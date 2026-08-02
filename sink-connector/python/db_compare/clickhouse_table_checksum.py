@@ -210,9 +210,12 @@ def get_table_checksum_query(conn, table):
     logging.debug("order by columns "+order_by_columns)
     return (query, select, order_by_columns, external_column_types)
 
-@staticmethod
 def fstr(template, partition_expression):
-        return eval(f"f'{template}'")
+        # Safe substitution: only replace {partition_expression} placeholder
+        # instead of eval() which allows arbitrary code execution
+        if partition_expression is not None:
+            return template.replace('{partition_expression}', str(partition_expression))
+        return template
 
 def select_table_statements(table, query, select_query, order_by, external_column_types, _where):
     statements = []
@@ -359,7 +362,7 @@ def main():
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
                         help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
     parser.add_argument('--include_json_columns', action='store_true', default=True,
-                        help='JSON data types can not easily be compared, we include them by default, please ignore them explicitly', required=False)
+                        help='JSON data types are included by default. This flag is a no-op (always True). Use --exclude_columns to skip JSON columns.', required=False)
     global args
     args = parser.parse_args()
 

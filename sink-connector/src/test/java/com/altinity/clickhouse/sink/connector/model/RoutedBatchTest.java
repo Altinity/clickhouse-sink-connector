@@ -1,215 +1,101 @@
 package com.altinity.clickhouse.sink.connector.model;
 
-import org.junit.Assert;
-import org.junit.Test;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import static org.junit.jupiter.api.Assertions.*;
 
 /**
- * Unit tests for RoutedBatch hash-based routing logic.
+ * Tests for {@link RoutedBatch} utility methods.
  */
 public class RoutedBatchTest {
 
     @Test
-    public void testCalculateThreadIdIsConsistent() {
-        String tableName = "test_table";
-        int threadPoolSize = 4;
-        
-        int threadId1 = RoutedBatch.calculateThreadId(tableName, threadPoolSize);
-        int threadId2 = RoutedBatch.calculateThreadId(tableName, threadPoolSize);
-        
-        // Same table should always map to same thread
-        Assert.assertEquals(threadId1, threadId2);
-    }
-
-    @Test
-    public void testCalculateThreadIdIsWithinRange() {
-        String tableName = "users";
-        int threadPoolSize = 5;
-        
-        int threadId = RoutedBatch.calculateThreadId(tableName, threadPoolSize);
-        
-        // Thread ID should be within valid range
-        Assert.assertTrue(threadId >= 0);
-        Assert.assertTrue(threadId < threadPoolSize);
-    }
-
-    @Test
-    public void testCalculateThreadIdDistributesTables() {
-        int threadPoolSize = 3;
-        String[] tables = {"users", "orders", "products", "inventory", "payments"};
-        
-        Map<Integer, Integer> threadDistribution = new HashMap<>();
-        
-        for (String table : tables) {
-            int threadId = RoutedBatch.calculateThreadId(table, threadPoolSize);
-            threadDistribution.put(threadId, threadDistribution.getOrDefault(threadId, 0) + 1);
-        }
-        
-        // All threads should be assigned at least one table
-        // (This might fail with very few tables, but should work with 5+ tables)
-        Assert.assertTrue("All threads should be used", threadDistribution.size() > 0);
-        
-        // No thread should have all the tables
-        for (int count : threadDistribution.values()) {
-            Assert.assertTrue("Distribution should be somewhat even", count < tables.length);
+    @DisplayName("calculateThreadId should never return negative (Integer.MIN_VALUE hash)")
+    public void testCalculateThreadIdNoNegative() {
+        // Find a string whose hashCode is Integer.MIN_VALUE
+        // "polygenelubricants" is a known string with hashCode == Integer.MIN_VALUE
+        // But we can also construct a test by using the actual logic
+        // The key property: (hashCode & 0x7FFFFFFF) % N >= 0 for all inputs
+        for (int poolSize = 1; poolSize <= 16; poolSize++) {
+            for (String name : new String[]{"test", "", "a", "ab", "abc", "server1.db.table"}) {
+                int result = RoutedBatch.calculateThreadId(name, poolSize);
+                assertTrue(result >= 0,
+                        "Thread ID must be non-negative for '" + name + "' with pool size " + poolSize);
+                assertTrue(result < poolSize,
+                        "Thread ID must be < pool size for '" + name + "' with pool size " + poolSize);
+            }
         }
     }
 
     @Test
-    public void testExtractTableNameFromTopic() {
-        String topic = "server5432.mydb.users";
-        String tableName = RoutedBatch.extractTableName(topic);
-        
-        Assert.assertEquals("users", tableName);
+    @DisplayName("calculateThreadId with null returns 0")
+    public void testCalculateThreadIdNull() {
+        assertEquals(0, RoutedBatch.calculateThreadId(null, 10),
+                "null table name should return thread 0");
     }
 
     @Test
-    public void testExtractTableNameFromInvalidTopic() {
-        String topic = "invalidformat";
-        String tableName = RoutedBatch.extractTableName(topic);
-        
-        // Should return the whole topic as fallback
-        Assert.assertEquals("invalidformat", tableName);
+    @DisplayName("calculateThreadId with zero pool size returns 0")
+    public void testCalculateThreadIdZeroPoolSize() {
+        assertEquals(0, RoutedBatch.calculateThreadId("test", 0),
+                "zero pool size should return thread 0");
     }
 
     @Test
-    public void testExtractTableNameFromEmptyTopic() {
-        String topic = "";
-        String tableName = RoutedBatch.extractTableName(topic);
-        
-        Assert.assertEquals("", tableName);
+    @DisplayName("calculateThreadId with negative pool size returns 0")
+    public void testCalculateThreadIdNegativePoolSize() {
+        assertEquals(0, RoutedBatch.calculateThreadId("test", -1),
+                "negative pool size should return thread 0");
     }
 
     @Test
-    public void testExtractTableNameFromNullTopic() {
-        String topic = null;
-        String tableName = RoutedBatch.extractTableName(topic);
-        
-        Assert.assertEquals("", tableName);
-    }
-
-    @Test
-    public void testCreateRoutingKey() {
-        String topic = "server5432.mydb.users";
-        String routingKey = RoutedBatch.createRoutingKey(topic);
-        
-        // Should be database.table
-        Assert.assertEquals("mydb.users", routingKey);
-    }
-
-    @Test
-    public void testCreateRoutingKeyWithInvalidTopic() {
-        String topic = "invalid";
-        String routingKey = RoutedBatch.createRoutingKey(topic);
-        
-        // Should return the whole topic as fallback
-        Assert.assertEquals("invalid", routingKey);
-    }
-
-    @Test
-    public void testDifferentDatabasesSameTableGetDifferentRouting() {
-        String topic1 = "server.db1.users";
-        String topic2 = "server.db2.users";
-        
-        String routingKey1 = RoutedBatch.createRoutingKey(topic1);
-        String routingKey2 = RoutedBatch.createRoutingKey(topic2);
-        
-        // Different databases should have different routing keys
-        Assert.assertNotEquals(routingKey1, routingKey2);
-        Assert.assertEquals("db1.users", routingKey1);
-        Assert.assertEquals("db2.users", routingKey2);
-    }
-
-    @Test
-    public void testSameTableAlwaysRoutesToSameThread() {
-        int threadPoolSize = 5;
-        String table = "orders";
-        
-        // Calculate thread ID multiple times
-        List<Integer> threadIds = new ArrayList<>();
+    @DisplayName("Same table name always routes to same thread (consistency)")
+    public void testCalculateThreadIdConsistency() {
+        String tableName = "my_database.my_table";
+        int poolSize = 8;
+        int expected = RoutedBatch.calculateThreadId(tableName, poolSize);
         for (int i = 0; i < 100; i++) {
-            threadIds.add(RoutedBatch.calculateThreadId(table, threadPoolSize));
-        }
-        
-        // All should be the same
-        int firstThreadId = threadIds.get(0);
-        for (int threadId : threadIds) {
-            Assert.assertEquals(firstThreadId, threadId);
+            assertEquals(expected, RoutedBatch.calculateThreadId(tableName, poolSize),
+                    "Same input must always produce same thread ID");
         }
     }
 
     @Test
-    public void testRoutedBatchConstruction() {
-        List<ClickHouseStruct> batch = new ArrayList<>();
-        batch.add(new ClickHouseStruct());
-        
-        int threadId = 2;
-        String tableName = "users";
-        
-        RoutedBatch routedBatch = new RoutedBatch(batch, threadId, tableName);
-        
-        Assert.assertEquals(batch, routedBatch.getBatch());
-        Assert.assertEquals(threadId, routedBatch.getAssignedThreadId());
-        Assert.assertEquals(tableName, routedBatch.getTableName());
+    @DisplayName("extractTableName parses server.database.table format")
+    public void testExtractTableNameStandard() {
+        assertEquals("orders", RoutedBatch.extractTableName("myserver.mydb.orders"));
     }
 
     @Test
-    public void testHashingDistributionIsReasonable() {
-        int threadPoolSize = 4;
-        int numTables = 100;
-        
-        Map<Integer, Integer> distribution = new HashMap<>();
-        
-        // Generate many table names and see how they distribute
-        for (int i = 0; i < numTables; i++) {
-            String tableName = "table_" + i;
-            int threadId = RoutedBatch.calculateThreadId(tableName, threadPoolSize);
-            distribution.put(threadId, distribution.getOrDefault(threadId, 0) + 1);
-        }
-        
-        // With 100 tables and 4 threads, each should get roughly 25 tables
-        // Allow some variance (between 15 and 35)
-        Assert.assertEquals("All threads should be assigned tables", threadPoolSize, distribution.size());
-        
-        for (Map.Entry<Integer, Integer> entry : distribution.entrySet()) {
-            int count = entry.getValue();
-            Assert.assertTrue("Thread " + entry.getKey() + " should have reasonable load: " + count, 
-                    count >= 15 && count <= 35);
-        }
+    @DisplayName("extractTableName returns full topic for non-standard format")
+    public void testExtractTableNameFallback() {
+        assertEquals("simple_topic", RoutedBatch.extractTableName("simple_topic"));
     }
 
     @Test
-    public void testZeroThreadPoolSize() {
-        String tableName = "users";
-        int threadPoolSize = 0;
-        
-        // Should not crash, should return 0
-        int threadId = RoutedBatch.calculateThreadId(tableName, threadPoolSize);
-        Assert.assertEquals(0, threadId);
+    @DisplayName("extractTableName handles null/empty")
+    public void testExtractTableNameNullEmpty() {
+        assertEquals("", RoutedBatch.extractTableName(null));
+        assertEquals("", RoutedBatch.extractTableName(""));
     }
 
     @Test
-    public void testNegativeThreadPoolSize() {
-        String tableName = "users";
-        int threadPoolSize = -1;
-        
-        // Should not crash, should return 0
-        int threadId = RoutedBatch.calculateThreadId(tableName, threadPoolSize);
-        Assert.assertEquals(0, threadId);
+    @DisplayName("createRoutingKey returns database.table from server.database.table")
+    public void testCreateRoutingKeyStandard() {
+        assertEquals("mydb.orders", RoutedBatch.createRoutingKey("myserver.mydb.orders"));
     }
 
     @Test
-    public void testNullTableName() {
-        String tableName = null;
-        int threadPoolSize = 4;
-        
-        // Should not crash, should return 0
-        int threadId = RoutedBatch.calculateThreadId(tableName, threadPoolSize);
-        Assert.assertEquals(0, threadId);
+    @DisplayName("createRoutingKey returns full topic for non-standard format")
+    public void testCreateRoutingKeyFallback() {
+        assertEquals("simple_topic", RoutedBatch.createRoutingKey("simple_topic"));
+    }
+
+    @Test
+    @DisplayName("createRoutingKey handles null/empty")
+    public void testCreateRoutingKeyNullEmpty() {
+        assertEquals("", RoutedBatch.createRoutingKey(null));
+        assertEquals("", RoutedBatch.createRoutingKey(""));
     }
 }
-

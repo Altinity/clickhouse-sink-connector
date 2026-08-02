@@ -1,5 +1,6 @@
 # python db_load/clickhouse_myloader.py --clickhouse_host localhost  --clickhouse_schema world --dump_dir $HOME/dbdumps/world --db_user root --db_password root --threads 16 --ch_module clickhouse-client-22.5.1.2079 --mysql_source_schema world
 from subprocess import Popen, PIPE
+import shlex
 from db.mysql import is_binary_datatype
 import argparse
 import sys
@@ -265,9 +266,8 @@ def convert_to_clickhouse_table(user_name, table_name, source, rmt_delete_suppor
 
 
 def get_unix_timezone_from_mysql_timezone(timezone):
-    tz = "UTC"
-    timezones = zoneinfo.available_timezones()
-    sorted(timezones)
+    default_tz = "UTC"
+    timezones = sorted(zoneinfo.available_timezones())
     for tz in timezones:
         offset = datetime.datetime.now(zoneinfo.ZoneInfo(
             tz)).utcoffset().total_seconds()/60/60
@@ -280,8 +280,8 @@ def get_unix_timezone_from_mysql_timezone(timezone):
         timezone_from_offset += f"{abs(offset_int):02}:{abs(round((offset-offset_int)*60)):02}"
         logging.debug(tz + "  => "+timezone_from_offset)
         if timezone == timezone_from_offset:
-            break
-    return tz
+            return tz
+    return default_tz
 
 
 def load_schema(args, clickhouse_user=None, clickhouse_password=None,  dry_run=False, datetime_timezone=None):
@@ -408,7 +408,7 @@ def get_column_list(schema_map, schema, table, virtual_columns, transform=False,
 def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_password=None, dry_run=False):
 
     if args.mysqlshell:
-        load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password, dry_run=False)
+        load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password, dry_run=dry_run)
 
     clickhouse_host = args.clickhouse_host
     clickhouse_port = args.clickhouse_port
@@ -417,10 +417,11 @@ def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_passw
     password = clickhouse_password
     password_option = ""
     if password is not None:
-        password_option= f"--password '{password}'"
+        register_secret(password)
+        password_option= f"--password {shlex.quote(password)}"
     config_file_option = ""
     if args.clickhouse_config_file is not None:
-       config_file_option= f"--config-file '{args.clickhouse_config_file}'"
+       config_file_option= f"--config-file {shlex.quote(args.clickhouse_config_file)}"
     schema_file = args.dump_dir + '/*-schema.sql.gz'
     for files in glob.glob(schema_file):
         (schema, table_name) = parse_schema_path(files)
@@ -440,8 +441,39 @@ def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_passw
             execute_load(cmd)
 
 
+_REGISTERED_SECRETS = set()
+
+
+def register_secret(secret):
+    """Register a secret so redact_password() can mask it by exact value.
+
+    Redacting by parsing shell syntax is not reliable: shlex.quote() renders a
+    password containing a single quote as a CONCATENATION of quoted segments
+    (my'secret -> 'my'"'"'secret'), and one containing whitespace splits across
+    tokens. Masking the known literal is exact however the shell quoted it.
+    """
+    if secret:
+        _REGISTERED_SECRETS.add(str(secret))
+
+
+def redact_password(cmd):
+    """Return cmd with any registered secret and any --password value masked."""
+    redacted = cmd
+    # Longest first, so a secret containing another is masked whole.
+    for secret in sorted(_REGISTERED_SECRETS, key=len, reverse=True):
+        redacted = redacted.replace(secret, "****")
+    # Fallback for values never registered: consume the whole shell word, which
+    # may be several adjacent quoted/bare segments emitted by shlex.quote().
+    redacted = re.sub(
+        r"""(--password[=\s]+)((?:'[^']*'|"[^"]*"|[^\s'"]+)+)""",
+        r"\1'****'",
+        redacted,
+    )
+    return redacted
+
+
 def execute_load(cmd):
-    logging.info(cmd)
+    logging.info(redact_password(cmd))
     if args.dry_run:
         logging.info("dry-run not executing")
         return 
@@ -459,13 +491,14 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
     ch_schema = args.clickhouse_database
 
     schema_files = args.dump_dir + f"/{args.mysql_source_database}@*.sql"
-    password = args.clickhouse_password
+    password = clickhouse_password
     password_option = ""
     if password is not None:
-        password_option= f"--password '{password}'"
+        register_secret(password)
+        password_option= f"--password {shlex.quote(password)}"
     config_file_option = ""
     if args.clickhouse_config_file is not None:
-       config_file_option= f"--config-file '{args.clickhouse_config_file}'"
+       config_file_option= f"--config-file {shlex.quote(args.clickhouse_config_file)}"
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         futures = []
         for file in glob.glob(schema_files):

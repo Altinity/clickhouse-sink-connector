@@ -1,11 +1,5 @@
 package com.altinity.clickhouse.sink.connector.config;
 
-import com.alibaba.fastjson.JSONObject;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.Map;
 
 /**

@@ -106,7 +106,16 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     REPLICATION_HISTORY_REPLICATION_LOG_ONLY("replication.history.replication_log_only"),
 
-    DATABASE_HOSTNAME("database.hostname");
+    // Union of both sides. This PR adds the two ddl.schema.change.* settings;
+    // develop added disable.drop.truncate. Keeping only one side would drop a
+    // config key whose own code reads it.
+    DDL_SCHEMA_CHANGE_TIMEOUT_MS("ddl.schema.change.timeout.ms"),
+
+    DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS("ddl.schema.change.poll.interval.ms"),
+
+    DATABASE_HOSTNAME("database.hostname"),
+
+    DISABLE_DROP_TRUNCATE("disable.drop.truncate");
 
 
 

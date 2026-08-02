@@ -120,8 +120,16 @@ public class DataTypeConverterTest {
         testCases.add(new TestCase("DECIMAL with high precision", "DECIMAL(30,10)", 10, 30, null, "Decimal(30,10)"));
         
         // Float types
+        // MySQL FLOAT is 4-byte single, DOUBLE/REAL are 8-byte. Debezium widens
+        // FLOAT to a FLOAT64 Kafka schema, so these two cases can only both pass
+        // if the converter decides from the source JDBC type rather than the
+        // schema type. Mapping DOUBLE to Float32 silently truncates ~15
+        // significant digits to ~7 on every replicated row.
         testCases.add(new TestCase("FLOAT data type", "FLOAT", "Float32"));
-        testCases.add(new TestCase("DOUBLE data type", "DOUBLE", "Float32"));
+        testCases.add(new TestCase("FLOAT4 data type", "FLOAT4", "Float32"));
+        testCases.add(new TestCase("DOUBLE data type", "DOUBLE", "Float64"));
+        testCases.add(new TestCase("FLOAT8 data type", "FLOAT8", "Float64"));
+        testCases.add(new TestCase("REAL data type", "REAL", "Float64"));
         
         // Date types
         testCases.add(new TestCase("DATE data type", "DATE", "Date32"));

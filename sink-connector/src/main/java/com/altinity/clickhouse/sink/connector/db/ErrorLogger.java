@@ -20,7 +20,7 @@ public class ErrorLogger {
     private static final Logger log = LogManager.getLogger(ErrorLogger.class);
 
     // Default table name if not specified in config
-    private static final String DEFAULT_ERROR_TABLE = "replica_source_error";
+    private static final String DEFAULT_ERROR_TABLE = "error_table";
 
     /**
      * Creates the error table if it doesn't exist.
@@ -44,7 +44,7 @@ public class ErrorLogger {
         }
 
         String createTableQuery = String.format(
-            "CREATE TABLE IF NOT EXISTS %s.%s (" +
+            "CREATE TABLE IF NOT EXISTS `%s`.`%s` (" +
                 "error_timestamp DateTime64(3) DEFAULT now()," +
                 "error String," +
                 "offset_key String," +
@@ -91,7 +91,7 @@ public class ErrorLogger {
         }
 
         String insertQuery = String.format(
-            "INSERT INTO %s.%s (" +
+            "INSERT INTO `%s`.`%s` (" +
                 "error, " +
                 "offset_key, " +
                 "binlog_file, " +

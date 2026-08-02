@@ -162,7 +162,9 @@ public class DBMetadata {
         while (!result && retryCount < MAX_RETRIES) {
             try {
                 retryCount++;
-                log.info("Retrying checkIfDatabaseExists, attempt {}", retryCount);
+                if (retryCount > 1) {
+                    log.info("Retrying checkIfDatabaseExists, attempt {}", retryCount);
+                }
                 try (Statement retryStmt = conn.createStatement()) {
                     String showSchemaQuery = String.format(CHECK_DB_EXISTS_SQL, databaseName);
                     ResultSet retryRs = retryStmt.executeQuery(showSchemaQuery);
@@ -535,14 +537,12 @@ public class DBMetadata {
     public ZoneId getServerTimeZone(Connection conn) {
         ZoneId result = ZoneId.of("UTC");
         if (conn != null) {
-            try {
-                // Perform a query to get the server timezone
-                ResultSet rs = conn.prepareStatement("SELECT timezone()").executeQuery();
+            try (java.sql.PreparedStatement tzPs = conn.prepareStatement("SELECT timezone()");
+                 ResultSet rs = tzPs.executeQuery()) {
                 if (rs.next()) {
                     String serverTimeZone = rs.getString(1);
                     result = ZoneId.of(serverTimeZone);
                 }
-                rs.close();
             } catch (Exception e) {
                 log.error("Error retrieving server timezone", e);
             }
@@ -572,16 +572,13 @@ public class DBMetadata {
                 String formattedQuery = String.format(query, tableName, databaseName);
 
                 // Execute query
-                ResultSet rs = conn.createStatement().executeQuery(formattedQuery);
-
-                // Get the list of columns from rs.
-                if (rs != null) {
+                try (Statement aliasStmt = conn.createStatement();
+                     ResultSet rs = aliasStmt.executeQuery(formattedQuery)) {
                     while (rs.next()) {
                         String response = rs.getString(1);
                         aliasColumns.add(response);
                     }
                 }
-                rs.close();
                 break;
             } catch (Exception e) {
                 log.error("Error getting alias columns, retrying ({}/{})", retryCount,MAX_RETRIES,e);
@@ -605,11 +602,13 @@ public class DBMetadata {
     public ResultSet executeQueryWithResultSet(String sql, Connection conn) throws SQLException {
         // Add retry logic.
         int retryCount = 0;
-        ResultSet rs = null;
         while (retryCount < MAX_RETRIES) {
             try {
-                rs = conn.prepareStatement(sql).executeQuery();
-                break;
+                // Note: caller is responsible for closing the returned ResultSet.
+                // The PreparedStatement is attached to the ResultSet and will be
+                // closed when the ResultSet is closed.
+                PreparedStatement ps = conn.prepareStatement(sql);
+                return ps.executeQuery();
             } catch(Exception e) {
                 log.error("Error executing query, retrying ({}/{})", retryCount,MAX_RETRIES,e);
                 if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
@@ -618,7 +617,7 @@ public class DBMetadata {
                 retryCount++;
             }
         }
-        return rs;
+        return null;
     }
 
     /**
@@ -651,8 +650,17 @@ public class DBMetadata {
         // Add retry logic.
         int retryCount = 0;
         String result = null;
-        ResultSet rs = null;
         while (retryCount < MAX_RETRIES) {
+            // Combines both sides: the null guard from 2.10.0 (cold start,
+            // where the connection was never established) AND our
+            // try-with-resources, which closes the statement and result set.
+            // 2.10.0's version leaks a PreparedStatement on every retry.
+            //
+            // The null check must be INSIDE the try: throwing it here as a
+            // SQLException lets the catch below decide whether the pool can
+            // supply a connection (retry) or not (give up and return null).
+            // Throwing outside the try would escape that recovery path and
+            // turn a recoverable cold start into a hard failure.
             try {
                 if (conn == null) {
                     // createConnection() returns null when ClickHouse is
@@ -663,8 +671,13 @@ public class DBMetadata {
                             "ClickHouse connection is not available for query: "
                                     + sql);
                 }
-                rs = conn.prepareStatement(sql).executeQuery();
-                break;
+                try (PreparedStatement sysPs = conn.prepareStatement(sql);
+                     ResultSet rs = sysPs.executeQuery()) {
+                    while (rs.next()) {
+                        result = rs.getString(1);
+                    }
+                    return result;
+                }
             } catch (SQLException sqle) {
                 // A missing connection can only be recovered from the pool. If
                 // no pool can supply one, the initial connection never
@@ -687,12 +700,6 @@ public class DBMetadata {
                     log.error("Error initiating DB connection, retrying ({}/{})",retryCount,MAX_RETRIES, e);
                 }
                 retryCount++;
-            }
-        }
-
-        if (rs != null) {
-            while(rs.next()) {
-                result = rs.getString(1);
             }
         }
         return result;
@@ -782,17 +789,23 @@ public class DBMetadata {
     public PreparedStatement getPreparedStatement(Connection conn, String sql) throws SQLException {
         int retryCount = 0;
         PreparedStatement ps = null;
+        SQLException lastException = null;
         while (retryCount < MAX_RETRIES) {
             try {
                 ps = conn.prepareStatement(sql);
                 break;
             } catch (SQLException e) {
+                lastException = e;
                 log.error("Error getting prepared statement, retry attempt ({}/{}) failed",retryCount,MAX_RETRIES, e);
                 if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
                     conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
                 }
                 retryCount++;
             }
+        }
+        if (ps == null) {
+            throw new SQLException("Failed to create PreparedStatement after " + MAX_RETRIES + " retries for: " + sql,
+                    lastException);
         }
         return ps;
     }

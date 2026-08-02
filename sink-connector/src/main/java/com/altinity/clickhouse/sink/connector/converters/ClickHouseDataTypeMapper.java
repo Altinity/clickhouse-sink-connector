@@ -25,6 +25,8 @@ import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKBReader;
 
 import java.math.BigDecimal;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.sql.PreparedStatement;
@@ -82,6 +84,8 @@ public class ClickHouseDataTypeMapper {
      * A map linking pairs of Kafka Connect schema type and schema name
      * to a corresponding ClickHouseDataType.
      */
+    private static final Logger log = LogManager.getLogger(ClickHouseDataTypeMapper.class);
+
     static Map<MutablePair<Schema.Type, String>, ClickHouseDataType> dataTypesMap;
 
     static {
@@ -107,7 +111,7 @@ public class ClickHouseDataTypeMapper {
                 ClickHouseDataType.Float32);
         dataTypesMap.put(
                 new MutablePair<>(Schema.FLOAT64_SCHEMA.type(), null),
-                ClickHouseDataType.Float32);
+                ClickHouseDataType.Float64);
 
         // String
         dataTypesMap.put(
@@ -172,9 +176,9 @@ public class ClickHouseDataTypeMapper {
                         ZonedTimestamp.SCHEMA_NAME),
                 ClickHouseDataType.DateTime64);
       
-        dataTypesMap.put(new MutablePair<>(Schema.Type.STRING, 
-                 ZonedTime.SCHEMA_NAME.toLowerCase()), 
-                         ClickHouseDataType.String);
+        dataTypesMap.put(new MutablePair<>(Schema.Type.STRING,
+                ZonedTime.SCHEMA_NAME),
+                ClickHouseDataType.String);
  
         dataTypesMap.put(
                 new MutablePair<>(Schema.Type.STRING,
@@ -353,7 +357,7 @@ public class ClickHouseDataTypeMapper {
                 else if (value instanceof Long) {
                     // DATETIME(0), DATETIME(1), DATETIME(2), DATETIME(3)
                     boolean isColumnDateTime64 = false;
-                    if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME) && type == Schema.INT64_SCHEMA.type()){
+                    if(Timestamp.SCHEMA_NAME.equalsIgnoreCase(schemaName) && type == Schema.INT64_SCHEMA.type()){
                         isColumnDateTime64 = true;
                     }
                     ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType,
@@ -369,7 +373,7 @@ public class ClickHouseDataTypeMapper {
         } else if (type == Schema.Type.BYTES) {
             // Blob storage.
             if (value instanceof byte[]) {
-                String hexValue = new String((byte[]) value);
+                String hexValue = BaseEncoding.base16().lowerCase().encode((byte[]) value);
                 ps.setString(index, hexValue);
             } else if (value instanceof java.nio.ByteBuffer) {
                 if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())) {
@@ -380,7 +384,7 @@ public class ClickHouseDataTypeMapper {
                 }
             }
 
-        }  else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(Geometry.LOGICAL_NAME)) {
+        }  else if (type == Schema.Type.STRUCT && schemaName != null && schemaName.equalsIgnoreCase(Geometry.LOGICAL_NAME)) {
             // Handle Geometry type (e.g., Polygon)
             if (value instanceof Struct) {
                 Struct geometryValue = (Struct) value;
@@ -405,6 +409,7 @@ public class ClickHouseDataTypeMapper {
                 try {
                     geometry = wkbReader.read(wkbBytes);
                 } catch (ParseException e) {
+                    log.warn("Failed to parse WKB geometry data, inserting empty polygon", e);
                     ps.setObject(index,
                             ClickHouseGeoPolygonValue.ofEmpty());
                     return true;
@@ -451,7 +456,7 @@ public class ClickHouseDataTypeMapper {
                         ClickHouseGeoPolygonValue.ofEmpty().asString());
             }
         } else if (type == Schema.Type.STRUCT
-                && schemaName.equalsIgnoreCase(Point.LOGICAL_NAME)) {
+                && schemaName != null && schemaName.equalsIgnoreCase(Point.LOGICAL_NAME)) {
             // Handle Point type (ClickHouse expects (longitude, latitude))
             if (value instanceof Struct) {
                 Struct pointValue = (Struct) value;
@@ -465,7 +470,7 @@ public class ClickHouseDataTypeMapper {
                         ClickHouseGeoPointValue.ofOrigin());
             }
         } else if (type == Schema.Type.STRUCT
-                && schemaName.equalsIgnoreCase(
+                && schemaName != null && schemaName.equalsIgnoreCase(
                 VariableScaleDecimal.LOGICAL_NAME)) {
             if (value instanceof Struct) {
                 Struct decimalValue = (Struct) value;

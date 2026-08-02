@@ -171,6 +171,12 @@ public class BlockMetaData {
         }
 
         long sourceDbLag = blockInsertionTimestamp - record.getTs_ms();
+        if (minSourceLag == 0 || sourceDbLag < minSourceLag) {
+            minSourceLag = sourceDbLag;
+        }
+        if (sourceDbLag > maxSourceLag) {
+            maxSourceLag = sourceDbLag;
+        }
         if (sourceToCHLag.containsKey(this.topicName)) {
             long storedSourceLag = sourceToCHLag.get(this.topicName);
             if (sourceDbLag > storedSourceLag) {
@@ -181,6 +187,12 @@ public class BlockMetaData {
         }
 
         long debeziumLag = blockInsertionTimestamp - record.getDebezium_ts_ms();
+        if (minConsumerLag == 0 || debeziumLag < minConsumerLag) {
+            minConsumerLag = debeziumLag;
+        }
+        if (debeziumLag > maxConsumerLag) {
+            maxConsumerLag = debeziumLag;
+        }
         if (debeziumToCHLag.containsKey(this.topicName)) {
             long storedDebeziumLag = debeziumToCHLag.get(this.topicName);
             if (debeziumLag > storedDebeziumLag) {

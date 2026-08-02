@@ -124,7 +124,7 @@ public class ClickHouseAutoCreateTable
         StringBuilder createTableSyntax = new StringBuilder();
 
         createTableSyntax.append(CREATE_TABLE).append(" ")
-                .append(databaseName).append(".")
+                .append("`").append(databaseName).append("`").append(".")
                 .append("`").append(tableName).append("`");
         if (useReplicatedReplacingMergeTree == true) {
             createTableSyntax.append(" ON CLUSTER `{cluster}` ");
@@ -249,12 +249,12 @@ public class ClickHouseAutoCreateTable
                 && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
             createTableSyntax.append(PRIMARY_KEY).append("(");
             createTableSyntax.append(primaryKey.stream()
-                    .map(Object::toString)
+                    .map(pk -> "`" + pk + "`")
                     .collect(Collectors.joining(",")));
             createTableSyntax.append(") ");
             createTableSyntax.append(ORDER_BY).append("(");
             createTableSyntax.append(primaryKey.stream()
-                    .map(Object::toString)
+                    .map(pk -> "`" + pk + "`")
                     .collect(Collectors.joining(",")));
             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
                 createTableSyntax.append(",`").append(DELETED_TIME_COLUMN).append("`");
@@ -339,7 +339,7 @@ public class ClickHouseAutoCreateTable
     }
 
     public void createHistoryDatabase(String databaseName, Connection connection, ClickHouseSinkConnectorConfig config) throws SQLException {
-        String sql = "CREATE DATABASE IF NOT EXISTS " + databaseName;
+        String sql = "CREATE DATABASE IF NOT EXISTS `" + databaseName.replace("`", "``") + "`";
         log.info(String.format(
                 "**** AUTO CREATE HISTORY DATABASE for database(%s), Query :%s)",
                 databaseName, sql));

@@ -23,6 +23,11 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
     String query;
 
     /**
+     * The name of the offset table (stored for use in getStoredOffsets).
+     */
+    String tableName;
+
+    /**
      * A map of column names to their respective data types in the offset table.
      */
     Map<String, String> columnNamesToDataTypesMap;
@@ -61,6 +66,7 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
         super(hostName, port, database, userName, password, config,
                 connection);
 
+        this.tableName = tableName;
         createOffsetTable();
         this.columnNamesToDataTypesMap =
                 new DBMetadata(config).getColumnsDataTypesForTable(
@@ -77,13 +83,11 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
      * Function to create the Kafka offset table if it does not exist.
      */
     public void createOffsetTable() {
-        try {
-            PreparedStatement ps = this.getConnection().prepareStatement(
-                    ClickHouseDbConstants.OFFSET_TABLE_CREATE_SQL
-            );
+        try (PreparedStatement ps = this.getConnection().prepareStatement(
+                ClickHouseDbConstants.OFFSET_TABLE_CREATE_SQL)) {
             ps.execute();
         } catch (SQLException se) {
-            log.error("Error creating Kafka offset table");
+            log.error("Error creating Kafka offset table", se);
         }
     }
 
@@ -148,22 +152,23 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
     public Map<TopicPartition, Long> getStoredOffsets() throws SQLException {
         Map<TopicPartition, Long> result = new HashMap<>();
 
-        Statement stmt = this.getConnection().createStatement();
-        ResultSet rs = stmt.executeQuery("select * from topic_offset_metadata");
+        try (Statement stmt = this.getConnection().createStatement();
+             ResultSet rs = stmt.executeQuery("select * from " + this.tableName)) {
 
-        while (rs.next()) {
-            String topicName = rs.getString(
-                    KafkaMetaData.TOPIC.getColumn()
-            );
-            int partition = rs.getInt(
-                    KafkaMetaData.PARTITION.getColumn()
-            );
-            long offset = rs.getLong(
-                    KafkaMetaData.OFFSET.getColumn()
-            );
+            while (rs.next()) {
+                String topicName = rs.getString(
+                        KafkaMetaData.TOPIC.getColumn()
+                );
+                int partition = rs.getInt(
+                        KafkaMetaData.PARTITION.getColumn()
+                );
+                long offset = rs.getLong(
+                        KafkaMetaData.OFFSET.getColumn()
+                );
 
-            TopicPartition tp = new TopicPartition(topicName, partition);
-            result.put(tp, offset);
+                TopicPartition tp = new TopicPartition(topicName, partition);
+                result.put(tp, offset);
+            }
         }
 
         return result;

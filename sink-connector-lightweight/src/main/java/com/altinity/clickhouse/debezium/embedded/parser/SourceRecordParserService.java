@@ -52,6 +52,15 @@ public class SourceRecordParserService implements DebeziumRecordParserService {
                                   DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> committer,
                                   boolean lastRecordInBatch) {
         SourceRecord sr = record.value();
+        if (sr == null || sr.value() == null) {
+            log.warn("Record has null SourceRecord or null value — skipping");
+            return null;
+        }
+        if (!(sr.value() instanceof Struct)) {
+            log.warn("Record value is not a Struct (type: {}) — skipping",
+                    sr.value().getClass().getName());
+            return null;
+        }
         Struct struct = (Struct) sr.value();
         ClickHouseStruct chStruct = null;
 
@@ -64,7 +73,7 @@ public class SourceRecordParserService implements DebeziumRecordParserService {
                     .orElse(null);
 
         } catch (Exception e) {
-            log.error("Error parsing schema");
+            log.error("Error parsing schema for record", e);
         }
 
         if (matchingDDLField != null) {
@@ -152,11 +161,17 @@ public class SourceRecordParserService implements DebeziumRecordParserService {
                             int index = 0;
                             for (Object key : jsonObject.keySet()) {
                                 if (key instanceof String) {
-                                    ConnectSchema valueSchema = new ConnectSchema(ConnectSchema.schemaType(jsonObject.get(key).getClass()));
+                                    Object jsonVal = jsonObject.get(key);
+                                    if (jsonVal == null) {
+                                        // Null JSON values — use optional string schema
+                                        sb.field((String) key, Schema.OPTIONAL_STRING_SCHEMA);
+                                        continue;
+                                    }
+                                    ConnectSchema valueSchema = new ConnectSchema(ConnectSchema.schemaType(jsonVal.getClass()));
                                     if (valueSchema.type() == Schema.Type.MAP) {
                                         sb.field((String) key, Schema.STRING_SCHEMA);
                                     } else {
-                                        sb.field((String) key, new ConnectSchema(ConnectSchema.schemaType(jsonObject.get(key).getClass())));
+                                        sb.field((String) key, new ConnectSchema(ConnectSchema.schemaType(jsonVal.getClass())));
                                     }
                                 }
                             }
@@ -166,10 +181,15 @@ public class SourceRecordParserService implements DebeziumRecordParserService {
                             for (Object key : jsonObject.keySet()) {
                                 if (key instanceof String && jsonObject.containsKey(key)) {
                                     Object value = jsonObject.get(key);
-                                    if (value instanceof Map) {
-                                        afterStruct.put((String) key, value.toString());
+                                    if (value == null) {
+                                        afterStruct.put((String) key, null);
+                                    } else if (value instanceof Map) {
+                                        // Use JSONObject for proper JSON serialization instead
+                                        // of Map.toString() which produces non-JSON "{key=value}"
+                                        afterStruct.put((String) key,
+                                                new JSONObject((Map) value).toJSONString());
                                     } else {
-                                        afterStruct.put((String) key, jsonObject.get(key));
+                                        afterStruct.put((String) key, value);
                                     }
                                 }
                             }

@@ -1,7 +1,9 @@
 package com.altinity.clickhouse.sink.connector.db;
 
-import java.util.HashMap;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.TreeMap;
 
 /**
  * Class that maps overrides of column data types. This is done specifically
@@ -12,11 +14,17 @@ public class ColumnOverrides {
     /**
      * Map of specific data type strings to their overridden forms.
      */
-    static Map<String, String> columnOverridesMap = new HashMap<>();
+    static Map<String, String> columnOverridesMap;
 
     static {
+        // Use TreeMap sorted by descending key length so that longer/more-specific
+        // keys like "Nullable(DateTime" are checked before shorter keys like "DateTime".
+        // This prevents DateTime64 columns from incorrectly matching the "DateTime" key.
+        columnOverridesMap = new TreeMap<>(Comparator.comparingInt(String::length).reversed()
+                .thenComparing(Comparator.naturalOrder()));
         columnOverridesMap.put("DateTime", "String");
         columnOverridesMap.put("Nullable(DateTime", "Nullable(String)");
+        columnOverridesMap.put("DateTime", "String");
     }
 
     /**
@@ -40,9 +48,21 @@ public class ColumnOverrides {
      *         is found, or {@code null} if no override applies.
      */
     public static String getColumnOverride(String dataType) {
-        for (String key : columnOverridesMap.keySet()) {
+        if (dataType == null) {
+            return null;
+        }
+        for (Map.Entry<String, String> entry : columnOverridesMap.entrySet()) {
+            String key = entry.getKey();
             if (dataType.contains(key)) {
-                return columnOverridesMap.get(key);
+                // Do not override DateTime64 — only plain DateTime needs the
+                // String workaround.  DateTime64 is handled correctly by JDBC.
+                if (key.equals("DateTime") && dataType.contains("DateTime64")) {
+                    continue;
+                }
+                if (key.equals("Nullable(DateTime") && dataType.contains("DateTime64")) {
+                    continue;
+                }
+                return entry.getValue();
             }
         }
         return null;

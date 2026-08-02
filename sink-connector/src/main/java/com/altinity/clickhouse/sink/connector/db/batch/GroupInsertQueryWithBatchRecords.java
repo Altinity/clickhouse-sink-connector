@@ -62,14 +62,40 @@ public class GroupInsertQueryWithBatchRecords {
             ClickHouseSinkConnectorConfig config,
             String tableName, String databaseName, Connection connection,
             Map<String, String> columnNameToDataTypeMap) {
+        return groupQueryWithRecords(records, queryToRecordsMap,
+                partitionToOffsetMap, config, tableName, databaseName,
+                connection, columnNameToDataTypeMap, null);
+    }
+
+    /**
+     * Variant that also receives the writer's connector-managed column names
+     * (the version/sign/is_deleted columns as actually named in the
+     * destination table engine, which may be custom — e.g.
+     * {@code ReplacingMergeTree(ver)}). These columns stay in the insert
+     * column list even though the source event never carries them, because
+     * the field mapper computes their values itself.
+     *
+     * @param connectorManagedColumns writer-specific managed column names; may
+     *                                be null when unknown.
+     * @return true if grouping is successful; false otherwise.
+     */
+    public boolean groupQueryWithRecords(
+            List<ClickHouseStruct> records,
+            Map<MutablePair<String, Map<String, Integer>>,
+                    List<ClickHouseStruct>> queryToRecordsMap,
+            Map<TopicPartition, Long> partitionToOffsetMap,
+            ClickHouseSinkConnectorConfig config,
+            String tableName, String databaseName, Connection connection,
+            Map<String, String> columnNameToDataTypeMap,
+            java.util.Collection<String> connectorManagedColumns) {
         boolean result = false;
 
         // Co4 = {ClickHouseStruct@9220} de block to create a Map of Query ->
         // list of records so that all records belonging to the same query
         // can be inserted as a batch.
-        Iterator iterator = records.iterator();
+        Iterator<ClickHouseStruct> iterator = records.iterator();
         while (iterator.hasNext()) {
-            ClickHouseStruct record = (ClickHouseStruct) iterator.next();
+            ClickHouseStruct record = iterator.next();
             if (record != null && record.getKafkaPartition() != null &&
                     record.getTopic() != null) {
                 updatePartitionOffsetMap(partitionToOffsetMap,
@@ -84,7 +110,8 @@ public class GroupInsertQueryWithBatchRecords {
                     getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                 result = updateQueryToRecordsMap(record,
                         record.getBeforeModifiedFields(), queryToRecordsMap,
-                        tableName, config, columnNameToDataTypeMap);
+                        tableName, config, columnNameToDataTypeMap,
+                        connectorManagedColumns);
             } else if (CdcRecordState.CDC_RECORD_STATE_AFTER ==
                     getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                 if (enableSchemaEvolution) {
@@ -103,7 +130,8 @@ public class GroupInsertQueryWithBatchRecords {
                 // tableName, connection, databaseName, config );
                 result = updateQueryToRecordsMap(record,
                         record.getAfterModifiedFields(), queryToRecordsMap,
-                        tableName, config, columnNameToDataTypeMap);
+                        tableName, config, columnNameToDataTypeMap,
+                        connectorManagedColumns);
             }
             // UPDATE: This creates 2 records, one with before and another one with after.
             else if (CdcRecordState.CDC_RECORD_STATE_BOTH ==
@@ -112,19 +140,26 @@ public class GroupInsertQueryWithBatchRecords {
                 if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
                         result = updateQueryToRecordsMap(record,
                                 record.getAfterModifiedFields(), queryToRecordsMap,
-                                tableName, config, columnNameToDataTypeMap);
-                        return result;
+                                tableName, config, columnNameToDataTypeMap,
+                                connectorManagedColumns);
+
+                        // Don't return here — continue processing remaining records in the batch.
+                        // The early return was dropping all subsequent records after the first UPDATE.
+
+                        continue;
                 }
                                 
                 if (record.getBeforeModifiedFields() != null) {
                     result = updateQueryToRecordsMap(record,
                             record.getBeforeModifiedFields(), queryToRecordsMap,
-                            tableName, config, columnNameToDataTypeMap);
+                            tableName, config, columnNameToDataTypeMap,
+                            connectorManagedColumns);
                 }
                 if (record.getAfterModifiedFields() != null) {
                     result = updateQueryToRecordsMap(record,
                             record.getAfterModifiedFields(), queryToRecordsMap,
-                            tableName, config, columnNameToDataTypeMap);
+                            tableName, config, columnNameToDataTypeMap,
+                            connectorManagedColumns);
                 }
             } else {
                 log.error("************ RECORD DROPPED: INVALID CDC RECORD " +
@@ -157,6 +192,27 @@ public class GroupInsertQueryWithBatchRecords {
                     List<ClickHouseStruct>> queryToRecordsMap,
             String tableName, ClickHouseSinkConnectorConfig config,
             Map<String, String> columnNameToDataTypeMap) {
+        return updateQueryToRecordsMap(record, modifiedFields,
+                queryToRecordsMap, tableName, config, columnNameToDataTypeMap,
+                null);
+    }
+
+    /**
+     * Variant of {@link #updateQueryToRecordsMap(ClickHouseStruct, List, Map,
+     * String, ClickHouseSinkConnectorConfig, Map)} that forwards the writer's
+     * connector-managed column names to the query formatter.
+     *
+     * @param connectorManagedColumns writer-specific managed column names; may
+     *                                be null when unknown.
+     * @return true if the mapping is updated; false otherwise.
+     */
+    public boolean updateQueryToRecordsMap(
+            ClickHouseStruct record, List<Field> modifiedFields,
+            Map<MutablePair<String, Map<String, Integer>>,
+                    List<ClickHouseStruct>> queryToRecordsMap,
+            String tableName, ClickHouseSinkConnectorConfig config,
+            Map<String, String> columnNameToDataTypeMap,
+            java.util.Collection<String> connectorManagedColumns) {
 
         // Step 1: If its a TRUNCATE OPERATION, add a TRUNCATE TABLE command.
         if (record.getCdcOperation().getOperation()
@@ -184,7 +240,7 @@ public class GroupInsertQueryWithBatchRecords {
                         config.getString(
                                 ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN
                                         .toString()),
-                        record.getDatabase());
+                        record.getDatabase(), connectorManagedColumns);
 
         String insertQueryTemplate = response.getKey();
         if (response.getKey() == null || response.getValue() == null) {

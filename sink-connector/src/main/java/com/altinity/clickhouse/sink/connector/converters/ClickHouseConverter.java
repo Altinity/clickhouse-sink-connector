@@ -460,8 +460,11 @@ public class ClickHouseConverter implements AbstractConverter {
                 // short circuit converting the object
                 return null;
             }
-            // else, field is not optional
-            // (leaving the original comments intact)
+            // Field is not optional but value is null — log a warning and return null
+            // to avoid NPE downstream. The caller should handle null gracefully.
+            log.warn("Received null value for non-optional field of type " + schema.type()
+                    + " (schema: " + schema.name() + "). This may indicate a schema mismatch.");
+            return null;
         }
         Schema.Type type = schema.type();
         switch (type) {

@@ -1,26 +1,62 @@
 package com.altinity.clickhouse.sink.connector.db;
 
-import com.clickhouse.data.ClickHouseDataType;
-import org.junit.Assert;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * Tests for {@link ColumnOverrides} to verify that DateTime64 columns
+ * are NOT incorrectly overridden to String.
+ */
 public class ColumnOverridesTest {
 
     @Test
-    public void testMapping() {
-        String dateTime64Type = "DateTime64(3)";
-        String dataTime64OverrideType = ColumnOverrides.getColumnOverride(dateTime64Type);
-        Assert.assertTrue(dataTime64OverrideType.equalsIgnoreCase("String"));
+    @DisplayName("DateTime column should be overridden to String")
+    public void testDateTimeIsOverridden() {
+        String result = ColumnOverrides.getColumnOverride("DateTime");
+        assertEquals("String", result, "DateTime should be overridden to String");
+    }
 
-        String nullableDateTime64Type = "Nullable(DateTime64)";
-        String nullableDataTime64OverrideType = ColumnOverrides.getColumnOverride(nullableDateTime64Type);
-        Assert.assertTrue(nullableDataTime64OverrideType.equalsIgnoreCase("Nullable(String)"));
+    @Test
+    @DisplayName("Nullable(DateTime) column should be overridden to Nullable(String)")
+    public void testNullableDateTimeIsOverridden() {
+        String result = ColumnOverrides.getColumnOverride("Nullable(DateTime)");
+        assertEquals("Nullable(String)", result, "Nullable(DateTime) should be overridden to Nullable(String)");
+    }
 
-        Assert.assertTrue(ColumnOverrides.getColumnOverride(ClickHouseDataType.DateTime.name()).equalsIgnoreCase("String"));
-        Assert.assertNull(ColumnOverrides.getColumnOverride(ClickHouseDataType.Decimal.name()));
+    @Test
+    @DisplayName("DateTime64 column should NOT be overridden")
+    public void testDateTime64NotOverridden() {
+        String result = ColumnOverrides.getColumnOverride("DateTime64(3)");
+        assertNull(result, "DateTime64 should NOT be overridden — JDBC handles it correctly");
+    }
 
+    @Test
+    @DisplayName("Nullable(DateTime64) column should NOT be overridden")
+    public void testNullableDateTime64NotOverridden() {
+        String result = ColumnOverrides.getColumnOverride("Nullable(DateTime64(6))");
+        assertNull(result, "Nullable(DateTime64) should NOT be overridden");
+    }
 
-        Assert.assertNull(ColumnOverrides.getColumnOverride(ClickHouseDataType.Int16.name()));
-        Assert.assertTrue(ColumnOverrides.getColumnOverride(ClickHouseDataType.DateTime32.name()).equalsIgnoreCase(ClickHouseDataType.String.name()));
+    @Test
+    @DisplayName("null dataType should return null without NPE")
+    public void testNullDataTypeReturnsNull() {
+        String result = ColumnOverrides.getColumnOverride(null);
+        assertNull(result, "null input should return null");
+    }
+
+    @Test
+    @DisplayName("String dataType should not match any override")
+    public void testStringNotOverridden() {
+        String result = ColumnOverrides.getColumnOverride("String");
+        assertNull(result, "String should not be overridden");
+    }
+
+    @Test
+    @DisplayName("DateTime with timezone should be overridden")
+    public void testDateTimeWithTimezoneOverridden() {
+        String result = ColumnOverrides.getColumnOverride("DateTime('UTC')");
+        assertEquals("String", result, "DateTime('UTC') should be overridden to String");
     }
 }

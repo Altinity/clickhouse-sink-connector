@@ -131,6 +131,26 @@ public class DataTypeConverter {
             return overriddenDataTypesMap.get(dataType.name().toLowerCase());
         }
 
+        // Approximate-numeric types must be decided from the SOURCE JDBC type,
+        // not from the Kafka schema type. Debezium widens MySQL FLOAT to a
+        // FLOAT64 schema, so both FLOAT and DOUBLE arrive here as the same
+        // schema type and the map can only answer one of them correctly:
+        //   - map FLOAT64 -> Float32 and every DOUBLE silently loses precision
+        //     (~15 significant digits truncated to ~7) on every replicated row;
+        //   - map FLOAT64 -> Float64 and a MySQL FLOAT column is created twice
+        //     as wide as the source.
+        // The resolved JDBC type still distinguishes them, so use it.
+        // MySQL: FLOAT/FLOAT4 = 4-byte single; DOUBLE/FLOAT8 = 8-byte double;
+        // REAL is a synonym for DOUBLE (absent REAL_AS_FLOAT).
+        Integer jdbcType = dataType.jdbcType();
+        if (jdbcType != null && precision <= 0) {
+            if (jdbcType == Types.FLOAT) {
+                return ClickHouseDataType.Float32.toString();
+            } else if (jdbcType == Types.DOUBLE || jdbcType == Types.REAL) {
+                return ClickHouseDataType.Float64.toString();
+            }
+        }
+
         // Map the schema to the corresponding ClickHouse data type
         ClickHouseDataType chDataType = ClickHouseDataTypeMapper.getClickHouseDataType(
                 schemaBuilder.schema().type(), schemaBuilder.schema().name());

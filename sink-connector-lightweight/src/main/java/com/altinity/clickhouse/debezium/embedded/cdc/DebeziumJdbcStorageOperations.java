@@ -179,7 +179,7 @@ public class DebeziumJdbcStorageOperations {
         try {
             new DBMetadata(props).executeSystemQuery(conn, formattedView);
         } catch (Exception e) {
-            log.error("**** Error creating VIEW **** " + formattedView);
+            log.error("**** Error creating VIEW **** " + formattedView, e);
         }
     }
 
@@ -239,36 +239,41 @@ public class DebeziumJdbcStorageOperations {
         DBMetadata metadata = new DBMetadata(props);
         ResultSet resultSet = metadata.executeQueryWithResultSet(
                 errorTableStatusQuery, conn);
-        if (resultSet != null) {
-            ResultSetMetaData md = resultSet.getMetaData();
-            int numCols = md.getColumnCount();
-            List<String> colNames = IntStream.range(0, numCols)
-                    .mapToObj(i -> {
+        try {
+            if (resultSet != null) {
+                ResultSetMetaData md = resultSet.getMetaData();
+                int numCols = md.getColumnCount();
+                List<String> colNames = IntStream.range(0, numCols)
+                        .mapToObj(i -> {
+                            try {
+                                return md.getColumnName(i + 1);
+                            } catch (SQLException e) {
+                                log.error("Error getting column name", e);
+                                return "?";
+                            }
+                        })
+                        .collect(Collectors.toList());
+                JSONArray result = new JSONArray();
+                // convert the result set to a json array.
+                while (resultSet.next()) {
+                    JSONObject row = new JSONObject();
+                    colNames.forEach(cn -> {
                         try {
-                            return md.getColumnName(i + 1);
+                            Object v = resultSet.getObject(cn);
+                            row.put(cn, v);
                         } catch (SQLException e) {
-                            e.printStackTrace();
-                            return "?";
+                            log.error("Error getting column value for " + cn, e);
                         }
-                    })
-                    .collect(Collectors.toList());
-            JSONArray result = new JSONArray();
-            // convert the result set to a json array.
-            while (resultSet.next()) {
-                JSONObject row = new JSONObject();
-                colNames.forEach(cn -> {
-                    try {
-                        Object v = resultSet.getObject(cn);
-                        row.put(cn, v);
-                    } catch (SQLException e) {
-                        e.printStackTrace();
-                    }
-                });
-                result.add(row);
+                    });
+                    result.add(row);
+                }
+                response = result.toString();
             }
-            response = result.toString();
+        } finally {
+            if (resultSet != null) {
+                resultSet.close();
+            }
         }
-
 
         return response;
 
@@ -300,21 +305,22 @@ public class DebeziumJdbcStorageOperations {
         DBMetadata metadata = new DBMetadata(config);
         ResultSet resultSet = metadata.executeQueryWithResultSet(
                 debeziumStorageStatusQuery, conn);
-        if (resultSet != null) {
-            ResultSetMetaData md = resultSet.getMetaData();
-            int numCols = md.getColumnCount();
-            List<String> colNames = IntStream.range(0, numCols)
-                    .mapToObj(i -> {
-                        try {
-                            return md.getColumnName(i + 1);
-                        } catch (SQLException e) {
-                            e.printStackTrace();
-                            return "?";
-                        }
-                    })
-                    .collect(Collectors.toList());
-            JSONArray result = new JSONArray();
-            JSONObject replicationLag = new JSONObject();
+        try {
+            if (resultSet != null) {
+                ResultSetMetaData md = resultSet.getMetaData();
+                int numCols = md.getColumnCount();
+                List<String> colNames = IntStream.range(0, numCols)
+                        .mapToObj(i -> {
+                            try {
+                                return md.getColumnName(i + 1);
+                            } catch (SQLException e) {
+                                log.error("Error getting column name", e);
+                                return "?";
+                            }
+                        })
+                        .collect(Collectors.toList());
+                JSONArray result = new JSONArray();
+                JSONObject replicationLag = new JSONObject();
             replicationLag.put("Seconds_Behind_Source",
                     ReplicationStatusSingleton.getInstance().getReplicationLag() / 1000);
             result.add(replicationLag);
@@ -342,6 +348,11 @@ public class DebeziumJdbcStorageOperations {
                 result.add(row);
             }
             response = result.toJSONString();
+            }
+        } finally {
+            if (resultSet != null) {
+                try { resultSet.close(); } catch (SQLException ignored) {}
+            }
         }
         return response;
     }

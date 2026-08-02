@@ -118,7 +118,7 @@ public class BinLogHistory {
 
         StringBuilder sb = new StringBuilder();
         sb.append(CREATE_TABLE).append(" ").append(IF_NOT_EXISTS)
-                .append(' ').append(databaseName)
+                .append(" `").append(databaseName).append("`")
                 .append(".`").append(historyTableName).append("`(");
 
         // Iterate through all history columns (LinkedHashMap preserves insertion order)
@@ -282,10 +282,15 @@ public class BinLogHistory {
                 Long version= SnowFlakeId.generate(struct.getTs_ms(), struct.getGtid(), false);
                 return version;
             case HOST_COLUMN:
-            case PRIMARY_HOST_COLUMN:
-                // Get this value from database.hostname
+                // Current MySQL server being replicated from
                 String databaseHostname = config.getString(ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString());
-                return databaseHostname; // Host might need special handling
+                return databaseHostname != null ? databaseHostname : "";
+            case PRIMARY_HOST_COLUMN:
+                // TODO: PRIMARY_HOST should ideally be the MySQL primary server,
+                // distinct from HOST (which is the server being replicated from).
+                // Currently no separate config exists, so both use DATABASE_HOSTNAME.
+                String primaryHostname = config.getString(ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString());
+                return primaryHostname != null ? primaryHostname : "";
             case LOGFILE_COLUMN:
                 if(struct.getFile() == null) {
                     return "";

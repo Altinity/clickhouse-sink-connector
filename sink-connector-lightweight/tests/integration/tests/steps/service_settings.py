@@ -107,7 +107,7 @@ EOF"""
     "replacingmergetree.delete.column": "_sign","""
         + f'"auto.create.tables": {auto_create_tables_local},'
         """
-          "schema.evolution": false
+          "schema.evolution": false,
 
           "metadata.max.age.ms" : 10000
         }

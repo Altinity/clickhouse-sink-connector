@@ -6,6 +6,7 @@ import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -35,6 +36,54 @@ public class QueryFormatterTest {
         fields.add(new Field("Min Value", 6, Schema.INT32_SCHEMA));
         fields.add(new Field("Null Value", 7, Schema.INT32_SCHEMA));
     }
+    @Test
+    public void testDestinationOnlyDataColumnIsOmittedFromInsert() {
+        // ADD COLUMN scenario: destination has price_usd but the (pre-ALTER)
+        // source event does not. The column must be OMITTED from the insert so
+        // ClickHouse fills its DEFAULT -- binding NULL fails outright on
+        // non-nullable columns and the whole batch then errors and replays
+        // forever (the price_usd data-loss/stall incident).
+        QueryFormatter qf = new QueryFormatter();
+
+        Map<String, String> colMap = new HashMap<>();
+        colMap.put("customerName", "String");
+        colMap.put("price_usd", "Decimal(18, 6)");   // destination-only
+        colMap.put("_version", "UInt64");            // connector-managed: kept
+
+        MutablePair<String, Map<String, Integer>> response =
+                qf.getInsertQueryUsingInputFunction("products", fields, colMap,
+                        false, false, null, "employees");
+
+        Assert.assertFalse("Destination-only data column must be omitted",
+                response.left.contains("price_usd"));
+        Assert.assertTrue("Connector-managed _version must be kept",
+                response.left.contains("`_version`"));
+        Assert.assertTrue("Source-present column must be kept",
+                response.left.contains("`customerName`"));
+        Assert.assertFalse(response.right.containsKey("price_usd"));
+    }
+
+    @Test
+    public void testCustomManagedColumnsAreKept() {
+        // Custom version/sign column names (e.g. ReplacingMergeTree(ver)) are
+        // passed through the connectorManagedColumns parameter and must be
+        // kept even though the source event never carries them.
+        QueryFormatter qf = new QueryFormatter();
+
+        Map<String, String> colMap = new HashMap<>();
+        colMap.put("customerName", "String");
+        colMap.put("ver", "UInt64");   // custom version column
+        colMap.put("signv", "Int8");   // custom delete column
+
+        MutablePair<String, Map<String, Integer>> response =
+                qf.getInsertQueryUsingInputFunction("products", fields, colMap,
+                        false, false, null, "employees",
+                        java.util.List.of("ver", "signv"));
+
+        Assert.assertTrue(response.left.contains("`ver`"));
+        Assert.assertTrue(response.left.contains("`signv`"));
+    }
+
     @Test
     public void testGetInsertQueryUsingInputFunctionWithKafkaMetaDataEnabled() {
         QueryFormatter qf = new QueryFormatter();
@@ -380,4 +429,89 @@ public class QueryFormatterTest {
         Assert.assertTrue("Column index map should be empty",
                 columnIndexMap.isEmpty());
     }
+
+    @Test
+    @DisplayName("extractDateTime64Precision handles Nullable(DateTime64(6)) wrapper")
+    public void testExtractDateTime64PrecisionWithNullable() {
+        // Test via reflection since extractDateTime64Precision is private
+        QueryFormatter qf = new QueryFormatter();
+        try {
+            java.lang.reflect.Method method = QueryFormatter.class.getDeclaredMethod(
+                "extractDateTime64Precision", String.class);
+            method.setAccessible(true);
+
+            // Plain DateTime64(3)
+            String result1 = (String) method.invoke(qf, "DateTime64(3)");
+            Assert.assertEquals("Should extract precision 3", "3", result1);
+
+            // Nullable(DateTime64(6))
+            String result2 = (String) method.invoke(qf, "Nullable(DateTime64(6))");
+            Assert.assertEquals("Should extract precision 6 from Nullable wrapper", "6", result2);
+
+            // Nullable(DateTime64(9, 'UTC'))
+            String result3 = (String) method.invoke(qf, "Nullable(DateTime64(9, 'UTC'))");
+            Assert.assertEquals("Should extract precision 9 from Nullable with timezone", "9", result3);
+
+            // DateTime64 without precision
+            String result4 = (String) method.invoke(qf, "DateTime64");
+            Assert.assertEquals("Should default to 3 when no precision specified", "3", result4);
+
+            // Nested Nullable edge case
+            String result5 = (String) method.invoke(qf, "NULLABLE(DateTime64(4))");
+            Assert.assertEquals("Should handle uppercase NULLABLE", "4", result5);
+
+        } catch (Exception e) {
+            Assert.fail("Reflection failed: " + e.getMessage());
+        }
+    }
+
+
+    @Test
+    @DisplayName("formatLiteralForSql uses toDateTime64 for DateTime64 types with correct precision")
+    public void testFormatLiteralForSqlDateTime64VsDateTime() {
+        QueryFormatter qf = new QueryFormatter();
+        try {
+            // Actual signature is formatLiteralForSql(Object value, String dataType).
+            // The column name and timezone are not parameters of this helper — the
+            // timezone is applied by the callers that build toDateTime(...) expressions
+            // (see getInsertQueryForDelete / getInsertQueryForUpdate).
+            java.lang.reflect.Method method = QueryFormatter.class.getDeclaredMethod(
+                "formatLiteralForSql", Object.class, String.class);
+            method.setAccessible(true);
+
+            // DateTime should use toDateTime
+            String dtResult = (String) method.invoke(qf, "2025-01-01 00:00:00", "DateTime");
+            Assert.assertTrue("DateTime should use toDateTime function",
+                dtResult.contains("toDateTime("));
+            Assert.assertFalse("DateTime should NOT use toDateTime64",
+                dtResult.contains("toDateTime64("));
+
+            // DateTime64(3) should use toDateTime64 with precision 3
+            String dt64Result = (String) method.invoke(qf, "2025-01-01 00:00:00.000", "DateTime64(3)");
+            Assert.assertTrue("DateTime64 should use toDateTime64 function",
+                dt64Result.contains("toDateTime64("));
+            Assert.assertTrue("DateTime64(3) should include precision 3",
+                dt64Result.contains(", 3)"));
+
+            // DateTime64(6) should use toDateTime64 with precision 6
+            String dt64_6Result = (String) method.invoke(qf, "2025-01-01 00:00:00.000000", "DateTime64(6)");
+            Assert.assertTrue("DateTime64(6) should use toDateTime64 function",
+                dt64_6Result.contains("toDateTime64("));
+            Assert.assertTrue("DateTime64(6) should include precision 6",
+                dt64_6Result.contains(", 6)"));
+
+            // Nullable(DateTime64(3)) should also use toDateTime64, with the
+            // Nullable wrapper stripped before precision extraction.
+            String nullableDt64 = (String) method.invoke(qf, "2025-01-01 00:00:00.000",
+                "Nullable(DateTime64(3))");
+            Assert.assertTrue("Nullable(DateTime64) should use toDateTime64",
+                nullableDt64.contains("toDateTime64("));
+            Assert.assertTrue("Nullable(DateTime64(3)) should include precision 3",
+                nullableDt64.contains(", 3)"));
+
+        } catch (Exception e) {
+            Assert.fail("Reflection failed: " + e.getMessage());
+        }
+    }
+
 }

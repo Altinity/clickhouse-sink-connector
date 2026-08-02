@@ -15,8 +15,9 @@ public class ReplicationStatusSingleton {
 
     /**
      * The singleton instance of the ReplicationStatusSingleton class.
+     * Eagerly initialized for thread safety.
      */
-    private static ReplicationStatusSingleton instance;
+    private static final ReplicationStatusSingleton instance = new ReplicationStatusSingleton();
 
     /**
      * The ReplicationStatus object that holds the replication state.
@@ -42,10 +43,6 @@ public class ReplicationStatusSingleton {
      * @return the singleton instance of ReplicationStatusSingleton.
      */
     public static ReplicationStatusSingleton getInstance() {
-
-        if (instance == null) {
-            instance = new ReplicationStatusSingleton();
-        }
         return instance;
     }
 

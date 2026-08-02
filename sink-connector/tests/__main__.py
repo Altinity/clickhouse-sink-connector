@@ -49,10 +49,10 @@ try:
             row = [fake.first_name(), fake.last_name(), fake.email(), \
                fake.postcode(), fake.city(), fake.country(), fake.date_of_birth()]
 
-            cursor.execute(' \
-                INSERT INTO `people` (first_name, last_name, email, zipcode, city, country, birthdate) \
-                VALUES ("%s", "%s", "%s", %s, "%s", "%s", "%s"); \
-                ' % (row[0], row[1], row[2], row[3], row[4], row[5], row[6]))
+            cursor.execute(
+                'INSERT INTO `people` (first_name, last_name, email, zipcode, city, country, birthdate) '
+                'VALUES (%s, %s, %s, %s, %s, %s, %s)',
+                (row[0], row[1], row[2], row[3], row[4], row[5], row[6]))
 
             if n % 100 == 0:
                 print("iteration %s" % n)
