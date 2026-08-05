@@ -21,8 +21,22 @@ public class ClickHouseBatchExecutor extends
 
     /**
      * Flag indicating whether the executor is paused.
+     *
+     * <p>Must be {@code volatile}. This flag is the DDL-versus-DML barrier:
+     * {@code DebeziumChangeEventCapture} calls {@link #pause()} from the
+     * Debezium change-event thread before applying a DDL and {@link #resume()}
+     * after it, while the batch-pool threads read the flag in the
+     * {@link #beforeExecute} spin loop. Writer and readers are different
+     * threads with no lock and no other happens-before edge between them, so
+     * without {@code volatile} the JMM gives no visibility guarantee (JLS
+     * 17.4), and the tight {@code while (isPaused)} loop - whose body touches
+     * no other shared state - may hoist the read out of the loop entirely.</p>
+     *
+     * <p>The consequence is not a stall but silent corruption: a batch thread
+     * that never observes the pause applies DML against a schema that is
+     * mid-DDL. Pinned by {@code ExecutorPauseVisibilityTest}.</p>
      */
-    boolean isPaused = false;
+    volatile boolean isPaused = false;
 
     /**
      * Constructs a ClickHouseBatchExecutor with the given core pool size
