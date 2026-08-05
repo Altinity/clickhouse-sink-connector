@@ -96,7 +96,7 @@ public class DeDuplicator {
         }
 
         // Update the deduplication pool with the new key
-        updateDedupePool(deDuplicationKey);
+        updateDedupePool(topicName, deDuplicationKey);
 
         return true;
     }
@@ -107,25 +107,24 @@ public class DeDuplicator {
      *
      * @param deDuplicationKey the key to add to the pool
      */
-    public void updateDedupePool(Object deDuplicationKey) {
+    public void updateDedupePool(String topicName, Object deDuplicationKey) {
 
         log.debug("add new key to the pool:" + deDuplicationKey);
 
-        // Iterate through all topics and corresponding pools
-        for (Map.Entry<String, LinkedList<Object>> entry : this.queue.entrySet()) {
+        // Add the key to the FIFO queue for this topic
+        LinkedList<Object> topicQueue = this.queue.computeIfAbsent(
+                topicName, k -> new LinkedList<>());
+        topicQueue.addLast(deDuplicationKey);
 
-            LinkedList<Object> matchingQueue = entry.getValue();
-
-            // If the pool size exceeds maxPoolSize, remove the oldest entries
-            while (matchingQueue.size() > this.maxPoolSize) {
-                log.info("records pool is too big, need to flush:" + this.queue.size());
-                Object key = matchingQueue.removeFirst();
-                if (key == null) {
-                    log.warn("unable to removeFirst() in the queue");
-                } else {
-                    matchingQueue.remove(key);
-                    log.info("removed key: " + key);
-                }
+        // If the pool size exceeds maxPoolSize, evict the oldest entries
+        Map<Object, Object> topicRecords = this.records.get(topicName);
+        while (topicQueue.size() > this.maxPoolSize) {
+            log.info("records pool is too big (" + topicQueue.size()
+                    + "), evicting oldest entry");
+            Object oldKey = topicQueue.removeFirst();
+            if (oldKey != null && topicRecords != null) {
+                topicRecords.remove(oldKey);
+                log.info("evicted key: " + oldKey);
             }
         }
     }
@@ -139,33 +138,31 @@ public class DeDuplicator {
      * @return true if the record is a duplicate, false otherwise
      */
     public boolean checkIfRecordIsDuplicate(String topicName, Object deDuplicationKey, SinkRecord record) {
-        boolean result = false;
 
         // Get matching records for the topic
         Map<Object, Object> matchingRecords = this.records.get(topicName);
 
         if (matchingRecords == null) {
-            // New record for topic, add it to the records pool
+            // New topic: create records map and add the record
             matchingRecords = new HashMap<>();
             matchingRecords.put(deDuplicationKey, record);
-
             this.records.put(topicName, matchingRecords);
-            result = true;
-        } else {
-            if (matchingRecords.containsKey(deDuplicationKey)) {
-                log.warn("already seen this key:" + deDuplicationKey);
-
-                // Depending on the policy, replace the record or keep the old one
-                if (this.policy == DeDuplicationPolicy.NEW) {
-                    matchingRecords.put(deDuplicationKey, record);
-                    this.records.put(topicName, matchingRecords);
-                    log.info("replace the key:" + deDuplicationKey);
-                }
-                result = false;
-            }
+            return true;
         }
 
-        return result;
+        if (matchingRecords.containsKey(deDuplicationKey)) {
+            log.warn("already seen this key:" + deDuplicationKey);
+            // Depending on the policy, replace the record or keep the old one
+            if (this.policy == DeDuplicationPolicy.NEW) {
+                matchingRecords.put(deDuplicationKey, record);
+                log.info("replace the key:" + deDuplicationKey);
+            }
+            return false;
+        }
+
+        // New key for existing topic: add the record
+        matchingRecords.put(deDuplicationKey, record);
+        return true;
     }
 
     /**
