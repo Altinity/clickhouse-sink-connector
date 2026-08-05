@@ -375,16 +375,13 @@ public class ClickHouseStruct {
      */
     public void setBeforeStruct(Struct s) {
         this.beforeStruct = s;
-        if (s != null) {
-            List<Field> schemaFields = s.schema().fields();
-            this.beforeModifiedFields = new ArrayList<>();
-            for (Field f : schemaFields) {
-                // Identify the list of columns that were modified.
-                // Schema.fields() will give the list of columns in the schema.
-                if (s.get(f) != null) {
-                    this.beforeModifiedFields.add(f);
-                }
-            }
+        if (s != null && s.schema() != null) {
+            // Include ALL fields in modifiedFields, not just non-null ones.
+            // The previous code skipped fields with null values, which caused
+            // UPDATE statements that set columns to NULL to silently lose those
+            // changes — the NULL column would not appear in the modified fields
+            // list and ClickHouse would keep the old value.
+            this.beforeModifiedFields = new ArrayList<>(s.schema().fields());
         }
     }
 
@@ -396,16 +393,9 @@ public class ClickHouseStruct {
      */
     public void setAfterStruct(Struct s) {
         this.afterStruct = s;
-        if (s != null) {
-            List<Field> schemaFields = s.schema().fields();
-            this.afterModifiedFields = new ArrayList<>();
-            for (Field f : schemaFields) {
-                // Identify the list of columns that were modified.
-                // Schema.fields() will give the list of columns in the schema.
-                if (s.get(f) != null) {
-                    this.afterModifiedFields.add(f);
-                }
-            }
+        if (s != null && s.schema() != null) {
+            // Include ALL fields in modifiedFields — see setBeforeStruct comment.
+            this.afterModifiedFields = new ArrayList<>(s.schema().fields());
         }
     }
 
@@ -465,15 +455,17 @@ public class ClickHouseStruct {
             if (fieldNames.contains(SERVER_THREAD)
                     && source.get(SERVER_THREAD) != null
                     && source.get(SERVER_THREAD) instanceof Integer) {
-                this.setThread((Integer) convertedValue.get(SERVER_THREAD));
+                // Fix: read from source, not convertedValue (was data corruption bug)
+                this.setThread((Integer) source.get(SERVER_THREAD));
             }
             if (fieldNames.contains(GTID)
                     && source.get(GTID) != null
                     && source.get(GTID) instanceof String) {
-                String[] gtidArray = ((String) source.get(GTID)).split(":");
-                if (gtidArray.length == EXPECTED_GTID_ARRAY_LENGTH) {
-                    this.setGtid(Long.parseLong(
-                            gtidArray[GTID_SEGMENT_INDEX]));
+                String gtidStr = (String) source.get(GTID);
+                try {
+                    this.setGtid(parseGtidMax(gtidStr));
+                } catch (NumberFormatException e) {
+                    log.warn("Failed to parse GTID value: " + gtidStr, e);
                 }
             }
             if (fieldNames.contains(LSN)
@@ -522,11 +514,11 @@ public class ClickHouseStruct {
                 .append(" ts_ms:").append(ts_ms)
                 .append(" ts_sec:").append(tsSec)
                 .append(" snapshot:").append(snapshot)
-                .append(" server_id").append(serverId)
-                .append(" binlog_file").append(file)
-                .append(" binlog_pos").append(pos)
-                .append(" row").append(row)
-                .append(" server_thread").append(thread)
+                .append(" server_id:").append(serverId)
+                .append(" binlog_file:").append(file)
+                .append(" binlog_pos:").append(pos)
+                .append(" row:").append(row)
+                .append(" server_thread:").append(thread)
                 .toString();
     }
 
@@ -541,11 +533,19 @@ public class ClickHouseStruct {
             return 0L;
         }
         SourceRecord srd = changeEvent.value();
+        if (!(srd.value() instanceof Struct)) {
+            return 0L;
+        }
         Struct kafkaStruct = (Struct) srd.value();
         if(kafkaStruct == null) {
             return 0L;
         }
-        return (Long) kafkaStruct.get(SinkRecordColumns.TS_MS);
+        // Guard against null or wrong type for TS_MS field
+        Object tsMs = kafkaStruct.get(SinkRecordColumns.TS_MS);
+        if (tsMs instanceof Long) {
+            return (Long) tsMs;
+        }
+        return 0L;
     }
 
     /**
@@ -559,7 +559,7 @@ public class ClickHouseStruct {
             return null;
         }
         
-        Map<String, Object> map = new HashMap<>();
+        Map<String, Object> map = new LinkedHashMap<>();
         for (Field field : struct.schema().fields()) {
             try {
                 Object value = struct.get(field);
@@ -749,6 +749,42 @@ public class ClickHouseStruct {
         } catch (Exception e) {
             log.error("Error parsing ts_sec from sourceOffset", e);
         }
+    }
+
+    /**
+     * Parses a MySQL GTID string and returns the maximum transaction ID.
+     * Handles formats:
+     *   - Simple: uuid:N
+     *   - Range: uuid:1-5
+     *   - Multi-range: uuid:1-5:7-10
+     *   - Multi-source: uuid1:1-5,uuid2:1-3
+     *
+     * @param gtidStr the raw GTID string from Debezium
+     * @return the maximum transaction ID across all sources and ranges
+     * @throws NumberFormatException if the GTID contains unparseable numbers
+     */
+    static long parseGtidMax(String gtidStr) {
+        long maxGtid = -1;
+        // Split by comma for multi-source GTIDs
+        String[] sources = gtidStr.split(",");
+        for (String src : sources) {
+            // Split by colon: first part is UUID, rest are ranges
+            String[] parts = src.trim().split(":");
+            for (int i = 1; i < parts.length; i++) {
+                String range = parts[i].trim();
+                long val;
+                if (range.contains("-")) {
+                    // Range format (e.g., "1-5"): take the end value
+                    String endStr = range.substring(
+                            range.lastIndexOf('-') + 1);
+                    val = Long.parseLong(endStr);
+                } else {
+                    val = Long.parseLong(range);
+                }
+                maxGtid = Math.max(maxGtid, val);
+            }
+        }
+        return maxGtid;
     }
 
     /**

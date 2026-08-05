@@ -76,7 +76,8 @@ public class RoutedBatch {
             return 0;
         }
         // Use Math.abs to ensure positive value, then modulo to get thread assignment
-        return Math.abs(tableName.hashCode()) % threadPoolSize;
+        // Use bitmask instead of Math.abs to avoid Integer.MIN_VALUE overflow
+        return (tableName.hashCode() & 0x7FFFFFFF) % threadPoolSize;
     }
     
     /**
