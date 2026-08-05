@@ -146,7 +146,7 @@ public class Logging {
      */
     protected void logWarn(String format, Object... vars) {
         if (log.isWarnEnabled()) {
-            log.warn(format, vars);
+            log.warn(logMessage(format, vars));
         }
     }
 

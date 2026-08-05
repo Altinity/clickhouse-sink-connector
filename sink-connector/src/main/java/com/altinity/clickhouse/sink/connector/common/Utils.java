@@ -105,6 +105,11 @@ public class Utils {
     public static Map<String, String> parseTopicToTableMap(String input) throws Exception {
         Map<String, String> topic2Table = new HashMap<>();
         boolean isInvalid = false;
+
+        if (input == null || input.isEmpty()) {
+            return topic2Table;
+        }
+
         for (String str : input.split(",")) {
             String[] tt = str.split(":");
 
@@ -180,6 +185,20 @@ public class Utils {
      * @return true if the table name is valid, false otherwise.
      */
     public static boolean isValidTable(String tableName) {
+        if (tableName == null || tableName.isEmpty() || tableName.length() > 63) {
+            return false;
+        }
+        char firstChar = tableName.charAt(0);
+        if (!(Character.isLetter(firstChar) || firstChar == '_')) {
+            return false;
+        }
+        for (int i = 1; i < tableName.length(); i++) {
+            char ch = tableName.charAt(i);
+            if (ch == '_') continue;
+            if (!(Character.isLetterOrDigit(ch) || ch == '.' || ch == '$')) {
+                return false;
+            }
+        }
         return true;
     }
 

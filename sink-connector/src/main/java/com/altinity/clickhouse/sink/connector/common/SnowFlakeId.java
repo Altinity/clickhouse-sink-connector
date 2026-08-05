@@ -77,6 +77,7 @@ public class SnowFlakeId {
         }
 
         // Return the final Snowflake ID as a long value.
-        return result.toLongArray()[0];
+        long[] resultArray = result.toLongArray();
+        return resultArray.length > 0 ? resultArray[0] : 0L;
     }
 }
