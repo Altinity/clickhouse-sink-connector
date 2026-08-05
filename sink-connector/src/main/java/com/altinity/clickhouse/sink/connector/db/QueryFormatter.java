@@ -79,10 +79,35 @@ public class QueryFormatter {
             boolean includeKafkaMetaData,
             boolean includeRawData,
             String rawDataColumn, String dbName) {
+        return getInsertQueryUsingInputFunction(tableName, fields,
+                columnNameToDataTypeMap, includeKafkaMetaData, includeRawData,
+                rawDataColumn, dbName, null);
+    }
+
+    /**
+     * Variant of {@link #getInsertQueryUsingInputFunction(String, List, Map,
+     * boolean, boolean, String, String)} that also receives the
+     * connector-managed column names for this table (version/sign/is_deleted
+     * columns as actually named in the table engine definition, which may be
+     * custom). These columns are always kept in the insert column list even
+     * though they never appear in the source event — the field mapper computes
+     * their values.
+     *
+     * @param connectorManagedColumns writer-specific managed column names; may
+     *                                be null when unknown.
+     */
+    public MutablePair<String, Map<String, Integer>> getInsertQueryUsingInputFunction(
+            String tableName, List<Field> fields,
+            Map<String, String> columnNameToDataTypeMap,
+            boolean includeKafkaMetaData,
+            boolean includeRawData,
+            String rawDataColumn, String dbName,
+            java.util.Collection<String> connectorManagedColumns) {
 
         // Create column data structures
         ColumnData columnData = createColumns(tableName, fields, columnNameToDataTypeMap,
-                includeKafkaMetaData, includeRawData, rawDataColumn, dbName);
+                includeKafkaMetaData, includeRawData, rawDataColumn, dbName,
+                connectorManagedColumns);
 
         if (columnData == null) {
             return null;
@@ -115,6 +140,24 @@ public class QueryFormatter {
             this.colNamesDelimited = colNamesDelimited;
             this.colNamesToDataTypes = colNamesToDataTypes;
         }
+    }
+
+    /**
+     * Checks if a column is populated by the connector itself rather than by
+     * the source event: the ReplacingMergeTree bookkeeping columns
+     * ({@code _version}, {@code _sign}, {@code is_deleted}) and the SCD2
+     * temporal tracking columns. These are never present in the source schema
+     * but MUST stay in the insert column list — the field mapper computes
+     * their values.
+     *
+     * @param colName the name of the column to check.
+     * @return true if the connector supplies this column's value itself.
+     */
+    private boolean isConnectorManagedColumn(String colName) {
+        return colName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)
+                || colName.equalsIgnoreCase(ClickHouseDbConstants.SIGN_COLUMN)
+                || colName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)
+                || isTemporalTrackingColumn(colName);
     }
 
     /**
@@ -171,20 +214,29 @@ public class QueryFormatter {
      * @return the precision value as a string, defaults to "3" if not found
      */
     private String extractDateTime64Precision(String dataType) {
-        // Find the opening parenthesis
-        int start = dataType.lastIndexOf('(');
+        // Strip Nullable wrapper if present — e.g. "Nullable(DateTime64(3))"
+        String dt = dataType;
+        if (dt.toUpperCase().startsWith("NULLABLE(") && dt.endsWith(")")) {
+            dt = dt.substring(9, dt.length() - 1);
+        }
+        // Find the opening parenthesis. This MUST index into `dt` (the
+        // Nullable-stripped string), not the original `dataType`: every
+        // substring/indexOf below operates on `dt`, so mixing an index taken
+        // from `dataType` with a substring of `dt` reads the wrong characters
+        // for any Nullable(...) type.
+        int start = dt.indexOf('(');
         if (start == -1) {
             return "3"; // Default precision
         }
         // Find the first comma or closing parenthesis
-        int end = dataType.indexOf(',', start);
+        int end = dt.indexOf(',', start);
         if (end == -1) {
-            end = dataType.indexOf(')', start);
+            end = dt.indexOf(')', start);
         }
         if (end == -1 || end <= start + 1) {
             return "3"; // Default precision
         }
-        return dataType.substring(start + 1, end).trim();
+        return dt.substring(start + 1, end).trim();
     }
 
     /**
@@ -237,7 +289,12 @@ public class QueryFormatter {
             numLiteral = numLiteral.replace("'", "''");
             return "CAST('" + numLiteral + "', '" + dataType + "')";
         }
-        if (upperDataType.contains("DATETIME64") || upperDataType.contains("DATETIME")) {
+        if (upperDataType.contains("DATETIME64")) {
+            String ts = value.toString().replace("'", "''");
+            String precision = extractDateTime64Precision(dataType);
+            return "toDateTime64('" + ts + "', " + precision + ")";
+        }
+        if (upperDataType.contains("DATETIME")) {
             String ts = value.toString().replace("'", "''");
             return "toDateTime('" + ts + "')";
         }
@@ -270,7 +327,8 @@ public class QueryFormatter {
      * @return a ColumnData object containing the column index map and delimited strings, or null if fields is null.
      */
     private ColumnData createColumns(String tableName, List<Field> fields, Map<String, String> columnNameToDataTypeMap,
-                                     boolean includeKafkaMetaData, boolean includeRawData, String rawDataColumn, String dbName) {
+                                     boolean includeKafkaMetaData, boolean includeRawData, String rawDataColumn, String dbName,
+                                     java.util.Collection<String> connectorManagedColumns) {
 
         if (fields == null) {
             log.error("getInsertQueryUsingInputFunction, fields empty");
@@ -282,6 +340,26 @@ public class QueryFormatter {
 
         StringBuilder colNamesDelimited = new StringBuilder();
         StringBuilder colNamesToDataTypes = new StringBuilder();
+
+        // Column names present in THIS record group's source schema
+        // (lower-cased for case-insensitive membership checks).
+        java.util.Set<String> sourceFieldNamesLower = new java.util.HashSet<>();
+        for (Field f : fields) {
+            if (f != null && f.name() != null) {
+                sourceFieldNamesLower.add(f.name().toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+
+        // Writer-specific connector-managed column names (custom version/sign
+        // columns parsed from the table engine), lower-cased.
+        java.util.Set<String> managedLower = new java.util.HashSet<>();
+        if (connectorManagedColumns != null) {
+            for (String c : connectorManagedColumns) {
+                if (c != null) {
+                    managedLower.add(c.toLowerCase(java.util.Locale.ROOT));
+                }
+            }
+        }
 
         // Loop over each column to generate the insert query and map data types
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
@@ -308,6 +386,25 @@ public class QueryFormatter {
                         colNamesToDataTypes.append(sourceColumnNameWithBackTicks).append(" ").append(dataType).append(",");
                         colNameToIndexMap.put(sourceColumnName, index++);
                     }
+                } else if (!sourceFieldNamesLower.contains(
+                                sourceColumnName.toLowerCase(java.util.Locale.ROOT))
+                        && !isConnectorManagedColumn(sourceColumnName)
+                        && !managedLower.contains(
+                                sourceColumnName.toLowerCase(java.util.Locale.ROOT))) {
+                    // Destination-only DATA column: the source event does not
+                    // carry a value for it (e.g. a column ADDed by a later DDL,
+                    // with pre-ALTER records still in flight). It must be
+                    // OMITTED from the insert so ClickHouse fills its DEFAULT.
+                    // Including it forced a NULL bind, which fails outright on
+                    // non-nullable columns — the whole batch then errors and
+                    // replays forever, stalling replication (observed: the
+                    // price_usd ADD COLUMN scenario, 35 of 200 rows never
+                    // landing). Connector-managed columns (_version, _sign,
+                    // is_deleted, temporal tracking) are always included: the
+                    // field mapper computes their values itself.
+                    log.debug("Omitting destination-only column {} from insert into {}.{} "
+                                    + "(not present in source event; ClickHouse DEFAULT applies)",
+                            sourceColumnName, dbName, tableName);
                 } else {
                     colNamesDelimited.append(sourceColumnNameWithBackTicks).append(",");
                     colNamesToDataTypes.append(sourceColumnNameWithBackTicks).append(" ").append(dataType).append(",");

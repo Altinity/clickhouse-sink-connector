@@ -32,7 +32,7 @@ public class ClickHouseDbConstants {
     /**
      * The CREATE TABLE statement keyword.
      */
-    public static final String CREATE_TABLE = "CREATE TABLE";
+    public static final String CREATE_TABLE = "CREATE TABLE IF NOT EXISTS";
 
     /**
      * Represents a nullability specification of NULL.
@@ -218,9 +218,29 @@ public class ClickHouseDbConstants {
     public static final String PRIMARY_HOST_COLUMN_DATA_TYPE = "String";
 
     /**
-     * A SQL statement used to create the topic_offset_metadata
-     * table for managing Kafka offsets.
+     * Default table name for the Kafka offset metadata table.
      */
+    public static final String DEFAULT_OFFSET_TABLE_NAME = "topic_offset_metadata";
+
+    /**
+     * Returns a SQL statement to create the offset metadata table with
+     * the specified table name.
+     *
+     * @param tableName the name of the offset table to create
+     * @return the CREATE TABLE SQL statement
+     */
+    public static String getOffsetTableCreateSql(String tableName) {
+        return "CREATE TABLE " + tableName + "(`_topic` String, "
+                + "`_partition` UInt64,`_offset` SimpleAggregateFunction(max, "
+                + "UInt64))ENGINE = AggregatingMergeTree ORDER BY "
+                + "(_topic, _partition)";
+    }
+
+    /**
+     * Returns a SQL statement to create the default offset metadata table.
+     * @deprecated Use {@link #getOffsetTableCreateSql(String)} with a configured table name.
+     */
+    @Deprecated
     public static final String OFFSET_TABLE_CREATE_SQL =
             "CREATE TABLE topic_offset_metadata(`_topic` String, "
                     + "`_partition` UInt64,`_offset` SimpleAggregateFunction(max, "

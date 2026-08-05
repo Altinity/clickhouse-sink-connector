@@ -12,7 +12,7 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static com.altinity.clickhouse.sink.connector.config.DefaultColumnDataTypeMappingConfig.loadDefaultColumnDataTypeMapping;
@@ -89,7 +89,7 @@ public class ClickHouseTableOperationsBase {
      */
     public Map<String, String> getColumnNameToCHDataTypeMapping(Field[] fields, ClickHouseSinkConnectorConfig config) {
         ClickHouseDataTypeMapper mapper = new ClickHouseDataTypeMapper();
-        Map<String, String> columnToDataTypesMap = new HashMap<>();
+        Map<String, String> columnToDataTypesMap = new LinkedHashMap<>();
 
         for (Field f : fields) {
             String colName = f.name();
