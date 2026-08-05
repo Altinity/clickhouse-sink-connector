@@ -46,7 +46,7 @@ public class PropertiesHelper {
             // Load the properties file from the classpath
             props.load(input);
         } catch (IOException ex) {
-            ex.printStackTrace();
+            throw new Exception("Error loading properties file: " + fileName, ex);
         }
 
         return props;

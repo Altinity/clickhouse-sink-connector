@@ -1,0 +1,8 @@
+string_key: "hello"
+integer_key: 42
+boolean_key: true
+double_key: 3.14
+null_key: null
+quoted_key: '"quoted_value"'
+port: 8123
+enabled: false

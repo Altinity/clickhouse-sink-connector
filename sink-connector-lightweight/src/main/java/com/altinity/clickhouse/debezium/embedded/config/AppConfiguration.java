@@ -14,77 +14,66 @@ public class AppConfiguration {
      * The host or IP address of the source database server.
      */
     @Getter
-    @Setter
     private final String sourceHost;
 
     /**
      * The port number of the source database server.
      */
     @Getter
-    @Setter
     private final String sourcePort;
 
     /**
      * The username used to connect to the source database.
      */
     @Getter
-    @Setter
     private final String sourceUserName;
 
     /**
      * The password used to connect to the source database.
      */
     @Getter
-    @Setter
     private final String sourcePassword;
 
     /**
      * The name of the source database.
      */
     @Getter
-    @Setter
     private final String sourceDatabase;
 
     /**
      * A comma-separated list of source tables to monitor or process.
      */
     @Getter
-    @Setter
     private final String sourceTables;
 
     /**
      * The host or IP address of the ClickHouse server.
      */
     @Getter
-    @Setter
     private final String clickHouseHost;
 
     /**
      * The port number of the ClickHouse server.
      */
     @Getter
-    @Setter
     private final String clickHousePort;
 
     /**
      * The password used to connect to the ClickHouse server.
      */
     @Getter
-    @Setter
     private final String clickHousePassword;
 
     /**
      * The name of the ClickHouse database.
      */
     @Getter
-    @Setter
     private final String clickHouseDatabase;
 
     /**
      * The username used to connect to the ClickHouse server.
      */
     @Getter
-    @Setter
     private final String clickHouseUserName;
 
     /**

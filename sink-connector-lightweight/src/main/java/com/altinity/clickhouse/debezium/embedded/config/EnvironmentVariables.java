@@ -52,4 +52,13 @@ public enum EnvironmentVariables {
     EnvironmentVariables(String s) {
         this.label = s;
     }
+
+    /**
+     * Returns the label (property key) for this environment variable.
+     *
+     * @return the label string
+     */
+    public String getLabel() {
+        return label;
+    }
 }
