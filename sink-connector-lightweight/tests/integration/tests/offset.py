@@ -126,10 +126,10 @@ def stop_start(self, services):
                 self.context.cluster.node(f"{node}").start()
 
     with Then("I check that ClickHouse table has same number of rows as MySQL table"):
-        select(statement="count(*)", table_name=table_name, with_finale=True)
+        select(statement="count(*)", table_name=table_name, with_final=True)
 
     with And("Drop system tables"):
-        clickhouse.query(f"DROP DATABASE altinity_sink_connector")
+        clickhouse.query(f"DROP DATABASE IF EXISTS altinity_sink_connector")
 
 
 @TestSuite

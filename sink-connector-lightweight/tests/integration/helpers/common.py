@@ -1,6 +1,7 @@
 import os
 import platform
 import time
+import shlex
 import uuid
 import xml.etree.ElementTree as xmltree
 
@@ -105,8 +106,14 @@ def instrument_clickhouse_server_log(
 
     try:
         with And("adding test name start message to the clickhouse-server.log"):
+            # Quote the WHOLE argument. Nesting shlex.quote() inside an outer
+            # double-quoted string does not protect anything: a test name of
+            # evil$(id) renders as "... 'evil$(id)' ..." and the shell still
+            # performs the command substitution inside the double quotes.
             node.command(
-                f'echo -e "\\n-- start: {test.name} --\\n" >> {clickhouse_server_log}'
+                "echo -e "
+                + shlex.quote(f"\\n-- start: {test.name} --\\n")
+                + f" >> {clickhouse_server_log}"
             )
         yield
 
@@ -117,8 +124,11 @@ def instrument_clickhouse_server_log(
         with Finally(
             "adding test name end message to the clickhouse-server.log", flags=TE
         ):
+            # Quote the WHOLE argument — see the note on the start message above.
             node.command(
-                f'echo -e "\\n-- end: {test.name} --\\n" >> {clickhouse_server_log}'
+                "echo -e "
+                + shlex.quote(f"\\n-- end: {test.name} --\\n")
+                + f" >> {clickhouse_server_log}"
             )
 
         with And("getting current log size at the end of the test"):
@@ -313,7 +323,7 @@ def add_invalid_config(
 
     with Then("error log should contain the expected error message"):
         started = time.time()
-        command = f'tail -n {tail} /var/log/clickhouse-server/clickhouse-server.err.log | grep "{message}"'
+        command = f'tail -n {tail} /var/log/clickhouse-server/clickhouse-server.err.log | grep {shlex.quote(message)}'
         while time.time() - started < timeout:
             exitcode = node.command(command, steps=False).exitcode
             if exitcode == 0:
@@ -509,7 +519,7 @@ def add_user_to_group_on_node(
     if node is None:
         node = self.context.node
 
-    node.command(f"usermode -g {group} {username}", exitcode=0)
+    node.command(f"usermod -g {group} {username}", exitcode=0)
 
 
 @TestStep(Given)
@@ -548,7 +558,7 @@ def add_group_on_node(self, node=None, groupname="clickhouse"):
         node.command(f"groupadd {groupname}", exitcode=0)
         yield
     finally:
-        node.command(f"delgroup clickhouse")
+        node.command(f"delgroup {groupname}")
 
 
 @TestStep(Given)
