@@ -60,6 +60,36 @@ public class DebeziumOffsetStorage {
     }
 
     /**
+     * Backtick-quotes a possibly database-qualified table name so it is safe
+     * to interpolate into SQL.
+     *
+     * <p>The configured offset/schema-history table name is routinely
+     * database-qualified (the shipped default is
+     * {@code altinity_sink_connector.replica_source_info}). Wrapping the WHOLE
+     * string in one pair of backticks turns the qualifier into part of the
+     * identifier — ClickHouse then resolves it against the CURRENT database
+     * and fails with
+     * {@code Table system.`altinity_sink_connector.replica_source_info`
+     * doesn't exist (UNKNOWN_TABLE)}. Each dotted component must be quoted
+     * separately: {@code `altinity_sink_connector`.`replica_source_info`}.
+     * Backticks inside a component are doubled, so a crafted name still
+     * cannot escape the quoting.</p>
+     *
+     * @param tableName the raw, possibly {@code db.table}-qualified name.
+     * @return the safely quoted identifier.
+     */
+    static String quoteQualifiedName(String tableName) {
+        StringBuilder quoted = new StringBuilder();
+        for (String part : tableName.split("\\.")) {
+            if (quoted.length() > 0) {
+                quoted.append('.');
+            }
+            quoted.append('`').append(part.replace("`", "``")).append('`');
+        }
+        return quoted.toString();
+    }
+
+    /**
      * Deletes the row with the specified offsetKey from the offset storage.
      *
      * @param offsetKey The offset key.
@@ -75,10 +105,23 @@ public class DebeziumOffsetStorage {
                 JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                         JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
+        // This is a pre-existing delete being HARDENED, not new capability:
+        // the key is now bound as a bind parameter instead of being
+        // string-concatenated, so a crafted offset_key can no longer close the
+        // predicate and widen this into an unbounded delete. The table name is
+        // quoted per dotted component (it cannot be parameterized in SQL, and
+        // the configured name is routinely database-qualified).
+        // DESTRUCTIVE: deletes the connector's own offset-storage row for one
+        // offset_key -- bounded to a single row by the mandatory
+        // "where offset_key=?" predicate, and confined to the connector's
+        // internal bookkeeping table (never replicated user data).
         String query = String.format(
-                "delete from %s where offset_key='%s'", tableName, offsetKey);
-        DBMetadata dbMetadata = new DBMetadata(props);
-        dbMetadata.executeSystemQuery(connection, query);
+                "delete from %s where offset_key=?",
+                quoteQualifiedName(tableName));
+        try (PreparedStatement ps = connection.prepareStatement(query)) {
+            ps.setString(1, offsetKey);
+            ps.executeUpdate();
+        }
     }
 
     /**
@@ -93,13 +136,22 @@ public class DebeziumOffsetStorage {
                                          Connection connection, Properties props)
             throws SQLException {
 
+        // Pre-existing delete being HARDENED, not new capability: the server
+        // name is now a bind parameter rather than concatenated into the
+        // statement, so it can no longer escape the predicate and turn this
+        // into a full-table delete.
+        // DESTRUCTIVE: deletes schema-history rows for ONE source server --
+        // bounded by the mandatory server-name predicate, and confined to the
+        // connector's internal schema-history table (never user data).
         String query = String.format(
-                "delete from `%s` where JSONExtractRaw(JSONExtractRaw(history_data,"
-                        + "'source'), 'server')='%s'",
-                tableName, offsetKey);
-        log.info("Deleting schema history table query: " + query);
-        DBMetadata dbMetadata = new DBMetadata(props);
-        dbMetadata.executeSystemQuery(connection, query);
+                "delete from %s where JSONExtractRaw(JSONExtractRaw(history_data,"
+                        + "'source'), 'server')=?",
+                quoteQualifiedName(tableName));
+        log.info("Deleting schema history table for offset key: " + offsetKey);
+        try (PreparedStatement ps = connection.prepareStatement(query)) {
+            ps.setString(1, offsetKey);
+            ps.executeUpdate();
+        }
     }
 
     /**
@@ -119,7 +171,8 @@ public class DebeziumOffsetStorage {
                         JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
         String query = String.format(
-                "select max(record_insert_ts) from %s", tableName);
+                "select max(record_insert_ts) from %s",
+                quoteQualifiedName(tableName));
         DBMetadata dbMetadata = new DBMetadata(props);
         return dbMetadata.executeSystemQuery(connection, query);
     }
@@ -140,11 +193,20 @@ public class DebeziumOffsetStorage {
                 JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                         JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
         String offsetKey = getOffsetKey(props);
+
+        // Use parameterized query to prevent SQL injection via offsetKey.
         String query = String.format(
-                "select offset_val from %s where offset_key='%s'",
-                tableName, offsetKey);
-        DBMetadata dbMetadata = new DBMetadata(props);
-        return dbMetadata.executeSystemQuery(connection, query);
+                "select offset_val from %s where offset_key=?",
+                quoteQualifiedName(tableName));
+        try (PreparedStatement ps = connection.prepareStatement(query)) {
+            ps.setString(1, offsetKey);
+            try (java.sql.ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return rs.getString(1);
+                }
+                return null;
+            }
+        }
     }
 
     /**

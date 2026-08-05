@@ -128,6 +128,7 @@ public class DebeziumEmbeddedRestApi {
         });
         app.get("/stop", ctx -> {
             ClickHouseDebeziumEmbeddedApplication.stop();
+            ctx.result("Replication stopped");
         });
         Properties finalProps1 = props;
         app.get("/status", ctx -> {
@@ -212,15 +213,22 @@ public class DebeziumEmbeddedRestApi {
                 userProperties.setProperty("database.password", sourcePassword);
             }
             if (userProperties.size() > 0) {
-                log.info("User Overridden properties: " + userProperties);
+                // Redact credentials before logging
+                Properties safeProps = new Properties();
+                safeProps.putAll(userProperties);
+                if (safeProps.containsKey("database.password")) {
+                    safeProps.setProperty("database.password", "****");
+                }
+                log.info("User Overridden properties: " + safeProps);
             }
 
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-            Connection connection = getDatabaseConnection(finalProps1);
-            debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
-                    finalProps1, binlogFile, binlogPosition, gtid);
-            connection.close();
+            // Use try-with-resources to prevent connection leak on exception
+            try (Connection connection = getDatabaseConnection(finalProps1)) {
+                debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
+                        finalProps1, binlogFile, binlogPosition, gtid);
+            }
             log.info("Received update-binlog request: " + body);
         });
 
@@ -277,11 +285,12 @@ public class DebeziumEmbeddedRestApi {
 
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-            Connection connection = getDatabaseConnection(finalProps1);
-            debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
-                    finalProps1, lsn);
-            connection.close();
-            log.info("Received update-binlog request: " + body);
+            // Use try-with-resources to prevent connection leak on exception
+            try (Connection connection = getDatabaseConnection(finalProps1)) {
+                debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
+                        finalProps1, lsn);
+            }
+            log.info("Received update-lsn request: " + body);
         });
 
         Properties finalProps = props;
