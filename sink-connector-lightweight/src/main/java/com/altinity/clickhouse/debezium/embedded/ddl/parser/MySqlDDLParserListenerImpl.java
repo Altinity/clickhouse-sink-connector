@@ -173,7 +173,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 String databaseName = tree.getText();
                 if(!databaseName.isEmpty()) {
                     String overrideDatabaseName = overrideDatabaseName(tree.getText());
-                    this.query.append(String.format(Constants.CREATE_DATABASE, overrideDatabaseName));
+                    this.query.append(String.format(Constants.CREATE_DATABASE, Constants.escapeIdentifier(overrideDatabaseName)));
 
                     boolean isReplicatedReplacingMergeTree = config.getBoolean(ClickHouseSinkConnectorConfigVariables
                             .AUTO_CREATE_TABLES_REPLICATED.toString());
@@ -197,7 +197,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             if (child instanceof MySqlParser.UidContext) {
                 String databaseName = child.getText();
                 String overrideDatabaseName = overrideDatabaseName(databaseName);
-                this.query.append(String.format(Constants.DROP_DATABASE, overrideDatabaseName));
+                this.query.append(String.format(Constants.DROP_DATABASE, Constants.escapeIdentifier(overrideDatabaseName)));
             }
         }
     }
@@ -225,11 +225,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
 
         // Handle the case where the table name includes the database name.
+        // Always include IF NOT EXISTS for idempotent DDL
         if (originalTableName.contains(".")) {
-            this.query.append(Constants.CREATE_TABLE).append(" ").append(originalTableName).append(" ")
+            this.query.append(Constants.CREATE_TABLE).append(" ").append(Constants.IF_NOT_EXISTS)
+                    .append(originalTableName).append(" ")
                     .append(Constants.AS).append(" ").append(newTableName);
         } else {
-            this.query.append(Constants.CREATE_TABLE).append(" ").append(databaseName).append(".").append(originalTableName).append(" ")
+            this.query.append(Constants.CREATE_TABLE).append(" ").append(Constants.IF_NOT_EXISTS)
+                    .append(databaseName).append(".").append(originalTableName).append(" ")
                     .append(Constants.AS).append(" ").append(databaseName).append(".").append(newTableName);
         }
     }
@@ -911,12 +914,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     public void postProcessModifyColumn(String tableName, String oldCol, String newCol, String dataType) {
         this.query.append("\n");
-        // If the tableName already includes the databaseName don't include databaseName in the query.
-        if (tableName.contains(".")) {
-            this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", tableName, oldCol, newCol));
-        } else {
-            this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", databaseName + "." + tableName, oldCol, newCol));
-        }
+        // Backtick-escape column names to handle reserved words and special characters
+        String escapedOldCol = Constants.escapeIdentifier(oldCol);
+        String escapedNewCol = Constants.escapeIdentifier(newCol);
+        // Always qualify with the DESTINATION database, exactly as the MODIFY
+        // COLUMN half of this same statement does. Passing a source-qualified
+        // name (sourcedb.tbl) straight through emitted a two-statement ALTER
+        // whose halves targeted DIFFERENT databases -- the MODIFY hit
+        // destdb.tbl while the RENAME hit sourcedb.tbl, so with
+        // database.override.map set the rename either failed or renamed a
+        // column on an unrelated table. Take the LAST dotted component so an
+        // already-qualified name is re-qualified rather than yielding db.db.tbl.
+        int lastDot = tableName.lastIndexOf('.');
+        String bareTable = lastDot >= 0
+                ? tableName.substring(lastDot + 1) : tableName;
+        this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s",
+                databaseName + "." + bareTable, escapedOldCol, escapedNewCol));
     }
 
     @Override
@@ -971,17 +984,56 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 parseAddIndex(tree);
             } else if (tree instanceof MySqlParser.AlterBySetAlgorithmContext) {
                 log.info("INSTANT ALGORITHM not supported in ClickHouse");
-                // Remove any terminating commas and break out of the parser loop.
+                // Remove any terminating commas and skip this clause.
+                // Using continue (not break) to avoid dropping subsequent ALTER operations.
                 if(this.query.charAt(this.query.length() - 1) == ',')
                     this.query.deleteCharAt(this.query.length() - 1);
-                break;
+                continue;
             } else if (tree instanceof TerminalNodeImpl) {
                 if (((TerminalNodeImpl) tree).symbol.getType() == MySqlParser.COMMA) {
-                    this.query.append(",");
+                    // Only emit a separator if something precedes it that still
+                    // needs separating. Unsupported clauses (ALGORITHM=, LOCK=)
+                    // emit nothing, so their comma would otherwise produce
+                    // "... Nullable(String),," or a dangling trailing comma.
+                    if (!endsWithSeparator()) {
+                        this.query.append(",");
+                    }
                 }
             } else if(tree instanceof MySqlParser.AlterByRenameContext) {
                 parseAlterTableByRename(tableName, (MySqlParser.AlterByRenameContext) tree);
             }
+        }
+        // An unsupported trailing clause (e.g. "..., LOCK=NONE") leaves its
+        // separator behind. A trailing comma is a syntax error in ClickHouse,
+        // so the whole ALTER would be rejected — strip it.
+        stripTrailingSeparator();
+    }
+
+    /**
+     * True when the query currently ends with a clause separator (ignoring
+     * trailing whitespace), meaning another separator would be redundant.
+     *
+     * @return whether the pending query already ends with a comma.
+     */
+    private boolean endsWithSeparator() {
+        int i = this.query.length() - 1;
+        while (i >= 0 && Character.isWhitespace(this.query.charAt(i))) {
+            i--;
+        }
+        return i < 0 || this.query.charAt(i) == ',';
+    }
+
+    /**
+     * Removes a dangling clause separator (and any trailing whitespace) from
+     * the end of the pending query.
+     */
+    private void stripTrailingSeparator() {
+        int i = this.query.length() - 1;
+        while (i >= 0 && Character.isWhitespace(this.query.charAt(i))) {
+            i--;
+        }
+        if (i >= 0 && this.query.charAt(i) == ',') {
+            this.query.delete(i, this.query.length());
         }
     }
 
@@ -1058,23 +1110,35 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     public void enterDropTable(MySqlParser.DropTableContext dropTableContext) {
         log.debug("DROP TABLE enter");
         this.query.append(Constants.DROP_TABLE).append(" ");
+        // Always emit IF EXISTS, whether or not the source statement had it.
+        // A DROP for a table that never got replicated (filtered, created
+        // before the connector was started, or already dropped on a retry)
+        // would otherwise raise UNKNOWN_TABLE and stall the DDL stream. The
+        // source-side IfExistsContext is deliberately NOT consulted: emitting
+        // it conditionally is what made a replayed DROP fatal.
+        this.query.append(Constants.IF_EXISTS);
         for (ParseTree child : dropTableContext.children) {
             if (child instanceof MySqlParser.TablesContext) {
                 for (ParseTree tableNameChild : ((MySqlParser.TablesContext) child).children) {
                     if (tableNameChild instanceof MySqlParser.TableNameContext) {
+                        // Always emit the DESTINATION database qualifier. A
+                        // source-qualified name (sourcedb.tbl) must be rewritten
+                        // to destdb.tbl, not passed through: with
+                        // database.override.map set, passing it through targets
+                        // the WRONG database. Take the LAST dotted component so
+                        // an already-qualified name is re-qualified rather than
+                        // producing db.db.tbl. lastIndexOf is used instead of
+                        // split()[1] so a name with more than one dot cannot
+                        // silently pick the wrong component.
                         String tableName = tableNameChild.getText();
-                        if (tableName.contains(".")) {
-                            String[] parts = tableName.split("\\.");
-                            this.query.append(databaseName).append(".").append(parts[1]);
-                        } else {
-                            this.query.append(databaseName).append(".").append(tableName);
-                        }
+                        int lastDot = tableName.lastIndexOf('.');
+                        String bareTable = lastDot >= 0
+                                ? tableName.substring(lastDot + 1) : tableName;
+                        this.query.append(databaseName).append(".").append(bareTable);
                     } else if (tableNameChild instanceof TerminalNodeImpl) {
                         this.query.append(tableNameChild.getText());
                     }
                 }
-            } else if (child instanceof MySqlParser.IfExistsContext) {
-                this.query.append(Constants.IF_EXISTS);
             }
         }
     }
@@ -1129,13 +1193,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     public void enterTruncateTable(MySqlParser.TruncateTableContext truncateTableContext) {
         for (ParseTree child : truncateTableContext.children) {
             if (child instanceof MySqlParser.TableNameContext) {
+                // Always emit the DESTINATION database qualifier — see the note
+                // in enterDropTable. Passing a source-qualified name through
+                // would TRUNCATE the wrong database when database.override.map
+                // is set, so re-qualify using the last dotted component.
                 String tableName = child.getText();
-                if (tableName.contains(".")) {
-                    String[] parts = tableName.split("\\.");
-                    this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + parts[1]));
-                } else {
-                    this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + tableName));
-                }
+                int lastDot = tableName.lastIndexOf('.');
+                String bareTable = lastDot >= 0
+                        ? tableName.substring(lastDot + 1) : tableName;
+                this.query.append(String.format(
+                        Constants.TRUNCATE_TABLE, databaseName + "." + bareTable));
             }
         }
     }

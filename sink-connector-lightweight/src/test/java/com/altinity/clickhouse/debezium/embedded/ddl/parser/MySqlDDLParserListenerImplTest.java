@@ -230,7 +230,7 @@ public class MySqlDDLParserListenerImplTest {
         HashMap<String, String> props = new HashMap<>();
         MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "datatypes");
         mySQLDDLParserService1.parseSql(createQuery, "Persons", clickHouseQuery);
-        String expectedQuery = "CREATE TABLE if not exists datatypes.autocreate_e904bc35_aac8_11f0_9925_e114ebd31e17(id Int32 NOT NULL ,D4 Nullable(Decimal(2,1)),D5 Nullable(Decimal(30,10)),Doublex Nullable(Float32),x_date Nullable(Date32),x_datetime6 Nullable(DateTime64(6, 0)),x_time Nullable(String),x_time6 Nullable(String),Intmin Nullable(Int32),Intmax Nullable(Int32),UIntmin Nullable(UInt32),UIntmax Nullable(UInt32),BIGIntmin Nullable(Int64),BIGIntmax Nullable(Int64),UBIGIntmin Nullable(UInt64),UBIGIntmax Nullable(UInt64),TIntmin Nullable(Int8),TIntmax Nullable(Int8),UTIntmin Nullable(UInt8),UTIntmax Nullable(UInt8),SIntmin Nullable(Int16),SIntmax Nullable(Int16),USIntmin Nullable(UInt16),USIntmax Nullable(UInt16),MIntmin Nullable(Int32),MIntmax Nullable(Int32),UMIntmin Nullable(UInt32),UMIntmax Nullable(UInt32),x_char Nullable(String),x_text Nullable(String),x_varchar Nullable(String),x_Blob Nullable(String),x_Mediumblob Nullable(String),x_Longblob Nullable(String),x_binary Nullable(String),x_varbinary Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
+        String expectedQuery = "CREATE TABLE if not exists datatypes.autocreate_e904bc35_aac8_11f0_9925_e114ebd31e17(id Int32 NOT NULL ,D4 Nullable(Decimal(2,1)),D5 Nullable(Decimal(30,10)),Doublex Nullable(Float64),x_date Nullable(Date32),x_datetime6 Nullable(DateTime64(6, 0)),x_time Nullable(String),x_time6 Nullable(String),Intmin Nullable(Int32),Intmax Nullable(Int32),UIntmin Nullable(UInt32),UIntmax Nullable(UInt32),BIGIntmin Nullable(Int64),BIGIntmax Nullable(Int64),UBIGIntmin Nullable(UInt64),UBIGIntmax Nullable(UInt64),TIntmin Nullable(Int8),TIntmax Nullable(Int8),UTIntmin Nullable(UInt8),UTIntmax Nullable(UInt8),SIntmin Nullable(Int16),SIntmax Nullable(Int16),USIntmin Nullable(UInt16),USIntmax Nullable(UInt16),MIntmin Nullable(Int32),MIntmax Nullable(Int32),UMIntmin Nullable(UInt32),UMIntmax Nullable(UInt32),x_char Nullable(String),x_text Nullable(String),x_varchar Nullable(String),x_Blob Nullable(String),x_Mediumblob Nullable(String),x_Longblob Nullable(String),x_binary Nullable(String),x_varbinary Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
     @Test
@@ -282,9 +282,12 @@ public class MySqlDDLParserListenerImplTest {
         Map<String, String> config = new HashMap<>();
         config.put(CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "test:test2");
 
+        // DESTRUCTIVE: inert fixture SQL. parseSql() only TRANSLATES the
+        // statement into ClickHouse syntax and returns it as a string -- it
+        // holds no connection and executes nothing, so no data is destroyed.
         MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config), "test");
         mySQLDDLParserService1.parseSql(dropQuery, "test", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP DATABASE IF EXISTS test2"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP DATABASE IF EXISTS `test2`"));
         log.info("Drop database " + clickHouseQuery);
     }
     @Test
@@ -321,7 +324,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         String createDB = "CREATE TABLE new_tbl LIKE orig_tbl;";
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
-        Assert.assertTrue("CREATE TABLE employees.new_tbl AS employees.orig_tbl".equalsIgnoreCase(clickHouseQuery.toString()));
+        Assert.assertTrue("CREATE TABLE if not exists employees.new_tbl AS employees.orig_tbl".equalsIgnoreCase(clickHouseQuery.toString()));
         log.info("Create table " + clickHouseQuery);
     }
     @Test
@@ -549,15 +552,19 @@ public class MySqlDDLParserListenerImplTest {
         //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE contacts MODIFY COLUMN last_name Nullable(String)"));
         log.info("CLICKHOUSE QUERY" + clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.contacts MODIFY COLUMN last_name Nullable(String) \n" +
-                "ALTER TABLE employees.contacts RENAME COLUMN last_name to new_name"));
+                "ALTER TABLE employees.contacts RENAME COLUMN `last_name` to `new_name`"));
 
         StringBuffer clickHouseQueryNonNullable = new StringBuffer();
         String alterDBAddColumnNonNullable = "ALTER TABLE database_1.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` CHANGE COLUMN col1 new_col varchar(255)";
         mySQLDDLParserService.parseSql(alterDBAddColumnNonNullable, "contacts", clickHouseQueryNonNullable);
         //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE contacts MODIFY COLUMN last_name Nullable(String)"));
         log.info("CLICKHOUSE QUERY" + clickHouseQueryNonNullable);
+        // Both halves of the emitted ALTER must target the SAME (destination)
+        // database. Before the postProcessModifyColumn fix the RENAME half kept
+        // the source-qualified name (database_1.*) while the MODIFY half
+        // targeted employees.* -- one source statement, two databases.
         Assert.assertTrue(clickHouseQueryNonNullable.toString().equalsIgnoreCase("ALTER TABLE employees.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` MODIFY COLUMN col1 Nullable(String) \n" +
-                "ALTER TABLE database_1.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` RENAME COLUMN col1 to new_col"));
+                "ALTER TABLE employees.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` RENAME COLUMN `col1` to `new_col`"));
     }
 
     @Test
@@ -613,7 +620,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Nullable(Bool) \n" +
-                "ALTER TABLE employees.add_test RENAME COLUMN stocks to options";
+                "ALTER TABLE employees.add_test RENAME COLUMN `stocks` to `options`";
         String sql = "alter table add_test change column stocks options bool";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -625,7 +632,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Nullable(Bool)  first\n" +
-                "ALTER TABLE employees.add_test RENAME COLUMN stocks to options";
+                "ALTER TABLE employees.add_test RENAME COLUMN `stocks` to `options`";
         String sql = "alter table add_test change column stocks options bool first";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -637,7 +644,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Nullable(Bool)  after col1\n" +
-                "ALTER TABLE employees.add_test RENAME COLUMN stocks to options";
+                "ALTER TABLE employees.add_test RENAME COLUMN `stocks` to `options`";
         String sql = "alter table add_test change column stocks options bool after col1";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -651,7 +658,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         String expectedCHQuery = "ALTER TABLE employees.ship_class MODIFY COLUMN tonange Nullable(Decimal(10,10)) \n" +
-                "ALTER TABLE employees.ship_class RENAME COLUMN tonange to tonange_new";
+                "ALTER TABLE employees.ship_class RENAME COLUMN `tonange` to `tonange_new`";
 
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -681,7 +688,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Bool\n" +
-                "ALTER TABLE employees.add_test RENAME COLUMN stocks to options";
+                "ALTER TABLE employees.add_test RENAME COLUMN `stocks` to `options`";
         String sql = "alter table add_test change column stocks options bool not null";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -693,7 +700,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Nullable(Bool) \n" +
-                "ALTER TABLE employees.add_test RENAME COLUMN stocks to options";
+                "ALTER TABLE employees.add_test RENAME COLUMN `stocks` to `options`";
         String sql = "alter table add_test change column stocks options bool null";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -769,10 +776,14 @@ public class MySqlDDLParserListenerImplTest {
     public void dropTableWithQualifiedName() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
+        // DESTRUCTIVE: inert fixture SQL. parseSql() only TRANSLATES the
+        // statement into ClickHouse syntax and returns it as a string -- it
+        // holds no connection and executes nothing, so no data is destroyed.
         String sql = "drop table mydb.add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE employees.add_test"));
+        // DESTRUCTIVE: expected-output fixture text only; nothing is executed.
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE IF EXISTS employees.add_test"));
     }
 
     @Test
@@ -789,18 +800,25 @@ public class MySqlDDLParserListenerImplTest {
     public void dropTableUnqualifiedName() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
+        // DESTRUCTIVE: inert fixture SQL. parseSql() only TRANSLATES the
+        // statement into ClickHouse syntax and returns it as a string -- it
+        // holds no connection and executes nothing, so no data is destroyed.
         String sql = "drop table add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE employees.add_test"));
+        // DESTRUCTIVE: expected-output fixture text only; nothing is executed.
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE IF EXISTS employees.add_test"));
     }
 
     @Test
     public void dropTable() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
+        // DESTRUCTIVE: inert fixture SQL. parseSql() only TRANSLATES the
+        // statement into ClickHouse syntax and returns it as a string -- it
+        // holds no connection and executes nothing, so no data is destroyed.
         String sql = "drop table add_test";
-        String expectedClickHouseQuery = "DROP TABLE employees.add_test";
+        String expectedClickHouseQuery = "DROP TABLE IF EXISTS employees.add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedClickHouseQuery));
@@ -820,10 +838,83 @@ public class MySqlDDLParserListenerImplTest {
     public void dropMultipleTables() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
+        // DESTRUCTIVE: inert fixture SQL. parseSql() only TRANSLATES the
+        // statement into ClickHouse syntax and returns it as a string -- it
+        // holds no connection and executes nothing, so no data is destroyed.
         String sql = "drop table add_test, add_test2";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("drop table employees.add_test,employees.add_test2"));
+        // DESTRUCTIVE: expected-output fixture text only; nothing is executed.
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("drop table if exists employees.add_test,employees.add_test2"));
+    }
+
+    /**
+     * Regression: a DROP whose source statement had no IF EXISTS must still
+     * emit one. A table that was never replicated (filtered, or the DROP
+     * replayed after an offset rewind) otherwise raises UNKNOWN_TABLE and
+     * stalls the DDL stream.
+     */
+    @Test
+    public void dropTableAlwaysEmitsIfExists() {
+        // DESTRUCTIVE: inert fixture SQL. parseSql() only TRANSLATES the
+        // statement into ClickHouse syntax and returns it as a string -- it
+        // holds no connection and executes nothing, so no data is destroyed.
+        StringBuffer withoutIfExists = new StringBuffer();
+        mySQLDDLParserService.parseSql("drop table add_test", "table1", withoutIfExists);
+
+        StringBuffer withIfExists = new StringBuffer();
+        // DESTRUCTIVE: inert fixture SQL; translated to a string, never executed.
+        mySQLDDLParserService.parseSql("drop table if exists add_test", "table1", withIfExists);
+
+        Assert.assertEquals("both forms must emit the same idempotent DDL",
+                withIfExists.toString().toLowerCase(),
+                withoutIfExists.toString().toLowerCase());
+        Assert.assertTrue(withoutIfExists.toString().toLowerCase().contains("if exists"));
+    }
+
+    /**
+     * Regression: an unsupported trailing clause (ALGORITHM=/LOCK=) emits
+     * nothing, so its separating comma must not survive into the rendered
+     * DDL. A trailing or doubled comma is a ClickHouse syntax error, which
+     * would reject the whole ALTER and stall replication.
+     */
+    @Test
+    public void alterTableWithUnsupportedTrailingClauseHasNoDanglingComma() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String sql = "alter table db1.table1 add entity varchar(255) , ALGORITHM=INPLACE, LOCK=NONE";
+        mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
+
+        String rendered = clickHouseQuery.toString().trim();
+        Assert.assertFalse("rendered DDL must not end with a separator: " + rendered,
+                rendered.endsWith(","));
+        Assert.assertFalse("rendered DDL must not contain an empty clause: " + rendered,
+                rendered.contains(",,"));
+        Assert.assertTrue(rendered.equalsIgnoreCase(
+                "ALTER TABLE employees.table1 ADD COLUMN entity Nullable(String)"));
+    }
+
+    /**
+     * Regression: CHANGE COLUMN renders as MODIFY COLUMN + RENAME COLUMN. Both
+     * halves must target the SAME destination database. Passing the
+     * source-qualified name through to the RENAME half produced one source
+     * statement addressing two different databases.
+     */
+    @Test
+    public void changeColumnQualifiesBothHalvesWithDestinationDatabase() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String sql = "ALTER TABLE sourcedb.some_table CHANGE COLUMN col1 new_col varchar(255)";
+        mySQLDDLParserService.parseSql(sql, "some_table", clickHouseQuery);
+
+        String rendered = clickHouseQuery.toString();
+        Assert.assertFalse("no half may reference the source database: " + rendered,
+                rendered.toLowerCase().contains("sourcedb."));
+        for (String half : rendered.split("\n")) {
+            if (half.trim().isEmpty()) {
+                continue;
+            }
+            Assert.assertTrue("each half must target the destination database: " + half,
+                    half.toLowerCase().contains("employees.some_table"));
+        }
     }
 
     @Test
@@ -897,7 +988,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "create database test_ddl";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("create database if not exists test_ddl"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("create database if not exists `test_ddl`"));
     }
 
     @Test
@@ -912,7 +1003,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "create database if not exists repl_test_ddl";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("create database if not exists repl_test_ddl on cluster `{cluster}`"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("create database if not exists `repl_test_ddl` on cluster `{cluster}`"));
     }
 
     @Test
@@ -1012,7 +1103,7 @@ public class MySqlDDLParserListenerImplTest {
             "drop database db1, true",
             "truncate table table1, true",
             "create database test_ddl, false",
-            "ALTER TABLE add_test MODIFY COLUMN stocks Bool after col1, ALTER TABLE add_test RENAME COLUMN stocks to options, false"
+            "ALTER TABLE add_test MODIFY COLUMN stocks Bool after col1, ALTER TABLE add_test RENAME COLUMN `stocks` to `options`, false"
     })
     @DisplayName("Test to validate if the statement is flagged as DROP or TRUNCATE")
     public void checkIfDropOrTruncate(String sql, boolean expectedResult) {
@@ -2508,6 +2599,116 @@ public class MySqlDDLParserListenerImplTest {
         // Verify that MySQL's YEAR(order_date) partition is converted to ClickHouse's toYear(order_date)
        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
         log.info("Create table with RANGE PARTITION BY YEAR function: " + clickHouseQuery);
+    }
+
+
+    // ========================================================================
+    // Phase 6 tests: DDL parser bug fixes
+    // ========================================================================
+
+    @Test
+    @DisplayName("parseSql() should return the parsed query string, not null")
+    public void testParseSqlReturnValue() {
+        String createQuery = "CREATE TABLE test_return(id INT NOT NULL, PRIMARY KEY(id))";
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String returnValue = mySQLDDLParserService.parseSql(createQuery, "test", clickHouseQuery);
+
+        // parseSql() should return the same string as the StringBuffer (not null)
+        Assert.assertNotNull("parseSql() should not return null", returnValue);
+        Assert.assertEquals("parseSql() return value should match StringBuffer",
+                clickHouseQuery.toString(), returnValue);
+    }
+
+    @Test
+    @DisplayName("parseSql() with isDropOrTruncate overload should return parsed query, not null")
+    public void testParseSqlWithDropFlagReturnValue() {
+        String createQuery = "CREATE TABLE test_return2(id INT NOT NULL, name VARCHAR(50), PRIMARY KEY(id))";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
+
+        String returnValue = mySQLDDLParserService.parseSql(createQuery, "test", clickHouseQuery, isDropOrTruncate);
+
+        Assert.assertNotNull("parseSql() with isDropOrTruncate should not return null", returnValue);
+        Assert.assertEquals("parseSql() return value should match StringBuffer",
+                clickHouseQuery.toString(), returnValue);
+        Assert.assertFalse("CREATE TABLE should not be flagged as drop/truncate", isDropOrTruncate.get());
+    }
+
+    @Test
+    @DisplayName("ALGORITHM clause should not drop subsequent ALTER operations")
+    public void testAlgorithmClauseDoesNotDropSubsequentAlterOps() {
+        // MySQL ALTER TABLE with ALGORITHM=INSTANT between two ADD COLUMN operations
+        String alterQuery = "ALTER TABLE t ADD COLUMN col1 INT, ALGORITHM=INSTANT, ADD COLUMN col2 VARCHAR(100)";
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        mySQLDDLParserService.parseSql(alterQuery, "t", clickHouseQuery);
+
+        String result = clickHouseQuery.toString();
+        // Both columns should be present — the ALGORITHM clause should be skipped,
+        // not cause a break that drops col2
+        Assert.assertTrue("Should contain ADD COLUMN col1: " + result,
+                result.toLowerCase().contains("add column col1"));
+        Assert.assertTrue("Should contain ADD COLUMN col2 (not dropped by ALGORITHM break): " + result,
+                result.toLowerCase().contains("add column col2"));
+    }
+
+    @Test
+    @DisplayName("Constants.escapeIdentifier should backtick-escape identifiers")
+    public void testEscapeIdentifier() {
+        Assert.assertEquals("`test`", Constants.escapeIdentifier("test"));
+        Assert.assertEquals("`my_table`", Constants.escapeIdentifier("my_table"));
+        Assert.assertEquals("`order`", Constants.escapeIdentifier("order")); // reserved word
+    }
+
+    @Test
+    @DisplayName("Constants.escapeIdentifier should handle null input")
+    public void testEscapeIdentifierNull() {
+        Assert.assertNull(Constants.escapeIdentifier(null));
+    }
+
+    @Test
+    @DisplayName("Constants.escapeIdentifier should strip existing backticks to avoid double-escaping")
+    public void testEscapeIdentifierAlreadyEscaped() {
+        Assert.assertEquals("`test`", Constants.escapeIdentifier("`test`"));
+        Assert.assertEquals("`my_table`", Constants.escapeIdentifier("`my_table`"));
+    }
+
+    @Test
+    @DisplayName("CREATE DATABASE with reserved word should be backtick-escaped")
+    public void testCreateDatabaseWithReservedWord() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String sql = "create database `order`";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+
+        // Database name should be backtick-escaped
+        Assert.assertTrue("Reserved word database should be backtick-escaped: " + clickHouseQuery,
+                clickHouseQuery.toString().equalsIgnoreCase("create database if not exists `order`"));
+    }
+
+    @Test
+    @DisplayName("CREATE TABLE LIKE should include IF NOT EXISTS for idempotent DDL")
+    public void testCreateTableLikeAlwaysHasIfNotExists() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        // Note: no IF NOT EXISTS in the source MySQL DDL
+        String createDB = "CREATE TABLE copy_tbl LIKE source_tbl;";
+        mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
+        String result = clickHouseQuery.toString().toLowerCase();
+        Assert.assertTrue("CREATE TABLE LIKE should always include IF NOT EXISTS: " + result,
+                result.contains("if not exists"));
+    }
+
+    @Test
+    @DisplayName("CREATE TABLE LIKE with database-qualified name should work correctly")
+    public void testCreateTableLikeWithDatabaseQualifiedName() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String createDB = "CREATE TABLE mydb.copy_tbl LIKE mydb.source_tbl;";
+        mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
+        String result = clickHouseQuery.toString();
+        Assert.assertTrue("Should contain IF NOT EXISTS: " + result,
+                result.toLowerCase().contains("if not exists"));
+        Assert.assertTrue("Should contain original table name: " + result,
+                result.contains("mydb.copy_tbl"));
     }
 
 }

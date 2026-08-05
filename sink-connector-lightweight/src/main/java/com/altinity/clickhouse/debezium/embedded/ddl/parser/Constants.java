@@ -201,4 +201,20 @@ public class Constants {
      */
     public static final Set<String> NULLABLE_NOT_SUPPORTED_DATA_TYPES =
             new HashSet<>(Arrays.asList("point", "polygon"));
+
+    /**
+     * Backtick-escapes a SQL identifier (table name, column name, database name)
+     * to safely handle reserved words and special characters.
+     * Strips any existing backticks first to avoid double-escaping.
+     *
+     * @param identifier The identifier to escape.
+     * @return The backtick-escaped identifier, or null if input is null.
+     */
+    public static String escapeIdentifier(String identifier) {
+        if (identifier == null) {
+            return null;
+        }
+        String stripped = identifier.replace("`", "");
+        return "`" + stripped + "`";
+    }
 }
