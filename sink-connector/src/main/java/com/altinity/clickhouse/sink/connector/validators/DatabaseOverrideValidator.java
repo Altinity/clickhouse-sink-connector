@@ -32,7 +32,8 @@ public class DatabaseOverrideValidator implements ConfigDef.Validator {
                 );
             }
         } catch (Exception e) {
-            e.printStackTrace();
+            throw new ConfigException(name, value,
+                    "Format: <src_database-1>:<destination_database-1>,...  Error: " + e.getMessage());
         }
     }
 }

@@ -115,7 +115,8 @@ public class ClickHouseSinkConnector extends SinkConnector {
             try {
                 Thread.sleep(THREAD_SLEEP_INTERVAL_MS);
             } catch (InterruptedException ex) {
-                // Action may be interrupted
+                Thread.currentThread().interrupt();
+                break;
             }
         }
 

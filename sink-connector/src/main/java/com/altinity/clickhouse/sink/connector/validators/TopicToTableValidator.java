@@ -52,8 +52,8 @@ public class TopicToTableValidator implements ConfigDef.Validator {
                         "Format: <topic-1>:<table-1>,<topic-2>:<table-2>,...");
             }
         } catch (Exception e) {
-            // Log the stack trace if an error occurs during validation
-            e.printStackTrace();
+            throw new ConfigException(name, value,
+                    "Format: <topic-1>:<table-1>,<topic-2>:<table-2>,...  Error: " + e.getMessage());
         }
     }
 

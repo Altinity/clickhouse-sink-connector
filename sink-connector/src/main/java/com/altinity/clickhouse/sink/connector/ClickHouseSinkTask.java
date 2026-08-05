@@ -229,10 +229,14 @@ public class ClickHouseSinkTask extends SinkTask {
             }
         }
 
-        try {
-            this.records.put(batch);
-        } catch (InterruptedException e) {
-            throw new RetriableException(e);
+        // Only enqueue non-empty batches — empty batches cause
+        // IndexOutOfBoundsException in processBatch/addRecordsToHistoryTable
+        if (!batch.isEmpty()) {
+            try {
+                this.records.put(batch);
+            } catch (InterruptedException e) {
+                throw new RetriableException(e);
+            }
         }
     }
 
