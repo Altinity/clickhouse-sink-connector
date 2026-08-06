@@ -48,21 +48,14 @@ public class DataTypeRange {
      * derived from {@code DATETIME64_MIN}.
      */
     public static final Instant CLICKHOUSE_MIN_SUPPORTED_DATETIME64 =
-            from(ofEpochMilli(DATETIME64_MIN * 1000)
-                    .atZone(ZoneId.of("UTC")))
-                    .plusNanos(DATETIME64_MIN * 1000 % 1_000);
+            Instant.ofEpochSecond(DATETIME64_MIN);
 
     /**
      * Maximum {@link Instant} for supported DateTime64 in ClickHouse,
      * derived from {@code DATETIME64_MAX}.
      */
     public static final Instant CLICKHOUSE_MAX_SUPPORTED_DATETIME64 =
-            from(ofEpochMilli(DATETIME64_MAX * 1000)
-                    .atZone(ZoneId.of("UTC"))
-                    .withHour(23)
-                    .withMinute(59)
-                    .withSecond(59)
-                    .withNano(000000));
+            Instant.ofEpochSecond(DATETIME64_MAX);
 
     // DateTime and DateTime32
 

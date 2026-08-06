@@ -26,19 +26,34 @@ public class DebeziumConverter {
 
     public static class MicroTimeConverter {
         /**
-         * Function to convert Long(Epoch)
-         * to Formatted String(Time)
-         * @param value
-         * @return
+         * Function to convert Long(Epoch microseconds)
+         * to Formatted String(Time).
+         *
+         * Handles MySQL TIME range -838:59:59.000000 to 838:59:59.000000
+         * which exceeds Java LocalTime's 00:00-23:59 range.
+         * Computes hours/minutes/seconds directly from microsecond value.
+         *
+         * @param value epoch microseconds
+         * @return formatted time string (e.g., "10:30:00.000000" or "-01:30:00.000000")
          */
         public static String convert(Object value) {
+            // Accept any Number: Debezium may deliver an Integer for small TIME
+            // values, and a direct (Long) cast throws ClassCastException. The
+            // sibling converters already use this widening cast.
+            long totalMicros = ((Number) value).longValue();
+            boolean negative = totalMicros < 0;
+            long absMicros = Math.abs(totalMicros);
 
-            Instant i = Instant.EPOCH.plus((Long) value, ChronoUnit.MICROS);
+            long totalSeconds = absMicros / 1_000_000L;
+            long remainingMicros = absMicros % 1_000_000L;
 
-            LocalTime time = i.atZone(ZoneOffset.UTC).toLocalTime();
-            String formattedSecondsTimestamp= time.format(DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"));
+            long hours = totalSeconds / 3600;
+            long minutes = (totalSeconds % 3600) / 60;
+            long seconds = totalSeconds % 60;
 
-            return formattedSecondsTimestamp;
+            String sign = negative ? "-" : "";
+            return String.format("%s%02d:%02d:%02d.%06d",
+                    sign, hours, minutes, seconds, remainingMicros);
         }
     }
 
@@ -48,10 +63,10 @@ public class DebeziumConverter {
         //ToDO: IF values exceed the ones supported by clickhouse
         public static String convert(Object value, ZoneId sourceTimezone,
                                      ZoneId serverTimezone, ClickHouseDataType clickHouseDataType) {
-            Long epochMicroSeconds = (Long) value;
+            Long epochMicroSeconds = ((Number) value).longValue();
 
-            //DateTime64 has a 8 digit precision.
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSS");
+            // DateTime64 — use 6-digit microsecond precision matching the input.
+            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
             if(clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
                 destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             }
@@ -116,7 +131,7 @@ public class DebeziumConverter {
                 destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             }
 
-            Long epochMillis = (Long) value;
+            Long epochMillis = ((Number) value).longValue();
             // Step 1: Convert from incorrect timezone to LocalDateTime
             //LocalDateTime wrongTime = LocalDateTime.ofInstant(ofEpochMilli(epochMillis), sourceTimeZone);
 
@@ -150,7 +165,7 @@ public class DebeziumConverter {
                 destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             }
 
-            Long epochMillis = (Long) value;
+            Long epochMillis = ((Number) value).longValue();
             // Step 1: Convert from incorrect timezone to LocalDateTime
             //LocalDateTime wrongTime = LocalDateTime.ofInstant(ofEpochMilli(epochMillis), sourceTimeZone);
 
@@ -388,6 +403,24 @@ public class DebeziumConverter {
         /**
          * Truncates the provided BigDecimal value to the maximum or minimum
          * supported value if it exceeds the ClickHouse limits.
+         *
+         * <p>The clamp targets the <b>Decimal128</b> bounds
+         * (&plusmn;10<sup>38</sup>), not the wider Decimal256 bounds
+         * (&plusmn;10<sup>76</sup>), and that is deliberate: the clamped value
+         * has to survive serialization by the JDBC driver, and the driver
+         * checks a <em>scaled</em> magnitude, not the raw one.
+         * {@code BinaryStreamUtils.writeDecimal256} multiplies the value by
+         * {@code 10^scale} and then requires the product to satisfy
+         * {@code |v| < 10^76} exclusive. A column such as
+         * {@code Decimal(64,18)} therefore leaves only 76 - 18 = 58 digits of
+         * integral headroom. Clamping to {@code DECIMAL256_MIN}
+         * (10<sup>76</sup>, 77 digits) produces a 95-digit product that fails
+         * that check with
+         * {@code IllegalArgumentException: BigDecimal(...) should be between
+         * -10^76 and 10^76}, so the batch that was supposed to be rescued by
+         * the clamp is rejected instead — the exact failure this method
+         * exists to prevent. {@code DECIMAL128_MIN}/{@code MAX} (39 digits)
+         * still fits after scaling for every scale ClickHouse permits.</p>
          *
          * @param value the BigDecimal value to be truncated.
          * @return the truncated BigDecimal value.
