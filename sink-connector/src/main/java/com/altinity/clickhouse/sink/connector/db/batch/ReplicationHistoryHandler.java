@@ -212,7 +212,7 @@ public class ReplicationHistoryHandler {
 
         // Ensure the record has a properly calculated version before building query params.
         // This guarantees the ReplicationHistoryHandler uses the same version formula
-        // (e.g. (sourceSec << 32) | pos for non-GTID) as the snapshot/insert path.
+        // (ts_ms * 1e6 + subMs for non-GTID) as the snapshot/insert path.
         if (record.getVersion() == -1) {
             boolean useSnowflakeId = config.getBoolean(
                     ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString());

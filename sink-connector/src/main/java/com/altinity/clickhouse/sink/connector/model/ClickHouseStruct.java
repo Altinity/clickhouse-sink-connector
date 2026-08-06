@@ -814,24 +814,62 @@ public class ClickHouseStruct {
         if (this.snapshot && this.debezium_ts_ms > 0) {
             effectiveTsMs = this.debezium_ts_ms;
         }
+
+        if (effectiveTsMs > 0 && effectiveTsMs >= (1L << 42)) {
+            log.warn("effectiveTsMs={} exceeds 2^42 (~year 2109); version overflow possible", effectiveTsMs);
+        }
+
         if (this.gtid != UNINITIALIZED_VALUE) {
             if (useSnowflakeId) {
                 this.version = SnowFlakeId.generate(effectiveTsMs, this.gtid, false);
             } else {
                 this.version = this.gtid;
             }
-        } else if (this.pos != null && this.pos > 0 && effectiveTsMs > 0) {
-            // Redelivery-stable, commit-ordered version for binlog sources (non-GTID mode).
-            // High 32 bits: source commit SECOND (identical on every re-delivery).
-            // Low 32 bits: binlog position (monotonic within a binlog file, stable per event).
-            // A re-delivered DELETE keeps its original lower position and can never out-rank a
-            // later re-INSERT, preventing rows from being stuck is_deleted=1 after offset rewind.
-            long sourceSec = effectiveTsMs / 1000L;
-            this.version = (sourceSec << 32) | (this.pos & 0xFFFFFFFFL);
         } else if (this.sequenceNumber != UNINITIALIZED_VALUE) {
             this.version = this.sequenceNumber;
+        } else if (this.pos != null && this.pos > 0 && effectiveTsMs > 0) {
+            // Kafka Connect fallback for MySQL non-GTID when sequenceNumber is not set
+            // (the lightweight embedded connector sets sequenceNumber in its batch loop).
+            // Stays in the ts_ms * 1e6 magnitude family (~1.79e18) for rollback safety.
+            if (this.pos > 0xFFFFFFFFL) {
+                throw new IllegalStateException(
+                        "Binlog position " + this.pos + " exceeds 2^32; version encoding would silently truncate");
+            }
+            long fileNum = parseBinlogFileNumber(this.file);
+            long subMs = deriveSubMs(fileNum, this.pos);
+            this.version = effectiveTsMs * 1_000_000L + subMs;
         } else if (this.lsn != UNINITIALIZED_VALUE) {
             this.version = this.lsn;
         }
+    }
+
+    /**
+     * Parses the numeric suffix from a binlog filename (e.g. "binlog.000123" -> 123).
+     * Returns 0 on parse failure.
+     */
+    static long parseBinlogFileNumber(String file) {
+        if (file == null || file.isEmpty()) {
+            return 0;
+        }
+        int dotIdx = file.lastIndexOf('.');
+        if (dotIdx < 0 || dotIdx == file.length() - 1) {
+            return 0;
+        }
+        try {
+            return Long.parseLong(file.substring(dotIdx + 1));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /**
+     * Derives a sub-millisecond ordering value from (fileNumber, pos) that stays in [0, 999_999].
+     * The composite (fileNumber << 32 | pos) is globally monotonic across binlog rotations;
+     * reducing mod 1_000_000 preserves ordering for events within the same millisecond in the
+     * vast majority of cases (rotation and same-ms writes are anti-correlated).
+     */
+    static long deriveSubMs(long fileNumber, long pos) {
+        long composite = (fileNumber << 32) | (pos & 0xFFFFFFFFL);
+        return Long.remainderUnsigned(composite, 1_000_000L);
     }
 }
