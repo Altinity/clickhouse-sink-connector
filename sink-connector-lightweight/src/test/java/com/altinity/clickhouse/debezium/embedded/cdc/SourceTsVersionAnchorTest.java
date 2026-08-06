@@ -53,10 +53,13 @@ public class SourceTsVersionAnchorTest {
                 recordAt(TS + 500, TS + 7));
         DebeziumChangeEventCapture.addVersion(batch);
 
-        long base = TS * 1_000_000L + DebeziumChangeEventCapture.SEQUENCE_START;
+        // The very first batch after start/resume is seeded at
+        // SEQUENCE_START_INITIAL (500m) - still inside the 2.8.0 domain.
+        long base = TS * 1_000_000L + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL;
         assertEquals(base + 1, batch.get(0).getSequenceNumber());
         assertEquals(base + 2, batch.get(1).getSequenceNumber());
-        assertEquals((TS + 500) * 1_000_000L + DebeziumChangeEventCapture.SEQUENCE_START + 3,
+        assertEquals((TS + 500) * 1_000_000L
+                        + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 3,
                 batch.get(2).getSequenceNumber(),
                 "the formula must remain ts_ms * 1_000_000 + counter, bit-compatible with "
                         + "2.8.0-written values in the same ReplacingMergeTree column");
@@ -113,9 +116,10 @@ public class SourceTsVersionAnchorTest {
                             + "a counter reset would emit a duplicate or inverted _version");
         }
         long expectedLast = (TS + 200) * 1_000_000L
-                + DebeziumChangeEventCapture.SEQUENCE_START + 4;
+                + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 4;
         assertEquals(expectedLast, all.get(3).longValue(),
-                "the counter must have kept incrementing (…+4), not reset to SEQUENCE_START");
+                "the counter must have kept incrementing (…+4), not reset — neither by the "
+                        + "rotation nor by the batch boundary");
     }
 
     @Test
@@ -146,7 +150,7 @@ public class SourceTsVersionAnchorTest {
         DebeziumChangeEventCapture.addVersion(next);
 
         assertEquals((TS + 10_500) * 1_000_000L
-                        + DebeziumChangeEventCapture.SEQUENCE_START + 3,
+                        + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 3,
                 next.get(0).getSequenceNumber(),
                 "the counter must have continued (…+3) - an old redelivered timestamp "
                         + "re-arming the reset is the duplicate-_version race");
@@ -159,9 +163,101 @@ public class SourceTsVersionAnchorTest {
         noSourceTs.setDebezium_ts_ms(TS + 42);
         DebeziumChangeEventCapture.addVersion(Arrays.asList(noSourceTs));
 
-        assertEquals((TS + 42) * 1_000_000L + DebeziumChangeEventCapture.SEQUENCE_START + 1,
+        assertEquals((TS + 42) * 1_000_000L
+                        + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1,
                 noSourceTs.getSequenceNumber(),
                 "records lacking source.ts_ms (e.g. some snapshot records) must keep the "
                         + "historical processing-time anchor rather than emitting version 0");
+    }
+
+    @Test
+    @DisplayName("first batch after resume is seeded at SEQUENCE_START_INITIAL (500m), "
+            + "so re-published events rank below pre-restart writes of the same second")
+    public void resumeSeedsCounterAtInitial() {
+        // Pre-restart run: two events written with counters in the 1000m range.
+        List<ClickHouseStruct> preRestart = Arrays.asList(
+                recordAt(TS, TS + 1), recordAt(TS, TS + 2));
+        DebeziumChangeEventCapture.addVersion(preRestart);
+        // Escape the initial domain: >1s source advance resets to SEQUENCE_START.
+        List<ClickHouseStruct> normalDomain = Arrays.asList(recordAt(TS + 5000, TS + 3));
+        DebeziumChangeEventCapture.addVersion(normalDomain);
+        long preRestartVersion = normalDomain.get(0).getSequenceNumber();
+        assertEquals((TS + 5000) * 1_000_000L + DebeziumChangeEventCapture.SEQUENCE_START,
+                preRestartVersion, "sanity: steady-state counters live in the 1000m range");
+
+        // Simulated restart: static state is re-initialized exactly as a new JVM would.
+        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
+        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
+
+        // Resume re-publishes the TS+5000 event (same source commit ts).
+        List<ClickHouseStruct> republished = Arrays.asList(recordAt(TS + 5000, TS + 90_000));
+        DebeziumChangeEventCapture.addVersion(republished);
+        long republishedVersion = republished.get(0).getSequenceNumber();
+
+        assertEquals((TS + 5000) * 1_000_000L
+                        + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1,
+                republishedVersion,
+                "the first post-resume counter must start from SEQUENCE_START_INITIAL (500m)");
+        assertTrue(republishedVersion < preRestartVersion,
+                "a re-published event must rank strictly BELOW the pre-restart write of the "
+                        + "same source second - re-publication must never supersede "
+                        + "already-written rows");
+    }
+
+    @Test
+    @DisplayName("the 500m initial domain is left on the first >1s source-clock advance")
+    public void initialSeedEscapesToNormalDomainAfterOneSecond() {
+        List<ClickHouseStruct> first = Arrays.asList(recordAt(TS, TS + 1));
+        DebeziumChangeEventCapture.addVersion(first);
+        assertEquals(TS * 1_000_000L
+                        + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1,
+                first.get(0).getSequenceNumber(),
+                "first post-start record is in the 500m domain");
+
+        List<ClickHouseStruct> later = Arrays.asList(recordAt(TS + 2001, TS + 5));
+        DebeziumChangeEventCapture.addVersion(later);
+        assertEquals((TS + 2001) * 1_000_000L + DebeziumChangeEventCapture.SEQUENCE_START,
+                later.get(0).getSequenceNumber(),
+                "the first >1s source-clock advance must reset to SEQUENCE_START (1000m), "
+                        + "leaving the initial domain for steady-state operation");
+    }
+
+    @Test
+    @DisplayName("re-publication after resume preserves DELETE < re-INSERT ordering "
+            + "and the counter survives a binlog rotation inside the re-published range")
+    public void republicationPreservesOrderAcrossRotation() {
+        // Original run: DELETE at TS, re-INSERT at TS+3000 (nightly refresh pattern).
+        List<ClickHouseStruct> original = Arrays.asList(
+                recordAt(TS, TS + 10),          // DELETE
+                recordAt(TS + 3000, TS + 12));  // re-INSERT
+        DebeziumChangeEventCapture.addVersion(original);
+        long originalDelete = original.get(0).getSequenceNumber();
+        long originalReinsert = original.get(1).getSequenceNumber();
+        assertTrue(originalDelete < originalReinsert);
+
+        // Crash + resume: static state re-initialized; the binlog also rotated
+        // between the DELETE and the re-INSERT. Both events are re-published.
+        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
+        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
+
+        List<ClickHouseStruct> republishedDelete = Arrays.asList(
+                recordAt(TS, TS + 120_000));            // re-published DELETE (old file)
+        DebeziumChangeEventCapture.addVersion(republishedDelete);
+        List<ClickHouseStruct> republishedReinsert = Arrays.asList(
+                recordAt(TS + 3000, TS + 120_001));     // re-published re-INSERT (new file)
+        DebeziumChangeEventCapture.addVersion(republishedReinsert);
+
+        long replayDelete = republishedDelete.get(0).getSequenceNumber();
+        long replayReinsert = republishedReinsert.get(0).getSequenceNumber();
+
+        assertTrue(replayDelete < replayReinsert,
+                "re-published DELETE must still rank below the re-published re-INSERT "
+                        + "(source-commit ordering is delivery-independent)");
+        assertTrue(replayDelete < originalReinsert,
+                "the re-published DELETE must rank below the ORIGINAL re-INSERT already in "
+                        + "ClickHouse - otherwise the #1346 stuck-delete returns on resume");
+        assertTrue(replayReinsert <= originalReinsert,
+                "a re-published event must never out-rank the original write of the same "
+                        + "source commit (500m seed < 1000m steady-state counter)");
     }
 }

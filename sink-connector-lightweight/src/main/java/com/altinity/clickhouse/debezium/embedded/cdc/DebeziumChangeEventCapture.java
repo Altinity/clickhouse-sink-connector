@@ -164,8 +164,20 @@ public class DebeziumChangeEventCapture {
     public static final long SEQUENCE_START = 1000000000;
 
     /**
-    * Initial starting sequence number.
-    */
+     * Initial starting sequence number, used ONLY for the first batch after the
+     * connector starts/resumes (500 million, half of {@link #SEQUENCE_START}).
+     *
+     * <p>On a resume, Debezium re-publishes every event after the last committed
+     * offset — including events that were already delivered and written before the
+     * shutdown/crash with counters in the {@code SEQUENCE_START} (1&nbsp;billion) range.
+     * Seeding the post-resume counter at 500 million guarantees every re-published
+     * event in the same source second receives a strictly LOWER {@code _version} than
+     * any pre-restart write of that second, so a re-published duplicate can never
+     * supersede a row that was already correctly written. The first source-clock
+     * advance of more than one second resets the counter to {@code SEQUENCE_START},
+     * returning to the normal domain. Values stay inside the 2.8.0 numeric domain
+     * ({@code ts_ms * 1_000_000 + counter}) in both phases.</p>
+     */
     public static final long SEQUENCE_START_INITIAL = 500000000;
     
     /**
@@ -272,8 +284,14 @@ public class DebeziumChangeEventCapture {
                         // boundaries) and never moves backward, so re-delivered events with
                         // older source timestamps cannot re-arm the counter reset (the
                         // duplicate-_version race).
+                        //
+                        // First record after start/resume: seed the counter at
+                        // SEQUENCE_START_INITIAL (500m) so events re-published from the last
+                        // committed offset rank strictly below any pre-restart write of the
+                        // same source second (which carried counters in the 1000m range).
                         if (sequenceAnchorTs == 0L) {
                             sequenceAnchorTs = recordTs;
+                            sequenceNumber = SEQUENCE_START_INITIAL;
                         }
                         int diff = (int) ((recordTs - sequenceAnchorTs) / 1000);
                         if (diff > 1) {
@@ -1132,7 +1150,11 @@ public class DebeziumChangeEventCapture {
             long recordTs = chStruct.getTs_ms() > 0
                     ? chStruct.getTs_ms() : chStruct.getDebezium_ts_ms();
             if (sequenceAnchorTs == 0L) {
+                // First record after start/resume: seed at SEQUENCE_START_INITIAL
+                // (500m) so re-published events of the same source second rank
+                // strictly below the pre-restart writes (1000m range).
                 sequenceAnchorTs = recordTs;
+                sequenceNumber = SEQUENCE_START_INITIAL;
             }
             int diff = (int) ((recordTs - sequenceAnchorTs) / 1000);
             if (diff > 1) {
