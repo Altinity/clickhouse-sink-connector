@@ -14,6 +14,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 // Singleton class(one per database)
 /**
@@ -29,12 +30,12 @@ public class HikariDbSource {
     /**
      * Map of database name to HikariDataSource instance.
      */
-    private static Map<String, HikariDataSource> instance = new HashMap<>();
+    private static Map<String, HikariDataSource> instance = new ConcurrentHashMap<>();
 
     /**
      * Map of database name to Connection.
      */
-    private static Map<String, Connection> connectionPool = new HashMap<>();
+    private static Map<String, Connection> connectionPool = new ConcurrentHashMap<>();
 
     // private static HikariDbSource instance;
 
@@ -81,8 +82,14 @@ public class HikariDbSource {
         }
         HikariDataSource dbSource = instance.get(databaseName);
         if (dbSource == null) {
-            // No pool exists for the database. This happens when the initial
-            // connection to ClickHouse failed, so the pool was never created.
+            // No pool exists for this database. This is the cold-start case:
+            // the initial connection to ClickHouse failed, so the pool was
+            // never created. Keep BOTH the log and the throw — the exception
+            // tells the caller, the log tells the operator which database
+            // never got a pool.
+            log.error("No connection pool found for database: {}. "
+                    + "Call getInstance() first to create a pool.",
+                    databaseName);
             throw new SQLException(
                     "No connection pool exists for database: " + databaseName);
         }

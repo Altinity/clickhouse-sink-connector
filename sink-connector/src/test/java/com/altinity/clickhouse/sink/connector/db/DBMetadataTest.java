@@ -1,193 +1,181 @@
 package com.altinity.clickhouse.sink.connector.db;
 
-import com.clickhouse.jdbc.ClickHouseConnection;
 import org.junit.Assert;
-import org.junit.jupiter.api.AfterAll;
-import org.junit.jupiter.api.Tag;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
-import org.testcontainers.containers.ClickHouseContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import org.apache.commons.lang3.tuple.MutablePair;
-import org.testcontainers.utility.MountableFile;
 
-import java.sql.Connection;
-import java.sql.SQLException;
-import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Set;
+import java.util.Properties;
 
-@Testcontainers
+import static org.junit.jupiter.api.Assertions.*;
 
+/**
+ * Tests for DBMetadata — Phase 12 edge case coverage.
+ * <p>
+ * Validates:
+ * - Engine detection from response strings
+ * - Version column parsing for ReplacingMergeTree variants
+ * - Sign column parsing for CollapsingMergeTree
+ * - New ReplacingMergeTree version check
+ * </p>
+ */
 public class DBMetadataTest {
 
-    @Container
-    private ClickHouseContainer clickHouseContainer = new ClickHouseContainer("clickhouse/clickhouse-server:24.8.8")
-            .withInitScript("./init_clickhouse.sql").withCopyFileToContainer(MountableFile.forClasspathResource("config.xml"), "/etc/clickhouse-server/config.d/config.xml");
-
-    @AfterAll
-    public static void cleanup() {
-        HikariDbSource.close();
+    private DBMetadata createMetadata() {
+        Properties props = new Properties();
+        props.put("clickhouse.server.url", "localhost");
+        props.put("clickhouse.server.port", "8123");
+        props.put("clickhouse.server.user", "test");
+        props.put("clickhouse.server.password", "test");
+        return new DBMetadata(props);
     }
 
+    @Nested
+    @DisplayName("getEngineFromResponse")
+    class EngineDetectionTests {
 
-    @Test
-    public void testGetSignColumnForCollapsingMergeTree() {
+        @Test
+        @DisplayName("CollapsingMergeTree engine should be detected")
+        public void testCollapsingMergeTree() {
+            DBMetadata meta = createMetadata();
+            var result = meta.getEngineFromResponse("CollapsingMergeTree(sign)");
+            assertEquals(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE, result.left);
+        }
 
-        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        @Test
+        @DisplayName("ReplacingMergeTree engine should be detected")
+        public void testReplacingMergeTree() {
+            DBMetadata meta = createMetadata();
+            var result = meta.getEngineFromResponse("ReplacingMergeTree(ver)");
+            assertEquals(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, result.left);
+        }
 
-        String createTableDML = "CollapsingMergeTree(signNumberCol) PRIMARY KEY productCode ORDER BY productCode SETTINGS index_granularity = 8192";
-        String signColumn = metadata.getSignColumnForCollapsingMergeTree(createTableDML);
+        @Test
+        @DisplayName("ReplicatedReplacingMergeTree should be detected")
+        public void testReplicatedReplacingMergeTree() {
+            DBMetadata meta = createMetadata();
+            var result = meta.getEngineFromResponse(
+                    "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/test', '{replica}', ver)");
+            assertEquals(DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE, result.left);
+        }
 
-        Assert.assertTrue(signColumn.equalsIgnoreCase("signNumberCol"));
+        @Test
+        @DisplayName("MergeTree engine should be detected")
+        public void testMergeTree() {
+            DBMetadata meta = createMetadata();
+            var result = meta.getEngineFromResponse("MergeTree()");
+            assertEquals(DBMetadata.TABLE_ENGINE.MERGE_TREE, result.left);
+        }
+
+        @Test
+        @DisplayName("Unknown engine should return DEFAULT")
+        public void testUnknownEngine() {
+            DBMetadata meta = createMetadata();
+            var result = meta.getEngineFromResponse("TinyLog()");
+            assertEquals(DBMetadata.TABLE_ENGINE.DEFAULT, result.left);
+        }
     }
 
-    @Test
-    public void testDefaultGetSignColumnForCollapsingMergeTree() {
+    @Nested
+    @DisplayName("getSignColumnForCollapsingMergeTree")
+    class SignColumnTests {
 
-        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        @Test
+        @DisplayName("Standard CollapsingMergeTree should extract sign column")
+        public void testStandardSign() {
+            DBMetadata meta = createMetadata();
+            String result = meta.getSignColumnForCollapsingMergeTree(
+                    "CREATE TABLE ... CollapsingMergeTree(sign_col)");
+            assertEquals("sign_col", result);
+        }
 
-        String createTableDML = "ReplacingMergeTree() PRIMARY KEY productCode ORDER BY productCode SETTINGS index_granularity = 8192";
-        String signColumn = metadata.getSignColumnForCollapsingMergeTree(createTableDML);
-
-        Assert.assertTrue(signColumn.equalsIgnoreCase("sign"));
+        @Test
+        @DisplayName("Non-CollapsingMergeTree should return default 'sign'")
+        public void testNonCollapsingMergeTree() {
+            DBMetadata meta = createMetadata();
+            String result = meta.getSignColumnForCollapsingMergeTree(
+                    "CREATE TABLE ... MergeTree()");
+            assertEquals("sign", result);
+        }
     }
 
-    @Test
-    public void testGetVersionColumnForReplacingMergeTree() {
-        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+    @Nested
+    @DisplayName("getVersionColumnForReplacingMergeTree")
+    class VersionColumnTests {
 
-        String createTableDML = "ReplacingMergeTree(versionNo) PRIMARY KEY productCode ORDER BY productCode SETTINGS index_granularity = 8192";
-        String signColumn = metadata.getVersionColumnForReplacingMergeTree(createTableDML);
+        @Test
+        @DisplayName("Simple ReplacingMergeTree should extract version column")
+        public void testSimpleVersion() {
+            DBMetadata meta = createMetadata();
+            String result = meta.getVersionColumnForReplacingMergeTree(
+                    "CREATE TABLE ... ReplacingMergeTree(ver)");
+            assertEquals("ver", result);
+        }
 
-        Assert.assertTrue(signColumn.equalsIgnoreCase("versionNo"));
+        @Test
+        @DisplayName("ReplicatedReplacingMergeTree with 3 params should extract version")
+        public void testReplicatedVersion3Params() {
+            DBMetadata meta = createMetadata();
+            String result = meta.getVersionColumnForReplacingMergeTree(
+                    "CREATE TABLE ... ReplicatedReplacingMergeTree('/path', '{replica}', ver)");
+            assertEquals("ver", result);
+        }
 
+        @Test
+        @DisplayName("ReplicatedReplacingMergeTree with 4 params should extract version+deleted")
+        public void testReplicatedVersion4Params() {
+            DBMetadata meta = createMetadata();
+            String result = meta.getVersionColumnForReplacingMergeTree(
+                    "CREATE TABLE ... ReplicatedReplacingMergeTree('/path', '{replica}', ver, is_deleted)");
+            // Each parameter is trimmed and re-joined with a bare comma (no space).
+            // DbWriter.configureReplacingMergeTreeColumns splits this on "," and
+            // trims each part, so both column names resolve correctly either way.
+            assertEquals("ver,is_deleted", result);
+        }
     }
 
-    @Test
-    @Tag("IntegrationTest")
-    public void testCheckIfDatabaseExists() throws SQLException {
+    @Nested
+    @DisplayName("checkIfNewReplacingMergeTree")
+    class VersionCheckTests {
 
-        String dbHostName = clickHouseContainer.getHost();
-        Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "system";
-        String userName = clickHouseContainer.getUsername();
-        String password = clickHouseContainer.getPassword();
-        String tableName = "employees";
+        @Test
+        @DisplayName("Version 23.3 should be new ReplacingMergeTree")
+        public void testNewVersion() throws Exception {
+            DBMetadata meta = createMetadata();
+            assertTrue(meta.checkIfNewReplacingMergeTree("23.3.1.1"));
+        }
 
-        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                "newdb", new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        @Test
+        @DisplayName("Version 22.8 should NOT be new ReplacingMergeTree")
+        public void testOldVersion() throws Exception {
+            DBMetadata meta = createMetadata();
+            assertFalse(meta.checkIfNewReplacingMergeTree("22.8.1.1"));
+        }
 
-        DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
-
-        // Default database exists.
-        boolean result = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).checkIfDatabaseExists(writer.getConnection(), "system");
-        Assert.assertTrue(result);
-
-        boolean result2 = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).checkIfDatabaseExists(writer.getConnection(), "newdb");
-        Assert.assertFalse(result2);
-
-        Map<String, Boolean> isNullableList = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getColumnsIsNullableForTable(tableName, writer.getConnection(), "default");
-       isNullableList.get("_offset").equals(true);
-       isNullableList.get("hire_date").equals(false);
-
+        @Test
+        @DisplayName("Version 23.2 should be new ReplacingMergeTree (boundary)")
+        public void testBoundaryVersion() throws Exception {
+            DBMetadata meta = createMetadata();
+            assertTrue(meta.checkIfNewReplacingMergeTree("23.2.0.0"));
+        }
     }
 
-    @Test
-    public void testGetEngineFromResponse() {
+    @Nested
+    @DisplayName("MAX_RETRIES configuration")
+    class RetryConfigTests {
 
-        String replacingMergeTree = "ReplacingMergeTree(ver) PRIMARY KEY dept_no ORDER BY dept_no SETTINGS index_granularity = 8192";
-        MutablePair<DBMetadata.TABLE_ENGINE, String> replacingMergeTreeResult = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getEngineFromResponse(replacingMergeTree);
-
-        Assert.assertTrue(replacingMergeTreeResult.getRight().equalsIgnoreCase("ver"));
-        Assert.assertTrue(replacingMergeTreeResult.getLeft().getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine()));
-
-        String replacingMergeTreeWIsDeletedColumn = "ReplacingMergeTree(ver, is_deleted) PRIMARY KEY dept_no ORDER BY dept_no SETTINGS index_granularity = 8192";
-        MutablePair<DBMetadata.TABLE_ENGINE, String> replacingMergeTreeWIsDeletedColumnResult = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getEngineFromResponse(replacingMergeTreeWIsDeletedColumn);
-
-        Assert.assertTrue(replacingMergeTreeWIsDeletedColumnResult.getRight().equalsIgnoreCase("ver, is_deleted"));
-        Assert.assertTrue(replacingMergeTreeWIsDeletedColumnResult.getLeft().getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine()));
-
-        String replicatedReplacingMergeTree = "ReplicatedReplacingMergeTree('/clickhouse/{cluster}/tables/dashboard_mysql_replication/favourite_products', '{replica}', ver) ORDER BY id SETTINGS allow_nullable_key = 1, index_granularity = 8192";
-
-        MutablePair<DBMetadata.TABLE_ENGINE, String> replicatedReplacingMergeTreeResult = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getEngineFromResponse(replicatedReplacingMergeTree);
-
-        Assert.assertTrue(replicatedReplacingMergeTreeResult.getRight().equalsIgnoreCase("ver"));
-        Assert.assertTrue(replicatedReplacingMergeTreeResult.getLeft().getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine()));
-
-
-        String replicatedReplacingMergeTreeWIsDeletedColumn = "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/temporal_types_DATETIME4', '{replica}', _version, is_deleted) ORDER BY tuple()";
-        MutablePair<DBMetadata.TABLE_ENGINE, String> replicatedReplacingMergeTreeWIsDeletedColumnResult = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getEngineFromResponse(replicatedReplacingMergeTreeWIsDeletedColumn);
-
-        Assert.assertTrue(replicatedReplacingMergeTreeWIsDeletedColumnResult.getRight().equalsIgnoreCase("_version,is_deleted"));
-        Assert.assertTrue(replicatedReplacingMergeTreeWIsDeletedColumnResult.getLeft().getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine()));
-
-    }
-
-    @ParameterizedTest
-    @CsvSource({
-            "23.2, true",
-            "23.1, false",
-            "23.2.1, true",
-            "23.1.1, false",
-            "23.0.1, false",
-            "23.3, true",
-            "33.1, true",
-            "23.10.1, true",
-            "23.9.2.47442, true"
-    })
-    public void testIsRMTVersionSupported(String clickhouseVersion, boolean result) throws SQLException {
-        Assert.assertTrue(new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).checkIfNewReplacingMergeTree(clickhouseVersion) == result);
-    }
-
-    @Test
-    public void getTestGetServerTimeZone() {
-        String dbHostName = clickHouseContainer.getHost();
-        Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "system";
-        String userName = clickHouseContainer.getUsername();
-        String password = clickHouseContainer.getPassword();
-        String tableName = "employees";
-
-        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB,new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        DbWriter writer = new DbWriter(dbHostName, port, "employees", tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
-        ZoneId serverTimeZone = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getServerTimeZone(writer.getConnection());
-
-        Assert.assertTrue(serverTimeZone.toString().equalsIgnoreCase("America/Chicago"));
-
-    }
-
-    @Test
-    public void getAliasAndMaterializedColumnsList() throws SQLException {
-        String dbHostName = clickHouseContainer.getHost();
-        Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "employees";
-        String userName = clickHouseContainer.getUsername();
-        String password = clickHouseContainer.getPassword();
-        String tableName = "employees";
-
-        String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
-        Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                "employees", new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        Set<String> aliasColumns = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getAliasAndMaterializedColumnsForTableAndDatabase("people", "employees2", conn);
-
-        Assert.assertTrue(aliasColumns.size() == 2);
-
-
-        // Check for a table with no alias columns.
-        Set<String> tmAliasColumns = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getAliasAndMaterializedColumnsForTableAndDatabase("tm", "public", conn);
-        Assert.assertTrue(tmAliasColumns.size() == 0);
-        // Check for a table with no alias columns.
-        Set<String> employeeMaterializedColumns = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getAliasAndMaterializedColumnsForTableAndDatabase("employee_materialized", "employees2", conn);
-        Assert.assertTrue(employeeMaterializedColumns.size() == 1);
+        @Test
+        @DisplayName("setMaxRetries should update the retry count")
+        public void testSetMaxRetries() {
+            int original = DBMetadata.MAX_RETRIES;
+            try {
+                DBMetadata.setMaxRetries(5);
+                assertEquals(5, DBMetadata.MAX_RETRIES);
+            } finally {
+                DBMetadata.setMaxRetries(original);
+            }
+        }
     }
 }

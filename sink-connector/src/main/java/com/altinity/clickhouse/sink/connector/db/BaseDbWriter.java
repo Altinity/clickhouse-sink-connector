@@ -139,7 +139,7 @@ public class BaseDbWriter {
             log.error("Error creating Database: " + databaseName);
 
             // Retry creating the database until max retries is reached.
-            boolean createDatabaseFailed = false;
+            boolean createDatabaseSucceeded = false;
             while (maxRetries++ < MAX_RETRIES) {
                 try {
                     Thread.sleep(maxRetries * RETRY_DELAY_MS);
@@ -147,7 +147,7 @@ public class BaseDbWriter {
                             databaseName)) {
                         new ClickHouseCreateDatabase()
                                 .createNewDatabase(this.conn, databaseName, useOnCluster, this.config);
-                        createDatabaseFailed = true;
+                        createDatabaseSucceeded = true;
                         break;
                     }
                 } catch (Exception ex) {
@@ -157,7 +157,7 @@ public class BaseDbWriter {
                 }
             }
             // If database creation still fails, throw a runtime exception.
-            if (!createDatabaseFailed) {
+            if (!createDatabaseSucceeded) {
                 throw new RuntimeException("Error creating Database: "
                         + databaseName, e);
             }
@@ -174,11 +174,24 @@ public class BaseDbWriter {
      *         the input string
      */
     public static Properties splitJdbcProperties(String jdbcProperties) {
+        if (jdbcProperties == null || jdbcProperties.trim().isEmpty()) {
+            return new Properties();
+        }
         String[] splitProperties = jdbcProperties.split(",");
         Properties properties = new Properties();
         Arrays.stream(splitProperties).forEach(property -> {
-            String[] keyValue = property.split("=");
-            properties.setProperty(keyValue[0], keyValue[1]);
+            String trimmed = property.trim();
+
+            if (trimmed.isEmpty()) {
+                return; // skip empty entries (e.g. trailing comma)
+            }
+            String[] keyValue = trimmed.split("=", 2);
+            if (keyValue.length == 2 && !keyValue[0].trim().isEmpty()) {
+                properties.setProperty(keyValue[0].trim(), keyValue[1].trim());
+            } else {
+                log.warn("Skipping malformed JDBC property: " + trimmed);
+
+            }
         });
         return properties;
     }
@@ -197,7 +210,8 @@ public class BaseDbWriter {
                 this.conn = HikariDbSource
                         .initiateNewConnectionIfClosed(this.database);
             } catch (Exception e) {
-                log.error("Error retrieving new connection in getConnection");
+                log.error("Error retrieving new connection in getConnection", e);
+                throw new RuntimeException("Failed to retrieve database connection for " + this.database, e);
             }
         }
         return this.conn;
@@ -289,7 +303,8 @@ public class BaseDbWriter {
                 conn = hikariDbSource.getConnection();
             }
         } catch (Exception e) {
-            log.error("Error creating ClickHouse connection" + e);
+            log.error("Error creating ClickHouse connection", e);
+            throw new RuntimeException("Failed to create ClickHouse connection to " + url, e);
         }
         return conn;
     }
