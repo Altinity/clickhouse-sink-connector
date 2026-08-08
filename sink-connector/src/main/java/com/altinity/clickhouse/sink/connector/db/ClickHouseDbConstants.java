@@ -222,7 +222,7 @@ public class ClickHouseDbConstants {
      * table for managing Kafka offsets.
      */
     public static final String OFFSET_TABLE_CREATE_SQL =
-            "CREATE TABLE topic_offset_metadata(`_topic` String, "
+            "CREATE TABLE IF NOT EXISTS topic_offset_metadata(`_topic` String, "
                     + "`_partition` UInt64,`_offset` SimpleAggregateFunction(max, "
                     + "UInt64))ENGINE = AggregatingMergeTree ORDER BY "
                     + "(_topic, _partition)";

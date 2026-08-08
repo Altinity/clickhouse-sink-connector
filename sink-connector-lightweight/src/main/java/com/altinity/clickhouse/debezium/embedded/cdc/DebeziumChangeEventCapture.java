@@ -212,6 +212,23 @@ public class DebeziumChangeEventCapture {
         // when it's bundled as a shaded JAR.
         Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
 
+        // Ensure ClickHouse JDBC URLs used by Debezium storage have
+        // jdbc_ignore_unsupported_values=true so that setAutoCommit(false)
+        // calls from Debezium's RetriableConnection don't throw
+        // SQLFeatureNotSupportedException (ClickHouse has no transactions).
+        // When the legacy V1 driver is requested (clickhouse.jdbc.v1=true),
+        // tag the URLs with the V1 marker instead — the V1 driver ignores
+        // those calls natively and does not know the V2-only flag.
+        boolean useV1Driver = config.getBoolean(
+                ClickHouseSinkConnectorConfigVariables.JDBC_V1_DRIVER.toString());
+        if (useV1Driver) {
+            ensureUrlParam(props, "offset.storage.jdbc.url", V1_DRIVER_MARKER + "=true");
+            ensureUrlParam(props, "schema.history.internal.jdbc.url", V1_DRIVER_MARKER + "=true");
+        } else {
+            ensureIgnoreUnsupportedValuesParam(props, "offset.storage.jdbc.url");
+            ensureIgnoreUnsupportedValuesParam(props, "schema.history.internal.jdbc.url");
+        }
+
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder =
                     DebeziumEngine.create(Connect.class);
@@ -448,6 +465,48 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
+     * JDBC driver property key — tells ClickHouse JDBC 0.9.x to silently
+     * ignore unsupported calls (setAutoCommit, commit, rollback).
+     * Keep in sync with SinkConnectorDataSource.IGNORE_UNSUPPORTED_KEY.
+     */
+    private static final String IGNORE_UNSUPPORTED_KEY = "jdbc_ignore_unsupported_values";
+
+    /**
+     * URL marker understood by com.clickhouse.jdbc.ClickHouseDriver (0.7+):
+     * selects the legacy V1 driver implementation for this URL.
+     * Keep in sync with SinkConnectorDataSource.V1_DRIVER_MARKER.
+     */
+    static final String V1_DRIVER_MARKER = "clickhouse.jdbc.v1";
+
+    /**
+     * Ensures the ClickHouse JDBC URL in the given property key has the
+     * {@code jdbc_ignore_unsupported_values=true} parameter, which prevents
+     * the driver from throwing SQLFeatureNotSupportedException on calls
+     * like setAutoCommit(false) that ClickHouse does not support.
+     */
+    static void ensureIgnoreUnsupportedValuesParam(Properties props, String key) {
+        ensureUrlParam(props, key, IGNORE_UNSUPPORTED_KEY + "=true");
+    }
+
+    /**
+     * Ensures the ClickHouse JDBC URL stored under the given property key
+     * carries the given {@code key=value} URL parameter (no-op if the
+     * parameter key is already present or the URL is not a ClickHouse one).
+     */
+    static void ensureUrlParam(Properties props, String propKey, String param) {
+        String url = props.getProperty(propKey);
+        if (url == null || !url.startsWith("jdbc:clickhouse:")) {
+            return;
+        }
+        String paramKey = param.substring(0, param.indexOf('='));
+        if (url.contains(paramKey)) {
+            return;
+        }
+        String separator = url.contains("?") ? "&" : "?";
+        props.setProperty(propKey, url + separator + param);
+    }
+
+    /**
      * Parses the database configuration from the connector configuration.
      *
      * @param config The ClickHouse sink connector configuration.
@@ -613,11 +672,96 @@ public class DebeziumChangeEventCapture {
         String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(),
                 dbCredentials.getPort(), BaseDbWriter.SYSTEM_DB);
 
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
-                dbCredentials.getUserName(), dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
+        Connection conn = createSystemDbConnectionWithRetry(jdbcUrl, dbCredentials, config);
         writer = new BaseDbWriter(dbCredentials.getHostName(), dbCredentials.getPort(),
                 BaseDbWriter.SYSTEM_DB, dbCredentials.getUserName(), dbCredentials.getPassword(),
                 config, conn);
+        return conn;
+    }
+
+    /**
+     * Number of attempts made to obtain the initial system-database connection.
+     */
+    static final int SYSTEM_DB_CONNECT_ATTEMPTS = 30;
+
+    /**
+     * Delay between initial system-database connection attempts, in millis.
+     */
+    static final long SYSTEM_DB_CONNECT_RETRY_MS = 2000L;
+
+    /**
+     * Obtains the initial system-database connection, retrying while ClickHouse
+     * is still starting up.
+     * <p>
+     * This connection is created exactly once at startup and is then reused for
+     * the Debezium storage-database creation and the version lookup. When the
+     * connection pool is disabled ({@code connection.pool.disable=true}, which
+     * is the setting used by the docker-compose stacks), there is no pool to
+     * obtain a replacement from later, so a {@code null} here is terminal for
+     * the process: every later query fails with "connection is not available"
+     * and the connector never creates the destination tables.
+     * <p>
+     * That is reachable on a cold start. compose gates the connector on the
+     * ClickHouse container's healthcheck, but the healthcheck can pass moments
+     * before the HTTP port is serving, and the two driver generations differ in
+     * how they surface that window: verified against clickhouse-jdbc 0.9.8, the
+     * V2 driver returns a connection object lazily even when nothing is
+     * listening, while the V1 driver throws
+     * "Connect to http://host:port failed: Connection refused" — which
+     * {@code BaseDbWriter.createConnection} logs and converts to {@code null}.
+     * Retrying here makes startup tolerant of that window for both drivers
+     * instead of depending on which driver defers the connect.
+     *
+     * @param jdbcUrl       the system-database JDBC URL.
+     * @param dbCredentials the database credentials.
+     * @param config        the connector configuration.
+     * @return the connection, or null if every attempt failed.
+     */
+    private Connection createSystemDbConnectionWithRetry(String jdbcUrl,
+                                                         DBCredentials dbCredentials,
+                                                         ClickHouseSinkConnectorConfig config) {
+        return connectWithRetry(() -> BaseDbWriter.createConnection(
+                jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
+                dbCredentials.getUserName(), dbCredentials.getPassword(),
+                BaseDbWriter.SYSTEM_DB, config),
+                SYSTEM_DB_CONNECT_RETRY_MS);
+    }
+
+    /**
+     * Retry loop backing {@link #createSystemDbConnectionWithRetry}. Package
+     * private so the retry behavior can be unit tested without a live server.
+     *
+     * @param supplier produces a connection, or null when unavailable.
+     * @param retryMs  delay between attempts, in milliseconds.
+     * @return the first non-null connection, or null if all attempts failed.
+     */
+    static Connection connectWithRetry(java.util.function.Supplier<Connection> supplier,
+                                       long retryMs) {
+        Connection conn = null;
+        for (int attempt = 1; attempt <= SYSTEM_DB_CONNECT_ATTEMPTS; attempt++) {
+            conn = supplier.get();
+            if (conn != null) {
+                if (attempt > 1) {
+                    log.info("Obtained system database connection on attempt {}/{}",
+                            attempt, SYSTEM_DB_CONNECT_ATTEMPTS);
+                }
+                return conn;
+            }
+            log.warn("System database connection not available yet "
+                    + "(attempt {}/{}), retrying in {}ms",
+                    attempt, SYSTEM_DB_CONNECT_ATTEMPTS, retryMs);
+            if (attempt < SYSTEM_DB_CONNECT_ATTEMPTS) {
+                try {
+                    Thread.sleep(retryMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
+        }
+        log.error("Could not obtain the system database connection after {} attempts; "
+                + "startup will continue but ClickHouse operations will fail",
+                SYSTEM_DB_CONNECT_ATTEMPTS);
         return conn;
     }
 

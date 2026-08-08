@@ -90,8 +90,9 @@ public class QueryFormatter {
 
         // Construct the full insert query
         String tableWithBackTicks = "`" + tableName + "`";
-        String insertQuery = String.format("insert into %s(%s) select %s from input('%s')",
-                tableWithBackTicks, columnData.colNamesDelimited, columnData.colNamesDelimited, columnData.colNamesToDataTypes);
+        String placeholders = generatePlaceholders(columnData.colNameToIndexMap.size());
+        String insertQuery = String.format("INSERT INTO %s(%s) VALUES (%s)",
+                tableWithBackTicks, columnData.colNamesDelimited, placeholders);
 
         // Return the query and column index map
         MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
@@ -367,7 +368,29 @@ public class QueryFormatter {
 
         // Construct the full insert query
         String tableWithBackTicks = "`" + tableName + "`";
-        return String.format("insert into %s select %s from input('%s')", tableWithBackTicks, colNamesDelimited, colNamesToDataTypes);
+        String placeholders = generatePlaceholders(columnNameToDataTypeMap.size());
+        return String.format("INSERT INTO %s(%s) VALUES (%s)",
+                tableWithBackTicks, colNamesDelimited, placeholders);
+    }
+
+    /**
+     * Generates a comma-separated list of JDBC parameter placeholders.
+     *
+     * @param count number of placeholders to generate
+     * @return placeholder string (e.g. "?,?,?")
+     */
+    private static String generatePlaceholders(int count) {
+        if (count <= 0) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            if (i > 0) {
+                sb.append(",");
+            }
+            sb.append("?");
+        }
+        return sb.toString();
     }
 
     /**

@@ -120,9 +120,11 @@ public class CreateTableDataTypesTimeZoneIT {
             dateResultValueChecked = true;
 
 
-            System.out.println(dateResult.getTimestamp("Mid_Value").toString());
-            System.out.println(dateResult.getTimestamp("Maximum_Value").toString());
-            System.out.println(dateResult.getTimestamp("Minimum_Value").toString());
+            // Use getDate() for Date32 columns: the jdbc 0.9.x V2 driver
+            // (correctly) refuses getTimestamp() on a Date32 value.
+            System.out.println(dateResult.getDate("Mid_Value").toString());
+            System.out.println(dateResult.getDate("Maximum_Value").toString());
+            System.out.println(dateResult.getDate("Minimum_Value").toString());
 
             Assert.assertTrue(dateResult.getDate("Mid_Value").toString().contains("2022-09-29"));
             Assert.assertTrue(dateResult.getDate("Maximum_Value").toString().contains("2299-12-31"));
