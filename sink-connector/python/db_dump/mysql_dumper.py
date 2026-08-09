@@ -89,7 +89,7 @@ def generate_mysqlsh_dump_tables_clause(dump_dir,
                                         bytes_per_chunk,
                                         consistent):
     table_array_clause = tables_to_dump
-    dump_options = {"dryRun":int(dry_run), "ddlOnly":int(schema_only), "dataOnly":int(data_only), "threads":threads, "bytesPerChunk":bytes_per_chunk, "consistent":int(consistent), "tzUtc":0}
+    dump_options = {"dryRun":int(dry_run), "ddlOnly":int(schema_only), "dataOnly":int(data_only), "threads":threads, "bytesPerChunk":bytes_per_chunk, "consistent":int(consistent)}
     if partition_map and not schema_only:
         dump_options['partitions'] = partition_map
     logging.info(f"{dump_options}")
