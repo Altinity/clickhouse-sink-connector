@@ -86,9 +86,10 @@ def generate_mysqlsh_dump_tables_clause(dump_dir,
                                         where,
                                         partition_map,
                                         threads,
-                                        bytes_per_chunk):
+                                        bytes_per_chunk,
+                                        consistent):
     table_array_clause = tables_to_dump
-    dump_options = {"dryRun":int(dry_run), "ddlOnly":int(schema_only), "dataOnly":int(data_only), "threads":threads, "bytesPerChunk":bytes_per_chunk}
+    dump_options = {"dryRun":int(dry_run), "ddlOnly":int(schema_only), "dataOnly":int(data_only), "threads":threads, "bytesPerChunk":bytes_per_chunk, "consistent":int(consistent)}
     if partition_map and not schema_only:
         dump_options['partitions'] = partition_map
     logging.info(f"{dump_options}")
@@ -112,7 +113,8 @@ def generate_mysqlsh_command(dump_dir,
                              partition_map,
                              threads, 
                              bytes_per_chunk,
-                             temp_file):
+                             temp_file,
+                             consistent=True):
     mysql_user_clause = ""
     if mysql_user is not None:
         mysql_user_clause = f" --user {mysql_user}"
@@ -135,7 +137,8 @@ def generate_mysqlsh_command(dump_dir,
                                                       where,
                                                       partition_map,
                                                       threads,
-                                                      bytes_per_chunk)
+                                                      bytes_per_chunk,
+                                                      consistent)
     temp_file.write(dump_clause)
     temp_file.flush()
     cmd = f"""mysqlsh {defaults_file_clause} -h {mysql_host} {mysql_user_clause} {mysql_password_clause} {mysql_port_clause} -f {temp_file.name} """
@@ -177,7 +180,10 @@ def main():
                         action='store_true', default=False)
     parser.add_argument('--dry_run', dest='dry_run',
                         action='store_true', default=False)
-    
+    parser.add_argument('--consistent', dest='consistent',
+                        action='store_true', default=True)
+    parser.add_argument('--no_consistent', dest='non_consistent',
+                        action='store_true', default=False)
     global args
     args = parser.parse_args()
 
@@ -264,7 +270,8 @@ def main():
                                        partition_map,
                                        args.threads,
                                        args.bytes_per_chunk,
-                                       temp_file
+                                       temp_file,
+                                       consistent=not args.non_consistent
                                        )
           rc = run_command(cmd)
           assert rc == "0", "mysqldumper failed, check the log."
