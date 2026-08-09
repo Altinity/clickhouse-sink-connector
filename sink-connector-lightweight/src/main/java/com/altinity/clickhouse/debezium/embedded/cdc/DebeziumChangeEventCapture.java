@@ -164,14 +164,38 @@ public class DebeziumChangeEventCapture {
     public static final long SEQUENCE_START = 1000000000;
 
     /**
-    * Initial starting sequence number.
-    */
+     * Initial starting sequence number, used ONLY for the first batch after the
+     * connector starts/resumes (500 million, half of {@link #SEQUENCE_START}).
+     *
+     * <p>On a resume, Debezium re-publishes every event after the last committed
+     * offset — including events that were already delivered and written before the
+     * shutdown/crash with counters in the {@code SEQUENCE_START} (1&nbsp;billion) range.
+     * Seeding the post-resume counter at 500 million guarantees every re-published
+     * event in the same source second receives a strictly LOWER {@code _version} than
+     * any pre-restart write of that second, so a re-published duplicate can never
+     * supersede a row that was already correctly written. The first source-clock
+     * advance of more than one second resets the counter to {@code SEQUENCE_START},
+     * returning to the normal domain. Values stay inside the 2.8.0 numeric domain
+     * ({@code ts_ms * 1_000_000 + counter}) in both phases.</p>
+     */
     public static final long SEQUENCE_START_INITIAL = 500000000;
     
     /**
          * Global sequence number.
     */
     public static long sequenceNumber = SEQUENCE_START;
+
+    /**
+     * Source-timestamp anchor for the intra-second sequence counter.
+     *
+     * <p>The counter resets only when the SOURCE commit clock advances by more than one
+     * second past this anchor, and the anchor never moves backward. Because the counter is
+     * keyed exclusively on the source commit time - never on the binlog file name or
+     * position - it is preserved across binary log rotations: two commits in the same
+     * second on either side of a rotation keep incrementing the same counter and can never
+     * receive an identical or inverted {@code _version} (see issue #1346).</p>
+     */
+    public static long sequenceAnchorTs = 0L;
 
 
     /**
@@ -236,10 +260,6 @@ public class DebeziumChangeEventCapture {
                         return;
                     }
 
-                    ChangeEvent<SourceRecord, SourceRecord> changeEvent = list.get(0);
-                    long debeziumTsMs = ClickHouseStruct.getDebeziumTsFromChangeEvent(changeEvent);
-                    long sequenceStartTime = debeziumTsMs ;
-                    
                     List<ClickHouseStruct> batch = new ArrayList<>();
                     for (int i = 0; i < list.size(); i++) {
                         ChangeEvent<SourceRecord, SourceRecord> record = list.get(i);
@@ -247,11 +267,36 @@ public class DebeziumChangeEventCapture {
                         if (i == list.size() - 1) {
                             lastRecordInBatch = true;
                         }
-                        long recordTs = ClickHouseStruct.getDebeziumTsFromChangeEvent(record);
-                        int diff = (int) ((recordTs - sequenceStartTime) / 1000);
+                        // Anchor the version to the SOURCE commit timestamp (source.ts_ms),
+                        // not the envelope/processing timestamp. The source timestamp is
+                        // identical on every Debezium re-delivery, so a re-delivered DELETE
+                        // keeps its original (lower) _version and can no longer out-rank a
+                        // later re-INSERT (issue #1346). The emitted formula is unchanged
+                        // from 2.8.0 (ts_ms * 1_000_000 + counter), so values stay in the
+                        // same numeric domain: upgrades AND downgrades remain safe.
+                        long recordTs = ClickHouseStruct.getSourceTsFromChangeEvent(record);
+
+                        // The intra-second counter is keyed exclusively on the source commit
+                        // clock - never on the binlog file name or position - so it is kept
+                        // across binary log rotations: two commits in the same second on
+                        // either side of a rotation keep incrementing the same counter and
+                        // cannot collide or invert. The anchor is global (survives batch
+                        // boundaries) and never moves backward, so re-delivered events with
+                        // older source timestamps cannot re-arm the counter reset (the
+                        // duplicate-_version race).
+                        //
+                        // First record after start/resume: seed the counter at
+                        // SEQUENCE_START_INITIAL (500m) so events re-published from the last
+                        // committed offset rank strictly below any pre-restart write of the
+                        // same source second (which carried counters in the 1000m range).
+                        if (sequenceAnchorTs == 0L) {
+                            sequenceAnchorTs = recordTs;
+                            sequenceNumber = SEQUENCE_START_INITIAL;
+                        }
+                        int diff = (int) ((recordTs - sequenceAnchorTs) / 1000);
                         if (diff > 1) {
                             sequenceNumber = SEQUENCE_START;
-                            sequenceStartTime = recordTs;
+                            sequenceAnchorTs = recordTs;
                         } else
                             sequenceNumber++;
 
@@ -1096,18 +1141,30 @@ public class DebeziumChangeEventCapture {
         if (chStructs.isEmpty()) {
             return;
         }
-        long sequenceStartTime = chStructs.get(0).getDebezium_ts_ms();
         for (ClickHouseStruct chStruct : chStructs) {
-            // Get diff in seconds from the first record's Debezium timestamp.
-            int diff = (int) ((chStruct.getDebezium_ts_ms() - sequenceStartTime) / 1000);
+            // Anchor on the SOURCE commit timestamp when available (redelivery-stable,
+            // issue #1346); fall back to the processing timestamp for records without one.
+            // The intra-second counter is keyed exclusively on the source clock and the
+            // shared anchor survives batch boundaries and binlog rotations - it is never
+            // reset by file/position changes and never moves backward.
+            long recordTs = chStruct.getTs_ms() > 0
+                    ? chStruct.getTs_ms() : chStruct.getDebezium_ts_ms();
+            if (sequenceAnchorTs == 0L) {
+                // First record after start/resume: seed at SEQUENCE_START_INITIAL
+                // (500m) so re-published events of the same source second rank
+                // strictly below the pre-restart writes (1000m range).
+                sequenceAnchorTs = recordTs;
+                sequenceNumber = SEQUENCE_START_INITIAL;
+            }
+            int diff = (int) ((recordTs - sequenceAnchorTs) / 1000);
             if (diff > 1) {
                 sequenceNumber = SEQUENCE_START;
-                sequenceStartTime = chStruct.getDebezium_ts_ms();
+                sequenceAnchorTs = recordTs;
             } else {
                 sequenceNumber++;
             }
             // Pad the sequence number with zeros and set the sequence number in the record.
-            chStruct.setSequenceNumber(chStruct.getDebezium_ts_ms() * 1000000 + sequenceNumber);
+            chStruct.setSequenceNumber(recordTs * 1000000 + sequenceNumber);
         }
     }
 }
