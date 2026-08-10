@@ -439,12 +439,8 @@ public class ClickHouseStruct {
             if (fieldNames.contains(SNAPSHOT)
                     && source.get(SNAPSHOT) != null
                     && source.get(SNAPSHOT) instanceof String) {
-                // Debezium emits the snapshot marker as an enum string, not a plain boolean:
-                // "true", "first", "first_in_data_collection", "last", "last_in_data_collection",
-                // "incremental" all denote a snapshot record, while "false" denotes streaming.
-                // Boolean.parseBoolean would incorrectly treat "first"/"last"/etc. as false.
-                String snapshotValue = (String) source.get(SNAPSHOT);
-                this.setSnapshot(!"false".equalsIgnoreCase(snapshotValue));
+                this.setSnapshot(Boolean.parseBoolean(
+                        (String) source.get(SNAPSHOT)));
             }
             if (fieldNames.contains(SERVER_ID)
                     && source.get(SERVER_ID) != null
@@ -550,49 +546,6 @@ public class ClickHouseStruct {
             return 0L;
         }
         return (Long) kafkaStruct.get(SinkRecordColumns.TS_MS);
-    }
-
-    /**
-     * Gets the SOURCE commit timestamp ({@code source.ts_ms}) from the change event.
-     *
-     * <p>Unlike {@link #getDebeziumTsFromChangeEvent} (which returns the envelope/processing
-     * timestamp assigned when the connector reads the event), this returns the time the change was
-     * committed at the source database. That value is identical every time Debezium re-delivers an
-     * event, so basing the ReplacingMergeTree {@code _version} on it keeps the effective ordering
-     * stable across at-least-once redelivery (a re-delivered DELETE can no longer out-rank a
-     * later, un-redelivered re-INSERT).
-     *
-     * @param changeEvent The change event.
-     * @return the source commit timestamp in ms; falls back to the envelope {@code ts_ms} (and
-     *         finally 0) when the nested {@code source} struct or field is unavailable
-     *         (e.g. some snapshot/heartbeat records).
-     */
-    public static Long getSourceTsFromChangeEvent(ChangeEvent<SourceRecord, SourceRecord> changeEvent) {
-        if (changeEvent == null || changeEvent.value() == null) {
-            return 0L;
-        }
-        SourceRecord srd = changeEvent.value();
-        Struct kafkaStruct = (Struct) srd.value();
-        if (kafkaStruct == null) {
-            return 0L;
-        }
-        if (kafkaStruct.schema() != null
-                && kafkaStruct.schema().field(SinkRecordColumns.SOURCE) != null) {
-            Object sourceObj = kafkaStruct.get(SinkRecordColumns.SOURCE);
-            if (sourceObj instanceof Struct) {
-                Struct source = (Struct) sourceObj;
-                if (source.schema() != null
-                        && source.schema().field(SinkRecordColumns.TS_MS) != null) {
-                    Object sourceTs = source.get(SinkRecordColumns.TS_MS);
-                    if (sourceTs instanceof Long) {
-                        return (Long) sourceTs;
-                    }
-                }
-            }
-        }
-        // Fall back to the envelope timestamp when the source struct/field is absent.
-        Object envelopeTs = kafkaStruct.get(SinkRecordColumns.TS_MS);
-        return envelopeTs instanceof Long ? (Long) envelopeTs : 0L;
     }
 
     /**
@@ -805,71 +758,16 @@ public class ClickHouseStruct {
      * @param useSnowflakeId Whether to use SnowFlakeId algorithm for version generation
      */
     public void calculateVersion(boolean useSnowflakeId) {
-        // Snapshot records carry a source clock (source.ts_ms) that MySQL emits in the server's
-        // local timezone, so it is NOT comparable to the real-UTC commit timestamps that streaming
-        // binlog events carry. For snapshots we anchor the version to debezium_ts_ms (the
-        // connector's System.currentTimeMillis() processing time) which is always real-UTC epoch
-        // millis. Streaming records keep using source.ts_ms for redelivery-stable ordering.
-        long effectiveTsMs = this.ts_ms;
-        if (this.snapshot && this.debezium_ts_ms > 0) {
-            effectiveTsMs = this.debezium_ts_ms;
-        }
-
-        if (effectiveTsMs > 0 && effectiveTsMs >= (1L << 42)) {
-            log.warn("effectiveTsMs={} exceeds 2^42 (~year 2109); version overflow possible", effectiveTsMs);
-        }
-
         if (this.gtid != UNINITIALIZED_VALUE) {
             if (useSnowflakeId) {
-                this.version = SnowFlakeId.generate(effectiveTsMs, this.gtid, false);
+                this.version = SnowFlakeId.generate(this.ts_ms, this.gtid, false);
             } else {
                 this.version = this.gtid;
             }
         } else if (this.sequenceNumber != UNINITIALIZED_VALUE) {
             this.version = this.sequenceNumber;
-        } else if (this.pos != null && this.pos > 0 && effectiveTsMs > 0) {
-            // Kafka Connect fallback for MySQL non-GTID when sequenceNumber is not set
-            // (the lightweight embedded connector sets sequenceNumber in its batch loop).
-            // Stays in the ts_ms * 1e6 magnitude family (~1.79e18) for rollback safety.
-            if (this.pos > 0xFFFFFFFFL) {
-                throw new IllegalStateException(
-                        "Binlog position " + this.pos + " exceeds 2^32; version encoding would silently truncate");
-            }
-            long fileNum = parseBinlogFileNumber(this.file);
-            long subMs = deriveSubMs(fileNum, this.pos);
-            this.version = effectiveTsMs * 1_000_000L + subMs;
         } else if (this.lsn != UNINITIALIZED_VALUE) {
             this.version = this.lsn;
         }
-    }
-
-    /**
-     * Parses the numeric suffix from a binlog filename (e.g. "binlog.000123" -> 123).
-     * Returns 0 on parse failure.
-     */
-    static long parseBinlogFileNumber(String file) {
-        if (file == null || file.isEmpty()) {
-            return 0;
-        }
-        int dotIdx = file.lastIndexOf('.');
-        if (dotIdx < 0 || dotIdx == file.length() - 1) {
-            return 0;
-        }
-        try {
-            return Long.parseLong(file.substring(dotIdx + 1));
-        } catch (NumberFormatException e) {
-            return 0;
-        }
-    }
-
-    /**
-     * Derives a sub-millisecond ordering value from (fileNumber, pos) that stays in [0, 999_999].
-     * The composite (fileNumber << 32 | pos) is globally monotonic across binlog rotations;
-     * reducing mod 1_000_000 preserves ordering for events within the same millisecond in the
-     * vast majority of cases (rotation and same-ms writes are anti-correlated).
-     */
-    static long deriveSubMs(long fileNumber, long pos) {
-        long composite = (fileNumber << 32) | (pos & 0xFFFFFFFFL);
-        return Long.remainderUnsigned(composite, 1_000_000L);
     }
 }

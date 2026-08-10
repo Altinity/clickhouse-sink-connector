@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db.batch;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -101,9 +102,8 @@ public class ReplicationHistoryHandler {
         String binlogRecordTimestamp = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
                 sourceTimeZone, serverTimeZone);
 
-        // Use the record's pre-calculated version (from calculateVersion()) to ensure
-        // consistency with the version domain used by the snapshot/insert path.
-        long version = record.getVersion();
+        // Generate unique version using snowflake algorithm
+        long version = SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
 
         // Get the primary key column name and its value from the record
         String primaryKeyColumnName = record.getPrimaryKey().get(0);
@@ -209,15 +209,6 @@ public class ReplicationHistoryHandler {
             Map<String, Integer> columnIndexMap,
             ClickHouseSinkConnectorConfig config,
             DBMetadata.TABLE_ENGINE engine, boolean isDelete ) throws Exception {
-
-        // Ensure the record has a properly calculated version before building query params.
-        // This guarantees the ReplicationHistoryHandler uses the same version formula
-        // (ts_ms * 1e6 + subMs for non-GTID) as the snapshot/insert path.
-        if (record.getVersion() == -1) {
-            boolean useSnowflakeId = config.getBoolean(
-                    ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString());
-            record.calculateVersion(useSnowflakeId);
-        }
 
         // Build query parameters from the record
         UpdateQueryParams params = buildUpdateQueryParams(record);

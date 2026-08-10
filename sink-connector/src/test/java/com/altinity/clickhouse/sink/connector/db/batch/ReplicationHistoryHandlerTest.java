@@ -109,7 +109,6 @@ public class ReplicationHistoryHandlerTest {
 
         // Test buildUpdateQueryParams
         ReplicationHistoryHandler handler = new ReplicationHistoryHandler(queryFormatter, null);
-        record.calculateVersion(true);
         ReplicationHistoryHandler.UpdateQueryParams params = handler.buildUpdateQueryParams(record);
 
         // Verify the params
