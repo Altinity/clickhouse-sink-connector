@@ -22,6 +22,8 @@ def create_table(connection, query):
         connection.commit()
     except Error as e:
         print(f"The error '{e}' occurred")
+    finally:
+        cursor.close()
 
 # Connection details - replace with your actual details
 host = "your_host"
