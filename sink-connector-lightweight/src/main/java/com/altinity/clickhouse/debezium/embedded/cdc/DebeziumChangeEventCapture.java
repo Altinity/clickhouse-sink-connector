@@ -227,6 +227,16 @@ public class DebeziumChangeEventCapture {
         } else {
             ensureIgnoreUnsupportedValuesParam(props, "offset.storage.jdbc.url");
             ensureIgnoreUnsupportedValuesParam(props, "schema.history.internal.jdbc.url");
+            // Only the V2 driver needs this. It returns a lazily-connected
+            // object for an unreachable server, which keeps Debezium's
+            // RetriableConnection on its UNBOUNDED statement-failure branch
+            // instead of its bounded reconnect branch, spinning without a
+            // delay. Route the two Debezium storage URLs through a driver
+            // that validates the connection before returning it, restoring
+            // the fail-fast behaviour the V1 driver has. The sink's own data
+            // path is deliberately left alone.
+            useValidatingDriver(props, "offset.storage.jdbc.url");
+            useValidatingDriver(props, "schema.history.internal.jdbc.url");
         }
 
         try {
@@ -504,6 +514,39 @@ public class DebeziumChangeEventCapture {
         }
         String separator = url.contains("?") ? "&" : "?";
         props.setProperty(propKey, url + separator + param);
+    }
+
+    /**
+     * Routes the ClickHouse JDBC URL under the given property key through
+     * {@link ValidatingClickHouseDriver}, so that a connection is only handed
+     * to Debezium once the server has been proven reachable.
+     * <p>
+     * Without this, the V2 driver's lazily-connected object keeps Debezium's
+     * {@code RetriableConnection} on its unbounded, sleepless
+     * statement-failure branch: it never reaches the reconnect branch that
+     * honours {@code retry.max.attempts} / {@code wait.retry.delay.ms}.
+     * <p>
+     * No-op when the URL is absent or is not a ClickHouse URL.
+     *
+     * @param props   the Debezium properties, modified in place.
+     * @param propKey the property holding the JDBC URL.
+     */
+    static void useValidatingDriver(Properties props, String propKey) {
+        String url = props.getProperty(propKey);
+        String checked = ValidatingClickHouseDriver.toCheckedUrl(url);
+        if (checked == null || checked.equals(url)) {
+            return;
+        }
+        try {
+            ValidatingClickHouseDriver.register();
+        } catch (SQLException e) {
+            // Leave the URL on the stock driver rather than producing one no
+            // registered driver accepts.
+            log.error("Could not register the validating ClickHouse driver; "
+                    + "leaving {} on the default driver", propKey, e);
+            return;
+        }
+        props.setProperty(propKey, checked);
     }
 
     /**
