@@ -271,7 +271,7 @@ public class BaseDbWriter {
      * @param connection the connection to inspect; may be null.
      * @return true when a replacement connection should be obtained.
      */
-    static boolean isUnusable(Connection connection) {
+    public static boolean isUnusable(Connection connection) {
         if (connection == null) {
             return true;
         }
