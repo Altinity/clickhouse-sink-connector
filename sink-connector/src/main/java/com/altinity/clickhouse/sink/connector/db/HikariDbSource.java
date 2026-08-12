@@ -178,10 +178,22 @@ public class HikariDbSource {
      * Pools are keyed by database name alone, but the same database name can be
      * requested against different servers within one JVM (tests using
      * throwaway containers, a reconfigured endpoint, a failover). Reusing a
-     * pool across servers sends queries to the wrong host, so the target URL is
-     * compared before a cached pool is reused. When either URL is unknown the
+     * pool across servers sends queries to the wrong host, so the target SERVER
+     * is compared before a cached pool is reused. When either URL is unknown the
      * pool is considered a match, preserving the previous behavior rather than
      * churning pools on an unexpected data-source type.
+     * <p>
+     * Only the server endpoint (host:port) participates in the comparison — NOT
+     * the database path or the query string. Callers legitimately create a pool
+     * under one pool key while pointing the URL at another database: e.g.
+     * {@code createConnection(".../employees", ..., databaseName="system")} in
+     * ITCommon.getDBWriter and ClickHouseBatchRunnable. Comparing whole URLs
+     * treats that as a server change, closes the live pool on every call, and
+     * the rebuilt pool then carries the caller's database path — so a pool
+     * registered as 'system' silently starts resolving unqualified names
+     * against 'employees'. That surfaced as
+     * "Code: 81 ... Database employees does not exist" in
+     * DatabaseOverrideInitialIT and ~40 sibling ITs.
      *
      * @param cached    the pool already cached for this database name.
      * @param requested the data source the caller wants a pool for.
@@ -194,7 +206,48 @@ public class HikariDbSource {
         if (cachedUrl == null || requestedUrl == null) {
             return true;
         }
-        return cachedUrl.equals(requestedUrl);
+        String cachedServer = serverEndpoint(cachedUrl);
+        String requestedServer = serverEndpoint(requestedUrl);
+        if (cachedServer == null || requestedServer == null) {
+            return true;
+        }
+        return cachedServer.equals(requestedServer);
+    }
+
+    /**
+     * Extracts the {@code host:port} endpoint from a ClickHouse JDBC URL,
+     * discarding the database path and any query parameters.
+     * <p>
+     * Handles the shapes the connector emits, e.g.
+     * {@code jdbc:clickhouse://host:8123/db?k=v},
+     * {@code jdbc:ch://host:8123/db} and
+     * {@code jdbc:clickhouse-checked://host:8123/db}. Returns null when the
+     * endpoint cannot be determined, which callers treat as "assume a match"
+     * so an unparseable URL never churns a working pool.
+     *
+     * @param url the JDBC URL to inspect.
+     * @return the {@code host:port} portion, or null.
+     */
+    static String serverEndpoint(String url) {
+        if (url == null) {
+            return null;
+        }
+        int schemeEnd = url.indexOf("//");
+        if (schemeEnd < 0) {
+            return null;
+        }
+        String rest = url.substring(schemeEnd + 2);
+        // The authority ends at the first '/', '?' or '#'.
+        int end = rest.length();
+        for (int i = 0; i < rest.length(); i++) {
+            char c = rest.charAt(i);
+            if (c == '/' || c == '?' || c == '#') {
+                end = i;
+                break;
+            }
+        }
+        String authority = rest.substring(0, end);
+        return authority.isEmpty() ? null : authority;
     }
 
     /**
