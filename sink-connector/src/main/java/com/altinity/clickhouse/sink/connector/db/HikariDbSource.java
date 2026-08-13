@@ -27,20 +27,25 @@ import java.util.Map;
 public class HikariDbSource {
 
     /**
-     * Map of database name to HikariDataSource instance.
+     * Map of pool key to HikariDataSource instance.
+     * <p>
+     * The key is {@code host:port|database} — see {@link #poolKey}. Keying by
+     * database name ALONE is not enough: more than one server can be addressed
+     * under the same database name at the same time, and a name-keyed cache
+     * holds only one of them, so each caller destroys the other's pool.
+     * Including the server in the key lets concurrent targets coexist.
      */
     private static Map<String, HikariDataSource> instance = new HashMap<>();
 
     /**
-     * Map of database name to the {@code host:port} endpoint most recently
-     * requested for it.
+     * Map of database name to the pool key most recently requested for it.
      * <p>
      * {@link #getInstance} is the only place a caller states which server it
      * wants; {@link #initiateNewConnectionIfClosed} receives nothing but a
-     * database name. Recording the requested endpoint here lets the retry path
-     * recognise a pool that outlived the server it was built for.
+     * database name. This pointer lets that method resolve the pool the most
+     * recent caller actually asked for.
      */
-    private static Map<String, String> requestedEndpoint = new HashMap<>();
+    private static Map<String, String> currentKey = new HashMap<>();
 
     /**
      * Map of database name to Connection.
@@ -90,13 +95,13 @@ public class HikariDbSource {
         if (disabled) {
             return null;
         }
-        String poolKey = databaseName;
-        HikariDataSource dbSource = instance.get(databaseName);
+        String key = currentKey.get(databaseName);
+        HikariDataSource dbSource = key == null ? null : instance.get(key);
         if (dbSource == null) {
-            // No dedicated pool for this database; fall back to the system pool
-            // which is always seeded first by BaseDbWriter.createConnection.
-            poolKey = BaseDbWriter.SYSTEM_DB;
-            dbSource = instance.get(BaseDbWriter.SYSTEM_DB);
+            // No pool for this database; fall back to the system pool, which is
+            // always seeded first by BaseDbWriter.createConnection.
+            key = currentKey.get(BaseDbWriter.SYSTEM_DB);
+            dbSource = key == null ? null : instance.get(key);
             if (dbSource == null) {
                 // Neither a dedicated pool nor the system fallback exists. This
                 // happens when the initial connection to ClickHouse failed, so no
@@ -113,33 +118,9 @@ public class HikariDbSource {
             // A pool that has been shut down can never hand out a usable
             // connection again; every getConnection() on it throws. Drop it so
             // the caller's retry can rebuild one instead of failing forever.
-            dropPool(dbSource);
+            dropPool(key);
             throw new SQLException(
                     "Connection pool is closed for database: " + databaseName);
-        }
-        String staleEndpoint = supersededEndpoint(poolKey, dbSource);
-        if (staleEndpoint != null) {
-            // An OPEN pool can still be useless: it was built for a server
-            // that is no longer the one being addressed (a restarted container
-            // on a new port, a failover, a reconfigured endpoint). Every
-            // connection it hands out targets the dead endpoint and fails with
-            // "Connect to http://<old-host:port> failed: Connection refused".
-            //
-            // getInstance() already refuses to reuse such a pool, but this
-            // method is the RETRY path -- DBMetadata's executeSystemQuery and
-            // getColumnsDataTypesForTable call it after a query fails -- and it
-            // only ever saw a database name, so it kept recycling the dead pool
-            // until the retry budget ran out. Drop it here too, so the retry
-            // rebuilds against the current endpoint instead of re-failing
-            // identically.
-            log.warn("Dropping pooled connection for database '{}': it was created "
-                    + "for a different server ({} != {})", poolKey,
-                    staleEndpoint, requestedEndpoint.get(poolKey));
-            closeQuietly(dbSource, poolKey);
-            dropPool(dbSource);
-            throw new SQLException(
-                    "Connection pool targets a superseded server for database: "
-                            + databaseName);
         }
         HikariDbSource.printConnectionInfo();
         return dbSource.getConnection();
@@ -164,86 +145,58 @@ public class HikariDbSource {
         disabled = config.getBoolean(
                 ClickHouseSinkConnectorConfigVariables
                         .CONNECTION_POOL_DISABLE.toString());
-        // Record the endpoint the caller asked for BEFORE any early return, so
-        // the retry path (initiateNewConnectionIfClosed, which is given only a
-        // database name) can tell whether a cached pool still targets it.
-        String wantedEndpoint = dataSource == null
-                ? null : serverEndpoint(dataSource.getJdbcUrl());
-        if (wantedEndpoint != null) {
-            requestedEndpoint.put(databaseName, wantedEndpoint);
-        }
-        HikariDataSource cached = instance.get(databaseName);
-        if (cached != null && servesSameServer(cached, dataSource)) {
+        // The pool is identified by server AND database, so a request for a
+        // different server does not disturb the pool already serving this
+        // database name on another server. Record which key this database name
+        // most recently resolved to, for the retry path that only gets a name.
+        String key = poolKey(
+                dataSource == null ? null : dataSource.getJdbcUrl(), databaseName);
+        currentKey.put(databaseName, key);
+
+        HikariDataSource cached = instance.get(key);
+        if (cached != null && !cached.isClosed()) {
             return cached;
-        }
-        if (cached != null) {
-            // The cached pool points at a DIFFERENT ClickHouse server than the
-            // caller asked for. Handing it back silently routes queries to the
-            // wrong (or a no-longer-running) server; the symptom is
-            // "Connect to http://<other-host> failed: Connection refused" from
-            // a caller that supplied a perfectly good URL. Replace it.
-            log.warn("Replacing pooled connection for database '{}': it was created for a "
-                    + "different server ({} != {})", databaseName,
-                    poolTargetUrl(cached), dataSource.getJdbcUrl());
-            closeQuietly(cached, databaseName);
         }
         HikariDataSource hikariDataSource = createConnectionPool(
                 dataSource, databaseName, config, userName, password);
-        instance.put(databaseName, hikariDataSource);
+        instance.put(key, hikariDataSource);
         return hikariDataSource;
     }
 
     /**
-     * Returns the endpoint a cached pool was built for when that endpoint has
-     * been superseded by a later request for the same database, or null when
-     * the pool is still current.
+     * Builds the cache key identifying a pool: the target server endpoint and
+     * the database name.
      * <p>
-     * Returns null whenever the answer cannot be established -- no endpoint has
-     * been recorded for this database, or either URL is unparseable -- so an
-     * unknown state never discards a working pool. This mirrors the
-     * "assume a match" stance of {@link #servesSameServer}.
+     * Keying by database name alone cannot represent the state that actually
+     * occurs — two servers addressed under the same database name at the same
+     * time. With one slot per name the two requests evict each other in turn,
+     * and each eviction closes a pool another live caller is still using, so
+     * both sides see
+     * "Connect to http://&lt;the other server&gt; failed: Connection refused"
+     * while both servers are up. Giving each (server, database) pair its own
+     * slot lets them coexist, and makes eviction-on-mismatch unnecessary.
+     * <p>
+     * When the endpoint cannot be determined the database name is used alone,
+     * preserving the previous behaviour for URL shapes this cannot parse.
      *
-     * @param databaseName the pool key.
-     * @param pool         the cached pool.
-     * @return the superseded {@code host:port}, or null when still current.
+     * @param jdbcUrl      the target JDBC URL; may be null.
+     * @param databaseName the database name.
+     * @return the cache key.
      */
-    static String supersededEndpoint(String databaseName, HikariDataSource pool) {
-        String wanted = requestedEndpoint.get(databaseName);
-        if (wanted == null) {
-            return null;
-        }
-        String actual = serverEndpoint(poolTargetUrl(pool));
-        if (actual == null || actual.equals(wanted)) {
-            return null;
-        }
-        return actual;
+    static String poolKey(String jdbcUrl, String databaseName) {
+        String endpoint = serverEndpoint(jdbcUrl);
+        return endpoint == null ? databaseName : endpoint + "|" + databaseName;
     }
 
     /**
-     * Closes a pool, logging rather than propagating any failure.
-     * <p>
-     * The caller is discarding this pool either way; a close failure must not
-     * mask the condition that prompted the discard.
+     * Removes a pool from the cache, along with any database name still
+     * pointing at it.
      *
-     * @param pool         the pool to close.
-     * @param databaseName the pool key, for logging.
+     * @param key the cache key to forget.
      */
-    private static void closeQuietly(HikariDataSource pool, String databaseName) {
-        try {
-            pool.close();
-        } catch (Exception e) {
-            log.warn("Error closing the superseded connection pool for database '{}'",
-                    databaseName, e);
-        }
-    }
-
-    /**
-     * Removes every mapping to the given pool from the cache.
-     *
-     * @param pool the pool to forget.
-     */
-    private static void dropPool(HikariDataSource pool) {
-        instance.values().remove(pool);
+    private static void dropPool(String key) {
+        instance.remove(key);
+        currentKey.values().removeIf(k -> k.equals(key));
     }
 
     /**
@@ -268,25 +221,21 @@ public class HikariDbSource {
      * Returns true when the cached pool already targets the same server as the
      * requested data source.
      * <p>
-     * Pools are keyed by database name alone, but the same database name can be
-     * requested against different servers within one JVM (tests using
-     * throwaway containers, a reconfigured endpoint, a failover). Reusing a
-     * pool across servers sends queries to the wrong host, so the target SERVER
-     * is compared before a cached pool is reused. When either URL is unknown the
-     * pool is considered a match, preserving the previous behavior rather than
-     * churning pools on an unexpected data-source type.
+     * Retained for callers that need to compare a pool against a data source
+     * directly. {@link #getInstance} no longer needs it: the server endpoint is
+     * part of the cache key (see {@link #poolKey}), so a lookup can only ever
+     * return a pool for the requested server.
      * <p>
      * Only the server endpoint (host:port) participates in the comparison — NOT
      * the database path or the query string. Callers legitimately create a pool
      * under one pool key while pointing the URL at another database: e.g.
      * {@code createConnection(".../employees", ..., databaseName="system")} in
-     * ITCommon.getDBWriter and ClickHouseBatchRunnable. Comparing whole URLs
-     * treats that as a server change, closes the live pool on every call, and
-     * the rebuilt pool then carries the caller's database path — so a pool
-     * registered as 'system' silently starts resolving unqualified names
-     * against 'employees'. That surfaced as
-     * "Code: 81 ... Database employees does not exist" in
-     * DatabaseOverrideInitialIT and ~40 sibling ITs.
+     * ITCommon.getDBWriter and ClickHouseBatchRunnable. Treating that as a
+     * server change would make a pool registered as 'system' resolve
+     * unqualified names against 'employees' — the
+     * "Code: 81 ... Database employees does not exist" failures in
+     * DatabaseOverrideInitialIT and ~40 sibling ITs. When either URL is
+     * unknown the pool is considered a match.
      *
      * @param cached    the pool already cached for this database name.
      * @param requested the data source the caller wants a pool for.
@@ -344,13 +293,15 @@ public class HikariDbSource {
     }
 
     /**
-     * Returns the HikariDataSource instance for the given database.
+     * Returns the pool currently serving the given database, or null when
+     * there is none.
      *
      * @param databaseName name of the database.
-     * @return the HikariDataSource instance.
+     * @return the HikariDataSource instance, or null.
      */
     public static HikariDataSource getInstance(String databaseName) {
-        return instance.get(databaseName);
+        String key = currentKey.get(databaseName);
+        return key == null ? null : instance.get(key);
     }
 
     /**
@@ -431,9 +382,8 @@ public class HikariDbSource {
             }
             instance.clear();
         }
-        // The recorded endpoints describe pools that no longer exist; keeping
-        // them would make a rebuilt pool look superseded on its first use.
-        requestedEndpoint.clear();
+        // These point at pools that no longer exist.
+        currentKey.clear();
     }
 
     /**
@@ -442,9 +392,10 @@ public class HikariDbSource {
      * @param databaseName name of the database.
      */
     public static void closeDatabaseConnection(String databaseName) {
-        if (instance.containsKey(databaseName)) {
+        HikariDataSource pool = getInstance(databaseName);
+        if (pool != null) {
             try {
-                instance.get(databaseName).close();
+                pool.close();
             } catch (Exception e) {
                 e.printStackTrace();
                 log.error("Error closing database connection pool", e);
