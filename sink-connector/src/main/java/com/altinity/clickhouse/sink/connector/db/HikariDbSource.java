@@ -123,6 +123,15 @@ public class HikariDbSource {
             return null;
         }
         String key = resolveKey(databaseName, jdbcUrl);
+        String endpoint = endpointOfKey(key);
+        if (endpoint != null && deadEndpoints.contains(endpoint)) {
+            // This server was reachable and is not any more. Rebuilding a pool
+            // for it cannot help, and retrying at full speed is what turned a
+            // torn-down container into a permanent hot loop. Fail terminally.
+            throw new SQLException(
+                    "ClickHouse server " + endpoint + " is no longer reachable; "
+                            + "not retrying for database: " + databaseName);
+        }
         HikariDataSource dbSource = key == null ? null : instance.get(key);
         if (dbSource == null) {
             // No pool for this database; fall back to the system pool on the
@@ -152,7 +161,148 @@ public class HikariDbSource {
                     "Connection pool is closed for database: " + databaseName);
         }
         HikariDbSource.printConnectionInfo();
+        // Check that the server is actually accepting connections before
+        // handing back a handle. Acquiring one is not evidence that it is:
+        // the V2 driver connects lazily, so the pool returns a healthy-looking
+        // object for a server that is not listening and the failure only
+        // surfaces later at query time. Verified by stopping a live server and
+        // acquiring from its pool -- four consecutive acquisitions all
+        // succeeded. That is why this is a socket probe and not an inspection
+        // of the acquisition's exception: there is no exception to inspect.
+        retireIfServerGone(key);
+        if (isRetired(key)) {
+            throw new SQLException(
+                    "ClickHouse server " + endpointOfKey(key) + " is no longer "
+                            + "reachable; not retrying for database: " + databaseName);
+        }
         return dbSource.getConnection();
+    }
+
+    /**
+     * Endpoints an acquisition has already succeeded against. An endpoint that
+     * has never worked is not evidence of a server that went away.
+     */
+    private static final java.util.Set<String> liveEndpoints =
+            new java.util.HashSet<>();
+
+    /**
+     * Endpoints known to be gone. Cleared per endpoint by {@link #getInstance}.
+     */
+    private static final java.util.Set<String> deadEndpoints =
+            new java.util.HashSet<>();
+
+    /**
+     * Retires every pool for an endpoint once that server has gone for good.
+     * <p>
+     * Pinning a caller to its own server is required for correctness --
+     * resolving anywhere else silently answers from the wrong server. But
+     * pinning alone has no termination condition: an executor whose server is
+     * permanently gone (a torn-down container, a decommissioned host) holds a
+     * pool nothing evicts, so every retry hands back a fresh handle to the
+     * dead endpoint and fails again, forever. Observed as one dead port
+     * absorbing 19,032 connection-refused traces in 19 minutes, about 16 per
+     * second, for the rest of the run.
+     * <p>
+     * Reachability is settled with a socket probe rather than by inspecting a
+     * failure, because at this layer there is no failure to inspect: the V2
+     * driver connects lazily, so the pool keeps returning healthy-looking
+     * connections for a server that is not listening -- verified by stopping a
+     * live server, after which four consecutive acquisitions all succeeded and
+     * only a query reported "Connection refused". The probe is the only signal
+     * available here that distinguishes a dead server from a slow query.
+     * <p>
+     * Only an endpoint that has been registered is retired, and only once: a
+     * server that has never come up is left to the ordinary startup retries.
+     * {@link #getInstance} clears the mark, so a restarted or failed-back
+     * server recovers on its next registration.
+     *
+     * @param key the cache key of the pool being used.
+     */
+    private static void retireIfServerGone(String key) {
+        String endpoint = endpointOfKey(key);
+        if (endpoint == null || !liveEndpoints.contains(endpoint)
+                || isReachable(endpoint)) {
+            return;
+        }
+        log.warn("Retiring connection pools for '{}': the server is no longer "
+                + "reachable. Further requests fail fast until it is "
+                + "registered again.", endpoint);
+        liveEndpoints.remove(endpoint);
+        deadEndpoints.add(endpoint);
+        for (String pooled : new java.util.ArrayList<>(instance.keySet())) {
+            if (endpoint.equals(endpointOfKey(pooled))) {
+                HikariDataSource pool = instance.get(pooled);
+                try {
+                    pool.close();
+                } catch (Exception ce) {
+                    log.warn("Error closing the retired pool '{}'", pooled, ce);
+                }
+                dropPool(pooled);
+            }
+        }
+    }
+
+    /**
+     * Returns true when this endpoint has been retired as unreachable.
+     *
+     * @param key the cache key to test.
+     * @return true when the endpoint is retired.
+     */
+    private static boolean isRetired(String key) {
+        String endpoint = endpointOfKey(key);
+        return endpoint != null && deadEndpoints.contains(endpoint);
+    }
+
+    /**
+     * How long to wait for a server to accept a TCP connection before treating
+     * it as gone. Short: this runs on the retry path, and the question is only
+     * whether anything is listening at all.
+     */
+    private static final int REACHABILITY_TIMEOUT_MS = 2000;
+
+    /**
+     * Returns true when something is accepting connections at this endpoint.
+     * <p>
+     * Any failure to parse the endpoint yields true, so an address shape this
+     * cannot read never causes a working pool to be retired.
+     *
+     * @param endpoint the {@code host:port} to probe.
+     * @return true when the endpoint accepts a connection.
+     */
+    static boolean isReachable(String endpoint) {
+        int sep = endpoint.lastIndexOf(':');
+        if (sep < 0) {
+            return true;
+        }
+        int port;
+        try {
+            port = Integer.parseInt(endpoint.substring(sep + 1));
+        } catch (NumberFormatException e) {
+            return true;
+        }
+        String host = endpoint.substring(0, sep);
+        try (java.net.Socket socket = new java.net.Socket()) {
+            socket.connect(new java.net.InetSocketAddress(host, port),
+                    REACHABILITY_TIMEOUT_MS);
+            return true;
+        } catch (Exception e) {
+            log.debug("Endpoint {} did not accept a connection", endpoint, e);
+            return false;
+        }
+    }
+
+    /**
+     * Extracts the endpoint from a cache key produced by {@link #poolKey}.
+     *
+     * @param key the cache key; may be null.
+     * @return the {@code host:port} portion, or null when the key carries none.
+     */
+    static String endpointOfKey(String key) {
+        if (key == null) {
+            return null;
+        }
+        int sep = key.indexOf('|');
+        return sep < 0 ? null : key.substring(0, sep);
     }
 
     /**
@@ -221,6 +371,17 @@ public class HikariDbSource {
         String key = poolKey(
                 dataSource == null ? null : dataSource.getJdbcUrl(), databaseName);
         currentKey.put(databaseName, key);
+        // Registering a server is the caller's statement that it is expected
+        // to work. That makes it eligible for retirement if it later stops
+        // answering, and clears any previous retirement -- which is how a
+        // restarted container or a failed-back host recovers, and why the
+        // startup retry loop, which re-registers on every attempt, still
+        // waits for a server that has not come up yet.
+        String registered = endpointOfKey(key);
+        if (registered != null) {
+            liveEndpoints.add(registered);
+            deadEndpoints.remove(registered);
+        }
 
         HikariDataSource cached = instance.get(key);
         if (cached != null && !cached.isClosed()) {
@@ -453,6 +614,10 @@ public class HikariDbSource {
         }
         // These point at pools that no longer exist.
         currentKey.clear();
+        // Reachability is a property of the pools just discarded, not of the
+        // next set: a fresh start must not inherit a retirement.
+        liveEndpoints.clear();
+        deadEndpoints.clear();
     }
 
     /**

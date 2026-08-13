@@ -184,4 +184,70 @@ public class ConcurrentServerPoolLiveIT {
         Assert.assertEquals("exactly one pool per server, no churn",
                 2, staticMap("instance").size());
     }
+
+    /**
+     * The termination guarantee: when a server goes away for good, the retry
+     * path must stop, not spin.
+     * <p>
+     * Pinning a caller to its own server is required so it never answers from
+     * the wrong one, but on its own it has no end state. An executor whose
+     * container has been torn down keeps a pool nothing evicts, and every
+     * retry re-acquires a connection to the dead endpoint and fails again. In
+     * CI a single dead port absorbed 19,032 connection-refused traces in 19
+     * minutes -- about 16 per second -- for the remainder of the run, and the
+     * job log grew from 46 MB to 355 MB.
+     * <p>
+     * Server B is stopped mid-test, so this exercises a real disappearance
+     * rather than a simulated one. Requires CH_KILLABLE=&lt;podman container
+     * name&gt; naming a container the test may stop.
+     */
+    @Test
+    @EnabledIfEnvironmentVariable(named = "CH_KILLABLE", matches = ".+")
+    public void testRetriesTerminateWhenAServerDisappears() throws Exception {
+        BaseDbWriter writerA = writerFor("CH_LIVE_A");
+        mark(writerA.getConnection(), "marker_a");
+        BaseDbWriter writerB = writerFor("CH_LIVE_B");
+        mark(writerB.getConnection(), "marker_b");
+
+        // Server B goes away, exactly as a torn-down test container does.
+        Process kill = new ProcessBuilder(
+                "podman", "stop", "-t", "1", System.getenv("CH_KILLABLE"))
+                .redirectErrorStream(true).start();
+        Assert.assertEquals("could not stop the container", 0, kill.waitFor());
+
+        writerB.conn = null;
+
+        // Retry the way DBMetadata does. Every attempt must fail, and the
+        // failures must become terminal rather than continuing to dial out.
+        int attempts = 0;
+        int refusals = 0;
+        boolean terminal = false;
+        for (int i = 0; i < 20; i++) {
+            attempts++;
+            try {
+                Connection c = HikariDbSource.initiateNewConnectionIfClosed(
+                        DB, BaseDbWriter.getConnectionString(
+                                hostOf("CH_LIVE_B"), portOf("CH_LIVE_B"), DB));
+                if (c != null && sees(c, "marker_b")) {
+                    Assert.fail("the stopped server answered on attempt " + i);
+                }
+            } catch (Exception e) {
+                String msg = String.valueOf(e.getMessage());
+                if (msg.contains("no longer reachable")) {
+                    terminal = true;
+                    break;
+                }
+                refusals++;
+            }
+        }
+        Assert.assertTrue("the dead server must be retired rather than dialled "
+                + "forever; " + attempts + " attempts, " + refusals
+                + " reached the network", terminal);
+        Assert.assertTrue("retirement must happen promptly, not after a long "
+                + "spin; took " + attempts + " attempts", attempts <= 3);
+
+        // The surviving server must be completely unaffected.
+        Assert.assertTrue("writer A must still work after B was retired",
+                sees(writerA.getConnection(), "marker_a"));
+    }
 }
