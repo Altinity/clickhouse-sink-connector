@@ -61,11 +61,8 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         Properties props = getDebeziumProperties();
         executorService.execute(() -> {
             try {
-
-                props.setProperty("database.include.list", "datatypes");
-
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService() , false);
+                engine.get().setup(props, new SourceRecordParserService() , false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -77,11 +74,11 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
         DBMetadata metadata = new DBMetadata(props);
         Connection conn = writer.getConnection();
-        Map<String, String> decimalTable = metadata.getColumnsDataTypesForTable(conn, "numeric_types_DECIMAL_65_30", "datatypes");
-        Map<String, String> dateTimeTable6 = metadata.getColumnsDataTypesForTable(conn, "temporal_types_DATETIME6", "datatypes");
-        Map<String, String> dateTimeTable2 = metadata.getColumnsDataTypesForTable(conn, "temporal_types_DATETIME2", "datatypes");
+        Map<String, String> decimalTable = metadata.getColumnsDataTypesForTable(conn, "numeric_types_DECIMAL_65_30", "employees");
+        Map<String, String> dateTimeTable6 = metadata.getColumnsDataTypesForTable(conn, "temporal_types_DATETIME6", "employees");
+        Map<String, String> dateTimeTable2 = metadata.getColumnsDataTypesForTable(conn, "temporal_types_DATETIME2", "employees");
 
-        Map<String, String> timestampTable = metadata.getColumnsDataTypesForTable(conn, "temporal_types_TIMESTAMP6", "datatypes");
+        Map<String, String> timestampTable = metadata.getColumnsDataTypesForTable(conn, "temporal_types_TIMESTAMP6", "employees");
 
         // Validate all decimal records.
         Assert.assertTrue(decimalTable.get("Type").equalsIgnoreCase("String"));
