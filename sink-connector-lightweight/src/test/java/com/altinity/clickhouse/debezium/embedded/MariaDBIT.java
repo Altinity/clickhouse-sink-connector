@@ -6,6 +6,7 @@ import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
@@ -13,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MariaDBContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
+import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 import org.testcontainers.utility.MountableFile;
@@ -35,15 +37,21 @@ public class MariaDBIT
 {
 
     protected MariaDBContainer mySqlContainer;
-    static ClickHouseContainer clickHouseContainer;
+
+    @Container
+    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
+            .asCompatibleSubstituteFor("clickhouse"))
+            .withInitScript("init_clickhouse_it.sql")
+            .withUsername("ch_user")
+            .withPassword("password")
+            .withExposedPorts(8123);
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
         mySqlContainer = (MariaDBContainer) new MariaDBContainer()
                 .withDatabaseName("employees").withUsername("adminuser").withPassword("adminpass")
-                // .withInitScript("data_types.sql")
                 .withCopyFileToContainer(
-                MountableFile.forClasspathResource("my.cnf"), // Adjust this to your resource file
+                MountableFile.forClasspathResource("my.cnf"),
                 "/etc/mysql/my.cnf"
         )
                 .withExtraHost("mysql-server", "0.0.0.0")
@@ -54,15 +62,11 @@ public class MariaDBIT
         Thread.sleep(15000);
     }
 
-    static {
-        clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
-                .asCompatibleSubstituteFor("clickhouse"))
-                .withInitScript("init_clickhouse_it.sql")
-                .withUsername("ch_user")
-                .withPassword("password")
-                .withExposedPorts(8123);
-
-        clickHouseContainer.start();
+    @AfterEach
+    public void stopContainers() {
+        if (mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();
+        }
     }
 
     @DisplayName("Integration Test that validates replication of MariaDB databases in single.threaded mode")
@@ -70,82 +74,71 @@ public class MariaDBIT
     public void testMultipleDatabases() throws Exception {
 
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
-
-        Properties props = ITCommon.getDebeziumProperties(mySqlContainer.getHost(),
-                String.valueOf(mySqlContainer.getFirstMappedPort()), clickHouseContainer);
-        // Set the list of databases captured.
-        props.put("database.whitelist", "employees,test_db,test_db2");
-        props.put("database.include.list", "employees,test_db,test_db2");
-        props.put("single.threaded", true);
-
         ExecutorService executorService = Executors.newFixedThreadPool(1);
-        executorService.execute(() -> {
-            try {
 
-                engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(props, new SourceRecordParserService(),false);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+        try {
+            Properties props = ITCommon.getDebeziumProperties(mySqlContainer.getHost(),
+                    String.valueOf(mySqlContainer.getFirstMappedPort()), clickHouseContainer);
+            props.put("database.whitelist", "employees,test_db,test_db2");
+            props.put("database.include.list", "employees,test_db,test_db2");
+            props.put("single.threaded", true);
+
+            executorService.execute(() -> {
+                try {
+                    engine.set(new DebeziumChangeEventCapture());
+                    engine.get().setup(props, new SourceRecordParserService(), false);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            Thread.sleep(30000);
+            Connection conn = ITCommon.connectToMySQL(mySqlContainer.getHost(), String.valueOf(mySqlContainer.getFirstMappedPort()),
+                    mySqlContainer.getDatabaseName(), mySqlContainer.getUsername(), mySqlContainer.getPassword());
+
+            Thread.sleep(5000);
+            conn.createStatement().execute("CREATE TABLE employees.audience ("
+                    + "id int unsigned NOT NULL AUTO_INCREMENT, "
+                    + "client_id int unsigned NOT NULL, "
+                    + "list_id int unsigned NOT NULL, "
+                    + "status tinyint NOT NULL, "
+                    + "email varchar(200) CHARACTER SET utf16 COLLATE utf16_unicode_ci NOT NULL, "
+                    + "custom_properties JSON, "
+                    + "source tinyint unsigned NOT NULL DEFAULT '0', "
+                    + "created_date datetime DEFAULT NULL, "
+                    + "modified_date datetime DEFAULT NULL, "
+                    + "property_update_date datetime DEFAULT NULL, "
+                    + "PRIMARY KEY (id), "
+                    + "KEY cid_email (client_id,email), "
+                    + "KEY cid (client_id,list_id,status), "
+                    + "KEY contact_created (created_date), "
+                    + "KEY idx_email (email)"
+                    + ") ENGINE=InnoDB CHARSET=utf16 COLLATE=utf16_unicode_ci");
+
+            Thread.sleep(5000);
+            conn.createStatement().execute("INSERT INTO employees.audience (client_id, list_id, status, email, custom_properties, source, created_date, modified_date, property_update_date)" +
+                    " VALUES (1, 100, 1, 'example@example.com', '{\"name\": \"John\", \"age\": 30}', 1, '2024-05-13 12:00:00', '2024-05-13 12:00:00', '2024-05-13 12:00:00')");
+
+            Thread.sleep(10000);
+            conn.close();
+
+            BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+
+            ResultSet rs = ITCommon.executeQueryWithResultSet("SELECT * FROM employees.audience", writer.getConnection());
+            boolean recordFound = false;
+            while (rs.next()) {
+                recordFound = true;
+                assert rs.getInt("id") == 1;
             }
-        });
+            Assert.assertTrue(recordFound);
 
-        Thread.sleep(30000);
-        Connection conn = ITCommon.connectToMySQL(mySqlContainer.getHost(), String.valueOf(mySqlContainer.getFirstMappedPort()),
-                mySqlContainer.getDatabaseName(), mySqlContainer.getUsername(), mySqlContainer.getPassword());
-
-        //conn.createStatement().execute("CREATE DATABASE test_db2");
-        Thread.sleep(5000);
-        // Create a new database
-        conn.createStatement().execute("CREATE TABLE employees.audience ("
-                + "id int unsigned NOT NULL AUTO_INCREMENT, "
-                + "client_id int unsigned NOT NULL, "
-                + "list_id int unsigned NOT NULL, "
-                + "status tinyint NOT NULL, "
-                + "email varchar(200) CHARACTER SET utf16 COLLATE utf16_unicode_ci NOT NULL, "
-                + "custom_properties JSON, "
-                + "source tinyint unsigned NOT NULL DEFAULT '0', "
-                + "created_date datetime DEFAULT NULL, "
-                + "modified_date datetime DEFAULT NULL, "
-                + "property_update_date datetime DEFAULT NULL, "
-                + "PRIMARY KEY (id), "
-                + "KEY cid_email (client_id,email), "
-                + "KEY cid (client_id,list_id,status), "
-                + "KEY contact_created (created_date), "
-                + "KEY idx_email (email)"
-                + ") ENGINE=InnoDB CHARSET=utf16 COLLATE=utf16_unicode_ci");
-
-
-        Thread.sleep(5000);
-        // Insert a new row.
-        conn.createStatement().execute("INSERT INTO employees.audience (client_id, list_id, status, email, custom_properties, source, created_date, modified_date, property_update_date)" +
-                " VALUES (1, 100, 1, 'example@example.com', '{\"name\": \"John\", \"age\": 30}', 1, '2024-05-13 12:00:00', '2024-05-13 12:00:00', '2024-05-13 12:00:00')");
-
-        Thread.sleep(10000);
-        conn.close();
-
-        // Create connection to clickhouse and validate if the tables are replicated.
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-
-        ResultSet rs = ITCommon.executeQueryWithResultSet("SELECT * FROM employees.audience", writer.getConnection());
-        // Validate the data
-        boolean recordFound = false;
-        while(rs.next()) {
-            recordFound = true;
-            assert rs.getInt("id") == 1;
-            //assert rs.getString("name").equalsIgnoreCase("test");
+            writer.getConnection().close();
+        } finally {
+            if (engine.get() != null) {
+                engine.get().stop();
+            }
+            executorService.shutdown();
+            HikariDbSource.close();
         }
-        Assert.assertTrue(recordFound);
-
-
-
-        if(engine.get() != null) {
-            engine.get().stop();
-        }
-        // Files.deleteIfExists(tmpFilePath);
-        executorService.shutdown();
-
-        writer.getConnection().close();
-
-        HikariDbSource.close();
     }
 }

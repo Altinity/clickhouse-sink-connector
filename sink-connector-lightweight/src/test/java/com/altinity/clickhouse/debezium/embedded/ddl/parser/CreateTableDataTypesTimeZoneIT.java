@@ -68,13 +68,8 @@ public class CreateTableDataTypesTimeZoneIT {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-
-
-                props.setProperty("database.include.list", "datatypes");
-
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService()
-                        , false);
+                engine.get().setup(props, new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -85,9 +80,9 @@ public class CreateTableDataTypesTimeZoneIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         DBMetadata metadata = new DBMetadata(props);
-        Map<String, String> decimalTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "numeric_types_DECIMAL_65_30", "datatypes");
-        Map<String, String> dateTimeTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "temporal_types_DATETIME6", "datatypes");
-        Map<String, String> timestampTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "temporal_types_TIMESTAMP6", "datatypes");
+        Map<String, String> decimalTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "numeric_types_DECIMAL_65_30", "employees");
+        Map<String, String> dateTimeTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "temporal_types_DATETIME6", "employees");
+        Map<String, String> timestampTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "temporal_types_TIMESTAMP6", "employees");
 
         // Validate all decimal records.
         Assert.assertTrue(decimalTable.get("Type").equalsIgnoreCase("String"));

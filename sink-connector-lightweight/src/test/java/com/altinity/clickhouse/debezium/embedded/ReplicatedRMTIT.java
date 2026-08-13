@@ -7,6 +7,7 @@ import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -75,6 +76,16 @@ public class ReplicatedRMTIT {
 
     }
 
+    @AfterEach
+    public void stopContainers() {
+        if (mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();
+        }
+        if (clickHouseContainer != null && clickHouseContainer.isRunning()) {
+            clickHouseContainer.stop();
+        }
+    }
+
     @ParameterizedTest
     @CsvSource({
             "clickhouse/clickhouse-server:latest"
@@ -83,61 +94,57 @@ public class ReplicatedRMTIT {
     public void testReplicatedRMTAutoCreate(String clickHouseServerVersion) throws Exception {
 
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
-
-        Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
-        props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
-        props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "false");
-
-
         ExecutorService executorService = Executors.newFixedThreadPool(1);
-        executorService.execute(() -> {
-            try {
 
-                engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(props, new SourceRecordParserService(),  false);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+        try {
+            Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
+            props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
+            props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "false");
+
+            executorService.execute(() -> {
+                try {
+                    engine.set(new DebeziumChangeEventCapture());
+                    engine.get().setup(props, new SourceRecordParserService(), false);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            Thread.sleep(30000);
+            Connection conn = ITCommon.connectToMySQL(mySqlContainer);
+
+            BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+
+            ResultSet rs = ITCommon.executeQueryWithResultSet("show create table employees.string_types_MEDIUMTEXT_utf8mb4", writer.getConnection());
+            boolean resultValidated = false;
+            while(rs.next()) {
+                resultValidated = true;
+                String createTableDML = rs.getString(1);
+                System.out.println(createTableDML);
+                assert(createTableDML.contains("ReplicatedReplacingMergeTree"));
             }
-        });
 
-        Thread.sleep(30000);
-        Connection conn = ITCommon.connectToMySQL(mySqlContainer);
+            Assert.assertTrue(resultValidated);
 
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+            boolean dataValidated = false;
+            ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.string_types_MEDIUMTEXT_utf8mb4", writer.getConnection());
 
-        ResultSet rs = ITCommon.executeQueryWithResultSet("show create table employees.string_types_MEDIUMTEXT_utf8mb4", writer.getConnection());
-        // Validate that all the tables are created.
-        boolean resultValidated = false;
-        while(rs.next()) {
-            resultValidated = true;
-            String createTableDML = rs.getString(1);
-            System.out.println(createTableDML);
-            assert(createTableDML.contains("ReplicatedReplacingMergeTree"));
+            while(dateTimeResult.next()) {
+                dataValidated = true;
+                System.out.println(dateTimeResult.getString("Type").toString());
+                System.out.println(dateTimeResult.getString("Value").toString());
+
+                Assert.assertTrue(dateTimeResult.getString("Type").toString().equalsIgnoreCase("mediumtext"));
+                Assert.assertTrue(dateTimeResult.getString("Value").toString().equalsIgnoreCase("????"));
+            }
+            Assert.assertTrue(dataValidated);
+        } finally {
+            if (engine.get() != null) {
+                engine.get().stop();
+            }
+            executorService.shutdown();
+            HikariDbSource.close();
         }
-
-        Assert.assertTrue(resultValidated);
-
-        boolean dataValidated = false;
-        // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.string_types_MEDIUMTEXT_utf8mb4", writer.getConnection());
-
-        while(dateTimeResult.next()) {
-            dataValidated = true;
-            System.out.println(dateTimeResult.getString("Type").toString());
-            System.out.println(dateTimeResult.getString("Value").toString());
-
-            Assert.assertTrue(dateTimeResult.getString("Type").toString().equalsIgnoreCase("mediumtext"));
-            Assert.assertTrue(dateTimeResult.getString("Value").toString().equalsIgnoreCase("????"));
-        }
-        Assert.assertTrue(dataValidated);
-
-        if(engine.get() != null) {
-            engine.get().stop();
-        }
-        // Files.deleteIfExists(tmpFilePath);
-        executorService.shutdown();
-
-        HikariDbSource.close();
     }
 
 }
