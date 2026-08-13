@@ -49,7 +49,6 @@ ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8192;
 
-USE employees;
 CREATE TABLE employees.dt
 (
 `timestamp` DateTime('Asia/Istanbul'),

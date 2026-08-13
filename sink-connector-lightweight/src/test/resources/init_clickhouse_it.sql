@@ -49,7 +49,6 @@ ENGINE = ReplacingMergeTree(_version)
 ORDER BY id
 SETTINGS index_granularity = 8192;
 
-USE employees;
 CREATE TABLE employees.dt
 (
 `timestamp` DateTime64(1, 'Asia/Istanbul'),
@@ -60,7 +59,6 @@ CREATE TABLE employees.dt
 )
 ENGINE = ReplacingMergeTree(_version) ORDER by event_id;
 
-USE employees;
 CREATE TABLE employees.dt32
 (
     `timestamp` DateTime(1, 'Asia/Istanbul'),
