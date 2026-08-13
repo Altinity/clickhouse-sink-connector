@@ -41,8 +41,8 @@
         <maven.compiler.source>17</maven.compiler.source>
         <maven.compiler.target>17</maven.compiler.target>
         <version.testcontainers>1.21.4</version.testcontainers>
-        <apache.httpclient.version>5.2.1</apache.httpclient.version>
-        <clickhouse.jdbc.version>0.6.0</clickhouse.jdbc.version>
+        <apache.httpclient.version>5.4.4</apache.httpclient.version>
+        <clickhouse.jdbc.version>0.9.8</clickhouse.jdbc.version>
         <version.kafka>3.8.0</version.kafka>
         <version.debezium>3.1.3.Final</version.debezium>
     </properties>
@@ -201,6 +201,22 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.15.0</version>
+                <configuration>
+                    <source>17</source>
+                    <target>17</target>
+                    <annotationProcessorPaths>
+                        <path>
+                            <groupId>org.projectlombok</groupId>
+                            <artifactId>lombok</artifactId>
+                            <version>1.18.34</version>
+                        </path>
+                    </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-source-plugin</artifactId>
                 <version>2.2.1</version>
                 <executions>
@@ -241,7 +257,9 @@
         <dependency>
             <groupId>org.apache.httpcomponents.client5</groupId>
             <artifactId>httpclient5</artifactId>
-            <version>5.3.1</version>
+            <!-- Must be >= 5.4.x so it pulls httpcore5 5.3.x; clickhouse-jdbc 0.9.8
+                 calls URIBuilder.optimize() which only exists in httpcore5 >= 5.3. -->
+            <version>5.4.4</version>
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/org.apache.kafka/connect-api -->
@@ -313,7 +331,7 @@
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
-            <version>1.18.22</version>
+            <version>1.18.34</version>
             <scope>provided</scope>
         </dependency>
         <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-lang3 -->
@@ -333,20 +351,6 @@
             <groupId>com.zaxxer</groupId>
             <artifactId>HikariCP</artifactId>
             <version>6.0.0</version>
-        </dependency>
-        <dependency>
-            <groupId>com.clickhouse</groupId>
-            <!-- or clickhouse-grpc-client if you prefer gRPC -->
-            <artifactId>clickhouse-jdbc</artifactId>
-            <version>${clickhouse.jdbc.version}</version>
-            <!-- below is only needed when all you want is a shaded jar -->
-            <classifier>http</classifier>
-            <exclusions>
-                <exclusion>
-                    <groupId>*</groupId>
-                    <artifactId>*</artifactId>
-                </exclusion>
-            </exclusions>
         </dependency>
 
         <!-- Micrometer and support to prometheus -->
