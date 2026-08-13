@@ -84,6 +84,10 @@ public class HikariDbSource {
 
     /**
      * Initiates a new connection if the connection pool is open.
+     * <p>
+     * Prefer {@link #initiateNewConnectionIfClosed(String, String)}: a
+     * database name alone does not identify a server, so this overload can
+     * only guess when more than one server is in play.
      *
      * @param databaseName name of the database.
      * @return a JDBC Connection.
@@ -91,16 +95,41 @@ public class HikariDbSource {
      */
     public static Connection initiateNewConnectionIfClosed(
             String databaseName) throws SQLException {
+        return initiateNewConnectionIfClosed(databaseName, null);
+    }
+
+    /**
+     * Initiates a new connection if the connection pool is open.
+     * <p>
+     * {@code jdbcUrl} identifies the server the caller is working against. It
+     * matters because a database name is not unique: two engines can address
+     * the same name on different servers at once, and the name-to-pool pointer
+     * holds only whichever one was requested last. A caller that resolved by
+     * name alone therefore got the OTHER engine's pool and failed with
+     * "Connect to http://&lt;the other server&gt; failed: Connection refused"
+     * against a server that was up. Passing the URL pins the lookup to the
+     * caller's own server, so concurrent engines cannot cross over.
+     *
+     * @param databaseName name of the database.
+     * @param jdbcUrl      the caller's target JDBC URL; null falls back to the
+     *                     most recently requested server for this database.
+     * @return a JDBC Connection.
+     * @throws SQLException if a database error occurs.
+     */
+    public static Connection initiateNewConnectionIfClosed(
+            String databaseName, String jdbcUrl) throws SQLException {
 
         if (disabled) {
             return null;
         }
-        String key = currentKey.get(databaseName);
+        String key = resolveKey(databaseName, jdbcUrl);
         HikariDataSource dbSource = key == null ? null : instance.get(key);
         if (dbSource == null) {
-            // No pool for this database; fall back to the system pool, which is
-            // always seeded first by BaseDbWriter.createConnection.
-            key = currentKey.get(BaseDbWriter.SYSTEM_DB);
+            // No pool for this database; fall back to the system pool on the
+            // SAME server, which BaseDbWriter.createConnection always seeds
+            // first. Falling back to a system pool on a different server would
+            // reintroduce the cross-over this method exists to prevent.
+            key = resolveKey(BaseDbWriter.SYSTEM_DB, jdbcUrl);
             dbSource = key == null ? null : instance.get(key);
             if (dbSource == null) {
                 // Neither a dedicated pool nor the system fallback exists. This
@@ -124,6 +153,46 @@ public class HikariDbSource {
         }
         HikariDbSource.printConnectionInfo();
         return dbSource.getConnection();
+    }
+
+    /**
+     * Resolves the cache key for a database, preferring the caller's own
+     * server over the most recently requested one.
+     *
+     * @param databaseName the database name.
+     * @param jdbcUrl      the caller's target URL; may be null or unparseable.
+     * @return the cache key, or null when nothing is known for this database.
+     */
+    private static String resolveKey(String databaseName, String jdbcUrl) {
+        if (serverEndpoint(jdbcUrl) != null) {
+            return poolKey(jdbcUrl, databaseName);
+        }
+        return currentKey.get(databaseName);
+    }
+
+    /**
+     * Returns the JDBC URL a connection was opened against, or null when it
+     * cannot be obtained.
+     * <p>
+     * Lets a caller holding a connection it wants to replace name the server
+     * that connection belonged to, so the replacement comes from the same
+     * server rather than from whichever one was requested most recently.
+     * A failing or closed connection simply yields null, which falls back to
+     * the previous by-name behaviour.
+     *
+     * @param connection the connection to inspect; may be null.
+     * @return the JDBC URL, or null.
+     */
+    public static String urlOf(Connection connection) {
+        if (connection == null) {
+            return null;
+        }
+        try {
+            return connection.getMetaData().getURL();
+        } catch (Exception e) {
+            log.debug("Could not determine the URL of an existing connection", e);
+            return null;
+        }
     }
 
     /**

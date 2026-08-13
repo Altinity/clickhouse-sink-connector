@@ -253,13 +253,29 @@ public class BaseDbWriter {
         HikariDbSource.printConnectionInfo();
         if (isUnusable(this.conn)) {
             try {
-                this.conn = HikariDbSource
-                        .initiateNewConnectionIfClosed(this.database);
+                // Pass this writer's own server, not just the database name: a
+                // name is not unique across concurrently addressed servers, so
+                // resolving by name alone can return another writer's pool.
+                this.conn = HikariDbSource.initiateNewConnectionIfClosed(
+                        this.database, this.jdbcUrl());
             } catch (Exception e) {
                 log.error("Error retrieving new connection in getConnection");
             }
         }
         return this.conn;
+    }
+
+    /**
+     * Returns the JDBC URL identifying the server this writer targets, or null
+     * when the host and port are unknown.
+     *
+     * @return the JDBC URL, or null.
+     */
+    String jdbcUrl() {
+        if (this.hostName == null || this.port == null) {
+            return null;
+        }
+        return getConnectionString(this.hostName, this.port, this.database);
     }
 
     /**
