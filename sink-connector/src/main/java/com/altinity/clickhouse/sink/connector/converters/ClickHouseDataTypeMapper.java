@@ -396,8 +396,7 @@ public class ClickHouseDataTypeMapper {
                     byteBuffer.rewind();
                 } else {
                     // Set an empty polygon if WKB value is not available
-                    ps.setObject(index,
-                            ClickHouseGeoPolygonValue.ofEmpty());
+                    setGeoValue(ps, index, ClickHouseGeoPolygonValue.ofEmpty());
                     return true;
                 }
                 WKBReader wkbReader = new WKBReader();
@@ -405,8 +404,7 @@ public class ClickHouseDataTypeMapper {
                 try {
                     geometry = wkbReader.read(wkbBytes);
                 } catch (ParseException e) {
-                    ps.setObject(index,
-                            ClickHouseGeoPolygonValue.ofEmpty());
+                    setGeoValue(ps, index, ClickHouseGeoPolygonValue.ofEmpty());
                     return true;
                 }
                 if (geometry instanceof Polygon) {
@@ -441,10 +439,9 @@ public class ClickHouseDataTypeMapper {
                             rings.toArray(new double[rings.size()][][]);
                     ClickHouseGeoPolygonValue geoPolygonValue =
                             ClickHouseGeoPolygonValue.of(polygonCoordinates);
-                    ps.setObject(index, geoPolygonValue);
+                    setGeoValue(ps, index, geoPolygonValue);
                 } else {
-                    ps.setObject(index,
-                            ClickHouseGeoPolygonValue.ofEmpty());
+                    setGeoValue(ps, index, ClickHouseGeoPolygonValue.ofEmpty());
                 }
             } else {
                 ps.setString(index,
@@ -458,11 +455,9 @@ public class ClickHouseDataTypeMapper {
                 Object xValue = pointValue.get("x");
                 Object yValue = pointValue.get("y");
                 double[] point = {(Double) xValue, (Double) yValue};
-                ps.setObject(index,
-                        ClickHouseGeoPointValue.of(point));
+                setGeoValue(ps, index, ClickHouseGeoPointValue.of(point));
             } else {
-                ps.setObject(index,
-                        ClickHouseGeoPointValue.ofOrigin());
+                setGeoValue(ps, index, ClickHouseGeoPointValue.ofOrigin());
             }
         } else if (type == Schema.Type.STRUCT
                 && schemaName.equalsIgnoreCase(
@@ -589,5 +584,41 @@ public class ClickHouseDataTypeMapper {
                 || chType == ClickHouseDataType.UInt64
                 || chType == ClickHouseDataType.UInt32
                 || chType == ClickHouseDataType.Int32;
+    }
+
+    /**
+     * Binds a ClickHouse geo value (Point/Polygon) in the representation the
+     * active JDBC driver understands. The legacy V1 driver accepts the
+     * ClickHouseValue object itself but rejects the string form ("Converting
+     * [String] to [Point] is not supported"); the V2 driver (0.9.x default)
+     * does not know ClickHouseValue objects — it serializes them with
+     * toString() into a VALUES clause, producing invalid SQL like
+     * "ClickHouseGeoPointValue[(1.,2.)]" — but parses the plain string form
+     * "(1.0,2.0)" / "[[(0,0),...]]" natively. Both were verified against a
+     * live ClickHouse 24.8 server with clickhouse-jdbc 0.9.8.
+     *
+     * @param ps the prepared statement.
+     * @param index the parameter index.
+     * @param geoValue the geo value (ClickHouseGeoPointValue or
+     *                 ClickHouseGeoPolygonValue).
+     * @throws SQLException if binding fails.
+     */
+    private static void setGeoValue(PreparedStatement ps, int index,
+                                    com.clickhouse.data.ClickHouseValue geoValue)
+            throws SQLException {
+        boolean v1Driver;
+        try {
+            // Only the V1 driver's statements implement/wrap the legacy
+            // ClickHousePreparedStatement interface.
+            v1Driver = ps.isWrapperFor(
+                    com.clickhouse.jdbc.ClickHousePreparedStatement.class);
+        } catch (SQLException e) {
+            v1Driver = false;
+        }
+        if (v1Driver) {
+            ps.setObject(index, geoValue);
+        } else {
+            ps.setString(index, geoValue.asString());
+        }
     }
 }

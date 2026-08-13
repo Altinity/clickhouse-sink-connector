@@ -278,8 +278,12 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         boolean pointResultValidated = false;
         while(rs.next()) {
             pointResultValidated = true;
-            String c3a = rs.getString("c3a");
-            String c3b = rs.getString("c3b");
+            // Driver-agnostic Point read: the legacy V1 jdbc driver renders a
+            // Point as the string "(1.0,2.0)" from getString(), while the
+            // 0.9.x V2 driver returns a double[] from getObject(). Normalize
+            // both to "(x.y,x.y)" before asserting.
+            String c3a = pointAsString(rs.getObject("c3a"));
+            String c3b = pointAsString(rs.getObject("c3b"));
             Assert.assertTrue(c3a.equalsIgnoreCase("(1.0,2.0)"));
             Assert.assertTrue(c3b.equalsIgnoreCase("(3.0,4.0)"));
         }
@@ -393,5 +397,17 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         writer.getConnection().close();
 
         HikariDbSource.close();
+    }
+
+    /**
+     * Renders a ClickHouse Point column value as "(x,y)" regardless of the
+     * JDBC driver generation: V1 returns a String, V2 returns double[].
+     */
+    private static String pointAsString(Object value) {
+        if (value instanceof double[]) {
+            double[] point = (double[]) value;
+            return "(" + point[0] + "," + point[1] + ")";
+        }
+        return String.valueOf(value);
     }
 }

@@ -644,7 +644,32 @@ public class ClickHouseBatchRunnable implements Runnable {
         if (userProvidedTimeZoneId != null) {
             return userProvidedTimeZoneId;
         }
-        return new DBMetadata(config).getServerTimeZone(this.systemConnection);
+        return new DBMetadata(config).getServerTimeZone(systemConnection());
+    }
+
+    /**
+     * Returns a usable connection to the system database, replacing the cached
+     * one when it has been closed.
+     * <p>
+     * {@code systemConnection} is opened once in the constructor and then held
+     * for the lifetime of the task. A pooled connection does not stay open that
+     * long: it gets returned to the pool, evicted, or reaped after an idle
+     * period, and every later use of the stale handle throws
+     * {@code SQLException: Connection is closed}. The only caller
+     * ({@link #getServerTimeZone}) runs on every batch, so a single closed
+     * handle produced one full stack trace per batch for the rest of the run —
+     * 1.17M log lines in CI — while the timezone silently fell back to the
+     * default. Re-opening when the handle is unusable keeps the connection
+     * valid for the life of the task.
+     *
+     * @return a usable system-database connection, or null when one cannot be
+     *         obtained (callers already handle a null connection).
+     */
+    private Connection systemConnection() {
+        if (BaseDbWriter.isUnusable(this.systemConnection)) {
+            this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
+        }
+        return this.systemConnection;
     }
 
     /**

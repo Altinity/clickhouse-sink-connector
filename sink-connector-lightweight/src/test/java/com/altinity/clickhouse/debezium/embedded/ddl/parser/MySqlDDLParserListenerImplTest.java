@@ -992,6 +992,66 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.contacts(fullname Nullable(String) MATERIALIZED CONCAT(first_name,' ',last_name),email String NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()"));
     }
 
+    /**
+     * MySQL emits a character-set introducer (_utf8mb4) before a string
+     * literal in a generated-column expression whenever the literal's
+     * charset differs from the connection's. ClickHouse has no such
+     * syntax and rejects the whole statement:
+     *
+     *   Code: 62. DB::Exception: Syntax error: failed at position 184
+     *
+     * Without the fix the introducer is passed through verbatim as
+     * concat(`first_name`,_utf8mb4' ',`last_name`).
+     */
+    @Test
+    public void testGeneratedColumnWithCharsetIntroducer() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        String sql = "CREATE TABLE employees.contacts (fullname varchar(101) "
+                + "GENERATED ALWAYS AS (concat(`first_name`,_utf8mb4' ',`last_name`)), "
+                + "email VARCHAR(100) NOT NULL);";
+        mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
+
+        String result = clickHouseQuery.toString();
+        Assert.assertFalse("charset introducer must not reach ClickHouse: " + result,
+                result.contains("_utf8mb4"));
+        Assert.assertTrue("the string literal itself must survive: " + result,
+                result.contains("concat(`first_name`,' ',`last_name`)"));
+    }
+
+    /**
+     * The stripper must remove ONLY an introducer that actually introduces
+     * a literal. An underscore-prefixed identifier, or an underscore inside
+     * a longer identifier, must survive untouched -- removing those would
+     * silently corrupt the expression.
+     */
+    @Test
+    public void testCharsetIntroducerStrippingIsTargeted() {
+        Assert.assertEquals("concat(`a`,' ',`b`)",
+                MySqlDDLParserListenerImpl.stripCharsetIntroducers(
+                        "concat(`a`,_utf8mb4' ',`b`)"));
+        Assert.assertEquals("concat(`a`,\" \",`b`)",
+                MySqlDDLParserListenerImpl.stripCharsetIntroducers(
+                        "concat(`a`,_utf8mb4\" \",`b`)"));
+        Assert.assertEquals("concat(`a`,' ',`b`)",
+                MySqlDDLParserListenerImpl.stripCharsetIntroducers(
+                        "concat(`a`,_latin1' ',`b`)"));
+        // Identifiers that merely start with, or contain, an underscore.
+        Assert.assertEquals("concat(_utf8mb4_col,`b`)",
+                MySqlDDLParserListenerImpl.stripCharsetIntroducers(
+                        "concat(_utf8mb4_col,`b`)"));
+        Assert.assertEquals("concat(`first_name`,`last_name`)",
+                MySqlDDLParserListenerImpl.stripCharsetIntroducers(
+                        "concat(`first_name`,`last_name`)"));
+        // An identifier ending in something introducer-shaped, then a literal.
+        Assert.assertEquals("concat(my_utf8mb4'x')",
+                MySqlDDLParserListenerImpl.stripCharsetIntroducers(
+                        "concat(my_utf8mb4'x')"));
+        Assert.assertNull(MySqlDDLParserListenerImpl.stripCharsetIntroducers(null));
+        Assert.assertEquals("a+b",
+                MySqlDDLParserListenerImpl.stripCharsetIntroducers("a+b"));
+    }
+
     @Test
     public void testSourceWithIsDeletedColumn() {
         StringBuffer clickHouseQuery = new StringBuffer();
