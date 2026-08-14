@@ -123,11 +123,26 @@ jobs:
       - name: Copy default binary for Docker build
         run: cp sink-connector-client/sink-connector-client-amd64 sink-connector-client/sink-connector-client
 
+      # Multi-arch build that publishes to Docker Hub. Requires the registry
+      # login above to have run, so it is gated on the same condition.
       - name: Build Docker image (Lightweight)
+        if: ${{ env.DOCKERHUB_USERNAME != '' }}
         run: |
           docker buildx create --name graviton --platform linux/arm64,linux/amd64
           docker buildx build . --file sink-connector-lightweight/Dockerfile --build-arg DOCKER_TAG=${{ env.IMAGE_TAG }} --tag altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt --push --builder graviton --platform linux/arm64,linux/amd64
           docker image pull altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt
+          docker save altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt | gzip > clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
+
+      # Fork-originated pull requests do not receive repository secrets, so the
+      # registry login above is skipped and no push is possible. Build the image
+      # locally instead of pushing it, so the build is still validated and the
+      # image tarball is still produced for the downstream test jobs. Single
+      # platform because --load cannot export a multi-platform manifest.
+      - name: Build Docker image (Lightweight, no registry credentials)
+        if: ${{ env.DOCKERHUB_USERNAME == '' }}
+        run: |
+          docker buildx create --name graviton --platform linux/amd64
+          docker buildx build . --file sink-connector-lightweight/Dockerfile --build-arg DOCKER_TAG=${{ env.IMAGE_TAG }} --tag altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt --load --builder graviton --platform linux/amd64
           docker save altinityinfra/clickhouse-sink-connector:${{ env.IMAGE_TAG }}-lt | gzip > clickhouse-sink-connector_${{ env.IMAGE_TAG }}-lt.tar.gz
 
       - name: Upload Docker tar (Lightweight)
