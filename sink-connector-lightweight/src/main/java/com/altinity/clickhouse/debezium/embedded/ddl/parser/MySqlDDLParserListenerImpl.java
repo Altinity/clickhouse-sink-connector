@@ -1004,12 +1004,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 parseAlterTable(tree);
             } else if (tree instanceof MySqlParser.AlterByAddIndexContext) {
                 parseAddIndex(tree);
-            } else if (tree instanceof MySqlParser.AlterBySetAlgorithmContext) {
-                log.info("INSTANT ALGORITHM not supported in ClickHouse");
-                // Remove any terminating commas and break out of the parser loop.
-                if(this.query.charAt(this.query.length() - 1) == ',')
-                    this.query.deleteCharAt(this.query.length() - 1);
-                break;
+            } else if (tree instanceof MySqlParser.AlterBySetAlgorithmContext
+                    || tree instanceof MySqlParser.AlterByLockContext) {
+                // ALGORITHM=/LOCK= are MySQL execution hints with no ClickHouse
+                // equivalent, so they emit nothing. Drop the separator that was
+                // emitted for them and keep walking: an ALTER may carry further
+                // operations after the hint, e.g.
+                //   ALTER TABLE t ADD COLUMN a INT, ALGORITHM=INSTANT,
+                //                  ADD COLUMN b BIGINT, ALGORITHM=INSTANT
+                // Terminating the walk here would silently discard every
+                // operation after the first hint.
+                log.info("ALGORITHM/LOCK clause not supported in ClickHouse, skipping clause");
+                removeTrailingComma();
             } else if (tree instanceof TerminalNodeImpl) {
                 if (((TerminalNodeImpl) tree).symbol.getType() == MySqlParser.COMMA) {
                     this.query.append(",");
@@ -1017,6 +1023,23 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             } else if(tree instanceof MySqlParser.AlterByRenameContext) {
                 parseAlterTableByRename(tableName, (MySqlParser.AlterByRenameContext) tree);
             }
+        }
+        // A hint in trailing position leaves the separator that preceded it
+        // dangling once the hint itself emits nothing.
+        removeTrailingComma();
+    }
+
+    /**
+     * Drops a single trailing comma from the generated query, if present.
+     * <p>
+     * Separators are emitted eagerly as the ALTER clause list is walked, so a
+     * clause that turns out to emit nothing (an ALGORITHM or LOCK hint) leaves
+     * a dangling comma behind. No-op when the query is empty.
+     */
+    private void removeTrailingComma() {
+        int length = this.query.length();
+        if (length > 0 && this.query.charAt(length - 1) == ',') {
+            this.query.deleteCharAt(length - 1);
         }
     }
 
