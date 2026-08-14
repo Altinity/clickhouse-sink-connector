@@ -4,8 +4,8 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
 
-import java.net.URLEncoder;
 import java.sql.Connection;
+import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.Properties;
@@ -184,23 +184,119 @@ public class BaseDbWriter {
     }
 
     /**
-     * Retrieves the current database connection. If the connection is null,
-     * a new connection is initiated.
+     * Connection properties understood by the legacy V1 ClickHouse JDBC driver
+     * that the V2 driver rejects outright.
+     * <p>
+     * The V2 client validates the whole property set up front and throws
+     * {@code ClientMisconfigurationException: Unknown and unmapped config
+     * properties: [...]} for anything it does not recognise, which
+     * {@code createConnection()} surfaces as "Failed to create connection".
+     * Because these values arrive from the user-facing
+     * {@code clickhouse.jdbc.params} setting, an existing deployment that
+     * upgrades to a build using the V2 driver would fail to connect at all
+     * until it edited its configuration.
+     * <p>
+     * Determined empirically against clickhouse-jdbc 0.9.8 by offering each
+     * property from the shipped docker configuration to the V2 driver
+     * individually: {@code socket_timeout}, {@code connection_timeout},
+     * {@code client_name}, {@code custom_settings},
+     * {@code http_connection_provider} and
+     * {@code jdbc_ignore_unsupported_values} are all accepted; only the two
+     * below are rejected.
+     */
+    static final String[] V1_ONLY_PROPERTIES = {
+            "keepalive.timeout",
+            "max_buffer_size",
+    };
+
+    /**
+     * Removes V1-only connection properties when the V2 driver is in use, so
+     * that a configuration written for the legacy driver keeps working instead
+     * of failing the connection outright. Each removal is logged.
+     * <p>
+     * Nothing is dropped on the V1 path — the legacy driver still receives and
+     * honours these properties.
+     *
+     * @param properties the connection properties, modified in place.
+     * @return the number of properties removed.
+     */
+    static int dropV1OnlyProperties(Properties properties) {
+        int removed = 0;
+        for (String key : V1_ONLY_PROPERTIES) {
+            if (properties.remove(key) != null) {
+                removed++;
+                log.warn("Ignoring JDBC property '{}': it is only supported by the legacy "
+                        + "ClickHouse JDBC V1 driver and the V2 driver rejects the "
+                        + "connection outright when it is present. Set "
+                        + "clickhouse.jdbc.v1=true to keep using the legacy driver.", key);
+            }
+        }
+        return removed;
+    }
+
+    /**
+     * Retrieves the current database connection, replacing it when it is null
+     * or has been closed.
+     * <p>
+     * Checking only for null was not enough: a pooled connection that has been
+     * closed (returned to / evicted by the pool, or reaped after an idle
+     * period) is a non-null object whose every subsequent use throws
+     * {@code SQLException: Connection is closed}. Callers hold the writer for
+     * the lifetime of the task and re-fetch through this method precisely so
+     * that a stale handle gets replaced, so the closed case has to be handled
+     * here too.
      *
      * @return a Connection object representing the current database
      *         connection
      */
     public Connection getConnection() {
         HikariDbSource.printConnectionInfo();
-        if (this.conn == null) {
+        if (isUnusable(this.conn)) {
             try {
-                this.conn = HikariDbSource
-                        .initiateNewConnectionIfClosed(this.database);
+                // Pass this writer's own server, not just the database name: a
+                // name is not unique across concurrently addressed servers, so
+                // resolving by name alone can return another writer's pool.
+                this.conn = HikariDbSource.initiateNewConnectionIfClosed(
+                        this.database, this.jdbcUrl());
             } catch (Exception e) {
                 log.error("Error retrieving new connection in getConnection");
             }
         }
         return this.conn;
+    }
+
+    /**
+     * Returns the JDBC URL identifying the server this writer targets, or null
+     * when the host and port are unknown.
+     *
+     * @return the JDBC URL, or null.
+     */
+    String jdbcUrl() {
+        if (this.hostName == null || this.port == null) {
+            return null;
+        }
+        return getConnectionString(this.hostName, this.port, this.database);
+    }
+
+    /**
+     * Returns true when the supplied connection cannot be used for a new
+     * statement, i.e. it is null or already closed. A driver that throws while
+     * answering {@link Connection#isClosed()} is treated as unusable as well,
+     * since nothing can be done with such a handle either.
+     *
+     * @param connection the connection to inspect; may be null.
+     * @return true when a replacement connection should be obtained.
+     */
+    public static boolean isUnusable(Connection connection) {
+        if (connection == null) {
+            return true;
+        }
+        try {
+            return connection.isClosed();
+        } catch (SQLException e) {
+            log.warn("Could not determine connection state, treating it as closed", e);
+            return true;
+        }
     }
 
     /**
@@ -263,29 +359,23 @@ public class BaseDbWriter {
                 Properties userProps = splitJdbcProperties(jdbcParams);
                 properties.putAll(userProps);
             }
-            String encodedUserName = null;
-            String encodedPassword = null;
 
-            // if username is empty don't encode it
-            if(userName != null && !userName.isEmpty()) {
-                encodedUserName = URLEncoder.encode(userName, "UTF-8");
+            boolean useV1Driver = config.getBoolean(
+                    ClickHouseSinkConnectorConfigVariables.JDBC_V1_DRIVER.toString());
+            if (useV1Driver) {
+                log.info("clickhouse.jdbc.v1=true — using legacy ClickHouse JDBC V1 driver");
+            } else {
+                dropV1OnlyProperties(properties);
             }
-            if(password != null && !password.isEmpty()) {
-                encodedPassword = URLEncoder.encode(password, "UTF-8");
-            }
-            if(encodedUserName != null && encodedPassword != null) {
-                url = url + "?user=" + encodedUserName + "&password=" + encodedPassword;
-            }
-            
             SinkConnectorDataSource dataSource =
-                    new SinkConnectorDataSource(url, properties);
+                    new SinkConnectorDataSource(url, properties, useV1Driver);
 
             if (connectionPoolDisable) {
                 log.info("Connection pool is disabled, creating a new connection");
-                conn = dataSource.getConnection();
+                conn = dataSource.getConnection(userName, password);
             } else {
                 HikariDataSource hikariDbSource = HikariDbSource.getInstance(
-                        dataSource, databaseName, config);
+                        dataSource, databaseName, config, userName, password);
                 conn = hikariDbSource.getConnection();
             }
         } catch (Exception e) {

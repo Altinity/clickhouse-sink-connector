@@ -609,6 +609,20 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.JDBC_V1_DRIVER.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "When true, use the legacy ClickHouse JDBC V1 driver implementation "
+                                + "(clickhouse-jdbc <= 0.6.x behavior, bundled as DriverV1/DataSourceV1 "
+                                + "in clickhouse-jdbc 0.7+). When false (default), the new JDBC V2 "
+                                + "driver is used. Both drivers ship in the same jar; this toggle "
+                                + "selects the implementation at runtime without a rebuild.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.JDBC_V1_DRIVER.toString())
                 // Define the max queue size.
                 .define(
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString(),

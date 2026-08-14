@@ -68,13 +68,8 @@ public class CreateTableDataTypesTimeZoneIT {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-
-
-                props.setProperty("database.include.list", "datatypes");
-
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService()
-                        , false);
+                engine.get().setup(props, new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -85,9 +80,9 @@ public class CreateTableDataTypesTimeZoneIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         DBMetadata metadata = new DBMetadata(props);
-        Map<String, String> decimalTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "numeric_types_DECIMAL_65_30", "datatypes");
-        Map<String, String> dateTimeTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "temporal_types_DATETIME6", "datatypes");
-        Map<String, String> timestampTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "temporal_types_TIMESTAMP6", "datatypes");
+        Map<String, String> decimalTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "numeric_types_DECIMAL_65_30", "employees");
+        Map<String, String> dateTimeTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "temporal_types_DATETIME6", "employees");
+        Map<String, String> timestampTable = metadata.getColumnsDataTypesForTable(writer.getConnection(), "temporal_types_TIMESTAMP6", "employees");
 
         // Validate all decimal records.
         Assert.assertTrue(decimalTable.get("Type").equalsIgnoreCase("String"));
@@ -120,9 +115,11 @@ public class CreateTableDataTypesTimeZoneIT {
             dateResultValueChecked = true;
 
 
-            System.out.println(dateResult.getTimestamp("Mid_Value").toString());
-            System.out.println(dateResult.getTimestamp("Maximum_Value").toString());
-            System.out.println(dateResult.getTimestamp("Minimum_Value").toString());
+            // Use getDate() for Date32 columns: the jdbc 0.9.x V2 driver
+            // (correctly) refuses getTimestamp() on a Date32 value.
+            System.out.println(dateResult.getDate("Mid_Value").toString());
+            System.out.println(dateResult.getDate("Maximum_Value").toString());
+            System.out.println(dateResult.getDate("Minimum_Value").toString());
 
             Assert.assertTrue(dateResult.getDate("Mid_Value").toString().contains("2022-09-29"));
             Assert.assertTrue(dateResult.getDate("Maximum_Value").toString().contains("2299-12-31"));

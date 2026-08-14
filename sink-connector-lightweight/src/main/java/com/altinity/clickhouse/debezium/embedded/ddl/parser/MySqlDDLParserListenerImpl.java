@@ -44,6 +44,39 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private static final Logger log = LogManager.getLogger(MySqlDDLParserListenerImpl.class);
 
     /**
+     * A MySQL character-set introducer immediately preceding a string
+     * literal, e.g. the {@code _utf8mb4} in {@code _utf8mb4' '}.
+     * <p>
+     * MySQL emits one whenever a literal's character set differs from the
+     * connection's. It is valid MySQL and meaningless to ClickHouse, which
+     * rejects the expression outright with a syntax error. Anchored on the
+     * quote so it can only ever match an introducer that actually
+     * introduces a literal -- an identifier such as {@code _utf8mb4_col}
+     * is left alone. The leading boundary keeps it from biting into the
+     * tail of a longer identifier (e.g. {@code my_utf8mb4'x'}).
+     */
+    private static final Pattern CHARSET_INTRODUCER =
+            Pattern.compile("(?<![A-Za-z0-9_$])_[A-Za-z0-9]+(?=['\"])");
+
+    /**
+     * Removes MySQL character-set introducers from a generated-column
+     * expression so the result is valid ClickHouse.
+     * <p>
+     * {@code concat(`a`,_utf8mb4' ',`b`)} becomes
+     * {@code concat(`a`,' ',`b`)}. The literal itself, and everything
+     * else in the expression, is preserved untouched.
+     *
+     * @param expression the raw expression text from the MySQL parse tree.
+     * @return the expression with any charset introducers stripped.
+     */
+    static String stripCharsetIntroducers(String expression) {
+        if (expression == null || expression.indexOf('_') < 0) {
+            return expression;
+        }
+        return CHARSET_INTRODUCER.matcher(expression).replaceAll("");
+    }
+
+    /**
      * The query string that will be transformed.
      */
     StringBuffer query;
@@ -619,6 +652,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                     }
                                 }
                                 isGeneratedColumn = true;
+                                generatedColumn =
+                                        stripCharsetIntroducers(generatedColumn);
                                 //generatedColumn = generatedColumnTree.getText();
                             }
                         }
