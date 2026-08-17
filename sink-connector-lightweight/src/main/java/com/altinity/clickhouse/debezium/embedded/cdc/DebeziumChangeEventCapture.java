@@ -357,6 +357,22 @@ public class DebeziumChangeEventCapture {
 
                         long recordSequenceNumber = recordTs * 1000000 + sequenceNumber;
 
+                        // A DDL inside this loop is applied to ClickHouse synchronously,
+                        // while the rows read before it in the same Debezium batch are
+                        // still sitting in the local `batch` list -- they are not handed
+                        // to the consumers until after the loop finishes. Those rows were
+                        // captured against the PRE-DDL schema but would reach ClickHouse
+                        // strictly AFTER the schema change, which inverts their order with
+                        // respect to the source. The inversion is guaranteed by control
+                        // flow, not a thread race, so it reproduces on every such batch.
+                        //
+                        // Hand the pending rows over BEFORE the DDL is applied, so the
+                        // schema change lands at its true position in the stream.
+                        if (isDDLRecord(record) && batch.size() > 0) {
+                            appendToRecords(new ArrayList<>(batch), config);
+                            batch.clear();
+                        }
+
                         ClickHouseStruct chStruct = processEveryChangeRecord(props, record,
                                 debeziumRecordParserService, config, recordCommitter, lastRecordInBatch, recordSequenceNumber);
                         if (chStruct != null) {
@@ -1191,6 +1207,50 @@ public class DebeziumChangeEventCapture {
     @VisibleForTesting
     void setWriter(BaseDbWriter writer) {
         this.writer = writer;
+    }
+
+    /**
+     * Reports whether a change event carries a DDL statement.
+     * <p>
+     * Uses the same test as the DDL branch of
+     * {@link #processEveryChangeRecord}: a schema-change event has a
+     * {@code DDL} field in its value schema holding a non-empty statement.
+     * Side-effect free, so it is safe to call while iterating a batch.
+     *
+     * @param record The change event to inspect.
+     * @return true if the record carries a non-empty DDL statement.
+     */
+    boolean isDDLRecord(ChangeEvent<SourceRecord, SourceRecord> record) {
+        try {
+            if (record == null || record.value() == null) {
+                return false;
+            }
+            Object value = record.value().value();
+            if (!(value instanceof Struct)) {
+                return false;
+            }
+            Struct struct = (Struct) value;
+            if (struct.schema() == null || struct.schema().fields() == null) {
+                return false;
+            }
+            // Match the field name case-insensitively, as the DDL branch does,
+            // but read it back by the name that actually matched: Struct.get is
+            // case-SENSITIVE and throws if handed a different spelling.
+            Field ddlField = struct.schema().fields().stream()
+                    .filter(f -> "DDL".equalsIgnoreCase(f.name()))
+                    .findAny()
+                    .orElse(null);
+            if (ddlField == null) {
+                return false;
+            }
+            Object ddl = struct.get(ddlField.name());
+            return ddl instanceof String && !((String) ddl).isEmpty();
+        } catch (Exception e) {
+            // Never let this check break the batch loop. Treating an
+            // unreadable record as non-DDL preserves the previous behaviour.
+            log.debug("Could not determine whether the record carries DDL", e);
+            return false;
+        }
     }
 
     /**

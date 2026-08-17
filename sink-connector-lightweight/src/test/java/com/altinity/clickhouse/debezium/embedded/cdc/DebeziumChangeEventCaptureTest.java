@@ -5,6 +5,8 @@ import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
+import io.debezium.engine.ChangeEvent;
+import org.apache.kafka.connect.source.SourceRecord;
 import org.json.simple.parser.ParseException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -240,6 +242,111 @@ public class DebeziumChangeEventCaptureTest {
                 "ALTER TABLE orders ADD COLUMN total INT").isEmpty());
         assertTrue(capture.getRenamedTableNames("").isEmpty());
         assertTrue(capture.getRenamedTableNames(null).isEmpty());
+    }
+
+    /** Builds a schema-change event carrying the given DDL statement. */
+    private static ChangeEvent<SourceRecord, SourceRecord> ddlEvent(String ddl) {
+        return ddlEvent(ddl, "DDL");
+    }
+
+    /**
+     * Builds a schema-change event whose DDL field carries the given name.
+     * Debezium spells it differently across connectors, and Struct.get is
+     * case-sensitive, so both spellings must resolve.
+     */
+    private static ChangeEvent<SourceRecord, SourceRecord> ddlEvent(String ddl, String fieldName) {
+        Schema schema = SchemaBuilder.struct()
+                .field(fieldName, Schema.OPTIONAL_STRING_SCHEMA)
+                .build();
+        Struct value = new Struct(schema);
+        if (ddl != null) {
+            value.put(fieldName, ddl);
+        }
+        SourceRecord record = new SourceRecord(null, null, "topic", schema, value);
+        return new ChangeEvent<SourceRecord, SourceRecord>() {
+            @Override
+            public SourceRecord key() {
+                return null;
+            }
+
+            @Override
+            public SourceRecord value() {
+                return record;
+            }
+
+            @Override
+            public String destination() {
+                return "topic";
+            }
+
+            @Override
+            public Integer partition() {
+                return null;
+            }
+        };
+    }
+
+    /** Builds a row-change event with no DDL field at all. */
+    private static ChangeEvent<SourceRecord, SourceRecord> rowEvent() {
+        Struct value = getKafkaStruct();
+        SourceRecord record = new SourceRecord(null, null, "topic", value.schema(), value);
+        return new ChangeEvent<SourceRecord, SourceRecord>() {
+            @Override
+            public SourceRecord key() {
+                return null;
+            }
+
+            @Override
+            public SourceRecord value() {
+                return record;
+            }
+
+            @Override
+            public String destination() {
+                return "topic";
+            }
+
+            @Override
+            public Integer partition() {
+                return null;
+            }
+        };
+    }
+
+    /**
+     * The batch loop uses this predicate to decide when to hand pending rows
+     * to the consumers before a DDL is applied. A false negative reintroduces
+     * the ordering inversion; a false positive would flush on every row and
+     * defeat batching, so both directions are asserted.
+     */
+    @Test
+    @DisplayName("A DDL event is recognised so pending rows can be flushed before it")
+    public void shouldRecogniseDDLRecord() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+
+        assertTrue("uppercase DDL field must resolve",
+                capture.isDDLRecord(ddlEvent("ALTER TABLE orders ADD COLUMN total INT", "DDL")));
+        assertTrue("lowercase ddl field must resolve",
+                capture.isDDLRecord(ddlEvent("ALTER TABLE orders ADD COLUMN total INT", "ddl")));
+    }
+
+    @Test
+    @DisplayName("A row-change event is not treated as DDL")
+    public void shouldNotTreatRowChangeAsDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+
+        assertFalse("a row event must not trigger a pre-DDL flush",
+                capture.isDDLRecord(rowEvent()));
+    }
+
+    @Test
+    @DisplayName("An empty, absent or null DDL statement is not treated as DDL")
+    public void shouldNotTreatEmptyDDLAsDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+
+        assertFalse(capture.isDDLRecord(ddlEvent("")));
+        assertFalse(capture.isDDLRecord(ddlEvent(null)));
+        assertFalse(capture.isDDLRecord(null));
     }
 
     @Test

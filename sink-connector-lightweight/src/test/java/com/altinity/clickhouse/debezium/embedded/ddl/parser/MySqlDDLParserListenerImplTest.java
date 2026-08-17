@@ -459,6 +459,72 @@ public class MySqlDDLParserListenerImplTest {
 
     }
 
+    /**
+     * Regression test for issue #1140: an ALGORITHM clause in a non-trailing
+     * position used to terminate the ALTER clause walk, silently discarding
+     * every operation that followed it. Only the first ADD COLUMN reached
+     * ClickHouse; the second column was never created, so subsequent inserts
+     * dropped its value with no error raised anywhere.
+     */
+    @Test
+    @DisplayName("ALGORITHM between operations must not discard the operations that follow it")
+    public void testAlterAddColumnWithInterleavedAlgorithmClauses() {
+        String expectedClickHouseQuery = "ALTER TABLE employees.test_lot "
+                + "ADD COLUMN event_ref_type_id Nullable(Int32), "
+                + "ADD COLUMN event_ref_id Nullable(Int64)";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String query = "ALTER TABLE test_lot ADD COLUMN event_ref_type_id INTEGER, algorithm=instant, "
+                + "ADD COLUMN event_ref_id BIGINT, algorithm=instant";
+
+        mySQLDDLParserService.parseSql(query, "test_lot", clickHouseQuery);
+        log.info("CLICKHOUSE QUERY: " + clickHouseQuery);
+
+        Assert.assertEquals(expectedClickHouseQuery.toLowerCase(),
+                clickHouseQuery.toString().toLowerCase());
+    }
+
+    /**
+     * A LOCK clause is the same class of MySQL-only execution hint as
+     * ALGORITHM and must likewise not truncate the statement.
+     */
+    @Test
+    @DisplayName("LOCK between operations must not discard the operations that follow it")
+    public void testAlterAddColumnWithInterleavedLockClause() {
+        String expectedClickHouseQuery = "ALTER TABLE employees.test_lot "
+                + "ADD COLUMN first_col Nullable(Int32), "
+                + "ADD COLUMN second_col Nullable(String)";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String query = "ALTER TABLE test_lot ADD COLUMN first_col INTEGER, LOCK=NONE, "
+                + "ADD COLUMN second_col VARCHAR(64)";
+
+        mySQLDDLParserService.parseSql(query, "test_lot", clickHouseQuery);
+        log.info("CLICKHOUSE QUERY: " + clickHouseQuery);
+
+        Assert.assertEquals(expectedClickHouseQuery.toLowerCase(),
+                clickHouseQuery.toString().toLowerCase());
+    }
+
+    /**
+     * A hint in trailing position must still be stripped cleanly, leaving no
+     * dangling separator for ClickHouse to reject.
+     */
+    @Test
+    @DisplayName("Trailing ALGORITHM/LOCK clauses leave no dangling comma")
+    public void testAlterAddColumnWithTrailingHintsLeavesNoDanglingComma() {
+        String expectedClickHouseQuery = "ALTER TABLE employees.test_lot "
+                + "ADD COLUMN only_col Nullable(Int32)";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String query = "ALTER TABLE test_lot ADD COLUMN only_col INTEGER, ALGORITHM=INPLACE, LOCK=NONE";
+
+        mySQLDDLParserService.parseSql(query, "test_lot", clickHouseQuery);
+        log.info("CLICKHOUSE QUERY: " + clickHouseQuery);
+
+        Assert.assertEquals(expectedClickHouseQuery.toLowerCase(),
+                clickHouseQuery.toString().toLowerCase());
+        Assert.assertFalse("generated query must not end with a separator",
+                clickHouseQuery.toString().trim().endsWith(","));
+    }
+
     @Test
     public void testAlterDatabaseAddMultipleColumns() {
 

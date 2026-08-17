@@ -21,8 +21,16 @@ public class ClickHouseBatchExecutor extends
 
     /**
      * Flag indicating whether the executor is paused.
+     *
+     * <p>Written by the Debezium event thread in {@link #pause()} and
+     * {@link #resume()}, read by every pool thread in
+     * {@link #beforeExecute}. Without {@code volatile} there is no
+     * happens-before edge between those threads, so a pool thread is not
+     * guaranteed to observe either transition: it may miss the pause and
+     * begin a batch while a DDL is being applied, or spin past the resume
+     * and stall.
      */
-    boolean isPaused = false;
+    volatile boolean isPaused = false;
 
     /**
      * Constructs a ClickHouseBatchExecutor with the given core pool size
