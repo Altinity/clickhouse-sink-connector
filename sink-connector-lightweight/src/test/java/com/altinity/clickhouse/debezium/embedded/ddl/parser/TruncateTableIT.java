@@ -174,6 +174,8 @@ public class TruncateTableIT {
         });
 
         Thread.sleep(30000);
+
+        try {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
 
         Connection conn = ITCommon.connectToMySQL(mySqlContainer);
@@ -214,12 +216,17 @@ public class TruncateTableIT {
         Assert.assertFalse("pre-truncate rows must not survive the truncate", staleRowFound);
         Assert.assertEquals("rows inserted after the truncate were wiped by it",
                 3, afterRows);
-
-        if (engine.get() != null) {
-            engine.get().stop();
+        } finally {
+            // Release the embedded engine and its CLI port unconditionally. If an
+            // assertion above fails, a teardown placed after it would never run,
+            // the port would stay bound, and every subsequent test in this class
+            // would fail with "Port already in use" -- turning one real failure
+            // into a cascade that hides its own cause.
+            if (engine.get() != null) {
+                engine.get().stop();
+            }
+            executorService.shutdown();
+            HikariDbSource.close();
         }
-        executorService.shutdown();
-
-        HikariDbSource.close();
     }
 }
