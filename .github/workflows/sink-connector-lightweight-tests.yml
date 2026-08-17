@@ -50,3 +50,10 @@ jobs:
           report_paths: 'sink-connector-lightweight/target/surefire-reports/*.xml'
           check_name: 'JUnit Test Report'
           fail_on_failure: true
+          # Fork-originated pull requests receive a read-only GITHUB_TOKEN, so the
+          # action cannot create a check run and dies with
+          # "Resource not accessible by integration" -- masking the test result it
+          # was asked to report. Fall back to annotations there. fail_on_failure is
+          # deliberately left enabled in both cases: a genuine test failure must
+          # still fail this job.
+          annotate_only: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' }}
