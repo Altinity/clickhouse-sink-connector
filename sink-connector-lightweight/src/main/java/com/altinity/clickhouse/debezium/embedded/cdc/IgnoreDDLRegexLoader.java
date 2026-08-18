@@ -5,7 +5,7 @@ import java.util.List;
 
 public class IgnoreDDLRegexLoader {
     private static final List<String> REGEX_PATTERNS = Arrays.asList(
-        "^ALTER TABLE .*\\s+analyze\\s+PARTITION\\s+p[0-9]+$",
+        "(?i)^ALTER TABLE .*\\s+analyze\\s+PARTITION\\s+p[0-9]+$",
         "(?i)ALTER\\s+TABLE\\s+\\S+\\s+ADD\\s+PARTITION\\s*\\(",
         "(?i)ALTER\\s+TABLE\\s+\\S+\\s+DROP\\s+PARTITION\\s+\\S+",
         "(?i)ALTER\\s+TABLE\\s+\\S+\\s+REORGANIZE\\s+PARTITION\\s+.*?\\s+INTO\\s*\\(",
