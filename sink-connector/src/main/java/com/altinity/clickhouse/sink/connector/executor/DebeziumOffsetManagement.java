@@ -40,12 +40,18 @@ public class DebeziumOffsetManagement {
             completedBatches = new ConcurrentHashMap<>();
 
     /**
-     * Shared lock that serializes every offset commit driven by the connector
-     * worker threads, guaranteeing a single connector-side flush at a time so
-     * that concurrent worker threads never issue overlapping
-     * {@code markBatchFinished()} calls against the same OffsetStorageWriter.
+     * Shared lock serialising every connector-driven offset commit.
+     * <p>
+     * Kafka's {@code OffsetStorageWriter} is not thread-safe and rejects overlapping
+     * flushes with {@code ConnectException: OffsetStorageWriter is already flushing}.
+     * Debezium's own {@code RecordCommitter} methods are {@code synchronized}, but a
+     * NEW committer instance is built per batch
+     * ({@code EmbeddedEngine.buildRecordCommitter}), so concurrent worker threads
+     * synchronise on different monitors and get no mutual exclusion. This single
+     * static lock is the actual barrier.
+     * </p>
      */
-    private static final Object OFFSET_COMMIT_LOCK = new Object();
+    static final Object OFFSET_COMMIT_LOCK = new Object();
 
     /**
      * Constructor to initialize DebeziumOffsetManagement with a provided
@@ -100,6 +106,9 @@ public class DebeziumOffsetManagement {
      */
     public static Pair<Long, Long> calculateMinMaxTimestampFromBatch(
             List<ClickHouseStruct> batch) {
+        if (batch == null || batch.isEmpty()) {
+            return Pair.of(0L, 0L);
+        }
         long min = Long.MAX_VALUE;
         long max = Long.MIN_VALUE;
         for (ClickHouseStruct clickHouseStruct : batch) {
@@ -170,17 +179,24 @@ public class DebeziumOffsetManagement {
             acknowledgeRecords(batch);
             result = true;
             // Check if completed batches can also be acknowledged.
-            completedBatches.forEach((k, v) -> {
-                if (false == checkIfThereAreInflightRequests(v)) {
+            // Collect keys first to avoid ConcurrentModificationException
+            // when removing entries during iteration
+            java.util.List<Pair<Long, Long>> toRemove = new java.util.ArrayList<>();
+            for (java.util.Map.Entry<Pair<Long, Long>, java.util.List<ClickHouseStruct>> entry
+                    : completedBatches.entrySet()) {
+                if (false == checkIfThereAreInflightRequests(entry.getValue())) {
                     try {
-                        acknowledgeRecords(v);
+                        acknowledgeRecords(entry.getValue());
                     } catch (InterruptedException e) {
-                        log.error("*** Error acknowlegeRecords ***", e);
+                        log.error("*** Error acknowledgeRecords ***", e);
                         throw new RuntimeException(e);
                     }
-                    completedBatches.remove(k);
+                    toRemove.add(entry.getKey());
                 }
-            });
+            }
+            for (Pair<Long, Long> key : toRemove) {
+                completedBatches.remove(key);
+            }
         }
         return result;
     }
@@ -196,24 +212,37 @@ public class DebeziumOffsetManagement {
      * @param batch The batch of ClickHouseStruct records to acknowledge.
      * @throws InterruptedException If the commit operation is interrupted.
      */
-    static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch) 
+    static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch)
                                             throws InterruptedException {
         // acknowledge records
         // Iterate through the records
         // and use the record committer to commit the offsets.
-        for(ClickHouseStruct record: batch) {
-            if (record.getCommitter() != null && record.getSourceRecord() != null) {
+        //
+        // Both sides of the merge are kept, because they fix DIFFERENT halves of
+        // the same race:
+        //  - develop widens the critical section: markProcessed() and
+        //    markBatchFinished() MUST be inside the SAME one. Debezium builds a
+        //    NEW RecordCommitter per batch (EmbeddedEngine.buildRecordCommitter),
+        //    so its own `synchronized` methods lock different monitors for
+        //    different batches and provide no mutual exclusion across worker
+        //    threads. 2.10.0 locked only the markBatchFinished() call, leaving
+        //    markProcessed() outside the barrier.
+        //  - 2.10.0 routes the finish through markBatchFinishedSafely(), which
+        //    null-guards the committer and keeps every finish path funnelled
+        //    through one helper. The helper re-acquires OFFSET_COMMIT_LOCK; that
+        //    is safe because Java monitors are reentrant.
+        synchronized (OFFSET_COMMIT_LOCK) {
+            for (ClickHouseStruct record : batch) {
+                if (record.getCommitter() != null && record.getSourceRecord() != null) {
 
-                record.getCommitter().markProcessed(record.getSourceRecord());
-//                log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
-//                        record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
-//                + "Sequence Number: " + record.getSequenceNumber() + "Debezium Timestamp: " + record.getDebezium_ts_ms());
+                    record.getCommitter().markProcessed(record.getSourceRecord());
 
-                if(record.isLastRecordInBatch()) {
-                    markBatchFinishedSafely(record.getCommitter());
-                    log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
-                            record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
-                            + " Sequence Number: " + record.getSequenceNumber() + " Debezium Timestamp: " + record.getDebezium_ts_ms());
+                    if (record.isLastRecordInBatch()) {
+                        markBatchFinishedSafely(record.getCommitter());
+                        log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
+                                record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
+                                + " Sequence Number: " + record.getSequenceNumber() + " Debezium Timestamp: " + record.getDebezium_ts_ms());
+                    }
                 }
             }
         }
@@ -239,8 +268,48 @@ public class DebeziumOffsetManagement {
             boolean lastRecordInBatch)
             throws InterruptedException {
         if (sourceRecord != null) {
+            // Same critical section as the batch variant above — see the comment there.
+            synchronized (OFFSET_COMMIT_LOCK) {
+                recordCommitter.markProcessed(sourceRecord);
+                if (lastRecordInBatch) {
+                    // Every finish path goes through the null-guarded helper, so
+                    // no caller can reach markBatchFinished() outside the lock.
+                    markBatchFinishedSafely(recordCommitter);
+                }
+            }
+        }
+    }
+
+    /**
+     * Acknowledges a single record on the shared offset-commit lock.
+     * <p>
+     * Exposed so that every offset-committing path in the connector funnels through
+     * the SAME lock. Any path that calls {@code markProcessed()} /
+     * {@code markBatchFinished()} directly bypasses the serialization and can drive
+     * concurrent {@code beginFlush()} calls into the non-thread-safe
+     * OffsetStorageWriter, which throws
+     * {@code ConnectException: OffsetStorageWriter is already flushing}.
+     * </p>
+     *
+     * @param recordCommitter    The record committer to be used.
+     * @param sourceRecord       The source record to mark as processed.
+     * @param lastRecordInBatch  True if this is the last record in the batch.
+     * @throws InterruptedException If the commit operation is interrupted.
+     */
+    public static void acknowledgeRecord(
+            DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>>
+                    recordCommitter,
+            ChangeEvent<SourceRecord, SourceRecord> sourceRecord,
+            boolean lastRecordInBatch)
+            throws InterruptedException {
+        if (recordCommitter == null || sourceRecord == null) {
+            return;
+        }
+        synchronized (OFFSET_COMMIT_LOCK) {
             recordCommitter.markProcessed(sourceRecord);
-            if (lastRecordInBatch == true) {
+            if (lastRecordInBatch) {
+                // Funnel every finish through the null-guarded helper (2.10.0)
+                // while staying inside develop's widened critical section.
                 markBatchFinishedSafely(recordCommitter);
             }
         }

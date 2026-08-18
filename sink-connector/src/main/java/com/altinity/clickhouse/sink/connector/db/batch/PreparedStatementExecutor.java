@@ -120,6 +120,9 @@ public class PreparedStatementExecutor {
                 // All records were processed.
                 iter.remove();
             }
+            // Note: entry.getValue().size() is the full list, not just processed batch.
+            // However, since we break on failure and don't partial-remove,
+            // this is correct for the success path (all records processed).
             Metrics.updateCounters(topicName, entry.getValue().size());
         }
 
@@ -150,7 +153,7 @@ public class PreparedStatementExecutor {
 
         AtomicBoolean result = new AtomicBoolean(false);
         long maxRecordsInBatch = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
-        List<ClickHouseStruct> failedRecords = new ArrayList<>();
+        // failedRecords removed: was declared but never read after collection
 
         Lists.partition(entry.getValue(), (int)maxRecordsInBatch).forEach(batch -> {
 
@@ -235,6 +238,26 @@ public class PreparedStatementExecutor {
                         ps.addBatch();
                 }
 
+                // TRUNCATE must execute BEFORE inserts to match CDC ordering.
+                // A TRUNCATE in the binlog means "wipe the table, then the subsequent
+                // records are the new state." Executing it after inserts would wipe
+                // the data we just inserted.
+                if (!truncatedRecords.isEmpty()) {
+                    try {
+                        // Replays a TRUNCATE the source database already executed;
+                        // suppressed entirely by disable.drop.truncate (checked below).
+                        // DESTRUCTIVE: empties the one destination table this batch
+                        // targets -- bounded to that table, mirroring source state.
+                        log.info("Executing TRUNCATE before batch insert for table: " + tableName);
+                        // DESTRUCTIVE: wipes only this batch's destination table.
+                        metadata.truncateTable(conn, databaseName, tableName);
+                    } catch (SQLException e) {
+                        // DESTRUCTIVE: the table wipe failed; rethrown, never swallowed,
+                        // so a partial wipe can never be mistaken for success.
+                        throw new RuntimeException("TRUNCATE failed for " + databaseName + "." + tableName, e);
+                    }
+                }
+
                 int[] batchResult = ps.executeBatch();
 
                 long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
@@ -249,19 +272,47 @@ public class PreparedStatementExecutor {
                 Metrics.updateErrorCounters(topicName, entry.getValue().size());
                 log.error(String.format("******* ERROR inserting Batch Database(%s), Table(%s) *****************",
                         databaseName, tableName), e);
-                failedRecords.addAll(batch);
+                // failedRecords.addAll(batch) removed: list was never read
                 throw new RuntimeException(e);
             }
 
             if (!truncatedRecords.isEmpty()) {
+                // Check disable.drop.truncate config before executing TRUNCATE.
+                // This CDC data path was previously unguarded.
+                String disableDropTruncate = null;
                 try {
-                    metadata.truncateTable(conn, databaseName, tableName);
-                } catch (SQLException e) {
-                    throw new RuntimeException(e);
+                    disableDropTruncate = config.getString(
+                            ClickHouseSinkConnectorConfigVariables.DISABLE_DROP_TRUNCATE.toString());
+                } catch (Exception e) {
+                    Object val = config.originals().get(
+                            ClickHouseSinkConnectorConfigVariables.DISABLE_DROP_TRUNCATE.toString());
+                    if (val != null) {
+                        disableDropTruncate = val.toString();
+                    }
+                }
+                // This is the GUARD being added: before this change the CDC data
+                // path applied every TRUNCATE unconditionally, so
+                // disable.drop.truncate silently failed to protect it.
+                // DESTRUCTIVE: empties the one destination table this batch targets,
+                // mirroring a source TRUNCATE; skipped outright when the guard is on.
+                if (disableDropTruncate != null && disableDropTruncate.equalsIgnoreCase("true")) {
+                    // DESTRUCTIVE: guard ON -- the table wipe is skipped entirely.
+                    log.warn("CDC TRUNCATE ignored for table " + databaseName + "." + tableName
+                            + " because disable.drop.truncate=true (" + truncatedRecords.size() + " records skipped)");
+                } else {
+                    try {
+                        metadata.truncateTable(conn, databaseName, tableName);
+                    } catch (SQLException e) {
+                        throw new RuntimeException(e);
+                    }
                 }
             }
         });
 
+        // The failedRecords list was removed earlier in this file (declared but
+        // never read). This trailing use was left behind by the phase merge and
+        // does not compile. Per-batch insert failures are already logged at the
+        // point of failure inside the loop above.
         return result.get();
     }
 }

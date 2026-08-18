@@ -44,6 +44,13 @@ public class PreparedStatementFieldMapper {
     private static final Logger log = LogManager.getLogger(PreparedStatementFieldMapper.class);
 
     /**
+     * Sentinel value carried by {@link ClickHouseStruct#getVersion()} before a
+     * version has been computed. It must never reach ClickHouse: {@code _version}
+     * is {@code UInt64}, so -1 is stored as 18446744073709551615.
+     */
+    private static final long UNINITIALIZED_VERSION = -1L;
+
+    /**
      * The column name used for "delete" operations in the ReplacingMergeTree engine.
      */
     private final String replacingMergeTreeDeleteColumn;
@@ -133,9 +140,12 @@ public class PreparedStatementFieldMapper {
                 continue;
             }
 
-            // Log error if columnNameToIndexMap is null.
+
+            // Fail fast if columnNameToIndexMap is null — cannot map columns.
             if (columnNameToIndexMap == null) {
-                log.error("Column Name to Index map error");
+                log.error("Column Name to Index map is null — cannot map columns to prepared statement");
+                throw new IllegalStateException("columnNameToIndexMap is null for table: " + tableName);
+
             }
 
             // Get the index position of the column in the prepared statement.
@@ -190,6 +200,10 @@ public class PreparedStatementFieldMapper {
 
             // Get the field information for the column and handle its data type.
             Field f = getFieldByColumnName(fields, colName);
+            if (f == null) {
+                log.debug("Field not found in source schema for column: {}, skipping", colName);
+                continue;
+            }
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
             Object value = struct.get(f);
@@ -347,11 +361,31 @@ public class PreparedStatementFieldMapper {
             if (columnNameToDataTypeMap.containsKey(versionColumn)) {
                 if (columnNameToIndexMap.containsKey(versionColumn)) {
                     // Calculate version if not already set
-                    if (record.getVersion() == -1) {
+                    if (record.getVersion() == UNINITIALIZED_VERSION) {
                         boolean useSnowflakeId = config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString());
                         record.calculateVersion(useSnowflakeId);
                     }
-                    ps.setLong(columnNameToIndexMap.get(versionColumn), record.getVersion());
+                    // calculateVersion() is a no-op when the record carries no usable
+                    // source ordering key (no gtid, no binlog pos, no sequence number,
+                    // no LSN), leaving the -1 sentinel in place. _version is UInt64 in
+                    // ClickHouse, so writing -1 stores 18446744073709551615 - the
+                    // largest representable version. That row then permanently outranks
+                    // every subsequent change to the same key: the ReplacingMergeTree
+                    // freezes on it and all later updates and deletes are silently
+                    // discarded on merge. Fail the batch instead of writing a row that
+                    // can never be superseded.
+                    long version = record.getVersion();
+                    if (version == UNINITIALIZED_VERSION) {
+                        throw new IllegalStateException(String.format(
+                                "Refusing to write an uncalculated _version for topic=%s "
+                                        + "offset=%d key=%s: no GTID, binlog position, sequence "
+                                        + "number or LSN was available. _version is UInt64 in "
+                                        + "ClickHouse, so the -1 sentinel would be stored as "
+                                        + "18446744073709551615 and permanently outrank every "
+                                        + "later change to this key.",
+                                record.getTopic(), record.getKafkaOffset(), record.getKey()));
+                    }
+                    ps.setLong(columnNameToIndexMap.get(versionColumn), version);
                 }
             }
         }

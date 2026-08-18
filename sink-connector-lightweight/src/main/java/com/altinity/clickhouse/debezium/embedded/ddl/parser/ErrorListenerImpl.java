@@ -41,8 +41,9 @@ public class ErrorListenerImpl implements ANTLRErrorListener {
                             Object offendingSymbol, int line,
                             int charPositionInLine, String msg,
                             RecognitionException e) {
-        log.error("Error parsing");
-        throw new RuntimeException("Error parsing DDL");
+        String errorDetail = String.format("Error parsing DDL at line %d:%d - %s", line, charPositionInLine, msg);
+        log.error(errorDetail);
+        throw new RuntimeException(errorDetail);
     }
 
     /**
