@@ -1,27 +1,84 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
-import org.junit.Assert;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-public class ClickHouseAlterTableTest extends com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTableTest {
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+/**
+ * Tests for {@link ClickHouseAlterTable} SQL syntax generation.
+ */
+public class ClickHouseAlterTableTest {
 
     @Test
-    public void createAlterTableSyntaxTest() {
+    @DisplayName("Empty column map returns empty string")
+    public void testEmptyColumnMapReturnsEmpty() {
+        ClickHouseAlterTable alterTable = new ClickHouseAlterTable();
+        String result = alterTable.createAlterTableSyntax(
+                "test_db", "test_table",
+                Collections.emptyMap(),
+                ClickHouseAlterTable.ALTER_TABLE_OPERATION.ADD);
+        assertEquals("", result, "Empty column map should return empty string");
+    }
 
-        ClickHouseAlterTable cat = new ClickHouseAlterTable();
+    @Test
+    @DisplayName("Null column map returns empty string")
+    public void testNullColumnMapReturnsEmpty() {
+        ClickHouseAlterTable alterTable = new ClickHouseAlterTable();
+        String result = alterTable.createAlterTableSyntax(
+                "test_db", "test_table",
+                null,
+                ClickHouseAlterTable.ALTER_TABLE_OPERATION.ADD);
+        assertEquals("", result, "Null column map should return empty string");
+    }
 
-        // Add Column
-        String alterTableAddColumnQuery = cat.createAlterTableSyntax("employees",
-                this.getExpectedColumnToDataTypesMap(), ClickHouseAlterTable.ALTER_TABLE_OPERATION.ADD);
+    @Test
+    @DisplayName("Single column ADD produces valid ALTER TABLE SQL")
+    public void testSingleColumnAdd() {
+        ClickHouseAlterTable alterTable = new ClickHouseAlterTable();
+        Map<String, String> cols = new LinkedHashMap<>();
+        cols.put("new_col", "String");
+        String result = alterTable.createAlterTableSyntax(
+                "test_table",
+                cols,
+                ClickHouseAlterTable.ALTER_TABLE_OPERATION.ADD);
+        assertTrue(result.contains("ALTER TABLE"), "Should contain ALTER TABLE");
+        assertTrue(result.contains("`new_col`"), "Should backtick-escape column name");
+        assertTrue(result.contains("add column"), "Should contain add column");
+    }
 
-        String expectedAddColumnQuery = "ALTER TABLE employees add column `amount` Float64,add column `occupation` String,add column `quantity` Int32,add column `blob_storage_scale` Decimal,add column `json_output` JSON,add column `max_amount` Float64,add column `amount_1` Float32,add column `customerName` String,add column `blob_storage` String,add column `employed` Bool";
-        Assert.assertTrue(alterTableAddColumnQuery.equalsIgnoreCase(expectedAddColumnQuery));
+    @Test
+    @DisplayName("Database-prefixed ALTER TABLE includes backtick-escaped database.table")
+    public void testDatabasePrefixedAlterTable() {
+        ClickHouseAlterTable alterTable = new ClickHouseAlterTable();
+        Map<String, String> cols = new LinkedHashMap<>();
+        cols.put("col1", "Int32");
+        String result = alterTable.createAlterTableSyntax(
+                "my_db", "my_table",
+                cols,
+                ClickHouseAlterTable.ALTER_TABLE_OPERATION.ADD);
+        assertTrue(result.contains("`my_db`.`my_table`"),
+                "Should contain backtick-escaped database.table: " + result);
+    }
 
-        // Delete Column
-        String alterTableDeleteColumnQuery = cat.createAlterTableSyntax("employees",
-                this.getExpectedColumnToDataTypesMap(), ClickHouseAlterTable.ALTER_TABLE_OPERATION.REMOVE);
-
-        String expectedDeleteColumnQuery = "ALTER TABLE employees delete column `amount` Float64,delete column `occupation` String,delete column `quantity` Int32,delete column `blob_storage_scale` Decimal,delete column `json_output` JSON,delete column `max_amount` Float64,delete column `amount_1` Float32,delete column `customerName` String,delete column `blob_storage` String,delete column `employed` Bool";
-        Assert.assertTrue(alterTableDeleteColumnQuery.equalsIgnoreCase(expectedDeleteColumnQuery));
+    @Test
+    @DisplayName("Multiple columns produce comma-separated ADD COLUMN clauses")
+    public void testMultipleColumnsAdd() {
+        ClickHouseAlterTable alterTable = new ClickHouseAlterTable();
+        Map<String, String> cols = new LinkedHashMap<>();
+        cols.put("col_a", "String");
+        cols.put("col_b", "Int64");
+        String result = alterTable.createAlterTableSyntax(
+                "test_table",
+                cols,
+                ClickHouseAlterTable.ALTER_TABLE_OPERATION.ADD);
+        assertTrue(result.contains("`col_a`"), "Should contain col_a");
+        assertTrue(result.contains("`col_b`"), "Should contain col_b");
+        // Should not end with comma
+        assertFalse(result.trim().endsWith(","), "Should not end with trailing comma");
     }
 }

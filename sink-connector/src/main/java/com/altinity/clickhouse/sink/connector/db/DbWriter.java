@@ -45,14 +45,14 @@ public class DbWriter extends BaseDbWriter {
      */
     private Map<String, String> columnNameToDataTypeMap = new LinkedHashMap<>();
 
-    /**
-     * The cache invalidation version this writer was built at. Compared against
-     * {@link com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager}
-     * to detect when the writer is stale and must be rebuilt after a DDL.
-     */
-    @Getter
-    @Setter
-    private long cacheInvalidationVersion = 0;
+    // NOTE: 2.10.0 tracked staleness with a `cacheInvalidationVersion` field on
+    // the writer itself. That mechanism is deliberately NOT carried over: it is
+    // fully superseded by the per-topic generation map the executors keep
+    // (topicToDbWriterGeneration) plus CacheInvalidationManager's TTL, which
+    // additionally self-heals a DDL that was missed entirely. Keeping the field
+    // as well would leave a second, unmaintained staleness signal that reads as
+    // authoritative — exactly the kind of stale-schema footgun this whole area
+    // exists to remove.
 
     /**
      * The engine type of the target table in ClickHouse (e.g., MergeTree,
@@ -144,7 +144,10 @@ public class DbWriter extends BaseDbWriter {
             initializeTableEngine(hostName, record);
             configureEngineSpecificColumns();
         } catch (Exception e) {
-            log.error("***** DBWriter error initializing ****", e);
+            log.error("***** FATAL: DBWriter initialization failed for "
+                    + database + "." + tableName + " ****", e);
+            throw new RuntimeException("DbWriter initialization failed for "
+                    + database + "." + tableName, e);
         }
     }
 
@@ -167,6 +170,13 @@ public class DbWriter extends BaseDbWriter {
             } else if (record.getBeforeStruct() != null) {
                 fields = record.getBeforeStruct().schema().fields()
                         .toArray(new Field[0]);
+            }
+
+            if (fields == null || fields.length == 0) {
+                log.error("Cannot auto-create table {}.{}: CDC record has "
+                        + "neither after nor before struct with fields",
+                        database, tableName);
+                return;
             }
 
             String rmtDeleteColumn = this.config.getString(
@@ -364,9 +374,9 @@ public class DbWriter extends BaseDbWriter {
         }
         String[] offsetStorageDatabaseNameArray = offsetSchemaHistoryTable.split(
                 "\\.");
-        if (offsetStorageDatabaseNameArray.length <= 2) {
-            log.warn("Skipping creating offset schema history table as the "
-                    + "query was not provided in configuration");
+        if (offsetStorageDatabaseNameArray.length < 2) {
+            log.warn("Invalid offset storage table name format: expected "
+                    + "database.table, got: " + offsetSchemaHistoryTable);
             return null;
         }
         String offsetStorageDatabaseName = offsetStorageDatabaseNameArray[0];

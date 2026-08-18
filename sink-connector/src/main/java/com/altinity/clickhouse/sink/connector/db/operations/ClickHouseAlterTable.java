@@ -68,10 +68,35 @@ public class ClickHouseAlterTable
     public String createAlterTableSyntax(String tableName,
                                          Map<String, String> colNameToDataTypesMap,
                                          ALTER_TABLE_OPERATION operation) {
+        return createAlterTableSyntax(null, tableName, colNameToDataTypesMap, operation);
+    }
+
+    /**
+     * Creates the SQL syntax for an ALTER TABLE operation with database prefix.
+     *
+     * @param databaseName the name of the database (may be null for backwards compatibility)
+     * @param tableName    the name of the table to alter
+     * @param colNameToDataTypesMap a map of column names to data types
+     * @param operation    the ALTER_TABLE_OPERATION to perform (ADD or REMOVE)
+     * @return a SQL string for altering the table
+     */
+    public String createAlterTableSyntax(String databaseName, String tableName,
+                                         Map<String, String> colNameToDataTypesMap,
+                                         ALTER_TABLE_OPERATION operation) {
+
+        if (colNameToDataTypesMap == null || colNameToDataTypesMap.isEmpty()) {
+            log.warn("createAlterTableSyntax called with empty column map for table {}", tableName);
+            return "";
+        }
 
         StringBuilder alterTableSyntax = new StringBuilder();
-        alterTableSyntax.append(ClickHouseDbConstants.ALTER_TABLE)
-                .append(" ").append(tableName).append(" ");
+        alterTableSyntax.append(ClickHouseDbConstants.ALTER_TABLE).append(" ");
+        if (databaseName != null && !databaseName.isEmpty()) {
+            alterTableSyntax.append("`").append(databaseName).append("`.`").append(tableName).append("`");
+        } else {
+            alterTableSyntax.append("`").append(tableName).append("`");
+        }
+        alterTableSyntax.append(" ");
 
         for (Map.Entry<String, String> entry
                 : colNameToDataTypesMap.entrySet()) {
