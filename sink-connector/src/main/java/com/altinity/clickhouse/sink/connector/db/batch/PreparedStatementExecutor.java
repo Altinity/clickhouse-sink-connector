@@ -155,7 +155,6 @@ public class PreparedStatementExecutor {
         Lists.partition(entry.getValue(), (int)maxRecordsInBatch).forEach(batch -> {
 
             String databaseName = null;
-            ArrayList<ClickHouseStruct> truncatedRecords = new ArrayList<>();
 
             DBMetadata metadata = new DBMetadata(config);
             ReplicationHistoryHandler replicationHistoryHandler = null;
@@ -176,7 +175,28 @@ public class PreparedStatementExecutor {
                     }
 
                     if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.TRUNCATE.getOperation())) {
-                        truncatedRecords.add(record);
+                        // A TRUNCATE must be applied at its binlog position, not at the
+                        // end of the batch. Rows staged before it belong to the
+                        // pre-truncate state and have to reach ClickHouse first; rows
+                        // after it are the new state and must survive. Flush what is
+                        // staged, truncate, then keep accumulating the remainder.
+                        //
+                        // Executing the truncate after executeBatch() (the previous
+                        // behaviour) discarded every row the same batch had just
+                        // inserted whenever a TRUNCATE was followed by more DML.
+                        try {
+                            ps.executeBatch();
+                        } catch (SQLException e) {
+                            throw new RuntimeException(String.format(
+                                    "Failed to flush records staged before TRUNCATE for %s.%s",
+                                    databaseName, tableName), e);
+                        }
+                        try {
+                            metadata.truncateTable(conn, databaseName, tableName);
+                        } catch (SQLException e) {
+                            throw new RuntimeException(String.format(
+                                    "TRUNCATE failed for %s.%s", databaseName, tableName), e);
+                        }
                         continue;
                     }
 
@@ -253,13 +273,6 @@ public class PreparedStatementExecutor {
                 throw new RuntimeException(e);
             }
 
-            if (!truncatedRecords.isEmpty()) {
-                try {
-                    metadata.truncateTable(conn, databaseName, tableName);
-                } catch (SQLException e) {
-                    throw new RuntimeException(e);
-                }
-            }
         });
 
         return result.get();
