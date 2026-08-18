@@ -64,6 +64,13 @@ public class ClickHouseBatchRunnable implements Runnable {
 
     /**
      * Connection used to create the Debezium storage database.
+     *
+     * <p>Opened LAZILY via {@link #getSystemConnection()}. It used to be opened
+     * in the constructor, which meant simply constructing this object required a
+     * reachable ClickHouse — even for pure-parsing calls like
+     * {@link #getTableFromTopic(String)} that touch no database at all. That
+     * became a hard failure once BaseDbWriter.createConnection was changed to
+     * throw rather than return null.</p>
      */
     private Connection systemConnection;
 
@@ -84,6 +91,12 @@ public class ClickHouseBatchRunnable implements Runnable {
     private Map<String, DbWriter> topicToDbWriterMap;
 
     /**
+     * DDL generation each cached DbWriter in {@link #topicToDbWriterMap} was built at,
+     * keyed by topic name. Used to detect schema changes applied since caching.
+     */
+    private Map<String, Long> topicToDbWriterGeneration;
+
+    /**
      * Database credentials.
      */
     private DBCredentials dbCredentials;
@@ -92,6 +105,17 @@ public class ClickHouseBatchRunnable implements Runnable {
      * Current batch of records being processed.
      */
     private List<ClickHouseStruct> currentBatch = null;
+
+    /**
+     * True when {@link #currentBatch} has already been flushed to ClickHouse
+     * successfully and is only waiting for older in-flight batches to clear
+     * before its offsets can be committed. While set, the retry loop must NOT
+     * re-execute the inserts: re-flushing an already-flushed batch writes a
+     * duplicate part per retry, and with no pacing sleep the loop re-inserted
+     * one record 1,000 times in CI — SELECTs without FINAL then saw duplicate
+     * rows until the merge caught up.
+     */
+    private boolean currentBatchFlushed = false;
 
     /**
      * Shared watermark (owned by ClickHouseSinkTask): highest Kafka offset per
@@ -190,9 +214,12 @@ public class ClickHouseBatchRunnable implements Runnable {
         }
         //this.queryToRecordsMap = new HashMap<>();
         this.topicToDbWriterMap = new HashMap<>();
+        this.topicToDbWriterGeneration = new HashMap<>();
         //this.topicToRecordsMap = new HashMap<>();
         this.dbCredentials = parseDBConfiguration();
-        this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
+        // systemConnection is opened lazily — see getSystemConnection(). Opening
+        // it here made construction require a reachable ClickHouse even for
+        // operations that never touch the database.
         try {
             this.databaseOverrideMap = Utils.parseSourceToDestinationDatabaseMap(
                     this.config.getString(
@@ -355,24 +382,74 @@ public class ClickHouseBatchRunnable implements Runnable {
                 logErrorToClickHouse(e, taskId, errorTableName);
             }
 
-            // Classify the error to decide whether to retry or stop
-            ClickHouseErrorClassifier.ErrorCategory category = ClickHouseErrorClassifier.classify(e);
+            // Two INDEPENDENT fatal detectors, both retained. Detector 2 is
+            // 2.10.0's error classifier; detector 1 is develop's addition and is
+            // a strict superset — 2.10.0 contributes nothing that is dropped here.
+            //
+            // 1. A poisoned OffsetStorageWriter is unrecoverable in-process:
+            //    once its flush semaphore is leaked, every future beginFlush()
+            //    throws for the life of the JVM. Swallowing it turns the fault
+            //    into SILENT data divergence -- ClickHouse writes keep
+            //    succeeding while the binlog offset is frozen, so the connector
+            //    looks healthy, replays the same batch forever, and re-delivers
+            //    from a stale offset on restart. This exception is a Kafka
+            //    ConnectException carrying NO ClickHouse error code, so the
+            //    classifier below cannot see it -- it must be checked first.
+            if (isOffsetWriterPoisoned(e)) {
+                log.error("FATAL: the Debezium OffsetStorageWriter is stuck in the "
+                        + "'already flushing' state. Offsets can no longer be committed, "
+                        + "so replication would continue writing rows while the binlog "
+                        + "position stays frozen. Stopping task Task({}) to prevent "
+                        + "silent data divergence -- the connector must be restarted.",
+                        taskId);
+                throw new RuntimeException(
+                        "OffsetStorageWriter is permanently stuck flushing; "
+                                + "stopping task to prevent silent data divergence", e);
+            }
+
+            // 2. Deterministic ClickHouse errors (auth, schema, type mismatch)
+            //    will never succeed on retry, so retrying forever stalls binlog
+            //    advancement for ALL tables. Classify by error code and stop.
+            ClickHouseErrorClassifier.ErrorCategory category =
+                    ClickHouseErrorClassifier.classify(e);
             int errorCode = ClickHouseErrorClassifier.extractErrorCode(e);
 
             if (category == ClickHouseErrorClassifier.ErrorCategory.FATAL) {
-                log.error("FATAL ClickHouse error (Code: {}) -- this batch will never succeed. " +
-                          "Discarding batch and stopping task to prevent silent data loss. " +
-                          "Manual intervention required.", errorCode);
-                // Clear the stuck batch so it is not retried forever
+                log.error("FATAL ClickHouse error (Code: {}) -- this batch will never succeed. "
+                        + "Discarding batch and stopping task to prevent silent data loss. "
+                        + "Manual intervention required.", errorCode);
+                // Clear the stuck batch so it is not retried forever.
                 currentBatch = null;
-                // Rethrow to stop the scheduled executor -- silent swallowing causes
-                // binlog advancement to stall and blocks replication for ALL tables
-                throw new RuntimeException("Fatal ClickHouse error, stopping task", e);
+                // Wrapped rather than rethrown directly: run() implements
+                // Runnable and cannot declare a checked exception, and the
+                // upstream `throw e` does not compile here.
+                throw new RuntimeException(
+                        "Fatal ClickHouse error (Code: " + errorCode
+                                + "), stopping task", e);
             } else {
-                log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- " +
-                         "batch will be retried on next scheduled run.", errorCode, category);
+                log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- "
+                        + "batch will be retried on next scheduled run.", errorCode, category);
             }
         }
+    }
+
+
+    /**
+     * Detects the unrecoverable "OffsetStorageWriter is already flushing" condition.
+     *
+     * @param e the exception thrown from the batch loop.
+     * @return true when offset commits can no longer succeed in this JVM.
+     */
+    private boolean isOffsetWriterPoisoned(Throwable e) {
+        Throwable current = e;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && message.contains("OffsetStorageWriter is already flushing")) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
 
@@ -451,6 +528,24 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @throws Exception if processing fails
      */
     private void processBatch(String sourceTimeZone, String serverTimeZone) throws Exception {
+        // Retry of an ALREADY-FLUSHED batch: the data is in ClickHouse and the
+        // batch is only waiting for older in-flight batches to clear before
+        // its offsets may be committed. Do NOT re-run the inserts (each replay
+        // writes a duplicate part, visible to SELECTs without FINAL until the
+        // merge collapses it — CI observed one record re-inserted 1,000 times)
+        // and do NOT re-add the batch to the in-flight map (that would undo
+        // its move to completedBatches and re-block every newer batch). Just
+        // re-check committability, with a short pause to avoid a hot spin.
+        if (currentBatchFlushed) {
+            if (DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {
+                currentBatch = null;
+                currentBatchFlushed = false;
+            } else {
+                Thread.sleep(100);
+            }
+            return;
+        }
+
         // If replication history is enabled, add the records to the history table.
         addRecordsToHistoryTable(currentBatch, sourceTimeZone, serverTimeZone);
 
@@ -464,7 +559,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         // Group records by topic name.
         // Create a new map of topic name to list of records.
         Map<String, List<ClickHouseStruct>> topicToRecordsMap =
-                new ConcurrentHashMap<>();
+                new HashMap<>();
         currentBatch.forEach(record -> {
             String topicName = record.getTopic();
             // If the topic name is not present, create a new list and
@@ -509,14 +604,16 @@ public class ClickHouseBatchRunnable implements Runnable {
             
         
         if (result) {
+            // The flush succeeded: remember that so a commit-blocked retry
+            // does not re-execute the inserts (duplicate parts) or re-add the
+            // batch to the in-flight map.
+            currentBatchFlushed = true;
             // Step 2: Check if the batch can be committed.
             if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {
                 currentBatch = null;
+                currentBatchFlushed = false;
             }
         }
-        Thread.sleep(config.getLong(
-                ClickHouseSinkConnectorConfigVariables.
-                        BUFFER_FLUSH_TIME.toString()));
         ///// ***** END PROCESSING BATCH **************************
     }
 
@@ -528,12 +625,27 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @throws SQLException
      */
     private void addRecordsToHistoryTable(List<ClickHouseStruct> records, String sourceTimeZone, String serverTimeZone) throws SQLException {
+        if(records == null || records.isEmpty()) {
+            return;
+        }
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
             String databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
             String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
+            if (records == null || records.isEmpty()) {
+                log.warn("Skipping history table update — batch is empty");
+                return;
+            }
             Connection databaseConn = getClickHouseConnection(databaseName);
             DbWriter writer = getDbWriterForTable(databaseName + "." + tableName, tableName, databaseName,
                     records.get(0), databaseConn);
+            if (writer == null) {
+                // getDbWriterForTable returns null when the table is still
+                // frozen for a DDL reconciliation. Skip the history write for
+                // this batch rather than dereferencing null; it is retried.
+                log.error("*** DbWriter is null for {}.{} (table frozen for DDL); "
+                        + "skipping history write for this batch", databaseName, tableName);
+                return;
+            }
 
             BinLogHistory binLogHistory = new BinLogHistory();
             binLogHistory.addRecordsToHistoryTable(config, tableName, writer.getConnection(), "", records, sourceTimeZone, serverTimeZone);
@@ -571,53 +683,187 @@ public class ClickHouseBatchRunnable implements Runnable {
                                         String databaseName,
                                         ClickHouseStruct record,
                                         Connection connection) {
-        // Compare the cached writer's build version against the shared, monotonic
-        // table version. A mismatch means a DDL invalidated this table after the
-        // writer was built, so it must be rebuilt with the fresh schema.
+        DbWriter writer = null;
         String fullyQualifiedTableName = databaseName + "." + tableName;
-        long currentVersion = CacheInvalidationManager.getInstance()
-                .getVersion(fullyQualifiedTableName);
-        DbWriter writer = this.topicToDbWriterMap.get(topicName);
-        boolean invalidated = false;
-        if (writer != null) {
-            if (writer.getCacheInvalidationVersion() == currentVersion) {
-                return writer;
+        // Block while a DDL schema change is being applied + reconciled for
+        // this table. This prevents inserting against a stale column cache
+        // (which would silently drop newly added source columns). The DDL
+        // thread freezes the table before ALTER and only unfreezes after the
+        // destination schema, the source schema, and the cache all agree.
+        // The return value MUST be honoured: false means the freeze did not
+        // clear within the timeout, i.e. a DDL reconciliation is stuck.
+        // Proceeding anyway would insert against the very stale column cache
+        // this freeze exists to prevent, silently dropping newly added source
+        // columns. Return null so the caller defers the batch and retries.
+        boolean unfrozen = TableReplicationFreezeManager.getInstance()
+                .awaitUnfrozen(fullyQualifiedTableName, DDLSchemaChangeWaiter.DEFAULT_TIMEOUT_MS);
+        if (!unfrozen) {
+            log.error("Table {} still frozen after {}ms; deferring this batch rather "
+                            + "than inserting against a possibly stale schema cache.",
+                    fullyQualifiedTableName, DDLSchemaChangeWaiter.DEFAULT_TIMEOUT_MS);
+            return null;
+        }
+
+        long generation = CacheInvalidationManager.getInstance()
+                .currentGeneration(fullyQualifiedTableName);
+
+        if (this.topicToDbWriterMap.containsKey(topicName)) {
+            // Rebuild when EITHER signal fires. Both sides of this merge are
+            // kept deliberately:
+            //  - generation change: a DDL was applied since this writer was
+            //    cached. Comparing generations (rather than consuming a
+            //    one-shot flag) is what lets every worker thread's private
+            //    cache invalidate independently; the old remove-on-read Set
+            //    let the first reader consume the signal and left the other
+            //    threads serving a stale column list.
+            //  - TTL expiry: defensive self-heal in case a schema change was
+            //    missed entirely and never bumped the generation.
+            Long cachedGeneration = this.topicToDbWriterGeneration.get(topicName);
+            boolean ddlInvalidated =
+                    cachedGeneration == null || cachedGeneration != generation;
+            boolean ttlExpired = CacheInvalidationManager.getInstance()
+                    .isCacheExpired(fullyQualifiedTableName);
+            if (!ddlInvalidated && !ttlExpired) {
+                return this.topicToDbWriterMap.get(topicName);
             }
-            log.info("Invalidating cached DbWriter for {} after DDL (version {} -> {})",
-                    topicName, writer.getCacheInvalidationVersion(), currentVersion);
+            log.info("Rebuilding cached DbWriter for {} ({}; generation {} -> {})",
+                    topicName,
+                    ddlInvalidated ? "DDL invalidation" : "cache TTL expiry",
+                    cachedGeneration, generation);
             this.topicToDbWriterMap.remove(topicName);
-            invalidated = true;
         }
         writer = new DbWriter(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName, tableName,
                 this.dbCredentials.getUserName(),
                 this.dbCredentials.getPassword(), this.config, record,
                 connection);
-        writer.setCacheInvalidationVersion(currentVersion);
         this.topicToDbWriterMap.put(topicName, writer);
-        // Log the resolved schema whenever this table has seen a DDL (version > 0).
-        // This covers both rebuilding a stale writer and building a fresh writer at
-        // the current version after a burst of DDLs, so the post-DDL schema is always
-        // observable regardless of which thread ends up owning the writer.
-        if (invalidated || currentVersion > 0) {
-            logRefreshedColumns(topicName, writer, invalidated);
+        // Record the generation this writer was built at (so the next call can
+        // detect a later DDL) AND stamp the TTL clock, then verify the freshly
+        // built column cache actually covers every source column.
+        this.topicToDbWriterGeneration.put(topicName, generation);
+        CacheInvalidationManager.getInstance().markCacheBuilt(fullyQualifiedTableName);
+        if (!verifySourceSchemaIntegrity(fullyQualifiedTableName, record, writer)) {
+            // The writer's column map does not cover every source column, so
+            // inserting with it would silently DROP those columns. Evict it and
+            // return null: the caller defers this batch and retries, by which
+            // time the rebuild picks up the now-visible columns. Returning the
+            // writer anyway was the stale-writer escape hatch that made the
+            // integrity check advisory instead of protective.
+            this.topicToDbWriterMap.remove(topicName);
+            this.topicToDbWriterGeneration.remove(topicName);
+            return null;
         }
         return writer;
     }
 
     /**
-     * Logs the refreshed column name and type map of a DbWriter that was rebuilt
-     * after a DDL cache invalidation.
+     * Verifies that every column present in the source change event also exists
+     * in the freshly rebuilt destination column cache. If a source column is
+     * missing, the INSERT path would silently drop it (data loss), so we log
+     * loudly and re-mark the table for invalidation. Re-marking forces the next
+     * batch to rebuild again rather than insert lossy data, which lets a
+     * still-propagating schema change catch up. This is a safety net layered on
+     * top of the per-table replication freeze.
      *
-     * @param topicName the topic whose writer was rebuilt
-     * @param writer    the freshly constructed DbWriter
+     * @return {@code true} when the writer may safely be used; {@code false}
+     *         when its column map is missing source columns, in which case the
+     *         caller MUST NOT insert with it.
      */
-    private void logRefreshedColumns(String topicName, DbWriter writer, boolean rebuilt) {
-        Map<String, String> cols = writer.getColumnNameToDataTypeMap();
-        if (cols != null) {
-            log.info("{} DbWriter schema for {} at cache version {} ({} columns): {}",
-                    rebuilt ? "Rebuilt" : "Built", topicName,
-                    writer.getCacheInvalidationVersion(), cols.size(), cols);
+    private boolean verifySourceSchemaIntegrity(String fullyQualifiedTableName,
+                                                ClickHouseStruct record,
+                                                DbWriter writer) {
+        try {
+            // The replication-history table is EXEMPT: it has its own fixed
+            // audit schema (gtid/ddl/before/after/...) and source-row columns
+            // are serialized into its payload columns, not mapped one-to-one.
+            // Comparing a source event against it reports every source column
+            // "missing" — the gate then blocks each batch for the full
+            // visibility-wait timeout polling system.columns for columns that
+            // will never appear, skips the history write, and starves the
+            // shared connection pool for the whole process.
+            // See SourceSchemaIntegrityValidator.isReplicationHistoryTable.
+            if (SourceSchemaIntegrityValidator.isReplicationHistoryTable(
+                    this.config, fullyQualifiedTableName)) {
+                return true;
+            }
+            java.util.List<String> sourceColumns =
+                    SourceSchemaColumns.fromRecord(record);
+            if (sourceColumns.isEmpty() || writer == null
+                    || writer.getColumnNameToDataTypeMap() == null) {
+                return true;
+            }
+            SourceSchemaIntegrityValidator.Result result =
+                    SourceSchemaIntegrityValidator.check(sourceColumns,
+                            writer.getColumnNameToDataTypeMap().keySet());
+            if (!result.isConsistent()) {
+                String[] parts = fullyQualifiedTableName.split("\\.", 2);
+                // Source columns that map to destination ALIAS/MATERIALIZED
+                // columns are NOT missing: the insertable cache excludes them
+                // by design — ClickHouse computes their values and rejects
+                // inserts into them, so the source value is intentionally not
+                // written. MySQL generated columns land here on EVERY batch;
+                // without this filter the gate invalidated and rebuilt the
+                // writer forever, livelocking replication for the table
+                // (observed: 8,208 invalidate/rebuild cycles in one CI run).
+                java.util.List<String> genuinelyMissing =
+                        result.getMissingInDestination();
+                if (parts.length == 2 && writer.getConnection() != null) {
+                    try {
+                        java.util.Set<String> generated = new DBMetadata(this.config)
+                                .getAliasAndMaterializedColumnsForTableAndDatabase(
+                                        parts[1], parts[0], writer.getConnection());
+                        genuinelyMissing = SourceSchemaIntegrityValidator
+                                .excludeGeneratedColumns(genuinelyMissing, generated);
+                    } catch (Exception ex) {
+                        log.warn("Could not fetch ALIAS/MATERIALIZED columns for {}: {}",
+                                fullyQualifiedTableName, ex.getMessage());
+                    }
+                }
+                if (genuinelyMissing.isEmpty()) {
+                    // Every "missing" column is computed by the destination —
+                    // the writer is correct as built. Invalidating here is the
+                    // livelock; the writer must be used as-is.
+                    return true;
+                }
+                // Generalized visibility gate: rather than only logging, WAIT for
+                // the destination to actually gain the missing columns. This is
+                // what covers RENAME/MODIFY COLUMN, whose net effect is "these
+                // columns must exist" but which the ADD/DROP text parser in
+                // waitForSchemaVisibility cannot see.
+                java.util.Collection<String> stillMissing = genuinelyMissing;
+                if (parts.length == 2 && writer.getConnection() != null) {
+                    stillMissing = new DDLSchemaChangeWaiter()
+                            .waitForExpectedColumns(writer.getConnection(), parts[0],
+                                    parts[1], genuinelyMissing);
+                }
+                if (stillMissing.isEmpty()) {
+                    // Columns landed while we waited; force a rebuild so the next
+                    // call picks up a writer that actually knows about them.
+                    log.warn("Schema integrity for {}: source column(s) {} were missing "
+                                    + "but became visible while waiting; re-marking for "
+                                    + "invalidation so the writer is rebuilt.",
+                            fullyQualifiedTableName, genuinelyMissing);
+                } else {
+                    log.error("Schema integrity violation for {}: source column(s) {} "
+                                    + "still missing from the destination after waiting; "
+                                    + "inserting now would drop them. Re-marking for "
+                                    + "invalidation.",
+                            fullyQualifiedTableName, stillMissing);
+                }
+                CacheInvalidationManager.getInstance().invalidateTable(fullyQualifiedTableName);
+                // Either way the CURRENT writer's column map predates those
+                // columns, so it must not be used for this batch.
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            log.warn("Error during source schema integrity check for {}: {}",
+                    fullyQualifiedTableName, e.getMessage());
+            // Fail open on an unexpected checker error: the freeze and
+            // generation gates upstream are the primary protections, and
+            // blocking every batch on a bug in this safety net would be worse.
+            return true;
         }
     }
 
@@ -644,7 +890,23 @@ public class ClickHouseBatchRunnable implements Runnable {
         if (userProvidedTimeZoneId != null) {
             return userProvidedTimeZoneId;
         }
-        return new DBMetadata(config).getServerTimeZone(this.systemConnection);
+        return new DBMetadata(config).getServerTimeZone(getSystemConnection());
+    }
+
+    /**
+     * Returns the shared system-database connection, opening it on first use.
+     *
+     * <p>Lazy so that constructing this runnable does not require a reachable
+     * ClickHouse. Callers that genuinely need the database still fail loudly,
+     * because createConnection throws when it cannot connect.</p>
+     *
+     * @return the system-database connection.
+     */
+    private synchronized Connection getSystemConnection() {
+        if (this.systemConnection == null) {
+            this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
+        }
+        return this.systemConnection;
     }
 
     /**
@@ -693,40 +955,60 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName,
                 firstRecord, databaseConn);
+        // Validate writer before using it — null writer causes NPE in
+        // PreparedStatementExecutor creation and error logging
+        if (writer == null) {
+            log.error("*** DbWriter is null for {}.{}, retrying", databaseName, tableName);
+            writer = getDbWriterForTable(topicName, tableName, databaseName,
+                    firstRecord, databaseConn);
+        }
+        if (writer == null) {
+            log.error("*** DbWriter still null for {}.{}, retrying on next attempt",
+                    databaseName, tableName);
+            return false;
+        }
+        if (writer.wasTableMetaDataRetrieved() == false) {
+            log.error(String.format("*** TABLE METADATA not retrieved for " +
+                            "Database(%s), table(%s) retrying",
+                    writer.getDatabaseName(), writer.getTableName()));
+            writer.updateColumnNameToDataTypeMap();
+            if (writer.wasTableMetaDataRetrieved() == false) {
+                log.error(String.format("*** TABLE METADATA not retrieved for " +
+                                "Database(%s), table(%s), retrying on next attempt",
+                        databaseName, tableName));
+                return false;
+            }
+        }
         PreparedStatementExecutor preparedStatementExecutor = new
                 PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
                 writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(),
                 writer.getVersionColumn(), writer.getDatabaseName(),
                 getServerTimeZone(this.config));
-        if (writer == null || writer.wasTableMetaDataRetrieved() == false) {
-            log.error(String.format("*** TABLE METADATA not retrieved for " +
-                            "Database(%s), table(%s) retrying",
-                    writer.getDatabaseName(), writer.getTableName()));
-            if (writer == null) {
-                writer = getDbWriterForTable(topicName, tableName, databaseName,
-                        firstRecord, databaseConn);
-            }
-            if (writer.wasTableMetaDataRetrieved() == false)
-                writer.updateColumnNameToDataTypeMap();
-            if (writer == null ||
-                    writer.wasTableMetaDataRetrieved() == false) {
-                log.error(String.format("*** TABLE METADATA not retrieved for " +
-                                "Database(%s), table(%s), retrying on next attempt",
-                        writer.getDatabaseName(), writer.getTableName()));
-                return false;
-            }
-        }
         // Step 1: The Batch Insert with preparedStatement in JDBC works by
         // forming the Query and then adding records to the Batch.
         // This step creates a Map of Query -> Records (List of ClickHouseStruct).
         Map<MutablePair<String, Map<String, Integer>>,
                 List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<>();
+        // Pass the writer's connector-managed column names (version/sign/
+        // delete columns as actually named in the table engine) so the query
+        // formatter keeps them in the insert list while omitting genuine
+        // destination-only data columns the source event does not carry.
+        java.util.List<String> managedColumns = new ArrayList<>();
+        if (writer.getVersionColumn() != null) {
+            managedColumns.add(writer.getVersionColumn());
+        }
+        if (writer.getSignColumn() != null) {
+            managedColumns.add(writer.getSignColumn());
+        }
+        if (writer.getReplacingMergeTreeDeleteColumn() != null) {
+            managedColumns.add(writer.getReplacingMergeTreeDeleteColumn());
+        }
         result = new GroupInsertQueryWithBatchRecords()
                 .groupQueryWithRecords(records, queryToRecordsMap,
                         partitionToOffsetMap, this.config, tableName,
                         writer.getDatabaseName(), writer.getConnection(),
-                        writer.getColumnNameToDataTypeMap());
+                        writer.getColumnNameToDataTypeMap(), managedColumns);
         BlockMetaData bmd = new BlockMetaData();
         long maxBufferSize = this.config.getLong(
                 ClickHouseSinkConnectorConfigVariables.
@@ -737,17 +1019,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         // and the records are flushed to ClickHouse.
         result = flushRecordsToClickHouse(topicName, writer, queryToRecordsMap,
                 bmd, maxBufferSize, preparedStatementExecutor);
-        if (result) {
-            // Records are now DURABLY in ClickHouse: advance the shared watermark
-            // (max offset per TopicPartition) so ClickHouseSinkTask.preCommit()
-            // only commits offsets that were actually persisted. Without this the
-            // offset advances on consume, and a crash/restart silently loses the
-            // records that were consumed but never inserted.
-            partitionToOffsetMap.forEach((tp, offset) ->
-                    this.durablyInsertedOffsets.merge(tp, offset, Math::max));
-            // Remove the entry.
-            queryToRecordsMap.remove(topicName);
-        }
+        // queryToRecordsMap uses MutablePair keys, not String — remove was a no-op
         if (this.config.getBoolean(
                 ClickHouseSinkConnectorConfigVariables.
                         ENABLE_KAFKA_OFFSET.toString())) {
@@ -790,12 +1062,10 @@ public class ClickHouseBatchRunnable implements Runnable {
                                              PreparedStatementExecutor preparedStatementExecutor)
             throws Exception {
         boolean result = false;
-        synchronized (queryToRecordsMap) {
-            result = preparedStatementExecutor.addToPreparedStatementBatch(
-                    topicName, queryToRecordsMap, bmd, config,
-                    writer.getConnection(), writer.getTableName(),
-                    writer.getColumnNameToDataTypeMap(), writer.getEngine());
-        }
+        result = preparedStatementExecutor.addToPreparedStatementBatch(
+                topicName, queryToRecordsMap, bmd, config,
+                writer.getConnection(), writer.getTableName(),
+                writer.getColumnNameToDataTypeMap(), writer.getEngine());
         try {
             Metrics.updateMetrics(bmd);
         } catch (Exception e) {

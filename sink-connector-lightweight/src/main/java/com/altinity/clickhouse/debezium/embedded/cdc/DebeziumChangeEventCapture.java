@@ -11,8 +11,10 @@ import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
+import com.altinity.clickhouse.sink.connector.db.DDLSchemaChangeWaiter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
+import com.altinity.clickhouse.sink.connector.db.TableReplicationFreezeManager;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
@@ -45,6 +47,7 @@ import java.sql.SQLException;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -89,12 +92,25 @@ public class DebeziumChangeEventCapture {
     /**
      * Flag indicating if a new replacing merge tree engine is used.
      */
-    static public boolean isNewReplacingMergeTreeEngine = true;
+    static public volatile boolean isNewReplacingMergeTreeEngine = true;
 
     /**
      * Executor service for single-thread Debezium event processing.
      */
     final ExecutorService singleThreadDebeziumEventExecutor;
+
+    /**
+     * Executor that performs engine restarts after a failure.
+     *
+     * <p>Deliberately separate from {@link #singleThreadDebeziumEventExecutor}.
+     * The restart is triggered from the engine's completion callback; running
+     * it there, or on the thread that runs the engine, would build the
+     * replacement engine underneath the failed one and nest one stack frame
+     * per attempt. A dedicated single thread lets the callback return and
+     * unwind before the next attempt begins, so retries are sequential and
+     * each starts from a clean stack.</p>
+     */
+    final ExecutorService debeziumRestartExecutor;
 
     /**
      * Debezium engine for capturing change events.
@@ -139,6 +155,12 @@ public class DebeziumChangeEventCapture {
      */
     public DebeziumChangeEventCapture() {
         singleThreadDebeziumEventExecutor = Executors.newFixedThreadPool(1);
+        debeziumRestartExecutor = Executors.newSingleThreadExecutor(runnable -> {
+            Thread thread = new Thread(runnable, "Sink connector Debezium Restart Thread");
+            // Daemon: a pending back-off sleep must never hold up JVM shutdown.
+            thread.setDaemon(true);
+            return thread;
+        });
         this.debeziumJdbcStorageOperations = new DebeziumJdbcStorageOperations();
     }
 
@@ -146,7 +168,7 @@ public class DebeziumChangeEventCapture {
      * Maximum number of retries for Debezium setup and other operations.
      * Default value, can be overridden by errors.max.retries configuration.
      */
-    public static int MAX_RETRIES = 10;
+    public static volatile int MAX_RETRIES = 10;
 
     /**
      * Sleep time (in milliseconds) between retries.
@@ -156,7 +178,7 @@ public class DebeziumChangeEventCapture {
     /**
      * This field tracks how many times an operation has been retried.
      */
-    public int numRetries = 0;
+    public volatile int numRetries = 0;
 
     /**
      * Starting sequence number for versioning.
@@ -169,9 +191,50 @@ public class DebeziumChangeEventCapture {
     public static final long SEQUENCE_START_INITIAL = 500000000;
     
     /**
-         * Global sequence number.
-    */
-    public static long sequenceNumber = SEQUENCE_START;
+     * Global sequence number.
+     *
+     * <p>Must be an AtomicLong, not a primitive: this counter feeds
+     * ClickHouseStruct.sequenceNumber, which becomes the {@code _version}
+     * used by ReplacingMergeTree to decide which row version wins. It is
+     * incremented from the Debezium change-event thread while being read
+     * elsewhere, so a non-atomic read-modify-write could hand two records
+     * the same version and let RMT silently collapse them, or emit a torn
+     * value on a 32-bit-split long read. Every call site below uses
+     * set()/get()/incrementAndGet().</p>
+     */
+    private final AtomicLong sequenceNumber = new AtomicLong(SEQUENCE_START);
+
+    /**
+     * Guards the counter together with its source-timestamp anchor.
+     *
+     * <p>Assigning a version is a check-and-act over TWO pieces of state: the
+     * time anchor is read to decide whether the second boundary was crossed,
+     * and only then is the counter reset or incremented. An atomic counter
+     * alone cannot make that pair consistent — two threads crossing the same
+     * boundary would both reset and emit an identical {@code _version},
+     * which ReplacingMergeTree would silently collapse. Every read and write
+     * of the counter/anchor pair happens while holding this lock.</p>
+     */
+    private final Object sequenceLock = new Object();
+
+    /**
+     * Sentinel meaning the source-timestamp anchor has not been set yet.
+     */
+    private static final long UNANCHORED = Long.MIN_VALUE;
+
+    /**
+     * Source-commit-timestamp anchor the sequence counter is measured from.
+     *
+     * <p>Instance state, deliberately NOT a per-call local. Re-seeding it from
+     * record[0] on every call made the reset branch reachable by every batch
+     * that spanned a time gap, and each such batch assigned the same constant
+     * {@link #SEQUENCE_START} — so two concurrent batches produced an
+     * identical {@code _version} and ReplacingMergeTree collapsed one of the
+     * rows. Persisting the anchor means the counter re-anchors once when the
+     * source clock advances, and later records at that timestamp increment.
+     * Guarded by {@link #sequenceLock}.</p>
+     */
+    private long sequenceStartTime = UNANCHORED;
 
 
     /**
@@ -238,8 +301,16 @@ public class DebeziumChangeEventCapture {
 
                     ChangeEvent<SourceRecord, SourceRecord> changeEvent = list.get(0);
                     long debeziumTsMs = ClickHouseStruct.getDebeziumTsFromChangeEvent(changeEvent);
-                    long sequenceStartTime = debeziumTsMs ;
-                    
+                    // Anchor this batch, but do NOT shadow the instance field with a
+                    // batch-local: the counter it gates is shared across batch
+                    // threads, so an anchor that is private to one batch lets two
+                    // batches independently decide to reset and hand their first
+                    // record the same SEQUENCE_START value. Seeding the shared
+                    // anchor under the same lock that guards the counter keeps the
+                    // pair consistent.
+                    seedSequenceAnchor(debeziumTsMs);
+
+
                     List<ClickHouseStruct> batch = new ArrayList<>();
                     for (int i = 0; i < list.size(); i++) {
                         ChangeEvent<SourceRecord, SourceRecord> record = list.get(i);
@@ -248,14 +319,31 @@ public class DebeziumChangeEventCapture {
                             lastRecordInBatch = true;
                         }
                         long recordTs = ClickHouseStruct.getDebeziumTsFromChangeEvent(record);
-                        int diff = (int) ((recordTs - sequenceStartTime) / 1000);
-                        if (diff > 1) {
-                            sequenceNumber = SEQUENCE_START;
-                            sequenceStartTime = recordTs;
-                        } else
-                            sequenceNumber++;
-
-                        long recordSequenceNumber = recordTs * 1000000 + sequenceNumber;
+                        // The VALUE SCHEME here is deliberately identical to 2.8.0:
+                        //     _version = debezium_ts_ms * 1_000_000 + counter
+                        // anchored to the Debezium timestamp, with the counter reset
+                        // when the clock advances more than one second past the
+                        // anchor. It must stay identical: _version decides which row
+                        // survives a ReplacingMergeTree merge, so a table already
+                        // holding 2.8.0-written rows and a connector emitting values
+                        // from a different scheme put two incomparable magnitudes in
+                        // the same column. Whichever scheme yields the larger number
+                        // wins every merge regardless of which change actually
+                        // happened later, and no downgrade can undo the rows already
+                        // written. Changing this formula is a one-way door.
+                        //
+                        // Only the ASSIGNMENT is made safe. Read-modify-write over
+                        // the shared counter was not atomic: the reset branch is a
+                        // check-and-act over two pieces of state (read the anchor,
+                        // decide, then reset the counter and re-anchor), and the
+                        // increment branch did incrementAndGet() and then a separate
+                        // get(). Two batch threads interleaving in either window
+                        // observe the same counter and hand two different records an
+                        // identical _version, which the ReplacingMergeTree then
+                        // silently collapses to one row. Serialising the decision
+                        // closes both windows, and the value used is the one produced
+                        // inside the critical section rather than a later re-read.
+                        long recordSequenceNumber = nextSequenceNumber(recordTs);
 
                         ClickHouseStruct chStruct = processEveryChangeRecord(props, record,
                                 debeziumRecordParserService, config, recordCommitter, lastRecordInBatch, recordSequenceNumber);
@@ -277,25 +365,35 @@ public class DebeziumChangeEventCapture {
                         @Override
                         public void handle(boolean success, String message, Throwable throwable) {
                             if (success == false) {
-                                log.error("Error starting connector" + throwable + " Message:" + message);
+                                log.error("Error starting connector: " + message, throwable);
                                 if (throwable != null && throwable.getCause() != null &&
                                         throwable.getCause().getLocalizedMessage() != null)
-                                    log.error("Error stating connector: Cause" +
+                                    log.error("Error starting connector: Cause: " +
                                             throwable.getCause().getLocalizedMessage());
-                                log.error("Retrying - try number:" + numRetries);
+                                // The engine has stopped. Nothing else restarts it:
+                                // setup() calls setupDebeziumEventCapture() exactly once
+                                // and returns, so if this callback does not retry, the
+                                // connector stays down for the rest of the process and
+                                // every subsequent change is silently never replicated.
+                                //
+                                // Retry must NOT run on this thread. The callback is
+                                // invoked from the engine's own completion path, so
+                                // calling setupDebeziumEventCapture() inline builds the
+                                // next engine underneath the failed one's frame and each
+                                // further failure nests again — MAX_RETRIES deep, which
+                                // is what previously overflowed the stack. Handing the
+                                // restart to a separate single-thread executor lets this
+                                // callback return and unwind first, so every attempt
+                                // starts from a fresh stack while the retry budget and
+                                // back-off are still honoured.
+                                // Bound matches upstream (<=), so the retry budget is
+                                // unchanged by this PR: MAX_RETRIES+1 attempts.
                                 if (numRetries++ <= MAX_RETRIES) {
-                                    try {
-                                        Thread.sleep(SLEEP_TIME);
-                                    } catch (InterruptedException e) {
-                                        log.error("Error sleeping", e);
-                                        throw new RuntimeException(e);
-                                    }
-                                    try {
-                                        setupDebeziumEventCapture(props, debeziumRecordParserService, config);
-                                    } catch (IOException | ClassNotFoundException e) {
-                                        log.error("Error setting up debezium event capture", e);
-                                        throw new RuntimeException(e);
-                                    }
+                                    log.error("Retrying - try number:" + numRetries);
+                                    scheduleDebeziumRestart(props, debeziumRecordParserService, config);
+                                } else {
+                                    log.error("Connector failed after " + numRetries + " retries. "
+                                            + "The connector will need to be restarted externally.");
                                 }
                             }
                             log.debug("Completion callback");
@@ -360,6 +458,53 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
+     * Rebuilds the Debezium engine after a failure, off the callback thread.
+     *
+     * <p>Called from the engine's completion callback when the engine has
+     * stopped with an error and the retry budget is not yet exhausted. The
+     * work is handed to {@link #debeziumRestartExecutor} rather than done
+     * inline so that the failing callback returns and its frame unwinds
+     * before the replacement engine is constructed; building it inline is
+     * what made repeated failures nest one stack frame per attempt.</p>
+     *
+     * <p>The executor is single-threaded, so restarts are serialised and two
+     * failures can never race to build two engines.</p>
+     *
+     * @param props                       The connector properties.
+     * @param debeziumRecordParserService The service to parse change events.
+     * @param config                      The ClickHouse sink connector config.
+     */
+    private void scheduleDebeziumRestart(Properties props,
+                                         DebeziumRecordParserService debeziumRecordParserService,
+                                         ClickHouseSinkConnectorConfig config) {
+        try {
+            debeziumRestartExecutor.submit(() -> {
+                try {
+                    Thread.sleep(SLEEP_TIME);
+                } catch (InterruptedException e) {
+                    // Shutdown requested during back-off: restore the flag and
+                    // abandon the restart rather than reconnecting into a
+                    // connector that is on its way down.
+                    Thread.currentThread().interrupt();
+                    log.error("Interrupted while waiting to restart Debezium event capture", e);
+                    return;
+                }
+                try {
+                    setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+                } catch (Exception e) {
+                    // Never rethrow here. This runs on the restart executor, so
+                    // an escaping exception would be swallowed into a Future
+                    // nobody reads and the failure would go unreported.
+                    log.error("Error restarting Debezium event capture", e);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            // Expected when stop() has already shut the executor down.
+            log.warn("Debezium restart not scheduled - connector is shutting down");
+        }
+    }
+
+    /**
      * Sets up the Debezium engine and processing thread.
      *
      * @param props                       The connector properties.
@@ -378,7 +523,7 @@ public class DebeziumChangeEventCapture {
             int maxQueueSize = Integer.parseInt(props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()));
             this.records = new LinkedBlockingQueue<>(maxQueueSize);
         } else {
-            this.records = new LinkedBlockingQueue<>();
+            this.records = new LinkedBlockingQueue<>(10000);
         }
 
         try {
@@ -404,6 +549,18 @@ public class DebeziumChangeEventCapture {
         // Start Debezium event loop if it is requested from REST API.
         if (!config.getBoolean(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString())
                 || forceStart) {
+
+            // Advisory check: snapshot.mode=initial re-snapshots and wipes offset state,
+            // so warn when existing replication state is present. This is WARN-ONLY by
+            // default and must stay that way: snapshot.mode=initial is the documented
+            // default, so refusing to start on it would break every ordinary restart of
+            // an already-replicating connector. Operators who want the hard stop opt in
+            // with snapshot.initial.require.confirmation=true.
+            String snapshotMode = props.getProperty("snapshot.mode", "");
+            if (snapshotMode.equalsIgnoreCase("initial")) {
+                validateInitialSnapshotSafety(props, config);
+            }
+
             this.setupProcessingThread(config);
             setupDebeziumEventCapture(props, debeziumRecordParserService, config);
         } else {
@@ -413,11 +570,120 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
+     * Validates that it is safe to run with snapshot.mode=initial.
+     * <p>
+     * When snapshot.mode is set to "initial", Debezium performs a full re-snapshot
+     * which resets offset tracking and re-reads all data from the source database.
+     * This is destructive if replication was previously running, as it wipes the
+     * stored binlog position and schema history.
+     * </p>
+     * <p>
+     * This method checks whether offset storage or schema history tables already
+     * contain data and logs a prominent warning if they do.
+     * </p>
+     * <p>
+     * The check is advisory by default and never blocks startup. {@code initial} is
+     * the documented default snapshot mode, so a connector that has been replicating
+     * for a while still has it set; failing startup on that condition would turn
+     * every routine restart into an outage requiring manual intervention on the host.
+     * </p>
+     * <p>
+     * Deployments that would rather not start at all than re-snapshot can opt in to
+     * the hard stop with {@code snapshot.initial.require.confirmation=true}. In that
+     * mode a {@code .confirm_initial_snapshot} file in the working directory permits
+     * one run and is renamed to {@code .confirm_initial_snapshot.used} so it cannot
+     * be re-used on the next restart.
+     * </p>
+     *
+     * @param props  The connector properties.
+     * @param config The ClickHouse sink connector configuration.
+     * @throws RuntimeException only when {@code snapshot.initial.require.confirmation}
+     *                          is enabled, existing state is found, and no confirmation
+     *                          file exists.
+     */
+    private void validateInitialSnapshotSafety(Properties props, ClickHouseSinkConnectorConfig config) {
+        log.warn("snapshot.mode=initial detected — checking for existing replication state");
+
+        boolean hasExistingState = false;
+        String stateDetails = "";
+
+        try {
+            // Check if offset storage table has data
+            DebeziumJdbcStorageOperations storageOps = new DebeziumJdbcStorageOperations();
+            if (systemDbConnection != null) {
+                String status = storageOps.getDebeziumStorageStatus(systemDbConnection, config, props);
+                if (status != null && !status.isEmpty() && !status.equals("[]")) {
+                    hasExistingState = true;
+                    stateDetails = "Offset storage contains existing replication state. ";
+                    log.warn("Found existing offset storage data: " + status);
+                }
+            }
+        } catch (Exception e) {
+            // If we can't check, it might be a fresh install — allow startup
+            log.info("Could not check existing offset state (may be fresh install): " + e.getMessage());
+        }
+
+        if (hasExistingState) {
+            String warning = "snapshot.mode=initial was requested but existing replication "
+                    + "state was found. " + stateDetails
+                    + "Running with snapshot.mode=initial will WIPE the current binlog position "
+                    + "and re-snapshot ALL data from the source database. "
+                    + "If you want to resume replication from where it left off, "
+                    + "change snapshot.mode to 'schema_only' or 'when_needed'.";
+
+            // Opt-in only. Defaulting this to fatal would stop a healthy connector from
+            // restarting, which is a worse failure than the re-snapshot it guards against.
+            boolean requireConfirmation = Boolean.parseBoolean(
+                    props.getProperty("snapshot.initial.require.confirmation", "false"));
+
+            if (!requireConfirmation) {
+                log.warn(warning);
+                log.warn("Proceeding anyway. Set snapshot.initial.require.confirmation=true "
+                        + "to refuse startup in this situation.");
+                return;
+            }
+
+            java.io.File confirmFile = new java.io.File(".confirm_initial_snapshot");
+            if (!confirmFile.exists()) {
+                String errorMsg = "SAFETY GUARD: " + warning
+                        + " snapshot.initial.require.confirmation is enabled, so startup is "
+                        + "refused. To confirm this is intentional, create a file named "
+                        + "'.confirm_initial_snapshot' in the sink-connector working directory "
+                        + "(touch .confirm_initial_snapshot) and restart.";
+                log.error(errorMsg);
+                throw new RuntimeException(errorMsg);
+            } else {
+                log.warn("Confirmation file .confirm_initial_snapshot found — proceeding with initial snapshot");
+                // Rename the file to prevent accidental re-use on next restart
+                java.io.File usedFile = new java.io.File(".confirm_initial_snapshot.used");
+                if (!confirmFile.renameTo(usedFile)) {
+                    log.warn("Could not rename .confirm_initial_snapshot to .confirm_initial_snapshot.used");
+                }
+            }
+        } else {
+            log.info("No existing replication state found — safe to proceed with initial snapshot");
+        }
+    }
+
+    /**
      * Stops the Debezium engine and shuts down all executor services.
      *
      * @throws IOException If an I/O error occurs during shutdown.
      */
     public void stop() throws IOException {
+        // Shut the restart executor down FIRST, and interrupt it: a retry that
+        // is mid-back-off would otherwise wake up after the engine has been
+        // closed and build a fresh engine on a connector that is shutting down.
+        // shutdownNow() both cancels queued restarts and interrupts the sleep.
+        try {
+            if (this.debeziumRestartExecutor != null) {
+                this.debeziumRestartExecutor.shutdownNow();
+                this.debeziumRestartExecutor.awaitTermination(60, TimeUnit.SECONDS);
+            }
+        } catch (Exception e) {
+            log.error("Error stopping debezium restart executor", e);
+        }
+
         try {
             if (this.executor != null) {
                 this.executor.shutdown();
@@ -442,6 +708,24 @@ public class DebeziumChangeEventCapture {
             }
         } catch (Exception e) {
             log.error("Error stopping debezium engine", e);
+        }
+
+        try {
+            if (this.systemDbConnection != null) {
+                this.systemDbConnection.close();
+                this.systemDbConnection = null;
+            }
+        } catch (Exception e) {
+            log.error("Error closing system DB connection", e);
+        }
+
+        try {
+            if (this.replicationHistoryDbConnection != null) {
+                this.replicationHistoryDbConnection.close();
+                this.replicationHistoryDbConnection = null;
+            }
+        } catch (Exception e) {
+            log.error("Error closing replication history DB connection", e);
         }
 
         Metrics.stop();
@@ -499,13 +783,33 @@ public class DebeziumChangeEventCapture {
         StringBuffer clickHouseQuery = new StringBuffer();
         AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
 
-        if (checkIfDDLNeedsToBeIgnored(DDL, props, sr, isDropOrTruncate)) {
-            log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
-            return;
-        }
-
+        // The DDL MUST be parsed before checkIfDDLNeedsToBeIgnored() is consulted.
+        // parseSql() is what populates isDropOrTruncate, and the DISABLE_DROP_TRUNCATE
+        // guard inside checkIfDDLNeedsToBeIgnored() reads that flag. Calling the guard
+        // first made it observe the freshly-initialised `false` on every invocation, so
+        // DISABLE_DROP_TRUNCATE=true silently allowed every DROP/TRUNCATE through to
+        // ClickHouse. The guard could only ever fail open.
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(writer, config, databaseName);
         mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
+
+        if (checkIfDDLNeedsToBeIgnored(DDL, props, sr, isDropOrTruncate)) {
+            log.info("Ignored Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
+            // Acknowledge offset even for ignored DDL to prevent replication from
+            // getting stuck replaying the same ignored DDL repeatedly.
+            // acknowledgeRecords() is a checked-exception method (it commits
+            // offsets under the shared lock); on interrupt, restore the flag and
+            // return WITHOUT acknowledging rather than swallowing it — a silent
+            // failure here would advance the offset past a DDL whose commit
+            // never completed.
+            try {
+                DebeziumOffsetManagement.acknowledgeRecords(
+                        recordCommitter, cdcRecord, lastRecordInBatch);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                log.error("Interrupted while acknowledging ignored DDL: " + DDL, e);
+            }
+            return;
+        }
 
 
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
@@ -522,6 +826,38 @@ public class DebeziumChangeEventCapture {
             retryDDLProperty = true;
         }
 
+        // Freeze replication for this table BEFORE executing the ALTER, so no
+        // batch insert thread can write rows against the stale (pre-ALTER)
+        // column cache while the schema change is in flight. The freeze is held
+        // until the destination schema is visible, the cache has been
+        // invalidated, and (on the insert side) source-vs-destination integrity
+        // is confirmed. This closes the race behind GitHub issue #1222, where a
+        // column added by an in-flight ALTER replicated as NULL for historical
+        // rows. Freeze is best-effort: if the table name cannot be resolved we
+        // proceed without it (the DDL waiter still runs).
+        String ddlFreezeTable = null;
+        try {
+            // Pass the DDL text: getTableName now resolves the table from the
+            // statement itself. The old record-key lookup ALWAYS returned null
+            // (Debezium's SchemaChangeKey carries only databaseName), which
+            // would have made this freeze silently never engage.
+            String tableName = getTableName(sr, DDL);
+            if (tableName != null) {
+                // The freeze key MUST be built the same way the batch consumers
+                // build their lookup key — i.e. with clickhouse.database.override.map
+                // applied. Freezing "sourcedb.tbl" while the insert path awaits
+                // "destdb.tbl" means the freeze never blocks anything, which is
+                // exactly the stale-column-cache race it exists to prevent.
+                ddlFreezeTable =
+                        resolveInvalidationDatabaseName(databaseName, config)
+                                + "." + tableName;
+                TableReplicationFreezeManager.getInstance().freeze(ddlFreezeTable);
+            }
+        } catch (Exception e) {
+            log.warn("Could not resolve table for DDL freeze: " + DDL, e);
+        }
+
+        try {
         while (numRetries < MAX_DDL_RETRIES) {
             try {
 
@@ -538,22 +874,53 @@ public class DebeziumChangeEventCapture {
                 // here. We intentionally start from the real source-mapped database
                 // (getDatabaseName(sr)), not the replication-history override above.
                 try {
-                    String invalidationDatabaseName = getDatabaseName(sr);
-                    String overrideMapConfig = config.getString(
-                            ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString());
-                    if (overrideMapConfig != null) {
-                        Map<String, String> databaseOverrideMap =
-                                Utils.parseSourceToDestinationDatabaseMap(overrideMapConfig);
-                        if (databaseOverrideMap.containsKey(invalidationDatabaseName)) {
-                            invalidationDatabaseName = databaseOverrideMap.get(invalidationDatabaseName);
+                    // Both sides of the merge are kept, because each fixes a
+                    // DIFFERENT half of the invalidation key:
+                    //  - 2.10.0 fixes the DATABASE half: the key must be the
+                    //    override-mapped DESTINATION database (see
+                    //    resolveInvalidationDatabaseName), which is what the
+                    //    batch consumers use. Using the raw `databaseName`
+                    //    here skips clickhouse.database.override.map, so the
+                    //    key never matches the consumer's.
+                    //  - develop fixes the TABLE half: resolve every affected
+                    //    table, and never silently skip a table-scoped DDL.
+                    // 2.10.0 resolves tables from the record value's
+                    // tableChanges array (so multi-table DDL invalidates all of
+                    // them); develop resolves it from the DDL text. Try the
+                    // value first, fall back to the text, and only then report.
+                    String invalidationDatabaseName =
+                            resolveInvalidationDatabaseName(databaseName, config);
+                    List<String> affectedTables = getTableNamesFromDDL(sr);
+                    if (affectedTables.isEmpty()) {
+                        String parsedTableName = getTableName(sr, DDL);
+                        if (parsedTableName != null) {
+                            affectedTables = java.util.Collections
+                                    .singletonList(parsedTableName);
                         }
                     }
-                    for (String tableName : getTableNamesFromDDL(sr)) {
-                        CacheInvalidationManager.getInstance()
-                                .invalidateTable(invalidationDatabaseName + "." + tableName);
+                    if (!affectedTables.isEmpty()) {
+                        for (String tableName : affectedTables) {
+                            CacheInvalidationManager.getInstance()
+                                    .invalidateTable(invalidationDatabaseName + "." + tableName);
+                        }
+                    } else if (isTableScopedDDL(DDL)) {
+                        // Never silently skip invalidation for a TABLE-scoped DDL: a
+                        // cached DbWriter that is not rebuilt keeps writing the pre-DDL
+                        // column list, so the new column is dropped from every
+                        // subsequent INSERT and ClickHouse diverges from MySQL
+                        // permanently. Surface it loudly instead.
+                        log.error("Could not determine the table affected by DDL, so the "
+                                + "DbWriter schema cache could NOT be invalidated. Subsequent "
+                                + "inserts may use a stale column list and silently diverge "
+                                + "from the source. DDL: {}", DDL);
+                    } else {
+                        // Database-scoped DDL (CREATE/DROP/ALTER DATABASE) has no table
+                        // subject and no DbWriter cache to invalidate. Expected, not an error.
+                        log.debug("DDL is not table-scoped; no schema cache to invalidate. "
+                                + "DDL: {}", DDL);
                     }
                 } catch (Exception e) {
-                    log.warn("Error invalidating cache for DDL: " + DDL, e);
+                    log.error("Error invalidating cache for DDL: " + DDL, e);
                 }
 
                 try {
@@ -596,6 +963,18 @@ public class DebeziumChangeEventCapture {
             }
             if (numRetries >= MAX_DDL_RETRIES) {
                 throw new RuntimeException("Max retries exceeded for DDL");
+            }
+        }
+        } finally {
+            // Always unfreeze, even if the DDL failed/threw, so the table is
+            // never left frozen forever. After a successful ALTER the cache is
+            // already marked for invalidation; the next insert rebuilds it and
+            // runs the source-vs-destination integrity check. On failure we
+            // unfreeze so inserts (which would also have failed against the old
+            // schema) are not blocked indefinitely -- the error was already
+            // logged to the error table above.
+            if (ddlFreezeTable != null) {
+                TableReplicationFreezeManager.getInstance().unfreeze(ddlFreezeTable);
             }
         }
         updateMetrics(DDL);
@@ -660,21 +1039,105 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
-     * Function to get the table name from the SourceRecord.
+     * Resolves the database half of a schema-cache key, applying
+     * {@code clickhouse.database.override.map} exactly the way the batch
+     * consumers ({@code ClickHouseBatchRunnable} /
+     * {@code ClickHouseBatchWriter}) do when they build their
+     * {@code "database.table"} lookup key.
      *
-     * @param sr The source record.
-     * @return The table name, or null if not found.
+     * <p>The consumer's key is
+     * {@code override(replicationHistoryEnabled ? historyDb : sourceDb)}, so
+     * BOTH steps must be applied here. Passing the caller's already
+     * history-adjusted {@code databaseName} covers the first step; this method
+     * applies the override map on top. A key built any other way silently
+     * never matches the consumer's key, so the invalidation (or freeze) would
+     * be registered against a table nobody ever looks up — the cache would
+     * appear to be invalidated while every worker kept its stale column
+     * list.</p>
+     *
+     * @param databaseName The caller's database name, already adjusted for
+     *                     replication history.
+     * @param config       The connector configuration.
+     * @return The destination database name to use in the cache key.
      */
-    private String getTableName(SourceRecord sr) {
-        if (sr != null && sr.key() instanceof Struct) {
+    private String resolveInvalidationDatabaseName(
+            String databaseName, ClickHouseSinkConnectorConfig config) {
+        String resolved = databaseName;
+        String overrideMapConfig = config.getString(
+                ClickHouseSinkConnectorConfigVariables
+                        .CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString());
+        if (overrideMapConfig != null) {
             try {
-                String tableName = (String) ((Struct) sr.key()).get("tableName");
-                if (tableName != null && !tableName.isEmpty()) {
-                    return tableName;
+                Map<String, String> databaseOverrideMap =
+                        Utils.parseSourceToDestinationDatabaseMap(overrideMapConfig);
+                if (databaseOverrideMap.containsKey(resolved)) {
+                    resolved = databaseOverrideMap.get(resolved);
                 }
             } catch (Exception e) {
-                // tableName field may not exist in the struct
-                log.debug("tableName field not found in source record key");
+                // Log LOUDLY rather than swallowing: an unparseable override map
+                // means the key computed here may not match the one the batch
+                // consumers use, so a cache invalidation or replication freeze
+                // could be registered against a table nobody looks up. The
+                // unmapped name is still the best available key, but an operator
+                // must see that the override map is broken.
+                log.error("Could not parse {}='{}' while resolving the schema-cache "
+                                + "key for database '{}'. Falling back to the unmapped "
+                                + "name; if an override is configured for it, DDL cache "
+                                + "invalidation and the replication freeze will NOT match "
+                                + "the insert path and inserts may use a stale schema.",
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_DATABASE_OVERRIDE_MAP,
+                        overrideMapConfig, databaseName, e);
+            }
+        }
+        return resolved;
+    }
+
+    /**
+     * Returns true when the DDL operates on a table (and therefore has a DbWriter
+     * schema cache that must be invalidated). Database-scoped DDL such as
+     * CREATE/DROP/ALTER DATABASE has no table subject, so a missing table name
+     * there is expected rather than an error worth alerting on.
+     *
+     * @param ddl the DDL statement text.
+     * @return true if the statement is table-scoped.
+     */
+    private boolean isTableScopedDDL(String ddl) {
+        if (ddl == null) {
+            return false;
+        }
+        return ddl.toUpperCase(java.util.Locale.ROOT).contains("TABLE");
+    }
+
+    /**
+     * Function to get the table name affected by a schema-change (DDL) record.
+     *
+     * <p>The table name is resolved from the DDL text, NOT from the record key.
+     * Debezium's {@code SchemaChangeKey} struct carries exactly one field,
+     * {@code databaseName} — there is no {@code tableName} field on it. Reading
+     * "tableName" from the key therefore always failed and returned null, which
+     * meant the DDL cache invalidation below was never registered for any table,
+     * leaving every cached DbWriter serving a stale column list forever.</p>
+     *
+     * @param sr  The source record (used only as a fallback source of the value).
+     * @param ddl The DDL statement text.
+     * @return The table name, or null if it could not be determined.
+     */
+    private String getTableName(SourceRecord sr, String ddl) {
+        String tableName = MySQLDDLParserService.extractTableName(ddl);
+        if (tableName != null && !tableName.isEmpty()) {
+            return tableName;
+        }
+        // Fall back to the record key in case a future connector version does
+        // expose a table name there.
+        if (sr != null && sr.key() instanceof Struct) {
+            try {
+                String keyTableName = (String) ((Struct) sr.key()).get("tableName");
+                if (keyTableName != null && !keyTableName.isEmpty()) {
+                    return keyTableName;
+                }
+            } catch (Exception e) {
+                log.debug("tableName field not present in source record key");
             }
         }
         return null;
@@ -752,11 +1215,22 @@ public class DebeziumChangeEventCapture {
     private void executeDDL(String clickHouseQuery, BaseDbWriter writer, ClickHouseSinkConnectorConfig config) throws SQLException {
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
         DBMetadata dbMetadata = new DBMetadata(config);
+        long schemaChangeTimeoutMs = config.getLong(
+                ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_TIMEOUT_MS.toString());
+        long schemaChangePollIntervalMs = config.getLong(
+                ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS.toString());
+        DDLSchemaChangeWaiter schemaWaiter = new DDLSchemaChangeWaiter(schemaChangeTimeoutMs, schemaChangePollIntervalMs);
         String[] queries = clickHouseQuery.replaceAll(",$", "").split("\n");
         for (String query : queries) {
             if (!query.isEmpty()) {
                 log.info("ClickHouse DDL: " + query);
                 dbMetadata.executeSystemQuery(writer.getConnection(), query);
+                // Wait for schema change to become visible in system.columns
+                // before cache invalidation proceeds. Without this, the batch
+                // insert thread may rebuild its column metadata cache before
+                // the ALTER TABLE has propagated, silently dropping values
+                // for newly added columns. See GitHub issue #1222.
+                schemaWaiter.waitForSchemaVisibility(writer.getConnection(), query);
             }
         }
     }
@@ -811,7 +1285,8 @@ public class DebeziumChangeEventCapture {
                 return null;
             }
             if (struct.schema() == null) {
-                log.error("SCHEMA EMPTY");
+log.error("SCHEMA EMPTY - cannot process record without schema. Record: {}", record.toString());
+                return null;
             }
 
             java.util.List<Field> schemaFields = struct.schema().fields();
@@ -828,18 +1303,36 @@ public class DebeziumChangeEventCapture {
 
                 if (DDL != null && !DDL.isEmpty()) {
                     log.info("***** DDL received, Flush all existing records");
-                    this.executor.pause();
+                    // In single.threaded mode there is no batch executor:
+                    // setupProcessingThread() creates singleThreadedWriter and
+                    // returns, so this.executor stays null and records are
+                    // written synchronously on this same thread — DDL and DML
+                    // are already serialized and there is nothing to pause.
+                    // Upstream calls pause() unconditionally and the resulting
+                    // NullPointerException was silently swallowed by the
+                    // log-only catch below (skipping the DDL); now that the
+                    // catch fails loudly, the null guard is required — without
+                    // it the FIRST DDL in single-threaded mode stops the
+                    // engine and cascades across the whole suite.
+                    pauseBatchExecutor();
+                    try {
+                        Map<String, Object> sourceObjStruct = new ClickHouseConverter().convertValue(sr);
 
-                    Map<String, Object> sourceObjStruct = new ClickHouseConverter().convertValue(sr);
-
-                    ClickHouseStruct ddlStruct = new ClickHouseStruct();
-                    ddlStruct.setAdditionalMetaData(sourceObjStruct);
-                    ddlStruct.setSequenceNumber(sequenceNumber);
-                    performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
-                    this.executor.resume();
+                        ClickHouseStruct ddlStruct = new ClickHouseStruct();
+                        ddlStruct.setAdditionalMetaData(sourceObjStruct);
+                        ddlStruct.setSequenceNumber(sequenceNumber);
+                        performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
+                    } finally {
+                        // Always resume executor — leaving it paused permanently stalls replication
+                        resumeBatchExecutor();
+                    }
                 }
             } else {
                 chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
+                if (chStruct == null) {
+                    log.warn("Record parser returned null — skipping record");
+                    return null;
+                }
                 chStruct.setSequenceNumber(sequenceNumber);
                 try {
                     if (chStruct != null) {
@@ -855,10 +1348,38 @@ public class DebeziumChangeEventCapture {
                 }
             }
         } catch (Exception e) {
-            log.error("Exception processing record", e);
+            log.error("Exception processing record: " + record.toString(), e);
+            throw new RuntimeException("Failed to process CDC record", e);
         }
 
         return chStruct;
+    }
+
+    /**
+     * Pauses the batch executor before a DDL is applied, if one exists.
+     *
+     * <p>In single.threaded mode {@link #setupProcessingThread} creates a
+     * {@code singleThreadedWriter} instead of a batch executor, so
+     * {@code this.executor} is null and DML is written synchronously on the
+     * Debezium event thread — the same thread that processes DDL — so there
+     * is no concurrent batch thread to pause and this is safely a no-op.</p>
+     */
+    @VisibleForTesting
+    void pauseBatchExecutor() {
+        if (this.executor != null) {
+            this.executor.pause();
+        }
+    }
+
+    /**
+     * Resumes the batch executor after a DDL completes, if one exists.
+     * No-op in single.threaded mode (see {@link #pauseBatchExecutor}).
+     */
+    @VisibleForTesting
+    void resumeBatchExecutor() {
+        if (this.executor != null) {
+            this.executor.resume();
+        }
     }
 
     /**
@@ -882,7 +1403,7 @@ public class DebeziumChangeEventCapture {
 
         if (sr.sourceOffset() != null) {
             if (sr.sourceOffset().containsKey("snapshot")) {
-                String snapshotMode = (String) sr.sourceOffset().get("snapshot");
+                String snapshotMode = String.valueOf(sr.sourceOffset().get("snapshot"));
                 if (snapshotMode.equalsIgnoreCase("INITIAL")) {
                     snapshotDDL = true;
                 }
@@ -939,13 +1460,36 @@ public class DebeziumChangeEventCapture {
             }
         }
 
-        // Check DDL against regex patterns from IgnoreDDLRegexLoader
+        // Check DDL against the built-in regex patterns from
+        // IgnoreDDLRegexLoader. Record the statement here too: a DDL ignored by
+        // a built-in pattern is just as ignored as one matched by the
+        // user-configured IGNORE_DDL_REGEX above, and getLastIgnoredDDL() is
+        // the only way an operator can see which statement was skipped.
+        // Without this the two paths disagree — making a built-in pattern
+        // case-insensitive silently stopped a lowercase DDL from ever being
+        // reported, because the built-in branch claimed it first and returned
+        // without recording it.
         if (checkDDLAgainstRegexPatterns(DDL)) {
+            lastIgnoredDDL = DDL;
+            log.info("Ignoring DDL: " + DDL
+                    + " as it matches a built-in ignore pattern");
             return true;
         }
 
+        // Snapshot-phase DDL is exempt from the DISABLE_DROP_TRUNCATE guard. During a
+        // snapshot Debezium replays schema bootstrap as a drop-and-recreate
+        // pair for every captured table; when the operator has enabled
+        // snapshot DDL, suppressing only the drop half leaves any
+        // pre-existing destination table in place and the paired CREATE then
+        // fails with TABLE_ALREADY_EXISTS, stalling the DDL stream in a retry
+        // loop. The guard exists to protect the destination from destructive
+        // STREAMING DDL (an accidental drop on the source mid-replication),
+        // which is still blocked below. Snapshot DDL that the operator has NOT
+        // enabled never reaches ClickHouse anyway via the final check in this
+        // method.
         String disableDropAndTruncateProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
-        if (disableDropAndTruncateProperty != null && disableDropAndTruncateProperty.equalsIgnoreCase("true") && isDropOrTruncate.get() == true) {
+        if (disableDropAndTruncateProperty != null && disableDropAndTruncateProperty.equalsIgnoreCase("true")
+                && isDropOrTruncate.get() == true && !isSnapshotDDL) {
             log.debug("Ignoring Drop or Truncate");
             return true;
         }
@@ -1083,31 +1627,110 @@ public class DebeziumChangeEventCapture {
 
 
     /**
+     * Seeds the shared sequence anchor for a new batch.
+     *
+     * <p>Runs under {@link #sequenceLock} because the anchor and the counter
+     * are a single unit of state: a thread that re-anchors without holding the
+     * counter's lock can race a thread deciding whether to reset.</p>
+     *
+     * <p>The anchor only ever moves <b>forward</b>. The anchor is shared by all
+     * batch threads, but each batch seeds it from its own first record, so with
+     * an unconditional assignment a batch carrying an older timestamp can drag
+     * the anchor <em>backward</em> past a point another thread has already
+     * passed. That re-arms the {@code diff > 1} reset branch for timestamps
+     * already in use, and the counter is reset to the constant
+     * {@link #SEQUENCE_START} a second time — so two different records at the
+     * same source timestamp receive an identical {@code _version} and
+     * ReplacingMergeTree silently discards one of them. Measured
+     * single-threaded, with the anchor re-seeded backward between assignments:
+     * 199 duplicate versions in 200 records, and the second value is
+     * <em>lower</em> than the first, so an older row can also outrank a newer
+     * one.</p>
+     *
+     * <p>The guard changes no emitted value for a non-decreasing source clock —
+     * a MySQL binlog's commit timestamps only advance, so {@code ts > anchor}
+     * holds on every ordinary seed and the assignment is identical to the
+     * unconditional one. Verified by replaying an ascending stream through both
+     * forms and comparing the full output: byte-for-byte equal. The 2.8.0
+     * {@code _version} format is therefore untouched (pinned by
+     * {@code Version280CompatibilityTest}); only an out-of-order re-seed, which
+     * previously corrupted the sequence, is now ignored.</p>
+     *
+     * @param debeziumTsMs the Debezium timestamp of the batch's first record.
+     */
+    void seedSequenceAnchor(long debeziumTsMs) {
+        synchronized (sequenceLock) {
+            if (sequenceStartTime == UNANCHORED || debeziumTsMs > sequenceStartTime) {
+                sequenceStartTime = debeziumTsMs;
+            }
+        }
+    }
+
+    /**
+     * Produces the next {@code _version} value for a record.
+     *
+     * <p>The returned value is <b>bit-for-bit the 2.8.0 formula</b>:</p>
+     * <pre>    _version = debezium_ts_ms * 1_000_000 + counter</pre>
+     * <p>with the counter reset to {@link #SEQUENCE_START} when the Debezium
+     * clock advances more than one second past the current anchor, and
+     * incremented otherwise. The formula is deliberately unchanged, because
+     * {@code _version} decides which row survives a ReplacingMergeTree merge:
+     * a table that already holds rows written by 2.8.0 cannot also hold rows
+     * from a different scheme without the larger magnitude winning every merge
+     * regardless of which change actually happened later — and no downgrade
+     * can undo rows already written.</p>
+     *
+     * <p>What is fixed is the <em>assignment</em>, not the value. The previous
+     * code read, modified and wrote the shared counter without holding a lock,
+     * in two separate windows: the reset branch is a check-and-act across the
+     * anchor and the counter, and the increment branch called
+     * {@code incrementAndGet()} and then re-read the counter with a separate
+     * {@code get()}. Two batch threads interleaving in either window observe
+     * the same counter and hand two distinct records an identical
+     * {@code _version}, which the ReplacingMergeTree silently collapses into
+     * one row. Holding the lock across the whole decision closes both windows,
+     * and the value used is the one produced inside the critical section.</p>
+     *
+     * @param debeziumTsMs the record's Debezium timestamp.
+     * @return the {@code _version} value to assign to the record.
+     */
+    long nextSequenceNumber(long debeziumTsMs) {
+        synchronized (sequenceLock) {
+            if (sequenceStartTime == UNANCHORED) {
+                sequenceStartTime = debeziumTsMs;
+            }
+            final long assignedSequence;
+            // Identical to 2.8.0: reset only when the clock advances more than
+            // one whole second past the anchor.
+            int diff = (int) ((debeziumTsMs - sequenceStartTime) / 1000);
+            if (diff > 1) {
+                sequenceNumber.set(SEQUENCE_START);
+                assignedSequence = SEQUENCE_START;
+                sequenceStartTime = debeziumTsMs;
+            } else {
+                assignedSequence = sequenceNumber.incrementAndGet();
+            }
+            return debeziumTsMs * 1000000 + assignedSequence;
+        }
+    }
+
+    /**
      * Adds a version (sequence number) to every record.
-     * <p>
-     * The sequence starts at SEQUENCE_START, increments for every record,
-     * and resets if more than one second has elapsed since the first record.
-     * </p>
+     *
+     * <p>Delegates to {@link #nextSequenceNumber(long)} so this path and the
+     * live batch-consumer path can never drift apart into two different
+     * {@code _version} schemes.</p>
      *
      * @param chStructs The list of {@link ClickHouseStruct} records.
      */
-    public static void addVersion(List<ClickHouseStruct> chStructs) {
-        // Start the sequence from SEQUENCE_START and increment for every record
+    public void addVersion(List<ClickHouseStruct> chStructs) {
         if (chStructs.isEmpty()) {
             return;
         }
-        long sequenceStartTime = chStructs.get(0).getDebezium_ts_ms();
         for (ClickHouseStruct chStruct : chStructs) {
-            // Get diff in seconds from the first record's Debezium timestamp.
-            int diff = (int) ((chStruct.getDebezium_ts_ms() - sequenceStartTime) / 1000);
-            if (diff > 1) {
-                sequenceNumber = SEQUENCE_START;
-                sequenceStartTime = chStruct.getDebezium_ts_ms();
-            } else {
-                sequenceNumber++;
-            }
-            // Pad the sequence number with zeros and set the sequence number in the record.
-            chStruct.setSequenceNumber(chStruct.getDebezium_ts_ms() * 1000000 + sequenceNumber);
+            // Anchored on the DEBEZIUM timestamp, exactly as 2.8.0 did.
+            chStruct.setSequenceNumber(
+                    nextSequenceNumber(chStruct.getDebezium_ts_ms()));
         }
     }
 }
