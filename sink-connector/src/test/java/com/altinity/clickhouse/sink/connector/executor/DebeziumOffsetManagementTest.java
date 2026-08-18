@@ -13,6 +13,7 @@ import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.junit.Assert;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
@@ -256,4 +257,81 @@ public class DebeziumOffsetManagementTest {
 
         return kafkaConnectStruct;
     }
+
+    @Test
+    @DisplayName("calculateMinMaxTimestampFromBatch returns (0,0) for empty batch")
+    public void testCalculateMinMaxTimestampFromBatchEmpty() {
+        // Before the fix, an empty batch returned (Long.MAX_VALUE, Long.MIN_VALUE)
+        // which is an inverted range that could cause downstream issues
+        List<ClickHouseStruct> emptyBatch = new ArrayList<>();
+        Pair<Long, Long> result = DebeziumOffsetManagement.calculateMinMaxTimestampFromBatch(emptyBatch);
+        Assert.assertEquals("Min should be 0 for empty batch", Long.valueOf(0L), result.getLeft());
+        Assert.assertEquals("Max should be 0 for empty batch", Long.valueOf(0L), result.getRight());
+    }
+
+
+    @Test
+    @DisplayName("calculateMinMaxTimestampFromBatch returns (0,0) for null batch")
+    public void testCalculateMinMaxTimestampFromBatchNull() {
+        Pair<Long, Long> result = DebeziumOffsetManagement.calculateMinMaxTimestampFromBatch(null);
+        Assert.assertEquals("Min should be 0 for null batch", Long.valueOf(0L), result.getLeft());
+        Assert.assertEquals("Max should be 0 for null batch", Long.valueOf(0L), result.getRight());
+    }
+
+
+    @Test
+    @DisplayName("calculateMinMaxTimestampFromBatch handles single-element batch")
+    public void testCalculateMinMaxTimestampFromBatchSingleElement() {
+        List<ClickHouseStruct> batch = new ArrayList<>();
+        ClickHouseStruct ch = new ClickHouseStruct(10, "SERVER5432.test.t", getKafkaStruct(),
+            2, 42L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        ch.setDebezium_ts_ms(500L);
+        batch.add(ch);
+
+        Pair<Long, Long> result = DebeziumOffsetManagement.calculateMinMaxTimestampFromBatch(batch);
+        Assert.assertEquals("Min should equal the single element", Long.valueOf(500L), result.getLeft());
+        Assert.assertEquals("Max should equal the single element", Long.valueOf(500L), result.getRight());
+    }
+
+
+    @Test
+    @DisplayName("checkIfBatchCanBeCommitted handles concurrent batch tracking without ConcurrentModificationException")
+    public void testCheckIfBatchCanBeCommittedConcurrentSafety() {
+        // Clear any previous state
+        DebeziumOffsetManagement.inFlightBatches.clear();
+
+        // Add several batches
+        for (int i = 0; i < 10; i++) {
+            List<ClickHouseStruct> batch = new ArrayList<>();
+            ClickHouseStruct ch = new ClickHouseStruct(i, "SERVER5432.test.t", getKafkaStruct(),
+                2, (long) i, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+            ch.setDebezium_ts_ms((long) (i * 100));
+            batch.add(ch);
+            DebeziumOffsetManagement.addToBatchTimestamps(batch);
+        }
+
+        // This should not throw ConcurrentModificationException
+        // The fix uses collect-then-remove pattern instead of forEach+remove
+        try {
+            List<ClickHouseStruct> testBatch = new ArrayList<>();
+            ClickHouseStruct ch = new ClickHouseStruct(99, "SERVER5432.test.t", getKafkaStruct(),
+                2, 99L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
+            ch.setDebezium_ts_ms(50L);
+            testBatch.add(ch);
+            DebeziumOffsetManagement.checkIfBatchCanBeCommitted(testBatch);
+            // Success — no exception thrown
+        } catch (java.util.ConcurrentModificationException e) {
+            Assert.fail("checkIfBatchCanBeCommitted should not throw ConcurrentModificationException");
+        } catch (InterruptedException e) {
+            // checkIfBatchCanBeCommitted commits offsets and is declared to
+            // throw InterruptedException. Restore the flag and fail rather than
+            // swallowing it, so an interrupted run never looks like a pass.
+            Thread.currentThread().interrupt();
+            Assert.fail("Interrupted while checking batch commit: " + e);
+        }
+
+        // Clean up
+        DebeziumOffsetManagement.inFlightBatches.clear();
+    }
+
 }
