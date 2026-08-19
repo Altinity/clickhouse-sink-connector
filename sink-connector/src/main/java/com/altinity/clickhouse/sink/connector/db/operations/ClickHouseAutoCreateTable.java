@@ -261,8 +261,23 @@ public class ClickHouseAutoCreateTable
             }
             createTableSyntax.append(")");
         } else {
-            // TODO: Define a default ORDER BY clause.
-            createTableSyntax.append(ORDER_BY_TUPLE);
+            // No usable primary key. ORDER BY tuple() is NOT a safe default
+            // for a ReplacingMergeTree: with an empty sorting key every row
+            // of the table shares the same (empty) key, so the engine treats
+            // the entire table as one deduplication group and collapses it to
+            // a single row. A source table with a UNIQUE key but no PRIMARY
+            // KEY silently loses every row but one.
+            //
+            // Fall back to ordering by all replicated non-metadata columns.
+            // That is a superset of any UNIQUE key the source table has, so
+            // distinct source rows keep distinct sorting keys and survive.
+            String fallbackOrderBy = orderByAllDataColumns(fields);
+            if (fallbackOrderBy.isEmpty()) {
+                createTableSyntax.append(ORDER_BY_TUPLE);
+            } else {
+                createTableSyntax.append(ORDER_BY).append("(")
+                        .append(fallbackOrderBy).append(")");
+            }
         }
 
         // If Replication history is enabled, add the ORDER BY toDate(deleted_time) , Add TTL deleted_time + toIntervalDay(30)
@@ -348,7 +363,45 @@ public class ClickHouseAutoCreateTable
     }
 
 
+    /**
+     * Builds the fallback {@code ORDER BY} column list for a table that has no
+     * usable primary key.
+     * <p>
+     * Every replicated data column is included, in declaration order, with the
+     * connector's own metadata columns ({@code _version}, {@code is_deleted},
+     * {@code _sign}, {@code _valid_to}) excluded — those are not part of the
+     * source row's identity and {@code _version} in particular differs on every
+     * write, which would defeat deduplication entirely.
+     * <p>
+     * This is deliberately a superset of any {@code UNIQUE} key on the source
+     * table, so two distinct source rows can never share a sorting key.
+     * <p>
+     * The order is taken from {@code fields} — the source schema's declaration
+     * order — and NOT from the column-to-data-type map, which is a
+     * {@link java.util.HashMap} whose iteration order is unspecified. A sorting
+     * key must be stable across connector restarts, otherwise a table
+     * re-created later would get a different {@code ORDER BY} than the one its
+     * existing parts were written with.
+     *
+     * @param fields the replicated columns, in source declaration order
+     * @return a comma-separated, backtick-quoted column list, or an empty
+     *         string when the table has no data columns at all
+     */
     @VisibleForTesting
+    static String orderByAllDataColumns(Field[] fields) {
+        if (fields == null || fields.length == 0) {
+            return "";
+        }
+        return java.util.Arrays.stream(fields)
+                .map(Field::name)
+                .filter(column -> !VERSION_COLUMN.equalsIgnoreCase(column))
+                .filter(column -> !IS_DELETED_COLUMN.equalsIgnoreCase(column))
+                .filter(column -> !SIGN_COLUMN.equalsIgnoreCase(column))
+                .filter(column -> !DELETED_TIME_COLUMN.equalsIgnoreCase(column))
+                .map(column -> "`" + column + "`")
+                .collect(Collectors.joining(","));
+    }
+
     boolean isPrimaryKeyColumnPresent(ArrayList<String> primaryKeys,
                                       Map<String, String> columnToDataTypesMap) {
         for (String primaryKey : primaryKeys) {
