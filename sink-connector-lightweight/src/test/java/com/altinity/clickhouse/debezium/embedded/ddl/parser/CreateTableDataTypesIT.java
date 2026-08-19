@@ -61,11 +61,8 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         Properties props = getDebeziumProperties();
         executorService.execute(() -> {
             try {
-
-                props.setProperty("database.include.list", "datatypes");
-
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService() , false);
+                engine.get().setup(props, new SourceRecordParserService() , false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -77,11 +74,11 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
         DBMetadata metadata = new DBMetadata(props);
         Connection conn = writer.getConnection();
-        Map<String, String> decimalTable = metadata.getColumnsDataTypesForTable(conn, "numeric_types_DECIMAL_65_30", "datatypes");
-        Map<String, String> dateTimeTable6 = metadata.getColumnsDataTypesForTable(conn, "temporal_types_DATETIME6", "datatypes");
-        Map<String, String> dateTimeTable2 = metadata.getColumnsDataTypesForTable(conn, "temporal_types_DATETIME2", "datatypes");
+        Map<String, String> decimalTable = metadata.getColumnsDataTypesForTable(conn, "numeric_types_DECIMAL_65_30", "employees");
+        Map<String, String> dateTimeTable6 = metadata.getColumnsDataTypesForTable(conn, "temporal_types_DATETIME6", "employees");
+        Map<String, String> dateTimeTable2 = metadata.getColumnsDataTypesForTable(conn, "temporal_types_DATETIME2", "employees");
 
-        Map<String, String> timestampTable = metadata.getColumnsDataTypesForTable(conn, "temporal_types_TIMESTAMP6", "datatypes");
+        Map<String, String> timestampTable = metadata.getColumnsDataTypesForTable(conn, "temporal_types_TIMESTAMP6", "employees");
 
         // Validate all decimal records.
         Assert.assertTrue(decimalTable.get("Type").equalsIgnoreCase("String"));
@@ -278,8 +275,12 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         boolean pointResultValidated = false;
         while(rs.next()) {
             pointResultValidated = true;
-            String c3a = rs.getString("c3a");
-            String c3b = rs.getString("c3b");
+            // Driver-agnostic Point read: the legacy V1 jdbc driver renders a
+            // Point as the string "(1.0,2.0)" from getString(), while the
+            // 0.9.x V2 driver returns a double[] from getObject(). Normalize
+            // both to "(x.y,x.y)" before asserting.
+            String c3a = pointAsString(rs.getObject("c3a"));
+            String c3b = pointAsString(rs.getObject("c3b"));
             Assert.assertTrue(c3a.equalsIgnoreCase("(1.0,2.0)"));
             Assert.assertTrue(c3b.equalsIgnoreCase("(3.0,4.0)"));
         }
@@ -393,5 +394,17 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         writer.getConnection().close();
 
         HikariDbSource.close();
+    }
+
+    /**
+     * Renders a ClickHouse Point column value as "(x,y)" regardless of the
+     * JDBC driver generation: V1 returns a String, V2 returns double[].
+     */
+    private static String pointAsString(Object value) {
+        if (value instanceof double[]) {
+            double[] point = (double[]) value;
+            return "(" + point[0] + "," + point[1] + ")";
+        }
+        return String.valueOf(value);
     }
 }

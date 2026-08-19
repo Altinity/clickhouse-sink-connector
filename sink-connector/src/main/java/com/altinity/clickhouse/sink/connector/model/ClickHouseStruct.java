@@ -429,8 +429,12 @@ public class ClickHouseStruct {
             if (fieldNames.contains(SNAPSHOT)
                     && source.get(SNAPSHOT) != null
                     && source.get(SNAPSHOT) instanceof String) {
-                this.setSnapshot(Boolean.parseBoolean(
-                        (String) source.get(SNAPSHOT)));
+                // Debezium emits the snapshot marker as an enum string, not a plain boolean:
+                // "true", "first", "first_in_data_collection", "last",
+                // "last_in_data_collection" and "incremental" all denote a snapshot record,
+                // while "false" denotes streaming. Boolean.parseBoolean would incorrectly
+                // classify "first"/"last"/etc. as streaming records.
+                this.setSnapshot(!"false".equalsIgnoreCase((String) source.get(SNAPSHOT)));
             }
             if (fieldNames.contains(SERVER_ID)
                     && source.get(SERVER_ID) != null
@@ -546,6 +550,65 @@ public class ClickHouseStruct {
             return (Long) tsMs;
         }
         return 0L;
+    }
+
+    /**
+     * Gets the SOURCE commit timestamp ({@code source.ts_ms}) from the change event.
+     *
+     * <p>Unlike {@link #getDebeziumTsFromChangeEvent} (which returns the envelope/processing
+     * timestamp assigned when the connector reads the event), this returns the time the change
+     * was committed at the source database. That value is identical every time Debezium
+     * re-delivers an event, so anchoring the ReplacingMergeTree {@code _version} sequence to it
+     * keeps the effective ordering stable across at-least-once redelivery: a re-delivered
+     * DELETE keeps its original (lower) version and can no longer out-rank a later,
+     * un-redelivered re-INSERT (issue #1346).</p>
+     *
+     * @param changeEvent The change event.
+     * @return the source commit timestamp in ms; falls back to the envelope {@code ts_ms}
+     *         (and finally 0) when the nested {@code source} struct or field is unavailable
+     *         (e.g. some snapshot or heartbeat records).
+     */
+    public static Long getSourceTsFromChangeEvent(ChangeEvent<SourceRecord, SourceRecord> changeEvent) {
+        if (changeEvent == null || changeEvent.value() == null) {
+            return 0L;
+        }
+        SourceRecord srd = changeEvent.value();
+        Struct kafkaStruct = (Struct) srd.value();
+        if (kafkaStruct == null) {
+            return 0L;
+        }
+        if (kafkaStruct.schema() != null
+                && kafkaStruct.schema().field(SinkRecordColumns.SOURCE) != null) {
+            Object sourceObj = kafkaStruct.get(SinkRecordColumns.SOURCE);
+            if (sourceObj instanceof Struct) {
+                Struct source = (Struct) sourceObj;
+                // Snapshot records do not carry a binlog commit timestamp - their
+                // source.ts_ms is the snapshot read time, whose clock semantics differ
+                // between connector versions/configurations. Keep the envelope
+                // (processing) timestamp for snapshots - identical to the historical
+                // behavior, and snapshots are not subject to the #1346 redelivery
+                // inversion (they are re-read, not re-delivered from an offset rewind).
+                boolean isSnapshot = false;
+                if (source.schema() != null
+                        && source.schema().field(SinkRecordColumns.SNAPSHOT) != null) {
+                    Object snap = source.get(SinkRecordColumns.SNAPSHOT);
+                    if (snap instanceof String) {
+                        isSnapshot = !"false".equalsIgnoreCase((String) snap);
+                    }
+                }
+                if (!isSnapshot
+                        && source.schema() != null
+                        && source.schema().field(SinkRecordColumns.TS_MS) != null) {
+                    Object sourceTs = source.get(SinkRecordColumns.TS_MS);
+                    if (sourceTs instanceof Long && (Long) sourceTs > 0) {
+                        return (Long) sourceTs;
+                    }
+                }
+            }
+        }
+        // Fall back to the envelope timestamp when the source struct/field is absent.
+        Object envelopeTs = kafkaStruct.get(SinkRecordColumns.TS_MS);
+        return envelopeTs instanceof Long ? (Long) envelopeTs : 0L;
     }
 
     /**

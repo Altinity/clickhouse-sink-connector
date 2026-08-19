@@ -64,7 +64,6 @@ public class DebeziumChangeEventCaptureIT{
 
         BasicConfigurator.configure();
         mySqlContainer.start();
-        clickHouseContainer.start();
         Thread.sleep(35000);
     }
 
@@ -86,84 +85,74 @@ public class DebeziumChangeEventCaptureIT{
         props.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
         props.setProperty("schema.history.internal.store.only.captured.databases.ddl", "true");
 
-        // Override clickhouse server timezone.
         ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
-
-
         ExecutorService executorService = Executors.newFixedThreadPool(1);
-        executorService.execute(() -> {
-            try {
-                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class) , props, false);
-                DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
-                        , new Properties());
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+        Connection conn = null;
+
+        try {
+            executorService.execute(() -> {
+                try {
+                    clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class), props, false);
+                    DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
+                            , new Properties());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            Thread.sleep(25000);
+
+            conn = ITCommon.connectToMySQL(mySqlContainer);
+            conn.prepareStatement("create table `newtable`(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
+
+            conn.prepareStatement("insert into newtable values('a', 1, 1)").execute();
+            conn.prepareStatement("insert into newtable values('b', 2, 2)").execute();
+            conn.prepareStatement("insert into newtable values('c', 3, 3)").execute();
+            conn.prepareStatement("insert into newtable values('d', 4, 4)").execute();
+
+            Thread.sleep(20000);
+
+            BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+
+            long version1 = 1L;
+            long version2 = 1L;
+            long version3 = 1L;
+            long version4 = 1L;
+
+            ResultSet version1Result = ITCommon.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'a'", writer.getConnection());
+            while (version1Result.next()) {
+                version1 = version1Result.getLong("_version");
             }
 
-        });
+            ResultSet version2Result = ITCommon.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'b'", writer.getConnection());
+            while (version2Result.next()) {
+                version2 = version2Result.getLong("_version");
+            }
 
-        Thread.sleep(25000);
+            ResultSet version3Result = ITCommon.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'c'", writer.getConnection());
+            while (version3Result.next()) {
+                version3 = version3Result.getLong("_version");
+            }
 
-        // Using MySQL.
-        // 1. Insert multiple records.
-        // Get connection to MySQL.
+            ResultSet version4Result = ITCommon.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'd'", writer.getConnection());
+            while (version4Result.next()) {
+                version4 = version4Result.getLong("_version");
+            }
 
-        Connection conn = ITCommon.connectToMySQL(mySqlContainer);
-        conn.prepareStatement("create table `newtable`(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
-
-        // Insert multiple rows.
-        conn.prepareStatement("insert into newtable values('a', 1, 1)").execute();
-        conn.prepareStatement("insert into newtable values('b', 2, 2)").execute();
-        conn.prepareStatement("insert into newtable values('c', 3, 3)").execute();
-        conn.prepareStatement("insert into newtable values('d', 4, 4)").execute();
-
-        Thread.sleep(20000);
-
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-
-        long version1 = 1L;
-        long version2 = 1L;
-        long version3 = 1L;
-        long version4 = 1L;
-
-        ResultSet version1Result = ITCommon.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'a'", writer.getConnection());
-        while(version1Result.next()) {
-            version1 = version1Result.getLong("_version");
+            assertTrue(version4 > version3);
+            assertTrue(version3 > version2);
+            assertTrue(version2 > version1);
+        } finally {
+            if (clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture() != null
+                    && clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine != null) {
+                clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
+            }
+            if (conn != null) {
+                conn.close();
+            }
+            executorService.shutdown();
+            HikariDbSource.close();
         }
-
-        ResultSet version2Result = ITCommon.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'b'", writer.getConnection());
-        while(version2Result.next()) {
-            version2 = version2Result.getLong("_version");
-        }
-
-        ResultSet version3Result = ITCommon.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'c'", writer.getConnection());
-        while(version3Result.next()) {
-            version3 = version3Result.getLong("_version");
-        }
-
-        ResultSet version4Result = ITCommon.executeQueryWithResultSet("select _version from employees.newtable final where col1 = 'd'", writer.getConnection());
-        while(version4Result.next()) {
-            version4 = version4Result.getLong("_version");
-        }
-        System.out.println("Version 1" + version1);
-        System.out.println("Version 2" + version2);
-        System.out.println("Version 3" + version3);
-        System.out.println("Version 4" + version4);
-
-
-        // Check if version 4 is greater than version 3
-        assertTrue(version4 > version3);
-        // Check if version 3 is greater than version 2
-        assertTrue(version3 > version2);
-        // Check if version 2 is greater than version 1
-        assertTrue(version2 > version1);
-
-        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();
-        conn.close();
-        executorService.shutdown();
-
-        HikariDbSource.close();
-
     }
 
 }

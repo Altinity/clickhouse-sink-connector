@@ -38,32 +38,36 @@ public class DbKafkaOffsetWriterTest {
     @Tag("IntegrationTest")
     public void testInsertTopicOffsetMetadata() throws SQLException {
 
-
         String dbHostName = clickHouseContainer.getHost();
         Integer port = clickHouseContainer.getFirstMappedPort();
-        String database = "system";
+        String database = "employees";
         String userName = clickHouseContainer.getUsername();
         String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
+        HashMap<String, String> rawConfig = new HashMap<>();
+        rawConfig.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(rawConfig);
+
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB,new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                BaseDbWriter.SYSTEM_DB, config);
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
+                config, null, conn);
 
         DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), conn);
+                config, conn);
 
         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
         Map<TopicPartition, Long> result = new HashMap<>();
         GroupInsertQueryWithBatchRecords groupInsertQueryWithBatchRecords = new GroupInsertQueryWithBatchRecords();
 
-        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        boolean resultStatus =groupInsertQueryWithBatchRecords.groupQueryWithRecords(com.altinity.clickhouse.sink.connector.db.DbWriterTest.getSampleRecords()
-                , queryToRecordsMap, result, new ClickHouseSinkConnectorConfig(new HashMap<>()), tableName, database, writer.getConnection(),
-                metadata.getColumnsDataTypesForTable(conn, tableName, "employees"));
+        DBMetadata metadata = new DBMetadata(config);
+        boolean resultStatus = groupInsertQueryWithBatchRecords.groupQueryWithRecords(
+                DbWriterTest.getSampleRecords(),
+                queryToRecordsMap, result, config, tableName, database, writer.getConnection(),
+                metadata.getColumnsDataTypesForTable(conn, tableName, database));
 
         dbKafkaOffsetWriter.insertTopicOffsetMetadata(result);
         Map<TopicPartition, Long> offsetsMap = dbKafkaOffsetWriter.getStoredOffsets();

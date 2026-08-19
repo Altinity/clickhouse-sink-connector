@@ -74,8 +74,30 @@ public class DbKafkaOffsetWriter extends BaseDbWriter {
                         this.getConnection(),
                         database
                 );
-        this.query = new QueryFormatter().getInsertQueryUsingInputFunction(
-                tableName, columnNamesToDataTypesMap
+        this.query = buildValuesInsertQuery(tableName, columnNamesToDataTypesMap);
+    }
+
+    /**
+     * Builds a VALUES-based INSERT query. Avoids the input() function which
+     * breaks when column types contain commas (e.g. SimpleAggregateFunction).
+     */
+    private static String buildValuesInsertQuery(
+            String tableName,
+            Map<String, String> columnNamesToDataTypesMap
+    ) {
+        StringBuilder colNames = new StringBuilder();
+        StringBuilder placeholders = new StringBuilder();
+        for (Map.Entry<String, String> entry : columnNamesToDataTypesMap.entrySet()) {
+            colNames.append("`").append(entry.getKey()).append("`,");
+            placeholders.append("?,");
+        }
+        if (!colNames.isEmpty()) {
+            colNames.setLength(colNames.length() - 1);
+            placeholders.setLength(placeholders.length() - 1);
+        }
+        return String.format(
+                "INSERT INTO `%s` (%s) VALUES (%s)",
+                tableName, colNames, placeholders
         );
     }
 

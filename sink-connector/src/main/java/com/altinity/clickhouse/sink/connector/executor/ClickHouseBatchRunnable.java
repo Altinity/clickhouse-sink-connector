@@ -890,20 +890,34 @@ public class ClickHouseBatchRunnable implements Runnable {
         if (userProvidedTimeZoneId != null) {
             return userProvidedTimeZoneId;
         }
-        return new DBMetadata(config).getServerTimeZone(getSystemConnection());
+        return new DBMetadata(config).getServerTimeZone(systemConnection());
     }
 
     /**
-     * Returns the shared system-database connection, opening it on first use.
+     * Returns a usable connection to the system database, replacing the cached
+     * one when it has been closed.
+     * <p>
+     * {@code systemConnection} is opened once in the constructor and then held
+     * for the lifetime of the task. A pooled connection does not stay open that
+     * long: it gets returned to the pool, evicted, or reaped after an idle
+     * period, and every later use of the stale handle throws
+     * {@code SQLException: Connection is closed}. The only caller
+     * ({@link #getServerTimeZone}) runs on every batch, so a single closed
+     * handle produced one full stack trace per batch for the rest of the run —
+     * 1.17M log lines in CI — while the timezone silently fell back to the
+     * default. Re-opening when the handle is unusable keeps the connection
+     * valid for the life of the task.
      *
-     * <p>Lazy so that constructing this runnable does not require a reachable
-     * ClickHouse. Callers that genuinely need the database still fail loudly,
-     * because createConnection throws when it cannot connect.</p>
+     * <p>This also subsumes the lazy-open behaviour this branch introduced: a
+     * null handle is unusable, so the connection is still opened on first use
+     * rather than in the constructor, and constructing the runnable does not
+     * require a reachable ClickHouse.</p>
      *
-     * @return the system-database connection.
+     * @return a usable system-database connection, or null when one cannot be
+     *         obtained (callers already handle a null connection).
      */
-    private synchronized Connection getSystemConnection() {
-        if (this.systemConnection == null) {
+    private synchronized Connection systemConnection() {
+        if (BaseDbWriter.isUnusable(this.systemConnection)) {
             this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
         }
         return this.systemConnection;

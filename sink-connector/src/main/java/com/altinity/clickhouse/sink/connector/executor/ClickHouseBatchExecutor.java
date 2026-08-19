@@ -32,9 +32,10 @@ public class ClickHouseBatchExecutor extends
      * 17.4), and the tight {@code while (isPaused)} loop - whose body touches
      * no other shared state - may hoist the read out of the loop entirely.</p>
      *
-     * <p>The consequence is not a stall but silent corruption: a batch thread
-     * that never observes the pause applies DML against a schema that is
-     * mid-DDL. Pinned by {@code ExecutorPauseVisibilityTest}.</p>
+     * <p>The consequence is not only a stall but silent corruption: a batch
+     * thread that never observes the pause applies DML against a schema that
+     * is mid-DDL; one that spins past the resume stalls instead. Pinned by
+     * {@code ExecutorPauseVisibilityTest}.</p>
      */
     volatile boolean isPaused = false;
 

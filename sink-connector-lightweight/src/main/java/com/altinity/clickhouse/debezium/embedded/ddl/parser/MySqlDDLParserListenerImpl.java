@@ -44,6 +44,39 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private static final Logger log = LogManager.getLogger(MySqlDDLParserListenerImpl.class);
 
     /**
+     * A MySQL character-set introducer immediately preceding a string
+     * literal, e.g. the {@code _utf8mb4} in {@code _utf8mb4' '}.
+     * <p>
+     * MySQL emits one whenever a literal's character set differs from the
+     * connection's. It is valid MySQL and meaningless to ClickHouse, which
+     * rejects the expression outright with a syntax error. Anchored on the
+     * quote so it can only ever match an introducer that actually
+     * introduces a literal -- an identifier such as {@code _utf8mb4_col}
+     * is left alone. The leading boundary keeps it from biting into the
+     * tail of a longer identifier (e.g. {@code my_utf8mb4'x'}).
+     */
+    private static final Pattern CHARSET_INTRODUCER =
+            Pattern.compile("(?<![A-Za-z0-9_$])_[A-Za-z0-9]+(?=['\"])");
+
+    /**
+     * Removes MySQL character-set introducers from a generated-column
+     * expression so the result is valid ClickHouse.
+     * <p>
+     * {@code concat(`a`,_utf8mb4' ',`b`)} becomes
+     * {@code concat(`a`,' ',`b`)}. The literal itself, and everything
+     * else in the expression, is preserved untouched.
+     *
+     * @param expression the raw expression text from the MySQL parse tree.
+     * @return the expression with any charset introducers stripped.
+     */
+    static String stripCharsetIntroducers(String expression) {
+        if (expression == null || expression.indexOf('_') < 0) {
+            return expression;
+        }
+        return CHARSET_INTRODUCER.matcher(expression).replaceAll("");
+    }
+
+    /**
      * The query string that will be transformed.
      */
     StringBuffer query;
@@ -622,6 +655,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                     }
                                 }
                                 isGeneratedColumn = true;
+                                generatedColumn =
+                                        stripCharsetIntroducers(generatedColumn);
                                 //generatedColumn = generatedColumnTree.getText();
                             }
                         }
@@ -982,13 +1017,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 parseAlterTable(tree);
             } else if (tree instanceof MySqlParser.AlterByAddIndexContext) {
                 parseAddIndex(tree);
-            } else if (tree instanceof MySqlParser.AlterBySetAlgorithmContext) {
-                log.info("INSTANT ALGORITHM not supported in ClickHouse");
-                // Remove any terminating commas and skip this clause.
-                // Using continue (not break) to avoid dropping subsequent ALTER operations.
-                if(this.query.charAt(this.query.length() - 1) == ',')
-                    this.query.deleteCharAt(this.query.length() - 1);
-                continue;
+            } else if (tree instanceof MySqlParser.AlterBySetAlgorithmContext
+                    || tree instanceof MySqlParser.AlterByLockContext) {
+                // ALGORITHM=/LOCK= are MySQL execution hints with no ClickHouse
+                // equivalent, so they emit nothing. Drop the separator that was
+                // emitted for them and keep walking: an ALTER may carry further
+                // operations after the hint, e.g.
+                //   ALTER TABLE t ADD COLUMN a INT, ALGORITHM=INSTANT,
+                //                  ADD COLUMN b BIGINT, ALGORITHM=INSTANT
+                // Terminating the walk here would silently discard every
+                // operation after the first hint.
+                log.info("ALGORITHM/LOCK clause not supported in ClickHouse, skipping clause");
+                removeTrailingComma();
             } else if (tree instanceof TerminalNodeImpl) {
                 if (((TerminalNodeImpl) tree).symbol.getType() == MySqlParser.COMMA) {
                     // Only emit a separator if something precedes it that still
@@ -1034,6 +1074,25 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
         if (i >= 0 && this.query.charAt(i) == ',') {
             this.query.delete(i, this.query.length());
+        }
+    }
+
+    /**
+     * Drops a single trailing comma from the generated query, if present.
+     * <p>
+     * Separators are emitted eagerly as the ALTER clause list is walked, so a
+     * clause that turns out to emit nothing (an ALGORITHM or LOCK hint) leaves
+     * a dangling comma behind. No-op when the query is empty.
+     * <p>
+     * Kept alongside {@link #stripTrailingSeparator()}: this one is the
+     * mid-walk call used right after a skipped hint, where the comma is always
+     * the last character. {@code stripTrailingSeparator} is the end-of-walk
+     * call and additionally tolerates trailing whitespace.
+     */
+    private void removeTrailingComma() {
+        int length = this.query.length();
+        if (length > 0 && this.query.charAt(length - 1) == ',') {
+            this.query.deleteCharAt(length - 1);
         }
     }
 

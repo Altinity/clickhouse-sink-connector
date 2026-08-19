@@ -527,20 +527,30 @@ public class ClickHouseBatchWriter {
         if (userProvidedTimeZoneId != null) {
             return userProvidedTimeZoneId;
         }
-        return new DBMetadata(config).getServerTimeZone(getSystemConnection());
+        return new DBMetadata(config).getServerTimeZone(systemConnection());
     }
 
     /**
-     * Returns the shared system-database connection, opening it on first use.
+     * Returns a usable connection to the system database, replacing the cached
+     * one when it has been closed.
+     * <p>
+     * Same lifetime problem as in {@code ClickHouseBatchRunnable}: the
+     * connection is opened once in the constructor and held for the life of the
+     * task, but a pooled connection is returned, evicted or idle-reaped long
+     * before then, after which every use throws
+     * {@code SQLException: Connection is closed}. Fixed in both places so the
+     * two executors do not diverge.
      *
-     * <p>Lazy so that constructing this writer does not require a reachable
-     * ClickHouse. Callers that genuinely need the database still fail loudly,
-     * because createConnection throws when it cannot connect.</p>
+     * <p>This also subsumes the lazy-open behaviour this branch introduced: a
+     * null handle is unusable, so the connection is still opened on first use
+     * rather than in the constructor, and constructing the writer does not
+     * require a reachable ClickHouse.</p>
      *
-     * @return the system-database connection.
+     * @return a usable system-database connection, or null when one cannot be
+     *         obtained (callers already handle a null connection).
      */
-    private synchronized Connection getSystemConnection() {
-        if (this.systemConnection == null) {
+    private synchronized Connection systemConnection() {
+        if (BaseDbWriter.isUnusable(this.systemConnection)) {
             this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
         }
         return this.systemConnection;

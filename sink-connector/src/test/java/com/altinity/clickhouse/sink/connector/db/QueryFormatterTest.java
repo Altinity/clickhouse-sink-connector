@@ -11,12 +11,13 @@ import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 public class QueryFormatterTest {
 
-    static Map<String, String> columnNameToDataTypesMap = new HashMap<>();
+    static Map<String, String> columnNameToDataTypesMap = new LinkedHashMap<>();
 
     static List<Field> fields = new ArrayList<>();
 
@@ -95,7 +96,7 @@ public class QueryFormatterTest {
         MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap, includeKafkaMetaData, includeRawData,
                 null, "employees");
 
-        String expectedQuery  = "insert into `products`(`occupation`,`quantity`,`_topic`,`customerName`) select `occupation`,`quantity`,`_topic`,`customerName` from input('`occupation` String,`quantity` UInt32,`_topic` String,`customerName` String')";
+        String expectedQuery  = "INSERT INTO `products`(`customerName`,`occupation`,`quantity`,`_topic`) VALUES (?,?,?,?)";
         //System.out.println("Kafka metadata enabled Processed Query:" + expectedQuery);
 
         Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
@@ -113,10 +114,10 @@ public class QueryFormatterTest {
         MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
                 includeKafkaMetaData, includeRawData, null, "employees");
 
-        String expectedQuery = "insert into `products`(`occupation`,`quantity`,`customerName`) select `occupation`,`quantity`,`customerName` from input('`occupation` String,`quantity` UInt32,`customerName` String')";
+        String expectedQuery = "INSERT INTO `products`(`customerName`,`occupation`,`quantity`) VALUES (?,?,?)";
 
         System.out.println("Kafka metadata disabled Processed Query:" + expectedQuery);
-        //Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
+        Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }
 
     @Test
@@ -130,7 +131,7 @@ public class QueryFormatterTest {
         MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
                 includeKafkaMetaData, includeRawData, null, "customer");
 
-        String expectedQuery = "insert into `products`(`occupation`,`quantity`,`customerName`) select `occupation`,`quantity`,`customerName` from input('`occupation` String,`quantity` UInt32,`customerName` String')";
+        String expectedQuery = "INSERT INTO `products`(`customerName`,`occupation`,`quantity`) VALUES (?,?,?)";
 
         Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }
@@ -142,11 +143,12 @@ public class QueryFormatterTest {
         boolean includeKafkaMetaData = false;
         boolean includeRawData = true;
 
-        columnNameToDataTypesMap.put("raw_column", "String");
-        MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypesMap,
+        Map<String, String> columnsWithRaw = new LinkedHashMap<>(columnNameToDataTypesMap);
+        columnsWithRaw.put("raw_column", "String");
+        MutablePair<String, Map<String, Integer>> response =  qf.getInsertQueryUsingInputFunction(tableName, fields, columnsWithRaw,
                 includeKafkaMetaData, includeRawData, "raw_column", "customer2");
 
-        String expectedQuery = "insert into `products`(`raw_column`,`occupation`,`quantity`,`customerName`) select `raw_column`,`occupation`,`quantity`,`customerName` from input('`raw_column` String,`occupation` String,`quantity` UInt32,`customerName` String')";
+        String expectedQuery = "INSERT INTO `products`(`customerName`,`occupation`,`quantity`,`raw_column`) VALUES (?,?,?,?)";
         //String expectedQuery = "insert into products(customerName,occupation,quantity,raw_column) select customerName,occupation,quantity,raw_column from input('customerName String,occupation String,quantity UInt32,raw_column String')";
         Assert.assertTrue(response.left.equalsIgnoreCase(expectedQuery));
     }
