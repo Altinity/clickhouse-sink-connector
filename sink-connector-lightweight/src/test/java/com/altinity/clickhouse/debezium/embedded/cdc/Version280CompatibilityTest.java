@@ -52,6 +52,9 @@ public class Version280CompatibilityTest {
     /** Mirrors {@code DebeziumChangeEventCapture.SEQUENCE_START}. */
     private static final long SEQUENCE_START = 1000000000L;
 
+    /** Mirrors {@code DebeziumChangeEventCapture.SEQUENCE_START_INITIAL}. */
+    private static final long SEQUENCE_START_INITIAL = 500000000L;
+
     private static final long SEQUENCE_SCALE = 1000000L;
 
     /** 2024-01-01T00:00:00Z. */
@@ -172,20 +175,46 @@ public class Version280CompatibilityTest {
     }
 
     @Test
-    @DisplayName("addVersion() anchors on debezium_ts_ms, not source ts_ms")
-    public void addVersionAnchorsOnDebeziumTimestamp() {
-        // If this ever anchors on the source commit timestamp, every emitted
-        // value shifts and 2.8.0 compatibility is silently broken.
+    @DisplayName("addVersion() anchors on source ts_ms, falling back to debezium_ts_ms")
+    public void addVersionAnchorsOnSourceTimestamp() {
+        // This test previously pinned anchoring to debezium_ts_ms. #1346
+        // deliberately changed that: the Debezium/processing timestamp is
+        // regenerated on every re-delivery, so a re-delivered DELETE was given
+        // a NEWER _version than the re-INSERT that followed it and won the
+        // ReplacingMergeTree merge. The source commit timestamp is stable
+        // across re-deliveries, which is what makes redelivery safe.
+        //
+        // 2.8.0 compatibility is unaffected: the FORMULA
+        // (ts * 1_000_000 + counter) and therefore the numeric domain are
+        // unchanged -- only which clock supplies `ts`. That is asserted
+        // directly by the other tests in this class.
         ClickHouseStruct record = new ClickHouseStruct();
         record.setDebezium_ts_ms(TS);
-        record.setTs_ms(TS + 3_600_000L); // deliberately far from the Debezium clock
+        record.setTs_ms(TS + 3_600_000L); // source clock, deliberately far from Debezium's
 
         DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
-        capture.seedSequenceAnchor(TS);
         capture.addVersion(Collections.singletonList(record));
 
-        assertEquals(TS * SEQUENCE_SCALE + SEQUENCE_START + 1, record.getSequenceNumber(),
-                "the version must be derived from debezium_ts_ms, exactly as 2.8.0 did");
+        assertEquals((TS + 3_600_000L) * SEQUENCE_SCALE + SEQUENCE_START_INITIAL + 1,
+                record.getSequenceNumber(),
+                "the version must be derived from the SOURCE commit ts (#1346), and the "
+                        + "first record after start seeds at SEQUENCE_START_INITIAL");
+    }
+
+    @Test
+    @DisplayName("addVersion() falls back to debezium_ts_ms when source ts_ms is absent")
+    public void addVersionFallsBackToDebeziumTimestamp() {
+        // Snapshot records carry no source commit timestamp. They must still
+        // get a sane version rather than one derived from 0.
+        ClickHouseStruct record = new ClickHouseStruct();
+        record.setDebezium_ts_ms(TS);
+
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        capture.addVersion(Collections.singletonList(record));
+
+        assertEquals(TS * SEQUENCE_SCALE + SEQUENCE_START_INITIAL + 1,
+                record.getSequenceNumber(),
+                "records without source.ts_ms must fall back to the processing clock");
     }
 
     /**

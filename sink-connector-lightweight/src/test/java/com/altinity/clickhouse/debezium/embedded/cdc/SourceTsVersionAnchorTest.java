@@ -23,10 +23,18 @@ public class SourceTsVersionAnchorTest {
 
     private static final long TS = 1_754_000_000_000L; // fixed source commit ts (ms)
 
+    /**
+     * The sequence anchor and counter are per-instance state guarded by one
+     * lock (they used to be two public statics, which is the duplicate-version
+     * race this suite pins). A fresh instance per test is therefore the
+     * equivalent of the old static reset.
+     */
+    private DebeziumChangeEventCapture capture;
+
     @BeforeEach
     public void resetSequenceState() {
-        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
-        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
+        capture = new DebeziumChangeEventCapture();
+        capture.resetSequenceStateForTest();
     }
 
     private ClickHouseStruct recordAt(long sourceTsMs, long processingTsMs) {
@@ -51,7 +59,7 @@ public class SourceTsVersionAnchorTest {
                 recordAt(TS, TS + 5),
                 recordAt(TS, TS + 6),
                 recordAt(TS + 500, TS + 7));
-        DebeziumChangeEventCapture.addVersion(batch);
+        capture.addVersion(batch);
 
         // The very first batch after start/resume is seeded at
         // SEQUENCE_START_INITIAL (500m) - still inside the 2.8.0 domain.
@@ -73,7 +81,7 @@ public class SourceTsVersionAnchorTest {
         List<ClickHouseStruct> first = Arrays.asList(
                 recordAt(TS, TS + 10),          // DELETE
                 recordAt(TS + 3000, TS + 12));  // re-INSERT (later commit)
-        DebeziumChangeEventCapture.addVersion(first);
+        capture.addVersion(first);
         long deleteV1 = first.get(0).getSequenceNumber();
         long reinsertV = first.get(1).getSequenceNumber();
         assertTrue(deleteV1 < reinsertV, "sanity: in-order delivery ranks re-INSERT higher");
@@ -84,7 +92,7 @@ public class SourceTsVersionAnchorTest {
         // re-INSERT and the row would be permanently stuck is_deleted=1.
         List<ClickHouseStruct> redelivery = Arrays.asList(
                 recordAt(TS, TS + 60_000));      // same source commit ts, much later
-        DebeziumChangeEventCapture.addVersion(redelivery);
+        capture.addVersion(redelivery);
         long deleteV2 = redelivery.get(0).getSequenceNumber();
 
         assertTrue(deleteV2 < reinsertV,
@@ -102,11 +110,11 @@ public class SourceTsVersionAnchorTest {
         // may reset the counter: only the source clock advancing can.
         List<ClickHouseStruct> beforeRotation = Arrays.asList(
                 recordAt(TS, TS + 1), recordAt(TS, TS + 2));
-        DebeziumChangeEventCapture.addVersion(beforeRotation);
+        capture.addVersion(beforeRotation);
 
         List<ClickHouseStruct> afterRotation = Arrays.asList(
                 recordAt(TS, TS + 500), recordAt(TS + 200, TS + 501));
-        DebeziumChangeEventCapture.addVersion(afterRotation);
+        capture.addVersion(afterRotation);
 
         List<Long> all = versionsOf(beforeRotation);
         all.addAll(versionsOf(afterRotation));
@@ -128,7 +136,7 @@ public class SourceTsVersionAnchorTest {
         List<ClickHouseStruct> batch = Arrays.asList(
                 recordAt(TS, TS + 1),
                 recordAt(TS + 5000, TS + 2)); // source clock jumped 5s
-        DebeziumChangeEventCapture.addVersion(batch);
+        capture.addVersion(batch);
 
         assertEquals((TS + 5000) * 1_000_000L + DebeziumChangeEventCapture.SEQUENCE_START,
                 batch.get(1).getSequenceNumber(),
@@ -140,14 +148,14 @@ public class SourceTsVersionAnchorTest {
     @DisplayName("an older re-delivered timestamp never moves the anchor backward")
     public void anchorNeverMovesBackward() {
         List<ClickHouseStruct> current = Arrays.asList(recordAt(TS + 10_000, TS + 20));
-        DebeziumChangeEventCapture.addVersion(current);
+        capture.addVersion(current);
 
         // Redelivered event with an older source ts must not re-arm the counter reset.
         List<ClickHouseStruct> redelivered = Arrays.asList(recordAt(TS, TS + 30));
-        DebeziumChangeEventCapture.addVersion(redelivered);
+        capture.addVersion(redelivered);
 
         List<ClickHouseStruct> next = Arrays.asList(recordAt(TS + 10_500, TS + 40));
-        DebeziumChangeEventCapture.addVersion(next);
+        capture.addVersion(next);
 
         assertEquals((TS + 10_500) * 1_000_000L
                         + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 3,
@@ -161,7 +169,7 @@ public class SourceTsVersionAnchorTest {
     public void fallsBackToProcessingTimestamp() {
         ClickHouseStruct noSourceTs = new ClickHouseStruct();
         noSourceTs.setDebezium_ts_ms(TS + 42);
-        DebeziumChangeEventCapture.addVersion(Arrays.asList(noSourceTs));
+        capture.addVersion(Arrays.asList(noSourceTs));
 
         assertEquals((TS + 42) * 1_000_000L
                         + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1,
@@ -177,21 +185,20 @@ public class SourceTsVersionAnchorTest {
         // Pre-restart run: two events written with counters in the 1000m range.
         List<ClickHouseStruct> preRestart = Arrays.asList(
                 recordAt(TS, TS + 1), recordAt(TS, TS + 2));
-        DebeziumChangeEventCapture.addVersion(preRestart);
+        capture.addVersion(preRestart);
         // Escape the initial domain: >1s source advance resets to SEQUENCE_START.
         List<ClickHouseStruct> normalDomain = Arrays.asList(recordAt(TS + 5000, TS + 3));
-        DebeziumChangeEventCapture.addVersion(normalDomain);
+        capture.addVersion(normalDomain);
         long preRestartVersion = normalDomain.get(0).getSequenceNumber();
         assertEquals((TS + 5000) * 1_000_000L + DebeziumChangeEventCapture.SEQUENCE_START,
                 preRestartVersion, "sanity: steady-state counters live in the 1000m range");
 
-        // Simulated restart: static state is re-initialized exactly as a new JVM would.
-        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
-        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
+        // Simulated restart: sequence state is re-initialized exactly as a new JVM would.
+        capture.resetSequenceStateForTest();
 
         // Resume re-publishes the TS+5000 event (same source commit ts).
         List<ClickHouseStruct> republished = Arrays.asList(recordAt(TS + 5000, TS + 90_000));
-        DebeziumChangeEventCapture.addVersion(republished);
+        capture.addVersion(republished);
         long republishedVersion = republished.get(0).getSequenceNumber();
 
         assertEquals((TS + 5000) * 1_000_000L
@@ -208,14 +215,14 @@ public class SourceTsVersionAnchorTest {
     @DisplayName("the 500m initial domain is left on the first >1s source-clock advance")
     public void initialSeedEscapesToNormalDomainAfterOneSecond() {
         List<ClickHouseStruct> first = Arrays.asList(recordAt(TS, TS + 1));
-        DebeziumChangeEventCapture.addVersion(first);
+        capture.addVersion(first);
         assertEquals(TS * 1_000_000L
                         + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1,
                 first.get(0).getSequenceNumber(),
                 "first post-start record is in the 500m domain");
 
         List<ClickHouseStruct> later = Arrays.asList(recordAt(TS + 2001, TS + 5));
-        DebeziumChangeEventCapture.addVersion(later);
+        capture.addVersion(later);
         assertEquals((TS + 2001) * 1_000_000L + DebeziumChangeEventCapture.SEQUENCE_START,
                 later.get(0).getSequenceNumber(),
                 "the first >1s source-clock advance must reset to SEQUENCE_START (1000m), "
@@ -230,22 +237,21 @@ public class SourceTsVersionAnchorTest {
         List<ClickHouseStruct> original = Arrays.asList(
                 recordAt(TS, TS + 10),          // DELETE
                 recordAt(TS + 3000, TS + 12));  // re-INSERT
-        DebeziumChangeEventCapture.addVersion(original);
+        capture.addVersion(original);
         long originalDelete = original.get(0).getSequenceNumber();
         long originalReinsert = original.get(1).getSequenceNumber();
         assertTrue(originalDelete < originalReinsert);
 
-        // Crash + resume: static state re-initialized; the binlog also rotated
+        // Crash + resume: sequence state re-initialized; the binlog also rotated
         // between the DELETE and the re-INSERT. Both events are re-published.
-        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
-        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
+        capture.resetSequenceStateForTest();
 
         List<ClickHouseStruct> republishedDelete = Arrays.asList(
                 recordAt(TS, TS + 120_000));            // re-published DELETE (old file)
-        DebeziumChangeEventCapture.addVersion(republishedDelete);
+        capture.addVersion(republishedDelete);
         List<ClickHouseStruct> republishedReinsert = Arrays.asList(
                 recordAt(TS + 3000, TS + 120_001));     // re-published re-INSERT (new file)
-        DebeziumChangeEventCapture.addVersion(republishedReinsert);
+        capture.addVersion(republishedReinsert);
 
         long replayDelete = republishedDelete.get(0).getSequenceNumber();
         long replayReinsert = republishedReinsert.get(0).getSequenceNumber();

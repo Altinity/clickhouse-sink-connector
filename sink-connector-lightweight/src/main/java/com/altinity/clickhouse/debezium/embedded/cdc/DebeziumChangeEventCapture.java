@@ -286,7 +286,41 @@ public class DebeziumChangeEventCapture {
      * second on either side of a rotation keep incrementing the same counter and can never
      * receive an identical or inverted {@code _version} (see issue #1346).</p>
      */
-    public static long sequenceAnchorTs = 0L;
+    /**
+     * Seeds the sequence anchor to {@code debeziumTsMs} if it is unset or
+     * older than the value supplied.
+     * <p>
+     * No longer called from the batch loop: with per-record source-timestamp
+     * anchoring (#1346) there is no single correct timestamp to anchor a whole
+     * batch on, and a per-batch anchor was itself a race. Retained because it
+     * is the seam several tests use to place the anchor deterministically
+     * before asserting on emitted {@code _version} values, and because it
+     * never moves the anchor backward it cannot corrupt the sequence.
+     *
+     * @param debeziumTsMs the timestamp to anchor at.
+     */
+    void seedSequenceAnchor(long debeziumTsMs) {
+        synchronized (sequenceLock) {
+            if (sequenceStartTime == UNANCHORED || debeziumTsMs > sequenceStartTime) {
+                sequenceStartTime = debeziumTsMs;
+            }
+        }
+    }
+
+    /**
+     * Resets the sequence anchor and counter to their start-up state.
+     * <p>
+     * Package-private, for tests that simulate a connector restart. The
+     * anchor and the counter are one unit of state -- resetting them
+     * separately is the race this class exists to prevent -- so they are
+     * reset together, under the same lock that guards every other access.
+     */
+    void resetSequenceStateForTest() {
+        synchronized (sequenceLock) {
+            sequenceStartTime = UNANCHORED;
+            sequenceNumber.set(SEQUENCE_START);
+        }
+    }
 
 
     /**
@@ -2002,45 +2036,6 @@ log.error("SCHEMA EMPTY - cannot process record without schema. Record: {}", rec
 
 
 
-    /**
-     * Seeds the shared sequence anchor for a new batch.
-     *
-     * <p>Runs under {@link #sequenceLock} because the anchor and the counter
-     * are a single unit of state: a thread that re-anchors without holding the
-     * counter's lock can race a thread deciding whether to reset.</p>
-     *
-     * <p>The anchor only ever moves <b>forward</b>. The anchor is shared by all
-     * batch threads, but each batch seeds it from its own first record, so with
-     * an unconditional assignment a batch carrying an older timestamp can drag
-     * the anchor <em>backward</em> past a point another thread has already
-     * passed. That re-arms the {@code diff > 1} reset branch for timestamps
-     * already in use, and the counter is reset to the constant
-     * {@link #SEQUENCE_START} a second time — so two different records at the
-     * same source timestamp receive an identical {@code _version} and
-     * ReplacingMergeTree silently discards one of them. Measured
-     * single-threaded, with the anchor re-seeded backward between assignments:
-     * 199 duplicate versions in 200 records, and the second value is
-     * <em>lower</em> than the first, so an older row can also outrank a newer
-     * one.</p>
-     *
-     * <p>The guard changes no emitted value for a non-decreasing source clock —
-     * a MySQL binlog's commit timestamps only advance, so {@code ts > anchor}
-     * holds on every ordinary seed and the assignment is identical to the
-     * unconditional one. Verified by replaying an ascending stream through both
-     * forms and comparing the full output: byte-for-byte equal. The 2.8.0
-     * {@code _version} format is therefore untouched (pinned by
-     * {@code Version280CompatibilityTest}); only an out-of-order re-seed, which
-     * previously corrupted the sequence, is now ignored.</p>
-     *
-     * @param debeziumTsMs the Debezium timestamp of the batch's first record.
-     */
-    void seedSequenceAnchor(long debeziumTsMs) {
-        synchronized (sequenceLock) {
-            if (sequenceStartTime == UNANCHORED || debeziumTsMs > sequenceStartTime) {
-                sequenceStartTime = debeziumTsMs;
-            }
-        }
-    }
 
     /**
      * Produces the next {@code _version} value for a record.
@@ -2079,10 +2074,14 @@ log.error("SCHEMA EMPTY - cannot process record without schema. Record: {}", rec
                 // last committed offset rank strictly BELOW any pre-restart
                 // write of the same source second, which carried counters in
                 // the SEQUENCE_START (1000m) range (#1346 / #1378).
+                //
+                // The seed is the counter's PRE-increment value, so this first
+                // record is assigned 500m+1. Returning the bare seed would hand
+                // out the same value twice if the anchor were re-established at
+                // the same millisecond.
                 sequenceStartTime = recordTsMs;
                 sequenceNumber.set(SEQUENCE_START_INITIAL);
-                assignedSequence = SEQUENCE_START_INITIAL;
-                return recordTsMs * 1000000 + assignedSequence;
+                return recordTsMs * 1000000 + sequenceNumber.incrementAndGet();
             }
             // Identical to 2.8.0: reset only when the clock advances more than
             // one whole second past the anchor.
