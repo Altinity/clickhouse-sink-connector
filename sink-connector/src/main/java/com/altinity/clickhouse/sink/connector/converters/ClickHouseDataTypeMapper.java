@@ -368,15 +368,26 @@ public class ClickHouseDataTypeMapper {
             ps.setBigDecimal(index, (BigDecimal) value);
         } else if (type == Schema.Type.BYTES) {
             // Blob storage.
+            //
+            // Both carriers of a BYTES value (byte[] and ByteBuffer) must be
+            // handled identically. Decoding a byte[] with `new String(bytes)`
+            // applies the platform default charset, and any byte >= 0x80 is
+            // not a valid single-byte UTF-8 sequence, so it is replaced with
+            // U+FFFD. MySQL BIT(n) reaches this branch as a raw byte[]: 0x80,
+            // 0xAA and 0xFF all collapsed to the same replacement character,
+            // silently and irreversibly, while row counts still matched.
+            byte[] rawBytes = null;
             if (value instanceof byte[]) {
-                String hexValue = new String((byte[]) value);
-                ps.setString(index, hexValue);
+                rawBytes = (byte[]) value;
             } else if (value instanceof java.nio.ByteBuffer) {
-                if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())) {
-                    //String hexValue = new String((byte[]) value);
-                    ps.setBytes(index, ((ByteBuffer) value).array());
+                rawBytes = ((ByteBuffer) value).array();
+            }
+            if (rawBytes != null) {
+                if (config.getBoolean(
+                        ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())) {
+                    ps.setBytes(index, rawBytes);
                 } else {
-                    ps.setString(index, BaseEncoding.base16().lowerCase().encode(((ByteBuffer) value).array()));
+                    ps.setString(index, BaseEncoding.base16().lowerCase().encode(rawBytes));
                 }
             }
 
