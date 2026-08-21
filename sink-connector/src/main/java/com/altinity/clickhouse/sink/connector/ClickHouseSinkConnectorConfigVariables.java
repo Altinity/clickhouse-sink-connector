@@ -107,6 +107,10 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     REPLICATION_HISTORY_REPLICATION_LOG_ONLY("replication.history.replication_log_only"),
 
+    DDL_SCHEMA_CHANGE_TIMEOUT_MS("ddl.schema.change.timeout.ms"),
+
+    DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS("ddl.schema.change.poll.interval.ms"),
+
     DATABASE_HOSTNAME("database.hostname");
 
 

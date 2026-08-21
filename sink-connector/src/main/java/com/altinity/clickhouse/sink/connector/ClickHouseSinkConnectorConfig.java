@@ -823,6 +823,28 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString()
                 )
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_TIMEOUT_MS.toString(),
+                        Type.LONG,
+                        30000L,
+                        Importance.LOW,
+                        "Maximum time in milliseconds to wait for ALTER TABLE schema changes to become visible in system.columns before proceeding. Prevents race conditions where the batch insert thread reads stale column metadata after DDL execution.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_TIMEOUT_MS.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS.toString(),
+                        Type.LONG,
+                        100L,
+                        Importance.LOW,
+                        "Polling interval in milliseconds between checks of system.columns when waiting for ALTER TABLE schema changes to become visible.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS.toString()
+                )
+                .define(
                         ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString(),
                         Type.STRING,
                         "",

@@ -11,6 +11,7 @@ import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
+import com.altinity.clickhouse.sink.connector.db.DDLSchemaChangeWaiter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
@@ -1090,11 +1091,22 @@ public class DebeziumChangeEventCapture {
     private void executeDDL(String clickHouseQuery, BaseDbWriter writer, ClickHouseSinkConnectorConfig config) throws SQLException {
         ClickHouseAlterTable cat = new ClickHouseAlterTable();
         DBMetadata dbMetadata = new DBMetadata(config);
+        long schemaChangeTimeoutMs = config.getLong(
+                ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_TIMEOUT_MS.toString());
+        long schemaChangePollIntervalMs = config.getLong(
+                ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS.toString());
+        DDLSchemaChangeWaiter schemaWaiter = new DDLSchemaChangeWaiter(schemaChangeTimeoutMs, schemaChangePollIntervalMs);
         String[] queries = clickHouseQuery.replaceAll(",$", "").split("\n");
         for (String query : queries) {
             if (!query.isEmpty()) {
                 log.info("ClickHouse DDL: " + query);
                 dbMetadata.executeSystemQuery(writer.getConnection(), query);
+                // Wait for schema change to become visible in system.columns
+                // before cache invalidation proceeds. Without this, the batch
+                // insert thread may rebuild its column metadata cache before
+                // the ALTER TABLE has propagated, silently dropping values
+                // for newly added columns. See GitHub issue #1222.
+                schemaWaiter.waitForSchemaVisibility(writer.getConnection(), query);
             }
         }
     }
