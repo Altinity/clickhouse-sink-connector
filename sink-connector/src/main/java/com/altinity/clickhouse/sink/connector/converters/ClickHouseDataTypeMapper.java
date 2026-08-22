@@ -383,6 +383,25 @@ public class ClickHouseDataTypeMapper {
                 rawBytes = ((ByteBuffer) value).array();
             }
             if (rawBytes != null) {
+                // Debezium delivers MySQL BIT(n) (io.debezium.data.Bits) as a
+                // LITTLE-ENDIAN byte[] -- least significant byte first -- while
+                // MySQL itself presents the value big-endian (HEX(b) prints the
+                // most significant byte first). Encoding the array as received
+                // therefore stores every multi-byte BIT byte-reversed: a MySQL
+                // BIT(64) of 0x0102030405060708 arrived as 0807060504030201.
+                // The reversal is silent and, for a non-palindromic value,
+                // wrong in a way no row count can detect.
+                //
+                // This applies to BIT only. BLOB/BINARY/VARBINARY arrive as a
+                // ByteBuffer already in source order and round-trip exactly,
+                // so reversing every BYTES value would corrupt them instead.
+                if (Bits.LOGICAL_NAME.equals(schemaName) && rawBytes.length > 1) {
+                    byte[] bigEndian = new byte[rawBytes.length];
+                    for (int i = 0; i < rawBytes.length; i++) {
+                        bigEndian[i] = rawBytes[rawBytes.length - 1 - i];
+                    }
+                    rawBytes = bigEndian;
+                }
                 if (config.getBoolean(
                         ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())) {
                     ps.setBytes(index, rawBytes);

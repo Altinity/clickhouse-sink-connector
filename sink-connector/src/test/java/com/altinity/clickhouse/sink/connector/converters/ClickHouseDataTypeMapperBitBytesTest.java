@@ -124,22 +124,35 @@ public class ClickHouseDataTypeMapperBitBytesTest {
         Assertions.assertEquals("ffffffffffffffff", convertBits(allOnes));
     }
 
-    /** Low bytes were already correct and must stay byte-identical. */
+    /**
+     * Low bytes must stay lossless.
+     *
+     * <p>Expectation updated: Debezium delivers BIT(n) LITTLE-endian, so the
+     * wire bytes {0x01, 0x7F} are the MySQL value 0x7F01, not 0x017F. This
+     * test previously asserted "017f", encoding the byte order as received.
+     * That assumption was wrong and is what let the reversal defect ship --
+     * see ClickHouseDataTypeMapperBitEndianTest, which measures the mismatch
+     * against a live MySQL/ClickHouse pair.</p>
+     */
     @Test
     public void bitLowBytesAreUnchanged() throws SQLException {
-        Assertions.assertEquals("017f", convertBits(new byte[] {0x01, 0x7F}));
+        Assertions.assertEquals("7f01", convertBits(new byte[] {0x01, 0x7F}));
     }
 
     /**
      * The two carriers of a BYTES value must agree: a byte[] and a ByteBuffer
      * holding the same bytes previously produced different results.
+     *
+     * <p>Both carriers are reversed identically for BIT, so they still agree;
+     * the expected value is the byte-reversed form for the same reason as
+     * above.</p>
      */
     @Test
     public void byteArrayAndByteBufferAgree() throws SQLException {
         byte[] payload = {(byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF};
 
-        Assertions.assertEquals("deadbeef", convertBits(payload));
-        Assertions.assertEquals("deadbeef", convertBits(ByteBuffer.wrap(payload)));
+        Assertions.assertEquals("efbeadde", convertBits(payload));
+        Assertions.assertEquals("efbeadde", convertBits(ByteBuffer.wrap(payload)));
     }
 
     /** A zero-length BIT payload must not throw. */
