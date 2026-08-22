@@ -277,7 +277,20 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     public void enterColumnCreateTable(MySqlParser.ColumnCreateTableContext columnCreateTableContext) {
         StringBuilder orderByColumns = new StringBuilder();
         StringBuilder partitionByColumn = new StringBuilder();
-        Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn);
+        StringBuilder uniqueKeyColumns = new StringBuilder();
+        Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn,
+                uniqueKeyColumns);
+
+        // A table with a UNIQUE key but no PRIMARY KEY would otherwise be created
+        // with ORDER BY tuple(): every row compares equal, so ReplacingMergeTree
+        // collapses the whole table into one row. The UNIQUE key is the source's
+        // stable row identity, so use it as the sorting key. Only applied when no
+        // PRIMARY KEY was found -- the PRIMARY KEY always wins.
+        if (orderByColumns.length() == 0 && uniqueKeyColumns.length() > 0) {
+            log.info("Table has no PRIMARY KEY; using UNIQUE key as the ClickHouse sorting key: "
+                    + uniqueKeyColumns);
+            orderByColumns.append(uniqueKeyColumns);
+        }
 
         String isDeletedColumn = IS_DELETED_COLUMN;
 
@@ -500,6 +513,29 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     private Set<String> parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
                                          StringBuilder partitionByColumns) {
+        return parseCreateTable(ctx, orderByColumns, partitionByColumns, new StringBuilder());
+    }
+
+    /**
+     * Overload that additionally collects the first UNIQUE key of the table.
+     *
+     * <p>A MySQL table may declare a UNIQUE key but no PRIMARY KEY. Such a
+     * table was previously created as
+     * {@code ReplacingMergeTree(...) ORDER BY tuple()}: with an empty sorting
+     * key every row compares equal, so ReplacingMergeTree collapses the entire
+     * table down to a single row. The UNIQUE key is the source's stable row
+     * identity, which is exactly what the sorting key must be, so it is used
+     * as the fallback when no PRIMARY KEY is present.</p>
+     *
+     * @param ctx The context of the CREATE TABLE statement.
+     * @param orderByColumns A StringBuilder to store the PRIMARY KEY columns.
+     * @param partitionByColumns A StringBuilder to store the PARTITION BY columns.
+     * @param uniqueKeyColumns A StringBuilder receiving the first UNIQUE key
+     *                         declared, used only when no PRIMARY KEY exists.
+     * @return A set of column names defined in the CREATE TABLE statement.
+     */
+    private Set<String> parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
+                                         StringBuilder partitionByColumns, StringBuilder uniqueKeyColumns) {
         List<ParseTree> pt = ctx.children;
         Set<String> columnNames = new HashSet<>();
 
@@ -532,7 +568,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         // Do nothing for TerminalNodeImpl, just skip it
                     } else if (subtree instanceof MySqlParser.ColumnDeclarationContext) {
                         // Parse column definitions
-                        parseColumnDefinitions(subtree, orderByColumns, columnNames);
+                        parseColumnDefinitions(subtree, orderByColumns, columnNames, uniqueKeyColumns);
                     } else if(subtree instanceof MySqlParser.ConstraintDeclarationContext) {
                         for (ParseTree constraintTree: ((MySqlParser.ConstraintDeclarationContext) subtree).children) {
                             if (constraintTree instanceof MySqlParser.PrimaryKeyTableConstraintContext) {
@@ -541,6 +577,21 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                         String primaryKeyColumns = primaryKeyTree.getText();
                                         if (primaryKeyColumns != null && !primaryKeyColumns.isEmpty()) {
                                             orderByColumns.append(primaryKeyColumns);
+                                        }
+                                    }
+                                }
+                            } else if (constraintTree instanceof MySqlParser.UniqueKeyTableConstraintContext) {
+                                // Table-level: UNIQUE KEY (col, ...). Only the FIRST unique
+                                // key is retained; it is used as the sorting key when the
+                                // table declares no PRIMARY KEY.
+                                if (uniqueKeyColumns.length() == 0) {
+                                    for (ParseTree uniqueKeyTree: ((MySqlParser.UniqueKeyTableConstraintContext) constraintTree).children) {
+                                        if (uniqueKeyTree instanceof MySqlParser.IndexColumnNamesContext) {
+                                            String uniqueColumns = uniqueKeyTree.getText();
+                                            if (uniqueColumns != null && !uniqueColumns.isEmpty()) {
+                                                uniqueKeyColumns.append(uniqueColumns);
+                                            }
+                                            break;
                                         }
                                     }
                                 }
@@ -606,6 +657,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * @param columnNames A set to hold the column names parsed from the statement.
      */
     private void parseColumnDefinitions(ParseTree subtree, StringBuilder orderByColumns, Set<String> columnNames) {
+        parseColumnDefinitions(subtree, orderByColumns, columnNames, new StringBuilder());
+    }
+
+    /**
+     * Overload that additionally records a column-level {@code UNIQUE}
+     * constraint (for example {@code uk INT NOT NULL UNIQUE}) so that a table
+     * without a PRIMARY KEY can still be given a real sorting key.
+     *
+     * @param subtree The parse subtree of the column declaration.
+     * @param orderByColumns A StringBuilder to append PRIMARY KEY columns to.
+     * @param columnNames A set to hold the column names parsed from the statement.
+     * @param uniqueKeyColumns A StringBuilder receiving the first UNIQUE column,
+     *                         used only when no PRIMARY KEY exists.
+     */
+    private void parseColumnDefinitions(ParseTree subtree, StringBuilder orderByColumns, Set<String> columnNames,
+                                        StringBuilder uniqueKeyColumns) {
         String columnName = null;
         String colDataType = null;
         boolean isNullColumn = true;
@@ -633,6 +700,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                             isNullColumn = false;
                             orderByColumns.append(columnName);
                             break;
+                        }
+                    } else if (colDefinitionChildTree instanceof MySqlParser.UniqueKeyColumnConstraintContext) {
+                        // Column-level: `uk INT NOT NULL UNIQUE`. Retained only as a
+                        // fallback sorting key for tables that declare no PRIMARY KEY.
+                        // Unlike PRIMARY KEY this does NOT force the column NOT NULL:
+                        // MySQL permits NULLs in a UNIQUE column, so the ClickHouse
+                        // column nullability must keep following the source DDL.
+                        if (uniqueKeyColumns.length() == 0 && columnName != null) {
+                            uniqueKeyColumns.append(columnName);
                         }
                     } else if (colDefinitionChildTree instanceof MySqlParser.GeneratedColumnConstraintContext) {
                         for (ParseTree generatedColumnTree: ((MySqlParser.GeneratedColumnConstraintContext) colDefinitionChildTree).children) {
