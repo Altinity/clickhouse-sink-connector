@@ -184,7 +184,10 @@ public class GroupInsertQueryWithBatchRecords {
                         config.getString(
                                 ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN
                                         .toString()),
-                        record.getDatabase());
+                        record.getDatabase(),
+                        config.getString(
+                                ClickHouseSinkConnectorConfigVariables
+                                        .REPLACING_MERGE_TREE_DELETE_COLUMN.toString()));
 
         String insertQueryTemplate = response.getKey();
         if (response.getKey() == null || response.getValue() == null) {
