@@ -18,20 +18,40 @@ COPY deploy/libs/* /kafka/connect/clickhouse-kafka-sink-connector/
 #    docker-maven-download confluent common-config "$CONFLUENT_VERSION" e1a4dc2b6d1d8d8c2df47db580276f38 && \
 #    docker-maven-download confluent common-utils "$CONFLUENT_VERSION" ad9e39d87c6a9fa1a9b19e6ce80392fa && \
 
+# Every download below uses the same hardened curl flags:
+#
+#   --fail            a bare `curl -L` treats an HTTP error as success: it exits
+#                     0 and writes the error BODY to the output path. A 404 or a
+#                     403 therefore produced a ~340-byte XML document named
+#                     *.jar and the image built "successfully" with a corrupt
+#                     dependency. --fail makes curl exit 22 instead.
+#   --retry 5
+#   --retry-connrefused
+#   --retry-all-errors  the build has been failing on transient TLS resets from
+#                     packages.confluent.io ("curl: (35) OpenSSL SSL_connect:
+#                     Connection reset by peer"), which aborts the whole image
+#                     build and skips every downstream CI job. A single reset
+#                     should be retried, not fatal.
+#   --connect-timeout / --max-time
+#                     bound a hung connection so the job fails fast instead of
+#                     burning the runner's wall clock.
+#
+# Kept as separate RUN layers to preserve the existing layer cache behaviour.
+
 # Copy apicurio
-RUN 'curl' '-L' '--output' '/kafka/connect/clickhouse-kafka-sink-connector/apicurio.tgz' 'https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz' \
+RUN 'curl' '-fsSL' '--retry' '5' '--retry-connrefused' '--retry-all-errors' '--connect-timeout' '30' '--max-time' '600' '--output' '/kafka/connect/clickhouse-kafka-sink-connector/apicurio.tgz' 'https://repo1.maven.org/maven2/io/apicurio/apicurio-registry-distro-connect-converter/2.1.5.Final/apicurio-registry-distro-connect-converter-2.1.5.Final.tar.gz' \
       && 'tar' 'xvfz' '/kafka/connect/clickhouse-kafka-sink-connector/apicurio.tgz' '-C' '/kafka/connect/clickhouse-kafka-sink-connector' \
       && 'rm' '-vf' '/kafka/connect/clickhouse-kafka-sink-connector/apicurio.tgz/apicurio.tgz'
 
 # Copy confluent
-RUN 'curl' '-L' '--output' '/kafka/libs/kafka-connect-avro-converter-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-connect-avro-converter/7.2.1/kafka-connect-avro-converter-7.2.1.jar'
-RUN 'curl' '-L' '--output' '/kafka/libs/kafka-avro-serializer-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-avro-serializer/7.2.1/kafka-avro-serializer-7.2.1.jar'
-RUN 'curl' '-L' '--output' '/kafka/libs/kafka-schema-registry-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry/7.2.1/kafka-schema-registry-7.2.1.jar'
+RUN 'curl' '-fsSL' '--retry' '5' '--retry-connrefused' '--retry-all-errors' '--connect-timeout' '30' '--max-time' '600' '--output' '/kafka/libs/kafka-connect-avro-converter-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-connect-avro-converter/7.2.1/kafka-connect-avro-converter-7.2.1.jar'
+RUN 'curl' '-fsSL' '--retry' '5' '--retry-connrefused' '--retry-all-errors' '--connect-timeout' '30' '--max-time' '600' '--output' '/kafka/libs/kafka-avro-serializer-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-avro-serializer/7.2.1/kafka-avro-serializer-7.2.1.jar'
+RUN 'curl' '-fsSL' '--retry' '5' '--retry-connrefused' '--retry-all-errors' '--connect-timeout' '30' '--max-time' '600' '--output' '/kafka/libs/kafka-schema-registry-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry/7.2.1/kafka-schema-registry-7.2.1.jar'
 
 
-RUN 'curl' '-L' '--output' '/kafka/libs/kafka-schema-registry-client-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry-client/7.2.1/kafka-schema-registry-client-7.2.1.jar'
-RUN 'curl' '-L' '--output' '/kafka/libs/common-config-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/common-config/7.2.1/common-config-7.2.1.jar'
-RUN 'curl' '-L' '--output' '/kafka/libs/common-utils-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/common-utils/7.2.1/common-utils-7.2.1.jar'
+RUN 'curl' '-fsSL' '--retry' '5' '--retry-connrefused' '--retry-all-errors' '--connect-timeout' '30' '--max-time' '600' '--output' '/kafka/libs/kafka-schema-registry-client-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry-client/7.2.1/kafka-schema-registry-client-7.2.1.jar'
+RUN 'curl' '-fsSL' '--retry' '5' '--retry-connrefused' '--retry-all-errors' '--connect-timeout' '30' '--max-time' '600' '--output' '/kafka/libs/common-config-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/common-config/7.2.1/common-config-7.2.1.jar'
+RUN 'curl' '-fsSL' '--retry' '5' '--retry-connrefused' '--retry-all-errors' '--connect-timeout' '30' '--max-time' '600' '--output' '/kafka/libs/common-utils-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/common-utils/7.2.1/common-utils-7.2.1.jar'
 
 RUN chown -R kafka:kafka /kafka/connect/
 
