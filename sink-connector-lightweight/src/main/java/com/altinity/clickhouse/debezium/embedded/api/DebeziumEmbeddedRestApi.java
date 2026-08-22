@@ -96,6 +96,19 @@ public class DebeziumEmbeddedRestApi {
                     + "Set rest.api.auth.username and rest.api.auth.password.");
         }
 
+        // `app` is static, so a second startRestApi() in the same JVM would call
+        // Javalin.start() again on the same port and throw
+        // JavalinBindException("Port already in use"). That is exactly what
+        // happens in the integration suite, where several tests each bring up
+        // the embedded application in one forked JVM: the first bind wins and
+        // every later one dies in a pool thread, failing the job on a port
+        // collision rather than on anything the test was asserting. Reuse the
+        // already-running server instead of racing it.
+        if (app != null) {
+            log.info("REST API already running on port {}; reusing the existing "
+                    + "server instead of binding again", cliPort);
+            return;
+        }
         app = Javalin.create().start(Integer.parseInt(cliPort));
 
         if (authEnabled) {
@@ -319,8 +332,14 @@ public class DebeziumEmbeddedRestApi {
      * Stops the Javalin REST API server.
      */
     public static void stop() {
-        if (app != null)
+        if (app != null) {
             app.stop();
+            // Clear the reference so a later startRestApi() binds a fresh
+            // server. Leaving a stopped instance here would make the
+            // already-running check above short-circuit and silently skip the
+            // restart, leaving the REST API dead after any stop/start cycle.
+            app = null;
+        }
     }
 
     /**
