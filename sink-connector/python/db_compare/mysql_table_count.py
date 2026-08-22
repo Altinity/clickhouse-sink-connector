@@ -38,9 +38,12 @@ def compute_count(table, statements, mysql_user, mysql_password):
         conn.close()
     return count
 
-@staticmethod
 def fstr(template, partition_expression):
-        return eval(f"f'{template}'")
+        # Safe substitution: only replace {partition_expression} placeholder
+        # instead of eval() which allows arbitrary code execution
+        if partition_expression is not None:
+            return template.replace('{partition_expression}', str(partition_expression))
+        return template
 
 def select_table_statements(conn, table):
     # TODO adjust the number as a parameter
@@ -99,10 +102,12 @@ def calculate_sql_count(conn, table, mysql_user, mysql_password):
                 futures.append(executor.submit(
                     compute_count, table, queries, mysql_user, mysql_password))
             for future in concurrent.futures.as_completed(futures):
-                result = future.result()
-                row_count += result
-                if future.exception() is not None:
-                    raise future.exception()
+                try:
+                    result = future.result()
+                    row_count += result
+                except Exception:
+                    logging.error(f"Count failed for {table}")
+                    raise
             logging.info("Count for table "+args.mysql_database + "."+table+" = "+str(row_count))
     finally:
         conn.close()

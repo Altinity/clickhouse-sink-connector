@@ -101,7 +101,10 @@ public class DataTypeConverterTest {
         testCases.add(new TestCase("BIGINT UNSIGNED data type - should be overridden to UInt64", "BIGINT UNSIGNED", "UInt64"));
         testCases.add(new TestCase("BIGINT (regular) data type", "BIGINT", "Int64"));
         testCases.add(new TestCase("SMALLINT data type", "SMALLINT", "Int16"));
-        testCases.add(new TestCase("SMALLINT UNSIGNED data type", "SMALLINT UNSIGNED", "Int32"));
+        testCases.add(new TestCase("SMALLINT UNSIGNED data type", "SMALLINT UNSIGNED", "UInt16"));
+        testCases.add(new TestCase("INT UNSIGNED data type", "INT UNSIGNED", "UInt32"));
+        testCases.add(new TestCase("TINYINT UNSIGNED data type", "TINYINT UNSIGNED", "UInt8"));
+        testCases.add(new TestCase("MEDIUMINT UNSIGNED data type", "MEDIUMINT UNSIGNED", "UInt32"));
         testCases.add(new TestCase("MEDIUMINT data type", "MEDIUMINT", "Int32"));
         
         // String types
@@ -116,9 +119,16 @@ public class DataTypeConverterTest {
         testCases.add(new TestCase("DECIMAL with precision only", "DECIMAL(10)", 0, 10, null, "Decimal(10, 0)"));
         testCases.add(new TestCase("DECIMAL with high precision", "DECIMAL(30,10)", 10, 30, null, "Decimal(30,10)"));
         
-        // Float types
+        // Float types.
+        // MySQL FLOAT is 4-byte -> Float32; DOUBLE/DOUBLE PRECISION/FLOAT8/REAL
+        // are 8-byte -> Float64. Mapping DOUBLE to Float32 silently truncated
+        // ~15 significant digits to ~7 and overflowed large values to inf.
         testCases.add(new TestCase("FLOAT data type", "FLOAT", "Float32"));
-        testCases.add(new TestCase("DOUBLE data type", "DOUBLE", "Float32"));
+        testCases.add(new TestCase("FLOAT4 data type", "FLOAT4", "Float32"));
+        testCases.add(new TestCase("DOUBLE data type", "DOUBLE", "Float64"));
+        testCases.add(new TestCase("DOUBLE PRECISION data type", "DOUBLE PRECISION", "Float64"));
+        testCases.add(new TestCase("FLOAT8 data type", "FLOAT8", "Float64"));
+        testCases.add(new TestCase("REAL data type", "REAL", "Float64"));
         
         // Date types
         testCases.add(new TestCase("DATE data type", "DATE", "Date32"));
@@ -138,7 +148,19 @@ public class DataTypeConverterTest {
         
         // Boolean types
         testCases.add(new TestCase("BOOL/BOOLEAN data type", "BOOL", "Bool"));
-        testCases.add(new TestCase("BIT data type", "BIT", "Bool"));
+
+        // BIT types.
+        // Only BIT(1) (and a bare BIT, whose MySQL default width is 1) is
+        // emitted by Debezium as a BOOLEAN schema. Every wider BIT(n) arrives
+        // as BYTES/io.debezium.data.Bits - a raw byte array - and must be
+        // String, matching what the runtime value path already does. Creating
+        // them as Bool made every insert fail with CANNOT_PARSE_BOOL.
+        testCases.add(new TestCase("BIT data type (implicit width 1)", "BIT", "Bool"));
+        testCases.add(new TestCase("BIT(1) data type", "BIT(1)", "Bool"));
+        testCases.add(new TestCase("BIT(2) data type", "BIT(2)", "String"));
+        testCases.add(new TestCase("BIT(8) data type", "BIT(8)", "String"));
+        testCases.add(new TestCase("BIT(64) data type", "BIT(64)", "String"));
+        testCases.add(new TestCase("BIT with spaces", "BIT( 16 )", "String"));
         
         // BLOB and special types
         testCases.add(new TestCase("BLOB data type", "BLOB", "String"));

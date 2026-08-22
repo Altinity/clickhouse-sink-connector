@@ -44,8 +44,8 @@ def compute_checksum(table, statements, conn):
                         debug_out.write(str(line)+'\n')
                 if args.debug_output:
                         debug_out.close()
-    finally:
-        conn.close()
+    except Exception:
+        raise  # propagate to caller which owns connection lifecycle
 
     return result
 
@@ -63,7 +63,7 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     min_date_value = args.min_date_value
     max_date_value = args.max_date_value
     max_datetime_value = args.max_datetime_value
-    row_list = [row for row in rowset]
+    row_list = [row for row in rowset.mappings()]
     same_charset = True
     collations = [row['collation'] for row in row_list if row['collation'] is not None]
     same_charset = len(collations) <= 1
@@ -161,9 +161,12 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     return (query, select, order_by_columns, external_column_types)
 
 
-@staticmethod
 def fstr(template, partition_expression):
-        return eval(f"f'{template}'")
+        # Safe substitution: only replace {partition_expression} placeholder
+        # instead of eval() which allows arbitrary code execution
+        if partition_expression is not None:
+            return template.replace('{partition_expression}', str(partition_expression))
+        return template
 
 
 def select_table_statements(table, query, select_query, order_by, external_column_types, _where):
@@ -289,10 +292,11 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns
                 futures.append(executor.submit(
                     calculate_checksum_single_thread, mysql_table, mysql_user, mysql_password, chunk, pk, where, excluded_columns, include_floating_point_columns, include_json_columns))
             for future in concurrent.futures.as_completed(futures):
-                result.append(future.result())
-                if future.exception() is not None:
-                    logging.info(f"{mysql_table}")
-                    raise future.exception()
+                try:
+                    result.append(future.result())
+                except Exception:
+                    logging.error(f"Checksum failed for {mysql_table}")
+                    raise
     if args.debug_output:
         # checksum is not output in debug_output mode
         return
@@ -373,7 +377,7 @@ def main():
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
                         help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
     parser.add_argument('--include_json_columns', action='store_true', default=True,
-                        help='JSON data types can not easily be compared, we do not include them by default', required=False)
+                        help='JSON data types are included by default. This flag is a no-op (always True). Use --exclude_columns to skip JSON columns.', required=False)
     global args
     args = parser.parse_args()
 
@@ -410,7 +414,7 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
             future_to_table = {}
-            for table in tables.fetchall():
+            for table in tables.mappings().fetchall():
                 future = executor.submit(
                     calculate_checksum, table['table_name'], mysql_user, mysql_password, args.exclude_columns, args.include_floating_point_columns, args.include_json_columns)
                 futures.append(future)

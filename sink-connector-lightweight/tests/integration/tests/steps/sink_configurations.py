@@ -3,12 +3,12 @@ import os
 from integration.helpers.create_config import *
 from integration.helpers.common import change_sink_configuration
 
-default_config_path = os.path.join("env", "auto", "configs")
+default_config_path = os.path.join("env", "auto", "configs") + os.sep
 
 
 @TestStep(Given)
 def config_with_replicated_table(
-    self, config_file=default_config_path + "replicated_replacing_merge_tree.yml"
+    self, config_file=os.path.join(default_config_path, "replicated_replacing_merge_tree.yml")
 ):
     """Create the Sink Connector configuration with the ReplicatedReplacingMergeTree table."""
     change_sink_configuration(
@@ -20,8 +20,7 @@ def config_with_replicated_table(
 @TestStep(Given)
 def config_with_replicated_table_and_disabled_auto_create(
     self,
-    config_file=default_config_path
-    + "replicated_replacing_merge_tree_no_auto_create.yml",
+    config_file=os.path.join(default_config_path, "replicated_replacing_merge_tree_no_auto_create.yml"),
 ):
     """Create the Sink Connector configuration with the ReplicatedReplacingMergeTree table."""
     change_sink_configuration(
@@ -35,7 +34,7 @@ def config_with_replicated_table_and_disabled_auto_create(
 
 
 @TestStep(Given)
-def config_with_schema_only(self, config_file=default_config_path + "schema_only.yml"):
+def config_with_schema_only(self, config_file=os.path.join(default_config_path, "schema_only.yml")):
     """Create the Sink Connector configuration with the schema only."""
     change_sink_configuration(
         values={"snapshot.mode": "no_data"}, config_file=config_file
@@ -43,12 +42,12 @@ def config_with_schema_only(self, config_file=default_config_path + "schema_only
 
 
 @TestStep(Given)
-def config_with_nullable_default_true(self, config_file=default_config_path + "nullable_default_true.yml"):
+def config_with_nullable_default_true(self, config_file=os.path.join(default_config_path, "nullable_default_true.yml")):
     """Create the Sink Connector configuration with the nullable default true."""
     change_sink_configuration(values={"non.default.value": "true"}, config_file=config_file)
 
 
 @TestStep(Given)
-def config_with_nullable_default_false(self, config_file=default_config_path + "nullable_default_false.yml"):
+def config_with_nullable_default_false(self, config_file=os.path.join(default_config_path, "nullable_default_false.yml")):
     """Create the Sink Connector configuration with the nullable default false."""
     change_sink_configuration(values={"non.default.value": "false"}, config_file=config_file)

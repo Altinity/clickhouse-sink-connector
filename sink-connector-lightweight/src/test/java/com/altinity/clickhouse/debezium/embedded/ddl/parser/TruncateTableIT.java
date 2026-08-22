@@ -141,4 +141,92 @@ public class TruncateTableIT {
 
         HikariDbSource.close();
     }
+
+    /**
+     * Regression test: rows written after a TRUNCATE must survive it.
+     * <p>
+     * The truncate used to be executed at the end of the batch, after
+     * {@code executeBatch()}. When a TRUNCATE and the inserts that logically
+     * follow it landed in the same batch, the truncate therefore ran last and
+     * wiped the very rows the batch had just inserted. The destination ended up
+     * empty while the source held the post-truncate rows, and nothing was
+     * logged -- the divergence only surfaced later via a checksum comparison.
+     * <p>
+     * The truncate is now executed at its binlog position: rows staged before
+     * it are flushed first, the table is truncated, and rows after it are
+     * inserted afterwards.
+     */
+    @Test
+    @DisplayName("Rows inserted after a TRUNCATE must survive the truncate")
+    public void testRowsInsertedAfterTruncateSurvive() throws Exception {
+
+        AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
+
+        ExecutorService executorService = Executors.newFixedThreadPool(1);
+        executorService.execute(() -> {
+            try {
+                engine.set(new DebeziumChangeEventCapture());
+                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer),
+                        new SourceRecordParserService(), false);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        Thread.sleep(30000);
+
+        try {
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+
+        Connection conn = ITCommon.connectToMySQL(mySqlContainer);
+        conn.prepareStatement("create table truncate_then_insert(id int primary key, payload varchar(64))")
+                .execute();
+        Thread.sleep(10000);
+
+        // Pre-truncate state.
+        conn.prepareStatement("insert into truncate_then_insert values(1, 'before')").execute();
+        conn.prepareStatement("insert into truncate_then_insert values(2, 'before')").execute();
+        Thread.sleep(10000);
+
+        // TRUNCATE immediately followed by the new state, with no pause in
+        // between, so the truncate and the following inserts are handled in the
+        // same batch -- this is what the defect required to reproduce.
+        conn.prepareStatement("truncate table truncate_then_insert").execute();
+        conn.prepareStatement("insert into truncate_then_insert values(10, 'after')").execute();
+        conn.prepareStatement("insert into truncate_then_insert values(11, 'after')").execute();
+        conn.prepareStatement("insert into truncate_then_insert values(12, 'after')").execute();
+        conn.close();
+        Thread.sleep(20000);
+
+        // The three post-truncate rows must be present, and none of the
+        // pre-truncate rows may remain.
+        ResultSet rs = ITCommon.executeQueryWithResultSet(
+                "select id, payload from employees.truncate_then_insert final order by id",
+                writer.getConnection());
+        int afterRows = 0;
+        boolean staleRowFound = false;
+        while (rs.next()) {
+            if ("before".equalsIgnoreCase(rs.getString("payload"))) {
+                staleRowFound = true;
+            } else {
+                afterRows++;
+            }
+        }
+
+        Assert.assertFalse("pre-truncate rows must not survive the truncate", staleRowFound);
+        Assert.assertEquals("rows inserted after the truncate were wiped by it",
+                3, afterRows);
+        } finally {
+            // Release the embedded engine and its CLI port unconditionally. If an
+            // assertion above fails, a teardown placed after it would never run,
+            // the port would stay bound, and every subsequent test in this class
+            // would fail with "Port already in use" -- turning one real failure
+            // into a cascade that hides its own cause.
+            if (engine.get() != null) {
+                engine.get().stop();
+            }
+            executorService.shutdown();
+            HikariDbSource.close();
+        }
+    }
 }

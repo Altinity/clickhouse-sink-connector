@@ -24,6 +24,8 @@ import java.time.LocalDateTime;
 import java.util.Date;
 import java.util.List;
 import java.util.Properties;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
@@ -38,6 +40,16 @@ public class DebeziumJdbcStorageOperations {
      */
     private static final Logger log = LogManager.getLogger(
             DebeziumJdbcStorageOperations.class);
+
+    /**
+     * Pattern used to extract the "[database.]viewName" target from a
+     * CREATE [OR REPLACE] VIEW DDL statement so the view name is never
+     * hard-coded.
+     */
+    private static final Pattern VIEW_NAME_PATTERN =
+            Pattern.compile(
+                    "CREATE\\s+(?:OR\\s+REPLACE\\s+)?VIEW\\s+([`\\w.]+)",
+                    Pattern.CASE_INSENSITIVE);
 
     /**
      * Instance of DebeziumOffsetStorage for performing storage ops.
@@ -119,9 +131,51 @@ public class DebeziumJdbcStorageOperations {
                 getDebeziumOffsetStorageDatabaseName(props);
         String tableName = tableNameDatabaseName.getLeft();
         String dbName = tableNameDatabaseName.getRight();
+
         String formattedView = String.format(view, dbName, dbName + "." + tableName);
         // Remove quotes.
         formattedView = formattedView.replace("\"", "");
+
+        // Parse the target "[database.]viewName" straight out of the DDL so we never
+        // hard-code the view name (or assume the wrong database).
+        String viewDatabase = null;
+        String viewName = null;
+        Matcher m = VIEW_NAME_PATTERN.matcher(formattedView);
+        if (m.find()) {
+            String identifier = m.group(1).replace("`", "");
+            int dot = identifier.lastIndexOf('.');
+            if (dot >= 0) {
+                viewDatabase = identifier.substring(0, dot);
+                viewName = identifier.substring(dot + 1);
+            } else {
+                viewName = identifier;
+            }
+        }
+
+        // Check if the view already exists before attempting to create it.
+        if (viewName != null) {
+            try {
+                String checkSql = (viewDatabase != null)
+                        ? String.format(
+                            "SELECT count(*) FROM system.tables WHERE database = '%s' AND name = '%s'",
+                            viewDatabase, viewName)
+                        : String.format(
+                            "SELECT count(*) FROM system.tables WHERE name = '%s'", viewName);
+                ResultSet rs = new DBMetadata(props).executeQueryWithResultSet(checkSql, conn);
+                if (rs != null && rs.next() && rs.getInt(1) > 0) {
+                    log.info("View {} already exists, skipping creation.",
+                            (viewDatabase != null ? viewDatabase + "." : "") + viewName);
+                    rs.close();
+                    return;
+                }
+                if (rs != null) {
+                    rs.close();
+                }
+            } catch (Exception e) {
+                log.warn("Could not check if view exists, will attempt to create it", e);
+            }
+        }
+
         try {
             new DBMetadata(props).executeSystemQuery(conn, formattedView);
         } catch (Exception e) {
@@ -304,6 +358,14 @@ public class DebeziumJdbcStorageOperations {
             throws SQLException {
         long result = -1;
         String latestRecordTs = this.debeziumOffsetStorage.getDebeziumLatestRecordTimestamp(props, conn);
+        if (latestRecordTs == null || latestRecordTs.isEmpty()) {
+            // The query returned no result, e.g. because ClickHouse was not
+            // reachable. Without this guard SimpleDateFormat.parse() below
+            // throws a NullPointerException, which the ParseException handler
+            // does not catch.
+            log.error("Latest record timestamp is not available");
+            return result;
+        }
         // Convert date string from "yyyy-MM-dd HH:mm:ss" format to milliseconds.
         SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
         Date date = null;

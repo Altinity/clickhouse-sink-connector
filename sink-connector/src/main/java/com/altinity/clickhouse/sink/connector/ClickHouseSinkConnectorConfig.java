@@ -609,6 +609,20 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.JDBC_V1_DRIVER.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "When true, use the legacy ClickHouse JDBC V1 driver implementation "
+                                + "(clickhouse-jdbc <= 0.6.x behavior, bundled as DriverV1/DataSourceV1 "
+                                + "in clickhouse-jdbc 0.7+). When false (default), the new JDBC V2 "
+                                + "driver is used. Both drivers ship in the same jar; this toggle "
+                                + "selects the implementation at runtime without a rebuild.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.JDBC_V1_DRIVER.toString())
                 // Define the max queue size.
                 .define(
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString(),
@@ -634,7 +648,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString(),
                         Type.STRING,
-                        "CREATE OR REPLACE VIEW altinity_sink_connector.show_replica_status " +
+                        "CREATE OR REPLACE VIEW %s.show_replica_status " +
                                 "(`seconds_behind_source` Int32, `duration_behind_source` String, `utc_time` DateTime('UTC'), " +
                                 "`local_time` DateTime, `id` String, `offset_key` String, `offset_val` String, " +
                                 "`record_insert_ts` DateTime, `record_insert_seq` UInt64) AS SELECT * FROM " +
@@ -642,7 +656,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                                 "formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source, " +
                                 "toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, " +
                                 "fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time, * FROM " +
-                                "merge(altinity_sink_connector, 'replica_source_info_.*') FINAL) AS U ORDER BY offset_key ASC",
+                                "%s FINAL) AS U ORDER BY offset_key ASC",
                         Importance.HIGH,
                         "SQL query to get replica status, lag etc.",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
@@ -807,6 +821,28 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ORDER_3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_TIMEOUT_MS.toString(),
+                        Type.LONG,
+                        30000L,
+                        Importance.LOW,
+                        "Maximum time in milliseconds to wait for ALTER TABLE schema changes to become visible in system.columns before proceeding. Prevents race conditions where the batch insert thread reads stale column metadata after DDL execution.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_TIMEOUT_MS.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS.toString(),
+                        Type.LONG,
+                        100L,
+                        Importance.LOW,
+                        "Polling interval in milliseconds between checks of system.columns when waiting for ALTER TABLE schema changes to become visible.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS.toString()
                 )
                 .define(
                         ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString(),

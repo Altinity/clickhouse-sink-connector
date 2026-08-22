@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.*;
@@ -93,6 +94,13 @@ public class ClickHouseBatchRunnable implements Runnable {
     private List<ClickHouseStruct> currentBatch = null;
 
     /**
+     * Shared watermark (owned by ClickHouseSinkTask): highest Kafka offset per
+     * TopicPartition durably inserted into ClickHouse. Updated after each
+     * successful flush so preCommit() only commits persisted offsets.
+     */
+    private final Map<TopicPartition, Long> durablyInsertedOffsets;
+
+    /**
      * Map for overriding database names from source to destination.
      */
     private Map<String, String> databaseOverrideMap = new HashMap<>();
@@ -105,6 +113,11 @@ public class ClickHouseBatchRunnable implements Runnable {
     /**
      * Constructs a ClickHouseBatchRunnable (legacy mode without hash-based routing).
      *
+     * <p>Backward-compatible overload for callers that do not track durable
+     * offsets: a private (unshared) watermark is used, so the durable-offset
+     * gating in {@code ClickHouseSinkTask.preCommit()} is a no-op for this
+     * instance (pre-existing behaviour is preserved).</p>
+     *
      * @param records        the queue of record batches
      * @param config         the connector configuration
      * @param topic2TableMap a map of topic names to table names
@@ -113,7 +126,23 @@ public class ClickHouseBatchRunnable implements Runnable {
             LinkedBlockingQueue<List<ClickHouseStruct>> records,
             ClickHouseSinkConnectorConfig config,
             Map<String, String> topic2TableMap) {
-        this(records, null, -1, config, topic2TableMap);
+        this(records, null, -1, config, topic2TableMap, new ConcurrentHashMap<>());
+    }
+
+    /**
+     * Constructs a ClickHouseBatchRunnable (legacy mode without hash-based routing).
+     *
+     * @param records                the queue of record batches
+     * @param config                 the connector configuration
+     * @param topic2TableMap         a map of topic names to table names
+     * @param durablyInsertedOffsets shared watermark of durably-inserted offsets
+     */
+    public ClickHouseBatchRunnable(
+            LinkedBlockingQueue<List<ClickHouseStruct>> records,
+            ClickHouseSinkConnectorConfig config,
+            Map<String, String> topic2TableMap,
+            Map<TopicPartition, Long> durablyInsertedOffsets) {
+        this(records, null, -1, config, topic2TableMap, durablyInsertedOffsets);
     }
 
     /**
@@ -129,7 +158,8 @@ public class ClickHouseBatchRunnable implements Runnable {
             int threadId,
             ClickHouseSinkConnectorConfig config,
             Map<String, String> topic2TableMap) {
-        this(null, routedRecords, threadId, config, topic2TableMap);
+        this(null, routedRecords, threadId, config, topic2TableMap,
+                new ConcurrentHashMap<>());
     }
 
     /**
@@ -146,11 +176,13 @@ public class ClickHouseBatchRunnable implements Runnable {
             LinkedBlockingQueue<RoutedBatch> routedRecords,
             int threadId,
             ClickHouseSinkConnectorConfig config,
-            Map<String, String> topic2TableMap) {
+            Map<String, String> topic2TableMap,
+            Map<TopicPartition, Long> durablyInsertedOffsets) {
         this.records = records;
         this.routedRecords = routedRecords;
         this.threadId = threadId;
         this.config = config;
+        this.durablyInsertedOffsets = durablyInsertedOffsets;
         if (topic2TableMap == null) {
             this.topic2TableMap = new HashMap();
         } else {
@@ -223,7 +255,12 @@ public class ClickHouseBatchRunnable implements Runnable {
             log.error("Error creating database " + e);
         } finally {
             try {
-                systemConn.close();
+                // createConnection() returns null when ClickHouse is
+                // unreachable, closing it would throw a NullPointerException
+                // that the handler below does not catch.
+                if (systemConn != null) {
+                    systemConn.close();
+                }
             } catch (SQLException e) {
                 log.error("Error closing connection when creating database" + e);
             }
@@ -235,7 +272,12 @@ public class ClickHouseBatchRunnable implements Runnable {
                 BaseDbWriter.DATABASE_CLIENT_NAME,
                 this.dbCredentials.getUserName(),
                 this.dbCredentials.getPassword(), databaseName, config);
-        this.databaseToConnectionMap.put(databaseName, conn);
+        // Only cache a usable connection. containsKey() above returns true for
+        // a key mapped to null, so caching a failed connection would keep
+        // returning null for this database until the connector restarts.
+        if (conn != null) {
+            this.databaseToConnectionMap.put(databaseName, conn);
+        }
         return conn;
     }
 
@@ -306,15 +348,33 @@ public class ClickHouseBatchRunnable implements Runnable {
                 runLegacyMode(taskId, sourceTimeZone, serverTimeZone, errorTableName);
             }
         } catch (Exception e) {
-            // insert data into error table
             log.error(String.format(
                             "ClickHouseBatchRunnable exception - Task(%s)", taskId),
                     e);
             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())){
                 logErrorToClickHouse(e, taskId, errorTableName);
             }
+
+            // Classify the error to decide whether to retry or stop
+            ClickHouseErrorClassifier.ErrorCategory category = ClickHouseErrorClassifier.classify(e);
+            int errorCode = ClickHouseErrorClassifier.extractErrorCode(e);
+
+            if (category == ClickHouseErrorClassifier.ErrorCategory.FATAL) {
+                log.error("FATAL ClickHouse error (Code: {}) -- this batch will never succeed. " +
+                          "Discarding batch and stopping task to prevent silent data loss. " +
+                          "Manual intervention required.", errorCode);
+                // Clear the stuck batch so it is not retried forever
+                currentBatch = null;
+                // Rethrow to stop the scheduled executor -- silent swallowing causes
+                // binlog advancement to stall and blocks replication for ALL tables
+                throw new RuntimeException("Fatal ClickHouse error, stopping task", e);
+            } else {
+                log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- " +
+                         "batch will be retried on next scheduled run.", errorCode, category);
+            }
         }
     }
+
 
     /**
      * Run loop for hash-based routing mode.
@@ -511,25 +571,54 @@ public class ClickHouseBatchRunnable implements Runnable {
                                         String databaseName,
                                         ClickHouseStruct record,
                                         Connection connection) {
-        DbWriter writer = null;
-        if (this.topicToDbWriterMap.containsKey(topicName)) {
-            // Check if this table needs cache invalidation after DDL
-            String fullyQualifiedTableName = databaseName + "." + tableName;
-            if (CacheInvalidationManager.getInstance().shouldInvalidate(fullyQualifiedTableName)) {
-                log.info("Invalidating cached DbWriter for {} after DDL", topicName);
-                this.topicToDbWriterMap.remove(topicName);
-            } else {
-                writer = this.topicToDbWriterMap.get(topicName);
+        // Compare the cached writer's build version against the shared, monotonic
+        // table version. A mismatch means a DDL invalidated this table after the
+        // writer was built, so it must be rebuilt with the fresh schema.
+        String fullyQualifiedTableName = databaseName + "." + tableName;
+        long currentVersion = CacheInvalidationManager.getInstance()
+                .getVersion(fullyQualifiedTableName);
+        DbWriter writer = this.topicToDbWriterMap.get(topicName);
+        boolean invalidated = false;
+        if (writer != null) {
+            if (writer.getCacheInvalidationVersion() == currentVersion) {
                 return writer;
             }
+            log.info("Invalidating cached DbWriter for {} after DDL (version {} -> {})",
+                    topicName, writer.getCacheInvalidationVersion(), currentVersion);
+            this.topicToDbWriterMap.remove(topicName);
+            invalidated = true;
         }
         writer = new DbWriter(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName, tableName,
                 this.dbCredentials.getUserName(),
                 this.dbCredentials.getPassword(), this.config, record,
                 connection);
+        writer.setCacheInvalidationVersion(currentVersion);
         this.topicToDbWriterMap.put(topicName, writer);
+        // Log the resolved schema whenever this table has seen a DDL (version > 0).
+        // This covers both rebuilding a stale writer and building a fresh writer at
+        // the current version after a burst of DDLs, so the post-DDL schema is always
+        // observable regardless of which thread ends up owning the writer.
+        if (invalidated || currentVersion > 0) {
+            logRefreshedColumns(topicName, writer, invalidated);
+        }
         return writer;
+    }
+
+    /**
+     * Logs the refreshed column name and type map of a DbWriter that was rebuilt
+     * after a DDL cache invalidation.
+     *
+     * @param topicName the topic whose writer was rebuilt
+     * @param writer    the freshly constructed DbWriter
+     */
+    private void logRefreshedColumns(String topicName, DbWriter writer, boolean rebuilt) {
+        Map<String, String> cols = writer.getColumnNameToDataTypeMap();
+        if (cols != null) {
+            log.info("{} DbWriter schema for {} at cache version {} ({} columns): {}",
+                    rebuilt ? "Rebuilt" : "Built", topicName,
+                    writer.getCacheInvalidationVersion(), cols.size(), cols);
+        }
     }
 
     /**
@@ -555,7 +644,32 @@ public class ClickHouseBatchRunnable implements Runnable {
         if (userProvidedTimeZoneId != null) {
             return userProvidedTimeZoneId;
         }
-        return new DBMetadata(config).getServerTimeZone(this.systemConnection);
+        return new DBMetadata(config).getServerTimeZone(systemConnection());
+    }
+
+    /**
+     * Returns a usable connection to the system database, replacing the cached
+     * one when it has been closed.
+     * <p>
+     * {@code systemConnection} is opened once in the constructor and then held
+     * for the lifetime of the task. A pooled connection does not stay open that
+     * long: it gets returned to the pool, evicted, or reaped after an idle
+     * period, and every later use of the stale handle throws
+     * {@code SQLException: Connection is closed}. The only caller
+     * ({@link #getServerTimeZone}) runs on every batch, so a single closed
+     * handle produced one full stack trace per batch for the rest of the run —
+     * 1.17M log lines in CI — while the timezone silently fell back to the
+     * default. Re-opening when the handle is unusable keeps the connection
+     * valid for the life of the task.
+     *
+     * @return a usable system-database connection, or null when one cannot be
+     *         obtained (callers already handle a null connection).
+     */
+    private Connection systemConnection() {
+        if (BaseDbWriter.isUnusable(this.systemConnection)) {
+            this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
+        }
+        return this.systemConnection;
     }
 
     /**
@@ -649,6 +763,13 @@ public class ClickHouseBatchRunnable implements Runnable {
         result = flushRecordsToClickHouse(topicName, writer, queryToRecordsMap,
                 bmd, maxBufferSize, preparedStatementExecutor);
         if (result) {
+            // Records are now DURABLY in ClickHouse: advance the shared watermark
+            // (max offset per TopicPartition) so ClickHouseSinkTask.preCommit()
+            // only commits offsets that were actually persisted. Without this the
+            // offset advances on consume, and a crash/restart silently loses the
+            // records that were consumed but never inserted.
+            partitionToOffsetMap.forEach((tp, offset) ->
+                    this.durablyInsertedOffsets.merge(tp, offset, Math::max));
             // Remove the entry.
             queryToRecordsMap.remove(topicName);
         }

@@ -7,6 +7,7 @@ import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -70,6 +71,15 @@ public class ReplicatedRMTDDLClickHouse22TIT {
         clickHouseContainer.start();
     }
 
+    @AfterEach
+    public void stopContainers() {
+        if (mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();
+        }
+        if (clickHouseContainer != null && clickHouseContainer.isRunning()) {
+            clickHouseContainer.stop();
+        }
+    }
 
     @ParameterizedTest
     @CsvSource({
@@ -79,91 +89,85 @@ public class ReplicatedRMTDDLClickHouse22TIT {
     public void testReplicatedRMTAutoCreate(String clickHouseServerVersion) throws Exception {
 
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
-
-        Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
-        props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
-        props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "true");
-        //props.setProperty(SinkConnectorLightWeightConfig.DISABLE_DDL, "true");
-
-
         ExecutorService executorService = Executors.newFixedThreadPool(1);
-        executorService.execute(() -> {
-            try {
+        Connection conn = null;
 
-                engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(props, new SourceRecordParserService(),  false);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+        try {
+            Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
+            props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
+            props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "true");
+
+            executorService.execute(() -> {
+                try {
+                    engine.set(new DebeziumChangeEventCapture());
+                    engine.get().setup(props, new SourceRecordParserService(), false);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            Thread.sleep(30000);
+            conn = ITCommon.connectToMySQL(mySqlContainer);
+
+            BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+
+            ResultSet rs = ITCommon.executeQueryWithResultSet("show create table employees.string_types_MEDIUMTEXT_utf8mb4", writer.getConnection());
+            boolean resultValidated = false;
+            while(rs.next()) {
+                resultValidated = true;
+                String createTableDML = rs.getString(1);
+                System.out.println(createTableDML);
+                assert(createTableDML.contains("ReplicatedReplacingMergeTree"));
             }
-        });
 
+            Assert.assertTrue(resultValidated);
 
-        Thread.sleep(30000);
-        Connection conn = ITCommon.connectToMySQL(mySqlContainer);
+            boolean dataValidated = false;
+            ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.string_types_MEDIUMTEXT_utf8mb4", writer.getConnection());
 
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+            while(dateTimeResult.next()) {
+                dataValidated = true;
+                System.out.println(dateTimeResult.getString("Type").toString());
+                System.out.println(dateTimeResult.getString("Value").toString());
 
-        ResultSet rs = ITCommon.executeQueryWithResultSet("show create table employees.string_types_MEDIUMTEXT_utf8mb4", writer.getConnection());
-        // Validate that all the tables are created.
-        boolean resultValidated = false;
-        while(rs.next()) {
-            resultValidated = true;
-            String createTableDML = rs.getString(1);
-            System.out.println(createTableDML);
-            assert(createTableDML.contains("ReplicatedReplacingMergeTree"));
+                Assert.assertTrue(dateTimeResult.getString("Type").toString().equalsIgnoreCase("mediumtext"));
+                Assert.assertTrue(dateTimeResult.getString("Value").toString().equalsIgnoreCase("????"));
+            }
+            Assert.assertTrue(dataValidated);
+
+            conn.createStatement().execute("CREATE TABLE `l1` (`uid` int unsigned NOT NULL,\n" +
+                    " `st` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
+                    " `dt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
+                    "  `dt_tz` int DEFAULT NULL,\n" +
+                    "  `lat` decimal(9,7) DEFAULT NULL,\n" +
+                    "  `long` decimal(10,7) DEFAULT NULL,\n" +
+                    "  `did` int unsigned DEFAULT NULL,\n" +
+                    "   `lname_id` int unsigned DEFAULT NULL,\n" +
+                    " PRIMARY KEY (`uid`,`dt`),\n" +
+                    "KEY `st` (`st`)\n" +
+                    " ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 ");
+
+            Thread.sleep(10000);
+
+            rs = ITCommon.executeQueryWithResultSet("show create table employees.l1", writer.getConnection());
+            resultValidated = false;
+            while(rs.next()) {
+                resultValidated = true;
+                String createTableDML = rs.getString(1);
+                System.out.println(createTableDML);
+                assert(createTableDML.contains("ReplicatedReplacingMergeTree"));
+            }
+            Assert.assertTrue(resultValidated);
+        } finally {
+            if(engine.get() != null) {
+                engine.get().stop();
+            }
+            if(conn != null) {
+                conn.close();
+            }
+            executorService.shutdown();
+            HikariDbSource.close();
         }
-
-        Assert.assertTrue(resultValidated);
-
-        boolean dataValidated = false;
-        // Validate temporal_types_DATETIME data.
-        ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.string_types_MEDIUMTEXT_utf8mb4", writer.getConnection());
-
-        while(dateTimeResult.next()) {
-            dataValidated = true;
-            System.out.println(dateTimeResult.getString("Type").toString());
-            System.out.println(dateTimeResult.getString("Value").toString());
-
-            Assert.assertTrue(dateTimeResult.getString("Type").toString().equalsIgnoreCase("mediumtext"));
-            Assert.assertTrue(dateTimeResult.getString("Value").toString().equalsIgnoreCase("????"));
-        }
-        Assert.assertTrue(dataValidated);
-
-        // Create a new table in MySQL
-        conn.createStatement().execute("CREATE TABLE `l1` (`uid` int unsigned NOT NULL,\n" +
-                " `st` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
-                " `dt` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,\n" +
-                "  `dt_tz` int DEFAULT NULL,\n" +
-                "  `lat` decimal(9,7) DEFAULT NULL,\n" +
-                "  `long` decimal(10,7) DEFAULT NULL,\n" +
-                "  `did` int unsigned DEFAULT NULL,\n" +
-                "   `lname_id` int unsigned DEFAULT NULL,\n" +
-                " PRIMARY KEY (`uid`,`dt`),\n" +
-                "KEY `st` (`st`)\n" +
-                " ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb3 ");
-
-        Thread.sleep(10000);
-
-        // Verify on ClickHouse if the table is created.
-        rs = ITCommon.executeQueryWithResultSet("show create table employees.l1", writer.getConnection());
-        // Validate that all the tables are created.
-        resultValidated = false;
-        while(rs.next()) {
-            resultValidated = true;
-            String createTableDML = rs.getString(1);
-            System.out.println(createTableDML);
-            assert(createTableDML.contains("ReplicatedReplacingMergeTree"));
-        }
-        Assert.assertTrue(resultValidated);
-
-        if(engine.get() != null) {
-            engine.get().stop();
-        }
-        conn.close();
-        // Files.deleteIfExists(tmpFilePath);
-        executorService.shutdown();
-
-        HikariDbSource.close();
    }
 
 }

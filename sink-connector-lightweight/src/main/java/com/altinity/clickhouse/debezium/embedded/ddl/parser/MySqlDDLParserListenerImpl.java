@@ -44,6 +44,39 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private static final Logger log = LogManager.getLogger(MySqlDDLParserListenerImpl.class);
 
     /**
+     * A MySQL character-set introducer immediately preceding a string
+     * literal, e.g. the {@code _utf8mb4} in {@code _utf8mb4' '}.
+     * <p>
+     * MySQL emits one whenever a literal's character set differs from the
+     * connection's. It is valid MySQL and meaningless to ClickHouse, which
+     * rejects the expression outright with a syntax error. Anchored on the
+     * quote so it can only ever match an introducer that actually
+     * introduces a literal -- an identifier such as {@code _utf8mb4_col}
+     * is left alone. The leading boundary keeps it from biting into the
+     * tail of a longer identifier (e.g. {@code my_utf8mb4'x'}).
+     */
+    private static final Pattern CHARSET_INTRODUCER =
+            Pattern.compile("(?<![A-Za-z0-9_$])_[A-Za-z0-9]+(?=['\"])");
+
+    /**
+     * Removes MySQL character-set introducers from a generated-column
+     * expression so the result is valid ClickHouse.
+     * <p>
+     * {@code concat(`a`,_utf8mb4' ',`b`)} becomes
+     * {@code concat(`a`,' ',`b`)}. The literal itself, and everything
+     * else in the expression, is preserved untouched.
+     *
+     * @param expression the raw expression text from the MySQL parse tree.
+     * @return the expression with any charset introducers stripped.
+     */
+    static String stripCharsetIntroducers(String expression) {
+        if (expression == null || expression.indexOf('_') < 0) {
+            return expression;
+        }
+        return CHARSET_INTRODUCER.matcher(expression).replaceAll("");
+    }
+
+    /**
      * The query string that will be transformed.
      */
     StringBuffer query;
@@ -244,7 +277,20 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     public void enterColumnCreateTable(MySqlParser.ColumnCreateTableContext columnCreateTableContext) {
         StringBuilder orderByColumns = new StringBuilder();
         StringBuilder partitionByColumn = new StringBuilder();
-        Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn);
+        StringBuilder uniqueKeyColumns = new StringBuilder();
+        Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn,
+                uniqueKeyColumns);
+
+        // A table with a UNIQUE key but no PRIMARY KEY would otherwise be created
+        // with ORDER BY tuple(): every row compares equal, so ReplacingMergeTree
+        // collapses the whole table into one row. The UNIQUE key is the source's
+        // stable row identity, so use it as the sorting key. Only applied when no
+        // PRIMARY KEY was found -- the PRIMARY KEY always wins.
+        if (orderByColumns.length() == 0 && uniqueKeyColumns.length() > 0) {
+            log.info("Table has no PRIMARY KEY; using UNIQUE key as the ClickHouse sorting key: "
+                    + uniqueKeyColumns);
+            orderByColumns.append(uniqueKeyColumns);
+        }
 
         String isDeletedColumn = IS_DELETED_COLUMN;
 
@@ -361,7 +407,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
 
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-            this.query.append(" TTL `").append(DELETED_TIME_COLUMN).append("` + toIntervalDay(30)");
+            this.query.append(" TTL `").append(DELETED_TIME_COLUMN)
+                      .append("` + toIntervalDay(").append(config.getInt(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()))
+                      .append(")");
         }
         
 
@@ -387,7 +435,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             partitioningKeys = matcher.group(1);
             log.info("Partitioning key (RANGE COLUMNS): " + partitioningKeys);
         }
-        
+
         // If not found, try to match function-based partitioning like PARTITION BY RANGE( YEAR(...) )
         if (partitioningKeys == null) {
             // Match PARTITION BY RANGE( <function_or_expression> ) but stop before the partition definitions
@@ -403,14 +451,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
-        
+
         String partitioningOptions = "";
         if (partitioningKeys != null) {
             partitioningOptions = "PARTITION BY " + partitioningKeys;
         }
         return partitioningOptions;
     }
-    
+
     /**
      * Convert MySQL partition function expressions to ClickHouse equivalents
      * @param mysqlFunction MySQL partition function expression (e.g., "YEAR(order_date)")
@@ -420,15 +468,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (mysqlFunction == null || mysqlFunction.isEmpty()) {
             return null;
         }
-        
+
         // Extract column name from function like YEAR(column_name) or TO_DAYS(column_name)
         Pattern columnPattern = Pattern.compile("(\\w+)\\s*\\(\\s*([\\w`]+)\\s*\\)", Pattern.CASE_INSENSITIVE);
         Matcher columnMatcher = columnPattern.matcher(mysqlFunction);
-        
+
         if (columnMatcher.find()) {
             String function = columnMatcher.group(1).toUpperCase();
             String columnName = columnMatcher.group(2).replaceAll("`", "");
-            
+
             // Convert MySQL functions to ClickHouse equivalents
             switch (function) {
                 case "YEAR":
@@ -448,7 +496,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     return columnName;
             }
         }
-        
+
         // If no function pattern matches, return the expression as-is
         log.info("Could not parse partition function, using expression as-is: " + mysqlFunction);
         return mysqlFunction;
@@ -465,6 +513,29 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     private Set<String> parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
                                          StringBuilder partitionByColumns) {
+        return parseCreateTable(ctx, orderByColumns, partitionByColumns, new StringBuilder());
+    }
+
+    /**
+     * Overload that additionally collects the first UNIQUE key of the table.
+     *
+     * <p>A MySQL table may declare a UNIQUE key but no PRIMARY KEY. Such a
+     * table was previously created as
+     * {@code ReplacingMergeTree(...) ORDER BY tuple()}: with an empty sorting
+     * key every row compares equal, so ReplacingMergeTree collapses the entire
+     * table down to a single row. The UNIQUE key is the source's stable row
+     * identity, which is exactly what the sorting key must be, so it is used
+     * as the fallback when no PRIMARY KEY is present.</p>
+     *
+     * @param ctx The context of the CREATE TABLE statement.
+     * @param orderByColumns A StringBuilder to store the PRIMARY KEY columns.
+     * @param partitionByColumns A StringBuilder to store the PARTITION BY columns.
+     * @param uniqueKeyColumns A StringBuilder receiving the first UNIQUE key
+     *                         declared, used only when no PRIMARY KEY exists.
+     * @return A set of column names defined in the CREATE TABLE statement.
+     */
+    private Set<String> parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
+                                         StringBuilder partitionByColumns, StringBuilder uniqueKeyColumns) {
         List<ParseTree> pt = ctx.children;
         Set<String> columnNames = new HashSet<>();
 
@@ -497,7 +568,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         // Do nothing for TerminalNodeImpl, just skip it
                     } else if (subtree instanceof MySqlParser.ColumnDeclarationContext) {
                         // Parse column definitions
-                        parseColumnDefinitions(subtree, orderByColumns, columnNames);
+                        parseColumnDefinitions(subtree, orderByColumns, columnNames, uniqueKeyColumns);
                     } else if(subtree instanceof MySqlParser.ConstraintDeclarationContext) {
                         for (ParseTree constraintTree: ((MySqlParser.ConstraintDeclarationContext) subtree).children) {
                             if (constraintTree instanceof MySqlParser.PrimaryKeyTableConstraintContext) {
@@ -506,6 +577,21 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                         String primaryKeyColumns = primaryKeyTree.getText();
                                         if (primaryKeyColumns != null && !primaryKeyColumns.isEmpty()) {
                                             orderByColumns.append(primaryKeyColumns);
+                                        }
+                                    }
+                                }
+                            } else if (constraintTree instanceof MySqlParser.UniqueKeyTableConstraintContext) {
+                                // Table-level: UNIQUE KEY (col, ...). Only the FIRST unique
+                                // key is retained; it is used as the sorting key when the
+                                // table declares no PRIMARY KEY.
+                                if (uniqueKeyColumns.length() == 0) {
+                                    for (ParseTree uniqueKeyTree: ((MySqlParser.UniqueKeyTableConstraintContext) constraintTree).children) {
+                                        if (uniqueKeyTree instanceof MySqlParser.IndexColumnNamesContext) {
+                                            String uniqueColumns = uniqueKeyTree.getText();
+                                            if (uniqueColumns != null && !uniqueColumns.isEmpty()) {
+                                                uniqueKeyColumns.append(uniqueColumns);
+                                            }
+                                            break;
                                         }
                                     }
                                 }
@@ -571,6 +657,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * @param columnNames A set to hold the column names parsed from the statement.
      */
     private void parseColumnDefinitions(ParseTree subtree, StringBuilder orderByColumns, Set<String> columnNames) {
+        parseColumnDefinitions(subtree, orderByColumns, columnNames, new StringBuilder());
+    }
+
+    /**
+     * Overload that additionally records a column-level {@code UNIQUE}
+     * constraint (for example {@code uk INT NOT NULL UNIQUE}) so that a table
+     * without a PRIMARY KEY can still be given a real sorting key.
+     *
+     * @param subtree The parse subtree of the column declaration.
+     * @param orderByColumns A StringBuilder to append PRIMARY KEY columns to.
+     * @param columnNames A set to hold the column names parsed from the statement.
+     * @param uniqueKeyColumns A StringBuilder receiving the first UNIQUE column,
+     *                         used only when no PRIMARY KEY exists.
+     */
+    private void parseColumnDefinitions(ParseTree subtree, StringBuilder orderByColumns, Set<String> columnNames,
+                                        StringBuilder uniqueKeyColumns) {
         String columnName = null;
         String colDataType = null;
         boolean isNullColumn = true;
@@ -599,6 +701,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                             orderByColumns.append(columnName);
                             break;
                         }
+                    } else if (colDefinitionChildTree instanceof MySqlParser.UniqueKeyColumnConstraintContext) {
+                        // Column-level: `uk INT NOT NULL UNIQUE`. Retained only as a
+                        // fallback sorting key for tables that declare no PRIMARY KEY.
+                        // Unlike PRIMARY KEY this does NOT force the column NOT NULL:
+                        // MySQL permits NULLs in a UNIQUE column, so the ClickHouse
+                        // column nullability must keep following the source DDL.
+                        if (uniqueKeyColumns.length() == 0 && columnName != null) {
+                            uniqueKeyColumns.append(columnName);
+                        }
                     } else if (colDefinitionChildTree instanceof MySqlParser.GeneratedColumnConstraintContext) {
                         for (ParseTree generatedColumnTree: ((MySqlParser.GeneratedColumnConstraintContext) colDefinitionChildTree).children) {
                             if (generatedColumnTree instanceof MySqlParser.ExpressionContext) {
@@ -617,6 +728,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                     }
                                 }
                                 isGeneratedColumn = true;
+                                generatedColumn =
+                                        stripCharsetIntroducers(generatedColumn);
                                 //generatedColumn = generatedColumnTree.getText();
                             }
                         }
@@ -781,6 +894,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         } else if (tree instanceof MySqlParser.AlterByModifyColumnContext) {
             modifier = Constants.MODIFY_COLUMN;
             modifierWithNull = Constants.MODIFY_COLUMN_NULLABLE;
+            // In MySQL, MODIFY COLUMN without an explicit NULL/NOT NULL constraint
+            // makes the column nullable, so default to Nullable when the current
+            // schema cannot be retrieved from ClickHouse.
+            isNullColumn = true;
         } else if (tree instanceof MySqlParser.AlterByRenameColumnContext) {
             modifier = Constants.RENAME_COLUMN;
             modifierWithNull = Constants.RENAME_COLUMN_NULLABLE;
@@ -789,6 +906,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             isAlterChangeColumn = true;
             modifier = Constants.MODIFY_COLUMN;
             modifierWithNull = Constants.MODIFY_COLUMN_NULLABLE;
+            // Same MySQL semantics as MODIFY COLUMN above.
+            isNullColumn = true;
         } else if (tree instanceof MySqlParser.AlterByAddIndexContext) {
             modifier = Constants.ADD_INDEX;
         } else {
@@ -961,12 +1080,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 parseAlterTable(tree);
             } else if (tree instanceof MySqlParser.AlterByAddIndexContext) {
                 parseAddIndex(tree);
-            } else if (tree instanceof MySqlParser.AlterBySetAlgorithmContext) {
-                log.info("INSTANT ALGORITHM not supported in ClickHouse");
-                // Remove any terminating commas and break out of the parser loop.
-                if(this.query.charAt(this.query.length() - 1) == ',')
-                    this.query.deleteCharAt(this.query.length() - 1);
-                break;
+            } else if (tree instanceof MySqlParser.AlterBySetAlgorithmContext
+                    || tree instanceof MySqlParser.AlterByLockContext) {
+                // ALGORITHM=/LOCK= are MySQL execution hints with no ClickHouse
+                // equivalent, so they emit nothing. Drop the separator that was
+                // emitted for them and keep walking: an ALTER may carry further
+                // operations after the hint, e.g.
+                //   ALTER TABLE t ADD COLUMN a INT, ALGORITHM=INSTANT,
+                //                  ADD COLUMN b BIGINT, ALGORITHM=INSTANT
+                // Terminating the walk here would silently discard every
+                // operation after the first hint.
+                log.info("ALGORITHM/LOCK clause not supported in ClickHouse, skipping clause");
+                removeTrailingComma();
             } else if (tree instanceof TerminalNodeImpl) {
                 if (((TerminalNodeImpl) tree).symbol.getType() == MySqlParser.COMMA) {
                     this.query.append(",");
@@ -974,6 +1099,23 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             } else if(tree instanceof MySqlParser.AlterByRenameContext) {
                 parseAlterTableByRename(tableName, (MySqlParser.AlterByRenameContext) tree);
             }
+        }
+        // A hint in trailing position leaves the separator that preceded it
+        // dangling once the hint itself emits nothing.
+        removeTrailingComma();
+    }
+
+    /**
+     * Drops a single trailing comma from the generated query, if present.
+     * <p>
+     * Separators are emitted eagerly as the ALTER clause list is walked, so a
+     * clause that turns out to emit nothing (an ALGORITHM or LOCK hint) leaves
+     * a dangling comma behind. No-op when the query is empty.
+     */
+    private void removeTrailingComma() {
+        int length = this.query.length();
+        if (length > 0 && this.query.charAt(length - 1) == ',') {
+            this.query.deleteCharAt(length - 1);
         }
     }
 
@@ -1054,7 +1196,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             if (child instanceof MySqlParser.TablesContext) {
                 for (ParseTree tableNameChild : ((MySqlParser.TablesContext) child).children) {
                     if (tableNameChild instanceof MySqlParser.TableNameContext) {
-                        this.query.append(tableNameChild.getText());
+                        String tableName = tableNameChild.getText();
+                        if (tableName.contains(".")) {
+                            String[] parts = tableName.split("\\.");
+                            this.query.append(databaseName).append(".").append(parts[1]);
+                        } else {
+                            this.query.append(databaseName).append(".").append(tableName);
+                        }
                     } else if (tableNameChild instanceof TerminalNodeImpl) {
                         this.query.append(tableNameChild.getText());
                     }
@@ -1084,12 +1232,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     originalTableName = renameTableContextChildren.get(0).getText();
                     newTableName = renameTableContextChildren.get(2).getText();
                     // If the table name already includes the database name don't include it in the query.
-                    if (originalTableName.contains(".") && newTableName.contains(".")) {
+                    if (originalTableName.contains(".") || newTableName.contains(".")) {
                         // Split database and table name.
-                        String[] databaseAndTableNameArray = originalTableName.split("\\.");
-                        String[] newDatabaseAndTableNameArray = newTableName.split("\\.");
-                        this.query.append(this.databaseName).append(".").append(databaseAndTableNameArray[1]).append(" to ").append(this.databaseName)
-                                .append(".").append(newDatabaseAndTableNameArray[1]);
+                        String origTable = originalTableName.contains(".")
+                                ? originalTableName.split("\\.")[1] : originalTableName;
+                        String newTable = newTableName.contains(".")
+                                ? newTableName.split("\\.")[1] : newTableName;
+                        this.query.append(this.databaseName).append(".").append(origTable).append(" to ").append(this.databaseName)
+                                .append(".").append(newTable);
                     } else {
                         this.query.append(databaseName).append(".").append(originalTableName).append(" to ").append(databaseName)
                                 .append(".").append(newTableName);
@@ -1113,7 +1263,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     public void enterTruncateTable(MySqlParser.TruncateTableContext truncateTableContext) {
         for (ParseTree child : truncateTableContext.children) {
             if (child instanceof MySqlParser.TableNameContext) {
-                this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + child.getText()));
+                String tableName = child.getText();
+                if (tableName.contains(".")) {
+                    String[] parts = tableName.split("\\.");
+                    this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + parts[1]));
+                } else {
+                    this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + tableName));
+                }
             }
         }
     }

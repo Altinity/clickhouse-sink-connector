@@ -45,6 +45,40 @@ import java.util.*;
 public class ClickHouseDataTypeMapper {
 
     /**
+     * Schema parameter key populated by Debezium (when source-type
+     * propagation is enabled) with the original MySQL column type,
+     * e.g. {@code "INT UNSIGNED"} or {@code "SMALLINT UNSIGNED"}.
+     */
+    public static final String DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM =
+            "__debezium.source.column.type";
+
+    /**
+     * Mapping of MySQL unsigned integer types (lower-cased) to the
+     * appropriate unsigned ClickHouse type.
+     *
+     * <p>MySQL unsigned integers cannot be represented faithfully by the
+     * signed Kafka Connect schema type that Debezium promotes them to
+     * (e.g. {@code INT UNSIGNED} arrives as {@code INT64}, {@code SMALLINT
+     * UNSIGNED} as {@code INT32}), and the promotion is ambiguous
+     * ({@code SMALLINT UNSIGNED} and {@code MEDIUMINT} both become
+     * {@code INT32}). Callers that have access to the MySQL source column
+     * type should therefore use this mapping to preserve unsignedness.
+     */
+    public static final Map<String, String> UNSIGNED_MYSQL_TO_CLICKHOUSE_TYPE;
+
+    static {
+        Map<String, String> unsignedMap = new HashMap<>();
+        unsignedMap.put("tinyint unsigned", "UInt8");
+        unsignedMap.put("smallint unsigned", "UInt16");
+        unsignedMap.put("mediumint unsigned", "UInt32");
+        unsignedMap.put("int unsigned", "UInt32");
+        unsignedMap.put("integer unsigned", "UInt32");
+        unsignedMap.put("bigint unsigned", "UInt64");
+        UNSIGNED_MYSQL_TO_CLICKHOUSE_TYPE =
+                Collections.unmodifiableMap(unsignedMap);
+    }
+
+    /**
      * A map linking pairs of Kafka Connect schema type and schema name
      * to a corresponding ClickHouseDataType.
      */
@@ -282,6 +316,9 @@ public class ClickHouseDataTypeMapper {
             } else if (schemaName != null
                     && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
                 ps.setTimestamp(index, (java.sql.Timestamp) value);
+            } else if (isWiderIntegerTarget(clickHouseDataType)) {
+                // Debezium schema may lag after ALTER (e.g. INT32) while CH column is UInt64
+                ps.setObject(index, value);
             } else {
                 ps.setInt(index, (Integer) value);
             }
@@ -331,15 +368,45 @@ public class ClickHouseDataTypeMapper {
             ps.setBigDecimal(index, (BigDecimal) value);
         } else if (type == Schema.Type.BYTES) {
             // Blob storage.
+            //
+            // Both carriers of a BYTES value (byte[] and ByteBuffer) must be
+            // handled identically. Decoding a byte[] with `new String(bytes)`
+            // applies the platform default charset, and any byte >= 0x80 is
+            // not a valid single-byte UTF-8 sequence, so it is replaced with
+            // U+FFFD. MySQL BIT(n) reaches this branch as a raw byte[]: 0x80,
+            // 0xAA and 0xFF all collapsed to the same replacement character,
+            // silently and irreversibly, while row counts still matched.
+            byte[] rawBytes = null;
             if (value instanceof byte[]) {
-                String hexValue = new String((byte[]) value);
-                ps.setString(index, hexValue);
+                rawBytes = (byte[]) value;
             } else if (value instanceof java.nio.ByteBuffer) {
-                if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())) {
-                    //String hexValue = new String((byte[]) value);
-                    ps.setBytes(index, ((ByteBuffer) value).array());
+                rawBytes = ((ByteBuffer) value).array();
+            }
+            if (rawBytes != null) {
+                // Debezium delivers MySQL BIT(n) (io.debezium.data.Bits) as a
+                // LITTLE-ENDIAN byte[] -- least significant byte first -- while
+                // MySQL itself presents the value big-endian (HEX(b) prints the
+                // most significant byte first). Encoding the array as received
+                // therefore stores every multi-byte BIT byte-reversed: a MySQL
+                // BIT(64) of 0x0102030405060708 arrived as 0807060504030201.
+                // The reversal is silent and, for a non-palindromic value,
+                // wrong in a way no row count can detect.
+                //
+                // This applies to BIT only. BLOB/BINARY/VARBINARY arrive as a
+                // ByteBuffer already in source order and round-trip exactly,
+                // so reversing every BYTES value would corrupt them instead.
+                if (Bits.LOGICAL_NAME.equals(schemaName) && rawBytes.length > 1) {
+                    byte[] bigEndian = new byte[rawBytes.length];
+                    for (int i = 0; i < rawBytes.length; i++) {
+                        bigEndian[i] = rawBytes[rawBytes.length - 1 - i];
+                    }
+                    rawBytes = bigEndian;
+                }
+                if (config.getBoolean(
+                        ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())) {
+                    ps.setBytes(index, rawBytes);
                 } else {
-                    ps.setString(index, BaseEncoding.base16().lowerCase().encode(((ByteBuffer) value).array()));
+                    ps.setString(index, BaseEncoding.base16().lowerCase().encode(rawBytes));
                 }
             }
 
@@ -359,8 +426,7 @@ public class ClickHouseDataTypeMapper {
                     byteBuffer.rewind();
                 } else {
                     // Set an empty polygon if WKB value is not available
-                    ps.setObject(index,
-                            ClickHouseGeoPolygonValue.ofEmpty());
+                    setGeoValue(ps, index, ClickHouseGeoPolygonValue.ofEmpty());
                     return true;
                 }
                 WKBReader wkbReader = new WKBReader();
@@ -368,8 +434,7 @@ public class ClickHouseDataTypeMapper {
                 try {
                     geometry = wkbReader.read(wkbBytes);
                 } catch (ParseException e) {
-                    ps.setObject(index,
-                            ClickHouseGeoPolygonValue.ofEmpty());
+                    setGeoValue(ps, index, ClickHouseGeoPolygonValue.ofEmpty());
                     return true;
                 }
                 if (geometry instanceof Polygon) {
@@ -404,10 +469,9 @@ public class ClickHouseDataTypeMapper {
                             rings.toArray(new double[rings.size()][][]);
                     ClickHouseGeoPolygonValue geoPolygonValue =
                             ClickHouseGeoPolygonValue.of(polygonCoordinates);
-                    ps.setObject(index, geoPolygonValue);
+                    setGeoValue(ps, index, geoPolygonValue);
                 } else {
-                    ps.setObject(index,
-                            ClickHouseGeoPolygonValue.ofEmpty());
+                    setGeoValue(ps, index, ClickHouseGeoPolygonValue.ofEmpty());
                 }
             } else {
                 ps.setString(index,
@@ -421,11 +485,9 @@ public class ClickHouseDataTypeMapper {
                 Object xValue = pointValue.get("x");
                 Object yValue = pointValue.get("y");
                 double[] point = {(Double) xValue, (Double) yValue};
-                ps.setObject(index,
-                        ClickHouseGeoPointValue.of(point));
+                setGeoValue(ps, index, ClickHouseGeoPointValue.of(point));
             } else {
-                ps.setObject(index,
-                        ClickHouseGeoPointValue.ofOrigin());
+                setGeoValue(ps, index, ClickHouseGeoPointValue.ofOrigin());
             }
         } else if (type == Schema.Type.STRUCT
                 && schemaName.equalsIgnoreCase(
@@ -493,5 +555,100 @@ public class ClickHouseDataTypeMapper {
             }
         }
         return matchingDataType;
+    }
+
+    /**
+     * Resolves the unsigned ClickHouse type for a MySQL source column type
+     * such as {@code "SMALLINT UNSIGNED"} (optionally with a {@code ZEROFILL}
+     * suffix or a display width, e.g. {@code "int(10) unsigned"}).
+     *
+     * @param mysqlSourceColumnType the raw MySQL column type, typically the
+     *                              value of the {@link #DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM}
+     *                              schema parameter
+     * @return the corresponding ClickHouse unsigned type string
+     *         (e.g. {@code "UInt16"}), or {@code null} when the type is not a
+     *         recognized unsigned integer
+     */
+    public static String getUnsignedClickHouseType(String mysqlSourceColumnType) {
+        if (mysqlSourceColumnType == null) {
+            return null;
+        }
+        String normalized = mysqlSourceColumnType.trim().toLowerCase();
+        if (!normalized.contains("unsigned")) {
+            return null;
+        }
+        // Strip any display width, e.g. "int(10) unsigned" -> "int unsigned".
+        normalized = normalized.replaceAll("\\(.*?\\)", "");
+        // Collapse whitespace introduced by removing the width.
+        normalized = normalized.replaceAll("\\s+", " ").trim();
+
+        String direct = UNSIGNED_MYSQL_TO_CLICKHOUSE_TYPE.get(normalized);
+        if (direct != null) {
+            return direct;
+        }
+        // Fall back to a prefix match to tolerate suffixes such as ZEROFILL.
+        if (normalized.startsWith("tinyint")) {
+            return "UInt8";
+        } else if (normalized.startsWith("smallint")) {
+            return "UInt16";
+        } else if (normalized.startsWith("mediumint")) {
+            return "UInt32";
+        } else if (normalized.startsWith("bigint")) {
+            return "UInt64";
+        } else if (normalized.startsWith("integer")
+                || normalized.startsWith("int")) {
+            return "UInt32";
+        }
+        return null;
+    }
+
+    /**
+     * True when the ClickHouse column is wider than a narrow Debezium integer schema
+     * (e.g. INT32 after ALTER to BIGINT UNSIGNED / UInt64).
+     */
+    private static boolean isWiderIntegerTarget(ClickHouseDataType chType) {
+        if (chType == null) {
+            return false;
+        }
+        return chType == ClickHouseDataType.Int64
+                || chType == ClickHouseDataType.UInt64
+                || chType == ClickHouseDataType.UInt32
+                || chType == ClickHouseDataType.Int32;
+    }
+
+    /**
+     * Binds a ClickHouse geo value (Point/Polygon) in the representation the
+     * active JDBC driver understands. The legacy V1 driver accepts the
+     * ClickHouseValue object itself but rejects the string form ("Converting
+     * [String] to [Point] is not supported"); the V2 driver (0.9.x default)
+     * does not know ClickHouseValue objects — it serializes them with
+     * toString() into a VALUES clause, producing invalid SQL like
+     * "ClickHouseGeoPointValue[(1.,2.)]" — but parses the plain string form
+     * "(1.0,2.0)" / "[[(0,0),...]]" natively. Both were verified against a
+     * live ClickHouse 24.8 server with clickhouse-jdbc 0.9.8.
+     *
+     * @param ps the prepared statement.
+     * @param index the parameter index.
+     * @param geoValue the geo value (ClickHouseGeoPointValue or
+     *                 ClickHouseGeoPolygonValue).
+     * @throws SQLException if binding fails.
+     */
+    private static void setGeoValue(PreparedStatement ps, int index,
+                                    com.clickhouse.data.ClickHouseValue geoValue)
+            throws SQLException {
+        boolean v1Driver;
+        try {
+            // Only the V1 driver's statements implement/wrap the legacy
+            // ClickHousePreparedStatement interface.
+            v1Driver = ps.isWrapperFor(
+                    com.clickhouse.jdbc.ClickHousePreparedStatement.class);
+        } catch (SQLException e) {
+            v1Driver = false;
+        }
+        if (v1Driver) {
+            ps.setObject(index, geoValue);
+        } else {
+            ps.setString(index, geoValue.asString());
+        }
     }
 }

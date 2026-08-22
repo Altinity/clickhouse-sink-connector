@@ -113,7 +113,15 @@ public class GroupInsertQueryWithBatchRecords {
                         result = updateQueryToRecordsMap(record,
                                 record.getAfterModifiedFields(), queryToRecordsMap,
                                 tableName, config, columnNameToDataTypeMap);
-                        return result;
+                        // `continue`, NOT `return`: this is inside the per-record
+                        // loop. Returning here abandoned every remaining record in
+                        // the batch the moment the first UPDATE was seen -- silently,
+                        // with no error and no metric, while the offset still
+                        // advanced past the discarded rows. A single MySQL statement
+                        // touching N rows emits N records in one batch, so all but
+                        // the first were lost. Only history mode took this branch,
+                        // which is why the standard flow was unaffected.
+                        continue;
                 }
                                 
                 if (record.getBeforeModifiedFields() != null) {
@@ -184,7 +192,10 @@ public class GroupInsertQueryWithBatchRecords {
                         config.getString(
                                 ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN
                                         .toString()),
-                        record.getDatabase());
+                        record.getDatabase(),
+                        config.getString(
+                                ClickHouseSinkConnectorConfigVariables
+                                        .REPLACING_MERGE_TREE_DELETE_COLUMN.toString()));
 
         String insertQueryTemplate = response.getKey();
         if (response.getKey() == null || response.getValue() == null) {

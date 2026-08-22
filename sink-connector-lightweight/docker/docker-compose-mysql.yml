@@ -29,6 +29,11 @@ services:
     extends:
       file: clickhouse-sink-connector-lt-service.yml
       service: clickhouse-sink-connector-lt
+    depends_on:
+      clickhouse:
+          condition: service_healthy
+      mysql-master:
+          condition: service_healthy
 
 
   ### MONITORING ####

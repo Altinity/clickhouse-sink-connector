@@ -40,6 +40,14 @@ public class DebeziumOffsetManagement {
             completedBatches = new ConcurrentHashMap<>();
 
     /**
+     * Shared lock that serializes every offset commit driven by the connector
+     * worker threads, guaranteeing a single connector-side flush at a time so
+     * that concurrent worker threads never issue overlapping
+     * {@code markBatchFinished()} calls against the same OffsetStorageWriter.
+     */
+    private static final Object OFFSET_COMMIT_LOCK = new Object();
+
+    /**
      * Constructor to initialize DebeziumOffsetManagement with a provided
      * in-flight batch map.
      *
@@ -202,7 +210,7 @@ public class DebeziumOffsetManagement {
 //                + "Sequence Number: " + record.getSequenceNumber() + "Debezium Timestamp: " + record.getDebezium_ts_ms());
 
                 if(record.isLastRecordInBatch()) {
-                    record.getCommitter().markBatchFinished();
+                    markBatchFinishedSafely(record.getCommitter());
                     log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
                             record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
                             + " Sequence Number: " + record.getSequenceNumber() + " Debezium Timestamp: " + record.getDebezium_ts_ms());
@@ -233,8 +241,35 @@ public class DebeziumOffsetManagement {
         if (sourceRecord != null) {
             recordCommitter.markProcessed(sourceRecord);
             if (lastRecordInBatch == true) {
-                recordCommitter.markBatchFinished();
+                markBatchFinishedSafely(recordCommitter);
             }
+        }
+    }
+
+    /**
+     * Finishes a Debezium batch (which triggers an offset flush).
+     * <p>
+     * All connector-driven commits are serialized on {@link #OFFSET_COMMIT_LOCK}
+     * so that worker threads never issue overlapping
+     * {@code markBatchFinished()} / {@code beginFlush()} calls against the same,
+     * non-thread-safe {@code OffsetStorageWriter}. This serialization, combined
+     * with Debezium's own single {@code RecordCommitter} whose methods are
+     * {@code synchronized}, prevents concurrent flushes. Any exception is
+     * allowed to propagate so it is handled by the caller's existing
+     * retriable-error path rather than being silently swallowed.
+     *
+     * @param committer The Debezium record committer.
+     * @throws InterruptedException If the commit is interrupted.
+     */
+    private static void markBatchFinishedSafely(
+            DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>>
+                    committer)
+            throws InterruptedException {
+        if (committer == null) {
+            return;
+        }
+        synchronized (OFFSET_COMMIT_LOCK) {
+            committer.markBatchFinished();
         }
     }
 }
