@@ -328,6 +328,46 @@ public class DBMetadata {
     }
 
     /**
+     * Returns the columns that make up the table's sorting key, in key order.
+     *
+     * <p>Used to decide whether an UPDATE moves a row to a different sorting
+     * key. When it does, the row's previous position must be tombstoned or the
+     * stale row survives forever alongside the updated one.</p>
+     *
+     * @param conn ClickHouse Connection.
+     * @param database The database name where the table is located.
+     * @param tableName The name of the table.
+     * @return The sorting-key columns in key order; empty when the table has an
+     *         empty sorting key ({@code ORDER BY tuple()}), is not found, or
+     *         cannot be queried.
+     */
+    public List<String> getSortingKeyColumns(final Connection conn, final String database,
+                                             final String tableName) {
+        List<String> sortingKeyColumns = new ArrayList<>();
+        if (conn == null) {
+            log.error("Error with DB connection, cannot read sorting key for {}.{}", database, tableName);
+            return sortingKeyColumns;
+        }
+        // sorting_key is the rendered ORDER BY expression, which may contain
+        // functions. Reading the column list from system.columns via
+        // is_in_sorting_key avoids having to parse it.
+        String query = String.format(
+                "SELECT name FROM system.columns WHERE database = '%s' AND table = '%s' "
+                        + "AND is_in_sorting_key = 1 ORDER BY position", database, tableName);
+        try (Statement stmt = conn.createStatement(); ResultSet rs = stmt.executeQuery(query)) {
+            while (rs.next()) {
+                sortingKeyColumns.add(rs.getString("name"));
+            }
+        } catch (Exception e) {
+            // Never fail the write path on this. An empty result makes the
+            // caller skip the tombstone, i.e. fall back to the previous
+            // behaviour rather than emitting a possibly wrong tombstone.
+            log.error("Error retrieving sorting key columns for {}.{}", database, tableName, e);
+        }
+        return sortingKeyColumns;
+    }
+
+    /**
      * Retrieves the table engine using system tables in ClickHouse.
      * This function queries the `system.tables` system table to determine the engine.
      *

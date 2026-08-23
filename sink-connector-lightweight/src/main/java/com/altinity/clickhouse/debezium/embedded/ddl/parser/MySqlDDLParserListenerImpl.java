@@ -278,8 +278,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         StringBuilder orderByColumns = new StringBuilder();
         StringBuilder partitionByColumn = new StringBuilder();
         StringBuilder uniqueKeyColumns = new StringBuilder();
+        List<String> orderedColumnNames = new ArrayList<>();
         Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn,
-                uniqueKeyColumns);
+                uniqueKeyColumns, orderedColumnNames);
 
         // A table with a UNIQUE key but no PRIMARY KEY would otherwise be created
         // with ORDER BY tuple(): every row compares equal, so ReplacingMergeTree
@@ -290,6 +291,43 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             log.info("Table has no PRIMARY KEY; using UNIQUE key as the ClickHouse sorting key: "
                     + uniqueKeyColumns);
             orderByColumns.append(uniqueKeyColumns);
+        }
+
+        // Neither a PRIMARY KEY nor a UNIQUE key: the table has no declared row
+        // identity at all (MySQL's `alembic_version` is the canonical example).
+        // ORDER BY tuple() makes every row compare equal, so ReplacingMergeTree
+        // keeps exactly ONE row for the entire table -- a silent, total data loss
+        // that is invisible while the table holds a single row and appears the
+        // moment it grows to two.
+        //
+        // Falling back to every column makes the full row its own identity, which
+        // is precisely MySQL's own semantics for a keyless table: rows are
+        // distinguished by their values. Paired with the before-image tombstone
+        // emitted by PreparedStatementExecutor, this reproduces INSERT, UPDATE and
+        // DELETE exactly (verified against MySQL for 1-row, N-row, growth,
+        // NULL-bearing and value-round-trip cases).
+        //
+        // PRIMARY KEY tuple() is emitted alongside it so the sparse index stays
+        // empty: the wide sorting key costs no index memory, it exists only to
+        // give ReplacingMergeTree a full-row identity to deduplicate on.
+        //
+        // Not representable: a table holding two byte-identical rows. Identical
+        // rows are indistinguishable under ANY sorting key, so ClickHouse keeps
+        // one. Collapsing/Summing engines track the multiplicity but still
+        // collapse the physical rows at merge time, so they do not help a plain
+        // consumer query. This case is logged as a warning below.
+        boolean isKeylessTable = false;
+        if (orderByColumns.length() == 0 && !orderedColumnNames.isEmpty()) {
+            isKeylessTable = true;
+            // Parenthesised: a bare `ORDER BY a,b SETTINGS ...` is a syntax
+            // error in ClickHouse (Code: 62), which only shows up once the key
+            // spans more than one column.
+            orderByColumns.append("(").append(String.join(",", orderedColumnNames)).append(")");
+            log.warn("Table {}.{} declares no PRIMARY KEY and no UNIQUE key. Using all {} columns as the "
+                            + "ClickHouse sorting key so rows are not collapsed. NOTE: if this table can hold "
+                            + "two byte-identical rows, ClickHouse will retain only one of them -- identical "
+                            + "rows cannot be told apart by any sorting key.",
+                    this.databaseName, this.tableName, orderedColumnNames.size());
         }
 
         String isDeletedColumn = IS_DELETED_COLUMN;
@@ -371,6 +409,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
         }
 
+        // For the all-columns fallback, pin an EMPTY primary key. In ClickHouse the
+        // primary key defaults to the sorting key and is held in memory for every
+        // active part, so a wide all-column sorting key would otherwise inflate the
+        // sparse index for no benefit. PRIMARY KEY tuple() keeps the index empty
+        // while ORDER BY still gives ReplacingMergeTree its full-row identity.
+        // Emitted before ORDER BY because ClickHouse requires that clause order.
+        if (isKeylessTable && (tableConfig.getPrimaryKey() == null || tableConfig.getPrimaryKey().isEmpty())) {
+            this.query.append(" PRIMARY KEY tuple()");
+        }
+
         if (tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
             // Use the primary_key from tableConfig if it exists
             this.query.append(Constants.ORDER_BY).append(tableConfig.getPrimaryKey());
@@ -413,9 +461,21 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
         
 
-        if (tableConfig.getSettings() != null && !tableConfig.getSettings().isEmpty()) {
+        // The all-columns fallback sorting key necessarily includes every nullable
+        // column of the source table, and ClickHouse rejects a nullable sorting key
+        // outright (Code: 44 ILLEGAL_COLUMN) unless allow_nullable_key is enabled.
+        // Append it to any user-supplied settings rather than replacing them.
+        String tableSettings = tableConfig.getSettings();
+        boolean hasUserSettings = tableSettings != null && !tableSettings.isEmpty();
+        if (isKeylessTable && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {
+            this.query.append(Constants.SETTINGS);
+            if (hasUserSettings) {
+                this.query.append(tableSettings).append(",");
+            }
+            this.query.append(ALLOW_NULLABLE_KEY).append("=1");
+        } else if (hasUserSettings) {
             // Use the settings from tableConfig if it exists
-            this.query.append(Constants.SETTINGS).append(tableConfig.getSettings());
+            this.query.append(Constants.SETTINGS).append(tableSettings);
         }
     }
 
@@ -536,6 +596,33 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     private Set<String> parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
                                          StringBuilder partitionByColumns, StringBuilder uniqueKeyColumns) {
+        return parseCreateTable(ctx, orderByColumns, partitionByColumns, uniqueKeyColumns, new ArrayList<>());
+    }
+
+    /**
+     * Overload that additionally records the declared columns <em>in DDL order</em>.
+     *
+     * <p>{@code columnNames} is a {@link HashSet} and therefore unordered. That
+     * is fine for the membership test it exists for, but unusable as a sorting
+     * key: {@code ORDER BY} must be deterministic, or two connectors replicating
+     * the same source would build tables whose sorting keys differ purely by
+     * hash iteration order. This overload preserves declaration order so the
+     * all-columns fallback sorting key is stable and reproducible.</p>
+     *
+     * @param ctx The context of the CREATE TABLE statement.
+     * @param orderByColumns A StringBuilder to store the PRIMARY KEY columns.
+     * @param partitionByColumns A StringBuilder to store the PARTITION BY columns.
+     * @param uniqueKeyColumns A StringBuilder receiving the first UNIQUE key.
+     * @param orderedColumnNames A list receiving the sortable columns in
+     *                           declaration order. Generated columns are
+     *                           excluded: they are a pure function of the stored
+     *                           columns and so add nothing to row identity, and
+     *                           they are absent from the CDC record payload.
+     * @return A set of column names defined in the CREATE TABLE statement.
+     */
+    private Set<String> parseCreateTable(MySqlParser.CreateTableContext ctx, StringBuilder orderByColumns,
+                                         StringBuilder partitionByColumns, StringBuilder uniqueKeyColumns,
+                                         List<String> orderedColumnNames) {
         List<ParseTree> pt = ctx.children;
         Set<String> columnNames = new HashSet<>();
 
@@ -568,7 +655,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         // Do nothing for TerminalNodeImpl, just skip it
                     } else if (subtree instanceof MySqlParser.ColumnDeclarationContext) {
                         // Parse column definitions
-                        parseColumnDefinitions(subtree, orderByColumns, columnNames, uniqueKeyColumns);
+                        parseColumnDefinitions(subtree, orderByColumns, columnNames, uniqueKeyColumns,
+                                orderedColumnNames);
                     } else if(subtree instanceof MySqlParser.ConstraintDeclarationContext) {
                         for (ParseTree constraintTree: ((MySqlParser.ConstraintDeclarationContext) subtree).children) {
                             if (constraintTree instanceof MySqlParser.PrimaryKeyTableConstraintContext) {
@@ -673,6 +761,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     private void parseColumnDefinitions(ParseTree subtree, StringBuilder orderByColumns, Set<String> columnNames,
                                         StringBuilder uniqueKeyColumns) {
+        parseColumnDefinitions(subtree, orderByColumns, columnNames, uniqueKeyColumns, new ArrayList<>());
+    }
+
+    /**
+     * Overload that additionally records the column in declaration order, for
+     * use as an all-columns fallback sorting key.
+     *
+     * @param subtree The parse subtree of the column declaration.
+     * @param orderByColumns A StringBuilder to append PRIMARY KEY columns to.
+     * @param columnNames A set to hold the column names parsed from the statement.
+     * @param uniqueKeyColumns A StringBuilder receiving the first UNIQUE column.
+     * @param orderedColumnNames A list receiving sortable columns in declaration
+     *                           order. Generated columns are skipped.
+     */
+    private void parseColumnDefinitions(ParseTree subtree, StringBuilder orderByColumns, Set<String> columnNames,
+                                        StringBuilder uniqueKeyColumns, List<String> orderedColumnNames) {
         String columnName = null;
         String colDataType = null;
         boolean isNullColumn = true;
@@ -759,6 +863,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
                 // Add column name to the set of column names.
                 columnNames.add(columnName);
+                // Record it in declaration order too. Only reached for
+                // non-generated columns -- the generated-column branch above
+                // exits via `continue`, which is deliberate: a generated column
+                // is a pure function of the stored columns, so it adds nothing
+                // to row identity, and it is not carried in the CDC payload for
+                // the writer to compare.
+                if (columnName != null) {
+                    orderedColumnNames.add(columnName);
+                }
             }
         }
     }

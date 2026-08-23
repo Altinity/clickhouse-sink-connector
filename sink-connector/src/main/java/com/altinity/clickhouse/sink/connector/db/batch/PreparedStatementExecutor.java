@@ -17,6 +17,7 @@ import java.sql.*;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Supplier;
 
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
 
@@ -47,6 +48,18 @@ public class PreparedStatementExecutor {
     private ZoneId serverTimeZone;
 
     /**
+     * Supplies the target table's sorting-key columns, in key order.
+     *
+     * <p>A supplier rather than a value: the executor is constructed before the
+     * DbWriter has necessarily resolved the table's metadata (a table created
+     * by DDL rather than by auto-create resolves it a moment later), so a
+     * snapshot taken at construction can be empty and would silently disable
+     * the UPDATE tombstone. Reading through on use always sees current
+     * metadata, including after a DDL refresh.</p>
+     */
+    private Supplier<List<String>> sortingKeyColumnsSupplier = ArrayList::new;
+
+    /**
      * Constructor for PreparedStatementExecutor.
      * Initializes the instance with the provided configuration values.
      *
@@ -61,9 +74,35 @@ public class PreparedStatementExecutor {
                                      boolean replacingMergeTreeWithIsDeletedColumn,
                                      String signColumn, String versionColumn,
                                      String databaseName, ZoneId serverTimeZone) {
+        this(replacingMergeTreeDeleteColumn, replacingMergeTreeWithIsDeletedColumn, signColumn,
+                versionColumn, databaseName, serverTimeZone, ArrayList::new);
+    }
+
+    /**
+     * Overload that additionally supplies the target table's sorting-key
+     * columns, used to detect UPDATEs that relocate a row to a different
+     * sorting key.
+     *
+     * @param replacingMergeTreeDeleteColumn The is_deleted column name.
+     * @param replacingMergeTreeWithIsDeletedColumn Whether the new RMT engine is in use.
+     * @param signColumn The sign column to mark updates and deletes.
+     * @param versionColumn The version column for ReplacingMergeTree.
+     * @param databaseName The name of the database.
+     * @param serverTimeZone The time zone for the server.
+     * @param sortingKeyColumnsSupplier Supplies the target table's sorting-key
+     *                                  columns, in key order. Read on use, so
+     *                                  it always reflects current metadata.
+     */
+    public PreparedStatementExecutor(String replacingMergeTreeDeleteColumn,
+                                     boolean replacingMergeTreeWithIsDeletedColumn,
+                                     String signColumn, String versionColumn,
+                                     String databaseName, ZoneId serverTimeZone,
+                                     Supplier<List<String>> sortingKeyColumnsSupplier) {
 
         this.databaseName = databaseName;
         this.serverTimeZone = serverTimeZone;
+        this.sortingKeyColumnsSupplier =
+                sortingKeyColumnsSupplier == null ? ArrayList::new : sortingKeyColumnsSupplier;
         // Initialize the field mapper with the same configuration
         this.fieldMapper = new PreparedStatementFieldMapper(
                 replacingMergeTreeDeleteColumn,
@@ -230,6 +269,32 @@ public class PreparedStatementExecutor {
                             fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
                         }
+                        // ReplacingMergeTree deduplicates by SORTING KEY. An UPDATE that
+                        // changes any sorting-key column therefore writes the new row at a
+                        // DIFFERENT key, leaving the pre-update row in place forever: MySQL
+                        // has one row, ClickHouse has two. Tombstone the before-image so the
+                        // row's old position is retired.
+                        //
+                        // This matters most for tables with no PRIMARY KEY and no UNIQUE key,
+                        // whose sorting key is every column (so any UPDATE relocates the row),
+                        // but it is not specific to them -- an UPDATE of a real key column on
+                        // a keyed table orphans the old row in exactly the same way.
+                        //
+                        // The tombstone is emitted ONLY when the key actually changes. Writing
+                        // one for a same-key UPDATE would put a delete marker and the new row
+                        // at the same key with the same _version, and ReplacingMergeTree breaks
+                        // that tie by insertion order -- which can permanently drop a live row.
+                        //
+                        // Skipped in replication-history mode: that mode keeps its own SCD
+                        // Type 2 history via ReplicationHistoryHandler, whose sorting key
+                        // includes deleted_time, and it retires the old version itself.
+                        else if (replicationHistoryHandler == null && isReplacingMergeTree(engine)
+                                && updateRelocatesSortingKey(record)) {
+                            fieldMapper.insertTombstonePreparedStatement(entry.getKey().right, ps,
+                                    record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
+                                    config, columnToDataTypeMap, engine, tableName);
+                            ps.addBatch();
+                        }
                         if (replicationHistoryHandler != null) {
                             // Use ReplicationHistoryHandler for SCD Type 2 updates
                             // tableName is already fully-qualified (e.g., binlog_history.employees_temporal_test)
@@ -276,5 +341,60 @@ public class PreparedStatementExecutor {
         });
 
         return result.get();
+    }
+
+    /**
+     * Whether the engine deduplicates by sorting key, i.e. is a
+     * ReplacingMergeTree variant.
+     *
+     * @param engine The target table engine.
+     * @return true for (Replicated)ReplacingMergeTree.
+     */
+    private boolean isReplacingMergeTree(DBMetadata.TABLE_ENGINE engine) {
+        if (engine == null) {
+            return false;
+        }
+        return engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine())
+                || engine.getEngine().equalsIgnoreCase(
+                        DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine());
+    }
+
+    /**
+     * Whether an UPDATE moves the row to a different sorting key, which leaves
+     * the pre-update row stranded under ReplacingMergeTree unless it is
+     * tombstoned.
+     *
+     * <p>Compares only the sorting-key columns, and only those actually present
+     * in both the before and after images. Returns {@code false} when the
+     * sorting key is unknown or empty, so an unreadable sorting key degrades to
+     * the previous behaviour rather than emitting a speculative tombstone.</p>
+     *
+     * @param record The CDC record carrying both before and after images.
+     * @return true when at least one sorting-key column changed value.
+     */
+    boolean updateRelocatesSortingKey(ClickHouseStruct record) {
+        List<String> sortingKeyColumns = sortingKeyColumnsSupplier.get();
+        if (sortingKeyColumns == null || sortingKeyColumns.isEmpty()) {
+            return false;
+        }
+        // Fully qualified: java.sql.* is imported wholesale above and also
+        // defines a Struct.
+        org.apache.kafka.connect.data.Struct before = record.getBeforeStruct();
+        org.apache.kafka.connect.data.Struct after = record.getAfterStruct();
+        if (before == null || after == null) {
+            return false;
+        }
+        for (String keyColumn : sortingKeyColumns) {
+            // A sorting key may be an expression over columns the record does
+            // not carry (for example toDate(deleted_time)); skip what is absent
+            // from either image rather than guessing.
+            if (before.schema().field(keyColumn) == null || after.schema().field(keyColumn) == null) {
+                continue;
+            }
+            if (!Objects.equals(before.get(keyColumn), after.get(keyColumn))) {
+                return true;
+            }
+        }
+        return false;
     }
 }

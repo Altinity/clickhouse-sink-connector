@@ -15,7 +15,9 @@ import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import static io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX;
@@ -105,6 +107,17 @@ public class DbWriter extends BaseDbWriter {
      * Cached table engine response containing engine type and column info.
      */
     private MutablePair<DBMetadata.TABLE_ENGINE, String> tableEngineResponse;
+
+    /**
+     * The target table's sorting-key columns, in key order.
+     *
+     * <p>Cached alongside the engine because it is consulted on every UPDATE to
+     * decide whether the row lands on a different sorting key and therefore
+     * needs its previous position tombstoned. Empty when the table has an empty
+     * sorting key ({@code ORDER BY tuple()}).</p>
+     */
+    @Getter
+    private List<String> sortingKeyColumns = new ArrayList<>();
 
     /**
      * Constructor that sets up the DbWriter by initializing the database
@@ -266,6 +279,9 @@ public class DbWriter extends BaseDbWriter {
             this.tableEngineResponse = dbMetadata.getTableEngine(this.conn, database, tableName);
             this.engine = tableEngineResponse.getLeft();
         }
+
+        // Read the sorting key once, here, rather than per batch on the write path.
+        this.sortingKeyColumns = dbMetadata.getSortingKeyColumns(this.conn, database, tableName);
     }
 
     /**
@@ -387,6 +403,11 @@ public class DbWriter extends BaseDbWriter {
                 tableName, this.conn, database);
         this.tableEngineResponse = dbMetadata.getTableEngine(this.conn, database, tableName);
         this.engine = tableEngineResponse.getLeft();
+        // Refresh the sorting key alongside the rest of the metadata. This is
+        // the path taken when the table is created by a replicated DDL rather
+        // than by auto-create, so leaving it stale here means the writer sees
+        // an empty sorting key and silently skips the UPDATE tombstone.
+        this.sortingKeyColumns = dbMetadata.getSortingKeyColumns(this.conn, database, tableName);
     }
 
     /**

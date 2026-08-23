@@ -19,10 +19,17 @@ import java.util.HashMap;
  * arrived as ONE row. Total, silent data loss.</p>
  *
  * <p>The UNIQUE key is the source's stable row identity, which is precisely
- * what the sorting key must be, so it is used when no PRIMARY KEY exists.
- * Note that ordering by all data columns is NOT a valid alternative: an UPDATE
- * to a non-key column then produces a different sorting key, so both versions
- * survive FINAL and the table gains permanent duplicates instead.</p>
+ * what the sorting key must be, so it is used when no PRIMARY KEY exists.</p>
+ *
+ * <p>This javadoc previously asserted that ordering by all data columns is "NOT
+ * a valid alternative", on the grounds that an UPDATE then writes a different
+ * sorting key so both versions survive FINAL. The duplication is real, but the
+ * conclusion was wrong: it follows from emitting only the after-image, not from
+ * the choice of sorting key. Tombstoning the before-image when the key changes
+ * eliminates it, and that is how tables with neither a PRIMARY KEY nor a UNIQUE
+ * key are now handled -- see {@link CreateTableNoKeySortKeyTest}. A UNIQUE key
+ * is still preferred here: it is a narrower and more meaningful identity than
+ * the whole row.</p>
  */
 public class CreateTableUniqueKeySortKeyTest {
 
@@ -104,19 +111,30 @@ public class CreateTableUniqueKeySortKeyTest {
     }
 
     /**
-     * Regression guard: a table with neither a PRIMARY KEY nor a UNIQUE key has
-     * no stable row identity to key on, so it must still fall back to
-     * ORDER BY tuple(). Inventing a key here (for example ordering by all data
-     * columns) would trade collapse for permanent duplication on UPDATE.
+     * A table with neither a PRIMARY KEY nor a UNIQUE key.
+     *
+     * <p>This test previously asserted the OPPOSITE -- that such a table "must
+     * still fall back to ORDER BY tuple()", reasoning that inventing a key
+     * would trade collapse for permanent duplication on UPDATE. That reasoning
+     * was wrong twice over. ORDER BY tuple() is not a safe fallback but a total
+     * data loss: ReplacingMergeTree keeps ONE row for the entire table. And the
+     * duplication it feared comes from emitting only the after-image, which the
+     * writer-side tombstone now handles.</p>
+     *
+     * <p>Measured on ClickHouse 24.8.14 against MySQL 8.0.36: five distinct
+     * rows in such a table arrived as one, and deleting one row of three
+     * emptied the table completely. See {@link CreateTableNoKeySortKeyTest}.</p>
      */
     @Test
-    public void testNoKeyAtAllStillFallsBackToTuple() {
+    public void testNoKeyAtAllUsesAllColumnsSortKey() {
         String createQuery = "CREATE TABLE nokey (a INT, v VARCHAR(64)) ENGINE=InnoDB;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "nokey", clickHouseQuery);
 
-        Assert.assertTrue("no key of any kind must still yield ORDER BY tuple(), was: "
-                        + clickHouseQuery,
-                clickHouseQuery.toString().toLowerCase().contains("order by tuple()"));
+        String query = clickHouseQuery.toString().toLowerCase();
+        Assert.assertFalse("ORDER BY tuple() collapses the whole table to one row, was: "
+                        + clickHouseQuery, query.contains("order by tuple()"));
+        Assert.assertTrue("all columns must become the sorting key, was: " + clickHouseQuery,
+                query.contains("order by (a,v)"));
     }
 }
