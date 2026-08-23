@@ -668,6 +668,54 @@ public class DebeziumChangeEventCapture {
      * @param cdcRecord       The CDC change event record.
      * @param lastRecordInBatch True if this is the last record in the batch.
      */
+    /**
+     * Maximum time to wait for the writer to become quiescent before a DDL.
+     */
+    private static final long DDL_DRAIN_TIMEOUT_MS = 60_000;
+
+    /**
+     * Brings the writer to a standstill before a DDL is applied.
+     *
+     * <p>Three steps, in order: let the queued records be picked up and written
+     * while the pool is still running; stop new batches from starting; then wait
+     * for the batches still inside a task body to finish. Only then is every
+     * record that was read under the pre-ALTER schema actually in ClickHouse.</p>
+     *
+     * <p>On timeout the DDL proceeds anyway and a warning is logged. Blocking
+     * replication indefinitely would be worse than the corruption this avoids,
+     * and the warning names the condition so it is visible rather than silent.</p>
+     */
+    private void drainBeforeDDL() {
+        long deadline = System.currentTimeMillis() + DDL_DRAIN_TIMEOUT_MS;
+
+        // Step 1: let the pool consume what is already queued.
+        while (this.records != null && !this.records.isEmpty()) {
+            if (System.currentTimeMillis() >= deadline) {
+                log.warn("DDL drain: {} record batch(es) still queued after {} ms; applying the DDL anyway. "
+                                + "Records buffered under the previous schema may be written against the new one.",
+                        this.records.size(), DDL_DRAIN_TIMEOUT_MS);
+                break;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        // Step 2: no new batches may start.
+        this.executor.pause();
+
+        // Step 3: wait out the batches already running.
+        long remaining = Math.max(0, deadline - System.currentTimeMillis());
+        if (!this.executor.awaitQuiescent(remaining)) {
+            log.warn("DDL drain: writer did not become quiescent within {} ms; applying the DDL anyway. "
+                            + "Records buffered under the previous schema may be written against the new one.",
+                    DDL_DRAIN_TIMEOUT_MS);
+        }
+    }
+
     private void performDDLOperation(String DDL, Properties props, SourceRecord sr,
                                      ClickHouseSinkConnectorConfig config,
                                      DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter,
@@ -1178,7 +1226,20 @@ public class DebeziumChangeEventCapture {
 
                 if (DDL != null && !DDL.isEmpty()) {
                     log.info("***** DDL received, Flush all existing records");
-                    this.executor.pause();
+                    // pause() stops NEW batches from starting; it does not drain
+                    // what is already queued or already running. Records read
+                    // under the pre-ALTER schema were therefore still being
+                    // written AFTER the ALTER had been applied to ClickHouse.
+                    //
+                    // For an ALTER TABLE ... CHANGE COLUMN (rename) that is
+                    // silent corruption: the buffered record still carries the
+                    // OLD field name while the ClickHouse table now has the NEW
+                    // column, so the writer finds no value for it and binds
+                    // NULL over the real one. Row counts are unaffected, so
+                    // count-based checksums report the table clean.
+                    //
+                    // Drain first, then apply the DDL.
+                    drainBeforeDDL();
 
                     Map<String, Object> sourceObjStruct = new ClickHouseConverter().convertValue(sr);
 
