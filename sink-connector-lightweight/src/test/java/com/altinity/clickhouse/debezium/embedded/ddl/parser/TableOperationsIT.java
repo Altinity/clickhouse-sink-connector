@@ -151,35 +151,39 @@ public class TableOperationsIT {
             // Validate table created with partitions.
             String membersResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.members");
             Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
-                        "(\n" +
-                        "    `firstname` String,\n" +
-                        "    `lastname` String,\n" +
-                        "    `username` String,\n" +
-                        "    `email` Nullable(String),\n" +
-                        "    `joined` Date32,\n" +
-                        "    `_version` UInt64,\n" +
-                        "    `is_deleted` UInt8\n" +
-                        ")\n" +
-                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
-                        "PARTITION BY joined\n" +
-                        "ORDER BY tuple()\n" +
-                        "SETTINGS index_granularity = 8192"));
+                    "(\n" +
+                    "    `firstname` String,\n" +
+                    "    `lastname` String,\n" +
+                    "    `username` String,\n" +
+                    "    `email` Nullable(String),\n" +
+                    "    `joined` Date32,\n" +
+                    "    `_row_key` UInt64 MATERIALIZED cityHash64((firstname IS NULL, ifNull(toString(firstname), ''), lastname IS NULL, ifNull(toString(lastname), ''), username IS NULL, ifNull(toString(username), ''), email IS NULL, ifNull(toString(email), ''), joined IS NULL, ifNull(toString(joined), ''))),\n" +
+                    "    `_version` UInt64,\n" +
+                    "    `is_deleted` UInt8\n" +
+                    ")\n" +
+                    "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
+                    "PARTITION BY joined\n" +
+                    "PRIMARY KEY tuple()\n" +
+                    "ORDER BY _row_key\n" +
+                    "SETTINGS index_granularity = 8192"));
 
             String rcxResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.rcx");
 
             Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
-                        "(\n" +
-                        "    `a` Int32,\n" +
-                        "    `b` Nullable(Int32),\n" +
-                        "    `c` String,\n" +
-                        "    `d` Int32,\n" +
-                        "    `_version` UInt64,\n" +
-                        "    `is_deleted` UInt8\n" +
-                        ")\n" +
-                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
-                        "PARTITION BY (a, d, c)\n" +
-                        "ORDER BY tuple()\n" +
-                        "SETTINGS index_granularity = 8192"));
+                    "(\n" +
+                    "    `a` Int32,\n" +
+                    "    `b` Nullable(Int32),\n" +
+                    "    `c` String,\n" +
+                    "    `d` Int32,\n" +
+                    "    `_row_key` UInt64 MATERIALIZED cityHash64((a IS NULL, ifNull(toString(a), ''), b IS NULL, ifNull(toString(b), ''), c IS NULL, ifNull(toString(c), ''), d IS NULL, ifNull(toString(d), ''))),\n" +
+                    "    `_version` UInt64,\n" +
+                    "    `is_deleted` UInt8\n" +
+                    ")\n" +
+                    "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
+                    "PARTITION BY (a, d, c)\n" +
+                    "PRIMARY KEY tuple()\n" +
+                    "ORDER BY _row_key\n" +
+                    "SETTINGS index_granularity = 8192"));
 
             Thread.sleep(10000);
             // Delete offset table.
