@@ -388,15 +388,21 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         String rowKeyColumnDefinition = null;
         if (orderByColumns.length() == 0 && !orderedColumnNames.isEmpty()) {
             isKeylessTable = true;
-            rowKeyColumnDefinition = "`" + ROW_KEY_COLUMN + "` UInt64 MATERIALIZED "
+            // The source may legitimately hold a column of this name. Emitting
+            // ours unconditionally then produces two definitions of it and
+            // ClickHouse rejects the CREATE outright (Code: 44 "column with
+            // this name already exists"), stalling that table. Disambiguate the
+            // same way the delete marker already does.
+            String rowKeyColumn = resolveRowKeyColumnName(orderedColumnNames);
+            rowKeyColumnDefinition = "`" + rowKeyColumn + "` UInt64 MATERIALIZED "
                     + rowFingerprintExpression(orderedColumnNames);
-            orderByColumns.append("`").append(ROW_KEY_COLUMN).append("`");
+            orderByColumns.append("`").append(rowKeyColumn).append("`");
             log.warn("Table {}.{} declares no PRIMARY KEY and no UNIQUE key. Adding the generated column "
                             + "`{}` as the ClickHouse sorting key -- a fingerprint over all {} columns -- so "
                             + "rows are not collapsed while the data columns stay alterable. NOTE: if this "
                             + "table can hold two byte-identical rows, ClickHouse will retain only one of "
                             + "them -- identical rows cannot be told apart by any sorting key.",
-                    this.databaseName, this.tableName, ROW_KEY_COLUMN, orderedColumnNames.size());
+                    this.databaseName, this.tableName, rowKeyColumn, orderedColumnNames.size());
         }
 
         String isDeletedColumn = IS_DELETED_COLUMN;
@@ -559,29 +565,62 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * hold: {@code NULL}, {@code ''} and {@code '0'} all hash to different
      * values (verified on ClickHouse 24.8.14.10547).</p>
      *
-     * <p>The null-flag also keeps the result non-Nullable, which a sorting key
-     * requires. Hashing the raw {@code Nullable} columns yields
+     * <p>The null-flag also keeps every argument non-Nullable, which a sorting
+     * key requires. Hashing the raw {@code Nullable} columns yields
      * {@code Nullable(UInt64)} and the insert is rejected with Code: 349, and
-     * {@code cityHash64(tuple(...))} throws Code: 48 the moment any member is
-     * NULL -- both were measured before settling on this form.</p>
+     * passing a {@code Nullable} straight into the tuple throws Code: 48 the
+     * moment any member is NULL -- both measured before settling on this
+     * form.</p>
      *
-     * <p>A 0x01 separator between columns stops adjacent values from running
-     * together, so ("ab","c") and ("a","bc") remain distinct.</p>
+     * <p>The arguments are passed as a {@code tuple}, NOT concatenated into one
+     * string. A delimiter-joined string is not an unambiguous encoding: with a
+     * 0x01 separator, the rows {@code ('x', 0x01+'0z')} and
+     * {@code ('x'+0x01+'0', 'z')} flatten to the identical byte sequence and so
+     * to the identical fingerprint, and ReplacingMergeTree then collapses two
+     * genuinely distinct rows. Verified on 24.8.14.10547: the concatenated form
+     * returns collision=1 for that pair, the tuple form returns 0, because
+     * tuple members keep their boundaries.</p>
      *
      * @param columns the table's columns in declaration order.
      * @return a non-Nullable UInt64 expression fingerprinting the whole row.
      */
+    /**
+     * Picks a name for the generated row-key column that no source column
+     * already uses.
+     *
+     * <p>A keyless MySQL table may itself declare a column called
+     * {@code _row_key}. Emitting ours unconditionally then renders two
+     * definitions of the same name and ClickHouse rejects the CREATE with
+     * Code: 44 "column with this name already exists", stalling replication of
+     * that table. Underscores are prepended until the name is free, the same
+     * disambiguation the delete-marker column already uses.</p>
+     *
+     * @param columns the table's declared columns.
+     * @return a column name not present in the source table.
+     */
+    private static String resolveRowKeyColumnName(List<String> columns) {
+        Set<String> taken = new HashSet<>();
+        for (String column : columns) {
+            taken.add(stripBackticks(column).toLowerCase());
+        }
+        String candidate = ROW_KEY_COLUMN;
+        while (taken.contains(candidate.toLowerCase())) {
+            candidate = "_" + candidate;
+        }
+        return candidate;
+    }
+
     private static String rowFingerprintExpression(List<String> columns) {
         StringBuilder parts = new StringBuilder();
         for (String column : columns) {
             if (parts.length() > 0) {
-                parts.append(",'\\x01',");
+                parts.append(",");
             }
             String quoted = "`" + stripBackticks(column) + "`";
-            parts.append("toString(isNull(").append(quoted).append("))")
+            parts.append("isNull(").append(quoted).append(")")
                     .append(",ifNull(toString(").append(quoted).append("),'')");
         }
-        return "cityHash64(concat(" + parts + "))";
+        return "cityHash64(tuple(" + parts + "))";
     }
 
     /**
