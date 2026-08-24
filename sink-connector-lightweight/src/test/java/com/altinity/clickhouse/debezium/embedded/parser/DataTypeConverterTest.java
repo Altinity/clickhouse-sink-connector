@@ -120,15 +120,33 @@ public class DataTypeConverterTest {
         testCases.add(new TestCase("DECIMAL with high precision", "DECIMAL(30,10)", 10, 30, null, "Decimal(30,10)"));
         
         // Float types.
-        // MySQL FLOAT is 4-byte -> Float32; DOUBLE/DOUBLE PRECISION/FLOAT8/REAL
-        // are 8-byte -> Float64. Mapping DOUBLE to Float32 silently truncated
+        // MySQL FLOAT is 4-byte -> Float32; DOUBLE/DOUBLE PRECISION/FLOAT8 are
+        // 8-byte -> Float64. Mapping DOUBLE to Float32 silently truncated
         // ~15 significant digits to ~7 and overflowed large values to inf.
         testCases.add(new TestCase("FLOAT data type", "FLOAT", "Float32"));
         testCases.add(new TestCase("FLOAT4 data type", "FLOAT4", "Float32"));
         testCases.add(new TestCase("DOUBLE data type", "DOUBLE", "Float64"));
         testCases.add(new TestCase("DOUBLE PRECISION data type", "DOUBLE PRECISION", "Float64"));
         testCases.add(new TestCase("FLOAT8 data type", "FLOAT8", "Float64"));
-        testCases.add(new TestCase("REAL data type", "REAL", "Float64"));
+
+        // REAL is Float32 even though MySQL stores it as an 8-byte double under
+        // the default sql_mode. This case previously asserted Float64, which
+        // pinned a column type the pipeline cannot honour.
+        //
+        // Debezium resolves MySQL REAL to Types.REAL and maps that to a float32
+        // Kafka schema, while FLOAT and DOUBLE both map to float64
+        // (io.debezium.jdbc.JdbcValueConverters, debezium 3.1.3.Final: switch
+        // keys 6 -> float64, 7 -> float32, 8 -> float64). The value is narrowed
+        // before any connector code runs, so a Float64 column cannot be filled
+        // with more precision than arrived -- it only makes truncated data look
+        // full-precision and doubles the stored width.
+        //
+        // Measured on 2.10.0 (MySQL 8.0.36 -> ClickHouse 24.8.14.10547) with the
+        // column declared Nullable(Float64):
+        //   REAL 9876543.210987654  -> 9876543
+        //   REAL 0.1234567890123456 -> 0.12345679
+        // and the stored value equals toFloat32(source) exactly in both cases.
+        testCases.add(new TestCase("REAL data type", "REAL", "Float32"));
         
         // Date types
         testCases.add(new TestCase("DATE data type", "DATE", "Date32"));

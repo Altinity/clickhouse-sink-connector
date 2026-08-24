@@ -134,8 +134,10 @@ public class CreateTableUniqueKeySortKeyTest {
         String query = clickHouseQuery.toString().toLowerCase();
         Assert.assertFalse("ORDER BY tuple() collapses the whole table to one row, was: "
                         + clickHouseQuery, query.contains("order by tuple()"));
-        Assert.assertTrue("all columns must become the sorting key, was: " + clickHouseQuery,
-                query.contains("order by (a,v)"));
+        Assert.assertTrue("the generated row-key column must be the sorting key, was: " + clickHouseQuery,
+                query.contains("order by `_row_key`"));
+        Assert.assertTrue("every column must feed the fingerprint, was: " + clickHouseQuery,
+                query.contains("isnull(`a`)") && query.contains("isnull(`v`)"));
     }
 
     /**
@@ -170,14 +172,14 @@ public class CreateTableUniqueKeySortKeyTest {
 
         String query = clickHouseQuery.toString().toLowerCase();
         Assert.assertTrue("a nullable UNIQUE key is not a row identity -- MySQL allows many "
-                        + "NULL-keyed rows -- so all columns must be used instead, was: "
+                        + "NULL-keyed rows -- so the row fingerprint must be used instead, was: "
                         + clickHouseQuery,
-                query.contains("order by (a,v)"));
-        Assert.assertTrue("the all-columns key spans nullable columns and needs "
-                        + "allow_nullable_key, or ClickHouse rejects the CREATE TABLE with "
-                        + "Code: 44 and the indefinite DDL retry stalls replication, was: "
-                        + clickHouseQuery,
-                query.contains("allow_nullable_key=1"));
+                query.contains("order by `_row_key`"));
+        Assert.assertTrue("every column must feed the fingerprint, was: " + clickHouseQuery,
+                query.contains("isnull(`a`)") && query.contains("isnull(`v`)"));
+        Assert.assertFalse("the fingerprint is a non-Nullable UInt64, so allow_nullable_key must "
+                        + "not be emitted, was: " + clickHouseQuery,
+                query.contains("allow_nullable_key"));
     }
 
     /**
@@ -193,11 +195,14 @@ public class CreateTableUniqueKeySortKeyTest {
 
         String query = clickHouseQuery.toString().toLowerCase();
         Assert.assertTrue("one nullable member makes the whole UNIQUE key unusable as an "
-                        + "identity, so all columns must be used, was: " + clickHouseQuery,
-                query.contains("order by (a,b,v)"));
-        Assert.assertTrue("the all-columns key spans nullable columns and needs "
-                        + "allow_nullable_key, was: " + clickHouseQuery,
-                query.contains("allow_nullable_key=1"));
+                        + "identity, so the row fingerprint must be used, was: " + clickHouseQuery,
+                query.contains("order by `_row_key`"));
+        Assert.assertTrue("every column must feed the fingerprint, was: " + clickHouseQuery,
+                query.contains("isnull(`a`)") && query.contains("isnull(`b`)")
+                        && query.contains("isnull(`v`)"));
+        Assert.assertFalse("the fingerprint is a non-Nullable UInt64, so allow_nullable_key must "
+                        + "not be emitted, was: " + clickHouseQuery,
+                query.contains("allow_nullable_key"));
     }
 
     /**
