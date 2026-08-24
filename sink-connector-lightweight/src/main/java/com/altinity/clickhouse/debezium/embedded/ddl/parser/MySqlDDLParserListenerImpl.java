@@ -292,16 +292,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn,
                 uniqueKeyColumns, orderedColumnNames);
 
-        // True when the emitted sorting key can name NULLABLE columns, which
-        // ClickHouse rejects outright unless allow_nullable_key is enabled (see
-        // the settings block at the end of this method).
-        //
-        // Only the all-columns fallback can: a PRIMARY KEY is NOT NULL by MySQL's
-        // own rule, and a UNIQUE key is adopted below only when every one of its
-        // columns is NOT NULL. Emitting the setting where it is not needed would
-        // silently permit nullable keys ClickHouse is right to reject.
-        boolean nullableSortingKey = false;
-
         // A table with a UNIQUE key but no PRIMARY KEY would otherwise be created
         // with ORDER BY tuple(): every row compares equal, so ReplacingMergeTree
         // collapses the whole table into one row. The UNIQUE key is the source's
@@ -348,37 +338,71 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // that is invisible while the table holds a single row and appears the
         // moment it grows to two.
         //
-        // Falling back to every column makes the full row its own identity, which
-        // is precisely MySQL's own semantics for a keyless table: rows are
-        // distinguished by their values. Paired with the before-image tombstone
-        // emitted by PreparedStatementExecutor, this reproduces INSERT, UPDATE and
-        // DELETE exactly (verified against MySQL for 1-row, N-row, growth,
-        // NULL-bearing and value-round-trip cases).
+        // Making the full row its own identity is precisely MySQL's own semantics
+        // for a keyless table: rows are distinguished by their values. Paired with
+        // the before-image tombstone emitted by PreparedStatementExecutor, this
+        // reproduces INSERT, UPDATE and DELETE exactly (verified against MySQL for
+        // 1-row, N-row, growth, NULL-bearing and value-round-trip cases).
         //
-        // PRIMARY KEY tuple() is emitted alongside it so the sparse index stays
-        // empty: the wide sorting key costs no index memory, it exists only to
-        // give ReplacingMergeTree a full-row identity to deduplicate on.
+        // That identity is carried by ONE generated column holding a fingerprint
+        // of the row, NOT by listing every data column in the sorting key.
+        //
+        // Listing the data columns was the first implementation and it FROZE THE
+        // TABLE'S SCHEMA. ClickHouse forbids altering any column that participates
+        // in the sorting key, so on a keyless table every one of these failed with
+        // Code: 524 ALTER_OF_COLUMN_IS_FORBIDDEN, measured on 24.8.14.10547:
+        //
+        //   ALTER TABLE t MODIFY COLUMN b Nullable(Int32)
+        //     -> "ALTER of key column b ... is not safe because it can change the
+        //         representation of primary key"
+        //   ALTER TABLE t RENAME COLUMN b TO b_new
+        //     -> "Trying to ALTER RENAME key b column which is a part of key
+        //         expression"
+        //   ALTER TABLE t DROP COLUMN v
+        //     -> Code: 47 UNKNOWN_IDENTIFIER, the key expression still names it
+        //
+        // The connector retries a failed DDL ten times (~45s) and then gives up, so
+        // the change never lands and replication of that table's schema is stuck.
+        // A fix for silent data loss must not cost the table its ability to take
+        // any other operation.
+        //
+        // The fingerprint column is MATERIALIZED, so it is computed by ClickHouse
+        // on insert and never appears in the INSERT column list the writer builds.
+        // Each column contributes an explicit null-flag as well as its text, so a
+        // genuine NULL cannot collide with any literal a column might hold (''
+        // and '0' and NULL all hash differently -- verified). The flag also keeps
+        // the expression non-Nullable, which a sorting key requires: hashing the
+        // raw Nullable columns yields Nullable(UInt64) and rejects the row with
+        // Code: 349, and cityHash64(tuple(...)) throws Code: 48 on a NULL member.
+        //
+        // PRIMARY KEY tuple() keeps the sparse index empty; the fingerprint exists
+        // only to give ReplacingMergeTree a full-row identity to deduplicate on.
         //
         // Not representable: a table holding two byte-identical rows. Identical
         // rows are indistinguishable under ANY sorting key, so ClickHouse keeps
         // one. Collapsing/Summing engines track the multiplicity but still
         // collapse the physical rows at merge time, so they do not help a plain
-        // consumer query. This case is logged as a warning below.
+        // consumer query. This case is logged as a warning below and is unchanged
+        // by moving from an all-column key to the fingerprint.
         boolean isKeylessTable = false;
+        String rowKeyColumnDefinition = null;
         if (orderByColumns.length() == 0 && !orderedColumnNames.isEmpty()) {
             isKeylessTable = true;
-            // The all-columns key necessarily includes every nullable column of
-            // the source table, so ClickHouse needs allow_nullable_key.
-            nullableSortingKey = true;
-            // Parenthesised: a bare `ORDER BY a,b SETTINGS ...` is a syntax
-            // error in ClickHouse (Code: 62), which only shows up once the key
-            // spans more than one column.
-            orderByColumns.append("(").append(String.join(",", orderedColumnNames)).append(")");
-            log.warn("Table {}.{} declares no PRIMARY KEY and no UNIQUE key. Using all {} columns as the "
-                            + "ClickHouse sorting key so rows are not collapsed. NOTE: if this table can hold "
-                            + "two byte-identical rows, ClickHouse will retain only one of them -- identical "
-                            + "rows cannot be told apart by any sorting key.",
-                    this.databaseName, this.tableName, orderedColumnNames.size());
+            // The source may legitimately hold a column of this name. Emitting
+            // ours unconditionally then produces two definitions of it and
+            // ClickHouse rejects the CREATE outright (Code: 44 "column with
+            // this name already exists"), stalling that table. Disambiguate the
+            // same way the delete marker already does.
+            String rowKeyColumn = resolveRowKeyColumnName(orderedColumnNames);
+            rowKeyColumnDefinition = "`" + rowKeyColumn + "` UInt64 MATERIALIZED "
+                    + rowFingerprintExpression(orderedColumnNames);
+            orderByColumns.append("`").append(rowKeyColumn).append("`");
+            log.warn("Table {}.{} declares no PRIMARY KEY and no UNIQUE key. Adding the generated column "
+                            + "`{}` as the ClickHouse sorting key -- a fingerprint over all {} columns -- so "
+                            + "rows are not collapsed while the data columns stay alterable. NOTE: if this "
+                            + "table can hold two byte-identical rows, ClickHouse will retain only one of "
+                            + "them -- identical rows cannot be told apart by any sorting key.",
+                    this.databaseName, this.tableName, rowKeyColumn, orderedColumnNames.size());
         }
 
         String isDeletedColumn = IS_DELETED_COLUMN;
@@ -418,6 +442,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     .append(",");
         }
 
+
+        // The keyless-table row fingerprint. MATERIALIZED, so ClickHouse computes
+        // it on insert and it never appears in the writer's INSERT column list.
+        if (rowKeyColumnDefinition != null) {
+            this.query.append(rowKeyColumnDefinition).append(",");
+        }
 
         if (DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine) {
             this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
@@ -512,28 +542,85 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
         
 
-        // The all-columns fallback sorting key necessarily includes every
-        // nullable column of the source table, and ClickHouse rejects a nullable
-        // sorting key outright (Code: 44 ILLEGAL_COLUMN) unless
-        // allow_nullable_key is enabled.
+        // No path emits allow_nullable_key any more.
         //
-        // The other two paths never need it, and must not get it: a PRIMARY KEY
-        // is NOT NULL by MySQL's own rule, and a UNIQUE key is adopted above only
-        // when every one of its columns is NOT NULL.
-        //
-        // Append to any user-supplied settings rather than replacing them.
+        // A PRIMARY KEY is NOT NULL by MySQL's own rule; a UNIQUE key is adopted
+        // above only when every one of its columns is NOT NULL; and the keyless
+        // fallback now keys on the generated `_row_key`, which is UInt64 and
+        // non-Nullable by construction. Emitting the setting where it is not
+        // needed would silently permit nullable keys ClickHouse is right to
+        // reject.
         String tableSettings = tableConfig.getSettings();
-        boolean hasUserSettings = tableSettings != null && !tableSettings.isEmpty();
-        if (nullableSortingKey && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {
-            this.query.append(Constants.SETTINGS);
-            if (hasUserSettings) {
-                this.query.append(tableSettings).append(",");
-            }
-            this.query.append(ALLOW_NULLABLE_KEY).append("=1");
-        } else if (hasUserSettings) {
+        if (tableSettings != null && !tableSettings.isEmpty()) {
             // Use the settings from tableConfig if it exists
             this.query.append(Constants.SETTINGS).append(tableSettings);
         }
+    }
+
+    /**
+     * Builds the {@code _row_key} fingerprint expression for a keyless table.
+     *
+     * <p>Each column contributes an explicit null-flag as well as its text, so a
+     * genuine NULL cannot collide with any literal the column might legitimately
+     * hold: {@code NULL}, {@code ''} and {@code '0'} all hash to different
+     * values (verified on ClickHouse 24.8.14.10547).</p>
+     *
+     * <p>The null-flag also keeps every argument non-Nullable, which a sorting
+     * key requires. Hashing the raw {@code Nullable} columns yields
+     * {@code Nullable(UInt64)} and the insert is rejected with Code: 349, and
+     * passing a {@code Nullable} straight into the tuple throws Code: 48 the
+     * moment any member is NULL -- both measured before settling on this
+     * form.</p>
+     *
+     * <p>The arguments are passed as a {@code tuple}, NOT concatenated into one
+     * string. A delimiter-joined string is not an unambiguous encoding: with a
+     * 0x01 separator, the rows {@code ('x', 0x01+'0z')} and
+     * {@code ('x'+0x01+'0', 'z')} flatten to the identical byte sequence and so
+     * to the identical fingerprint, and ReplacingMergeTree then collapses two
+     * genuinely distinct rows. Verified on 24.8.14.10547: the concatenated form
+     * returns collision=1 for that pair, the tuple form returns 0, because
+     * tuple members keep their boundaries.</p>
+     *
+     * @param columns the table's columns in declaration order.
+     * @return a non-Nullable UInt64 expression fingerprinting the whole row.
+     */
+    /**
+     * Picks a name for the generated row-key column that no source column
+     * already uses.
+     *
+     * <p>A keyless MySQL table may itself declare a column called
+     * {@code _row_key}. Emitting ours unconditionally then renders two
+     * definitions of the same name and ClickHouse rejects the CREATE with
+     * Code: 44 "column with this name already exists", stalling replication of
+     * that table. Underscores are prepended until the name is free, the same
+     * disambiguation the delete-marker column already uses.</p>
+     *
+     * @param columns the table's declared columns.
+     * @return a column name not present in the source table.
+     */
+    private static String resolveRowKeyColumnName(List<String> columns) {
+        Set<String> taken = new HashSet<>();
+        for (String column : columns) {
+            taken.add(stripBackticks(column).toLowerCase());
+        }
+        String candidate = ROW_KEY_COLUMN;
+        while (taken.contains(candidate.toLowerCase())) {
+            candidate = "_" + candidate;
+        }
+        return candidate;
+    }
+
+    private static String rowFingerprintExpression(List<String> columns) {
+        StringBuilder parts = new StringBuilder();
+        for (String column : columns) {
+            if (parts.length() > 0) {
+                parts.append(",");
+            }
+            String quoted = "`" + stripBackticks(column) + "`";
+            parts.append("isNull(").append(quoted).append(")")
+                    .append(",ifNull(toString(").append(quoted).append("),'')");
+        }
+        return "cityHash64(tuple(" + parts + "))";
     }
 
     /**

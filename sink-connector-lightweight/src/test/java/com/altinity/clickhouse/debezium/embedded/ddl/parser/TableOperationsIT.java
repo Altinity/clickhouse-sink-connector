@@ -134,9 +134,19 @@ public class TableOperationsIT {
             Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test_new", "employees");
             Map<String, String> copied_table = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "copied_table", "employees");
 
-            Assert.assertTrue(shipClassColumns.size() == 9);
-            Assert.assertTrue(addTestColumns.size() == 5);
-            Assert.assertTrue(copied_table.size() == 5);
+            // Each of these source tables declares neither a PRIMARY KEY nor a
+            // UNIQUE key, so the connector adds the generated `_row_key`
+            // fingerprint column and keys the table on it -- one column more
+            // than before. Keying on the data columns themselves froze the
+            // table's schema, because ClickHouse forbids altering any column
+            // that participates in the sorting key.
+            Assert.assertEquals(10, shipClassColumns.size());
+            Assert.assertEquals(6, addTestColumns.size());
+            Assert.assertEquals(6, copied_table.size());
+            Assert.assertTrue("the keyless fingerprint column must be present",
+                    shipClassColumns.containsKey("_row_key")
+                            && addTestColumns.containsKey("_row_key")
+                            && copied_table.containsKey("_row_key"));
 
             // Validate table created with partitions.
             String membersResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.members");
