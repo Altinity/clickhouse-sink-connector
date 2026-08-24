@@ -137,4 +137,108 @@ public class CreateTableUniqueKeySortKeyTest {
         Assert.assertTrue("all columns must become the sorting key, was: " + clickHouseQuery,
                 query.contains("order by (a,v)"));
     }
+
+    /**
+     * A UNIQUE key over a NULLABLE column, with no PRIMARY KEY, must NOT be
+     * adopted as the sorting key.
+     *
+     * <p>MySQL does not treat NULLs as equal for uniqueness, so a nullable
+     * UNIQUE index permits any number of rows whose key is NULL -- it is not a
+     * row identity at all. ClickHouse does compare NULLs as equal in a sorting
+     * key, so adopting such a key makes ReplacingMergeTree collapse those
+     * distinct source rows into one.</p>
+     *
+     * <p>Measured on MySQL 8.0.36 ROW/FULL/GTID -&gt; ClickHouse 24.8.14.10547
+     * with {@code UNIQUE KEY(a)} over a nullable {@code a}: four source rows,
+     * three of them {@code a IS NULL}, arrived as TWO. Rows 'first' and
+     * 'second' were silently lost.</p>
+     *
+     * <p>Such a table falls through to the all-columns fallback, which does
+     * reproduce MySQL's semantics for a table with no row identity: rows are
+     * distinguished by value. That key spans nullable columns, so
+     * {@code allow_nullable_key} is required -- without it ClickHouse rejects
+     * the CREATE TABLE with {@code Code: 44 ILLEGAL_COLUMN}, and because DDL
+     * is retried indefinitely that failure stalls the ENTIRE replication
+     * stream, not merely the offending table.</p>
+     */
+    @Test
+    public void testNullableUniqueKeyFallsBackToAllColumns() {
+        String createQuery = "CREATE TABLE nopk_nullable_uk (a INT, v VARCHAR(64), "
+                + "UNIQUE KEY uk_idx (a)) ENGINE=InnoDB;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "nopk_nullable_uk", clickHouseQuery);
+
+        String query = clickHouseQuery.toString().toLowerCase();
+        Assert.assertTrue("a nullable UNIQUE key is not a row identity -- MySQL allows many "
+                        + "NULL-keyed rows -- so all columns must be used instead, was: "
+                        + clickHouseQuery,
+                query.contains("order by (a,v)"));
+        Assert.assertTrue("the all-columns key spans nullable columns and needs "
+                        + "allow_nullable_key, or ClickHouse rejects the CREATE TABLE with "
+                        + "Code: 44 and the indefinite DDL retry stalls replication, was: "
+                        + clickHouseQuery,
+                query.contains("allow_nullable_key=1"));
+    }
+
+    /**
+     * A composite UNIQUE key with even one nullable member is equally unusable:
+     * MySQL permits many rows sharing a NULL in that member.
+     */
+    @Test
+    public void testPartiallyNullableCompositeUniqueKeyFallsBackToAllColumns() {
+        String createQuery = "CREATE TABLE nopk_mixed_uk (a INT NOT NULL, b INT, v VARCHAR(64), "
+                + "UNIQUE KEY ab_idx (a, b)) ENGINE=InnoDB;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "nopk_mixed_uk", clickHouseQuery);
+
+        String query = clickHouseQuery.toString().toLowerCase();
+        Assert.assertTrue("one nullable member makes the whole UNIQUE key unusable as an "
+                        + "identity, so all columns must be used, was: " + clickHouseQuery,
+                query.contains("order by (a,b,v)"));
+        Assert.assertTrue("the all-columns key spans nullable columns and needs "
+                        + "allow_nullable_key, was: " + clickHouseQuery,
+                query.contains("allow_nullable_key=1"));
+    }
+
+    /**
+     * The safe case must keep working: a UNIQUE key whose every column is
+     * NOT NULL IS a stable row identity, and stays the sorting key. Being
+     * NOT NULL, it needs no allow_nullable_key.
+     */
+    @Test
+    public void testNotNullCompositeUniqueKeyRemainsSortKey() {
+        String createQuery = "CREATE TABLE nopk_nn_uk (a INT NOT NULL, b INT NOT NULL, "
+                + "v VARCHAR(64), UNIQUE KEY ab_idx (a, b)) ENGINE=InnoDB;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "nopk_nn_uk", clickHouseQuery);
+
+        String query = clickHouseQuery.toString().toLowerCase();
+        Assert.assertTrue("a fully NOT NULL UNIQUE key is a valid identity and must remain the "
+                        + "sorting key, was: " + clickHouseQuery,
+                query.contains("order by (a,b)"));
+        Assert.assertFalse("a NOT NULL UNIQUE sorting key cannot be nullable, so the setting "
+                        + "must not be emitted, was: " + clickHouseQuery,
+                query.contains("allow_nullable_key"));
+    }
+
+    /**
+     * Regression guard on the other side: a PRIMARY KEY sorting key must NOT
+     * acquire allow_nullable_key. MySQL forces PRIMARY KEY columns to NOT NULL,
+     * so the setting is unnecessary there, and emitting it unconditionally
+     * would silently permit nullable keys ClickHouse is right to reject.
+     */
+    @Test
+    public void testPrimaryKeyDoesNotEmitAllowNullableKey() {
+        String createQuery = "CREATE TABLE pk_only (id INT NOT NULL PRIMARY KEY, "
+                + "v VARCHAR(64)) ENGINE=InnoDB;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "pk_only", clickHouseQuery);
+
+        String query = clickHouseQuery.toString().toLowerCase();
+        Assert.assertTrue("PRIMARY KEY must be the sorting key, was: " + clickHouseQuery,
+                query.contains("order by id"));
+        Assert.assertFalse("a PRIMARY KEY sorting key cannot be nullable, so the setting must "
+                        + "not be emitted, was: " + clickHouseQuery,
+                query.contains("allow_nullable_key"));
+    }
 }
