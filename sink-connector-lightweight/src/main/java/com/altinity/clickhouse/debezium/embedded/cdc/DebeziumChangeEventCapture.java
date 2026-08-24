@@ -839,17 +839,25 @@ public class DebeziumChangeEventCapture {
                 // here. We intentionally start from the real source-mapped database
                 // (getDatabaseName(sr)), not the replication-history override above.
                 try {
-                    String tableName = getTableName(sr);
-                    if (tableName == null) {
-                        tableName = Utils.getTableNameFromTopic(sr.topic(), pgConfig.isSchemaPrefixEnabled(), pgConfig.getCommonSchemaTemplate());
+                    String invalidationDatabaseName = getDatabaseName(sr);
+                    String overrideMapConfig = config.getString(
+                            ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString());
+                    if (overrideMapConfig != null) {
+                        Map<String, String> databaseOverrideMap =
+                                Utils.parseSourceToDestinationDatabaseMap(overrideMapConfig);
+                        if (databaseOverrideMap.containsKey(invalidationDatabaseName)) {
+                            invalidationDatabaseName = databaseOverrideMap.get(invalidationDatabaseName);
+                        }
                     }
+                    // A PostgreSQL schema-change event may name no table in its
+                    // tableChanges array; fall back to the table encoded in the topic.
                     List<String> ddlTables = getTableNamesFromDDL(sr, DDL);
                     if (ddlTables.isEmpty()) {
-                        String topicTable =
-                                extractTableNameFromTopic(sr.topic(), schemaPrefixEnabled,
-                                        commonSchemaTemplate);
+                        String topicTable = Utils.getTableNameFromTopic(
+                                sr.topic(), pgConfig.isSchemaPrefixEnabled(),
+                                pgConfig.getCommonSchemaTemplate());
                         if (topicTable != null) {
-                            ddlTables = java.util.Collections.singletonList(topicTable);
+                            ddlTables = Collections.singletonList(topicTable);
                         }
                     }
                     for (String tableName : ddlTables) {
