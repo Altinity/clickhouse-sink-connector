@@ -282,15 +282,32 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn,
                 uniqueKeyColumns, orderedColumnNames);
 
+        // True when the sorting key was DERIVED here rather than taken from the
+        // source's PRIMARY KEY. A derived key may name nullable columns, which
+        // ClickHouse rejects outright unless allow_nullable_key is enabled (see
+        // the settings block at the end of this method).
+        //
+        // A PRIMARY KEY never needs that setting: MySQL forces every PRIMARY KEY
+        // column to NOT NULL, so that path cannot produce a nullable sorting key.
+        boolean derivedSortingKey = false;
+
         // A table with a UNIQUE key but no PRIMARY KEY would otherwise be created
         // with ORDER BY tuple(): every row compares equal, so ReplacingMergeTree
         // collapses the whole table into one row. The UNIQUE key is the source's
         // stable row identity, so use it as the sorting key. Only applied when no
         // PRIMARY KEY was found -- the PRIMARY KEY always wins.
+        //
+        // Unlike a PRIMARY KEY, a MySQL UNIQUE key MAY span nullable columns --
+        // MySQL permits any number of NULLs in a UNIQUE index -- so this key is
+        // derived and needs allow_nullable_key. Without it ClickHouse fails the
+        // CREATE TABLE with Code: 44, and because the connector retries DDL
+        // indefinitely that failure stalls the whole replication stream, not
+        // just the offending table.
         if (orderByColumns.length() == 0 && uniqueKeyColumns.length() > 0) {
             log.info("Table has no PRIMARY KEY; using UNIQUE key as the ClickHouse sorting key: "
                     + uniqueKeyColumns);
             orderByColumns.append(uniqueKeyColumns);
+            derivedSortingKey = true;
         }
 
         // Neither a PRIMARY KEY nor a UNIQUE key: the table has no declared row
@@ -319,6 +336,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         boolean isKeylessTable = false;
         if (orderByColumns.length() == 0 && !orderedColumnNames.isEmpty()) {
             isKeylessTable = true;
+            derivedSortingKey = true;
             // Parenthesised: a bare `ORDER BY a,b SETTINGS ...` is a syntax
             // error in ClickHouse (Code: 62), which only shows up once the key
             // spans more than one column.
@@ -461,13 +479,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
         
 
-        // The all-columns fallback sorting key necessarily includes every nullable
-        // column of the source table, and ClickHouse rejects a nullable sorting key
+        // Any sorting key DERIVED by this class -- the all-columns keyless
+        // fallback, or a UNIQUE key standing in for an absent PRIMARY KEY -- can
+        // name nullable columns, and ClickHouse rejects a nullable sorting key
         // outright (Code: 44 ILLEGAL_COLUMN) unless allow_nullable_key is enabled.
-        // Append it to any user-supplied settings rather than replacing them.
+        //
+        // Keyed on derivedSortingKey rather than isKeylessTable: the UNIQUE-key
+        // path also derives its key, and MySQL allows a UNIQUE index over
+        // nullable columns. Gating on isKeylessTable alone emitted ORDER BY (a)
+        // with no setting for such a table, so the CREATE TABLE failed and the
+        // connector's indefinite DDL retry stalled the entire replication
+        // stream -- every table behind it, not merely the one that failed.
+        //
+        // Append to any user-supplied settings rather than replacing them.
         String tableSettings = tableConfig.getSettings();
         boolean hasUserSettings = tableSettings != null && !tableSettings.isEmpty();
-        if (isKeylessTable && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {
+        if (derivedSortingKey && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {
             this.query.append(Constants.SETTINGS);
             if (hasUserSettings) {
                 this.query.append(tableSettings).append(",");

@@ -137,4 +137,81 @@ public class CreateTableUniqueKeySortKeyTest {
         Assert.assertTrue("all columns must become the sorting key, was: " + clickHouseQuery,
                 query.contains("order by (a,v)"));
     }
+
+    /**
+     * A UNIQUE key over a NULLABLE column, with no PRIMARY KEY.
+     *
+     * <p>MySQL permits any number of NULLs in a UNIQUE index, so unlike a
+     * PRIMARY KEY -- whose columns MySQL forces to NOT NULL -- a UNIQUE key may
+     * name nullable columns. ClickHouse rejects a nullable sorting key outright
+     * with {@code Code: 44 ILLEGAL_COLUMN} unless {@code allow_nullable_key} is
+     * enabled, so the emitted DDL must carry that setting.</p>
+     *
+     * <p>Every other test in this class declares its UNIQUE column
+     * {@code NOT NULL}, which is exactly why the missing setting went
+     * unnoticed: the generated DDL is only rejected once a nullable column
+     * reaches the key.</p>
+     *
+     * <p>Measured on the connector before this fix (MySQL 8.0.36 ROW/FULL/GTID
+     * -&gt; ClickHouse 24.8.14): the CREATE TABLE failed with Code: 44, and
+     * because DDL is retried indefinitely the failure stalled the ENTIRE
+     * replication stream -- every table behind it, not merely the one that
+     * failed. The five-row table never appeared and three later tables were
+     * never created at all.</p>
+     */
+    @Test
+    public void testNullableUniqueKeyEmitsAllowNullableKey() {
+        String createQuery = "CREATE TABLE nopk_nullable_uk (a INT, v VARCHAR(64), "
+                + "UNIQUE KEY uk_idx (a)) ENGINE=InnoDB;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "nopk_nullable_uk", clickHouseQuery);
+
+        String query = clickHouseQuery.toString().toLowerCase();
+        Assert.assertTrue("UNIQUE key must become the sorting key, was: " + clickHouseQuery,
+                query.contains("order by (a)") || query.contains("order by a"));
+        Assert.assertTrue("a nullable UNIQUE-key column needs allow_nullable_key, or ClickHouse "
+                        + "rejects the CREATE TABLE with Code: 44 and the indefinite DDL retry "
+                        + "stalls replication, was: " + clickHouseQuery,
+                query.contains("allow_nullable_key=1"));
+    }
+
+    /**
+     * A composite UNIQUE key with a nullable member needs the setting too: one
+     * nullable column anywhere in the sorting key is enough for Code: 44.
+     */
+    @Test
+    public void testPartiallyNullableCompositeUniqueKeyEmitsAllowNullableKey() {
+        String createQuery = "CREATE TABLE nopk_mixed_uk (a INT NOT NULL, b INT, v VARCHAR(64), "
+                + "UNIQUE KEY ab_idx (a, b)) ENGINE=InnoDB;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "nopk_mixed_uk", clickHouseQuery);
+
+        String query = clickHouseQuery.toString().toLowerCase();
+        Assert.assertTrue("both UNIQUE key columns must be in the sorting key, was: "
+                        + clickHouseQuery, query.contains("a") && query.contains("b"));
+        Assert.assertTrue("a nullable member of a composite UNIQUE key still needs "
+                        + "allow_nullable_key, was: " + clickHouseQuery,
+                query.contains("allow_nullable_key=1"));
+    }
+
+    /**
+     * Regression guard on the other side: a PRIMARY KEY sorting key must NOT
+     * acquire allow_nullable_key. MySQL forces PRIMARY KEY columns to NOT NULL,
+     * so the setting is unnecessary there, and emitting it unconditionally
+     * would silently permit nullable keys ClickHouse is right to reject.
+     */
+    @Test
+    public void testPrimaryKeyDoesNotEmitAllowNullableKey() {
+        String createQuery = "CREATE TABLE pk_only (id INT NOT NULL PRIMARY KEY, "
+                + "v VARCHAR(64)) ENGINE=InnoDB;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "pk_only", clickHouseQuery);
+
+        String query = clickHouseQuery.toString().toLowerCase();
+        Assert.assertTrue("PRIMARY KEY must be the sorting key, was: " + clickHouseQuery,
+                query.contains("order by id"));
+        Assert.assertFalse("a PRIMARY KEY sorting key cannot be nullable, so the setting must "
+                        + "not be emitted, was: " + clickHouseQuery,
+                query.contains("allow_nullable_key"));
+    }
 }
