@@ -90,7 +90,13 @@ public class CreateTableNoKeySortKeyTest {
         String query = clickHouseQuery.toString();
         Assert.assertFalse("ORDER BY tuple() collapses the whole table to one row, was: " + query,
                 query.toLowerCase().contains("order by tuple()"));
-        Assert.assertTrue("all columns must become the sorting key, was: " + query,
+        Assert.assertTrue("the generated row-key column must be the sorting key, was: " + query,
+                query.toLowerCase().contains("order by `_row_key`"));
+        Assert.assertTrue("the fingerprint must cover the table's only column, was: " + query,
+                query.toLowerCase().contains("isnull(`version_num`)"));
+        // Keying on the data column itself is what froze the table's schema:
+        // ClickHouse forbids altering any column in the sorting key.
+        Assert.assertFalse("no data column may sit in the sorting key, was: " + query,
                 query.toLowerCase().contains("order by (version_num)"));
     }
 
@@ -106,10 +112,20 @@ public class CreateTableNoKeySortKeyTest {
         String query = clickHouseQuery.toString();
         Assert.assertFalse("ORDER BY tuple() collapses the whole table to one row, was: " + query,
                 query.toLowerCase().contains("order by tuple()"));
-        // Declaration order, not hash order: the sorting key has to be
+        Assert.assertTrue("the generated row-key column must be the sorting key, was: " + query,
+                query.toLowerCase().contains("order by `_row_key`"));
+        // Declaration order, not hash order: the fingerprint has to be
         // reproducible across connectors replicating the same source.
-        Assert.assertTrue("sorting key must list all columns in DDL order, was: " + query,
-                query.toLowerCase().contains("order by (a,b,c)"));
+        String lower = query.toLowerCase();
+        int a = lower.indexOf("isnull(`a`)");
+        int b = lower.indexOf("isnull(`b`)");
+        int c = lower.indexOf("isnull(`c`)");
+        Assert.assertTrue("every column must feed the fingerprint, was: " + query,
+                a >= 0 && b >= 0 && c >= 0);
+        Assert.assertTrue("the fingerprint must fold columns in DDL order, was: " + query,
+                a < b && b < c);
+        Assert.assertFalse("no data column may sit in the sorting key, was: " + query,
+                lower.contains("order by (a,b,c)"));
     }
 
     /**
@@ -127,18 +143,22 @@ public class CreateTableNoKeySortKeyTest {
     }
 
     /**
-     * Nullable columns are the common case for a keyless table, and ClickHouse
-     * rejects a nullable sorting key outright without this setting.
+     * Nullable columns are the common case for a keyless table. The fingerprint
+     * is a non-Nullable UInt64 by construction, so {@code allow_nullable_key} is
+     * no longer needed -- and must not be emitted, since it would silently
+     * permit nullable keys ClickHouse is right to reject elsewhere.
      */
     @Test
-    public void testKeylessTableEnablesNullableKey() {
+    public void testKeylessTableNeedsNoNullableKeySetting() {
         String createQuery = "CREATE TABLE nokey_nullable (a INT, b VARCHAR(64)) ENGINE=InnoDB;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "nokey_nullable", clickHouseQuery);
 
         String query = clickHouseQuery.toString();
-        Assert.assertTrue("nullable sorting key needs allow_nullable_key=1, was: " + query,
-                query.toLowerCase().replace(" ", "").contains("allow_nullable_key=1"));
+        Assert.assertTrue("the row-key column must be a non-Nullable UInt64, was: " + query,
+                query.toLowerCase().contains("`_row_key` uint64 materialized"));
+        Assert.assertFalse("a non-Nullable key needs no allow_nullable_key, was: " + query,
+                query.toLowerCase().contains("allow_nullable_key"));
     }
 
     /**
@@ -156,8 +176,8 @@ public class CreateTableNoKeySortKeyTest {
                 query.toLowerCase().contains("order by id"));
         Assert.assertFalse("a keyed table must not get the keyless PRIMARY KEY tuple(), was: " + query,
                 query.toLowerCase().contains("primary key tuple()"));
-        Assert.assertFalse("a keyed table does not need a nullable sorting key, was: " + query,
-                query.toLowerCase().replace(" ", "").contains("allow_nullable_key=1"));
+        Assert.assertFalse("a keyed table must not gain the generated row-key column, was: " + query,
+                query.toLowerCase().contains("_row_key"));
     }
 
     /**
@@ -198,9 +218,11 @@ public class CreateTableNoKeySortKeyTest {
         mySQLDDLParserService.parseSql(createQuery, "nokey_gen", clickHouseQuery);
 
         String query = clickHouseQuery.toString();
-        Assert.assertTrue("only the stored column may be in the sorting key, was: " + query,
-                query.toLowerCase().contains("order by (a)"));
+        Assert.assertTrue("the generated row-key column must be the sorting key, was: " + query,
+                query.toLowerCase().contains("order by `_row_key`"));
+        Assert.assertTrue("the stored column must feed the fingerprint, was: " + query,
+                query.toLowerCase().contains("isnull(`a`)"));
         Assert.assertFalse("a generated column adds nothing to row identity, was: " + query,
-                query.toLowerCase().contains("order by (a,b)"));
+                query.toLowerCase().contains("isnull(`b`)"));
     }
 }

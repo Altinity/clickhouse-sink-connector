@@ -39,7 +39,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         mySQLDDLParserService.parseSql(createQuery, "test", clickHouseQuery);
-        Assert.assertTrue("CREATE TABLE employees.example(options Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (options) SETTINGS allow_nullable_key=1".equalsIgnoreCase(clickHouseQuery.toString()));
+        Assert.assertTrue("CREATE TABLE employees.example(options Nullable(String),`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`options`)),ifNull(toString(`options`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`".equalsIgnoreCase(clickHouseQuery.toString()));
         ;
     }
     @Test
@@ -70,7 +70,7 @@ public class MySqlDDLParserListenerImplTest {
                 "PARTITION p2 VALUES LESS THAN (15,30,'sss'), PARTITION p3 VALUES LESS THAN (MAXVALUE,MAXVALUE,MAXVALUE));";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "Persons",  clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (a,d,c) PRIMARY KEY tuple() ORDER BY (a,b,c,d) SETTINGS allow_nullable_key=1"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`a`)),ifNull(toString(`a`),''),'\\x01',toString(isNull(`b`)),ifNull(toString(`b`),''),'\\x01',toString(isNull(`c`)),ifNull(toString(`c`),''),'\\x01',toString(isNull(`d`)),ifNull(toString(`d`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (a,d,c) PRIMARY KEY tuple() ORDER BY `_row_key`"));
         log.info("Create table " + clickHouseQuery);
     }
 
@@ -118,7 +118,7 @@ public class MySqlDDLParserListenerImplTest {
                 ");";
         StringBuffer clickHouseQueryWOPrimaryKey = new StringBuffer();
         mySQLDDLParserService.parseSql(createQueryWithoutPrimaryKey, "Persons", clickHouseQueryWOPrimaryKey);
-        Assert.assertTrue(clickHouseQueryWOPrimaryKey.toString().equalsIgnoreCase("CREATE TABLE employees.t(id Nullable(Int32),dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) PRIMARY KEY tuple() ORDER BY (id,dt) SETTINGS allow_nullable_key=1"));
+        Assert.assertTrue(clickHouseQueryWOPrimaryKey.toString().equalsIgnoreCase("CREATE TABLE employees.t(id Nullable(Int32),dt Date32 NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`id`)),ifNull(toString(`id`),''),'\\x01',toString(isNull(`dt`)),ifNull(toString(`dt`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) PRIMARY KEY tuple() ORDER BY `_row_key`"));
         log.info("Create table " + clickHouseQueryWOPrimaryKey);
     }
 
@@ -159,7 +159,7 @@ public class MySqlDDLParserListenerImplTest {
                 "PARTITIONS 6;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.members(firstname String NOT NULL ,lastname String NOT NULL ,username String NOT NULL ,email Nullable(String),joined Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  joined PRIMARY KEY tuple() ORDER BY (firstname,lastname,username,email,joined) SETTINGS allow_nullable_key=1"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.members(firstname String NOT NULL ,lastname String NOT NULL ,username String NOT NULL ,email Nullable(String),joined Date32 NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`firstname`)),ifNull(toString(`firstname`),''),'\\x01',toString(isNull(`lastname`)),ifNull(toString(`lastname`),''),'\\x01',toString(isNull(`username`)),ifNull(toString(`username`),''),'\\x01',toString(isNull(`email`)),ifNull(toString(`email`),''),'\\x01',toString(isNull(`joined`)),ifNull(toString(`joined`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  joined PRIMARY KEY tuple() ORDER BY `_row_key`"));
         log.info("Create table " + clickHouseQuery);
     }
 
@@ -230,7 +230,7 @@ public class MySqlDDLParserListenerImplTest {
         HashMap<String, String> props = new HashMap<>();
         MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "datatypes");
         mySQLDDLParserService1.parseSql(createQuery, "Persons", clickHouseQuery);
-        String expectedQuery = "CREATE TABLE if not exists datatypes.autocreate_e904bc35_aac8_11f0_9925_e114ebd31e17(id Int32 NOT NULL ,D4 Nullable(Decimal(2,1)),D5 Nullable(Decimal(30,10)),Doublex Nullable(Float32),x_date Nullable(Date32),x_datetime6 Nullable(DateTime64(6, 0)),x_time Nullable(String),x_time6 Nullable(String),Intmin Nullable(Int32),Intmax Nullable(Int32),UIntmin Nullable(UInt32),UIntmax Nullable(UInt32),BIGIntmin Nullable(Int64),BIGIntmax Nullable(Int64),UBIGIntmin Nullable(UInt64),UBIGIntmax Nullable(UInt64),TIntmin Nullable(Int8),TIntmax Nullable(Int8),UTIntmin Nullable(UInt8),UTIntmax Nullable(UInt8),SIntmin Nullable(Int16),SIntmax Nullable(Int16),USIntmin Nullable(UInt16),USIntmax Nullable(UInt16),MIntmin Nullable(Int32),MIntmax Nullable(Int32),UMIntmin Nullable(UInt32),UMIntmax Nullable(UInt32),x_char Nullable(String),x_text Nullable(String),x_varchar Nullable(String),x_Blob Nullable(String),x_Mediumblob Nullable(String),x_Longblob Nullable(String),x_binary Nullable(String),x_varbinary Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
+        String expectedQuery = "CREATE TABLE if not exists datatypes.autocreate_e904bc35_aac8_11f0_9925_e114ebd31e17(id Int32 NOT NULL ,D4 Nullable(Decimal(2,1)),D5 Nullable(Decimal(30,10)),Doublex Nullable(Float64),x_date Nullable(Date32),x_datetime6 Nullable(DateTime64(6, 0)),x_time Nullable(String),x_time6 Nullable(String),Intmin Nullable(Int32),Intmax Nullable(Int32),UIntmin Nullable(UInt32),UIntmax Nullable(UInt32),BIGIntmin Nullable(Int64),BIGIntmax Nullable(Int64),UBIGIntmin Nullable(UInt64),UBIGIntmax Nullable(UInt64),TIntmin Nullable(Int8),TIntmax Nullable(Int8),UTIntmin Nullable(UInt8),UTIntmax Nullable(UInt8),SIntmin Nullable(Int16),SIntmax Nullable(Int16),USIntmin Nullable(UInt16),USIntmax Nullable(UInt16),MIntmin Nullable(Int32),MIntmax Nullable(Int32),UMIntmin Nullable(UInt32),UMIntmax Nullable(UInt32),x_char Nullable(String),x_text Nullable(String),x_varchar Nullable(String),x_Blob Nullable(String),x_Mediumblob Nullable(String),x_Longblob Nullable(String),x_binary Nullable(String),x_varbinary Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
     @Test
@@ -330,7 +330,7 @@ public class MySqlDDLParserListenerImplTest {
         String createDB = "create table if not exists ship_class(id int, class_name varchar(100), tonange decimal(10,2), max_length decimal(10,2), start_build year, end_build year(4), max_guns_size int)";
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.ship_class(id Nullable(Int32),class_name Nullable(String),tonange Nullable(Decimal(10,2)),max_length Nullable(Decimal(10,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (id,class_name,tonange,max_length,start_build,end_build,max_guns_size) SETTINGS allow_nullable_key=1"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.ship_class(id Nullable(Int32),class_name Nullable(String),tonange Nullable(Decimal(10,2)),max_length Nullable(Decimal(10,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`id`)),ifNull(toString(`id`),''),'\\x01',toString(isNull(`class_name`)),ifNull(toString(`class_name`),''),'\\x01',toString(isNull(`tonange`)),ifNull(toString(`tonange`),''),'\\x01',toString(isNull(`max_length`)),ifNull(toString(`max_length`),''),'\\x01',toString(isNull(`start_build`)),ifNull(toString(`start_build`),''),'\\x01',toString(isNull(`end_build`)),ifNull(toString(`end_build`),''),'\\x01',toString(isNull(`max_guns_size`)),ifNull(toString(`max_guns_size`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`"));
         log.info("Create table " + clickHouseQuery);
 
     }
@@ -341,7 +341,7 @@ public class MySqlDDLParserListenerImplTest {
         String createDB = "create table ship_class(id int, class_name varchar(100), tonange decimal(10,2) not null, max_length decimal(65,2), start_build year, end_build year(4), max_guns_size int)";
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.ship_class(id Nullable(Int32),class_name Nullable(String),tonange Decimal(10,2) NOT NULL ,max_length Nullable(Decimal(65,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (id,class_name,tonange,max_length,start_build,end_build,max_guns_size) SETTINGS allow_nullable_key=1"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.ship_class(id Nullable(Int32),class_name Nullable(String),tonange Decimal(10,2) NOT NULL ,max_length Nullable(Decimal(65,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`id`)),ifNull(toString(`id`),''),'\\x01',toString(isNull(`class_name`)),ifNull(toString(`class_name`),''),'\\x01',toString(isNull(`tonange`)),ifNull(toString(`tonange`),''),'\\x01',toString(isNull(`max_length`)),ifNull(toString(`max_length`),''),'\\x01',toString(isNull(`start_build`)),ifNull(toString(`start_build`),''),'\\x01',toString(isNull(`end_build`)),ifNull(toString(`end_build`),''),'\\x01',toString(isNull(`max_guns_size`)),ifNull(toString(`max_guns_size`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`"));
         log.info("Create table " + clickHouseQuery);
 
     }
@@ -1055,7 +1055,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "CREATE TABLE employees.contacts (fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)), email VARCHAR(100) NOT NULL);";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.contacts(fullname Nullable(String) MATERIALIZED CONCAT(first_name,' ',last_name),email String NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (email) SETTINGS allow_nullable_key=1"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.contacts(fullname Nullable(String) MATERIALIZED CONCAT(first_name,' ',last_name),email String NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`email`)),ifNull(toString(`email`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`"));
     }
 
     /**
@@ -1126,13 +1126,13 @@ public class MySqlDDLParserListenerImplTest {
         // identity and belong in the all-columns sorting key. The connector's own
         // delete marker is renamed to `_is_deleted` to dodge the collision, and
         // that bookkeeping column stays out of the sorting key.
-        String expectedQuery = "CREATE TABLE employees.new_table(col1 Nullable(String),col2 Nullable(Int32),is_deleted Nullable(Int32),_sign Nullable(Int32),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,_is_deleted) PRIMARY KEY tuple() ORDER BY (col1,col2,is_deleted,_sign) SETTINGS allow_nullable_key=1";
+        String expectedQuery = "CREATE TABLE employees.new_table(col1 Nullable(String),col2 Nullable(Int32),is_deleted Nullable(Int32),_sign Nullable(Int32),`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`col1`)),ifNull(toString(`col1`),''),'\\x01',toString(isNull(`col2`)),ifNull(toString(`col2`),''),'\\x01',toString(isNull(`is_deleted`)),ifNull(toString(`is_deleted`),''),'\\x01',toString(isNull(`_sign`)),ifNull(toString(`_sign`),''))),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,_is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`";
 
         String sql = "create table new_table(col1 varchar(255), col2 int, is_deleted int, _sign int);";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
 
-        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.new_table(col1 Nullable(String),col2 Nullable(Int32),is_deleted Nullable(Int32),_sign Nullable(Int32),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) PRIMARY KEY tuple() ORDER BY (col1,col2,`_is_deleted`) SETTINGS allow_nullable_key=1"));
+        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE employees.new_table(col1 Nullable(String),col2 Nullable(Int32),is_deleted Nullable(Int32),_sign Nullable(Int32),`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`col1`)),ifNull(toString(`col1`),''),'\\x01',toString(isNull(`col2`)),ifNull(toString(`col2`),''),'\\x01',toString(isNull(`is_deleted`)),ifNull(toString(`is_deleted`),''),'\\x01',toString(isNull(`_sign`)),ifNull(toString(`_sign`),''))),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`"));
     }
 
     @ParameterizedTest
@@ -1166,7 +1166,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` timestamp(1) NOT NULL) ENGINE=InnoDB;";
         mySQLDDLParserService.parseSql(sql, "temporal_types_DATETIME4", clickHouseQuery, isDropOrTruncate);
 
-        String expectedResult = "CREATE TABLE datatypes.temporal_types_TIMESTAMP1 ON CLUSTER `{cluster}`(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplicatedReplacingMergeTree(_version, is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1";
+        String expectedResult = "CREATE TABLE datatypes.temporal_types_TIMESTAMP1 ON CLUSTER `{cluster}`(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplicatedReplacingMergeTree(_version, is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedResult));
 
 
@@ -1174,12 +1174,12 @@ public class MySqlDDLParserListenerImplTest {
 
     @ParameterizedTest
     @CsvSource(
-            value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` timestamp(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1",
-            "CREATE TABLE temporal_types_TIMESTAMP2(`Mid_Value` timestamp(2) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP2(`Mid_Value` DateTime64(2, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1",
-            "CREATE TABLE temporal_types_TIMESTAMP3(`Mid_Value` timestamp(3) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP3(`Mid_Value` DateTime64(3, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1",
-            "CREATE TABLE temporal_types_TIMESTAMP4(`Mid_Value` timestamp(4) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP4(`Mid_Value` DateTime64(4, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1",
-            "CREATE TABLE temporal_types_TIMESTAMP5(`Mid_Value` timestamp(5) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP5(`Mid_Value` DateTime64(5, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1",
-            "CREATE TABLE temporal_types_TIMESTAMP6(`Mid_Value` timestamp(6) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP6(`Mid_Value` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1"}
+            value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` timestamp(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`",
+            "CREATE TABLE temporal_types_TIMESTAMP2(`Mid_Value` timestamp(2) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP2(`Mid_Value` DateTime64(2, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`",
+            "CREATE TABLE temporal_types_TIMESTAMP3(`Mid_Value` timestamp(3) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP3(`Mid_Value` DateTime64(3, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`",
+            "CREATE TABLE temporal_types_TIMESTAMP4(`Mid_Value` timestamp(4) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP4(`Mid_Value` DateTime64(4, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`",
+            "CREATE TABLE temporal_types_TIMESTAMP5(`Mid_Value` timestamp(5) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP5(`Mid_Value` DateTime64(5, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`",
+            "CREATE TABLE temporal_types_TIMESTAMP6(`Mid_Value` timestamp(6) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP6(`Mid_Value` DateTime64(6, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`"}
     ,delimiter = ':')
     @DisplayName("Test to validate if the timestamp data type precision is maintained from MySQL to ClickHouse")
     public void checkIfTimestampDataTypePrecisionIsMaintained(String sql, String expectedResult) {
@@ -1193,12 +1193,12 @@ public class MySqlDDLParserListenerImplTest {
 
     @ParameterizedTest
     @CsvSource(
-            value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` TIMESTAMP(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1",
-                    "CREATE TABLE temporal_types_TIMESTAMP2(`Mid_Value` TIMESTAMP(2) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP2(`Mid_Value` DateTime64(2, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1",
-                    "CREATE TABLE temporal_types_TIMESTAMP3(`Mid_Value` TIMESTAMP(3) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP3(`Mid_Value` DateTime64(3, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1",
-                    "CREATE TABLE temporal_types_TIMESTAMP4(`Mid_Value` TIMESTAMP(4) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP4(`Mid_Value` DateTime64(4, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1",
-                    "CREATE TABLE temporal_types_TIMESTAMP5(`Mid_Value` TIMESTAMP(5) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP5(`Mid_Value` DateTime64(5, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1",
-                    "CREATE TABLE temporal_types_TIMESTAMP6(`Mid_Value` TIMESTAMP(6) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP6(`Mid_Value` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY (`Mid_Value`) SETTINGS allow_nullable_key=1"}
+            value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` TIMESTAMP(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`",
+                    "CREATE TABLE temporal_types_TIMESTAMP2(`Mid_Value` TIMESTAMP(2) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP2(`Mid_Value` DateTime64(2, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`",
+                    "CREATE TABLE temporal_types_TIMESTAMP3(`Mid_Value` TIMESTAMP(3) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP3(`Mid_Value` DateTime64(3, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`",
+                    "CREATE TABLE temporal_types_TIMESTAMP4(`Mid_Value` TIMESTAMP(4) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP4(`Mid_Value` DateTime64(4, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`",
+                    "CREATE TABLE temporal_types_TIMESTAMP5(`Mid_Value` TIMESTAMP(5) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP5(`Mid_Value` DateTime64(5, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`",
+                    "CREATE TABLE temporal_types_TIMESTAMP6(`Mid_Value` TIMESTAMP(6) NOT NULL) ENGINE=InnoDB;: CREATE TABLE employees.temporal_types_TIMESTAMP6(`Mid_Value` DateTime64(6, 0) NOT NULL ,`_row_key` UInt64 MATERIALIZED cityHash64(concat(toString(isNull(`Mid_Value`)),ifNull(toString(`Mid_Value`),''))),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PRIMARY KEY tuple() ORDER BY `_row_key`"}
             ,delimiter = ':')
     @DisplayName("Test to validate if the timestamp data type precision(uppercase timestamp is maintained from MySQL to ClickHouse")
     public void checkIfTimestampDataTypeUpperCasePrecisionIsMaintained(String sql, String expectedResult) {
