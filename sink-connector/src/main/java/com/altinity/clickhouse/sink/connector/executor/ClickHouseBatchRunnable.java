@@ -718,11 +718,18 @@ public class ClickHouseBatchRunnable implements Runnable {
 
         DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName,
                 firstRecord, databaseConn);
+        // Sorting key passed as a supplier, not a snapshot: this executor is
+        // built BEFORE the metadata-retry block below, which is where a table
+        // created by DDL (rather than by auto-create) first resolves its
+        // sorting key. A value captured here would still be empty, and the
+        // writer would then silently skip the UPDATE tombstone.
+        final DbWriter sortingKeySource = writer;
         PreparedStatementExecutor preparedStatementExecutor = new
                 PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
                 writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(),
                 writer.getVersionColumn(), writer.getDatabaseName(),
-                getServerTimeZone(this.config));
+                getServerTimeZone(this.config),
+                sortingKeySource::getSortingKeyColumns);
         if (writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error(String.format("*** TABLE METADATA not retrieved for " +
                             "Database(%s), table(%s) retrying",
