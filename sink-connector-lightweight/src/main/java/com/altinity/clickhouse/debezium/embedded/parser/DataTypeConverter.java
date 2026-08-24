@@ -148,18 +148,48 @@ public class DataTypeConverter {
             return bitClickHouseType(columnDefChild);
         }
 
-        // MySQL DOUBLE / DOUBLE PRECISION / FLOAT8 / REAL are 8-byte values
-        // carrying ~15 significant digits. Debezium widens MySQL FLOAT to a
-        // FLOAT64 Kafka schema as well, so FLOAT and DOUBLE are
-        // indistinguishable by schema type alone and the shared type map can
-        // only answer one of them correctly — it answers Float32, silently
-        // truncating every DOUBLE to ~7 significant digits and overflowing
-        // large magnitudes to inf.
+        // MySQL DOUBLE / DOUBLE PRECISION / FLOAT8 are 8-byte values carrying
+        // ~15 significant digits. Debezium widens MySQL FLOAT to a FLOAT64
+        // Kafka schema as well, so FLOAT and DOUBLE are indistinguishable by
+        // schema type alone and the shared type map can only answer one of them
+        // correctly — it answers Float32, silently truncating every DOUBLE to
+        // ~7 significant digits and overflowing large magnitudes to inf.
         // On this DDL path the resolved source JDBC type IS available, so the
         // two can be told apart exactly: FLOAT/FLOAT4 keep Float32, and only
         // the genuine 8-byte types widen to Float64.
-        if (dataType.jdbcType() == Types.DOUBLE || dataType.jdbcType() == Types.REAL) {
+        //
+        // Types.REAL is deliberately NOT widened here, even though MySQL treats
+        // REAL as an 8-byte double under the default sql_mode (its own SHOW
+        // CREATE TABLE reports a REAL column as `double`).
+        //
+        // Debezium resolves MySQL REAL to Types.REAL and maps that to a
+        // SchemaBuilder.float32 Kafka schema, whereas FLOAT (Types.FLOAT) and
+        // DOUBLE (Types.DOUBLE) both map to float64
+        // (io.debezium.jdbc.JdbcValueConverters, debezium 3.1.3.Final: switch
+        // keys 6 -> float64, 7 -> float32, 8 -> float64). The value therefore
+        // arrives at the writer ALREADY narrowed to IEEE-754 single precision.
+        // Those bits are gone before any connector code runs, so no bind-side
+        // change can recover them — verified by binding at double width and
+        // re-measuring: the value was unchanged.
+        //
+        // Declaring Float64 promised a precision the pipeline cannot deliver.
+        // Measured on 2.10.0 (MySQL 8.0.36 ROW/FULL/GTID -> ClickHouse
+        // 24.8.14.10547), column declared Nullable(Float64):
+        //   REAL 9876543.210987654  -> 9876543
+        //   REAL 0.1234567890123456 -> 0.12345679
+        // and in both cases the stored value is EXACTLY toFloat32(source), i.e.
+        // precisely what Debezium delivered. A Float64 column makes truncated
+        // data look full-precision to every consumer and doubles the stored
+        // width for no benefit; Float32 states honestly what is carried.
+        //
+        // Recovering the lost digits requires a change upstream in Debezium
+        // (map Types.REAL to float64 like FLOAT and DOUBLE); until then the
+        // faithful representation of the delivered value is Float32.
+        if (dataType.jdbcType() == Types.DOUBLE) {
             return ClickHouseDataType.Float64.toString();
+        }
+        if (dataType.jdbcType() == Types.REAL) {
+            return ClickHouseDataType.Float32.toString();
         }
 
         // Map the schema to the corresponding ClickHouse data type
