@@ -122,6 +122,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     String originalSql;
 
     /**
+     * Names of the columns the CREATE TABLE being parsed declares NOT NULL.
+     *
+     * <p>Used to decide whether a UNIQUE key is safe to adopt as the sorting
+     * key. Cleared at the start of each CREATE TABLE so a listener reused
+     * across statements cannot leak nullability from a previous table.</p>
+     */
+    private final Set<String> notNullColumnNames = new HashSet<>();
+
+    /**
      * Constructor for initializing the MySqlDDLParserListenerImpl instance.
      *
      * @param writer         The database writer instance.
@@ -279,17 +288,19 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         StringBuilder partitionByColumn = new StringBuilder();
         StringBuilder uniqueKeyColumns = new StringBuilder();
         List<String> orderedColumnNames = new ArrayList<>();
+        notNullColumnNames.clear();
         Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn,
                 uniqueKeyColumns, orderedColumnNames);
 
-        // True when the sorting key was DERIVED here rather than taken from the
-        // source's PRIMARY KEY. A derived key may name nullable columns, which
+        // True when the emitted sorting key can name NULLABLE columns, which
         // ClickHouse rejects outright unless allow_nullable_key is enabled (see
         // the settings block at the end of this method).
         //
-        // A PRIMARY KEY never needs that setting: MySQL forces every PRIMARY KEY
-        // column to NOT NULL, so that path cannot produce a nullable sorting key.
-        boolean derivedSortingKey = false;
+        // Only the all-columns fallback can: a PRIMARY KEY is NOT NULL by MySQL's
+        // own rule, and a UNIQUE key is adopted below only when every one of its
+        // columns is NOT NULL. Emitting the setting where it is not needed would
+        // silently permit nullable keys ClickHouse is right to reject.
+        boolean nullableSortingKey = false;
 
         // A table with a UNIQUE key but no PRIMARY KEY would otherwise be created
         // with ORDER BY tuple(): every row compares equal, so ReplacingMergeTree
@@ -297,17 +308,37 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // stable row identity, so use it as the sorting key. Only applied when no
         // PRIMARY KEY was found -- the PRIMARY KEY always wins.
         //
-        // Unlike a PRIMARY KEY, a MySQL UNIQUE key MAY span nullable columns --
-        // MySQL permits any number of NULLs in a UNIQUE index -- so this key is
-        // derived and needs allow_nullable_key. Without it ClickHouse fails the
-        // CREATE TABLE with Code: 44, and because the connector retries DDL
-        // indefinitely that failure stalls the whole replication stream, not
-        // just the offending table.
+        // ONLY when every column of that UNIQUE key is NOT NULL. MySQL does not
+        // treat NULLs as equal for uniqueness, so a nullable UNIQUE index permits
+        // any number of rows whose key is NULL -- it is not a row identity at
+        // all. ClickHouse compares NULLs as equal in a sorting key, so adopting
+        // such a key makes ReplacingMergeTree collapse those distinct source rows
+        // into one.
+        //
+        // Measured on MySQL 8.0.36 -> ClickHouse 24.8.14.10547 with
+        // UNIQUE KEY(a) over a nullable `a`: four source rows, three of them
+        // a IS NULL, arrived as TWO -- 'first' and 'second' silently lost. A
+        // partially-nullable composite UNIQUE key loses rows the same way.
+        //
+        // Such a table has no usable declared identity, so it falls through to
+        // the all-columns fallback below, which reproduces MySQL's own semantics
+        // for a table without a row identity: rows are distinguished by value.
+        List<String> uniqueKeyColumnNames = splitIndexColumns(uniqueKeyColumns.toString());
+        boolean uniqueKeyIsNotNull = !uniqueKeyColumnNames.isEmpty()
+                && notNullColumnNames.containsAll(uniqueKeyColumnNames);
+
         if (orderByColumns.length() == 0 && uniqueKeyColumns.length() > 0) {
-            log.info("Table has no PRIMARY KEY; using UNIQUE key as the ClickHouse sorting key: "
-                    + uniqueKeyColumns);
-            orderByColumns.append(uniqueKeyColumns);
-            derivedSortingKey = true;
+            if (uniqueKeyIsNotNull) {
+                log.info("Table has no PRIMARY KEY; using UNIQUE key as the ClickHouse sorting key: "
+                        + uniqueKeyColumns);
+                orderByColumns.append(uniqueKeyColumns);
+            } else {
+                log.warn("Table {}.{} has no PRIMARY KEY and its UNIQUE key ({}) spans nullable "
+                                + "columns. MySQL does not treat NULLs as equal, so that index permits "
+                                + "many NULL-keyed rows and is not a row identity; ClickHouse would "
+                                + "collapse them. Falling back to all columns as the sorting key.",
+                        this.databaseName, this.tableName, uniqueKeyColumns);
+            }
         }
 
         // Neither a PRIMARY KEY nor a UNIQUE key: the table has no declared row
@@ -336,7 +367,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         boolean isKeylessTable = false;
         if (orderByColumns.length() == 0 && !orderedColumnNames.isEmpty()) {
             isKeylessTable = true;
-            derivedSortingKey = true;
+            // The all-columns key necessarily includes every nullable column of
+            // the source table, so ClickHouse needs allow_nullable_key.
+            nullableSortingKey = true;
             // Parenthesised: a bare `ORDER BY a,b SETTINGS ...` is a syntax
             // error in ClickHouse (Code: 62), which only shows up once the key
             // spans more than one column.
@@ -479,22 +512,19 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
         
 
-        // Any sorting key DERIVED by this class -- the all-columns keyless
-        // fallback, or a UNIQUE key standing in for an absent PRIMARY KEY -- can
-        // name nullable columns, and ClickHouse rejects a nullable sorting key
-        // outright (Code: 44 ILLEGAL_COLUMN) unless allow_nullable_key is enabled.
+        // The all-columns fallback sorting key necessarily includes every
+        // nullable column of the source table, and ClickHouse rejects a nullable
+        // sorting key outright (Code: 44 ILLEGAL_COLUMN) unless
+        // allow_nullable_key is enabled.
         //
-        // Keyed on derivedSortingKey rather than isKeylessTable: the UNIQUE-key
-        // path also derives its key, and MySQL allows a UNIQUE index over
-        // nullable columns. Gating on isKeylessTable alone emitted ORDER BY (a)
-        // with no setting for such a table, so the CREATE TABLE failed and the
-        // connector's indefinite DDL retry stalled the entire replication
-        // stream -- every table behind it, not merely the one that failed.
+        // The other two paths never need it, and must not get it: a PRIMARY KEY
+        // is NOT NULL by MySQL's own rule, and a UNIQUE key is adopted above only
+        // when every one of its columns is NOT NULL.
         //
         // Append to any user-supplied settings rather than replacing them.
         String tableSettings = tableConfig.getSettings();
         boolean hasUserSettings = tableSettings != null && !tableSettings.isEmpty();
-        if (derivedSortingKey && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {
+        if (nullableSortingKey && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {
             this.query.append(Constants.SETTINGS);
             if (hasUserSettings) {
                 this.query.append(tableSettings).append(",");
@@ -898,9 +928,51 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 // the writer to compare.
                 if (columnName != null) {
                     orderedColumnNames.add(columnName);
+                    if (!isNullColumn) {
+                        notNullColumnNames.add(stripBackticks(columnName));
+                    }
                 }
             }
         }
+    }
+
+    /**
+     * Strips backticks so a column name from the parse tree can be compared
+     * with one taken from an index-column list, which may quote differently.
+     *
+     * @param name a column name, possibly backtick-quoted.
+     * @return the name without backticks, or null if the input was null.
+     */
+    private static String stripBackticks(String name) {
+        return name == null ? null : name.replace("`", "");
+    }
+
+    /**
+     * Splits a MySQL index column list into its individual column names.
+     *
+     * <p>The parse tree hands back the list already flattened, e.g.
+     * {@code (a,b)} or {@code (a(10),b)}. Any prefix length is dropped: it
+     * narrows the index, not the column, and plays no part in nullability.</p>
+     *
+     * @param indexColumns the raw index column list text.
+     * @return the bare column names in declaration order.
+     */
+    private static List<String> splitIndexColumns(String indexColumns) {
+        List<String> columns = new ArrayList<>();
+        if (indexColumns == null || indexColumns.isEmpty()) {
+            return columns;
+        }
+        String stripped = indexColumns.trim();
+        if (stripped.startsWith("(") && stripped.endsWith(")")) {
+            stripped = stripped.substring(1, stripped.length() - 1);
+        }
+        for (String part : stripped.split(",")) {
+            String column = stripBackticks(part).trim().replaceAll("\\(\\d+\\)$", "");
+            if (!column.isEmpty()) {
+                columns.add(column);
+            }
+        }
+        return columns;
     }
 
     /**
