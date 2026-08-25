@@ -34,7 +34,7 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCK
 public class TruncateTableIT {
 
     protected MySQLContainer mySqlContainer;
-    static ClickHouseContainer clickHouseContainer;
+    protected ClickHouseContainer clickHouseContainer;
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
@@ -45,13 +45,13 @@ public class TruncateTableIT {
                 .withExtraHost("mysql-server", "0.0.0.0")
                 .waitingFor(new HttpWaitStrategy().forPort(3306));
 
-        BasicConfigurator.configure();
-        mySqlContainer.start();
-        // clickHouseContainer.start();
-        Thread.sleep(15000);
-    }
-
-    static {
+        // Created per test rather than once in a static block. @AfterEach
+        // stops BOTH containers, so a ClickHouse container shared across the
+        // class is already stopped when the second test runs, and
+        // getMappedPort() then throws "Mapped port can only be obtained after
+        // the container is started". Every other IT in this package declares a
+        // single test, which is why the shared static instance survived: this
+        // class is the only one with two.
         clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("clickhouse"))
                 .withInitScript("init_clickhouse_it.sql")
@@ -59,7 +59,10 @@ public class TruncateTableIT {
                 .withPassword("password")
                 .withExposedPorts(8123);
 
+        BasicConfigurator.configure();
+        mySqlContainer.start();
         clickHouseContainer.start();
+        Thread.sleep(15000);
     }
 
     @AfterEach
