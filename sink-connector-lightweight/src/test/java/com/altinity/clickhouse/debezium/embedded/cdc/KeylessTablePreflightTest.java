@@ -3,6 +3,9 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -336,5 +339,102 @@ public class KeylessTablePreflightTest {
         props.setProperty(KeylessTablePreflight.SKIP_PROPERTY, "true");
 
         KeylessTablePreflight.check(props);
+    }
+
+    /**
+     * The preflight must never write a global on the source server.
+     *
+     * <p>Regression test for the defect this change fixes. Starting the
+     * connector used to run {@code SET GLOBAL
+     * sql_generate_invisible_primary_key = ON}, after which MySQL rejects
+     * every keyless {@code CREATE TABLE ... PARTITION BY} on the WHOLE server
+     * with ERROR 1235 -- a source-side DDL outage caused by a read-only
+     * consumer, persisting after the connector stopped.</p>
+     *
+     * <p>Asserted against the source text rather than a live server because
+     * the failure mode is the mere PRESENCE of the statement: any execution
+     * path reaching it is the bug, so no runtime scenario has to be guessed
+     * at. The file is located from the class itself, so the test fails loudly
+     * if it cannot be found rather than passing vacuously.</p>
+     */
+    @Test
+    public void testPreflightNeverSetsAGlobalOnTheSource() throws Exception {
+        Path src = sourceFile();
+        for (String line : Files.readAllLines(src)) {
+            String code = line.trim();
+            // Skip prose: the javadoc explains the defect and so necessarily
+            // quotes the statement it forbids.
+            if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) {
+                continue;
+            }
+            Assert.assertFalse(
+                    "the preflight must not execute SET GLOBAL on the source server: " + code,
+                    code.contains("SET GLOBAL") && code.contains("execute"));
+        }
+    }
+
+    /**
+     * The shared IT fixture must keep opting out of the check.
+     *
+     * <p>{@code sql/data_types.sql} deliberately declares keyless tables
+     * ({@code ship_class}, {@code add_test}) that the DDL-parser suites
+     * exercise, so the preflight correctly refuses that source. Without the
+     * opt-out every MySQL IT in the module fails at startup -- 19 errors
+     * across 15 suites in the run that prompted this change.</p>
+     */
+    @Test
+    public void testItConfigOptsOutOfTheKeylessCheck() throws Exception {
+        Path cfg = moduleRoot().resolve("src/test/resources/config.yml");
+        Assert.assertTrue("cannot locate the IT config at " + cfg
+                + " -- this test must not pass vacuously", Files.exists(cfg));
+
+        boolean optedOut = false;
+        for (String line : Files.readAllLines(cfg)) {
+            String code = line.trim();
+            if (code.startsWith("#")) {
+                continue;
+            }
+            if (code.startsWith(KeylessTablePreflight.SKIP_PROPERTY) && code.contains("true")) {
+                optedOut = true;
+            }
+        }
+        Assert.assertTrue(
+                KeylessTablePreflight.SKIP_PROPERTY + " must be true in " + cfg + ": the shared "
+                        + "employees fixture declares keyless tables on purpose",
+                optedOut);
+    }
+
+    /**
+     * The preflight's own source file, located from the compiled class.
+     *
+     * <p>Derived from the class location rather than assumed relative to the
+     * working directory, so the test behaves the same under maven, an IDE and
+     * a reactor build -- and fails rather than silently skipping if the layout
+     * ever changes.</p>
+     */
+    private static Path sourceFile() {
+        Path src = moduleRoot().resolve(
+                "src/main/java/" + KeylessTablePreflight.class.getName().replace('.', '/')
+                        + ".java");
+        Assert.assertTrue("cannot locate KeylessTablePreflight source at " + src
+                + " -- this test must not pass vacuously", Files.exists(src));
+        return src;
+    }
+
+    /** The sink-connector-lightweight module root, found from the class location. */
+    private static Path moduleRoot() {
+        Path p;
+        try {
+            p = Paths.get(KeylessTablePreflightTest.class.getProtectionDomain()
+                    .getCodeSource().getLocation().toURI());
+        } catch (Exception e) {
+            throw new AssertionError("cannot locate the test class on disk", e);
+        }
+        // .../<module>/target/test-classes -> .../<module>
+        while (p != null && !Files.exists(p.resolve("src/main/java"))) {
+            p = p.getParent();
+        }
+        Assert.assertNotNull("cannot locate the module root from the test class location", p);
+        return p;
     }
 }

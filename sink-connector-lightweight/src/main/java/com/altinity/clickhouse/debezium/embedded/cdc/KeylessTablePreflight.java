@@ -157,9 +157,21 @@ public class KeylessTablePreflight {
             if (!keyless.isEmpty()) {
                 throw new UnsupportedSourceException(refusalPreExisting(keyless));
             }
-            log.info("Keyless-table check passed: no table without a PRIMARY KEY or UNIQUE key, and "
-                    + "sql_generate_invisible_primary_key is ON so any created from now on will "
-                    + "receive one from MySQL.");
+            if (gipkEnabledGlobally(conn)) {
+                log.info("Keyless-table check passed: no table without a PRIMARY KEY or UNIQUE key, and "
+                        + "sql_generate_invisible_primary_key is ON so any created from now on will "
+                        + "receive one from MySQL.");
+            } else {
+                log.warn("Keyless-table check passed: every table currently has a row identity. But "
+                        + "sql_generate_invisible_primary_key is OFF on this server, so a table created "
+                        + "from now on WITHOUT a PRIMARY KEY will have no row identity in the binlog and "
+                        + "will be refused at the next restart. To have MySQL supply one automatically:\n"
+                        + "    SET GLOBAL sql_generate_invisible_primary_key = ON;\n"
+                        + "    # and in my.cnf so it survives a restart:\n"
+                        + "    sql_generate_invisible_primary_key = ON\n"
+                        + "Note this makes MySQL REJECT keyless CREATE TABLE ... PARTITION BY, so it is "
+                        + "the server owner's call -- the connector does not set it.");
+            }
         } catch (UnsupportedSourceException e) {
             throw e;
         } catch (Exception e) {
@@ -223,14 +235,29 @@ public class KeylessTablePreflight {
     }
 
     /**
-     * Turns GIPK on for this session, and globally when the account may.
+     * Turns GIPK on for the preflight's own session only.
      *
-     * <p>The session setting is what matters for correctness here: it is not
-     * replicated and applier threads ignore it, but the connector does not
-     * create source tables. Setting it globally is the useful part -- it makes
-     * MySQL give a key to keyless tables created by the application from now
-     * on. A missing SUPER/SYSTEM_VARIABLES_ADMIN grant is expected and is
-     * reported rather than treated as a failure.</p>
+     * <p>This deliberately does NOT write the global. A read-only replication
+     * consumer must not reconfigure the server it reads from, and this
+     * particular global is not inert: with
+     * {@code sql_generate_invisible_primary_key=ON}, MySQL REJECTS every
+     * subsequent keyless {@code CREATE TABLE ... PARTITION BY} on the whole
+     * server with</p>
+     *
+     * <pre>
+     *   ERROR 1235 (42000): This version of MySQL doesn't yet support
+     *   'generating invisible primary key for the partitioned tables'
+     * </pre>
+     *
+     * <p>So starting the connector would have broken partitioned-table DDL for
+     * every application sharing that MySQL -- an outage on the SOURCE caused by
+     * a consumer, persisting after the connector stopped, and surviving until
+     * someone found the global and reset it. Setting the global is the
+     * operator's decision to make, with their own knowledge of what else uses
+     * the server; the refusal message already spells out the exact statements.
+     *
+     * <p>The session setting is kept: it is harmless (the connector creates no
+     * source tables), and it makes the preflight's own behaviour explicit.</p>
      */
     private static void enableGipk(Connection conn) {
         try (Statement st = conn.createStatement()) {
@@ -238,20 +265,24 @@ public class KeylessTablePreflight {
         } catch (Exception e) {
             log.warn("Could not set sql_generate_invisible_primary_key for this session: {}", e.toString());
         }
-        try (Statement st = conn.createStatement()) {
-            st.execute("SET GLOBAL sql_generate_invisible_primary_key = ON");
-            log.info("Enabled sql_generate_invisible_primary_key globally: a table created without a "
-                    + "PRIMARY KEY from now on receives my_row_id from MySQL, which is carried by the "
-                    + "binlogged DDL and by every row image.");
+    }
+
+    /**
+     * Whether the server will give newly created keyless tables a key.
+     *
+     * @param conn an open connection to the source.
+     * @return true when the global {@code sql_generate_invisible_primary_key}
+     *         is ON. Unreadable is reported as false: the advice that follows
+     *         is then merely redundant, never wrongly reassuring.
+     */
+    private static boolean gipkEnabledGlobally(Connection conn) {
+        try {
+            return "ON".equalsIgnoreCase(
+                    scalar(conn, "SELECT @@GLOBAL.sql_generate_invisible_primary_key"))
+                    || "1".equals(scalar(conn, "SELECT @@GLOBAL.sql_generate_invisible_primary_key"));
         } catch (Exception e) {
-            log.warn("Could not enable sql_generate_invisible_primary_key globally ({}). Grant the "
-                            + "connector's account SYSTEM_VARIABLES_ADMIN, or set it on the server:\n"
-                            + "    SET GLOBAL sql_generate_invisible_primary_key = ON;\n"
-                            + "    # and in my.cnf so it survives a restart:\n"
-                            + "    sql_generate_invisible_primary_key = ON\n"
-                            + "Until then a newly created keyless table has no row identity in the "
-                            + "binlog and will be refused at the next restart.",
-                    e.toString());
+            log.debug("Could not read @@GLOBAL.sql_generate_invisible_primary_key: {}", e.toString());
+            return false;
         }
     }
 
