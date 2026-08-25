@@ -14,8 +14,7 @@ import java.util.Properties;
 
 /**
  * Refuses to start when the source holds a table whose rows cannot be
- * identified, and enables MySQL's generated invisible primary key so that
- * future keyless tables get one.
+ * identified, reading the source and never writing to it.
  *
  * <p>A table with no PRIMARY KEY and no non-null UNIQUE key has no row
  * identity in the logical schema. InnoDB does give such a table an internal
@@ -47,16 +46,31 @@ import java.util.Properties;
  *
  * <p>So this check, run once at startup:</p>
  * <ol>
- *   <li>turns GIPK ON for the connector's own session and, where permitted,
- *       globally, so keyless tables created from now on get a real key;</li>
- *   <li>lists the keyless tables that ALREADY exist -- GIPK is not
- *       retroactive -- and refuses to start, naming them and the single
- *       {@code ALTER TABLE} that fixes each one;</li>
+ *   <li>lists the keyless tables that ALREADY exist and refuses to start,
+ *       naming them and the single {@code ALTER TABLE} that fixes each one;</li>
  *   <li>refuses outright below MySQL 8.0.30, where GIPK does not exist and no
- *       correct replication of a keyless table is possible.</li>
+ *       correct replication of a keyless table is possible;</li>
+ *   <li>reports whether {@code sql_generate_invisible_primary_key} is ON, so
+ *       the operator knows whether a keyless table created tomorrow will get
+ *       an identity -- and prints the statements to turn it on if not.</li>
  * </ol>
  *
- * <p>Refusing is the point. Replicating such a table silently produces a
+ * <p><b>It does not turn GIPK on itself.</b> The connector is a replication
+ * CONSUMER and must not change the server it reads from. That is not a style
+ * preference here: an earlier version of this class ran
+ * {@code SET GLOBAL sql_generate_invisible_primary_key = ON}, after which
+ * MySQL rejected every keyless {@code CREATE TABLE ... PARTITION BY} on the
+ * whole server (ERROR 1235) -- an outage on the source, caused by its own
+ * consumer, outliving the connector that caused it. Enabling GIPK affects
+ * every application on that server, so it is the operator's call, made with
+ * knowledge of what else uses it.</p>
+ *
+ * <p>Read-only is enforced, not merely intended: the connection is opened
+ * {@link java.sql.Connection#setReadOnly(boolean) read-only} so the SERVER
+ * rejects a write, every statement passes {@link #assertReadOnlySql}, and a
+ * test fails the build if a mutating keyword appears in this file.</p>
+ *
+ * <p>Refusing is the point. Replicating a keyless table silently produces a
  * ClickHouse table that disagrees with its source, and a checksum job reports
  * it as a mismatch long after the data is wrong.</p>
  */
@@ -132,6 +146,9 @@ public class KeylessTablePreflight {
 
         String url = jdbcUrl(host, port, props);
         try (Connection conn = DriverManager.getConnection(url, user, password)) {
+            // Before anything is executed: the connector must not change the
+            // server it replicates from.
+            makeReadOnly(conn);
             String version = scalar(conn, "SELECT VERSION()");
             boolean gipkSupported = supportsGipk(version);
 
@@ -151,8 +168,6 @@ public class KeylessTablePreflight {
                 }
                 throw new UnsupportedSourceException(refusalTooOld(version, keyless));
             }
-
-            enableGipk(conn);
 
             if (!keyless.isEmpty()) {
                 throw new UnsupportedSourceException(refusalPreExisting(keyless));
@@ -235,35 +250,96 @@ public class KeylessTablePreflight {
     }
 
     /**
-     * Turns GIPK on for the preflight's own session only.
+     * Opens the preflight's connection to the source in read-only mode.
      *
-     * <p>This deliberately does NOT write the global. A read-only replication
-     * consumer must not reconfigure the server it reads from, and this
-     * particular global is not inert: with
-     * {@code sql_generate_invisible_primary_key=ON}, MySQL REJECTS every
-     * subsequent keyless {@code CREATE TABLE ... PARTITION BY} on the whole
-     * server with</p>
+     * <p>The connector is a replication CONSUMER: it must never change the
+     * server it reads from. That is enforced here rather than left to review,
+     * on three levels, because an earlier version of this class did exactly
+     * what this now prevents -- it ran
+     * {@code SET GLOBAL sql_generate_invisible_primary_key = ON}, after which
+     * MySQL rejected every keyless {@code CREATE TABLE ... PARTITION BY} on
+     * the whole server (ERROR 1235). A consumer caused an outage on its own
+     * source, and it outlived the connector.</p>
      *
-     * <pre>
-     *   ERROR 1235 (42000): This version of MySQL doesn't yet support
-     *   'generating invisible primary key for the partitioned tables'
-     * </pre>
+     * <ol>
+     *   <li>{@link Connection#setReadOnly(boolean)} -- the MySQL driver sends
+     *       {@code SET SESSION TRANSACTION READ ONLY}, so the SERVER rejects a
+     *       write on this connection even if new code asks for one. This is
+     *       the only layer that does not depend on the connector behaving.</li>
+     *   <li>{@link #assertReadOnlySql} on every statement this class runs, so
+     *       a write is refused before it is sent, with a message naming the
+     *       rule rather than a driver error.</li>
+     *   <li>{@code testPreflightIssuesNoWritesToTheSource}, which fails the
+     *       build if a mutating keyword is ever added to this file.</li>
+     * </ol>
      *
-     * <p>So starting the connector would have broken partitioned-table DDL for
-     * every application sharing that MySQL -- an outage on the SOURCE caused by
-     * a consumer, persisting after the connector stopped, and surviving until
-     * someone found the global and reset it. Setting the global is the
-     * operator's decision to make, with their own knowledge of what else uses
-     * the server; the refusal message already spells out the exact statements.
+     * <p>Read-only is requested and then VERIFIED: a driver that silently
+     * ignored the request would leave the guarantee resting on the other two
+     * layers without saying so, and a failure to obtain it is worth a warning.
+     * Note this is a session property of the preflight's own short-lived
+     * connection -- it changes nothing for any other client, which is exactly
+     * the distinction the old {@code SET GLOBAL} got wrong.</p>
      *
-     * <p>The session setting is kept: it is harmless (the connector creates no
-     * source tables), and it makes the preflight's own behaviour explicit.</p>
+     * @param conn the freshly opened connection to the source.
      */
-    private static void enableGipk(Connection conn) {
-        try (Statement st = conn.createStatement()) {
-            st.execute("SET SESSION sql_generate_invisible_primary_key = ON");
+    private static void makeReadOnly(Connection conn) {
+        try {
+            conn.setReadOnly(true);
+            if (!conn.isReadOnly()) {
+                log.warn("The MySQL driver did not honour the read-only request on the "
+                        + "keyless-table check's connection. The check still issues only SELECTs "
+                        + "(enforced by assertReadOnlySql), but the server-side guarantee is absent.");
+            }
         } catch (Exception e) {
-            log.warn("Could not set sql_generate_invisible_primary_key for this session: {}", e.toString());
+            log.warn("Could not set the keyless-table check's connection read-only ({}). The check "
+                    + "still issues only SELECTs, enforced client-side.", e.toString());
+        }
+    }
+
+    /**
+     * Refuses any statement that is not a plain read, before it is sent.
+     *
+     * <p>Belt to {@link #makeReadOnly}'s braces, and the layer that produces a
+     * comprehensible message: a future edit adding a write to this class fails
+     * here naming the rule, rather than surfacing as a driver error from
+     * whatever the server said.</p>
+     *
+     * <p>Deliberately an ALLOWLIST. A denylist of mutating keywords is the
+     * wrong shape for a safety check: every statement MySQL gains in a future
+     * version defaults to permitted, and the one that matters here --
+     * {@code SET} -- is easy to forget precisely because it does not read like
+     * a write. Only {@code SELECT} is allowed, which is all this class needs.
+     * Leading comments are stripped first so a commented statement cannot slip
+     * past the prefix test.</p>
+     *
+     * @param sql the statement about to be executed against the source.
+     * @throws IllegalStateException when it is anything but a SELECT.
+     */
+    static void assertReadOnlySql(String sql) {
+        String bare = sql == null ? "" : sql.trim();
+        // Strip leading /* */ and -- comments so the check sees the real verb.
+        while (true) {
+            if (bare.startsWith("/*")) {
+                int end = bare.indexOf("*/");
+                if (end < 0) {
+                    break;
+                }
+                bare = bare.substring(end + 2).trim();
+            } else if (bare.startsWith("--") || bare.startsWith("#")) {
+                int end = bare.indexOf('\n');
+                if (end < 0) {
+                    bare = "";
+                    break;
+                }
+                bare = bare.substring(end + 1).trim();
+            } else {
+                break;
+            }
+        }
+        if (!bare.regionMatches(true, 0, "SELECT", 0, "SELECT".length())) {
+            throw new IllegalStateException(
+                    "the connector is read-only against its MySQL source: the keyless-table check "
+                            + "may only issue SELECT, refusing to execute: " + sql);
         }
     }
 
@@ -359,8 +435,10 @@ public class KeylessTablePreflight {
 
     private static List<String> keylessTables(Connection conn, String databaseFilter) throws Exception {
         List<String> tables = new ArrayList<>();
+        String sql = keylessTablesQuery(databaseFilter);
+        assertReadOnlySql(sql);
         try (Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery(keylessTablesQuery(databaseFilter))) {
+             ResultSet rs = st.executeQuery(sql)) {
             while (rs.next()) {
                 tables.add(rs.getString(1) + "." + rs.getString(2));
             }
@@ -502,6 +580,7 @@ public class KeylessTablePreflight {
     }
 
     private static String scalar(Connection conn, String sql) throws Exception {
+        assertReadOnlySql(sql);
         try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
             return rs.next() ? rs.getString(1) : null;
         }
