@@ -135,7 +135,12 @@ public class KeylessTablePreflight {
             String version = scalar(conn, "SELECT VERSION()");
             boolean gipkSupported = supportsGipk(version);
 
-            List<String> keyless = keylessTables(conn, databaseFilter(props));
+            // A table the connector is not replicating cannot be replicated
+            // incorrectly, so it must not block startup. Without this, the only
+            // way past a keyless table was to add a key to it or disable the
+            // check entirely -- even when the operator had already excluded it.
+            List<String> keyless = withoutExcluded(
+                    keylessTables(conn, databaseFilter(props)), props);
 
             if (!gipkSupported) {
                 if (keyless.isEmpty()) {
@@ -344,6 +349,97 @@ public class KeylessTablePreflight {
      * non-system schemas. Over-scanning can only surface a table that is
      * genuinely keyless; it can never hide one.</p>
      */
+    /**
+     * Drops tables the connector is not actually replicating.
+     *
+     * <p>A table that is excluded is never read from the binlog, so it cannot
+     * be replicated incorrectly and must not block startup. Without this, an
+     * operator who had already excluded a keyless table still could not start:
+     * the only ways past were adding a key to a table they did not own, or
+     * disabling the whole check and losing the protection for every other
+     * table.</p>
+     *
+     * <p>Both Debezium list properties are honoured, with its own semantics:
+     * entries are REGULAR EXPRESSIONS matched against the fully-qualified
+     * {@code db.table}, and {@code table.include.list} — when set — means
+     * anything NOT listed is excluded. The scan is deliberately conservative in
+     * the same direction as {@code databaseFilter}: if a pattern cannot be
+     * compiled it is ignored rather than treated as a match, so a malformed
+     * exclude can only leave a keyless table reported (a false refusal), never
+     * silently drop one from the check (a false pass).</p>
+     *
+     * @param keyless fully-qualified {@code db.table} names found keyless.
+     * @param props the connector properties.
+     * @return those still in scope for replication.
+     */
+    static List<String> withoutExcluded(List<String> keyless, Properties props) {
+        List<java.util.regex.Pattern> excludes =
+                compilePatterns(props.getProperty("table.exclude.list"));
+        List<java.util.regex.Pattern> includes =
+                compilePatterns(props.getProperty("table.include.list"));
+
+        List<String> inScope = new ArrayList<>();
+        for (String table : keyless) {
+            if (matchesAny(excludes, table)) {
+                log.info("Keyless table {} is excluded by table.exclude.list, so it is not "
+                        + "replicated and does not block startup.", table);
+                continue;
+            }
+            if (!includes.isEmpty() && !matchesAny(includes, table)) {
+                log.info("Keyless table {} is outside table.include.list, so it is not "
+                        + "replicated and does not block startup.", table);
+                continue;
+            }
+            inScope.add(table);
+        }
+        return inScope;
+    }
+
+    /**
+     * Compiles a Debezium comma-separated regex list, skipping what will not
+     * compile.
+     *
+     * <p>An uncompilable pattern is dropped rather than propagated, because
+     * this list can only ever REMOVE tables from the refusal set: treating a
+     * broken pattern as matching would silently exclude a genuinely keyless
+     * table from the check.</p>
+     */
+    private static List<java.util.regex.Pattern> compilePatterns(String csv) {
+        List<java.util.regex.Pattern> patterns = new ArrayList<>();
+        if (csv == null || csv.trim().isEmpty()) {
+            return patterns;
+        }
+        for (String raw : csv.split(",")) {
+            String pattern = raw.trim();
+            if (pattern.isEmpty()) {
+                continue;
+            }
+            try {
+                patterns.add(java.util.regex.Pattern.compile(pattern));
+            } catch (java.util.regex.PatternSyntaxException e) {
+                log.warn("Ignoring unparseable table list pattern '{}' when deciding whether a "
+                        + "keyless table blocks startup: {}", pattern, e.getMessage());
+            }
+        }
+        return patterns;
+    }
+
+    /**
+     * Whether any pattern matches the fully-qualified name, Debezium-style.
+     *
+     * <p>Debezium anchors these patterns (a full match, not a substring), so
+     * {@code aerion.trade} must not be excluded by a pattern written for
+     * {@code aerion.trade_history}.</p>
+     */
+    private static boolean matchesAny(List<java.util.regex.Pattern> patterns, String table) {
+        for (java.util.regex.Pattern p : patterns) {
+            if (p.matcher(table).matches()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     static String databaseFilter(Properties props) {
         String include = props.getProperty("database.include.list");
         if (include == null || include.trim().isEmpty()) {

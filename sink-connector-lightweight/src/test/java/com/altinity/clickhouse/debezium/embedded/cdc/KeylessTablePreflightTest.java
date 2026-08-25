@@ -4,6 +4,8 @@ import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 import java.util.Properties;
 
 /**
@@ -224,6 +226,102 @@ public class KeylessTablePreflightTest {
         Assert.assertTrue("and plaintext when not, so it must not be mandatory",
                 url.contains("requireSSL=false"));
         Assert.assertTrue("the check must never hang a startup", url.contains("connectTimeout="));
+    }
+
+    /**
+     * An EXCLUDED keyless table must not block startup.
+     *
+     * <p>It is never read from the binlog, so it cannot be replicated
+     * incorrectly. Before this, an operator who had already excluded such a
+     * table still could not start: the only ways past were adding a key to a
+     * table they did not own, or disabling the whole check.</p>
+     *
+     * <p>Uses the exact pattern shipped for txnrepo uat/staging, so this test
+     * fails if that production exclusion ever stops covering the table it was
+     * written for.</p>
+     */
+    @Test
+    public void testExcludedKeylessTableDoesNotBlockStartup() {
+        Properties props = new Properties();
+        props.setProperty("table.exclude.list", ".*.temp_.*,.*[.]alembic_version");
+
+        List<String> keyless = Arrays.asList(
+                "aerion_uat.alembic_version",
+                "txnrepo_staging.alembic_version",
+                "txnrepo_uat.temp_override_target",
+                "aerion_uat.trade");
+
+        Assert.assertEquals("only the table still in scope may block startup",
+                Collections.singletonList("aerion_uat.trade"),
+                KeylessTablePreflight.withoutExcluded(keyless, props));
+    }
+
+    /**
+     * Exclusion is anchored, so a pattern must not swallow a neighbour.
+     *
+     * <p>Debezium full-matches these patterns. A substring match would let an
+     * exclusion written for one table silently drop a DIFFERENT keyless table
+     * from the check -- a false pass, the worst outcome here.</p>
+     */
+    @Test
+    public void testExclusionIsAnchoredNotSubstring() {
+        Properties props = new Properties();
+        props.setProperty("table.exclude.list", ".*[.]alembic_version");
+
+        List<String> keyless = Arrays.asList(
+                "aerion_uat.alembic_version_history",
+                "aerion_uat.xalembic_version");
+
+        Assert.assertEquals("neither neighbour is the excluded table, so both still block",
+                keyless, KeylessTablePreflight.withoutExcluded(keyless, props));
+    }
+
+    /**
+     * With an include list set, anything not listed is out of scope.
+     */
+    @Test
+    public void testTableOutsideIncludeListDoesNotBlockStartup() {
+        Properties props = new Properties();
+        props.setProperty("table.include.list", "aerion_uat[.]trade.*");
+
+        List<String> keyless = Arrays.asList(
+                "aerion_uat.trade_scratch",      // included -> still blocks
+                "aerion_uat.alembic_version");   // not included -> out of scope
+
+        Assert.assertEquals(Collections.singletonList("aerion_uat.trade_scratch"),
+                KeylessTablePreflight.withoutExcluded(keyless, props));
+    }
+
+    /**
+     * No lists configured means nothing is excluded.
+     */
+    @Test
+    public void testNoListsConfiguredExcludesNothing() {
+        List<String> keyless = Arrays.asList("a.one", "b.two");
+
+        Assert.assertEquals(keyless,
+                KeylessTablePreflight.withoutExcluded(keyless, new Properties()));
+    }
+
+    /**
+     * A malformed pattern must fail SAFE -- toward reporting, not hiding.
+     *
+     * <p>This list can only remove tables from the refusal set, so treating an
+     * uncompilable pattern as matching would silently drop a genuinely keyless
+     * table from the check. It is ignored instead, and the valid entry beside
+     * it still applies.</p>
+     */
+    @Test
+    public void testUnparseablePatternFailsSafeAndDoesNotHideATable() {
+        Properties props = new Properties();
+        props.setProperty("table.exclude.list", "*[bad(regex,.*[.]alembic_version");
+
+        List<String> keyless = Arrays.asList("aerion_uat.alembic_version", "aerion_uat.trade");
+
+        Assert.assertEquals("the valid pattern still excludes; the broken one is ignored "
+                        + "rather than treated as a match",
+                Collections.singletonList("aerion_uat.trade"),
+                KeylessTablePreflight.withoutExcluded(keyless, props));
     }
 
     /**
