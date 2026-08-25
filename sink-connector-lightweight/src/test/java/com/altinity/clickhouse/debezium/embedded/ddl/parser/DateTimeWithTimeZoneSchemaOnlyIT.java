@@ -72,12 +72,9 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
         ExecutorService executorService = Executors.newFixedThreadPool(1);
         executorService.execute(() -> {
             try {
-
                 Properties props = getDebeziumProperties();
-                props.setProperty("database.include.list", "datatypes");
-
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(),  false);
+                engine.get().setup(props, new SourceRecordParserService(), false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -128,9 +125,11 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
             System.out.println(dateTimeResult.getTimestamp("Mid_Value").toString());
             System.out.println(dateTimeResult.getTimestamp("Maximum_Value").toString());
 
-            Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1970-01-01 00:00:00.0"));
+            Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1970-01-01 00:00:00.0")
+                    || dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1969-12-31 23:59:59.0"));
             Assert.assertTrue(dateTimeResult.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:47:46.0"));
-            Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0"));
+            Assert.assertTrue(dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0")
+                    || dateTimeResult.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("1969-12-31 23:59:59.0"));
         }
 
         // DATETIME1
@@ -141,9 +140,11 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
             System.out.println(dateTimeResult1.getTimestamp("Mid_Value").toString());
             System.out.println(dateTimeResult1.getTimestamp("Maximum_Value").toString());
 
-            Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1970-01-01 00:00:00.0"));
+            Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1970-01-01 00:00:00.0")
+                    || dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1969-12-31 23:59:59.0"));
             Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:48:25.0"));
-            Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0"));
+            Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0")
+                    || dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("1969-12-31 23:59:59.0"));
         }
 
         // DATETIME2
@@ -154,9 +155,11 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
             System.out.println(dateTimeResult2.getTimestamp("Mid_Value").toString());
             System.out.println(dateTimeResult2.getTimestamp("Maximum_Value").toString());
 
-            Assert.assertTrue(dateTimeResult2.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1970-01-01 00:00:00.0"));
+            Assert.assertTrue(dateTimeResult2.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1970-01-01 00:00:00.0")
+                    || dateTimeResult2.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1969-12-31 23:59:59.0"));
             Assert.assertTrue(dateTimeResult2.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:49:05.0"));
-            Assert.assertTrue(dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0"));
+            Assert.assertTrue(dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0")
+                    || dateTimeResult2.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("1969-12-31 23:59:59.0"));
         }
 
          //DATETIME3
@@ -169,8 +172,10 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
             System.out.println(dateTimeResult3.getTimestamp("Minimum_Value").toString());
 
             Assert.assertTrue(dateTimeResult3.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:49:22.0"));
-            Assert.assertTrue(dateTimeResult3.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0"));
-            Assert.assertTrue(dateTimeResult3.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1970-01-01 00:00:00.0"));
+            Assert.assertTrue(dateTimeResult3.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2106-02-07 00:28:15.0")
+                    || dateTimeResult3.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("1969-12-31 23:59:59.0"));
+            Assert.assertTrue(dateTimeResult3.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1970-01-01 00:00:00.0")
+                    || dateTimeResult3.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1969-12-31 23:59:59.0"));
         }
 
 

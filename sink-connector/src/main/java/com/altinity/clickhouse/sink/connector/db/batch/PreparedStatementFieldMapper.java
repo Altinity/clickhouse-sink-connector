@@ -224,6 +224,65 @@ public class PreparedStatementFieldMapper {
     }
 
     /**
+     * Writes the row as an explicit ReplacingMergeTree tombstone: the supplied
+     * (before-image) values with the delete marker set.
+     *
+     * <p>Used for an UPDATE that relocates a row to a different sorting key.
+     * The plain before-image write cannot be reused for this, because its
+     * delete marker is driven by the record's CDC operation -- an UPDATE record
+     * yields {@code is_deleted = 0}, which would insert a second LIVE row at the
+     * old key instead of retiring it.</p>
+     *
+     * <p>The tombstone deliberately carries the record's own version, one less
+     * than the after-image is written with, so the after-image is unambiguously
+     * newer. Note the two rows normally land on different sorting keys and so
+     * never compete; the ordering matters for the case where they collide.</p>
+     *
+     * @param columnNameToIndexMap A map of column names to prepared-statement indices.
+     * @param ps The prepared statement to populate.
+     * @param fields The before-image fields.
+     * @param record The CDC record.
+     * @param struct The before-image struct.
+     * @param config The connector configuration.
+     * @param columnNameToDataTypeMap A map of column names to data types.
+     * @param engine The target table engine.
+     * @param tableName The target table name.
+     * @throws Exception if the values cannot be set.
+     */
+    public void insertTombstonePreparedStatement(Map<String, Integer> columnNameToIndexMap,
+                                                 PreparedStatement ps, List<Field> fields,
+                                                 ClickHouseStruct record, Struct struct,
+                                                 ClickHouseSinkConnectorConfig config,
+                                                 Map<String, String> columnNameToDataTypeMap,
+                                                 DBMetadata.TABLE_ENGINE engine, String tableName) throws Exception {
+
+        insertPreparedStatement(columnNameToIndexMap, ps, fields, record, struct, true, config,
+                columnNameToDataTypeMap, engine, tableName);
+
+        // Force the delete marker on. insertPreparedStatement() derived it from
+        // the CDC operation (UPDATE => not deleted); this row is a tombstone.
+        if (this.replacingMergeTreeDeleteColumn != null
+                && columnNameToDataTypeMap.containsKey(this.replacingMergeTreeDeleteColumn)
+                && columnNameToIndexMap.containsKey(this.replacingMergeTreeDeleteColumn)
+                && !config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())) {
+            int deleteColumnIndex = columnNameToIndexMap.get(this.replacingMergeTreeDeleteColumn);
+            ps.setInt(deleteColumnIndex, this.replacingMergeTreeWithIsDeletedColumn ? 1 : -1);
+        }
+
+        // Keep the tombstone strictly older than the after-image.
+        if (this.versionColumn != null
+                && columnNameToDataTypeMap.containsKey(this.versionColumn)
+                && columnNameToIndexMap.containsKey(this.versionColumn)) {
+            if (record.getVersion() == -1) {
+                record.calculateVersion(config.getBoolean(
+                        ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString()));
+            }
+            long tombstoneVersion = record.getVersion() > 0 ? record.getVersion() - 1 : record.getVersion();
+            ps.setLong(columnNameToIndexMap.get(this.versionColumn), tombstoneVersion);
+        }
+    }
+
+    /**
      * Handles Kafka metadata columns.
      */
     private void handleKafkaMetadata(Map<String, Integer> columnNameToIndexMap,
@@ -245,6 +304,22 @@ public class PreparedStatementFieldMapper {
 
     /**
      * Handles Sign column for COLLAPSING_MERGE_TREE engine.
+     *
+     * <p>The engine test compares the enum CONSTANT, not the engine string.
+     * This previously read
+     * {@code engine.getEngine() == TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine()}
+     * -- reference equality on a String. It happens to hold today only because
+     * both sides resolve to the same interned literal from the enum, so the
+     * moment the engine is carried as a runtime-built String (a value read from
+     * a JDBC ResultSet is the obvious candidate, and DBMetadata already derives
+     * the engine from {@code SHOW CREATE TABLE}) the comparison silently
+     * becomes false and the sign column is never bound -- writing the engine's
+     * default sign for every row, so no +1/-1 pair ever collapses.</p>
+     *
+     * <p>Comparing the enum constant cannot degrade that way, and it matches
+     * what {@code PreparedStatementExecutor} already does for the same engine
+     * (it uses {@code equalsIgnoreCase}). Behaviour is unchanged today; this
+     * removes a latent trap rather than fixing a live miss.</p>
      */
     private void handleSignColumn(Map<String, Integer> columnNameToIndexMap,
                                    PreparedStatement ps,
@@ -253,7 +328,7 @@ public class PreparedStatementFieldMapper {
                                    Map<String, String> columnNameToDataTypeMap,
                                    DBMetadata.TABLE_ENGINE engine,
                                    boolean beforeSection) throws Exception {
-        if (engine != null && engine.getEngine() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine() && signColumn != null) {
+        if (engine == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE && signColumn != null) {
             if (columnNameToDataTypeMap.containsKey(signColumn) && columnNameToIndexMap.containsKey(signColumn)) {
                 int signColumnIndex = columnNameToIndexMap.get(signColumn);
                 if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {

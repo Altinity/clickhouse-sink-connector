@@ -31,3 +31,10 @@ enable.snapshot.ddl: "true"
 auto.create.tables: "true"
 metrics.enable: "false"
 database.connectionTimeZone: "America/Chicago"
+# The shared employees fixture (sql/data_types.sql) deliberately declares
+# keyless tables -- ship_class and add_test have no PRIMARY KEY and no UNIQUE
+# key -- because the DDL-parser suites exercise ALTER/RENAME/TRUNCATE against
+# them. The keyless preflight is right to refuse such a source in production,
+# but here the keyless-ness IS the fixture, so the check is opted out of.
+# KeylessTablePreflightTest covers the check itself directly.
+keyless.table.check.skip: "true"

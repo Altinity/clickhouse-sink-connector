@@ -26,6 +26,8 @@ import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Class responsible for converting MySQL DDL data types to
@@ -47,12 +49,19 @@ public class DataTypeConverter {
         return initializeDataTypeResolver().resolveDataType(columnDefChild);
     }
 
+    /** Matches the declared width in a parsed {@code BIT(n)} data type. */
+    private static final Pattern BIT_LENGTH =
+            Pattern.compile("(?i)^BIT\\s*\\(\\s*(\\d+)\\s*\\)");
+
     // Create a static map of overridden data types
     static Map<String, String> overriddenDataTypesMap = new HashMap<>();
 
     static {
         overriddenDataTypesMap.put("tinyint", "Int8");
-        overriddenDataTypesMap.put("bigint unsigned", "UInt64");
+        // Centralized MySQL-unsigned -> ClickHouse-UInt mapping, shared with
+        // the record-schema auto-create path so both stay in lockstep.
+        overriddenDataTypesMap.putAll(
+                ClickHouseDataTypeMapper.UNSIGNED_MYSQL_TO_CLICKHOUSE_TYPE);
     }
     /**
      * Converts the given MySQL parser context to a ClickHouse data type string.
@@ -128,6 +137,61 @@ public class DataTypeConverter {
             return overriddenDataTypesMap.get(dataType.name().toLowerCase());
         }
 
+        // MySQL BIT(n) is a bit-string, not a boolean. Debezium emits it as
+        // BYTES/io.debezium.data.Bits (BIT(1) is the only width that is
+        // emitted as BOOLEAN), and the runtime value path already maps
+        // Bits.LOGICAL_NAME -> String. Resolving the DDL-side type from the
+        // JDBC type alone loses the width, so every BIT(n) was created as
+        // Bool and every insert failed with CANNOT_PARSE_BOOL, retried
+        // forever and blocked the whole batch pipeline.
+        if (dataType.jdbcType() == Types.BIT) {
+            return bitClickHouseType(columnDefChild);
+        }
+
+        // MySQL DOUBLE / DOUBLE PRECISION / FLOAT8 are 8-byte values carrying
+        // ~15 significant digits. Debezium widens MySQL FLOAT to a FLOAT64
+        // Kafka schema as well, so FLOAT and DOUBLE are indistinguishable by
+        // schema type alone and the shared type map can only answer one of them
+        // correctly — it answers Float32, silently truncating every DOUBLE to
+        // ~7 significant digits and overflowing large magnitudes to inf.
+        // On this DDL path the resolved source JDBC type IS available, so the
+        // two can be told apart exactly: FLOAT/FLOAT4 keep Float32, and only
+        // the genuine 8-byte types widen to Float64.
+        //
+        // Types.REAL is deliberately NOT widened here, even though MySQL treats
+        // REAL as an 8-byte double under the default sql_mode (its own SHOW
+        // CREATE TABLE reports a REAL column as `double`).
+        //
+        // Debezium resolves MySQL REAL to Types.REAL and maps that to a
+        // SchemaBuilder.float32 Kafka schema, whereas FLOAT (Types.FLOAT) and
+        // DOUBLE (Types.DOUBLE) both map to float64
+        // (io.debezium.jdbc.JdbcValueConverters, debezium 3.1.3.Final: switch
+        // keys 6 -> float64, 7 -> float32, 8 -> float64). The value therefore
+        // arrives at the writer ALREADY narrowed to IEEE-754 single precision.
+        // Those bits are gone before any connector code runs, so no bind-side
+        // change can recover them — verified by binding at double width and
+        // re-measuring: the value was unchanged.
+        //
+        // Declaring Float64 promised a precision the pipeline cannot deliver.
+        // Measured on 2.10.0 (MySQL 8.0.36 ROW/FULL/GTID -> ClickHouse
+        // 24.8.14.10547), column declared Nullable(Float64):
+        //   REAL 9876543.210987654  -> 9876543
+        //   REAL 0.1234567890123456 -> 0.12345679
+        // and in both cases the stored value is EXACTLY toFloat32(source), i.e.
+        // precisely what Debezium delivered. A Float64 column makes truncated
+        // data look full-precision to every consumer and doubles the stored
+        // width for no benefit; Float32 states honestly what is carried.
+        //
+        // Recovering the lost digits requires a change upstream in Debezium
+        // (map Types.REAL to float64 like FLOAT and DOUBLE); until then the
+        // faithful representation of the delivered value is Float32.
+        if (dataType.jdbcType() == Types.DOUBLE) {
+            return ClickHouseDataType.Float64.toString();
+        }
+        if (dataType.jdbcType() == Types.REAL) {
+            return ClickHouseDataType.Float32.toString();
+        }
+
         // Map the schema to the corresponding ClickHouse data type
         ClickHouseDataType chDataType = ClickHouseDataTypeMapper.getClickHouseDataType(
                 schemaBuilder.schema().type(), schemaBuilder.schema().name());
@@ -156,6 +220,53 @@ public class DataTypeConverter {
         }
 
         return convertedDataType;
+    }
+
+
+    /**
+     * Resolves the ClickHouse type for a MySQL {@code BIT(n)} column.
+     * <p>
+     * MySQL {@code BIT(1)} is emitted by Debezium as a BOOLEAN schema, and is
+     * therefore representable as ClickHouse {@code Bool}. Every wider
+     * {@code BIT(n)} is emitted as {@code BYTES} with the
+     * {@code io.debezium.data.Bits} logical name, whose value is a raw byte
+     * array — it must be stored as {@code String}, which is what the runtime
+     * value path ({@code ClickHouseDataTypeMapper}) already does for
+     * {@code Bits.LOGICAL_NAME}.
+     *
+     * @param columnDefChild the parsed data-type context for the column
+     * @return {@code Bool} for BIT(1) (or an unspecified width), else {@code String}
+     */
+    static String bitClickHouseType(MySqlParser.DataTypeContext columnDefChild) {
+        int length = bitLength(columnDefChild);
+        return length > 1 ? ClickHouseDataType.String.toString()
+                          : ClickHouseDataType.Bool.toString();
+    }
+
+    /**
+     * Extracts the declared width of a {@code BIT(n)} column.
+     *
+     * @param columnDefChild the parsed data-type context for the column
+     * @return the declared width, or 1 when no width is declared or it
+     *         cannot be parsed (MySQL's own default for {@code BIT})
+     */
+    static int bitLength(MySqlParser.DataTypeContext columnDefChild) {
+        if (columnDefChild == null) {
+            return 1;
+        }
+        String text = columnDefChild.getText();
+        if (text == null) {
+            return 1;
+        }
+        Matcher matcher = BIT_LENGTH.matcher(text);
+        if (!matcher.find()) {
+            return 1;
+        }
+        try {
+            return Integer.parseInt(matcher.group(1));
+        } catch (NumberFormatException e) {
+            return 1;
+        }
     }
 
     /**

@@ -114,6 +114,17 @@ public class ClickHouseDbConstants {
      */
     public static final String IS_DELETED_COLUMN_DATA_TYPE = "UInt8";
 
+    /**
+     * MergeTree setting that permits Nullable columns in a sorting key.
+     *
+     * <p>Required by the all-columns fallback sorting key used for source
+     * tables declaring neither a PRIMARY KEY nor a UNIQUE key: such a key
+     * necessarily spans every nullable column of the table, and ClickHouse
+     * rejects a nullable sorting key with {@code Code: 44 ILLEGAL_COLUMN}
+     * unless this setting is enabled.</p>
+     */
+    public static final String ALLOW_NULLABLE_KEY = "allow_nullable_key";
+
     //--- New CDC binlog columns -------------------------------------------
 
     /**
@@ -222,7 +233,7 @@ public class ClickHouseDbConstants {
      * table for managing Kafka offsets.
      */
     public static final String OFFSET_TABLE_CREATE_SQL =
-            "CREATE TABLE topic_offset_metadata(`_topic` String, "
+            "CREATE TABLE IF NOT EXISTS topic_offset_metadata(`_topic` String, "
                     + "`_partition` UInt64,`_offset` SimpleAggregateFunction(max, "
                     + "UInt64))ENGINE = AggregatingMergeTree ORDER BY "
                     + "(_topic, _partition)";

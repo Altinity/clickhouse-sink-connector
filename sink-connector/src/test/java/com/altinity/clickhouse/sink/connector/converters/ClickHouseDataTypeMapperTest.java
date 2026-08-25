@@ -50,4 +50,31 @@ public class ClickHouseDataTypeMapperTest {
 
     }
 
+    @Test
+    public void getUnsignedClickHouseType() {
+        Assert.assertEquals("UInt8",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("TINYINT UNSIGNED"));
+        Assert.assertEquals("UInt16",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("SMALLINT UNSIGNED"));
+        Assert.assertEquals("UInt32",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("MEDIUMINT UNSIGNED"));
+        Assert.assertEquals("UInt32",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("INT UNSIGNED"));
+        Assert.assertEquals("UInt32",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("INTEGER UNSIGNED"));
+        Assert.assertEquals("UInt64",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("BIGINT UNSIGNED"));
+
+        // Case-insensitive, display width and ZEROFILL suffix tolerated.
+        Assert.assertEquals("UInt32",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("int(10) unsigned"));
+        Assert.assertEquals("UInt32",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("int unsigned zerofill"));
+
+        // Signed / unrelated types are not remapped.
+        Assert.assertNull(ClickHouseDataTypeMapper.getUnsignedClickHouseType("INT"));
+        Assert.assertNull(ClickHouseDataTypeMapper.getUnsignedClickHouseType("VARCHAR(255)"));
+        Assert.assertNull(ClickHouseDataTypeMapper.getUnsignedClickHouseType(null));
+    }
+
 }

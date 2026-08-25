@@ -183,7 +183,13 @@ def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, i
     defaults_file_clause = ""
     if defaults_file:
         defaults_file_clause = f"--defaults_file={defaults_file}"
-    cmd = f"""set -e pipefail;python db_compare/mysql_table_checksum.py --threads_per_table {args.threads_per_table} --threads={args.threads} --min_date_value "1900-01-01" --mysql_host {mysql_host} --mysql_database {database} --tables_regex "^{table}$" {where_argument} --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00"  --binary_encoding base64 {ignored_columns_clause} {debug_output_clause} {defaults_file_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """
+    # `set -eo pipefail` (NOT `set -e pipefail`): bash parses the latter as
+    # `set -e` plus a positional argument named "pipefail", so pipefail is
+    # never enabled. Without it a failing checksum script on the left of the
+    # pipe is masked by a successful awk and the pipeline exits 0 -- a run
+    # that never produced a checksum is reported as a PASS. Verified in bash:
+    # `set -e pipefail; false | grep x | awk '{print}'` exits 0.
+    cmd = f"""set -eo pipefail;python db_compare/mysql_table_checksum.py --threads_per_table {args.threads_per_table} --threads={args.threads} --min_date_value "1900-01-01" --mysql_host {mysql_host} --mysql_database {database} --tables_regex "^{table}$" {where_argument} --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00"  --binary_encoding base64 {ignored_columns_clause} {debug_output_clause} {defaults_file_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
     logging.debug(f"MySQL command: {cmd}")
     return cmd
 
@@ -212,8 +218,14 @@ def get_clickhouse_checksum_command(ch_host, database, table, pk, max_pk, where=
     partition_key_clause = ""
     if partition_key:
         partition_key_clause = f" --partition_key {partition_key.replace('`','')}"
-    cmd = f"""set -e pipefail;python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads={args.threads} --clickhouse_host {ch_host} --clickhouse_database  {database}  --tables_regex "^{table}$" {where_argument}  --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00" {ignored_columns_clause} --sign_column "" {debug_output_clause} {partition_key_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """
-    return cmd
+    # `set -eo pipefail` (NOT `set -e pipefail`): bash parses the latter as
+    # `set -e` plus a positional argument named "pipefail", so pipefail is
+    # never enabled. Without it a failing checksum script on the left of the
+    # pipe is masked by a successful awk and the pipeline exits 0 -- a run
+    # that never produced a checksum is reported as a PASS. Verified in bash:
+    # `set -e pipefail; false | grep x | awk '{print}'` exits 0.
+    cmd = f"""set -eo pipefail;python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads={args.threads} --clickhouse_host {ch_host} --clickhouse_database  {database}  --tables_regex "^{table}$" {where_argument}  --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00" {ignored_columns_clause} --sign_column "" {debug_output_clause} {partition_key_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
+    return cmd 
 
 
 def analyze_differences(results, mysql_host, replica_hosts):
@@ -231,8 +243,18 @@ def analyze_differences(results, mysql_host, replica_hosts):
             logging.info(f"No difference for {source_results[0][1]}")
 
 
+def quote_mysql_identifier(identifier):
+    """Backtick-quote a MySQL identifier, escaping embedded backticks.
+
+    MySQL escapes a backtick inside a quoted identifier by doubling it. Without
+    this, a table name containing a backtick would terminate the quoted
+    identifier early and the remainder would be parsed as SQL grammar.
+    """
+    return "`" + str(identifier).replace("`", "``") + "`"
+
+
 def lock_tables(conn, table):
-    lock_stmt = f"FLUSH TABLE `{table}` WITH READ LOCK"
+    lock_stmt = f"LOCK TABLES {quote_mysql_identifier(table)} READ"
     logging.info(f"Locking table with statement {lock_stmt}")
     execute_mysql(conn, lock_stmt)
 
@@ -410,7 +432,7 @@ def valid_date(s, format= "%Y-%m-%d"):
     try:
         try :
             return datetime.strptime(s, format)
-        except:
+        except ValueError:
             return datetime.strptime(s, "%Y/%m/%d")
     except ValueError:
         msg = "Not a valid date: '{0}'.".format(s)

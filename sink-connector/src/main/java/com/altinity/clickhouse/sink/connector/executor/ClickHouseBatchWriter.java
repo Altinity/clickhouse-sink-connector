@@ -283,25 +283,54 @@ public class ClickHouseBatchWriter {
                                         String databaseName,
                                         ClickHouseStruct record,
                                         Connection connection) {
-        DbWriter writer = null;
-        if (this.topicToDbWriterMap.containsKey(topicName)) {
-            // Check if this table needs cache invalidation after DDL
-            String fullyQualifiedTableName = databaseName + "." + tableName;
-            if (CacheInvalidationManager.getInstance().shouldInvalidate(fullyQualifiedTableName)) {
-                log.info("Invalidating cached DbWriter for {} after DDL", topicName);
-                this.topicToDbWriterMap.remove(topicName);
-            } else {
-                writer = this.topicToDbWriterMap.get(topicName);
+        // Compare the cached writer's build version against the shared, monotonic
+        // table version. A mismatch means a DDL invalidated this table after the
+        // writer was built, so it must be rebuilt with the fresh schema.
+        String fullyQualifiedTableName = databaseName + "." + tableName;
+        long currentVersion = CacheInvalidationManager.getInstance()
+                .getVersion(fullyQualifiedTableName);
+        DbWriter writer = this.topicToDbWriterMap.get(topicName);
+        boolean invalidated = false;
+        if (writer != null) {
+            if (writer.getCacheInvalidationVersion() == currentVersion) {
                 return writer;
             }
+            log.info("Invalidating cached DbWriter for {} after DDL (version {} -> {})",
+                    topicName, writer.getCacheInvalidationVersion(), currentVersion);
+            this.topicToDbWriterMap.remove(topicName);
+            invalidated = true;
         }
         writer = new DbWriter(this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName, tableName,
                 this.dbCredentials.getUserName(),
                 this.dbCredentials.getPassword(), this.config, record,
                 connection);
+        writer.setCacheInvalidationVersion(currentVersion);
         this.topicToDbWriterMap.put(topicName, writer);
+        // Log the resolved schema whenever this table has seen a DDL (version > 0).
+        // This covers both rebuilding a stale writer and building a fresh writer at
+        // the current version after a burst of DDLs, so the post-DDL schema is always
+        // observable regardless of which thread ends up owning the writer.
+        if (invalidated || currentVersion > 0) {
+            logRefreshedColumns(topicName, writer, invalidated);
+        }
         return writer;
+    }
+
+    /**
+     * Logs the refreshed column name and type map of a DbWriter that was rebuilt
+     * after a DDL cache invalidation.
+     *
+     * @param topicName the topic whose writer was rebuilt
+     * @param writer    the freshly constructed DbWriter
+     */
+    private void logRefreshedColumns(String topicName, DbWriter writer, boolean rebuilt) {
+        Map<String, String> cols = writer.getColumnNameToDataTypeMap();
+        if (cols != null) {
+            log.info("{} DbWriter schema for {} at cache version {} ({} columns): {}",
+                    rebuilt ? "Rebuilt" : "Built", topicName,
+                    writer.getCacheInvalidationVersion(), cols.size(), cols);
+        }
     }
 
     /**
@@ -328,7 +357,28 @@ public class ClickHouseBatchWriter {
         if (userProvidedTimeZoneId != null) {
             return userProvidedTimeZoneId;
         }
-        return new DBMetadata(config).getServerTimeZone(this.systemConnection);
+        return new DBMetadata(config).getServerTimeZone(systemConnection());
+    }
+
+    /**
+     * Returns a usable connection to the system database, replacing the cached
+     * one when it has been closed.
+     * <p>
+     * Same lifetime problem as in {@code ClickHouseBatchRunnable}: the
+     * connection is opened once in the constructor and held for the life of the
+     * task, but a pooled connection is returned, evicted or idle-reaped long
+     * before then, after which every use throws
+     * {@code SQLException: Connection is closed}. Fixed in both places so the
+     * two executors do not diverge.
+     *
+     * @return a usable system-database connection, or null when one cannot be
+     *         obtained (callers already handle a null connection).
+     */
+    private Connection systemConnection() {
+        if (BaseDbWriter.isUnusable(this.systemConnection)) {
+            this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
+        }
+        return this.systemConnection;
     }
 
     /**
@@ -374,13 +424,19 @@ public class ClickHouseBatchWriter {
         Connection databaseConn = getClickHouseConnection(databaseName);
         DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName,
                 firstRecord, databaseConn);
+        // Supplied as a supplier, not a snapshot: this executor is built BEFORE
+        // the metadata-retry block below, which is exactly when a table created
+        // by DDL (rather than by auto-create) first gets its sorting key. A
+        // value captured here would still be empty, and the writer would then
+        // silently skip the UPDATE tombstone.
         PreparedStatementExecutor preparedStatementExecutor =
                 new PreparedStatementExecutor(writer.
                         getReplacingMergeTreeDeleteColumn(),
                         writer.isReplacingMergeTreeWithIsDeletedColumn(),
                         writer.getSignColumn(), writer.getVersionColumn(),
                         writer.getDatabaseName(),
-                        getServerTimeZone(this.config));
+                        getServerTimeZone(this.config),
+                        writer::getSortingKeyColumns);
         if (writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error(String.format(
                     "*** TABLE METADATA not retrieved for " +

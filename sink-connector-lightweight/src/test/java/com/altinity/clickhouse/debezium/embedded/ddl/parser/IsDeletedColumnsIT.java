@@ -7,6 +7,7 @@ import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
 import org.junit.Assert;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -14,6 +15,7 @@ import org.junit.jupiter.params.provider.CsvSource;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
+import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
@@ -31,7 +33,14 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCK
 public class IsDeletedColumnsIT {
 
     protected MySQLContainer mySqlContainer;
-    static ClickHouseContainer clickHouseContainer;
+
+    @Container
+    public static ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
+            .asCompatibleSubstituteFor("clickhouse"))
+            .withInitScript("init_clickhouse_it.sql")
+            .withUsername("ch_user")
+            .withPassword("password")
+            .withExposedPorts(8123);
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
@@ -44,19 +53,14 @@ public class IsDeletedColumnsIT {
 
         BasicConfigurator.configure();
         mySqlContainer.start();
-        // clickHouseContainer.start();
         Thread.sleep(15000);
     }
 
-    static {
-        clickHouseContainer = new org.testcontainers.clickhouse.ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
-                .asCompatibleSubstituteFor("clickhouse"))
-                .withInitScript("init_clickhouse_it.sql")
-                .withUsername("ch_user")
-                .withPassword("password")
-                .withExposedPorts(8123);
-
-        clickHouseContainer.start();
+    @AfterEach
+    public void stopContainers() {
+        if (mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();
+        }
     }
 
 
@@ -69,47 +73,45 @@ public class IsDeletedColumnsIT {
     public void testIsDeleted(String clickHouseServerVersion) throws Exception {
 
         AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
-
         ExecutorService executorService = Executors.newFixedThreadPool(1);
-        executorService.execute(() -> {
-            try {
 
-                engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService()
-                        ,false);
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+        try {
+            executorService.execute(() -> {
+                try {
+                    engine.set(new DebeziumChangeEventCapture());
+                    engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(), false);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            Thread.sleep(30000);
+            Connection conn = ITCommon.connectToMySQL(mySqlContainer);
+            conn.prepareStatement("create table new_table(col1 varchar(255), col2 int, is_deleted int, _sign int)").execute();
+
+            Thread.sleep(10000);
+
+            conn.prepareStatement("insert into new_table values('test', 1, 22, 1)").execute();
+            conn.close();
+            Thread.sleep(10000);
+
+            BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+            ResultSet rs = ITCommon.executeQueryWithResultSet("select * from employees.new_table", writer.getConnection());
+            boolean recordFound = false;
+            while (rs.next()) {
+                recordFound = true;
+                Assert.assertTrue(rs.getString("col1").equalsIgnoreCase("test"));
+                Assert.assertTrue(rs.getInt("col2") == 1);
+                Assert.assertTrue(rs.getInt("is_deleted") == 22);
+                Assert.assertTrue(rs.getInt("_sign") == 1);
             }
-        });
-
-
-        Thread.sleep(30000);
-        Connection conn = ITCommon.connectToMySQL(mySqlContainer);
-        conn.prepareStatement("create table new_table(col1 varchar(255), col2 int, is_deleted int, _sign int)").execute();
-
-        Thread.sleep(10000);
-
-        conn.prepareStatement("insert into new_table values('test', 1, 22, 1)").execute();
-        conn.close();
-        Thread.sleep(10000);
-
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        ResultSet rs = ITCommon.executeQueryWithResultSet("select * from employees.new_table", writer.getConnection());
-        boolean recordFound = false;
-        while(rs.next()) {
-            recordFound = true;
-            Assert.assertTrue(rs.getString("col1").equalsIgnoreCase("test"));
-            Assert.assertTrue(rs.getInt("col2") == 1);
-            Assert.assertTrue(rs.getInt("is_deleted") == 22);
-            Assert.assertTrue(rs.getInt("_sign") == 1);
+            Assert.assertTrue(recordFound);
+        } finally {
+            if (engine.get() != null) {
+                engine.get().stop();
+            }
+            executorService.shutdown();
+            HikariDbSource.close();
         }
-        Assert.assertTrue(recordFound);
-
-        if(engine.get() != null) {
-            engine.get().stop();
-        }
-        executorService.shutdown();
-
-        HikariDbSource.close();
     }
 }

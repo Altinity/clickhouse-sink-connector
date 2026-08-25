@@ -21,8 +21,28 @@ public class ClickHouseBatchExecutor extends
 
     /**
      * Flag indicating whether the executor is paused.
+     *
+     * <p>Written by the Debezium event thread in {@link #pause()} and
+     * {@link #resume()}, read by every pool thread in
+     * {@link #beforeExecute}. Without {@code volatile} there is no
+     * happens-before edge between those threads, so a pool thread is not
+     * guaranteed to observe either transition: it may miss the pause and
+     * begin a batch while a DDL is being applied, or spin past the resume
+     * and stall.
      */
-    boolean isPaused = false;
+    volatile boolean isPaused = false;
+
+    /**
+     * Number of batches currently inside a task body.
+     *
+     * <p>{@link #pause()} only stops NEW tasks from starting; a batch already
+     * running keeps going. That distinction matters for DDL: a record read
+     * under the pre-ALTER schema must reach ClickHouse BEFORE the ALTER is
+     * applied, or it is written against the post-ALTER table. This counter lets
+     * the DDL path wait for in-flight batches to finish draining.</p>
+     */
+    private final java.util.concurrent.atomic.AtomicInteger activeBatches =
+            new java.util.concurrent.atomic.AtomicInteger();
 
     /**
      * Constructs a ClickHouseBatchExecutor with the given core pool size
@@ -60,6 +80,45 @@ public class ClickHouseBatchExecutor extends
                 t.interrupt();
             }
         }
+        activeBatches.incrementAndGet();
+    }
+
+    /**
+     * Invoked after execution of a task.
+     *
+     * @param r the task that was executed
+     * @param t the exception that terminated the task, or null
+     */
+    @Override
+    public void afterExecute(Runnable r, Throwable t) {
+        activeBatches.decrementAndGet();
+        super.afterExecute(r, t);
+    }
+
+    /**
+     * Waits until no batch is executing, up to {@code timeoutMs}.
+     *
+     * <p>Call after {@link #pause()} so that {@link #pause()} (no new batches)
+     * plus this (no running batches) together give a genuinely quiescent
+     * writer, which is what applying a DDL safely requires.</p>
+     *
+     * @param timeoutMs maximum time to wait, in milliseconds.
+     * @return true if the executor became quiescent within the timeout.
+     */
+    public boolean awaitQuiescent(long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (activeBatches.get() > 0) {
+            if (System.currentTimeMillis() >= deadline) {
+                return false;
+            }
+            try {
+                TimeUnit.MILLISECONDS.sleep(POLLING_INTERVAL_MS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
+        return true;
     }
 
     /**

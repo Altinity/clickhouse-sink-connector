@@ -12,6 +12,7 @@ import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import org.apache.log4j.BasicConfigurator;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -74,141 +75,128 @@ public class DatabaseOverrideRRMTIT {
 
         BasicConfigurator.configure();
         mySqlContainer.start();
-       clickHouseContainer.start();
+        clickHouseContainer.start();
         Thread.sleep(35000);
+    }
 
+    @AfterEach
+    public void stopContainers() {
+        if (mySqlContainer != null && mySqlContainer.isRunning()) {
+            mySqlContainer.stop();
+        }
+        if (clickHouseContainer != null && clickHouseContainer.isRunning()) {
+            clickHouseContainer.stop();
+        }
     }
 
     @DisplayName("Test that validates overriding database name in ClickHouse for ReplicatedReplacingMergeTree(RRMT)")
     @Test
     public void testDatabaseOverride() throws Exception {
 
-        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
-        props.setProperty("snapshot.mode", "no_data");
-        props.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
-        props.setProperty("schema.history.internal.store.only.captured.databases.ddl", "true");
-        props.setProperty("clickhouse.database.override.map", "employees:employees2, products:productsnew");
-        props.setProperty("database.include.list", "employees, products, customers");
-        props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
-        props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "true");
-        props.setProperty("ddl.retry", "true");
-        DBMetadata dbMetadata = new DBMetadata(props);
-        dbMetadata.executeSystemQuery(writer.getConnection(), "CREATE DATABASE employees2");
-        dbMetadata.executeSystemQuery(writer.getConnection(), "CREATE DATABASE productsnew");
-
-        Thread.sleep(10000);
-        Injector injector = Guice.createInjector(new AppInjector());
-
-
-        // Override clickhouse server timezone.
-        ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
-
-
         ExecutorService executorService = Executors.newFixedThreadPool(1);
-        executorService.execute(() -> {
-            try {
-                clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class),  props, false);
-                DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
-                        , new Properties());
-            } catch (Exception e) {
-                throw new RuntimeException(e);
+        ClickHouseDebeziumEmbeddedApplication clickHouseDebeziumEmbeddedApplication = new ClickHouseDebeziumEmbeddedApplication();
+        Connection conn = null;
+
+        try {
+            BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+            Properties props = getDebeziumProperties(mySqlContainer, clickHouseContainer);
+            props.setProperty("snapshot.mode", "no_data");
+            props.setProperty("schema.history.internal.store.only.captured.tables.ddl", "true");
+            props.setProperty("schema.history.internal.store.only.captured.databases.ddl", "true");
+            props.setProperty("clickhouse.database.override.map", "employees:employees2, products:productsnew");
+            props.setProperty("database.include.list", "employees, products, customers");
+            props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
+            props.setProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES.toString(), "true");
+            props.setProperty("ddl.retry", "true");
+            DBMetadata dbMetadata = new DBMetadata(props);
+            dbMetadata.executeSystemQuery(writer.getConnection(), "CREATE DATABASE employees2");
+            dbMetadata.executeSystemQuery(writer.getConnection(), "CREATE DATABASE productsnew");
+
+            Thread.sleep(10000);
+            Injector injector = Guice.createInjector(new AppInjector());
+
+            executorService.execute(() -> {
+                try {
+                    clickHouseDebeziumEmbeddedApplication.start(injector.getInstance(DebeziumRecordParserService.class), props, false);
+                    DebeziumEmbeddedRestApi.startRestApi(props, injector, clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture()
+                            , new Properties());
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+
+            Thread.sleep(25000);
+
+            conn = ITCommon.connectToMySQL(mySqlContainer);
+            conn.prepareStatement("create table `newtable`(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
+            conn.prepareStatement("insert into newtable values('a', 1, 1)").execute();
+
+            conn.prepareStatement("create database products").execute();
+            conn.prepareStatement("create table products.prodtable(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
+            conn.prepareStatement("insert into products.prodtable values('a', 1, 1)").execute();
+
+            conn.prepareStatement("create database customers").execute();
+            conn.prepareStatement("create table customers.custtable(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
+            conn.prepareStatement("insert into customers.custtable values('a', 1, 1)").execute();
+
+            Thread.sleep(10000);
+
+            long col2 = 0L;
+            ResultSet version1Result = ITCommon.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'", writer.getConnection());
+            while (version1Result.next()) {
+                col2 = version1Result.getLong("col2");
             }
+            Thread.sleep(10000);
+            assertTrue(col2 == 1);
 
-        });
+            long productsCol2 = 0L;
+            ResultSet productsVersionResult = ITCommon.executeQueryWithResultSet("select col2 from productsnew.prodtable final where col1 = 'a'", writer.getConnection());
+            while (productsVersionResult.next()) {
+                productsCol2 = productsVersionResult.getLong("col2");
+            }
+            assertTrue(productsCol2 == 1);
+            Thread.sleep(10000);
 
-        Thread.sleep(25000);
+            long customersCol2 = 0L;
+            ResultSet customersVersionResult = ITCommon.executeQueryWithResultSet("select col2 from customers.custtable final where col1 = 'a'", writer.getConnection());
+            while (customersVersionResult.next()) {
+                customersCol2 = customersVersionResult.getLong("col2");
+            }
+            assertTrue(customersCol2 == 1);
 
-        // Employees table
-        Connection conn = ITCommon.connectToMySQL(mySqlContainer);
-        conn.prepareStatement("create table `newtable`(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
+            Thread.sleep(10000);
+            conn.prepareStatement("use products").execute();
+            conn.prepareStatement("rename table prodtable to prodtable2").execute();
+            Thread.sleep(10000);
 
-        // Insert a new row in the table
-        conn.prepareStatement("insert into newtable values('a', 1, 1)").execute();
+            ResultSet chRs = ITCommon.executeQueryWithResultSet("select * from productsnew.prodtable2", writer.getConnection());
+            boolean recordFound = false;
+            while (chRs.next()) {
+                recordFound = true;
+                assert chRs.getString("col1").equalsIgnoreCase("a");
+            }
+            assertTrue(recordFound);
 
+            conn.prepareStatement("rename table prodtable2 to prodtable3").execute();
 
-        conn.prepareStatement("create database products").execute();
-        conn.prepareStatement("create table products.prodtable(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
-        conn.prepareStatement("insert into products.prodtable values('a', 1, 1)").execute();
-
-        conn.prepareStatement("create database customers").execute();
-        conn.prepareStatement("create table customers.custtable(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
-        conn.prepareStatement("insert into customers.custtable values('a', 1, 1)").execute();
-
-
-        Thread.sleep(10000);
-
-        // Validate in Clickhouse the last record written is 29999
-
-
-        long col2 = 0L;
-        ResultSet version1Result = ITCommon.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'", writer.getConnection());
-        while(version1Result.next()) {
-            col2 = version1Result.getLong("col2");
+            Thread.sleep(10000);
+            chRs = ITCommon.executeQueryWithResultSet("select * from productsnew.prodtable3", writer.getConnection());
+            boolean prod3RecordFound = false;
+            while (chRs.next()) {
+                prod3RecordFound = true;
+                assert chRs.getString("col1").equalsIgnoreCase("a");
+            }
+            assertTrue(prod3RecordFound);
+        } finally {
+            ClickHouseDebeziumEmbeddedApplication.stop();
+            if (clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture() != null) {
+                clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
+            }
+            if (conn != null) {
+                conn.close();
+            }
+            executorService.shutdown();
+            HikariDbSource.close();
         }
-        Thread.sleep(10000);
-        assertTrue(col2 == 1);
-
-        long productsCol2 = 0L;
-        ResultSet productsVersionResult = ITCommon.executeQueryWithResultSet("select col2 from productsnew.prodtable final where col1 = 'a'", writer.getConnection());
-        while(productsVersionResult.next()) {
-            productsCol2 = productsVersionResult.getLong("col2");
-        }
-        assertTrue(productsCol2 == 1);
-        Thread.sleep(10000);
-
-        long customersCol2 = 0L;
-        ResultSet customersVersionResult = ITCommon.executeQueryWithResultSet("select col2 from customers.custtable final where col1 = 'a'", writer.getConnection());
-        while(customersVersionResult.next()) {
-            customersCol2 = customersVersionResult.getLong("col2");
-        }
-        assertTrue(customersCol2 == 1);
-
-
-        Thread.sleep(10000);
-        // Execute the query in MySQL to rename table.
-        conn.prepareStatement("use products").execute();
-        conn.prepareStatement("rename table prodtable to prodtable2").execute();
-        Thread.sleep(10000);
-//        ResultSet customersVersionResult2 = writer.executeQueryWithResultSet("select col2 from customers.custtable2 final where col1 = 'a'");
-//        while(customersVersionResult2.next()) {
-//            customersCol2 = customersVersionResult2.getLong("col2");
-//        }
-//        assertTrue(customersCol2 == 2);
-
-        // validate that the table prodtaable2 is present in clickhouse
-        ResultSet chRs = ITCommon.executeQueryWithResultSet("select * from productsnew.prodtable2", writer.getConnection());
-        boolean recordFound = false;
-        while(chRs.next()) {
-            recordFound = true;
-            assert chRs.getString("col1").equalsIgnoreCase("a");
-            //assert rs.getString("name").equalsIgnoreCase("test");
-        }
-
-        assertTrue(recordFound);
-
-
-        // Execute mysql to rename from prodtabl2 to prodtable3 without database prefix.
-        conn.prepareStatement("rename table prodtable2 to prodtable3").execute();
-
-        Thread.sleep(10000);
-        // Validate on CH that the table prodtable3 is present.
-         chRs = ITCommon.executeQueryWithResultSet("select * from productsnew.prodtable3", writer.getConnection());
-        boolean prod3RecordFound = false;
-        while(chRs.next()) {
-            prod3RecordFound = true;
-            assert chRs.getString("col1").equalsIgnoreCase("a");
-            //assert rs.getString("name").equalsIgnoreCase("test");
-        }
-        assertTrue(prod3RecordFound);
-
-        ClickHouseDebeziumEmbeddedApplication.stop();
-        clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().stop();
-        conn.close();
-        // Files.deleteIfExists( tmpFilePath);
-        executorService.shutdown();
-
-        HikariDbSource.close();
-
     }
 }

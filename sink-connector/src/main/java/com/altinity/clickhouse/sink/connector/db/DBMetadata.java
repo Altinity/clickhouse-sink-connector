@@ -178,7 +178,8 @@ public class DBMetadata {
                 log.error("Retry attempt ({}/{}) failed", retryCount,MAX_RETRIES, retryException);
                 // if config disable thread pool is false, then initiate new connection
                 if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
-                    conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(
+                            databaseName, HikariDbSource.urlOf(conn));
                 }
             }
         }
@@ -231,7 +232,8 @@ public class DBMetadata {
                 try {
                     if (conn == null || conn.isClosed()) {
                         if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
-                            conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                            conn = HikariDbSource.initiateNewConnectionIfClosed(
+                            databaseName, HikariDbSource.urlOf(conn));
                         }
                     }
                 } catch (SQLException sqlException) {
@@ -323,6 +325,46 @@ public class DBMetadata {
         }
 
         return versionColumn;
+    }
+
+    /**
+     * Returns the columns that make up the table's sorting key, in key order.
+     *
+     * <p>Used to decide whether an UPDATE moves a row to a different sorting
+     * key. When it does, the row's previous position must be tombstoned or the
+     * stale row survives forever alongside the updated one.</p>
+     *
+     * @param conn ClickHouse Connection.
+     * @param database The database name where the table is located.
+     * @param tableName The name of the table.
+     * @return The sorting-key columns in key order; empty when the table has an
+     *         empty sorting key ({@code ORDER BY tuple()}), is not found, or
+     *         cannot be queried.
+     */
+    public List<String> getSortingKeyColumns(final Connection conn, final String database,
+                                             final String tableName) {
+        List<String> sortingKeyColumns = new ArrayList<>();
+        if (conn == null) {
+            log.error("Error with DB connection, cannot read sorting key for {}.{}", database, tableName);
+            return sortingKeyColumns;
+        }
+        // sorting_key is the rendered ORDER BY expression, which may contain
+        // functions. Reading the column list from system.columns via
+        // is_in_sorting_key avoids having to parse it.
+        String query = String.format(
+                "SELECT name FROM system.columns WHERE database = '%s' AND table = '%s' "
+                        + "AND is_in_sorting_key = 1 ORDER BY position", database, tableName);
+        try (Statement stmt = conn.createStatement(); ResultSet rs = stmt.executeQuery(query)) {
+            while (rs.next()) {
+                sortingKeyColumns.add(rs.getString("name"));
+            }
+        } catch (Exception e) {
+            // Never fail the write path on this. An empty result makes the
+            // caller skip the tombstone, i.e. fall back to the previous
+            // behaviour rather than emitting a possibly wrong tombstone.
+            log.error("Error retrieving sorting key columns for {}.{}", database, tableName, e);
+        }
+        return sortingKeyColumns;
     }
 
     /**
@@ -475,7 +517,8 @@ public class DBMetadata {
 
             try {
                 if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
-                    conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(
+                            database, HikariDbSource.urlOf(conn));
                 }
             } catch (SQLException e1) {
                 log.error("Error initiating new connection retrying ({}/{})", retryCount,MAX_RETRIES,e1);
@@ -487,18 +530,16 @@ public class DBMetadata {
         retryCount = 0;
         while (retryCount < MAX_RETRIES) {
             try {
-                ResultSet columns = conn.getMetaData().getColumns(database, null, tableName, null);
+                String query = String.format(
+                        "SELECT name, type, default_kind FROM system.columns WHERE database = '%s' AND table = '%s' ORDER BY position",
+                        database, tableName);
+                ResultSet columns = conn.createStatement().executeQuery(query);
                 while (columns.next()) {
-                    String columnName = columns.getString("COLUMN_NAME");
-                    String typeName = columns.getString("TYPE_NAME");
+                    String columnName = columns.getString("name");
+                    String typeName = columns.getString("type");
+                    String defaultKind = columns.getString("default_kind");
 
-                    String isGeneratedColumn = columns.getString("IS_GENERATEDCOLUMN");
-                    String columnDefinition = columns.getString("COLUMN_DEF");
-                    String sqlDataType = columns.getString("SQL_DATA_TYPE");
-                    String dataType = columns.getString("DATA_TYPE");
-
-                    // Skip generated columns.
-                    if (isGeneratedColumn != null && isGeneratedColumn.equalsIgnoreCase("YES")) {
+                    if ("ALIAS".equals(defaultKind) || "MATERIALIZED".equals(defaultKind)) {
                         continue;
                     }
                     if (aliasColumns.contains(columnName)) {
@@ -514,7 +555,8 @@ public class DBMetadata {
                         retryCount,MAX_RETRIES, sq);
                 try {
                     if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
-                        conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                        conn = HikariDbSource.initiateNewConnectionIfClosed(
+                            database, HikariDbSource.urlOf(conn));
                     }
                 } catch (SQLException e1) {
                     log.error("Error initiating new connection, retrying ({}/{})", retryCount,MAX_RETRIES,e1);
@@ -586,7 +628,8 @@ public class DBMetadata {
             } catch (Exception e) {
                 log.error("Error getting alias columns, retrying ({}/{})", retryCount,MAX_RETRIES,e);
                 if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
-                    conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(
+                            databaseName, HikariDbSource.urlOf(conn));
                 }
                 retryCount++;
             }
@@ -613,12 +656,31 @@ public class DBMetadata {
             } catch(Exception e) {
                 log.error("Error executing query, retrying ({}/{})", retryCount,MAX_RETRIES,e);
                 if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
-                    conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(
+                            SYSTEM_DB, HikariDbSource.urlOf(conn));
                 }
                 retryCount++;
             }
         }
         return rs;
+    }
+
+    /**
+     * Checks whether the connection pool is able to hand out a connection for
+     * the system database.
+     *
+     * @return true if pooling is enabled and a pool exists.
+     */
+    private boolean canReconnectFromPool() {
+        try {
+            if (config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
+                return false;
+            }
+            return HikariDbSource.getInstance(SYSTEM_DB) != null;
+        } catch (Exception e) {
+            log.error("Error checking the connection pool state", e);
+            return false;
+        }
     }
 
     /**
@@ -636,15 +698,42 @@ public class DBMetadata {
         ResultSet rs = null;
         while (retryCount < MAX_RETRIES) {
             try {
-                rs = conn.prepareStatement(sql).executeQuery();
+                if (conn == null) {
+                    // createConnection() returns null when ClickHouse is
+                    // unreachable. Report it as a SQLException so that the
+                    // retry below is applied and callers that already handle
+                    // SQLException are not hit by a NullPointerException.
+                    throw new SQLException(
+                            "ClickHouse connection is not available for query: "
+                                    + sql);
+                }
+                PreparedStatement ps = conn.prepareStatement(sql);
+                // Use execute() so DDL/DML statements (e.g. CREATE DATABASE, CREATE TABLE,
+                // INSERT, SYSTEM ...) that do not produce a ResultSet are supported by
+                // strict JDBC drivers (clickhouse-jdbc >= 0.9.x, which rejects executeQuery()
+                // for statements that do not return a ResultSet).
+                if (ps.execute()) {
+                    rs = ps.getResultSet();
+                }
                 break;
             } catch (SQLException sqle) {
+                // A missing connection can only be recovered from the pool. If
+                // no pool can supply one, the initial connection never
+                // succeeded and retrying would just sleep out the whole retry
+                // budget, so fail immediately instead.
+                if (conn == null && !canReconnectFromPool()) {
+                    log.error("ClickHouse connection is not available and no "
+                            + "connection pool can provide one, giving up on "
+                            + "query: {}", sql, sqle);
+                    break;
+                }
                 try {
                     log.error("Error executing query: Retrying ({}/{})" ,retryCount,MAX_RETRIES, sqle);
                     Thread.sleep(1000 * retryCount);
                     // Get a new connection from pool.
                     if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
-                        conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                        conn = HikariDbSource.initiateNewConnectionIfClosed(
+                            SYSTEM_DB, HikariDbSource.urlOf(conn));
                     }
                 } catch (Exception e) {
                     log.error("Error initiating DB connection, retrying ({}/{})",retryCount,MAX_RETRIES, e);
@@ -681,11 +770,33 @@ public class DBMetadata {
                     return result;
                 }
 
-                ResultSet columns = conn.getMetaData().getColumns(null, database,
-                        tableName, null);
+                // Query system.columns directly instead of
+                // DatabaseMetaData.getColumns(null, database, tableName, null).
+                //
+                // getColumns() treats its schemaPattern/tableNamePattern
+                // arguments as JDBC LIKE patterns, in which '_' matches ANY
+                // single character and '%' matches any sequence. A table whose
+                // name contains an underscore therefore also matches sibling
+                // tables: for `under_score_t`, getColumns() additionally
+                // returned the columns of `underXscore_t`, silently merging
+                // two schemas into one column map. Verified live against
+                // ClickHouse 24.8.8 with clickhouse-jdbc 0.9.8 on BOTH driver
+                // generations (V1 and V2), so this is a latent defect in the
+                // original code rather than a driver-migration regression.
+                // Underscores are extremely common in replicated MySQL table
+                // names, and a wrong column map produces wrong INSERT column
+                // lists — i.e. data corruption.
+                //
+                // system.columns uses exact equality, is driver-independent,
+                // and matches how the sibling metadata methods in this class
+                // already read column metadata.
+                String query = String.format(
+                        "SELECT name, type FROM system.columns WHERE database = '%s' AND table = '%s' ORDER BY position",
+                        database, tableName);
+                ResultSet columns = conn.createStatement().executeQuery(query);
                 while (columns.next()) {
-                    String columnName = columns.getString("COLUMN_NAME");
-                    String typeName = columns.getString("TYPE_NAME");
+                    String columnName = columns.getString("name");
+                    String typeName = columns.getString("type");
 
                     result.put(columnName, typeName);
                 }
@@ -696,7 +807,8 @@ public class DBMetadata {
                         retryCount,MAX_RETRIES,sq);
                 try {
                     if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
-                        conn = HikariDbSource.initiateNewConnectionIfClosed(database);
+                        conn = HikariDbSource.initiateNewConnectionIfClosed(
+                            database, HikariDbSource.urlOf(conn));
                     }
                 } catch (SQLException e1) {
                     log.error("Error initiating new connection, retrying ({}/{})",retryCount,MAX_RETRIES,e1);
@@ -727,7 +839,8 @@ public class DBMetadata {
             } catch (SQLException e) {
                 log.error("*** Error: Truncate table statement error, retry attempt ({}/{}) failed" ,retryCount,MAX_RETRIES, e);
                 if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
-                    conn = HikariDbSource.initiateNewConnectionIfClosed(databaseName);
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(
+                            databaseName, HikariDbSource.urlOf(conn));
                 }
                 retryCount++;
             }
@@ -752,7 +865,8 @@ public class DBMetadata {
             } catch (SQLException e) {
                 log.error("Error getting prepared statement, retry attempt ({}/{}) failed",retryCount,MAX_RETRIES, e);
                 if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
-                    conn = HikariDbSource.initiateNewConnectionIfClosed(SYSTEM_DB);
+                    conn = HikariDbSource.initiateNewConnectionIfClosed(
+                            SYSTEM_DB, HikariDbSource.urlOf(conn));
                 }
                 retryCount++;
             }

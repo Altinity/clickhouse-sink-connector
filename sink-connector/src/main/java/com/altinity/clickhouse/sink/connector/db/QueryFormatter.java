@@ -11,8 +11,10 @@ import org.apache.logging.log4j.Logger;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Class responsible for generating raw queries for the ClickHouse JDBC library.
@@ -79,10 +81,39 @@ public class QueryFormatter {
             boolean includeKafkaMetaData,
             boolean includeRawData,
             String rawDataColumn, String dbName) {
+        return getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypeMap,
+                includeKafkaMetaData, includeRawData, rawDataColumn, dbName, null);
+    }
+
+    /**
+     * Overload accepting the configured ReplacingMergeTree delete column name.
+     *
+     * <p>The delete column is configurable
+     * ({@code replacingmergetree.delete.column}), so it cannot be recognised
+     * from a constant. It is never present in the source record but is
+     * populated by the connector, so it must not be filtered out of the
+     * INSERT column list.</p>
+     *
+     * @param tableName               the name of the ClickHouse table.
+     * @param fields                  the list of fields from the source schema.
+     * @param columnNameToDataTypeMap a map of column names to their corresponding data types.
+     * @param includeKafkaMetaData    flag indicating whether Kafka metadata columns should be included.
+     * @param includeRawData          flag indicating whether raw data should be included in the query.
+     * @param rawDataColumn           the name of the raw data column.
+     * @param dbName                  the name of the database.
+     * @param deleteColumn            the configured ReplacingMergeTree delete column, may be null.
+     * @return a MutablePair containing the generated INSERT query and a map of column names to their indices.
+     */
+    public MutablePair<String, Map<String, Integer>> getInsertQueryUsingInputFunction(
+            String tableName, List<Field> fields,
+            Map<String, String> columnNameToDataTypeMap,
+            boolean includeKafkaMetaData,
+            boolean includeRawData,
+            String rawDataColumn, String dbName, String deleteColumn) {
 
         // Create column data structures
         ColumnData columnData = createColumns(tableName, fields, columnNameToDataTypeMap,
-                includeKafkaMetaData, includeRawData, rawDataColumn, dbName);
+                includeKafkaMetaData, includeRawData, rawDataColumn, dbName, deleteColumn);
 
         if (columnData == null) {
             return null;
@@ -90,8 +121,9 @@ public class QueryFormatter {
 
         // Construct the full insert query
         String tableWithBackTicks = "`" + tableName + "`";
-        String insertQuery = String.format("insert into %s(%s) select %s from input('%s')",
-                tableWithBackTicks, columnData.colNamesDelimited, columnData.colNamesDelimited, columnData.colNamesToDataTypes);
+        String placeholders = generatePlaceholders(columnData.colNameToIndexMap.size());
+        String insertQuery = String.format("INSERT INTO %s(%s) VALUES (%s)",
+                tableWithBackTicks, columnData.colNamesDelimited, placeholders);
 
         // Return the query and column index map
         MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
@@ -165,14 +197,14 @@ public class QueryFormatter {
 
     /**
      * Extracts the precision (scale) from a DateTime64 data type.
-     * Handles formats like "DateTime64(3)" or "DateTime64(3, 'UTC')".
+     * Handles formats like "DateTime64(3)", "DateTime64(3, 'UTC')" or "Nullable(DateTime64(3))".
      *
      * @param dataType the DateTime64 data type string
      * @return the precision value as a string, defaults to "3" if not found
      */
     private String extractDateTime64Precision(String dataType) {
         // Find the opening parenthesis
-        int start = dataType.indexOf('(');
+        int start = dataType.lastIndexOf('(');
         if (start == -1) {
             return "3"; // Default precision
         }
@@ -271,6 +303,35 @@ public class QueryFormatter {
      */
     private ColumnData createColumns(String tableName, List<Field> fields, Map<String, String> columnNameToDataTypeMap,
                                      boolean includeKafkaMetaData, boolean includeRawData, String rawDataColumn, String dbName) {
+        return createColumns(tableName, fields, columnNameToDataTypeMap, includeKafkaMetaData,
+                includeRawData, rawDataColumn, dbName, null);
+    }
+
+    /**
+     * Returns true for columns the connector populates itself rather than
+     * copying from the source record: {@code _version}, {@code is_deleted},
+     * {@code _sign}, the replication-history validity columns, and the
+     * configured ReplacingMergeTree delete column. These are never present in
+     * the incoming record's schema and must always remain in the INSERT
+     * column list.
+     *
+     * @param colName      the ClickHouse column name to test.
+     * @param deleteColumn the configured delete column name, may be null.
+     * @return true if the connector populates this column itself.
+     */
+    private boolean isConnectorManagedColumn(String colName, String deleteColumn) {
+        return colName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)
+                || colName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)
+                || colName.equalsIgnoreCase(ClickHouseDbConstants.SIGN_COLUMN)
+                || colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)
+                || colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)
+                || (deleteColumn != null && !deleteColumn.isEmpty()
+                        && colName.equalsIgnoreCase(deleteColumn));
+    }
+
+    private ColumnData createColumns(String tableName, List<Field> fields, Map<String, String> columnNameToDataTypeMap,
+                                     boolean includeKafkaMetaData, boolean includeRawData, String rawDataColumn,
+                                     String dbName, String deleteColumn) {
 
         if (fields == null) {
             log.error("getInsertQueryUsingInputFunction, fields empty");
@@ -283,11 +344,42 @@ public class QueryFormatter {
         StringBuilder colNamesDelimited = new StringBuilder();
         StringBuilder colNamesToDataTypes = new StringBuilder();
 
+        // Names the incoming record actually carries. A record buffered before an
+        // ALTER TABLE ... ADD/CHANGE COLUMN does not carry the columns that the
+        // ALTER introduced, yet columnNameToDataTypeMap reflects the ClickHouse
+        // table AFTER the ALTER. Including such a column in the INSERT column list
+        // binds it to NULL and silently overwrites the real source value (row
+        // counts still match, so count-based checksums report the table clean).
+        // Omitting it from the column list instead lets ClickHouse apply the
+        // column's DEFAULT, which is what the ALTER established.
+        Set<String> recordFieldNames = new HashSet<>();
+        for (Field field : fields) {
+            if (field != null && field.name() != null) {
+                recordFieldNames.add(field.name().toLowerCase());
+            }
+        }
+
         // Loop over each column to generate the insert query and map data types
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
             String sourceColumnName = entry.getKey();
             String sourceColumnNameWithBackTicks = "`" + entry.getKey() + "`";
             String dataType = ClickHouseUtils.escape(entry.getValue(), '\'');
+
+            // Skip ClickHouse columns absent from this record's schema. Columns the
+            // connector itself populates (Kafka metadata, raw data, _version,
+            // is_deleted/_sign, replication-history) are never present in the source
+            // record and must stay in the column list.
+            if (!recordFieldNames.contains(sourceColumnName.toLowerCase())
+                    && !isKafkaMetaDataColumn(sourceColumnName)
+                    && !sourceColumnName.equalsIgnoreCase(rawDataColumn)
+                    && !isConnectorManagedColumn(sourceColumnName, deleteColumn)) {
+                log.debug(String.format(
+                        "Table Name: %s, Database: %s, Column(%s) omitted from INSERT: "
+                                + "not present in this record's schema (pre-ALTER record); "
+                                + "the ClickHouse DEFAULT applies instead of NULL",
+                        tableName, dbName, sourceColumnNameWithBackTicks));
+                continue;
+            }
 
             // Override data type if necessary
             if (ColumnOverrides.getColumnOverride(dataType) != null) {
@@ -367,7 +459,29 @@ public class QueryFormatter {
 
         // Construct the full insert query
         String tableWithBackTicks = "`" + tableName + "`";
-        return String.format("insert into %s select %s from input('%s')", tableWithBackTicks, colNamesDelimited, colNamesToDataTypes);
+        String placeholders = generatePlaceholders(columnNameToDataTypeMap.size());
+        return String.format("INSERT INTO %s(%s) VALUES (%s)",
+                tableWithBackTicks, colNamesDelimited, placeholders);
+    }
+
+    /**
+     * Generates a comma-separated list of JDBC parameter placeholders.
+     *
+     * @param count number of placeholders to generate
+     * @return placeholder string (e.g. "?,?,?")
+     */
+    private static String generatePlaceholders(int count) {
+        if (count <= 0) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < count; i++) {
+            if (i > 0) {
+                sb.append(",");
+            }
+            sb.append("?");
+        }
+        return sb.toString();
     }
 
     /**

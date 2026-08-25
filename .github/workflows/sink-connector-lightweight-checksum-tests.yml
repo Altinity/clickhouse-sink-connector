@@ -1,0 +1,88 @@
+name: Lightweight - Checksum Integration Test
+
+on:
+  workflow_call:
+    inputs:
+      SINK_CONNECTOR_IMAGE:
+        description: "Lightweight connector docker image"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      SINK_CONNECTOR_IMAGE:
+        description: "Lightweight connector docker image"
+        required: true
+        type: string
+
+env:
+  SINK_CONNECTOR_IMAGE: ${{ inputs.SINK_CONNECTOR_IMAGE }}
+  CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE: ${{ inputs.SINK_CONNECTOR_IMAGE }}
+  # Keep the compose stack up after pytest so we can capture logs; we tear it down
+  # explicitly in a final step.
+  KEEP_STACK: "1"
+
+jobs:
+  checksum-lightweight:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # For PRs from forks the image is not pushed to the registry, but the build
+      # workflow uploads it as a tar artifact. Load it so docker-compose can use it.
+      - uses: actions/download-artifact@v4
+        if: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' && github.event_name != 'workflow_dispatch' }}
+        with:
+          name: clickhouse-sink-connector_${{ github.event.number }}-${{ github.sha }}-lt.tar.gz
+
+      - name: Load Docker image
+        if: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' && github.event_name != 'workflow_dispatch' }}
+        run: |
+          docker load < clickhouse-sink-connector_${{ github.event.number }}-${{ github.sha }}-lt.tar.gz
+          docker image ls
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install test dependencies
+        run: pip3 install -r sink-connector-lightweight/tests/checksum/requirements.txt
+
+      # Each checksum suite owns its own compose stack (session fixture + KEEP_STACK=1),
+      # so they must run as separate pytest invocations with a teardown between them.
+      - name: Run checksum integration test (init_mysql seed)
+        run: pytest -v -s sink-connector-lightweight/tests/checksum/test_checksum_replication.py
+
+      - name: Dump connector / compose logs on init_mysql failure
+        if: failure()
+        working-directory: sink-connector-lightweight/docker
+        run: docker compose -f docker-compose.yml logs --no-color > compose-logs-init-mysql.txt 2>&1 || true
+
+      - name: Tear down compose stack before sysbench
+        if: always()
+        working-directory: sink-connector-lightweight/docker
+        run: docker compose -f docker-compose.yml down -v --remove-orphans || true
+
+      - name: Run checksum integration test (sysbench seed)
+        run: pytest -v -s sink-connector-lightweight/tests/checksum/test_sysbench_checksum_replication.py
+
+      - name: Dump connector / compose logs on sysbench failure
+        if: failure()
+        working-directory: sink-connector-lightweight/docker
+        run: docker compose -f docker-compose.yml logs --no-color > compose-logs-sysbench.txt 2>&1 || true
+
+      - name: Upload compose logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksum-lightweight-compose-logs
+          path: |
+            sink-connector-lightweight/docker/compose-logs-init-mysql.txt
+            sink-connector-lightweight/docker/compose-logs-sysbench.txt
+          if-no-files-found: ignore
+
+      - name: Tear down compose stack
+        if: always()
+        working-directory: sink-connector-lightweight/docker
+        run: docker compose -f docker-compose.yml down -v --remove-orphans || true

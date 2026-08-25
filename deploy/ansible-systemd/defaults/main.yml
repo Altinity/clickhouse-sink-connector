@@ -1,0 +1,37 @@
+# Defaults for the sink-connector systemd deployment role
+
+# Whether to start/restart the sink-connector service after deployment.
+# Set to false (-e start_service=false) to deploy configs without starting.
+start_service: true
+
+# Default for schema.history.internal.skip.unparseable.ddl.
+# true prevents connector crashes on DDL Debezium cannot parse
+# (e.g. MySQL 8.0+ functional indexes).
+# Can be overridden per connector via item.sink_connector.skip_unparseable_ddl
+sink_connector_skip_unparseable_ddl_default: true
+
+# The JAR symlink name the service file references.
+# Allows hot-swapping connector versions without editing the unit file:
+# drop new JAR -> repoint symlink -> systemctl --user restart.
+sink_connector_jar_symlink_name: "clickhouse-debezium-embedded-latest.jar"
+
+# Deployments are declared per environment in inventory, e.g.:
+#
+# sink_connector_deployments:
+#   - name: orders-sink-prod
+#     deployment_mode: systemd
+#     systemd:
+#       sink_connector_version: "2.8.0"
+#       local_sink_connector_bin_dir: /opt/sink-connector/bin
+#       local_jar_filename: clickhouse-debezium-embedded.jar
+#       local_java_bin_dir: /usr/lib/jvm/java-17/bin
+#       sink_connector_java_opts: "-Xmx8G -Xms8G"
+#       timezone: "UTC"
+#     mysql: { ... }
+#     clickhouse: { ... }
+#     offset_clickhouse: { ... }
+#     schema_history_clickhouse: { ... }
+#     sink_connector: { ... }
+#
+# See README.md for a complete example.
+sink_connector_deployments: []

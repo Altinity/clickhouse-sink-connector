@@ -31,7 +31,10 @@ services:
       file: clickhouse-sink-connector-lt-service.yml
       service: clickhouse-sink-connector-lt
     depends_on:
-      - clickhouse
+      clickhouse:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:

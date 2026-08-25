@@ -5,6 +5,8 @@ import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
+import io.debezium.engine.ChangeEvent;
+import org.apache.kafka.connect.source.SourceRecord;
 import org.json.simple.parser.ParseException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,6 +16,7 @@ import java.util.List;
 
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertEquals;
 
 public class DebeziumChangeEventCaptureTest {
 
@@ -161,6 +164,189 @@ public class DebeziumChangeEventCaptureTest {
         // Test case insensitivity
         String ddlToIgnoreCaseInsensitive = "alter table trade_prod.bundle_detail drop partition p20230106";
         assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnoreCaseInsensitive));
+    }
+
+    /**
+     * A rename must invalidate the cached writer for the OLD table name as well
+     * as the new one. Debezium's tableChanges entry identifies a renamed table
+     * by its NEW name only, so the old name has to be recovered from the DDL
+     * text -- otherwise a writer keyed to the old name keeps inserting against
+     * a table that no longer exists.
+     */
+    @Test
+    @DisplayName("RENAME TABLE yields both the source and the destination table")
+    public void shouldExtractBothSidesOfRenameTable() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        List<String> names = capture.getRenamedTableNames("RENAME TABLE orders TO orders_archive");
+
+        assertTrue("source table must be invalidated", names.contains("orders"));
+        assertTrue("destination table must be invalidated", names.contains("orders_archive"));
+    }
+
+    @Test
+    @DisplayName("ALTER TABLE ... RENAME TO yields both the source and the destination table")
+    public void shouldExtractBothSidesOfAlterTableRename() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        List<String> names = capture.getRenamedTableNames("ALTER TABLE orders RENAME TO orders_archive");
+
+        assertTrue("source table must be invalidated", names.contains("orders"));
+        assertTrue("destination table must be invalidated", names.contains("orders_archive"));
+    }
+
+    /**
+     * Guards against a keyword suffix being mistaken for a table name: an
+     * unanchored exclusion of the RENAME keyword still lets the scan resume one
+     * character in and match "ENAME" as the rename source, which would
+     * invalidate a table that does not exist and mask the real one.
+     */
+    @Test
+    @DisplayName("ALTER TABLE ... RENAME TO yields exactly two tables, no keyword fragments")
+    public void shouldNotExtractKeywordFragmentsFromAlterTableRename() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        List<String> names = capture.getRenamedTableNames("ALTER TABLE orders RENAME TO orders_archive");
+
+        assertEquals("only the two real tables may be returned", 2, names.size());
+        assertFalse("a fragment of the RENAME keyword must not be treated as a table",
+                names.contains("ENAME"));
+    }
+
+    @Test
+    @DisplayName("Database qualifiers and quoting are stripped from renamed table names")
+    public void shouldStripQualifiersAndQuotingFromRenamedNames() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        List<String> names = capture.getRenamedTableNames(
+                "RENAME TABLE `shop`.`orders` TO `shop`.`orders_archive`");
+
+        assertTrue("source table must be invalidated", names.contains("orders"));
+        assertTrue("destination table must be invalidated", names.contains("orders_archive"));
+    }
+
+    @Test
+    @DisplayName("A multi-pair RENAME TABLE yields every table involved")
+    public void shouldExtractEveryPairOfMultiRename() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        List<String> names = capture.getRenamedTableNames("RENAME TABLE a TO b, c TO d");
+
+        assertTrue(names.contains("a"));
+        assertTrue(names.contains("b"));
+        assertTrue(names.contains("c"));
+        assertTrue(names.contains("d"));
+    }
+
+    @Test
+    @DisplayName("A DDL with no rename yields no table names")
+    public void shouldReturnNothingForNonRenameDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+
+        assertTrue(capture.getRenamedTableNames(
+                "ALTER TABLE orders ADD COLUMN total INT").isEmpty());
+        assertTrue(capture.getRenamedTableNames("").isEmpty());
+        assertTrue(capture.getRenamedTableNames(null).isEmpty());
+    }
+
+    /** Builds a schema-change event carrying the given DDL statement. */
+    private static ChangeEvent<SourceRecord, SourceRecord> ddlEvent(String ddl) {
+        return ddlEvent(ddl, "DDL");
+    }
+
+    /**
+     * Builds a schema-change event whose DDL field carries the given name.
+     * Debezium spells it differently across connectors, and Struct.get is
+     * case-sensitive, so both spellings must resolve.
+     */
+    private static ChangeEvent<SourceRecord, SourceRecord> ddlEvent(String ddl, String fieldName) {
+        Schema schema = SchemaBuilder.struct()
+                .field(fieldName, Schema.OPTIONAL_STRING_SCHEMA)
+                .build();
+        Struct value = new Struct(schema);
+        if (ddl != null) {
+            value.put(fieldName, ddl);
+        }
+        SourceRecord record = new SourceRecord(null, null, "topic", schema, value);
+        return new ChangeEvent<SourceRecord, SourceRecord>() {
+            @Override
+            public SourceRecord key() {
+                return null;
+            }
+
+            @Override
+            public SourceRecord value() {
+                return record;
+            }
+
+            @Override
+            public String destination() {
+                return "topic";
+            }
+
+            @Override
+            public Integer partition() {
+                return null;
+            }
+        };
+    }
+
+    /** Builds a row-change event with no DDL field at all. */
+    private static ChangeEvent<SourceRecord, SourceRecord> rowEvent() {
+        Struct value = getKafkaStruct();
+        SourceRecord record = new SourceRecord(null, null, "topic", value.schema(), value);
+        return new ChangeEvent<SourceRecord, SourceRecord>() {
+            @Override
+            public SourceRecord key() {
+                return null;
+            }
+
+            @Override
+            public SourceRecord value() {
+                return record;
+            }
+
+            @Override
+            public String destination() {
+                return "topic";
+            }
+
+            @Override
+            public Integer partition() {
+                return null;
+            }
+        };
+    }
+
+    /**
+     * The batch loop uses this predicate to decide when to hand pending rows
+     * to the consumers before a DDL is applied. A false negative reintroduces
+     * the ordering inversion; a false positive would flush on every row and
+     * defeat batching, so both directions are asserted.
+     */
+    @Test
+    @DisplayName("A DDL event is recognised so pending rows can be flushed before it")
+    public void shouldRecogniseDDLRecord() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+
+        assertTrue("uppercase DDL field must resolve",
+                capture.isDDLRecord(ddlEvent("ALTER TABLE orders ADD COLUMN total INT", "DDL")));
+        assertTrue("lowercase ddl field must resolve",
+                capture.isDDLRecord(ddlEvent("ALTER TABLE orders ADD COLUMN total INT", "ddl")));
+    }
+
+    @Test
+    @DisplayName("A row-change event is not treated as DDL")
+    public void shouldNotTreatRowChangeAsDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+
+        assertFalse("a row event must not trigger a pre-DDL flush",
+                capture.isDDLRecord(rowEvent()));
+    }
+
+    @Test
+    @DisplayName("An empty, absent or null DDL statement is not treated as DDL")
+    public void shouldNotTreatEmptyDDLAsDDL() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+
+        assertFalse(capture.isDDLRecord(ddlEvent("")));
+        assertFalse(capture.isDDLRecord(ddlEvent(null)));
+        assertFalse(capture.isDDLRecord(null));
     }
 
     @Test

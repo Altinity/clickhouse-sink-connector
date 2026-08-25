@@ -12,11 +12,14 @@ import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Injector;
 import io.javalin.Javalin;
 import io.javalin.http.HttpStatus;
+import io.javalin.http.UnauthorizedResponse;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.json.simple.JSONObject;
 import org.json.simple.parser.JSONParser;
 
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.HashMap;
 import java.sql.Connection;
 import java.util.Properties;
@@ -83,7 +86,56 @@ public class DebeziumEmbeddedRestApi {
             cliPort = "7000";
         }
 
+        boolean authEnabled = Boolean.parseBoolean(
+                props.getProperty(SinkConnectorLightWeightConfig.REST_API_AUTH_ENABLED, "false"));
+        String authUsername = props.getProperty(SinkConnectorLightWeightConfig.REST_API_AUTH_USERNAME, "");
+        String authPassword = props.getProperty(SinkConnectorLightWeightConfig.REST_API_AUTH_PASSWORD, "");
+
+        if (authEnabled && (authUsername.isEmpty() || authPassword.isEmpty())) {
+            log.warn("REST API auth is enabled but username or password is not configured. "
+                    + "Set rest.api.auth.username and rest.api.auth.password.");
+        }
+
+        // `app` is static, so a second startRestApi() in the same JVM would call
+        // Javalin.start() again on the same port and throw
+        // JavalinBindException("Port already in use"). That is exactly what
+        // happens in the integration suite, where several tests each bring up
+        // the embedded application in one forked JVM: the first bind wins and
+        // every later one dies in a pool thread, failing the job on a port
+        // collision rather than on anything the test was asserting. Reuse the
+        // already-running server instead of racing it.
+        if (app != null) {
+            log.info("REST API already running on port {}; reusing the existing "
+                    + "server instead of binding again", cliPort);
+            return;
+        }
         app = Javalin.create().start(Integer.parseInt(cliPort));
+
+        if (authEnabled) {
+            app.before(ctx -> {
+                String authHeader = ctx.header("Authorization");
+                if (authHeader == null || !authHeader.startsWith("Basic ")) {
+                    ctx.header("WWW-Authenticate", "Basic realm=\"Sink Connector API\"");
+                    throw new UnauthorizedResponse("Authentication required");
+                }
+
+                String base64Credentials = authHeader.substring("Basic ".length());
+                String credentials = new String(Base64.getDecoder().decode(base64Credentials), StandardCharsets.UTF_8);
+                int separatorIndex = credentials.indexOf(':');
+                if (separatorIndex < 0) {
+                    throw new UnauthorizedResponse("Invalid credentials format");
+                }
+
+                String providedUser = credentials.substring(0, separatorIndex);
+                String providedPass = credentials.substring(separatorIndex + 1);
+                if (!authUsername.equals(providedUser) || !authPassword.equals(providedPass)) {
+                    throw new UnauthorizedResponse("Invalid credentials");
+                }
+            });
+            log.info("REST API Basic Auth is enabled");
+        } else {
+            log.info("REST API authentication is disabled");
+        }
         app.get("/", ctx -> {
             ctx.result("Hello World");
         });
@@ -280,8 +332,14 @@ public class DebeziumEmbeddedRestApi {
      * Stops the Javalin REST API server.
      */
     public static void stop() {
-        if (app != null)
+        if (app != null) {
             app.stop();
+            // Clear the reference so a later startRestApi() binds a fresh
+            // server. Leaving a stopped instance here would make the
+            // already-running check above short-circuit and silently skip the
+            // restart, leaving the REST API dead after any stop/start cycle.
+            app = null;
+        }
     }
 
     /**

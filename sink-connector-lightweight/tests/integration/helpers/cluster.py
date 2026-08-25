@@ -743,6 +743,45 @@ class Cluster(object):
         return r
 
 
+#: Escapes that bash removed when SQL was interpolated into a double-quoted
+#: shell word. Only the characters bash treats specially inside double quotes
+#: are listed - inside double quotes bash strips a backslash ONLY before one
+#: of $ ` " \ and newline, and leaves every other backslash sequence intact
+#: (so ``\n``, ``\t`` and MySQL's own ``\%`` reach the client untouched and
+#: must NOT be rewritten here).
+_SHELL_DQUOTE_ESCAPES = {
+    r"\`": "`",
+    r"\$": "$",
+    r"\"": '"',
+    "\\\\": "\\",
+}
+
+_SHELL_DQUOTE_ESCAPE_RE = re.compile(r"\\[`$\"\\]")
+
+
+def _unescape_shell_quoted_sql(sql):
+    """Undo the shell-level unescaping the old ``echo -e`` path performed.
+
+    Historically every query was interpolated into a double-quoted shell word
+    (``echo -e "{sql}" | mysql``), so bash consumed one level of escaping
+    before the client ever saw the SQL. The test suite is written against that
+    behaviour: it spells quoted identifiers ``\\`{table}\\``` precisely so that
+    bash would strip the backslashes and MySQL would receive ``` `table` ```.
+
+    Routing the SQL through a temp file removed the shell from the path, which
+    is what makes it injection-safe - but it also removed that unescaping step,
+    so the backslashes now reach the client verbatim and MySQL rejects the
+    statement with ``ERROR at line 1: Unknown command '\\`'``.
+
+    Performing the same removal here keeps the bytes delivered to the client
+    identical to the old path, so the ~90 call sites that rely on the old
+    spelling continue to work, without reintroducing the shell.
+    """
+    return _SHELL_DQUOTE_ESCAPE_RE.sub(
+        lambda m: _SHELL_DQUOTE_ESCAPES[m.group(0)], sql
+    )
+
+
 class DatabaseNode(Node):
     """Common tools for Database nodes."""
 
@@ -794,9 +833,9 @@ class DatabaseNode(Node):
         if hasattr(current().context, "default_query_settings"):
             query_settings += current().context.default_query_settings
 
-        if len(sql) > 1024:
+        if True:  # Always use temp file to prevent shell injection (was: len(sql) > 1024)
             with tempfile.NamedTemporaryFile("w", encoding="utf-8") as query:
-                query.write(sql)
+                query.write(_unescape_shell_quoted_sql(sql))
                 query.flush()
 
                 client_options = ""
@@ -828,28 +867,8 @@ class DatabaseNode(Node):
                     except ExpectTimeoutError:
                         self.cluster.close_bash(None)
                         raise
-        else:
-            client_options = ""
-            for setting in query_settings:
-                name, value = setting
-                client_options += f' --{name} "{value}"'
-
-            if max_query_output_in_bytes != "-0":
-                command = f'(set -o pipefail && echo -e "{sql}" | {client_command}{client_options} 2>&1 | head -c {max_query_output_in_bytes})'
-            else:
-                command = f'echo -e "{sql}" | {client_command}{client_options} 2>&1'
-
-            with (
-                step("executing command", description=command, format_description=False)
-                if steps
-                else NullStep()
-            ):
-                try:
-                    r = self.cluster.bash(self.name)(command, *args, **kwargs)
-                    time.sleep(0.5)
-                except ExpectTimeoutError:
-                    self.cluster.close_bash(self.name)
-                    raise
+        # Removed: vulnerable echo -e SQL path that allowed shell injection.
+        # All queries now use the temp file path above.
 
         if retry_count and retry_count > 0:
             if any(msg in r.output for msg in messages_to_retry):
@@ -1064,7 +1083,7 @@ class SinkConnector(DatabaseNode):
 
     def show_replication_status(self):
         """Show ClickHouse Sink Connector replication status using sink-connector-client script."""
-        with Given("I change ClickHouse Sink Connector replica source"):
+        with Given("I show ClickHouse Sink Connector replication status"):
             self.command(
                 command=f"{self.sink_connector_cli} show_replica_status",
                 timeout=300,
@@ -1337,6 +1356,7 @@ class ClickHouseNode(DatabaseNode):
                         r = self.cluster.bash(None)(command, *args, **kwargs)
                     except ExpectTimeoutError:
                         self.cluster.close_bash(None)
+                        raise
         else:
             command = f'set -o pipefail && echo -e "{sql}" | {client} | {hash_utility}'
             for setting in query_settings:
@@ -1351,6 +1371,7 @@ class ClickHouseNode(DatabaseNode):
                     r = self.cluster.bash(self.name)(command, *args, **kwargs)
                 except ExpectTimeoutError:
                     self.cluster.close_bash(self.name)
+                    raise
 
         with Then(f"exitcode should be 0") if steps else NullStep():
             assert r.exitcode == 0, error(r.output)
@@ -1412,6 +1433,7 @@ class ClickHouseNode(DatabaseNode):
                         r = self.cluster.bash(None)(command, *args, **kwargs)
                     except ExpectTimeoutError:
                         self.cluster.close_bash(None)
+                        raise
         else:
             command = f'diff <(echo -e "{sql}" | {self.cluster.docker_compose} exec -T {self.name} {client}) {expected_output}'
             for setting in query_settings:
@@ -1426,6 +1448,7 @@ class ClickHouseNode(DatabaseNode):
                     r = self.cluster.bash(None)(command, *args, **kwargs)
                 except ExpectTimeoutError:
                     self.cluster.close_bash(None)
+                    raise
 
         with Then(f"exitcode should be 0") if steps else NullStep():
             assert r.exitcode == 0, error(r.output)

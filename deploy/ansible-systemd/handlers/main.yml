@@ -1,0 +1,10 @@
+---
+- name: restart sink connectors
+  ansible.builtin.systemd:
+    name: "sink-connector-{{ item.name }}.service"
+    state: restarted
+    scope: user
+  loop: "{{ systemd_deployments }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: start_service | bool

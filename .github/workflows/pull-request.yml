@@ -17,6 +17,12 @@ jobs:
       IMAGE_TAG: ${{ github.event.number }}-${{ github.sha }}
       attach_stable_lightweight_jar_artifact: true
 
+  checksum-tests-lightweight:
+    needs: [build-kafka-lightweight]
+    uses: ./.github/workflows/sink-connector-lightweight-checksum-tests.yml
+    with:
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
+
 #  testflows-kafka:
 #    needs: [build-kafka-lightweight]
 #    uses: ./.github/workflows/testflows-sink-connector-kafka.yml

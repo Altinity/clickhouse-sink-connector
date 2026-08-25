@@ -89,5 +89,10 @@ debezium:
   pod:
     mountPath: "/usr/share/debezium/storage"
 
+### Connector safety settings
+connector:
+  snapshotMode: "schema_only"
+  disableDropTruncate: "true"
+
 #### Postgres connector
-postgres: true 
+postgres: true

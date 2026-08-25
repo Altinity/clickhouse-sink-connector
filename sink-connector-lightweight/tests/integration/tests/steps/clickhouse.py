@@ -61,7 +61,7 @@ def check_column(
                     primary_key = node.query(
                         f"SELECT is_in_primary_key FROM system.columns WHERE database = '{database}' AND table = '{table_name}' AND name = '{column_name}' LIMIT 1 FORMAT TabSeparated"
                     )
-                    assert primary_key.output.strip() == 1, error(
+                    assert primary_key.output.strip() == "1", error(
                         f"Column {column_name} is not a primary key"
                     )
 

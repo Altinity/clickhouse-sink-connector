@@ -72,6 +72,7 @@ public enum ClickHouseSinkConnectorConfigVariables {
     RESTART_EVENT_LOOP_TIMEOUT_PERIOD("restart.event.loop.timeout.period.secs"),
     JDBC_PARAMETERS("clickhouse.jdbc.params"),
     JDBC_SETTINGS("clickhouse.jdbc.settings"),
+    JDBC_V1_DRIVER("clickhouse.jdbc.v1"),
     REPLICA_STATUS_VIEW("replica.status.view"),
     MAX_QUEUE_SIZE("sink.connector.max.queue.size"),
 
@@ -105,6 +106,10 @@ public enum ClickHouseSinkConnectorConfigVariables {
     REPLICATION_HISTORY_TTL("replication.history.ttl"),
 
     REPLICATION_HISTORY_REPLICATION_LOG_ONLY("replication.history.replication_log_only"),
+
+    DDL_SCHEMA_CHANGE_TIMEOUT_MS("ddl.schema.change.timeout.ms"),
+
+    DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS("ddl.schema.change.poll.interval.ms"),
 
     DATABASE_HOSTNAME("database.hostname");
 
