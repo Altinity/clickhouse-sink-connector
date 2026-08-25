@@ -1058,6 +1058,19 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private void parseRenameColumn(ParseTree tree) {
         ListIterator<ParseTree> it = ((MySqlParser.AlterSpecificationContext) tree).children.listIterator();
         // this.query.append(" ").append(Constants.RENAME_COLUMN);
+        // This path echoes the source tokens verbatim (RENAME, COLUMN, the two
+        // names), so the existence guard has to be injected as the COLUMN
+        // keyword goes past -- it cannot come from the RENAME_COLUMN constant
+        // the way the other clauses get it.
+        //
+        // Without it, replaying an already-applied rename fails: the old name
+        // no longer exists, so ClickHouse returns Code: 10
+        // NOT_FOUND_COLUMN_IN_BLOCK "Cannot find column `x` to rename"
+        // (measured on 24.8.14). DDL is retried indefinitely, so that single
+        // failure stalls the ENTIRE replication stream. Debezium flushes
+        // offsets periodically, so any restart can re-deliver DDL already
+        // applied downstream.
+        boolean guardEmitted = false;
         while (it.hasNext()) {
             ParseTree child = it.next();
             if (child instanceof MySqlParser.UidContext) {
@@ -1066,6 +1079,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             } else if (child instanceof TerminalNodeImpl) {
                 // Append the terminal node text to the query
                 this.query.append(" ").append(child.getText());
+                if (!guardEmitted && "COLUMN".equalsIgnoreCase(child.getText())) {
+                    this.query.append(" ").append(Constants.IF_EXISTS.trim());
+                    guardEmitted = true;
+                }
             }
         }
     }
@@ -1230,11 +1247,20 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     public void postProcessModifyColumn(String tableName, String oldCol, String newCol, String dataType) {
         this.query.append("\n");
+        // IF EXISTS, so replaying an already-applied rename is a no-op rather
+        // than a stream-stalling failure. Debezium flushes offsets
+        // periodically, so a restart re-delivers every DDL event committed
+        // since the last flush; a rename is not self-idempotent, because once
+        // applied the old name is gone. Measured on 24.8.14, the replay fails
+        // with Code: 10 NOT_FOUND_COLUMN_IN_BLOCK "Cannot find column `x` to
+        // rename", and since DDL is retried indefinitely that stalls the
+        // ENTIRE replication stream, not just this table.
+        String rename = "ALTER TABLE %s " + Constants.RENAME_COLUMN + " %s to %s";
         // If the tableName already includes the databaseName don't include databaseName in the query.
         if (tableName.contains(".")) {
-            this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", tableName, oldCol, newCol));
+            this.query.append(String.format(rename, tableName, oldCol, newCol));
         } else {
-            this.query.append(String.format("ALTER TABLE %s RENAME COLUMN %s to %s", databaseName + "." + tableName, oldCol, newCol));
+            this.query.append(String.format(rename, databaseName + "." + tableName, oldCol, newCol));
         }
     }
 
