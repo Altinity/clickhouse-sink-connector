@@ -39,15 +39,27 @@ public class DDLSchemaChangeWaiter {
     /**
      * Regex to extract column names from ALTER TABLE ... ADD COLUMN statements.
      * Matches both backtick-quoted and unquoted column names.
+     *
+     * <p>The optional {@code IF NOT EXISTS} is consumed as part of the prefix,
+     * not captured as the column name. Without that, the generated DDL
+     * {@code ADD COLUMN IF NOT EXISTS ship_spec Nullable(String)} yields the
+     * literal column {@code IF}, which never appears in
+     * {@code system.columns} -- so the waiter polls a name that cannot exist
+     * until it times out, and the real column is never waited for at all.</p>
      */
-    private static final Pattern ADD_COLUMN_PATTERN = Pattern.compile(
-            "ADD\\s+COLUMN\\s+`?([^`\\s]+)`?",
+    static final Pattern ADD_COLUMN_PATTERN = Pattern.compile(
+            "ADD\\s+COLUMN\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?`?([^`\\s]+)`?",
             Pattern.CASE_INSENSITIVE
     );
 
-    /** Regex to extract column names from ALTER TABLE ... DROP COLUMN. */
-    private static final Pattern DROP_COLUMN_PATTERN = Pattern.compile(
-            "DROP\\s+COLUMN\\s+`?([^`\\s]+)`?",
+    /**
+     * Regex to extract column names from ALTER TABLE ... DROP COLUMN.
+     *
+     * <p>Consumes the optional {@code IF EXISTS} for the same reason as
+     * {@link #ADD_COLUMN_PATTERN}.</p>
+     */
+    static final Pattern DROP_COLUMN_PATTERN = Pattern.compile(
+            "DROP\\s+COLUMN\\s+(?:IF\\s+EXISTS\\s+)?`?([^`\\s]+)`?",
             Pattern.CASE_INSENSITIVE
     );
 
@@ -160,7 +172,9 @@ public class DDLSchemaChangeWaiter {
 
         if (!remaining.isEmpty()) {
             log.warn("Timeout ({}ms) waiting for columns to appear in {}.{}: {}. " +
-                            "Proceeding anyway -- data loss may occur for these columns.",
+                            "Proceeding anyway -- data loss may occur for these columns. "
+                            + "If a name here is a SQL keyword such as IF, the DDL was "
+                            + "misparsed and the real column was never waited for.",
                     timeoutMs, database, table, remaining);
         }
     }

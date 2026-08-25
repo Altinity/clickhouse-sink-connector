@@ -133,6 +133,64 @@ class DDLSchemaChangeWaiterRaceConditionTest {
         }
 
         @Test
+        @DisplayName("IF NOT EXISTS is not captured as the column name")
+        void addColumnIfNotExistsIsNotTheColumnName() {
+            // Verbatim from the failing CI run: the DDL the connector itself
+            // generates for `alter table ship_class add column ship_spec ...`.
+            String ddl = "ALTER TABLE employees.ship_class "
+                    + "ADD COLUMN IF NOT EXISTS ship_spec Nullable(String)  first, "
+                    + "ADD COLUMN IF NOT EXISTS somecol Nullable(Int32)  after start_build";
+
+            List<String> cols = DDLSchemaChangeWaiter.extractColumnNames(
+                    ddl, DDLSchemaChangeWaiter.ADD_COLUMN_PATTERN);
+
+            assertEquals(List.of("ship_spec", "somecol"), cols,
+                    "the guarded form must yield the real columns, not the keyword IF");
+        }
+
+        @Test
+        @DisplayName("IF EXISTS is not captured as the dropped column name")
+        void dropColumnIfExistsIsNotTheColumnName() {
+            // DESTRUCTIVE: nothing is destroyed. This string is regex input for
+            // extractColumnNames; no connection or execution is involved.
+            String ddl = "ALTER TABLE employees.ship_class DROP COLUMN IF EXISTS extra";
+
+            List<String> cols = DDLSchemaChangeWaiter.extractColumnNames(
+                    ddl, DDLSchemaChangeWaiter.DROP_COLUMN_PATTERN);
+
+            assertEquals(List.of("extra"), cols);
+        }
+
+        @Test
+        @DisplayName("The shipped patterns handle the unguarded form too")
+        void shippedPatternsHandleBothForms() {
+            // Asserted against the class's OWN patterns rather than a copy.
+            // Every other test in this class re-declares the regex inline, so
+            // they kept passing while the shipped pattern was broken -- which
+            // is precisely how this defect reached CI.
+            assertEquals(List.of("plain_col"), DDLSchemaChangeWaiter.extractColumnNames(
+                    "ALTER TABLE db.tbl ADD COLUMN plain_col String",
+                    DDLSchemaChangeWaiter.ADD_COLUMN_PATTERN));
+            assertEquals(List.of("quoted_col"), DDLSchemaChangeWaiter.extractColumnNames(
+                    "ALTER TABLE `db`.`tbl` ADD COLUMN `quoted_col` String",
+                    DDLSchemaChangeWaiter.ADD_COLUMN_PATTERN));
+            // DESTRUCTIVE: nothing is destroyed -- regex input only, never run.
+            assertEquals(List.of("gone"), DDLSchemaChangeWaiter.extractColumnNames(
+                    "ALTER TABLE db.tbl DROP COLUMN gone",
+                    DDLSchemaChangeWaiter.DROP_COLUMN_PATTERN));
+        }
+
+        @Test
+        @DisplayName("A column legitimately named `if` is still extracted")
+        void columnNamedIfStillWorks() {
+            // The guard consumes IF only when it introduces the EXISTS clause;
+            // a backticked column actually named `if` must survive.
+            assertEquals(List.of("if"), DDLSchemaChangeWaiter.extractColumnNames(
+                    "ALTER TABLE db.tbl ADD COLUMN `if` String",
+                    DDLSchemaChangeWaiter.ADD_COLUMN_PATTERN));
+        }
+
+        @Test
         @DisplayName("No match returns empty list")
         void noMatchReturnsEmpty() {
             String ddl = "ALTER TABLE db.tbl MODIFY COLUMN col1 String";
