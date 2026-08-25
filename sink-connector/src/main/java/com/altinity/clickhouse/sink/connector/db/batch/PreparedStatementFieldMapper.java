@@ -304,6 +304,22 @@ public class PreparedStatementFieldMapper {
 
     /**
      * Handles Sign column for COLLAPSING_MERGE_TREE engine.
+     *
+     * <p>The engine test compares the enum CONSTANT, not the engine string.
+     * This previously read
+     * {@code engine.getEngine() == TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine()}
+     * -- reference equality on a String. It happens to hold today only because
+     * both sides resolve to the same interned literal from the enum, so the
+     * moment the engine is carried as a runtime-built String (a value read from
+     * a JDBC ResultSet is the obvious candidate, and DBMetadata already derives
+     * the engine from {@code SHOW CREATE TABLE}) the comparison silently
+     * becomes false and the sign column is never bound -- writing the engine's
+     * default sign for every row, so no +1/-1 pair ever collapses.</p>
+     *
+     * <p>Comparing the enum constant cannot degrade that way, and it matches
+     * what {@code PreparedStatementExecutor} already does for the same engine
+     * (it uses {@code equalsIgnoreCase}). Behaviour is unchanged today; this
+     * removes a latent trap rather than fixing a live miss.</p>
      */
     private void handleSignColumn(Map<String, Integer> columnNameToIndexMap,
                                    PreparedStatement ps,
@@ -312,7 +328,7 @@ public class PreparedStatementFieldMapper {
                                    Map<String, String> columnNameToDataTypeMap,
                                    DBMetadata.TABLE_ENGINE engine,
                                    boolean beforeSection) throws Exception {
-        if (engine != null && engine.getEngine() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine() && signColumn != null) {
+        if (engine == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE && signColumn != null) {
             if (columnNameToDataTypeMap.containsKey(signColumn) && columnNameToIndexMap.containsKey(signColumn)) {
                 int signColumnIndex = columnNameToIndexMap.get(signColumn);
                 if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {

@@ -193,10 +193,48 @@ public class DebeziumOffsetManagement {
      * marked as finished.
      * </p>
      *
+     * <p><b>Delivery semantics.</b> {@code markBatchFinished()} REQUESTS an
+     * offset flush; it does not guarantee one. Debezium's embedded engine
+     * honours the request no more often than {@code offset.flush.interval.ms}
+     * (5000 in the shipped configs), so the committed position in
+     * {@code altinity_sink_connector.replica_source_info} can lag the data
+     * already written to ClickHouse by up to that interval. A crash in that
+     * window re-delivers every event after the last flushed position on
+     * restart. Delivery is therefore AT-LEAST-ONCE, not exactly-once.</p>
+     *
+     * <p>Measured on 2026-08-25 against ClickHouse 24.8.14 by hard-killing the
+     * connector mid-flight ({@code podman kill}, no graceful flush). The same
+     * batch and the same DDL were both re-executed after restart:</p>
+     * <pre>
+     *   05:29:57.959  EXECUTED BATCH Successfully Records: 3
+     *   05:29:58.090  Executed Source DB DDL: ... ADD COLUMN burstcol
+     *   --- hard kill + restart ---
+     *   05:30:03.553  EXECUTED BATCH Successfully Records: 3      &lt;- re-sent
+     *   05:30:03.672  Executed Source DB DDL: ... ADD COLUMN burstcol
+     * </pre>
+     *
+     * <p>No data was corrupted, and the reason matters: the APPLY is
+     * idempotent, not the delivery. Each row carries a stable key
+     * (MySQL's generated invisible primary key) as the ReplacingMergeTree
+     * sorting key, and the re-sent event regenerates the SAME {@code _version},
+     * so the replayed copy collapses onto the original instead of adding a row
+     * ({@code mysql=8 ch_raw=8 ch_live=8}; per-row raw copies = 1, distinct
+     * versions = 1).</p>
+     *
+     * <p>The consequence for anyone changing this path: correctness rests on
+     * every write being replay-safe. A non-idempotent apply would corrupt.
+     * The known shape to watch is a table whose version is derived from
+     * wall-clock time rather than the binlog coordinates -- two deliveries of
+     * one event would then produce two distinct versions and stop collapsing.
+     * CollapsingMergeTree sign rows are additive rather than replacing, but
+     * the connector never auto-creates that engine (auto-create emits only
+     * ReplacingMergeTree / ReplicatedReplacingMergeTree), so it is reachable
+     * only for a pre-existing table the user points the connector at.</p>
+     *
      * @param batch The batch of ClickHouseStruct records to acknowledge.
      * @throws InterruptedException If the commit operation is interrupted.
      */
-    static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch) 
+    static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch)
                                             throws InterruptedException {
         // acknowledge records
         // Iterate through the records
