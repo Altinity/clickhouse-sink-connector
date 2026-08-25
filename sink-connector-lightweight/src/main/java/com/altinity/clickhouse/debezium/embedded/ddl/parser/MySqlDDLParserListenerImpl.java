@@ -452,8 +452,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
 
 
-        // The keyless-table row fingerprint. MATERIALIZED, so ClickHouse computes
-        // it on insert and it never appears in the writer's INSERT column list.
+        // The keyless-table row fingerprint. A plain UInt64: the CONNECTOR
+        // computes the value and binds it, so the column IS part of the
+        // writer's INSERT column list (see QueryFormatter#isConnectorManagedColumn).
         if (rowKeyColumnDefinition != null) {
             this.query.append(rowKeyColumnDefinition).append(",");
         }
@@ -978,8 +979,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * that table. Underscores are prepended until the name is free, the same
      * disambiguation the delete-marker column already uses.</p>
      *
+     * <p>The generated name must also be STRICTLY DEEPER than every source
+     * column of the row-key shape, not merely absent from the source. Both the
+     * connector and the checksum tooling identify the generated column by that
+     * shape and resolve a clash by underscore depth, so a source
+     * {@code __row_key} with the generated column at {@code _row_key} inverts
+     * the two: the generated column is treated as source data and the real
+     * column is dropped from the comparison, hiding any divergence in it.
+     * Skipping past the deepest source variant keeps the generated column
+     * unambiguously the deepest one.</p>
+     *
      * @param columns the table's declared columns.
-     * @return a column name not present in the source table.
+     * @return a column name that is free and deeper than any source row-key column.
      */
     private static String resolveRowKeyColumnName(List<String> columns) {
         Set<String> taken = new HashSet<>();
@@ -987,7 +998,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             taken.add(stripBackticks(column).toLowerCase());
         }
         String candidate = ROW_KEY_COLUMN;
-        while (taken.contains(candidate.toLowerCase())) {
+        // Free AND deeper than every source column sharing the row-key shape.
+        while (taken.contains(candidate.toLowerCase())
+                || taken.contains("_" + candidate.toLowerCase())) {
             candidate = "_" + candidate;
         }
         return candidate;

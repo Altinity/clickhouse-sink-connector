@@ -29,9 +29,9 @@ from db_compare.clickhouse_table_checksum import filter_excluded_columns
 from db_compare.top_level_table_checksum import CONNECTOR_GENERATED_COLUMNS
 
 
-def _column(name):
+def _column(name, data_type="String"):
     """One row of ClickHouse column metadata: (name, type, nullable, scale)."""
-    return (name, "String", 0, None)
+    return (name, data_type, 0, None)
 
 
 def _kept(columns_metadata, excluded):
@@ -75,6 +75,26 @@ class RowKeyExclusionTestCase(unittest.TestCase):
             CONNECTOR_GENERATED_COLUMNS,
         )
         self.assertEqual(["_row_key", "v"], kept)
+
+    def test_source_double_underscore_row_key_is_still_compared(self):
+        """A source ``__row_key`` must not invert which column is dropped.
+
+        The exclusion rule resolves a clash by underscore depth, so the
+        generated column has to be strictly DEEPER than every source column of
+        the row-key shape. If the generator picked ``_row_key`` while the
+        source already had ``__row_key``, the rule would keep the generated
+        column and drop the real one -- hashing a ClickHouse-only value on one
+        side and hiding any divergence in the user's data on the other.
+
+        ``resolveRowKeyColumnName`` therefore skips past the deepest source
+        variant, which for this table means ``___row_key``.
+        """
+        kept = _kept(
+            [_column("__row_key"), _column("v"), _column("___row_key", "UInt64"),
+             _column("_version"), _column("is_deleted")],
+            CONNECTOR_GENERATED_COLUMNS,
+        )
+        self.assertEqual(["__row_key", "v"], kept)
 
     def test_keyed_table_is_unaffected(self):
         """A table with its own primary key has no generated row key."""

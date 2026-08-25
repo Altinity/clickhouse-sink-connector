@@ -212,4 +212,46 @@ public class CreateTableNoKeySortKeyTest {
         Assert.assertTrue("the generated row-key column must be the sorting key, was: " + query,
                 query.toLowerCase().contains("order by `_row_key`"));
     }
+
+    /**
+     * The generated name must be STRICTLY DEEPER than every source column of
+     * the row-key shape, not merely a name the source does not already use.
+     *
+     * <p>Both the connector and the checksum tooling identify the generated
+     * column by that shape and resolve a clash by underscore depth. A source
+     * {@code __row_key} with the generated column at {@code _row_key} would
+     * invert the two: the generated column would be treated as source data and
+     * the real column dropped from the comparison, hashing a ClickHouse-only
+     * value on one side while hiding any divergence in the user's data.</p>
+     */
+    @Test
+    public void testGeneratedRowKeyIsDeeperThanAnySourceRowKeyColumn() {
+        String createQuery =
+                "CREATE TABLE nokey_deep (__row_key INT, v VARCHAR(64)) ENGINE=InnoDB;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "nokey_deep", clickHouseQuery);
+
+        String query = clickHouseQuery.toString().toLowerCase();
+        Assert.assertTrue(
+                "the generated column must be deeper than the source `__row_key`, was: " + query,
+                query.contains("order by `___row_key`"));
+        Assert.assertTrue("the source column must survive as ordinary data, was: " + query,
+                query.contains("__row_key nullable(int32)"));
+    }
+
+    /**
+     * A source column named exactly {@code _row_key} pushes the generated one
+     * to {@code __row_key} -- one level, since nothing deeper is taken.
+     */
+    @Test
+    public void testGeneratedRowKeyStepsPastAnExactSourceClash() {
+        String createQuery =
+                "CREATE TABLE nokey_clash (_row_key INT, v VARCHAR(64)) ENGINE=InnoDB;";
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(createQuery, "nokey_clash", clickHouseQuery);
+
+        String query = clickHouseQuery.toString().toLowerCase();
+        Assert.assertTrue("the generated column must step past the source name, was: " + query,
+                query.contains("order by `__row_key`"));
+    }
 }

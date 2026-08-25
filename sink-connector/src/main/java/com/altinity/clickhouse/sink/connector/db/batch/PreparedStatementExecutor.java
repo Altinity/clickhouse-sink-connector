@@ -386,12 +386,27 @@ public class PreparedStatementExecutor {
         if (sortingKeyColumns == null || sortingKeyColumns.isEmpty()) {
             return false;
         }
-        if (sortingKeyColumns.size() == 1 && ROW_KEY_COLUMN.equalsIgnoreCase(
-                sortingKeyColumns.get(0).replace("`", "").trim())) {
+        // Match the row-key SHAPE, not the literal constant: when the source
+        // table declares a column of that name the generated one is renamed
+        // with extra leading underscores. Comparing only to ROW_KEY_COLUMN
+        // misses the renamed form, the loop below then skips it (no CDC record
+        // carries it), and the method reports "not relocated" for every UPDATE
+        // -- stranding the pre-update row and duplicating data for exactly the
+        // name-clash case this path exists to support.
+        String soleSortingKey = sortingKeyColumns.get(0).replace("`", "").trim();
+        if (sortingKeyColumns.size() == 1
+                && PreparedStatementFieldMapper.isRowKeyColumn(soleSortingKey)) {
             org.apache.kafka.connect.data.Struct beforeRow = record.getBeforeStruct();
             org.apache.kafka.connect.data.Struct afterRow = record.getAfterStruct();
             if (beforeRow == null || afterRow == null) {
                 return false;
+            }
+            // A source column of the row-key shape is ordinary data carried by
+            // the record; only the connector-generated column is absent from
+            // it, and only that one needs the whole-row comparison.
+            if (afterRow.schema().field(soleSortingKey) != null) {
+                return !Objects.equals(beforeRow.get(soleSortingKey),
+                        afterRow.get(soleSortingKey));
             }
             for (org.apache.kafka.connect.data.Field field : afterRow.schema().fields()) {
                 if (beforeRow.schema().field(field.name()) == null) {
