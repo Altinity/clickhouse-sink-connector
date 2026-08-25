@@ -49,16 +49,6 @@ jobs:
       - name: Install test dependencies
         run: pip3 install -r sink-connector-lightweight/tests/checksum/requirements.txt
 
-      # Pure unit test over the checksum scripts' column-exclusion rules. Runs
-      # before the container suites because it needs no stack and pins the
-      # behaviour they depend on: a connector-generated column excluded from the
-      # comparison, a same-named SOURCE column kept in it.
-      - name: Run checksum script unit tests
-        run: python3 -m unittest discover -s sink-connector/python/db_compare/tests -p "*_test.py" -v
-        working-directory: ${{ github.workspace }}
-        env:
-          PYTHONPATH: ${{ github.workspace }}/sink-connector/python
-
       # Each checksum suite owns its own compose stack (session fixture + KEEP_STACK=1),
       # so they must run as separate pytest invocations with a teardown between them.
       - name: Run checksum integration test (init_mysql seed)
@@ -68,22 +58,6 @@ jobs:
         if: failure()
         working-directory: sink-connector-lightweight/docker
         run: docker compose -f docker-compose.yml logs --no-color > compose-logs-init-mysql.txt 2>&1 || true
-
-      - name: Tear down compose stack before keyless
-        if: always()
-        working-directory: sink-connector-lightweight/docker
-        run: docker compose -f docker-compose.yml down -v --remove-orphans || true
-
-      # Keyless source tables (no PRIMARY KEY, no UNIQUE key). The connector
-      # generates a _row_key column for these; this proves the checksum jobs
-      # still agree across seed, UPDATE/DELETE and schema change.
-      - name: Run checksum integration test (keyless tables)
-        run: pytest -v -s sink-connector-lightweight/tests/checksum/test_keyless_checksum_replication.py
-
-      - name: Dump connector / compose logs on keyless failure
-        if: failure()
-        working-directory: sink-connector-lightweight/docker
-        run: docker compose -f docker-compose.yml logs --no-color > compose-logs-keyless.txt 2>&1 || true
 
       - name: Tear down compose stack before sysbench
         if: always()
@@ -105,7 +79,6 @@ jobs:
           name: checksum-lightweight-compose-logs
           path: |
             sink-connector-lightweight/docker/compose-logs-init-mysql.txt
-            sink-connector-lightweight/docker/compose-logs-keyless.txt
             sink-connector-lightweight/docker/compose-logs-sysbench.txt
           if-no-files-found: ignore
 

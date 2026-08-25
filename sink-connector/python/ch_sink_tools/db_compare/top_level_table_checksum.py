@@ -14,28 +14,6 @@ from subprocess import Popen, PIPE
 import subprocess
 import time
 import re
-
-# Columns the sink connector generates in ClickHouse that have no counterpart
-# in the MySQL source. They must be excluded from the ClickHouse side of every
-# comparison, or the two sides hash different column sets and the table is
-# reported as a mismatch when the data is identical.
-#
-# _row_key is the row identity given to a KEYLESS source table (no PRIMARY KEY,
-# no UNIQUE key) so ReplacingMergeTree can tell its rows apart. It may carry
-# extra leading underscores when the source table already declares a column of
-# that name, hence the prefixed variants -- the same convention the is_deleted
-# entries already follow.
-CONNECTOR_GENERATED_COLUMNS = [
-    "_version",
-    "is_deleted",
-    "_is_deleted",
-    "__is_deleted",
-    "_row_key",
-    "__row_key",
-    "___row_key",
-]
-
-
 def parse_config(config_file):
     """Parse the YAML configuration file."""
     try:
@@ -193,15 +171,7 @@ def get_clickhouse_checksum_command(ch_host, database, table, pk, max_pk, where=
 
     where_argument += '"'
     
-    # _row_key belongs in this list for the same reason as _version and
-    # is_deleted: the connector generates it, it exists only in ClickHouse, and
-    # MySQL has no column to hash against it. It is added to a keyless source
-    # table -- one with no PRIMARY KEY and no UNIQUE key -- to give
-    # ReplacingMergeTree a row identity. Left in, the two sides hash different
-    # column sets and every such table is reported as a checksum MISMATCH by
-    # this job, which is the signal a genuine divergence uses.
-    ignored_columns_clause = ("--exclude_columns "
-                              + ",".join(CONNECTOR_GENERATED_COLUMNS))
+    ignored_columns_clause = "--exclude_columns _version,is_deleted,_is_deleted,__is_deleted"
     if len(ignored_columns) > 0:
         logging.info(f"Ignoring columns {ignored_columns} for table {table}")
         ignored_columns_clause += ","+",".join(ignored_columns)

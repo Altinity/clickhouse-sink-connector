@@ -19,7 +19,6 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
-import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.ROW_KEY_COLUMN;
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
 
 /**
@@ -370,52 +369,12 @@ public class PreparedStatementExecutor {
      * sorting key is unknown or empty, so an unreadable sorting key degrades to
      * the previous behaviour rather than emitting a speculative tombstone.</p>
      *
-     * <p>A keyless source table is sorted by the generated {@code _row_key}
-     * column, a fingerprint of the whole row. No CDC record carries that column,
-     * so the per-column loop below would skip it and report "not relocated" for
-     * every UPDATE -- stranding the pre-update row and reintroducing exactly the
-     * loss the fingerprint exists to prevent. For that key any change to any
-     * value moves the row by construction, so the full before and after images
-     * are compared instead.</p>
-     *
      * @param record The CDC record carrying both before and after images.
      * @return true when at least one sorting-key column changed value.
      */
     boolean updateRelocatesSortingKey(ClickHouseStruct record) {
         List<String> sortingKeyColumns = sortingKeyColumnsSupplier.get();
         if (sortingKeyColumns == null || sortingKeyColumns.isEmpty()) {
-            return false;
-        }
-        // Match the row-key SHAPE, not the literal constant: when the source
-        // table declares a column of that name the generated one is renamed
-        // with extra leading underscores. Comparing only to ROW_KEY_COLUMN
-        // misses the renamed form, the loop below then skips it (no CDC record
-        // carries it), and the method reports "not relocated" for every UPDATE
-        // -- stranding the pre-update row and duplicating data for exactly the
-        // name-clash case this path exists to support.
-        String soleSortingKey = sortingKeyColumns.get(0).replace("`", "").trim();
-        if (sortingKeyColumns.size() == 1
-                && PreparedStatementFieldMapper.isRowKeyColumn(soleSortingKey)) {
-            org.apache.kafka.connect.data.Struct beforeRow = record.getBeforeStruct();
-            org.apache.kafka.connect.data.Struct afterRow = record.getAfterStruct();
-            if (beforeRow == null || afterRow == null) {
-                return false;
-            }
-            // A source column of the row-key shape is ordinary data carried by
-            // the record; only the connector-generated column is absent from
-            // it, and only that one needs the whole-row comparison.
-            if (afterRow.schema().field(soleSortingKey) != null) {
-                return !Objects.equals(beforeRow.get(soleSortingKey),
-                        afterRow.get(soleSortingKey));
-            }
-            for (org.apache.kafka.connect.data.Field field : afterRow.schema().fields()) {
-                if (beforeRow.schema().field(field.name()) == null) {
-                    continue;
-                }
-                if (!Objects.equals(beforeRow.get(field.name()), afterRow.get(field.name()))) {
-                    return true;
-                }
-            }
             return false;
         }
         // Fully qualified: java.sql.* is imported wholesale above and also

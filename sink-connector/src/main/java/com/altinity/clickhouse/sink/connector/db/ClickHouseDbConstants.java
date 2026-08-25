@@ -115,30 +115,6 @@ public class ClickHouseDbConstants {
     public static final String IS_DELETED_COLUMN_DATA_TYPE = "UInt8";
 
     /**
-     * Generated column carrying the row identity of a source table that
-     * declares neither a PRIMARY KEY nor a UNIQUE key.
-     *
-     * <p>It holds a fingerprint of the whole row and is the sorting key for
-     * such a table, which gives ReplacingMergeTree something to deduplicate on
-     * without putting any data column into the key -- ClickHouse forbids
-     * altering a column that participates in the sorting key, so keying on the
-     * data columns themselves would freeze the table's schema.</p>
-     *
-     * <p>A plain {@code UInt64}, NOT a MATERIALIZED expression: the connector
-     * computes the value per record and binds it, so the column IS part of the
-     * INSERT column list the writer builds. A MATERIALIZED expression would
-     * have to name the columns, which bakes the column list into the table and
-     * blocks dropping any column it names.</p>
-     *
-     * <p>When the source table already declares a column of this name, the
-     * generated one is renamed with extra leading underscores, deeper than any
-     * source column of the same shape. Recognise it with
-     * {@code PreparedStatementFieldMapper#isRowKeyColumn}, never by comparing
-     * against this constant alone.</p>
-     */
-    public static final String ROW_KEY_COLUMN = "_row_key";
-
-    /**
      * MergeTree setting that permits Nullable columns in a sorting key.
      *
      * <p>Required by the all-columns fallback sorting key used for source

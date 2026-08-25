@@ -76,6 +76,13 @@ public class KeylessTablePreflight {
     private static final String BANNER_RULE =
             "========================================================================";
 
+    /**
+     * A literal MySQL schema name: anything else in {@code database.include.list}
+     * is a Debezium regex and cannot be compared with SQL {@code IN}.
+     */
+    private static final java.util.regex.Pattern LITERAL_SCHEMA_NAME =
+            java.util.regex.Pattern.compile("[A-Za-z0-9_$]+");
+
     private KeylessTablePreflight() {
     }
 
@@ -230,13 +237,18 @@ public class KeylessTablePreflight {
     /**
      * Lists base tables with no PRIMARY KEY and no non-null UNIQUE key.
      *
-     * <p>A UNIQUE key over a nullable column is NOT a row identity: two rows
-     * may both hold NULL there and remain distinct, so it is excluded here,
-     * matching MySQL's own rule for when InnoDB falls back to
-     * {@code GEN_CLUST_INDEX}.</p>
+     * <p>A UNIQUE index counts as a row identity only when EVERY one of its
+     * columns is {@code NOT NULL}. MySQL does not treat NULLs as equal for
+     * uniqueness, so a single nullable member makes the whole index permissive:
+     * {@code UNIQUE(a, b)} with {@code b} nullable accepts {@code (1, NULL)}
+     * twice. Testing "any column of the index is NOT NULL" would pass such a
+     * table as keyed while it has no identity at all -- the exact silent
+     * collapse this check exists to prevent -- so the test is per index, with
+     * {@code GROUP BY s.index_name} and a {@code HAVING} that requires zero
+     * nullable members.</p>
      */
-    private static List<String> keylessTables(Connection conn, String databaseFilter) throws Exception {
-        String sql =
+    static String keylessTablesQuery(String databaseFilter) {
+        return
                 "SELECT t.table_schema, t.table_name "
                         + "FROM information_schema.tables t "
                         + "WHERE t.table_type = 'BASE TABLE' "
@@ -252,10 +264,15 @@ public class KeylessTablePreflight {
                         + "      WHERE s.table_schema = t.table_schema "
                         + "        AND s.table_name = t.table_name "
                         + "        AND s.non_unique = 0 "
-                        + "        AND c.is_nullable = 'NO') "
+                        + "      GROUP BY s.index_name "
+                        + "      HAVING SUM(CASE WHEN c.is_nullable = 'YES' THEN 1 ELSE 0 END) = 0) "
                         + "ORDER BY t.table_schema, t.table_name";
+    }
+
+    private static List<String> keylessTables(Connection conn, String databaseFilter) throws Exception {
         List<String> tables = new ArrayList<>();
-        try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery(keylessTablesQuery(databaseFilter))) {
             while (rs.next()) {
                 tables.add(rs.getString(1) + "." + rs.getString(2));
             }
@@ -266,8 +283,17 @@ public class KeylessTablePreflight {
     /**
      * The connector's {@code database.include.list} as a quoted SQL list, so
      * the check reports only databases actually being replicated.
+     *
+     * <p>Debezium matches that list as REGULAR EXPRESSIONS, so a pattern entry
+     * such as {@code app.*} names no schema literally. Turning it into
+     * {@code IN ('app.*')} would match nothing and the check would report a
+     * clean source while the replicated schemas go uninspected -- a false PASS,
+     * the one outcome worse than a false refusal. So any entry that is not a
+     * plain literal makes this return null, which widens the scan to ALL
+     * non-system schemas. Over-scanning can only surface a table that is
+     * genuinely keyless; it can never hide one.</p>
      */
-    private static String databaseFilter(Properties props) {
+    static String databaseFilter(Properties props) {
         String include = props.getProperty("database.include.list");
         if (include == null || include.trim().isEmpty()) {
             return null;
@@ -281,9 +307,14 @@ public class KeylessTablePreflight {
             if (sb.length() > 0) {
                 sb.append(",");
             }
-            // information_schema names cannot contain a quote; reject rather
-            // than build a broken predicate.
-            if (name.contains("'")) {
+            // A regex metacharacter means this entry is a pattern, not a name.
+            // information_schema names cannot contain a quote either. In both
+            // cases fall back to scanning everything rather than building a
+            // predicate that silently matches nothing.
+            if (!LITERAL_SCHEMA_NAME.matcher(name).matches()) {
+                log.info("database.include.list entry '{}' is a pattern, not a literal schema "
+                        + "name, so the keyless-table check scans every non-system schema "
+                        + "instead of guessing which ones it matches.", name);
                 return null;
             }
             sb.append("'").append(name).append("'");

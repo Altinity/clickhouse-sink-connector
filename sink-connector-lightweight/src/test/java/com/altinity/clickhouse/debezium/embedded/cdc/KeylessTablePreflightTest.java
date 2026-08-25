@@ -122,6 +122,62 @@ public class KeylessTablePreflightTest {
     }
 
     /**
+     * A UNIQUE index counts only when EVERY column in it is NOT NULL.
+     *
+     * <p>MySQL does not treat NULLs as equal for uniqueness, so
+     * {@code UNIQUE(a, b)} with a nullable {@code b} accepts {@code (1, NULL)}
+     * twice -- verified on MySQL 8.0.36. Testing merely "some column of the
+     * index is NOT NULL" would pass such a table as keyed while it has no
+     * identity at all, which is the silent collapse this check exists to
+     * prevent.</p>
+     */
+    @Test
+    public void testUniqueIndexCountsOnlyWhenEveryColumnIsNotNull() {
+        String sql = KeylessTablePreflight.keylessTablesQuery(null);
+
+        Assert.assertTrue("the nullable test must be per index, not per column",
+                sql.contains("GROUP BY s.index_name"));
+        Assert.assertTrue("an index with any nullable member must not count as an identity",
+                sql.contains("HAVING SUM(CASE WHEN c.is_nullable = 'YES' THEN 1 ELSE 0 END) = 0"));
+        Assert.assertFalse("the any-column form passes a partially nullable composite UNIQUE "
+                        + "key as keyed, which is the false negative being fixed",
+                sql.contains("AND c.is_nullable = 'NO')"));
+    }
+
+    /**
+     * A literal include list narrows the scan; a regex one must NOT.
+     *
+     * <p>Debezium matches database.include.list as regular expressions, so
+     * {@code app.*} names no schema literally. Rendering it as
+     * {@code IN ('app.*')} would match nothing and report a clean source while
+     * the replicated schemas went uninspected -- a false PASS. Falling back to
+     * scanning everything can only surface a genuinely keyless table.</p>
+     */
+    @Test
+    public void testLiteralIncludeListNarrowsTheScan() {
+        Properties props = new Properties();
+        props.setProperty("database.include.list", "app, billing");
+
+        Assert.assertEquals("'app','billing'", KeylessTablePreflight.databaseFilter(props));
+    }
+
+    @Test
+    public void testRegexIncludeListScansEverythingRatherThanMatchingNothing() {
+        for (String pattern : new String[]{"app.*", "app[0-9]+", "^app$", "app|billing"}) {
+            Properties props = new Properties();
+            props.setProperty("database.include.list", pattern);
+            Assert.assertNull("a regex entry (" + pattern + ") must widen the scan, never be "
+                            + "compared literally with SQL IN",
+                    KeylessTablePreflight.databaseFilter(props));
+        }
+    }
+
+    @Test
+    public void testAbsentIncludeListScansEverything() {
+        Assert.assertNull(KeylessTablePreflight.databaseFilter(new Properties()));
+    }
+
+    /**
      * The override works, so an operator who accepts the risk is not blocked.
      */
     @Test
