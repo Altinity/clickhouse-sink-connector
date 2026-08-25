@@ -17,10 +17,24 @@ import org.junit.jupiter.api.Test;
  * <p>Measured on 2026-08-25 (ClickHouse 24.8.14) by hard-killing the connector
  * mid-flight: the same batch of 3 records and the same ALTER were both
  * re-executed after restart. Nothing was corrupted -- but only because the
- * apply is idempotent, not because delivery is exactly-once.</p>
+ * apply is replay-safe, not because delivery is exactly-once.</p>
  *
- * <p>These tests pin the invariants that idempotency rests on, so a later
- * change cannot quietly remove them.</p>
+ * <p>The mechanism is version ORDERING, not version equality. A replayed event
+ * does not reproduce its original {@code _version}: on resume the counter is
+ * seeded at {@code SEQUENCE_START_INITIAL} (500m) instead of
+ * {@code SEQUENCE_START} (1000m), so the re-published copy is issued a lower
+ * version than the pre-restart write of the SAME event and loses to the row
+ * already stored under the same ReplacingMergeTree sorting key.</p>
+ *
+ * <p><b>That ordering does not generalise.</b> The sequence seeds overflow the
+ * space the timestamp multiplier leaves them, so a genuinely NEWER event just
+ * after a resume can rank BELOW an older pre-restart one. That defect, and the
+ * test that pins it, live in {@code SequenceSeedOverflowTest} in the
+ * lightweight module, which can bind to the real
+ * {@code DebeziumChangeEventCapture} constants -- this module cannot see them
+ * (the dependency runs the other way).</p>
+ *
+ * <p>These tests therefore pin only what THIS module can verify.</p>
  */
 @DisplayName("Replayed events must be safe to apply twice")
 public class ReplaySafetyTest {
@@ -85,4 +99,5 @@ public class ReplaySafetyTest {
                     DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE, autoCreated);
         }
     }
+
 }
