@@ -130,8 +130,7 @@ public class KeylessTablePreflight {
             return;
         }
 
-        String url = String.format("jdbc:mysql://%s:%s/?useSSL=false&allowPublicKeyRetrieval=true",
-                host, port);
+        String url = jdbcUrl(host, port, props);
         try (Connection conn = DriverManager.getConnection(url, user, password)) {
             String version = scalar(conn, "SELECT VERSION()");
             boolean gipkSupported = supportsGipk(version);
@@ -164,6 +163,58 @@ public class KeylessTablePreflight {
                     + "with no PRIMARY KEY and no UNIQUE key, its ClickHouse copy may silently "
                     + "disagree with MySQL.", e.toString());
         }
+    }
+
+    /**
+     * The preflight's JDBC URL, honouring the connector's own TLS setting.
+     *
+     * <p>Hard-coding {@code useSSL=false} would make this check fail on any
+     * server enforcing TLS ({@code require_secure_transport=ON}, the default on
+     * RDS and most managed MySQL). That failure is caught and the pipeline
+     * continues, so the check would be SILENTLY BYPASSED for exactly the
+     * deployments most likely to matter -- and Debezium, using its own
+     * configured SSL properties, would then happily replicate the keyless
+     * tables this exists to refuse. It also needlessly downgrades the
+     * authentication exchange where TLS is available.</p>
+     *
+     * <p>So {@code database.ssl.mode} drives it, with Debezium's own default of
+     * {@code preferred} when unset: TLS when the server offers it, plaintext
+     * when it does not, and no silent bypass either way.
+     * {@code allowPublicKeyRetrieval} is only needed for
+     * {@code caching_sha2_password} over an unencrypted link, so it is set only
+     * in that case.</p>
+     *
+     * @param host the MySQL host.
+     * @param port the MySQL port.
+     * @param props the connector properties, read for {@code database.ssl.mode}.
+     * @return a JDBC URL whose transport security matches the connector's.
+     */
+    static String jdbcUrl(String host, String port, Properties props) {
+        String sslMode = props.getProperty("database.ssl.mode", "preferred").trim().toLowerCase();
+        StringBuilder url = new StringBuilder("jdbc:mysql://").append(host).append(":").append(port)
+                .append("/?connectTimeout=10000&socketTimeout=30000");
+        switch (sslMode) {
+            case "disabled":
+                // Explicitly plaintext: public key retrieval is then required
+                // for caching_sha2_password to authenticate at all.
+                url.append("&useSSL=false&allowPublicKeyRetrieval=true");
+                break;
+            case "required":
+                url.append("&useSSL=true&requireSSL=true&verifyServerCertificate=false");
+                break;
+            case "verify_ca":
+            case "verify_identity":
+                url.append("&useSSL=true&requireSSL=true&verifyServerCertificate=true");
+                break;
+            case "preferred":
+            default:
+                // Debezium's default: TLS if the server offers it, plaintext if
+                // not. Public key retrieval covers the plaintext fallback.
+                url.append("&useSSL=true&requireSSL=false&verifyServerCertificate=false")
+                        .append("&allowPublicKeyRetrieval=true");
+                break;
+        }
+        return url.toString();
     }
 
     /**

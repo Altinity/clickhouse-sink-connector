@@ -178,6 +178,55 @@ public class KeylessTablePreflightTest {
     }
 
     /**
+     * The preflight must connect the way the connector does.
+     *
+     * <p>Hard-coding {@code useSSL=false} would make the check fail on any
+     * server enforcing TLS -- the default on RDS and most managed MySQL. That
+     * failure is caught and the pipeline continues, so the check would be
+     * silently bypassed for exactly those deployments while Debezium, using its
+     * own SSL settings, replicated the keyless tables anyway.</p>
+     */
+    @Test
+    public void testJdbcUrlHonoursTheConnectorsSslMode() {
+        Properties required = new Properties();
+        required.setProperty("database.ssl.mode", "required");
+        String url = KeylessTablePreflight.jdbcUrl("db", "3306", required);
+        Assert.assertTrue("a TLS-enforcing server must not be met with useSSL=false, or the "
+                        + "check fails and is silently skipped: " + url,
+                url.contains("useSSL=true") && url.contains("requireSSL=true"));
+        Assert.assertFalse(url.contains("useSSL=false"));
+
+        Properties verify = new Properties();
+        verify.setProperty("database.ssl.mode", "verify_identity");
+        Assert.assertTrue("certificate verification must not be silently disabled",
+                KeylessTablePreflight.jdbcUrl("db", "3306", verify)
+                        .contains("verifyServerCertificate=true"));
+
+        Properties disabled = new Properties();
+        disabled.setProperty("database.ssl.mode", "disabled");
+        String plain = KeylessTablePreflight.jdbcUrl("db", "3306", disabled);
+        Assert.assertTrue(plain.contains("useSSL=false"));
+        Assert.assertTrue("caching_sha2_password over plaintext needs public key retrieval",
+                plain.contains("allowPublicKeyRetrieval=true"));
+    }
+
+    /**
+     * With no ssl.mode configured, follow Debezium's default rather than
+     * forcing plaintext.
+     */
+    @Test
+    public void testJdbcUrlDefaultsToPreferredNotPlaintext() {
+        String url = KeylessTablePreflight.jdbcUrl("db", "3306", new Properties());
+
+        Assert.assertFalse("defaulting to useSSL=false is what breaks TLS-enforcing servers: "
+                + url, url.contains("useSSL=false"));
+        Assert.assertTrue("preferred means TLS when offered", url.contains("useSSL=true"));
+        Assert.assertTrue("and plaintext when not, so it must not be mandatory",
+                url.contains("requireSSL=false"));
+        Assert.assertTrue("the check must never hang a startup", url.contains("connectTimeout="));
+    }
+
+    /**
      * The override works, so an operator who accepts the risk is not blocked.
      */
     @Test
