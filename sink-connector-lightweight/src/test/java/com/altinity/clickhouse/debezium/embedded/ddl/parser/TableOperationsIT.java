@@ -134,56 +134,42 @@ public class TableOperationsIT {
             Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test_new", "employees");
             Map<String, String> copied_table = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "copied_table", "employees");
 
-            // Each of these source tables declares neither a PRIMARY KEY nor a
-            // UNIQUE key, so the connector adds the generated `_row_key`
-            // fingerprint column and keys the table on it -- one column more
-            // than before. Keying on the data columns themselves froze the
-            // table's schema, because ClickHouse forbids altering any column
-            // that participates in the sorting key.
-            Assert.assertEquals(10, shipClassColumns.size());
-            Assert.assertEquals(6, addTestColumns.size());
-            Assert.assertEquals(6, copied_table.size());
-            Assert.assertTrue("the keyless fingerprint column must be present",
-                    shipClassColumns.containsKey("_row_key")
-                            && addTestColumns.containsKey("_row_key")
-                            && copied_table.containsKey("_row_key"));
+            Assert.assertTrue(shipClassColumns.size() == 9);
+            Assert.assertTrue(addTestColumns.size() == 5);
+            Assert.assertTrue(copied_table.size() == 5);
 
             // Validate table created with partitions.
             String membersResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.members");
             Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
-                    "(\n" +
-                    "    `firstname` String,\n" +
-                    "    `lastname` String,\n" +
-                    "    `username` String,\n" +
-                    "    `email` Nullable(String),\n" +
-                    "    `joined` Date32,\n" +
-                    "    `_row_key` UInt64 MATERIALIZED cityHash64((firstname IS NULL, ifNull(toString(firstname), ''), lastname IS NULL, ifNull(toString(lastname), ''), username IS NULL, ifNull(toString(username), ''), email IS NULL, ifNull(toString(email), ''), joined IS NULL, ifNull(toString(joined), ''))),\n" +
-                    "    `_version` UInt64,\n" +
-                    "    `is_deleted` UInt8\n" +
-                    ")\n" +
-                    "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
-                    "PARTITION BY joined\n" +
-                    "PRIMARY KEY tuple()\n" +
-                    "ORDER BY _row_key\n" +
-                    "SETTINGS index_granularity = 8192"));
+                        "(\n" +
+                        "    `firstname` String,\n" +
+                        "    `lastname` String,\n" +
+                        "    `username` String,\n" +
+                        "    `email` Nullable(String),\n" +
+                        "    `joined` Date32,\n" +
+                        "    `_version` UInt64,\n" +
+                        "    `is_deleted` UInt8\n" +
+                        ")\n" +
+                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
+                        "PARTITION BY joined\n" +
+                        "ORDER BY tuple()\n" +
+                        "SETTINGS index_granularity = 8192"));
 
             String rcxResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.rcx");
 
             Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
-                    "(\n" +
-                    "    `a` Int32,\n" +
-                    "    `b` Nullable(Int32),\n" +
-                    "    `c` String,\n" +
-                    "    `d` Int32,\n" +
-                    "    `_row_key` UInt64 MATERIALIZED cityHash64((a IS NULL, ifNull(toString(a), ''), b IS NULL, ifNull(toString(b), ''), c IS NULL, ifNull(toString(c), ''), d IS NULL, ifNull(toString(d), ''))),\n" +
-                    "    `_version` UInt64,\n" +
-                    "    `is_deleted` UInt8\n" +
-                    ")\n" +
-                    "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
-                    "PARTITION BY (a, d, c)\n" +
-                    "PRIMARY KEY tuple()\n" +
-                    "ORDER BY _row_key\n" +
-                    "SETTINGS index_granularity = 8192"));
+                        "(\n" +
+                        "    `a` Int32,\n" +
+                        "    `b` Nullable(Int32),\n" +
+                        "    `c` String,\n" +
+                        "    `d` Int32,\n" +
+                        "    `_version` UInt64,\n" +
+                        "    `is_deleted` UInt8\n" +
+                        ")\n" +
+                        "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
+                        "PARTITION BY (a, d, c)\n" +
+                        "ORDER BY tuple()\n" +
+                        "SETTINGS index_granularity = 8192"));
 
             Thread.sleep(10000);
             // Delete offset table.

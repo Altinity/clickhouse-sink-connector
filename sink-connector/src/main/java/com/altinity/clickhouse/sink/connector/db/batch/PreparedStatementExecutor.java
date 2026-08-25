@@ -19,7 +19,6 @@ import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
-import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.ROW_KEY_COLUMN;
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
 
 /**
@@ -370,37 +369,12 @@ public class PreparedStatementExecutor {
      * sorting key is unknown or empty, so an unreadable sorting key degrades to
      * the previous behaviour rather than emitting a speculative tombstone.</p>
      *
-     * <p>A keyless source table is sorted by the generated {@code _row_key}
-     * column, a fingerprint of the whole row. No CDC record carries that column,
-     * so the per-column loop below would skip it and report "not relocated" for
-     * every UPDATE -- stranding the pre-update row and reintroducing exactly the
-     * loss the fingerprint exists to prevent. For that key any change to any
-     * value moves the row by construction, so the full before and after images
-     * are compared instead.</p>
-     *
      * @param record The CDC record carrying both before and after images.
      * @return true when at least one sorting-key column changed value.
      */
     boolean updateRelocatesSortingKey(ClickHouseStruct record) {
         List<String> sortingKeyColumns = sortingKeyColumnsSupplier.get();
         if (sortingKeyColumns == null || sortingKeyColumns.isEmpty()) {
-            return false;
-        }
-        if (sortingKeyColumns.size() == 1 && ROW_KEY_COLUMN.equalsIgnoreCase(
-                sortingKeyColumns.get(0).replace("`", "").trim())) {
-            org.apache.kafka.connect.data.Struct beforeRow = record.getBeforeStruct();
-            org.apache.kafka.connect.data.Struct afterRow = record.getAfterStruct();
-            if (beforeRow == null || afterRow == null) {
-                return false;
-            }
-            for (org.apache.kafka.connect.data.Field field : afterRow.schema().fields()) {
-                if (beforeRow.schema().field(field.name()) == null) {
-                    continue;
-                }
-                if (!Objects.equals(beforeRow.get(field.name()), afterRow.get(field.name()))) {
-                    return true;
-                }
-            }
             return false;
         }
         // Fully qualified: java.sql.* is imported wholesale above and also
