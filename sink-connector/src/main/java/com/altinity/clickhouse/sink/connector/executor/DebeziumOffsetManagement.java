@@ -213,23 +213,35 @@ public class DebeziumOffsetManagement {
      *   05:30:03.672  Executed Source DB DDL: ... ADD COLUMN burstcol
      * </pre>
      *
-     * <p>No data was corrupted, and the reason matters: the APPLY is
-     * idempotent, not the delivery. Each row carries a stable key
-     * (MySQL's generated invisible primary key) as the ReplacingMergeTree
-     * sorting key, and the re-sent event regenerates the SAME {@code _version},
-     * so the replayed copy collapses onto the original instead of adding a row
-     * ({@code mysql=8 ch_raw=8 ch_live=8}; per-row raw copies = 1, distinct
-     * versions = 1).</p>
+     * <p>No data was corrupted, and the reason is worth stating precisely,
+     * because it is NOT that the replayed event reproduces its original
+     * {@code _version} -- it deliberately does not. On resume the counter is
+     * seeded at {@code SEQUENCE_START_INITIAL} (500m) rather than
+     * {@code SEQUENCE_START} (1000m), so a re-published event in the same
+     * source second is issued a strictly LOWER version than the pre-restart
+     * write of that same event. Combined with a stable row key (MySQL's
+     * generated invisible primary key) as the ReplacingMergeTree sorting key,
+     * the replayed copy therefore LOSES to the row already stored and is
+     * discarded, rather than winning and overwriting it. Measured:
+     * {@code mysql=8 ch_raw=8 ch_live=8}, per-row raw copies 1.</p>
      *
-     * <p>The consequence for anyone changing this path: correctness rests on
-     * every write being replay-safe. A non-idempotent apply would corrupt.
-     * The known shape to watch is a table whose version is derived from
-     * wall-clock time rather than the binlog coordinates -- two deliveries of
-     * one event would then produce two distinct versions and stop collapsing.
-     * CollapsingMergeTree sign rows are additive rather than replacing, but
-     * the connector never auto-creates that engine (auto-create emits only
-     * ReplacingMergeTree / ReplicatedReplacingMergeTree), so it is reachable
-     * only for a pre-existing table the user points the connector at.</p>
+     * <p>That ordering is the safety property, and it is load-bearing in a way
+     * that is easy to break by accident. It depends on the version being
+     * anchored to the SOURCE commit timestamp ({@code source.ts_ms}), which is
+     * identical on every re-delivery. Anchoring it to any processing-side or
+     * wall-clock value instead would give the replayed copy a HIGHER version,
+     * so it would supersede the correct row -- silently, with row counts still
+     * matching. See the anchoring comment in
+     * {@code DebeziumChangeEventCapture#handleBatch} before changing either
+     * the sequence seeding or the timestamp source.</p>
+     *
+     * <p>The engine matters too. ReplacingMergeTree resolves a duplicate by
+     * version, so a losing replay is simply dropped. CollapsingMergeTree sign
+     * rows are ADDITIVE: a replayed {@code +1} sums to {@code +2} and never
+     * cancels against a single {@code -1}, so the same replay would corrupt.
+     * The connector never auto-creates that engine -- auto-create emits only
+     * ReplacingMergeTree / ReplicatedReplacingMergeTree -- so it is reachable
+     * only for a pre-existing table a user points the connector at.</p>
      *
      * @param batch The batch of ClickHouseStruct records to acknowledge.
      * @throws InterruptedException If the commit operation is interrupted.

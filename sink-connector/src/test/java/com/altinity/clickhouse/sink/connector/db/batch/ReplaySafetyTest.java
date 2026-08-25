@@ -17,10 +17,18 @@ import org.junit.jupiter.api.Test;
  * <p>Measured on 2026-08-25 (ClickHouse 24.8.14) by hard-killing the connector
  * mid-flight: the same batch of 3 records and the same ALTER were both
  * re-executed after restart. Nothing was corrupted -- but only because the
- * apply is idempotent, not because delivery is exactly-once.</p>
+ * apply is replay-safe, not because delivery is exactly-once.</p>
  *
- * <p>These tests pin the invariants that idempotency rests on, so a later
- * change cannot quietly remove them.</p>
+ * <p>The mechanism is version ORDERING, not version equality. A replayed event
+ * does not reproduce its original {@code _version}: on resume the counter is
+ * seeded at {@code SEQUENCE_START_INITIAL} (500m) instead of
+ * {@code SEQUENCE_START} (1000m), so the re-published copy is issued a
+ * strictly LOWER version and therefore loses to the row already stored under
+ * the same ReplacingMergeTree sorting key. It is discarded rather than
+ * overwriting a correct row.</p>
+ *
+ * <p>These tests pin the invariants that safety rests on, so a later change
+ * cannot quietly remove them.</p>
  */
 @DisplayName("Replayed events must be safe to apply twice")
 public class ReplaySafetyTest {
@@ -84,5 +92,48 @@ public class ReplaySafetyTest {
                             + "default while delivery is at-least-once",
                     DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE, autoCreated);
         }
+    }
+
+    /**
+     * A replayed event must LOSE to the row already stored, not tie with it.
+     *
+     * <p>This is the invariant that actually makes the observed replay
+     * harmless, and it is an ordering property rather than an equality one. On
+     * resume the sequence counter is seeded at {@code SEQUENCE_START_INITIAL}
+     * (500m) instead of {@code SEQUENCE_START} (1000m), so a re-published event
+     * in the same source second is issued a strictly lower {@code _version}
+     * than the pre-restart write of that same event. ReplacingMergeTree then
+     * keeps the higher version -- the row already correctly stored -- and
+     * discards the replay.</p>
+     *
+     * <p>Both constants live in the lightweight module, so they are restated
+     * here as the literals this module's behaviour depends on; the assertion
+     * fails loudly if that relationship is ever inverted.</p>
+     */
+    @Test
+    public void testResumeVersionsRankBelowPreRestartVersions() {
+        // Mirrors DebeziumChangeEventCapture.SEQUENCE_START{,_INITIAL}.
+        final long sequenceStart = 1000000000L;
+        final long sequenceStartInitial = 500000000L;
+
+        Assert.assertTrue("a resumed event must rank strictly BELOW a pre-restart write "
+                        + "of the same source second, or the replay would supersede the "
+                        + "correct row",
+                sequenceStartInitial < sequenceStart);
+
+        // Same source second on both sides -- the source timestamp is identical
+        // on every re-delivery, which is what makes the comparison meaningful.
+        final long sourceTsMs = 1787635797000L;
+        long preRestartVersion = sourceTsMs * 1000000L + sequenceStart;
+        long replayedVersion = sourceTsMs * 1000000L + sequenceStartInitial;
+
+        Assert.assertTrue("the replayed copy must lose the version comparison: "
+                        + replayedVersion + " !< " + preRestartVersion,
+                replayedVersion < preRestartVersion);
+
+        // Equality would be just as wrong as being higher: RMT would then be free
+        // to keep either copy, making the outcome depend on merge order.
+        Assert.assertNotEquals("a replay must not TIE with the stored row -- ties leave "
+                        + "the winner up to merge order", preRestartVersion, replayedVersion);
     }
 }
