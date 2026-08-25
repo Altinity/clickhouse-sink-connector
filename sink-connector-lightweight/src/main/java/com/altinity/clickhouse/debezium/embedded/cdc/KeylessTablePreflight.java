@@ -1,0 +1,315 @@
+package com.altinity.clickhouse.debezium.embedded.cdc;
+
+import com.altinity.clickhouse.sink.connector.db.KeylessTableWarning;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.ResultSet;
+import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Properties;
+
+/**
+ * Refuses to start when the source holds a table whose rows cannot be
+ * identified, and enables MySQL's generated invisible primary key so that
+ * future keyless tables get one.
+ *
+ * <p>A table with no PRIMARY KEY and no non-null UNIQUE key has no row
+ * identity in the logical schema. InnoDB does give such a table an internal
+ * 6-byte {@code DB_ROW_ID} inside its {@code GEN_CLUST_INDEX}, but that value
+ * is NOT a column, is NOT written to the binlog, and is assigned from a
+ * server-local counter, so it differs between source and replica. Verified on
+ * MySQL 8.0.36: {@code SELECT DB_ROW_ID} fails with
+ * {@code ERROR 1054 Unknown column}, and {@code information_schema.innodb_columns}
+ * lists only the declared columns for such a table while
+ * {@code innodb_indexes} shows the {@code GEN_CLUST_INDEX}. Nothing downstream
+ * can recover it.</p>
+ *
+ * <p>That leaves only one honest source of identity: MySQL's <b>generated
+ * invisible primary key</b> (GIPK, MySQL 8.0.30+). With
+ * {@code sql_generate_invisible_primary_key=ON} a keyless InnoDB table is
+ * created with a real
+ * {@code my_row_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT INVISIBLE PRIMARY KEY}
+ * column. Being part of the table definition, it is carried by the binlogged
+ * DDL and by every row image, so the connector sees an ordinary keyed table and
+ * needs no invented identity at all. Verified on 8.0.36: the binlog DDL carries
+ * {@code `my_row_id` bigint unsigned NOT NULL AUTO_INCREMENT /*!80023 INVISIBLE *&#47;},
+ * {@code information_schema} reports it {@code PRI}, and it is selectable.</p>
+ *
+ * <p>Deriving an identity downstream instead -- hashing the row's values into a
+ * generated ClickHouse column -- was tried and rejected. It cannot survive the
+ * schema changing: a column the identity depends on cannot be dropped, and a
+ * column added later is absent from it, so two rows differing only in the new
+ * column collapse into one. An identity has to come from the source of truth.</p>
+ *
+ * <p>So this check, run once at startup:</p>
+ * <ol>
+ *   <li>turns GIPK ON for the connector's own session and, where permitted,
+ *       globally, so keyless tables created from now on get a real key;</li>
+ *   <li>lists the keyless tables that ALREADY exist -- GIPK is not
+ *       retroactive -- and refuses to start, naming them and the single
+ *       {@code ALTER TABLE} that fixes each one;</li>
+ *   <li>refuses outright below MySQL 8.0.30, where GIPK does not exist and no
+ *       correct replication of a keyless table is possible.</li>
+ * </ol>
+ *
+ * <p>Refusing is the point. Replicating such a table silently produces a
+ * ClickHouse table that disagrees with its source, and a checksum job reports
+ * it as a mismatch long after the data is wrong.</p>
+ */
+public class KeylessTablePreflight {
+
+    private static final Logger log = LogManager.getLogger(KeylessTablePreflight.class);
+
+    /** MySQL release that introduced the generated invisible primary key. */
+    static final int GIPK_MAJOR = 8;
+    static final int GIPK_MINOR = 0;
+    static final int GIPK_PATCH = 30;
+
+    /** Escape hatch, for a source the operator knows is safe. */
+    static final String SKIP_PROPERTY = "keyless.table.check.skip";
+
+    /** Matches the rule used by {@link KeylessTableWarning} so banners align. */
+    private static final String BANNER_RULE =
+            "========================================================================";
+
+    private KeylessTablePreflight() {
+    }
+
+    /** A source the connector refuses to replicate, with the reason. */
+    public static class UnsupportedSourceException extends RuntimeException {
+        public UnsupportedSourceException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * Runs the check against the configured MySQL source.
+     *
+     * <p>Only MySQL is checked; other connectors pass through untouched. A
+     * connection or permission failure is logged and allowed through -- this
+     * check must never be the reason a healthy pipeline cannot start -- but a
+     * source that is genuinely unsafe throws.</p>
+     *
+     * @param props the connector properties.
+     * @throws UnsupportedSourceException when the source cannot be replicated correctly.
+     */
+    public static void check(Properties props) {
+        if (Boolean.parseBoolean(props.getProperty(SKIP_PROPERTY, "false"))) {
+            // Loud on purpose: the override silences a correctness check, so it
+            // must not itself be quiet.
+            log.error("\n{}\n  !!  {}=true -- KEYLESS-TABLE CHECK DISABLED  !!\n{}\n"
+                            + "  A source table with no PRIMARY KEY and no non-null UNIQUE key has NO\n"
+                            + "  ROW IDENTITY IN THE BINLOG. Any such table WILL silently diverge from\n"
+                            + "  MySQL: rows collapse, and UPDATE/DELETE cannot be matched to one row.\n"
+                            + "  This override accepts that risk. Remove it once every table has a key.\n{}",
+                    BANNER_RULE, SKIP_PROPERTY, BANNER_RULE, BANNER_RULE);
+            return;
+        }
+        String connector = props.getProperty("connector.class", "");
+        if (!connector.toLowerCase().contains("mysql")) {
+            return;
+        }
+
+        String host = props.getProperty("database.hostname");
+        String port = props.getProperty("database.port", "3306");
+        String user = props.getProperty("database.user");
+        String password = props.getProperty("database.password");
+        if (host == null || user == null) {
+            log.warn("Keyless-table check skipped: no MySQL host/user in the configuration.");
+            return;
+        }
+
+        String url = String.format("jdbc:mysql://%s:%s/?useSSL=false&allowPublicKeyRetrieval=true",
+                host, port);
+        try (Connection conn = DriverManager.getConnection(url, user, password)) {
+            String version = scalar(conn, "SELECT VERSION()");
+            boolean gipkSupported = supportsGipk(version);
+
+            List<String> keyless = keylessTables(conn, databaseFilter(props));
+
+            if (!gipkSupported) {
+                if (keyless.isEmpty()) {
+                    log.info("MySQL {} predates the generated invisible primary key ({}.{}.{}), but the "
+                                    + "source declares no keyless tables. Every table has a usable row identity.",
+                            version, GIPK_MAJOR, GIPK_MINOR, GIPK_PATCH);
+                    return;
+                }
+                throw new UnsupportedSourceException(refusalTooOld(version, keyless));
+            }
+
+            enableGipk(conn);
+
+            if (!keyless.isEmpty()) {
+                throw new UnsupportedSourceException(refusalPreExisting(keyless));
+            }
+            log.info("Keyless-table check passed: no table without a PRIMARY KEY or UNIQUE key, and "
+                    + "sql_generate_invisible_primary_key is ON so any created from now on will "
+                    + "receive one from MySQL.");
+        } catch (UnsupportedSourceException e) {
+            throw e;
+        } catch (Exception e) {
+            // Never block a healthy pipeline on this check itself.
+            log.warn("Keyless-table check could not run ({}). Continuing. If the source holds a table "
+                    + "with no PRIMARY KEY and no UNIQUE key, its ClickHouse copy may silently "
+                    + "disagree with MySQL.", e.toString());
+        }
+    }
+
+    /**
+     * Turns GIPK on for this session, and globally when the account may.
+     *
+     * <p>The session setting is what matters for correctness here: it is not
+     * replicated and applier threads ignore it, but the connector does not
+     * create source tables. Setting it globally is the useful part -- it makes
+     * MySQL give a key to keyless tables created by the application from now
+     * on. A missing SUPER/SYSTEM_VARIABLES_ADMIN grant is expected and is
+     * reported rather than treated as a failure.</p>
+     */
+    private static void enableGipk(Connection conn) {
+        try (Statement st = conn.createStatement()) {
+            st.execute("SET SESSION sql_generate_invisible_primary_key = ON");
+        } catch (Exception e) {
+            log.warn("Could not set sql_generate_invisible_primary_key for this session: {}", e.toString());
+        }
+        try (Statement st = conn.createStatement()) {
+            st.execute("SET GLOBAL sql_generate_invisible_primary_key = ON");
+            log.info("Enabled sql_generate_invisible_primary_key globally: a table created without a "
+                    + "PRIMARY KEY from now on receives my_row_id from MySQL, which is carried by the "
+                    + "binlogged DDL and by every row image.");
+        } catch (Exception e) {
+            log.warn("Could not enable sql_generate_invisible_primary_key globally ({}). Grant the "
+                            + "connector's account SYSTEM_VARIABLES_ADMIN, or set it on the server:\n"
+                            + "    SET GLOBAL sql_generate_invisible_primary_key = ON;\n"
+                            + "    # and in my.cnf so it survives a restart:\n"
+                            + "    sql_generate_invisible_primary_key = ON\n"
+                            + "Until then a newly created keyless table has no row identity in the "
+                            + "binlog and will be refused at the next restart.",
+                    e.toString());
+        }
+    }
+
+    /**
+     * Whether this MySQL supports the generated invisible primary key.
+     *
+     * @param version the raw {@code VERSION()} string, e.g. {@code 8.0.36-log}.
+     * @return true from 8.0.30 onward. An unparseable version is treated as
+     *         supported: the pre-existing-table check still runs, and a wrong
+     *         guess there fails loudly rather than silently.
+     */
+    static boolean supportsGipk(String version) {
+        if (version == null) {
+            return true;
+        }
+        // MariaDB reports MySQL-like versions but has no GIPK. It is not a
+        // supported source for a keyless table either way; treat it as old so
+        // the refusal names the real reason.
+        if (version.toLowerCase().contains("mariadb")) {
+            return false;
+        }
+        String[] parts = version.split("[.\\-+~]");
+        try {
+            int major = Integer.parseInt(parts[0]);
+            int minor = parts.length > 1 ? Integer.parseInt(parts[1]) : 0;
+            int patch = parts.length > 2 ? Integer.parseInt(parts[2]) : 0;
+            if (major != GIPK_MAJOR) {
+                return major > GIPK_MAJOR;
+            }
+            if (minor != GIPK_MINOR) {
+                return minor > GIPK_MINOR;
+            }
+            return patch >= GIPK_PATCH;
+        } catch (NumberFormatException e) {
+            return true;
+        }
+    }
+
+    /**
+     * Lists base tables with no PRIMARY KEY and no non-null UNIQUE key.
+     *
+     * <p>A UNIQUE key over a nullable column is NOT a row identity: two rows
+     * may both hold NULL there and remain distinct, so it is excluded here,
+     * matching MySQL's own rule for when InnoDB falls back to
+     * {@code GEN_CLUST_INDEX}.</p>
+     */
+    private static List<String> keylessTables(Connection conn, String databaseFilter) throws Exception {
+        String sql =
+                "SELECT t.table_schema, t.table_name "
+                        + "FROM information_schema.tables t "
+                        + "WHERE t.table_type = 'BASE TABLE' "
+                        + "  AND t.table_schema NOT IN "
+                        + "      ('mysql','information_schema','performance_schema','sys') "
+                        + (databaseFilter == null ? "" : "  AND t.table_schema IN (" + databaseFilter + ") ")
+                        + "  AND NOT EXISTS ("
+                        + "      SELECT 1 FROM information_schema.statistics s "
+                        + "      JOIN information_schema.columns c "
+                        + "        ON c.table_schema = s.table_schema "
+                        + "       AND c.table_name = s.table_name "
+                        + "       AND c.column_name = s.column_name "
+                        + "      WHERE s.table_schema = t.table_schema "
+                        + "        AND s.table_name = t.table_name "
+                        + "        AND s.non_unique = 0 "
+                        + "        AND c.is_nullable = 'NO') "
+                        + "ORDER BY t.table_schema, t.table_name";
+        List<String> tables = new ArrayList<>();
+        try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+            while (rs.next()) {
+                tables.add(rs.getString(1) + "." + rs.getString(2));
+            }
+        }
+        return tables;
+    }
+
+    /**
+     * The connector's {@code database.include.list} as a quoted SQL list, so
+     * the check reports only databases actually being replicated.
+     */
+    private static String databaseFilter(Properties props) {
+        String include = props.getProperty("database.include.list");
+        if (include == null || include.trim().isEmpty()) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (String db : include.split(",")) {
+            String name = db.trim();
+            if (name.isEmpty()) {
+                continue;
+            }
+            if (sb.length() > 0) {
+                sb.append(",");
+            }
+            // information_schema names cannot contain a quote; reject rather
+            // than build a broken predicate.
+            if (name.contains("'")) {
+                return null;
+            }
+            sb.append("'").append(name).append("'");
+        }
+        return sb.length() == 0 ? null : sb.toString();
+    }
+
+    private static String scalar(Connection conn, String sql) throws Exception {
+        try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+            return rs.next() ? rs.getString(1) : null;
+        }
+    }
+
+    static String refusalTooOld(String version, List<String> keyless) {
+        return KeylessTableWarning.banner(keyless, false)
+                + "\nREFUSING TO REPLICATE. MySQL " + version + " is older than "
+                + GIPK_MAJOR + "." + GIPK_MINOR + "." + GIPK_PATCH + ", where the generated invisible "
+                + "primary key was introduced, so MySQL cannot supply an identity for these tables "
+                + "either. Add a primary key to each, or upgrade to MySQL "
+                + GIPK_MAJOR + "." + GIPK_MINOR + "." + GIPK_PATCH + "+.\n"
+                + "Set " + SKIP_PROPERTY + "=true to override, accepting that those tables may diverge.";
+    }
+
+    static String refusalPreExisting(List<String> keyless) {
+        return KeylessTableWarning.banner(keyless, true)
+                + "\nREFUSING TO REPLICATE until each table above has a primary key.\n"
+                + "Set " + SKIP_PROPERTY + "=true to override, accepting that those tables may diverge.";
+    }
+}

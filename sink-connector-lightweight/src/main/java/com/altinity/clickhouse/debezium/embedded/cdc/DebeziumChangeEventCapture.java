@@ -507,8 +507,16 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Error retrieving max retries", e);
         }
+        // A source table with no PRIMARY KEY and no non-null UNIQUE key has no
+        // row identity in the binlog, so nothing downstream can keep its
+        // ClickHouse copy correct. Enable MySQL's generated invisible primary
+        // key so tables created from now on get one, and refuse to start on a
+        // source that already holds such a table rather than replicating it
+        // wrongly.
+        KeylessTablePreflight.check(props);
+
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
-        
+
         // Log if replication history mode is enabled
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             log.info("************** HISTORY MODE ENABLED **************");

@@ -13,6 +13,7 @@ import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.KeylessTableWarning;
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
@@ -292,6 +293,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn,
                 uniqueKeyColumns, orderedColumnNames);
 
+        // True when the emitted sorting key can name NULLABLE columns, which
+        // ClickHouse rejects outright unless allow_nullable_key is enabled (see
+        // the settings block at the end of this method).
+        //
+        // Only the all-columns fallback can: a PRIMARY KEY is NOT NULL by MySQL's
+        // own rule, and a UNIQUE key is adopted below only when every one of its
+        // columns is NOT NULL. Emitting the setting where it is not needed would
+        // silently permit nullable keys ClickHouse is right to reject.
+        boolean nullableSortingKey = false;
+
         // A table with a UNIQUE key but no PRIMARY KEY would otherwise be created
         // with ORDER BY tuple(): every row compares equal, so ReplacingMergeTree
         // collapses the whole table into one row. The UNIQUE key is the source's
@@ -338,80 +349,42 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // that is invisible while the table holds a single row and appears the
         // moment it grows to two.
         //
-        // Making the full row its own identity is precisely MySQL's own semantics
-        // for a keyless table: rows are distinguished by their values. Paired with
-        // the before-image tombstone emitted by PreparedStatementExecutor, this
-        // reproduces INSERT, UPDATE and DELETE exactly (verified against MySQL for
-        // 1-row, N-row, growth, NULL-bearing and value-round-trip cases).
+        // The identity for such a table must come from MySQL, the source of
+        // truth, and MySQL has exactly one to offer: the GENERATED INVISIBLE
+        // PRIMARY KEY (8.0.30+). With sql_generate_invisible_primary_key=ON a
+        // keyless InnoDB table is created with a real
+        //   my_row_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT INVISIBLE PRIMARY KEY
+        // which is part of the table definition, so it is carried by the
+        // binlogged DDL and by every row image. Such a table therefore never
+        // reaches this branch at all -- it arrives here as an ordinary keyed
+        // table and my_row_id becomes its sorting key. Verified on 8.0.36.
         //
-        // That identity is carried by ONE generated column holding a fingerprint
-        // of the row, NOT by listing every data column in the sorting key.
+        // KeylessTablePreflight enables that setting at startup and REFUSES to
+        // replicate a source that still holds a genuinely keyless table, so
+        // this branch is reached only when that check was explicitly skipped.
         //
-        // Listing the data columns was the first implementation and it FROZE THE
-        // TABLE'S SCHEMA. ClickHouse forbids altering any column that participates
-        // in the sorting key, so on a keyless table every one of these failed with
-        // Code: 524 ALTER_OF_COLUMN_IS_FORBIDDEN, measured on 24.8.14.10547:
+        // Deriving an identity downstream instead was tried and does not work.
+        // Both attempts are recorded here because both look reasonable:
         //
-        //   ALTER TABLE t MODIFY COLUMN b Nullable(Int32)
-        //     -> "ALTER of key column b ... is not safe because it can change the
-        //         representation of primary key"
-        //   ALTER TABLE t RENAME COLUMN b TO b_new
-        //     -> "Trying to ALTER RENAME key b column which is a part of key
-        //         expression"
-        //   ALTER TABLE t DROP COLUMN v
-        //     -> Code: 47 UNKNOWN_IDENTIFIER, the key expression still names it
+        //   ORDER BY (every column)
+        //     -> ClickHouse forbids altering any column in the sorting key, so
+        //        the table's schema FREEZES: MODIFY and RENAME fail with
+        //        Code: 524, DROP with Code: 47, the connector retries the DDL
+        //        ten times (~45s) and gives up. Measured on 24.8.14.10547.
+        //   ORDER BY (a hash of the row's values)
+        //     -> a column the hash names cannot be dropped (Code: 44), and a
+        //        column added later is absent from it, so two rows differing
+        //        only in the new column collapse: 2 rows in, 1 row out.
         //
-        // The connector retries a failed DDL ten times (~45s) and then gives up, so
-        // the change never lands and replication of that table's schema is stuck.
-        // A fix for silent data loss must not cost the table its ability to take
-        // any other operation.
+        // Neither can be fixed, because both invent an identity out of the
+        // data. Dropping a column must stay possible, and only a key that is
+        // independent of the data columns allows it -- which is precisely what
+        // MySQL's my_row_id is.
         //
-        // The column is a PLAIN UInt64 and the CONNECTOR computes its value per
-        // record (PreparedStatementFieldMapper#rowFingerprint). It is deliberately
-        // NOT a MATERIALIZED expression: an expression has to name the columns,
-        // which bakes the column list into the table and is brittle in both
-        // directions as the schema evolves. Both failures were measured on
-        // 24.8.14.10547:
-        //
-        //   DROP COLUMN of a named column
-        //     -> Code: 44 "Cannot drop column b, because column _row_key
-        //        depends on it"
-        //   ADD COLUMN, then two rows differing ONLY in the new column
-        //     -> the expression predates the column, both rows hash the same and
-        //        ReplacingMergeTree collapses them: 2 rows in, 1 row out
-        //
-        // Computing the value connector-side removes the dependency entirely: the
-        // fingerprint covers whatever fields the record carries, so it follows the
-        // schema automatically, and ADD/DROP/MODIFY/RENAME COLUMN all succeed with
-        // no maintenance of the key.
-        //
-        // PRIMARY KEY tuple() keeps the sparse index empty; the fingerprint exists
-        // only to give ReplacingMergeTree a full-row identity to deduplicate on.
-        //
-        // Not representable: a table holding two byte-identical rows. Identical
-        // rows are indistinguishable under ANY sorting key, so ClickHouse keeps
-        // one. Collapsing/Summing engines track the multiplicity but still
-        // collapse the physical rows at merge time, so they do not help a plain
-        // consumer query. This case is logged as a warning below and is unchanged
-        // by moving from an all-column key to the fingerprint.
-        boolean isKeylessTable = false;
-        String rowKeyColumnDefinition = null;
+        // Left as ORDER BY tuple() here rather than inventing a key: the
+        // preflight refuses this table, and the warning below names it.
         if (orderByColumns.length() == 0 && !orderedColumnNames.isEmpty()) {
-            isKeylessTable = true;
-            // The source may legitimately hold a column of this name. Emitting
-            // ours unconditionally then produces two definitions of it and
-            // ClickHouse rejects the CREATE outright (Code: 44 "column with
-            // this name already exists"), stalling that table. Disambiguate the
-            // same way the delete marker already does.
-            String rowKeyColumn = resolveRowKeyColumnName(orderedColumnNames);
-            rowKeyColumnDefinition = "`" + rowKeyColumn + "` UInt64";
-            orderByColumns.append("`").append(rowKeyColumn).append("`");
-            log.warn("Table {}.{} declares no PRIMARY KEY and no UNIQUE key. Adding the generated column "
-                            + "`{}` as the ClickHouse sorting key -- a fingerprint over all {} columns -- so "
-                            + "rows are not collapsed while the data columns stay alterable. NOTE: if this "
-                            + "table can hold two byte-identical rows, ClickHouse will retain only one of "
-                            + "them -- identical rows cannot be told apart by any sorting key.",
-                    this.databaseName, this.tableName, rowKeyColumn, orderedColumnNames.size());
+            log.error(KeylessTableWarning.banner(this.databaseName, this.tableName));
         }
 
         String isDeletedColumn = IS_DELETED_COLUMN;
@@ -452,13 +425,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
 
 
-        // The keyless-table row fingerprint. A plain UInt64: the CONNECTOR
-        // computes the value and binds it, so the column IS part of the
-        // writer's INSERT column list (see QueryFormatter#isConnectorManagedColumn).
-        if (rowKeyColumnDefinition != null) {
-            this.query.append(rowKeyColumnDefinition).append(",");
-        }
-
         if (DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine) {
             this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
             this.query.append("`").append(isDeletedColumn).append("` ").append(IS_DELETED_COLUMN_DATA_TYPE);
@@ -498,16 +464,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         } else if (partitionByColumn.length() > 0) {
             // Fallback to partitionByColumn if tableConfig does not provide a partition_by value
             this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
-        }
-
-        // For the all-columns fallback, pin an EMPTY primary key. In ClickHouse the
-        // primary key defaults to the sorting key and is held in memory for every
-        // active part, so a wide all-column sorting key would otherwise inflate the
-        // sparse index for no benefit. PRIMARY KEY tuple() keeps the index empty
-        // while ORDER BY still gives ReplacingMergeTree its full-row identity.
-        // Emitted before ORDER BY because ClickHouse requires that clause order.
-        if (isKeylessTable && (tableConfig.getPrimaryKey() == null || tableConfig.getPrimaryKey().isEmpty())) {
-            this.query.append(" PRIMARY KEY tuple()");
         }
 
         if (tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
@@ -552,21 +508,29 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
         
 
-        // No path emits allow_nullable_key any more.
+        // The all-columns fallback sorting key necessarily includes every
+        // nullable column of the source table, and ClickHouse rejects a nullable
+        // sorting key outright (Code: 44 ILLEGAL_COLUMN) unless
+        // allow_nullable_key is enabled.
         //
-        // A PRIMARY KEY is NOT NULL by MySQL's own rule; a UNIQUE key is adopted
-        // above only when every one of its columns is NOT NULL; and the keyless
-        // fallback now keys on the generated `_row_key`, which is UInt64 and
-        // non-Nullable by construction. Emitting the setting where it is not
-        // needed would silently permit nullable keys ClickHouse is right to
-        // reject.
+        // The other two paths never need it, and must not get it: a PRIMARY KEY
+        // is NOT NULL by MySQL's own rule, and a UNIQUE key is adopted above only
+        // when every one of its columns is NOT NULL.
+        //
+        // Append to any user-supplied settings rather than replacing them.
         String tableSettings = tableConfig.getSettings();
-        if (tableSettings != null && !tableSettings.isEmpty()) {
+        boolean hasUserSettings = tableSettings != null && !tableSettings.isEmpty();
+        if (nullableSortingKey && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {
+            this.query.append(Constants.SETTINGS);
+            if (hasUserSettings) {
+                this.query.append(tableSettings).append(",");
+            }
+            this.query.append(ALLOW_NULLABLE_KEY).append("=1");
+        } else if (hasUserSettings) {
             // Use the settings from tableConfig if it exists
             this.query.append(Constants.SETTINGS).append(tableSettings);
         }
     }
-
 
     /**
      * Finds partitioning options using regex when ANTLR parser fails to identify partitions.
@@ -966,44 +930,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
-    }
-
-    /**
-     * Picks a name for the generated row-key column that no source column
-     * already uses.
-     *
-     * <p>A keyless MySQL table may itself declare a column called
-     * {@code _row_key}. Emitting ours unconditionally then renders two
-     * definitions of the same name and ClickHouse rejects the CREATE with
-     * Code: 44 "column with this name already exists", stalling replication of
-     * that table. Underscores are prepended until the name is free, the same
-     * disambiguation the delete-marker column already uses.</p>
-     *
-     * <p>The generated name must also be STRICTLY DEEPER than every source
-     * column of the row-key shape, not merely absent from the source. Both the
-     * connector and the checksum tooling identify the generated column by that
-     * shape and resolve a clash by underscore depth, so a source
-     * {@code __row_key} with the generated column at {@code _row_key} inverts
-     * the two: the generated column is treated as source data and the real
-     * column is dropped from the comparison, hiding any divergence in it.
-     * Skipping past the deepest source variant keeps the generated column
-     * unambiguously the deepest one.</p>
-     *
-     * @param columns the table's declared columns.
-     * @return a column name that is free and deeper than any source row-key column.
-     */
-    private static String resolveRowKeyColumnName(List<String> columns) {
-        Set<String> taken = new HashSet<>();
-        for (String column : columns) {
-            taken.add(stripBackticks(column).toLowerCase());
-        }
-        String candidate = ROW_KEY_COLUMN;
-        // Free AND deeper than every source column sharing the row-key shape.
-        while (taken.contains(candidate.toLowerCase())
-                || taken.contains("_" + candidate.toLowerCase())) {
-            candidate = "_" + candidate;
-        }
-        return candidate;
     }
 
     /**
