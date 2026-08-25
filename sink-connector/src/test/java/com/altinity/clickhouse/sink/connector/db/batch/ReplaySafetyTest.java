@@ -22,13 +22,34 @@ import org.junit.jupiter.api.Test;
  * <p>The mechanism is version ORDERING, not version equality. A replayed event
  * does not reproduce its original {@code _version}: on resume the counter is
  * seeded at {@code SEQUENCE_START_INITIAL} (500m) instead of
- * {@code SEQUENCE_START} (1000m), so the re-published copy is issued a
- * strictly LOWER version and therefore loses to the row already stored under
- * the same ReplacingMergeTree sorting key. It is discarded rather than
- * overwriting a correct row.</p>
+ * {@code SEQUENCE_START} (1000m), so the re-published copy is issued a lower
+ * version than the pre-restart write of the SAME event and loses to the row
+ * already stored under the same ReplacingMergeTree sorting key.</p>
  *
- * <p>These tests pin the invariants that safety rests on, so a later change
- * cannot quietly remove them.</p>
+ * <p><b>That ordering does not generalise, and the gap is a real defect.</b>
+ * The version is {@code sourceTsMs * 1_000_000 + sequence}, which leaves only
+ * six decimal digits for the sequence, but the seeds are ten digits. Adding
+ * {@code SEQUENCE_START} therefore carries into the timestamp field and acts
+ * as a ~1000&nbsp;ms shift. A genuinely NEWER event that arrives just after a
+ * resume can then rank BELOW an older pre-restart event, so ReplacingMergeTree
+ * discards the newer row:</p>
+ *
+ * <pre>
+ *   older, pre-restart  (T)    -&gt; T*1e6 + 1_000_000_000 = 1787635798000000000
+ *   newer, post-restart (T+1ms)-&gt; (T+1)*1e6 + 500_000_000 = 1787635797501000000
+ *   newer &lt; older  =&gt; the newer update is silently dropped
+ * </pre>
+ *
+ * <p>The {@code diff &gt; 1} second guard does not save this case: a
+ * 1&nbsp;ms advance gives {@code diff == 0}, so the 500m seed is still in
+ * force. Found by the adversarial review of the PR that first documented this
+ * area, and reproduced with the arithmetic above.</p>
+ *
+ * <p>These tests therefore pin only what is genuinely safe today, and one of
+ * them documents the overflow so it cannot be mistaken for intended
+ * behaviour. Fixing it means changing the encoding so the sequence cannot
+ * carry into the timestamp -- a behaviour change to the version scheme, out of
+ * scope for a documentation PR.</p>
  */
 @DisplayName("Replayed events must be safe to apply twice")
 public class ReplaySafetyTest {
@@ -95,45 +116,44 @@ public class ReplaySafetyTest {
     }
 
     /**
-     * A replayed event must LOSE to the row already stored, not tie with it.
+     * The sequence seeds overflow the space the multiplier leaves them.
      *
-     * <p>This is the invariant that actually makes the observed replay
-     * harmless, and it is an ordering property rather than an equality one. On
-     * resume the sequence counter is seeded at {@code SEQUENCE_START_INITIAL}
-     * (500m) instead of {@code SEQUENCE_START} (1000m), so a re-published event
-     * in the same source second is issued a strictly lower {@code _version}
-     * than the pre-restart write of that same event. ReplacingMergeTree then
-     * keeps the higher version -- the row already correctly stored -- and
-     * discards the replay.</p>
+     * <p>{@code sourceTsMs * 1_000_000 + sequence} reserves six decimal digits
+     * for the sequence, but {@code SEQUENCE_START} is ten digits. The addition
+     * therefore carries into the timestamp field, worth about 1000&nbsp;ms.
+     * Across a resume that inverts causal order: a NEWER event seeded at 500m
+     * can rank below an OLDER pre-restart event seeded at 1000m, and
+     * ReplacingMergeTree silently discards the newer row.</p>
      *
-     * <p>Both constants live in the lightweight module, so they are restated
-     * here as the literals this module's behaviour depends on; the assertion
-     * fails loudly if that relationship is ever inverted.</p>
+     * <p>This test asserts the defect EXISTS rather than asserting it is
+     * correct. It is deliberately written to start failing the moment the
+     * encoding is fixed, at which point it should be inverted into the
+     * ordering guarantee it currently cannot make.</p>
      */
     @Test
-    public void testResumeVersionsRankBelowPreRestartVersions() {
-        // Mirrors DebeziumChangeEventCapture.SEQUENCE_START{,_INITIAL}.
-        final long sequenceStart = 1000000000L;
-        final long sequenceStartInitial = 500000000L;
+    public void testSequenceSeedsOverflowTheTimestampMultiplier() {
+        // Mirrors DebeziumChangeEventCapture.SEQUENCE_START{,_INITIAL} and the
+        // ts_ms * 1_000_000 + counter encoding.
+        final long multiplier = 1_000_000L;
+        final long sequenceStart = 1_000_000_000L;
+        final long sequenceStartInitial = 500_000_000L;
 
-        Assert.assertTrue("a resumed event must rank strictly BELOW a pre-restart write "
-                        + "of the same source second, or the replay would supersede the "
-                        + "correct row",
-                sequenceStartInitial < sequenceStart);
+        Assert.assertTrue("the seed must not fit in the space the multiplier leaves; "
+                        + "when this stops holding the encoding has been fixed and the "
+                        + "ordering assertion below should be inverted",
+                sequenceStart >= multiplier);
 
-        // Same source second on both sides -- the source timestamp is identical
-        // on every re-delivery, which is what makes the comparison meaningful.
-        final long sourceTsMs = 1787635797000L;
-        long preRestartVersion = sourceTsMs * 1000000L + sequenceStart;
-        long replayedVersion = sourceTsMs * 1000000L + sequenceStartInitial;
+        final long olderSourceTs = 1787635797000L;
+        final long newerSourceTs = olderSourceTs + 1;   // 1 ms later, so diff == 0
 
-        Assert.assertTrue("the replayed copy must lose the version comparison: "
-                        + replayedVersion + " !< " + preRestartVersion,
-                replayedVersion < preRestartVersion);
+        long olderPreRestart = olderSourceTs * multiplier + sequenceStart;
+        long newerPostRestart = newerSourceTs * multiplier + sequenceStartInitial;
 
-        // Equality would be just as wrong as being higher: RMT would then be free
-        // to keep either copy, making the outcome depend on merge order.
-        Assert.assertNotEquals("a replay must not TIE with the stored row -- ties leave "
-                        + "the winner up to merge order", preRestartVersion, replayedVersion);
+        Assert.assertTrue("KNOWN DEFECT: a newer post-resume event currently ranks BELOW "
+                        + "an older pre-restart one (" + newerPostRestart + " < "
+                        + olderPreRestart + "), so ReplacingMergeTree drops the newer "
+                        + "row. If this assertion fails, the encoding was fixed -- "
+                        + "replace it with the real ordering guarantee.",
+                newerPostRestart < olderPreRestart);
     }
 }

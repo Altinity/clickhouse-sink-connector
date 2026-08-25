@@ -235,6 +235,27 @@ public class DebeziumOffsetManagement {
      * {@code DebeziumChangeEventCapture#handleBatch} before changing either
      * the sequence seeding or the timestamp source.</p>
      *
+     * <p><b>KNOWN DEFECT, not fixed here.</b> The guarantee above holds only
+     * for the SAME event re-delivered. It does not generalise, because the
+     * encoding {@code sourceTsMs * 1_000_000 + sequence} leaves six decimal
+     * digits for the sequence while the seeds are ten digits, so the addition
+     * carries into the timestamp field and acts as a ~1000&nbsp;ms shift.
+     * A genuinely NEWER event arriving just after a resume can then rank BELOW
+     * an older pre-restart event and be discarded:</p>
+     *
+     * <pre>
+     *   older, pre-restart  (T)     -&gt; T*1e6 + 1_000_000_000 = 1787635798000000000
+     *   newer, post-restart (T+1ms) -&gt; (T+1)*1e6 + 500_000_000 = 1787635797501000000
+     * </pre>
+     *
+     * <p>The {@code diff &gt; 1} second reset does not cover it: a 1&nbsp;ms
+     * advance yields {@code diff == 0}, so the 500m seed still applies. Fixing
+     * it means widening the multiplier (or shrinking the seeds) so the
+     * sequence cannot carry -- a change to the version scheme itself, which
+     * needs its own review and a migration story for existing versions.
+     * {@code ReplaySafetyTest} pins the arithmetic so the gap cannot be
+     * mistaken for intended behaviour.</p>
+     *
      * <p>The engine matters too. ReplacingMergeTree resolves a duplicate by
      * version, so a losing replay is simply dropped. CollapsingMergeTree sign
      * rows are ADDITIVE: a replayed {@code +1} sums to {@code +2} and never
