@@ -277,9 +277,10 @@ public class KeylessTablePreflight {
      */
     private static boolean gipkEnabledGlobally(Connection conn) {
         try {
-            return "ON".equalsIgnoreCase(
-                    scalar(conn, "SELECT @@GLOBAL.sql_generate_invisible_primary_key"))
-                    || "1".equals(scalar(conn, "SELECT @@GLOBAL.sql_generate_invisible_primary_key"));
+            // One round trip: MySQL renders this as 1/0 or ON/OFF depending on
+            // version and client, so both spellings are accepted.
+            String value = scalar(conn, "SELECT @@GLOBAL.sql_generate_invisible_primary_key");
+            return "ON".equalsIgnoreCase(value) || "1".equals(value);
         } catch (Exception e) {
             log.debug("Could not read @@GLOBAL.sql_generate_invisible_primary_key: {}", e.toString());
             return false;
