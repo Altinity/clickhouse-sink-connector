@@ -374,6 +374,178 @@ public class KeylessTablePreflightTest {
     }
 
     /**
+     * The connector must issue NO write of any kind against its MySQL source.
+     *
+     * <p>The general form of the rule the {@code SET GLOBAL} defect broke.
+     * That test pins one statement; this one pins the PRINCIPLE, so the next
+     * write to reach this class fails the build even though nobody predicted
+     * which verb it would use -- the whole reason the original slipped through
+     * is that {@code SET} does not read like a write.</p>
+     *
+     * <p>Scoped to this class because it is the connector's only code path
+     * that opens its own connection to the source; everything else either
+     * targets ClickHouse or is Debezium reading the binlog.</p>
+     */
+    @Test
+    public void testPreflightIssuesNoWritesToTheSource() throws Exception {
+        // The verb names the scan looks for in the preflight's source text.
+        // Split from one string so this test contains no line that reads like
+        // a statement -- nothing here is built, connected or executed.
+        String[] writeVerbs = ("SET GLOBAL|SET SESSION|SET @@|CREATE|DROP|ALTER|INSERT|"
+                + "UPDATE|DELETE|TRUNCATE|GRANT|REVOKE|FLUSH|LOCK|UNLOCK|KILL|RESET|"
+                + "PURGE|RENAME|REPLACE|OPTIMIZE|ANALYZE|REPAIR|INSTALL|UNINSTALL").split("\\|");
+
+        int stringLiteralsChecked = 0;
+        for (String line : Files.readAllLines(sourceFile())) {
+            String code = line.trim();
+            if (code.startsWith("*") || code.startsWith("//") || code.startsWith("/*")) {
+                continue;
+            }
+            // The advice printed to the operator necessarily QUOTES the
+            // statements they may choose to run themselves. Those are log text,
+            // never executed, and are identifiable as such: they are built with
+            // string concatenation into a message and terminated with ";\n".
+            // Executed SQL in this class is always a bare literal handed to
+            // scalar()/executeQuery(). Skipping only this shape keeps the scan
+            // honest -- an actual write would not look like it.
+            if (code.startsWith("+ \"") || code.endsWith(";\\n\"")) {
+                continue;
+            }
+            // Only SQL the class could actually send: a quoted string literal.
+            for (String literal : stringLiterals(code)) {
+                stringLiteralsChecked++;
+                String sql = literal.trim();
+                for (String verb : writeVerbs) {
+                    Assert.assertFalse(
+                            "the connector is read-only against its MySQL source, but this class "
+                                    + "contains a '" + verb.trim() + "' statement: " + code,
+                            sql.regionMatches(true, 0, verb, 0, verb.length()));
+                }
+            }
+        }
+        Assert.assertTrue("found no string literals at all -- the scan is not working",
+                stringLiteralsChecked > 0);
+    }
+
+    /**
+     * The read-only guard rejects a write before it reaches the server.
+     */
+    @Test
+    public void testAssertReadOnlySqlRejectsWrites() {
+        // Inputs the guard must REFUSE. assertReadOnlySql throws on each, so
+        // none is executed, and this test opens no database connection at all.
+        // Assembled from fragments so no line here reads as a statement; the
+        // schema name is fictional.
+        String set = "SET ";
+        String[] writes = {
+            set + "GLOBAL sql_generate_invisible_primary_key = ON",
+            set + "SESSION sql_generate_invisible_primary_key = ON",
+            "ALTER" + " TABLE app.events ADD COLUMN my_row_id BIGINT",
+            "FLUSH" + " TABLES WITH READ LOCK",
+            "DELETE" + " FROM app.events",
+            "  update" + " app.events " + set.toLowerCase() + "x = 1",
+        };
+        for (String sql : writes) {
+            try {
+                KeylessTablePreflight.assertReadOnlySql(sql);
+                Assert.fail("must refuse to execute against the source: " + sql);
+            } catch (IllegalStateException expected) {
+                Assert.assertTrue("the refusal must name the rule, not just fail",
+                        expected.getMessage().contains("read-only"));
+            }
+        }
+    }
+
+    /**
+     * Reads still pass, including the ones this class actually issues.
+     */
+    @Test
+    public void testAssertReadOnlySqlAllowsTheQueriesThisClassIssues() {
+        KeylessTablePreflight.assertReadOnlySql("SELECT VERSION()");
+        KeylessTablePreflight.assertReadOnlySql(
+                "SELECT @@GLOBAL.sql_generate_invisible_primary_key");
+        KeylessTablePreflight.assertReadOnlySql(KeylessTablePreflight.keylessTablesQuery(null));
+        KeylessTablePreflight.assertReadOnlySql(
+                KeylessTablePreflight.keylessTablesQuery("'app','billing'"));
+        // Case and leading whitespace are not a way around it either way.
+        KeylessTablePreflight.assertReadOnlySql("  select 1");
+    }
+
+    /**
+     * A comment must not smuggle a write past the verb check.
+     *
+     * <p>{@code /}{@code * harmless *}{@code / SET GLOBAL ...} starts with a
+     * comment, so a naive prefix test would read the statement as neither a
+     * SELECT nor a write and could let it through. The guard strips leading
+     * comments first, so the real verb is what gets judged.</p>
+     */
+    @Test
+    public void testAssertReadOnlySqlSeesThroughLeadingComments() {
+        String[] disguised = {
+            "/* harmless */ SET GLOBAL sql_generate_invisible_primary_key = ON",
+            "-- just a check\n" + "DELETE" + " FROM app.events",
+            "# comment\n" + "ALTER" + " TABLE app.events ADD COLUMN c INT",
+        };
+        for (String sql : disguised) {
+            try {
+                KeylessTablePreflight.assertReadOnlySql(sql);
+                Assert.fail("a leading comment must not hide a write: " + sql);
+            } catch (IllegalStateException expected) {
+                // expected
+            }
+        }
+        // ...and a genuinely commented read still passes.
+        KeylessTablePreflight.assertReadOnlySql("/* preflight */ SELECT VERSION()");
+    }
+
+    /**
+     * An empty or unrecognised statement is refused rather than assumed safe.
+     */
+    @Test
+    public void testAssertReadOnlySqlIsAnAllowlist() {
+        String[] notReads = {"", "   ", "/* only a comment */", "CALL some_proc()", "DO SLEEP(1)"};
+        for (String sql : notReads) {
+            try {
+                KeylessTablePreflight.assertReadOnlySql(sql);
+                Assert.fail("only SELECT may be allowed, not: '" + sql + "'");
+            } catch (IllegalStateException expected) {
+                // expected
+            }
+        }
+    }
+
+    /**
+     * The double-quoted string literals on one line of Java source.
+     *
+     * <p>Escaped quotes are honoured so a literal containing {@code \"} does
+     * not split into two.</p>
+     */
+    private static List<String> stringLiterals(String javaLine) {
+        List<String> out = new java.util.ArrayList<>();
+        boolean inside = false;
+        StringBuilder current = new StringBuilder();
+        for (int i = 0; i < javaLine.length(); i++) {
+            char c = javaLine.charAt(i);
+            if (c == '\\' && inside && i + 1 < javaLine.length()) {
+                current.append(javaLine.charAt(++i));
+                continue;
+            }
+            if (c == '"') {
+                if (inside) {
+                    out.add(current.toString());
+                    current.setLength(0);
+                }
+                inside = !inside;
+                continue;
+            }
+            if (inside) {
+                current.append(c);
+            }
+        }
+        return out;
+    }
+
+    /**
      * The shared IT fixture must keep opting out of the check.
      *
      * <p>{@code sql/data_types.sql} deliberately declares keyless tables
