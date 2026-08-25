@@ -117,7 +117,24 @@ schema.history.internal.jdbc.table.name: "altinity_sink_connector.replicate_sche
 # enable.snapshot.ddl: If set to true, the connector will parse the DDL statements from the initial load
 enable.snapshot.ddl: "true"
 
-# persist.raw.bytes: If set to true, the connector will persist raw bytes as received in a String column.
+# persist.raw.bytes: how BLOB/BINARY/VARBINARY/BIT values are written. Both
+# modes target a String column; they differ in what that column contains.
+#
+#   false (default) -- the bytes are HEX-ENCODED and the hex TEXT is stored.
+#                      MySQL x'0102030405' becomes the 10-character string
+#                      "0102030405", so hex(col) in ClickHouse returns
+#                      30313032303330343035 (the hex OF THAT TEXT), not
+#                      0102030405. A byte-for-byte comparison against the
+#                      source therefore does not match, and the column takes
+#                      twice the space. The value is recoverable with
+#                      unhex(col).
+#   true            -- the raw bytes are stored unchanged, so the column is
+#                      byte-identical to MySQL and hex(col) matches HEX(col)
+#                      on the source. Use this when binary values are compared
+#                      against MySQL, e.g. by the db_compare checksum jobs.
+#
+# The default stays false for backward compatibility: flipping it changes the
+# stored representation, so existing tables would need to be rewritten.
 persist.raw.bytes: "false"
 
 # auto.create.tables: If set to true, the connector will create tables in the target based on the schema received in the incoming message.
