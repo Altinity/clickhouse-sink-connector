@@ -136,8 +136,6 @@ public class CreateTableUniqueKeySortKeyTest {
                         + clickHouseQuery, query.contains("order by tuple()"));
         Assert.assertTrue("the generated row-key column must be the sorting key, was: " + clickHouseQuery,
                 query.contains("order by `_row_key`"));
-        Assert.assertTrue("every column must feed the fingerprint, was: " + clickHouseQuery,
-                query.contains("isnull(`a`)") && query.contains("isnull(`v`)"));
     }
 
     /**
@@ -175,8 +173,6 @@ public class CreateTableUniqueKeySortKeyTest {
                         + "NULL-keyed rows -- so the row fingerprint must be used instead, was: "
                         + clickHouseQuery,
                 query.contains("order by `_row_key`"));
-        Assert.assertTrue("every column must feed the fingerprint, was: " + clickHouseQuery,
-                query.contains("isnull(`a`)") && query.contains("isnull(`v`)"));
         Assert.assertFalse("the fingerprint is a non-Nullable UInt64, so allow_nullable_key must "
                         + "not be emitted, was: " + clickHouseQuery,
                 query.contains("allow_nullable_key"));
@@ -197,9 +193,6 @@ public class CreateTableUniqueKeySortKeyTest {
         Assert.assertTrue("one nullable member makes the whole UNIQUE key unusable as an "
                         + "identity, so the row fingerprint must be used, was: " + clickHouseQuery,
                 query.contains("order by `_row_key`"));
-        Assert.assertTrue("every column must feed the fingerprint, was: " + clickHouseQuery,
-                query.contains("isnull(`a`)") && query.contains("isnull(`b`)")
-                        && query.contains("isnull(`v`)"));
         Assert.assertFalse("the fingerprint is a non-Nullable UInt64, so allow_nullable_key must "
                         + "not be emitted, was: " + clickHouseQuery,
                 query.contains("allow_nullable_key"));

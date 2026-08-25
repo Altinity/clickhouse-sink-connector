@@ -325,6 +325,14 @@ public class QueryFormatter {
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.SIGN_COLUMN)
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)
+                // The keyless row identity. Like _version and is_deleted it is
+                // never present in the source record -- the connector computes
+                // it -- so it must stay in the INSERT column list. Omitted, every
+                // row is written with the UInt64 default of 0, every row shares a
+                // sorting key, and ReplacingMergeTree collapses the whole table:
+                // the exact loss this column exists to prevent.
+                || com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementFieldMapper
+                        .isRowKeyColumn(colName)
                 || (deleteColumn != null && !deleteColumn.isEmpty()
                         && colName.equalsIgnoreCase(deleteColumn));
     }

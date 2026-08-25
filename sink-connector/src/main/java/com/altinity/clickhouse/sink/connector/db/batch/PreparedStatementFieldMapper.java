@@ -22,6 +22,8 @@ import org.apache.logging.log4j.Logger;
 import java.sql.PreparedStatement;
 import java.sql.Types;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -170,7 +172,14 @@ public class PreparedStatementFieldMapper {
                 // If the record was not supplied, we need to set it as null.
                 // Ignore version and sign columns.
                 if (colName.equalsIgnoreCase(versionColumn) || colName.equalsIgnoreCase(signColumn) ||
-                        colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)) {
+                        colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn) ||
+                        // The generated keyless row identity is absent from the
+                        // source by design and is bound below by
+                        // handleRowKeyColumn(), which overwrites this null. It
+                        // belongs with _version and _sign, not in the error log:
+                        // logging it per column per record made a working table
+                        // look broken.
+                        isRowKeyColumn(colName)) {
                     // Ignore version and sign columns
                 } else {
                     if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
@@ -203,6 +212,9 @@ public class PreparedStatementFieldMapper {
                         schemaName, colName));
             }
         }
+
+        // Handle the keyless-table row identity.
+        handleRowKeyColumn(columnNameToIndexMap, ps, struct, columnNameToDataTypeMap);
 
         // Handle Kafka metadata columns if configured to store Kafka metadata.
         handleKafkaMetadata(columnNameToIndexMap, ps, record, config, columnNameToDataTypeMap);
@@ -387,6 +399,179 @@ public class PreparedStatementFieldMapper {
         if(columnNameToDataTypeMap.containsKey(OPERATION_COLUMN) && columnNameToIndexMap.containsKey(OPERATION_COLUMN)) {
             ps.setString(columnNameToIndexMap.get(OPERATION_COLUMN), record.getCdcOperation().getOperation());
         }
+    }
+
+    /**
+     * Binds the row-identity column of a keyless source table.
+     *
+     * <p>A table that declares neither a PRIMARY KEY nor a UNIQUE key has no
+     * row identity of its own, so the connector supplies one: a fingerprint of
+     * the record's values, which is what MySQL itself uses to tell such rows
+     * apart. It is a PLAIN {@code UInt64} column, and the connector computes
+     * the value here rather than ClickHouse computing it from a stored
+     * expression.</p>
+     *
+     * <p>That distinction is the whole point. A {@code MATERIALIZED} expression
+     * has to name the columns, which bakes the column list into the table and
+     * makes the design brittle in both directions, measured on 24.8.14.10547:
+     * dropping a named column is refused with
+     * {@code Code: 44 "because column _row_key depends on it"}, and a column
+     * added later is absent from the expression, so two rows differing only in
+     * that new column share a fingerprint and ReplacingMergeTree silently
+     * collapses them (2 distinct rows measured in, 1 out).</p>
+     *
+     * <p>Computing it here has no such dependency: the fingerprint always
+     * covers whatever fields the record actually carries, so it follows the
+     * schema automatically. ADD, DROP, MODIFY and RENAME COLUMN all succeed
+     * against the table with no maintenance of the key, verified end to end.</p>
+     *
+     * <p>The record's fields are folded in NAME order, not declaration order.
+     * Debezium orders fields by the source schema, which changes when a column
+     * is added or dropped; sorting by name keeps the fingerprint stable for a
+     * given set of values and reproducible across connector restarts and across
+     * two connectors replicating the same source. Each field contributes its
+     * name, an explicit null-flag and its value, so a NULL cannot be confused
+     * with the literal text of any value, and a value cannot be confused with a
+     * field boundary.</p>
+     */
+    private void handleRowKeyColumn(Map<String, Integer> columnNameToIndexMap,
+                                    PreparedStatement ps,
+                                    Struct struct,
+                                    Map<String, String> columnNameToDataTypeMap) throws Exception {
+        for (Map.Entry<String, Integer> entry : columnNameToIndexMap.entrySet()) {
+            String colName = entry.getKey();
+            if (!isRowKeyColumn(colName) || !columnNameToDataTypeMap.containsKey(colName)) {
+                continue;
+            }
+            // A source table may itself declare a column whose name matches the
+            // row-key shape. That is a real data column, already bound from the
+            // record above, and the generated one was given a different name at
+            // DDL time precisely so the two can coexist. Overwriting it here
+            // would replace the user's value with the fingerprint -- silent
+            // corruption that leaves the row count unchanged.
+            if (struct != null && struct.schema().field(colName) != null) {
+                continue;
+            }
+            ps.setLong(entry.getValue(), rowFingerprint(struct));
+        }
+    }
+
+    /**
+     * Whether a column has the shape of the generated keyless row-identity
+     * column.
+     *
+     * <p>The name may carry extra leading underscores: it is disambiguated at
+     * DDL time when the source table already declares a column called
+     * {@code _row_key}. The shape alone does not prove a column is the
+     * generated one -- a source column can be named {@code _row_key} too --
+     * so callers must also establish that the record does not carry it.</p>
+     */
+    public static boolean isRowKeyColumn(String columnName) {
+        if (columnName == null) {
+            return false;
+        }
+        String name = columnName.replace("`", "").trim();
+        while (name.startsWith("_") && !name.equalsIgnoreCase(ROW_KEY_COLUMN)) {
+            name = name.substring(1);
+        }
+        return name.equalsIgnoreCase(ROW_KEY_COLUMN);
+    }
+
+    /**
+     * Fingerprints every field a record carries, in field-name order.
+     *
+     * @param struct the record image being written.
+     * @return a stable 64-bit identity for that set of values.
+     */
+    static long rowFingerprint(Struct struct) {
+        if (struct == null) {
+            return 0L;
+        }
+        List<String> names = new ArrayList<>();
+        for (Field field : struct.schema().fields()) {
+            names.add(field.name());
+        }
+        Collections.sort(names);
+
+        StringBuilder sb = new StringBuilder();
+        for (String name : names) {
+            Object value;
+            try {
+                value = struct.get(name);
+            } catch (Exception e) {
+                // A field the record does not actually carry contributes
+                // nothing beyond its name and null-flag.
+                value = null;
+            }
+            // Length-prefix every part so no value can imitate a boundary.
+            appendPart(sb, name);
+            appendPart(sb, renderValue(value));
+        }
+        return fingerprintOf(sb.toString());
+    }
+
+    /**
+     * Renders one field value as text that depends ONLY on the value, never on
+     * the JVM that happens to be running.
+     *
+     * <p>This is what lets the fingerprint survive a connector restart or a move
+     * to a different host. {@code String.valueOf} is not safe here: arrays and
+     * {@code ByteBuffer} inherit {@code Object.toString()}, which embeds the
+     * identity hash code, so the same BLOB renders as {@code [B@2f8f5f62} in one
+     * process and something else in the next. The key would change on restart,
+     * a re-sent row would no longer match the row already in ClickHouse, and it
+     * would be inserted a second time instead of replacing it.</p>
+     *
+     * <p>Binary is therefore rendered as hex, and {@code BigDecimal} through
+     * {@code toPlainString} so scale and notation cannot vary. Everything else
+     * is a value type whose {@code toString} is defined by its contents.</p>
+     *
+     * @param value the field value, possibly null.
+     * @return a stable textual rendering of that value.
+     */
+    private static String renderValue(Object value) {
+        if (value == null) {
+            return "\u0000null";
+        }
+        if (value instanceof byte[]) {
+            return "\u0001bin:" + bytesToHex((byte[]) value);
+        }
+        if (value instanceof java.nio.ByteBuffer) {
+            java.nio.ByteBuffer buffer = ((java.nio.ByteBuffer) value).asReadOnlyBuffer();
+            byte[] bytes = new byte[buffer.remaining()];
+            buffer.get(bytes);
+            return "\u0001bin:" + bytesToHex(bytes);
+        }
+        if (value instanceof java.math.BigDecimal) {
+            return "\u0001" + ((java.math.BigDecimal) value).toPlainString();
+        }
+        return "\u0001" + value;
+    }
+
+    private static String bytesToHex(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(Character.forDigit((b >> 4) & 0xF, 16));
+            sb.append(Character.forDigit(b & 0xF, 16));
+        }
+        return sb.toString();
+    }
+    private static void appendPart(StringBuilder sb, String part) {
+        sb.append(part.length()).append(':').append(part);
+    }
+
+    /**
+     * 64-bit FNV-1a. Chosen over {@link String#hashCode()} because that is only
+     * 32 bits, where a few tens of thousands of rows already make a collision
+     * likely, and a collision here means a lost row.
+     */
+    private static long fingerprintOf(String s) {
+        long hash = 0xcbf29ce484222325L;
+        for (int i = 0; i < s.length(); i++) {
+            hash ^= s.charAt(i);
+            hash *= 0x100000001b3L;
+        }
+        return hash;
     }
 
     /**

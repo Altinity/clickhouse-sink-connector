@@ -366,14 +366,24 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // A fix for silent data loss must not cost the table its ability to take
         // any other operation.
         //
-        // The fingerprint column is MATERIALIZED, so it is computed by ClickHouse
-        // on insert and never appears in the INSERT column list the writer builds.
-        // Each column contributes an explicit null-flag as well as its text, so a
-        // genuine NULL cannot collide with any literal a column might hold (''
-        // and '0' and NULL all hash differently -- verified). The flag also keeps
-        // the expression non-Nullable, which a sorting key requires: hashing the
-        // raw Nullable columns yields Nullable(UInt64) and rejects the row with
-        // Code: 349, and cityHash64(tuple(...)) throws Code: 48 on a NULL member.
+        // The column is a PLAIN UInt64 and the CONNECTOR computes its value per
+        // record (PreparedStatementFieldMapper#rowFingerprint). It is deliberately
+        // NOT a MATERIALIZED expression: an expression has to name the columns,
+        // which bakes the column list into the table and is brittle in both
+        // directions as the schema evolves. Both failures were measured on
+        // 24.8.14.10547:
+        //
+        //   DROP COLUMN of a named column
+        //     -> Code: 44 "Cannot drop column b, because column _row_key
+        //        depends on it"
+        //   ADD COLUMN, then two rows differing ONLY in the new column
+        //     -> the expression predates the column, both rows hash the same and
+        //        ReplacingMergeTree collapses them: 2 rows in, 1 row out
+        //
+        // Computing the value connector-side removes the dependency entirely: the
+        // fingerprint covers whatever fields the record carries, so it follows the
+        // schema automatically, and ADD/DROP/MODIFY/RENAME COLUMN all succeed with
+        // no maintenance of the key.
         //
         // PRIMARY KEY tuple() keeps the sparse index empty; the fingerprint exists
         // only to give ReplacingMergeTree a full-row identity to deduplicate on.
@@ -394,8 +404,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             // this name already exists"), stalling that table. Disambiguate the
             // same way the delete marker already does.
             String rowKeyColumn = resolveRowKeyColumnName(orderedColumnNames);
-            rowKeyColumnDefinition = "`" + rowKeyColumn + "` UInt64 MATERIALIZED "
-                    + rowFingerprintExpression(orderedColumnNames);
+            rowKeyColumnDefinition = "`" + rowKeyColumn + "` UInt64";
             orderByColumns.append("`").append(rowKeyColumn).append("`");
             log.warn("Table {}.{} declares no PRIMARY KEY and no UNIQUE key. Adding the generated column "
                             + "`{}` as the ClickHouse sorting key -- a fingerprint over all {} columns -- so "
@@ -557,71 +566,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
     }
 
-    /**
-     * Builds the {@code _row_key} fingerprint expression for a keyless table.
-     *
-     * <p>Each column contributes an explicit null-flag as well as its text, so a
-     * genuine NULL cannot collide with any literal the column might legitimately
-     * hold: {@code NULL}, {@code ''} and {@code '0'} all hash to different
-     * values (verified on ClickHouse 24.8.14.10547).</p>
-     *
-     * <p>The null-flag also keeps every argument non-Nullable, which a sorting
-     * key requires. Hashing the raw {@code Nullable} columns yields
-     * {@code Nullable(UInt64)} and the insert is rejected with Code: 349, and
-     * passing a {@code Nullable} straight into the tuple throws Code: 48 the
-     * moment any member is NULL -- both measured before settling on this
-     * form.</p>
-     *
-     * <p>The arguments are passed as a {@code tuple}, NOT concatenated into one
-     * string. A delimiter-joined string is not an unambiguous encoding: with a
-     * 0x01 separator, the rows {@code ('x', 0x01+'0z')} and
-     * {@code ('x'+0x01+'0', 'z')} flatten to the identical byte sequence and so
-     * to the identical fingerprint, and ReplacingMergeTree then collapses two
-     * genuinely distinct rows. Verified on 24.8.14.10547: the concatenated form
-     * returns collision=1 for that pair, the tuple form returns 0, because
-     * tuple members keep their boundaries.</p>
-     *
-     * @param columns the table's columns in declaration order.
-     * @return a non-Nullable UInt64 expression fingerprinting the whole row.
-     */
-    /**
-     * Picks a name for the generated row-key column that no source column
-     * already uses.
-     *
-     * <p>A keyless MySQL table may itself declare a column called
-     * {@code _row_key}. Emitting ours unconditionally then renders two
-     * definitions of the same name and ClickHouse rejects the CREATE with
-     * Code: 44 "column with this name already exists", stalling replication of
-     * that table. Underscores are prepended until the name is free, the same
-     * disambiguation the delete-marker column already uses.</p>
-     *
-     * @param columns the table's declared columns.
-     * @return a column name not present in the source table.
-     */
-    private static String resolveRowKeyColumnName(List<String> columns) {
-        Set<String> taken = new HashSet<>();
-        for (String column : columns) {
-            taken.add(stripBackticks(column).toLowerCase());
-        }
-        String candidate = ROW_KEY_COLUMN;
-        while (taken.contains(candidate.toLowerCase())) {
-            candidate = "_" + candidate;
-        }
-        return candidate;
-    }
-
-    private static String rowFingerprintExpression(List<String> columns) {
-        StringBuilder parts = new StringBuilder();
-        for (String column : columns) {
-            if (parts.length() > 0) {
-                parts.append(",");
-            }
-            String quoted = "`" + stripBackticks(column) + "`";
-            parts.append("isNull(").append(quoted).append(")")
-                    .append(",ifNull(toString(").append(quoted).append("),'')");
-        }
-        return "cityHash64(tuple(" + parts + "))";
-    }
 
     /**
      * Finds partitioning options using regex when ANTLR parser fails to identify partitions.
@@ -1021,6 +965,32 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
+    }
+
+    /**
+     * Picks a name for the generated row-key column that no source column
+     * already uses.
+     *
+     * <p>A keyless MySQL table may itself declare a column called
+     * {@code _row_key}. Emitting ours unconditionally then renders two
+     * definitions of the same name and ClickHouse rejects the CREATE with
+     * Code: 44 "column with this name already exists", stalling replication of
+     * that table. Underscores are prepended until the name is free, the same
+     * disambiguation the delete-marker column already uses.</p>
+     *
+     * @param columns the table's declared columns.
+     * @return a column name not present in the source table.
+     */
+    private static String resolveRowKeyColumnName(List<String> columns) {
+        Set<String> taken = new HashSet<>();
+        for (String column : columns) {
+            taken.add(stripBackticks(column).toLowerCase());
+        }
+        String candidate = ROW_KEY_COLUMN;
+        while (taken.contains(candidate.toLowerCase())) {
+            candidate = "_" + candidate;
+        }
+        return candidate;
     }
 
     /**
