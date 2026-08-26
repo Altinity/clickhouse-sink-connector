@@ -88,6 +88,33 @@ public class DBMetadataRetryClassificationTest {
     }
 
     @Test
+    @DisplayName("A transient error quoting a query that contains 'Code: 57' stays retryable")
+    public void testCodeInsideQuotedQueryTextIsNotTheServerCode() {
+        // Reported by the review panel. Drivers often append the failing
+        // statement to the message. If the code were searched for anywhere in
+        // the string, a query carrying the literal text would be misread as a
+        // permanent failure and lose its retries -- the precise loss this
+        // classification exists to prevent.
+        SQLException transientWithQueryText = new SQLException(
+                "Connection timed out. Query: CREATE TABLE t (id Int32 COMMENT 'Code: 57')");
+        assertTrue(DBMetadata.isRetryable(transientWithQueryText),
+                "a read timeout must stay retryable even when the query text contains 'Code: 57'");
+        assertNull(DBMetadata.parseClickHouseErrorCode(
+                "Connection timed out. Query: CREATE TABLE t (id Int32 COMMENT 'Code: 57')"),
+                "the code must be read from the server prefix, not from quoted query text");
+    }
+
+    @Test
+    @DisplayName("A driver-wrapped message still yields the server code")
+    public void testDriverPrefixStillParses() {
+        assertEquals(Integer.valueOf(57), DBMetadata.parseClickHouseErrorCode(
+                "Code: 57. DB::Exception: Table x already exists. (TABLE_ALREADY_EXISTS)"));
+        assertFalse(DBMetadata.isRetryable(new BatchUpdateException("batch failed", new int[0],
+                new SQLException("Code: 57. DB::Exception: Table x already exists."))),
+                "the wrapped server error must still be classified as permanent");
+    }
+
+    @Test
     @DisplayName("A code that merely contains 57 as a substring is not code 57")
     public void testNoSubstringFalsePositive() {
         // 570 must not be read as 57.

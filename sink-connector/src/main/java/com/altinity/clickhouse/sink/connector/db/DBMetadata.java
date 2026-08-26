@@ -756,9 +756,20 @@ public class DBMetadata {
         }
     }
 
-    /** Matches the leading {@code Code: NN} of a ClickHouse error message. */
+    /**
+     * Matches the {@code Code: NN} that ClickHouse puts at the START of an
+     * error message.
+     *
+     * <p>Anchored deliberately. An unanchored search would also match the
+     * text inside a failing statement -- a transient read timeout whose
+     * message quotes a query containing {@code COMMENT 'Code: 57'} would be
+     * misread as permanent and lose its retries, which is the exact failure
+     * this classification exists to prevent. Drivers wrap the server message,
+     * so a bounded prefix is allowed before the code, but it must not appear
+     * arbitrarily deep in user data.</p>
+     */
     private static final java.util.regex.Pattern CLICKHOUSE_ERROR_CODE =
-            java.util.regex.Pattern.compile("Code:\\s*(\\d+)");
+            java.util.regex.Pattern.compile("^[^:]{0,64}?\\bCode:\\s*(\\d+)");
 
     public String executeSystemQuery(Connection conn, String sql) throws SQLException {
         // Add retry logic.
