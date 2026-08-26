@@ -691,6 +691,75 @@ public class DBMetadata {
      * @return The result string from the query.
      * @throws SQLException if an error occurs while executing the query.
      */
+    /**
+     * ClickHouse server error codes that describe a permanent, deterministic
+     * condition. Retrying them cannot change the outcome, so they must not
+     * consume the retry budget.
+     *
+     * <p>57 = TABLE_ALREADY_EXISTS, 82 = DATABASE_ALREADY_EXISTS,
+     * 44 = ILLEGAL_COLUMN, 47 = UNKNOWN_IDENTIFIER, 60 = UNKNOWN_TABLE,
+     * 62 = SYNTAX_ERROR, 81 = UNKNOWN_DATABASE, already-exists variants for
+     * dictionaries (487) and columns (44/15).</p>
+     */
+    private static final Set<Integer> NON_RETRYABLE_ERROR_CODES = Collections.unmodifiableSet(
+            new HashSet<>(Arrays.asList(15, 44, 47, 57, 60, 62, 81, 82, 487)));
+
+    /**
+     * Decides whether a failed statement can plausibly succeed on a retry.
+     *
+     * <p>Before this classification every SQLException was retried with a
+     * linear backoff. A deterministic failure such as
+     * {@code Code: 57 TABLE_ALREADY_EXISTS} therefore blocked the calling
+     * thread for the entire {@code errors.max.retries} budget. In history
+     * mode that thread is the CDC/DDL thread, so the change events arriving
+     * during the sleep were dropped -- silent data loss whose only symptom is
+     * a burst of "Error executing query: Retrying" lines.</p>
+     *
+     * @param sqle the exception raised by the driver
+     * @return true when a retry may succeed, false for a permanent condition
+     */
+    static boolean isRetryable(SQLException sqle) {
+        if (sqle == null) {
+            return false;
+        }
+        for (Throwable t = sqle; t != null; t = t.getCause()) {
+            Integer code = parseClickHouseErrorCode(t.getMessage());
+            if (code != null && NON_RETRYABLE_ERROR_CODES.contains(code)) {
+                return false;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Extracts the numeric error code from a ClickHouse error message of the
+     * form {@code "Code: 57. DB::Exception: ..."}.
+     *
+     * @param message the exception message, may be null
+     * @return the code, or null when the message carries none
+     */
+    static Integer parseClickHouseErrorCode(String message) {
+        if (message == null) {
+            return null;
+        }
+        java.util.regex.Matcher m = CLICKHOUSE_ERROR_CODE.matcher(message);
+        if (!m.find()) {
+            return null;
+        }
+        try {
+            return Integer.valueOf(m.group(1));
+        } catch (NumberFormatException nfe) {
+            return null;
+        }
+    }
+
+    /** Matches the leading {@code Code: NN} of a ClickHouse error message. */
+    private static final java.util.regex.Pattern CLICKHOUSE_ERROR_CODE =
+            java.util.regex.Pattern.compile("Code:\\s*(\\d+)");
+
     public String executeSystemQuery(Connection conn, String sql) throws SQLException {
         // Add retry logic.
         int retryCount = 0;
@@ -726,6 +795,15 @@ public class DBMetadata {
                             + "connection pool can provide one, giving up on "
                             + "query: {}", sql, sqle);
                     break;
+                }
+                if (!isRetryable(sqle)) {
+                    // Permanent, deterministic failure. Retrying it would
+                    // block this thread for the whole retry budget while the
+                    // outcome cannot change; in history mode that thread is
+                    // the CDC/DDL thread and the events arriving during the
+                    // sleep are lost. Surface it to the caller instead.
+                    log.error("Non-retryable error executing query, giving up: {}", sql, sqle);
+                    throw sqle;
                 }
                 try {
                     log.error("Error executing query: Retrying ({}/{})" ,retryCount,MAX_RETRIES, sqle);
