@@ -59,6 +59,33 @@ public class PreparedStatementFieldMapper {
                 || SIGN_COLUMN.equalsIgnoreCase(columnName);
     }
 
+    /**
+     * Whether the incoming change event actually carries this column.
+     *
+     * <p>A column the record does not carry is intentionally absent from the
+     * generated INSERT, so ClickHouse applies the column's DEFAULT. That is
+     * the intended behaviour for a pre-ALTER record, and for a column the
+     * source event omits because it is NULL. A column the record DOES carry
+     * but that has no placeholder is a real defect: nothing binds it and the
+     * value never reaches ClickHouse. Only the latter is an error -- reporting
+     * both buries the one that loses data.</p>
+     *
+     * @param fields the record's schema fields, may be null
+     * @param columnName the ClickHouse column being bound
+     * @return true when the record carries a field of that name
+     */
+    static boolean recordCarries(List<Field> fields, String columnName) {
+        if (fields == null || columnName == null) {
+            return false;
+        }
+        for (Field f : fields) {
+            if (f != null && columnName.equalsIgnoreCase(f.name())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
 
     /**
      * Logger instance for logging purposes.
@@ -174,6 +201,13 @@ public class PreparedStatementFieldMapper {
                 // spurious ERROR lines and buried the real ones.
                 if (isUnboundByDesign(colName)) {
                     log.debug("Column {} is emitted as a SQL literal; no parameter binding required.", colName);
+                } else if (!recordCarries(fields, colName)) {
+                    // The record does not carry this column, so createColumns
+                    // deliberately left it out of the INSERT and ClickHouse
+                    // applies the column's DEFAULT. Intended for a pre-ALTER
+                    // record, or a column the source event omits because it is
+                    // NULL -- not a dropped value.
+                    log.debug("Column {} absent from this record's schema; ClickHouse DEFAULT applies.", colName);
                 } else {
                     // A genuine data column with no placeholder is silently
                     // dropped from the INSERT: nothing binds it here and the

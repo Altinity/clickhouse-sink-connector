@@ -325,6 +325,13 @@ public class QueryFormatter {
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.SIGN_COLUMN)
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)
+                // _operation is populated by the connector, never by the source
+                // record, exactly like _version and is_deleted. Omitting it made
+                // createColumns drop it from every replication-history INSERT, so
+                // the SCD Type 2 rows carried an empty _operation and a DELETE
+                // could not be distinguished from an insert -- deleted rows stayed
+                // visible in ClickHouse forever while row counts looked plausible.
+                || colName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)
                 || (deleteColumn != null && !deleteColumn.isEmpty()
                         && colName.equalsIgnoreCase(deleteColumn));
     }
