@@ -243,6 +243,31 @@ public class PreparedStatementExecutor {
                     if (CdcRecordState.CDC_RECORD_STATE_BEFORE == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         if (replicationHistoryHandler != null &&
                             record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
+                                // The SCD Type 2 delete reads the row it is closing
+                                // straight back out of the target
+                                // (INSERT ... SELECT ... FROM <table> FINAL WHERE ...),
+                                // and it runs INLINE. Plain inserts in the same batch are
+                                // only staged on the PreparedStatement and do not reach
+                                // ClickHouse until executeBatch() below. So when one batch
+                                // carries a row's CREATE and its DELETE -- ordinary for a
+                                // busy source -- the delete's SELECT runs BEFORE the insert
+                                // it depends on, matches nothing, and writes zero rows. No
+                                // error is raised: the delete is silently dropped and the
+                                // row stays visible in ClickHouse forever.
+                                //
+                                // Flush what is staged first so the delete observes the
+                                // same state the source did at that binlog position. This
+                                // is the same ordering rule the TRUNCATE branch above
+                                // already applies, and it is why the defect looked
+                                // intermittent -- it only bites when the CREATE and the
+                                // DELETE land in one batch.
+                                try {
+                                    ps.executeBatch();
+                                } catch (SQLException e) {
+                                    throw new RuntimeException(String.format(
+                                            "Failed to flush records staged before a replication-history "
+                                                    + "DELETE for %s.%s", databaseName, tableName), e);
+                                }
                                 replicationHistoryHandler.executeHistoryUpdate(
                                     conn,
                                     tableName,
