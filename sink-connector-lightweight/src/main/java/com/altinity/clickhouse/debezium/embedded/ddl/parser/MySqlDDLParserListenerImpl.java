@@ -679,7 +679,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         List<ParseTree> pt = ctx.children;
         Set<String> columnNames = new HashSet<>();
 
-        this.query.append(Constants.CREATE_TABLE).append(" ");
+        // Always emit CREATE TABLE IF NOT EXISTS. The ClickHouse side is a
+        // replica of the source table, so a CREATE for a table that is already
+        // present is a no-op by definition. A bare CREATE TABLE made replay of
+        // a snapshot/binlog CREATE fail with Code: 57 TABLE_ALREADY_EXISTS,
+        // which DBMetadata.executeSystemQuery treats as retryable: it blocks
+        // the CDC thread for the whole errors.max.retries budget (linear
+        // backoff) and every event arriving in that window is lost.
+        this.query.append(Constants.CREATE_TABLE).append(" ").append(Constants.IF_NOT_EXISTS);
         for (ParseTree tree : pt) {
 
             if (tree instanceof TableNameContext) {
@@ -701,7 +708,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
                 this.query.append("(");
             } else if (tree instanceof MySqlParser.IfNotExistsContext) {
-                this.query.append(Constants.IF_NOT_EXISTS);
+                // Already emitted unconditionally above; swallow the source
+                // clause so the guard is not duplicated in the output.
             } else if (tree instanceof MySqlParser.CreateDefinitionsContext) {
                 for (ParseTree subtree : ((MySqlParser.CreateDefinitionsContext) tree).children) {
                     if (subtree instanceof TerminalNodeImpl) {

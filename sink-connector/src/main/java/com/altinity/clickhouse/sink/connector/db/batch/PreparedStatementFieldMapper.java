@@ -39,6 +39,28 @@ import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 public class PreparedStatementFieldMapper {
 
     /**
+     * Columns that the generated INSERT supplies as SQL literals rather than
+     * as bind parameters, so they are legitimately absent from the
+     * column-to-parameter-index map.
+     *
+     * <p>{@code QueryFormatter#getInsertQueryForUpdate} and
+     * {@code #getInsertQueryForDelete} hardcode the bitemporal metadata
+     * columns to guarantee their values, and record no index for them. Their
+     * absence is by design; every other missing column is a real defect that
+     * silently drops the value.</p>
+     *
+     * @param columnName the ClickHouse column being bound
+     * @return true when the column is intentionally not a bind parameter
+     */
+    static boolean isUnboundByDesign(String columnName) {
+        return VERSION_COLUMN.equalsIgnoreCase(columnName)
+                || IS_DELETED_COLUMN.equalsIgnoreCase(columnName)
+                || OPERATION_COLUMN.equalsIgnoreCase(columnName)
+                || SIGN_COLUMN.equalsIgnoreCase(columnName);
+    }
+
+
+    /**
      * Logger instance for logging purposes.
      */
     private static final Logger log = LogManager.getLogger(PreparedStatementFieldMapper.class);
@@ -143,7 +165,25 @@ public class PreparedStatementFieldMapper {
             if (columnNameToIndexMap.containsKey(colName)) {
                 index = columnNameToIndexMap.get(colName);
             } else {
-                log.error("***** Column index missing for column ****" + colName);
+                // Not every column in the target table is a bind parameter.
+                // In replication-history mode QueryFormatter deliberately
+                // hardcodes the bitemporal metadata columns as SQL literals
+                // and omits them from the index map, so their absence is
+                // expected and must not be reported as an error -- on a busy
+                // history-mode connector that logged tens of thousands of
+                // spurious ERROR lines and buried the real ones.
+                if (isUnboundByDesign(colName)) {
+                    log.debug("Column {} is emitted as a SQL literal; no parameter binding required.", colName);
+                } else {
+                    // A genuine data column with no placeholder is silently
+                    // dropped from the INSERT: nothing binds it here and the
+                    // handlers below are guarded by the same map, so the value
+                    // never reaches ClickHouse.
+                    log.error("***** Column index missing for column ****" + colName
+                            + " -- this column is present in the ClickHouse table but has no"
+                            + " placeholder in the generated INSERT, so its value will NOT be"
+                            + " written. Database(" + databaseName + "), Table(" + tableName + ")");
+                }
                 continue;
             }
 
