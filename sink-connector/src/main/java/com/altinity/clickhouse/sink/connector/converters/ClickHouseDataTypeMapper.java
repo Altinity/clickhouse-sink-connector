@@ -525,8 +525,14 @@ public class ClickHouseDataTypeMapper {
         } else if (type == Schema.Type.ARRAY) {
             ClickHouseDataType dt = getClickHouseDataType(
                     Schema.Type.valueOf(schemaName), null);
+            // Kafka Connect delivers an ARRAY field as a java.util.List, and
+            // not necessarily an ArrayList: an empty array arrives as
+            // Collections.emptyList(), and immutable/Arrays.asList forms are
+            // equally legal. Bind through Collection so every implementation
+            // works; toArray() produces the identical Object[] an ArrayList
+            // did. See issue #749.
             ps.setArray(index, ps.getConnection().createArrayOf(
-                    dt.name(), ((ArrayList) value).toArray()));
+                    dt.name(), ((Collection<?>) value).toArray()));
         } else {
             result = false;
         }
