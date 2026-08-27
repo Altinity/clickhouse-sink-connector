@@ -313,7 +313,11 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
         log.info("Create table " + clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.730b595f_d475_11ed_b64a_398b553542b2(id Nullable(Int32),x Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)"));
+        // MySQL forces a PRIMARY KEY column to NOT NULL, so the key column
+        // must not be Nullable here: ClickHouse rejects a nullable sorting
+        // key outright (Code: 44 ILLEGAL_COLUMN), so the expectation below
+        // used to pin DDL that could never execute.
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.730b595f_d475_11ed_b64a_398b553542b2(id Int32 NOT NULL ,x Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)"));
     }
 
     @Test
@@ -352,7 +356,11 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createDBQuery, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.730b595f_d475_11ed_b64a_398b553542b2(id Nullable(Int32),x Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)"));
+        // MySQL forces a PRIMARY KEY column to NOT NULL, so the key column
+        // must not be Nullable here: ClickHouse rejects a nullable sorting
+        // key outright (Code: 44 ILLEGAL_COLUMN), so the expectation below
+        // used to pin DDL that could never execute.
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.730b595f_d475_11ed_b64a_398b553542b2(id Int32 NOT NULL ,x Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)"));
         log.info("Create table " + clickHouseQuery);
 
     }
@@ -2646,7 +2654,11 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "employees", clickHouseQuery);
 
-        String expectedQuery = "CREATE TABLE if not exists employees.test3(order_id Nullable(Int32),product_name Nullable(String),quantity Nullable(Int32),order_date Nullable(Date32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  toYear(order_date) ORDER BY (order_id,order_date)";
+        // MySQL forces a PRIMARY KEY column to NOT NULL, so the key column
+        // must not be Nullable here: ClickHouse rejects a nullable sorting
+        // key outright (Code: 44 ILLEGAL_COLUMN), so the expectation below
+        // used to pin DDL that could never execute.
+        String expectedQuery = "CREATE TABLE if not exists employees.test3(order_id Int32 NOT NULL ,product_name Nullable(String),quantity Nullable(Int32),order_date Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  toYear(order_date) ORDER BY (order_id,order_date)";
 
         // Verify that MySQL's YEAR(order_date) partition is converted to ClickHouse's toYear(order_date)
        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));

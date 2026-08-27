@@ -154,6 +154,25 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private final Set<String> notNullColumnNames = new HashSet<>();
 
     /**
+     * Names of the columns named by a TABLE-level {@code PRIMARY KEY (...)}
+     * clause of the CREATE TABLE being parsed, backticks stripped.
+     *
+     * <p>MySQL forces every PRIMARY KEY column to NOT NULL whether or not the
+     * column declaration says so -- verified on 8.0.36: {@code CREATE TABLE t
+     * (id INT AUTO_INCREMENT, x INT, PRIMARY KEY (id))} reports {@code id}
+     * with {@code Null=NO, Key=PRI}. A column-level {@code id INT PRIMARY KEY}
+     * is seen by parseColumnDefinitions, which clears the nullable flag
+     * directly; a table-level clause is parsed elsewhere and used to be
+     * invisible to the column pass, so the column was emitted
+     * {@code Nullable(T)} while also being placed in the ORDER BY.
+     *
+     * <p>Populated by a pre-pass over the CreateDefinitions BEFORE any column
+     * is emitted, because the PRIMARY KEY clause follows the columns it names
+     * and the query is built streaming.
+     */
+    private final Set<String> primaryKeyColumnNames = new HashSet<>();
+
+    /**
      * Constructor for initializing the MySqlDDLParserListenerImpl instance.
      *
      * @param writer         The database writer instance.
@@ -357,6 +376,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         StringBuilder uniqueKeyColumns = new StringBuilder();
         List<String> orderedColumnNames = new ArrayList<>();
         notNullColumnNames.clear();
+        primaryKeyColumnNames.clear();
         Set<String> columnNames = parseCreateTable(columnCreateTableContext, orderByColumns, partitionByColumn,
                 uniqueKeyColumns, orderedColumnNames);
 
@@ -778,6 +798,21 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 // Already emitted unconditionally above; swallow the source
                 // clause so the guard is not duplicated in the output.
             } else if (tree instanceof MySqlParser.CreateDefinitionsContext) {
+                // Pre-pass: collect the table-level PRIMARY KEY columns before
+                // any column is emitted.
+                //
+                // The DDL is built streaming into this.query as the columns are
+                // walked, but a table-level PRIMARY KEY (...) clause appears
+                // AFTER the columns it names. Without this pass the column pass
+                // cannot know that MySQL has already forced those columns NOT
+                // NULL, and emits them Nullable(T) -- which ClickHouse then
+                // refuses, because they are also the sorting key:
+                //   Code: 44. Sorting key contains nullable columns, but merge
+                //   tree setting `allow_nullable_key` is disabled.
+                // (measured on ClickHouse 24.8.14.10547).
+                collectTableLevelPrimaryKeyColumns(
+                        (MySqlParser.CreateDefinitionsContext) tree);
+
                 for (ParseTree subtree : ((MySqlParser.CreateDefinitionsContext) tree).children) {
                     if (subtree instanceof TerminalNodeImpl) {
                         // Do nothing for TerminalNodeImpl, just skip it
@@ -980,6 +1015,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     continue;
                 }
 
+                // A table-level PRIMARY KEY (...) naming this column makes it
+                // NOT NULL in MySQL regardless of what the column declaration
+                // said. Applied here, after the declaration has been read, so
+                // an explicit NOT NULL is unaffected and a nullable non-key
+                // column is untouched.
+                if (columnName != null
+                        && primaryKeyColumnNames.contains(stripBackticks(columnName))) {
+                    isNullColumn = false;
+                }
+
                 // For non-generated columns, apply nullable constraints if applicable.
                 String lowerCaseDataType = colDataType.toLowerCase();
                 if (!Constants.NULLABLE_NOT_SUPPORTED_DATA_TYPES.contains(lowerCaseDataType) && isNullColumn) {
@@ -1028,6 +1073,45 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * @param indexColumns the raw index column list text.
      * @return the bare column names in declaration order.
      */
+    /**
+     * Records the columns named by a table-level {@code PRIMARY KEY (...)} so
+     * the column pass can emit them NOT NULL, as MySQL has already made them.
+     *
+     * <p>Only the PRIMARY KEY is treated this way. A UNIQUE key deliberately is
+     * NOT: MySQL permits NULLs in a unique index and does not treat them as
+     * equal, so its columns really can be null and forcing them NOT NULL would
+     * lose rows. That is the same distinction the sorting-key selection above
+     * already makes when it refuses a nullable UNIQUE key as a row identity.
+     *
+     * @param ctx the CreateDefinitions subtree of the CREATE TABLE
+     */
+    private void collectTableLevelPrimaryKeyColumns(
+            MySqlParser.CreateDefinitionsContext ctx) {
+        for (ParseTree subtree : ctx.children) {
+            if (!(subtree instanceof MySqlParser.ConstraintDeclarationContext)) {
+                continue;
+            }
+            for (ParseTree constraintTree
+                    : ((MySqlParser.ConstraintDeclarationContext) subtree).children) {
+                if (!(constraintTree
+                        instanceof MySqlParser.PrimaryKeyTableConstraintContext)) {
+                    continue;
+                }
+                for (ParseTree primaryKeyTree
+                        : ((MySqlParser.PrimaryKeyTableConstraintContext) constraintTree)
+                        .children) {
+                    if (primaryKeyTree instanceof MySqlParser.IndexColumnNamesContext) {
+                        // splitIndexColumns strips backticks and any (len)
+                        // prefix-index suffix, so `emp_no` and emp_no(10) both
+                        // match the column name recorded by the column pass.
+                        primaryKeyColumnNames.addAll(
+                                splitIndexColumns(primaryKeyTree.getText()));
+                    }
+                }
+            }
+        }
+    }
+
     private static List<String> splitIndexColumns(String indexColumns) {
         List<String> columns = new ArrayList<>();
         if (indexColumns == null || indexColumns.isEmpty()) {
