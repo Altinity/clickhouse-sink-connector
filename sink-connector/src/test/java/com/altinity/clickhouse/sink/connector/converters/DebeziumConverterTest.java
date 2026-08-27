@@ -265,12 +265,24 @@ public class DebeziumConverterTest {
 
        // Assert.assertTrue(formattedTime.equalsIgnoreCase("00:28:21.424861"));
 
-        Object timePacificTZ = ZonedDateTime.of(2024, 1, 1, 1, 1, 1, 1, ZoneId.of("America/Los_Angeles")).toEpochSecond() * 1000 * 1000;
+        // 09:01:01 as MicroTime actually encodes it: microseconds PAST
+        // MIDNIGHT.
+        //
+        // This input used to be built as
+        //   ZonedDateTime.of(2024,1,1,1,1,1,1, "America/Los_Angeles")
+        //       .toEpochSecond() * 1000 * 1000
+        // which is 1704099661000000 -- an epoch timestamp, i.e. ~473361 HOURS
+        // past midnight, not a time of day. No MySQL TIME can hold it (the
+        // type caps at 838:59:59) and Debezium never emits it for a TIME
+        // column. It only read as "09:01:01" because the converter silently
+        // wrapped every value onto a 24-hour clock, which is precisely the
+        // defect the signed/large-value handling removes. Keeping the old
+        // literal would have pinned that wrap in place as expected behaviour.
+        //
+        // The assertion below is unchanged, and so is what it checks: a
+        // whole-second TIME renders with no fractional part (issue #1215).
+        Object timePacificTZ = LocalTime.of(9, 1, 1).toSecondOfDay() * 1_000_000L;
         String formattedTimePacificTZ = DebeziumConverter.MicroTimeConverter.convert(timePacificTZ);
-        // This value has no sub-second component. It previously rendered as
-        // "09:01:01.000000" because the formatter always emitted six fractional
-        // digits; that padding is what issue #1215 reports. A whole-second TIME
-        // must now render without a fractional part.
         Assert.assertEquals("09:01:01", formattedTimePacificTZ);
     }
 
@@ -359,5 +371,135 @@ public class DebeziumConverterTest {
         long midnight = 0L;
         Assert.assertEquals("00:00:00",
                 DebeziumConverter.MicroTimeConverter.convert(midnight));
+    }
+
+    /**
+     * MySQL TIME is a signed duration, not a clock reading: its declared range
+     * is -838:59:59 .. 838:59:59, and both ends of that range occur in real
+     * schemas (elapsed times, deltas, durations).
+     *
+     * <p>Debezium delivers such a value verbatim. Under every temporal
+     * precision mode the connector runs in, JdbcValueConverters passes
+     * acceptLargeValues=true into io.debezium.time.MicroTime#toMicroOfDay
+     * (see supportsLargeTimeValues(): true for ADAPTIVE,
+     * ADAPTIVE_TIME_MICROSECONDS, MICROSECONDS and NANOSECONDS -- i.e. all of
+     * them), which then skips its own range check entirely and returns
+     * Duration.toNanos() / 1000. So a negative TIME arrives as a NEGATIVE
+     * micro count, and an over-24h TIME arrives as a count larger than a day.
+     *
+     * <p>The converter wrapped that count onto a 24-hour clock:
+     *
+     *   Instant.EPOCH.plus(value, MICROS).atZone(UTC).toLocalTime()
+     *
+     * LocalTime cannot represent either case, so both were silently rewritten
+     * into a plausible-looking wrong time -- no exception, no log line. This
+     * is the worst shape a data bug can take: the destination looks healthy
+     * and a checksum job is the only thing that would ever notice.
+     */
+    @Test
+    @DisplayName("A negative MySQL TIME must keep its sign, not wrap onto a 24h clock")
+    public void testMicroTimeConverterNegativeValue() {
+
+        // -01:30:00 == -5400 seconds
+        long negative = -5400L * 1_000_000L;
+
+        Assert.assertEquals("-01:30:00",
+                DebeziumConverter.MicroTimeConverter.convert(negative));
+    }
+
+    @Test
+    @DisplayName("A MySQL TIME past 24 hours must keep its hour count, not wrap")
+    public void testMicroTimeConverterBeyondTwentyFourHours() {
+
+        // MySQL's documented maximum TIME: 838:59:59 == 3020399 seconds.
+        long maximum = 3020399L * 1_000_000L;
+
+        Assert.assertEquals("838:59:59",
+                DebeziumConverter.MicroTimeConverter.convert(maximum));
+
+        // ...and its documented minimum.
+        Assert.assertEquals("-838:59:59",
+                DebeziumConverter.MicroTimeConverter.convert(-maximum));
+    }
+
+    @Test
+    @DisplayName("A negative TIME keeps its fractional digits, and the sign leads the whole value")
+    public void testMicroTimeConverterNegativeWithFraction() {
+
+        // -00:00:00.500000 -- the sign belongs to the value as a whole, so it
+        // must not be applied to the hour field alone.
+        Assert.assertEquals("-00:00:00.5",
+                DebeziumConverter.MicroTimeConverter.convert(-500_000L));
+
+        // -01:30:00.123456
+        long v = -(5400L * 1_000_000L + 123_456L);
+        Assert.assertEquals("-01:30:00.123456",
+                DebeziumConverter.MicroTimeConverter.convert(v));
+    }
+
+    /**
+     * The INT32 millis-of-day shape has the same defect. Debezium's
+     * io.debezium.time.Time#toMilliOfDay with acceptLargeValues=true returns
+     * (int) Duration.toMillis(), so a negative TIME reaches the converter as a
+     * negative millisecond count.
+     *
+     * <p>Note the int truncation in Debezium itself: 838:59:59 is 3020399000
+     * ms, which overflows a signed 32-bit int. That is out of this connector's
+     * hands -- but it only ever happens for TIME(0)..TIME(3) columns, and only
+     * beyond ~24.8 days of the value range, so the reachable INT32 defect is
+     * the sign.
+     */
+    @Test
+    @DisplayName("A negative MySQL TIME on the INT32 millis path must keep its sign")
+    public void testTimeConverterNegativeValue() {
+
+        // -01:30:00 == -5400000 ms
+        Assert.assertEquals("-01:30:00",
+                DebeziumConverter.TimeConverter.convert(-5400000));
+
+        // -00:00:00.250
+        Assert.assertEquals("-00:00:00.25",
+                DebeziumConverter.TimeConverter.convert(-250));
+    }
+
+    @Test
+    @DisplayName("A MySQL TIME past 24 hours on the INT32 millis path must keep its hour count")
+    public void testTimeConverterBeyondTwentyFourHours() {
+
+        // 30:00:00 == 108000000 ms, representable in an int.
+        Assert.assertEquals("30:00:00",
+                DebeziumConverter.TimeConverter.convert(108000000));
+    }
+
+    /**
+     * Control. Every ordinary in-range value must render exactly as before --
+     * the signed/large handling must not disturb the common path, including
+     * the fraction trimming that issue #1215 asked for.
+     */
+    @Test
+    @DisplayName("Control: ordinary in-range TIME values are unchanged on both paths")
+    public void testTimeConvertersInRangeUnchanged() {
+
+        Assert.assertEquals("16:01:25",
+                DebeziumConverter.MicroTimeConverter.convert(57685L * 1_000_000L));
+        Assert.assertEquals("17:51:04.777",
+                DebeziumConverter.MicroTimeConverter.convert(64264L * 1_000_000L + 777_000L));
+        Assert.assertEquals("17:51:04.123456",
+                DebeziumConverter.MicroTimeConverter.convert(64264L * 1_000_000L + 123_456L));
+        Assert.assertEquals("00:00:00",
+                DebeziumConverter.MicroTimeConverter.convert(0L));
+
+        Assert.assertEquals("16:01:25",
+                DebeziumConverter.TimeConverter.convert(57685000));
+        Assert.assertEquals("23:23:00",
+                DebeziumConverter.TimeConverter.convert(84180000));
+        Assert.assertEquals("00:00:00",
+                DebeziumConverter.TimeConverter.convert(0));
+
+        // 23:59:59.999999 -- the largest value that still fits a 24h clock,
+        // so it must be rendered by the ordinary path and be identical either
+        // way.
+        Assert.assertEquals("23:59:59.999999",
+                DebeziumConverter.MicroTimeConverter.convert(86400L * 1_000_000L - 1L));
     }
 }

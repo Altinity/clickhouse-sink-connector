@@ -50,6 +50,105 @@ public class DebeziumConverter {
                     .appendFraction(ChronoField.NANO_OF_SECOND, 0, 6, true)
                     .toFormatter();
 
+    /**
+     * Renders a MySQL TIME given as a signed count of microseconds, covering
+     * the whole declared range -838:59:59 .. 838:59:59.
+     *
+     * <p>{@link LocalTime} is a clock reading, so it can represent neither a
+     * negative TIME nor one past 24 hours; routing such a value through it
+     * wraps it onto a 24-hour clock and produces a plausible-looking wrong
+     * value with no error. MySQL TIME is a DURATION, and both ends of its
+     * range are ordinary values in real schemas -- elapsed times, deltas, and
+     * differences between two timestamps all produce them.
+     *
+     * <p>Debezium hands the value over unclamped: JdbcValueConverters calls
+     * {@code MicroTime.toMicroOfDay(value, acceptLargeValues)} /
+     * {@code Time.toMilliOfDay(value, acceptLargeValues)} with
+     * {@code acceptLargeValues = supportsLargeTimeValues()}, which is true for
+     * ADAPTIVE, ADAPTIVE_TIME_MICROSECONDS, MICROSECONDS and NANOSECONDS --
+     * every mode this connector runs under. With that flag set, Debezium
+     * skips its own range check and returns the raw {@code Duration}, so a
+     * negative or over-24h TIME reaches this converter intact and it is this
+     * converter's job not to lose it.
+     *
+     * <p>The output stays a plain string because the destination column is
+     * ClickHouse String (see the (INT32, Time) and (INT64, MicroTime) entries
+     * in ClickHouseDataTypeMapper), and MySQL's own TIME literal syntax is
+     * what a reader and a checksum comparison both expect. The sign leads the
+     * entire value, exactly as MySQL renders it: -01:30:00.5, never
+     * -01:-30:-00.5. The hour field is NOT zero-padded past two digits, again
+     * matching MySQL, so 838:59:59 keeps three.
+     *
+     * <p>Fraction handling is identical to {@link #TIME_FORMATTER}: only the
+     * digits actually present are emitted, and trailing zeros are dropped.
+     * Both are derived from the same value here, so an in-range value renders
+     * byte-for-byte the same whichever path produced it.
+     *
+     * @param totalMicros signed microseconds; negative means a negative TIME
+     * @return the MySQL TIME text for that duration
+     */
+    private static String renderSignedTime(long totalMicros) {
+
+        // Math.abs on Long.MIN_VALUE returns itself, which would silently emit
+        // a negative field. No MySQL TIME can reach that magnitude (the range
+        // caps at ~3.02e12 micros against a ~9.22e18 limit), but the guard
+        // costs nothing and turns an impossible input into a visible one.
+        if (totalMicros == Long.MIN_VALUE) {
+            throw new IllegalArgumentException(
+                    "TIME value out of range: " + totalMicros + " microseconds");
+        }
+
+        boolean negative = totalMicros < 0;
+        long micros = Math.abs(totalMicros);
+
+        long totalSeconds = micros / MICROS_IN_SEC;
+        long fraction = micros % MICROS_IN_SEC;
+
+        long hours = totalSeconds / 3600;
+        long minutes = (totalSeconds % 3600) / 60;
+        long seconds = totalSeconds % 60;
+
+        StringBuilder out = new StringBuilder(16);
+        if (negative) {
+            out.append('-');
+        }
+        if (hours < 10) {
+            out.append('0');
+        }
+        out.append(hours).append(':');
+        if (minutes < 10) {
+            out.append('0');
+        }
+        out.append(minutes).append(':');
+        if (seconds < 10) {
+            out.append('0');
+        }
+        out.append(seconds);
+
+        if (fraction != 0) {
+            // Six digits, then strip the trailing zeros the source did not
+            // send -- the same rule TIME_FORMATTER applies via
+            // appendFraction(..., 0, 6, true). String.format is avoided on
+            // this per-row path.
+            String digits = Long.toString(MICROS_IN_SEC + fraction).substring(1);
+            int end = digits.length();
+            while (end > 1 && digits.charAt(end - 1) == '0') {
+                end--;
+            }
+            out.append('.').append(digits, 0, end);
+        }
+
+        return out.toString();
+    }
+
+    /**
+     * True when the value fits a 24-hour clock and can therefore be rendered
+     * by {@link #TIME_FORMATTER} unchanged.
+     */
+    private static boolean fitsOnAClock(long totalMicros) {
+        return totalMicros >= 0 && totalMicros < 86400L * MICROS_IN_SEC;
+    }
+
     private static final Logger log = LogManager.getLogger(DebeziumConverter.class);
 
 
@@ -68,7 +167,15 @@ public class DebeziumConverter {
          */
         public static String convert(Object value) {
 
-            Instant i = Instant.EPOCH.plus((Long) value, ChronoUnit.MICROS);
+            long micros = ((Number) value).longValue();
+
+            // A negative or over-24h TIME has no LocalTime, so it is rendered
+            // directly from the duration. See renderSignedTime.
+            if (!fitsOnAClock(micros)) {
+                return renderSignedTime(micros);
+            }
+
+            Instant i = Instant.EPOCH.plus(micros, ChronoUnit.MICROS);
 
             LocalTime time = i.atZone(ZoneOffset.UTC).toLocalTime();
 
@@ -93,7 +200,16 @@ public class DebeziumConverter {
          */
         public static String convert(Object value) {
 
-            Instant i = Instant.EPOCH.plus(((Number) value).longValue(), ChronoUnit.MILLIS);
+            long millis = ((Number) value).longValue();
+            long micros = millis * MICROS_IN_MILLI;
+
+            // A negative or over-24h TIME has no LocalTime, so it is rendered
+            // directly from the duration. See renderSignedTime.
+            if (!fitsOnAClock(micros)) {
+                return renderSignedTime(micros);
+            }
+
+            Instant i = Instant.EPOCH.plus(millis, ChronoUnit.MILLIS);
 
             LocalTime time = i.atZone(ZoneOffset.UTC).toLocalTime();
 
