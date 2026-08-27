@@ -10,7 +10,9 @@ import org.apache.logging.log4j.Logger;
 import java.math.BigDecimal;
 import java.sql.Date;import java.time.*;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeFormatterBuilder;
 import java.time.zone.ZoneOffsetTransition;
+import java.time.temporal.ChronoField;
 import java.time.temporal.ChronoUnit;
 import java.util.TimeZone;
 
@@ -21,6 +23,33 @@ public class DebeziumConverter {
     private static final int MICROS_IN_SEC = 1000000;
     private static final int MICROS_IN_MILLI = 1000;
 
+    /**
+     * Renders a MySQL TIME value as HH:mm:ss with only the fractional digits
+     * the value actually carries -- no fraction at all when it is zero.
+     *
+     * <p>A fixed "HH:mm:ss.SSSSSS" pattern cannot be right here, because the
+     * Debezium schema for a TIME column carries no scale: TIME(0) 16:01:25 and
+     * TIME(6) 16:01:25.000000 arrive as the same wire value, so no rendering
+     * can reproduce both source texts. Trailing zeros in a fixed-point
+     * fraction carry no value information, so omitting them never discards
+     * anything the source sent; padding them on, by contrast, asserts a
+     * microsecond scale the converter has no evidence for and that the
+     * default TIME(0) column does not have. See issue #1215.
+     *
+     * <p>{@code appendFraction} with a zero minimum width emits the decimal
+     * point only when there are digits to follow it, and trims the fraction
+     * to its significant digits -- so .123456 and .1 both survive intact.
+     *
+     * <p>{@code removeTrailingZeros} below is deliberately not reused: it
+     * strips zeros from the whole string, so a fraction-less "16:01:20" would
+     * become "16:01:2".
+     */
+    private static final DateTimeFormatter TIME_FORMATTER =
+            new DateTimeFormatterBuilder()
+                    .appendPattern("HH:mm:ss")
+                    .appendFraction(ChronoField.NANO_OF_SECOND, 0, 6, true)
+                    .toFormatter();
+
     private static final Logger log = LogManager.getLogger(DebeziumConverter.class);
 
 
@@ -28,17 +57,47 @@ public class DebeziumConverter {
         /**
          * Function to convert Long(Epoch)
          * to Formatted String(Time)
-         * @param value
-         * @return
+         *
+         * <p>Input is io.debezium.time.MicroTime: the number of microseconds
+         * past midnight. Debezium emits it for MySQL TIME(4)..TIME(6) under
+         * the default ADAPTIVE precision mode, and for TIME at every
+         * precision under ADAPTIVE_TIME_MICROSECONDS and MICROSECONDS.
+         *
+         * @param value microseconds past midnight
+         * @return the time rendered with only the fractional digits it has
          */
         public static String convert(Object value) {
 
             Instant i = Instant.EPOCH.plus((Long) value, ChronoUnit.MICROS);
 
             LocalTime time = i.atZone(ZoneOffset.UTC).toLocalTime();
-            String formattedSecondsTimestamp= time.format(DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"));
 
-            return formattedSecondsTimestamp;
+            return time.format(TIME_FORMATTER);
+        }
+    }
+
+    public static class TimeConverter {
+        /**
+         * Function to convert Integer(millis past midnight)
+         * to Formatted String(Time)
+         *
+         * <p>Input is io.debezium.time.Time: an INT32 count of milliseconds
+         * past midnight, which is what Debezium emits for MySQL
+         * TIME(0)..TIME(3) under the default ADAPTIVE precision mode. This is
+         * the millisecond counterpart of {@link MicroTimeConverter}; without
+         * it an INT32 TIME value reached no time branch at all and was bound
+         * as a raw integer. See issue #1215.
+         *
+         * @param value milliseconds past midnight
+         * @return the time rendered with only the fractional digits it has
+         */
+        public static String convert(Object value) {
+
+            Instant i = Instant.EPOCH.plus(((Number) value).longValue(), ChronoUnit.MILLIS);
+
+            LocalTime time = i.atZone(ZoneOffset.UTC).toLocalTime();
+
+            return time.format(TIME_FORMATTER);
         }
     }
 

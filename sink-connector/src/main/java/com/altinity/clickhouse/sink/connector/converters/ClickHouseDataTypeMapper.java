@@ -277,6 +277,22 @@ public class ClickHouseDataTypeMapper {
             isFieldTypeDecimal = true;
         }
 
+        // Time -> INT32 + io.debezium.time.Time (milliseconds past midnight).
+        // Debezium emits this shape under the default ADAPTIVE precision mode for
+        // TIME(0)..TIME(3). The destination column is String (see the type map
+        // above), so the value has to be rendered as a time string; without this
+        // branch it falls through to the integer path and the raw
+        // millisecond-of-day count is written instead.
+        boolean isFieldMilliTime = (type == Schema.INT32_SCHEMA.type())
+                && schemaName != null
+                && schemaName.equalsIgnoreCase(Time.SCHEMA_NAME);
+        if (isFieldMilliTime) {
+            isFieldTime = true;
+            // Clear the integer flag set above: the two are mutually exclusive
+            // and the integer branch would bind the raw millisecond count.
+            isFieldTypeInt = false;
+        }
+
         if (type == Schema.INT64_SCHEMA.type()) {
             // Time -> INT64 + io.debezium.time.MicroTime
             if (schemaName != null
@@ -376,7 +392,12 @@ public class ClickHouseDataTypeMapper {
                         ZoneId.of(sourceTimeZone), serverTimeZone));
                 }
             } else if (isFieldTime) {
-                ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
+                // INT32 carries milliseconds past midnight, INT64 microseconds.
+                if (isFieldMilliTime) {
+                    ps.setString(index, DebeziumConverter.TimeConverter.convert(value));
+                } else {
+                    ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
+                }
             }
             // Convert this to string.
             // ps.setString(index, String.valueOf(value));

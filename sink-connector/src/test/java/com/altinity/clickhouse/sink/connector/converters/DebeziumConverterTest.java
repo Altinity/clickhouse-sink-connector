@@ -267,7 +267,11 @@ public class DebeziumConverterTest {
 
         Object timePacificTZ = ZonedDateTime.of(2024, 1, 1, 1, 1, 1, 1, ZoneId.of("America/Los_Angeles")).toEpochSecond() * 1000 * 1000;
         String formattedTimePacificTZ = DebeziumConverter.MicroTimeConverter.convert(timePacificTZ);
-        Assert.assertTrue(formattedTimePacificTZ.equalsIgnoreCase("09:01:01.000000"));
+        // This value has no sub-second component. It previously rendered as
+        // "09:01:01.000000" because the formatter always emitted six fractional
+        // digits; that padding is what issue #1215 reports. A whole-second TIME
+        // must now render without a fractional part.
+        Assert.assertEquals("09:01:01", formattedTimePacificTZ);
     }
 
 
@@ -297,4 +301,63 @@ public class DebeziumConverterTest {
         Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2100-01-01 00:00:00"));
     }
 
+    /**
+     * Issue #1215: a MySQL TIME(0) value replicated as "16:01:25.000000".
+     *
+     * <p>Under the default ADAPTIVE temporal precision mode Debezium emits
+     * TIME(4)..TIME(6) as io.debezium.time.MicroTime (INT64 microseconds past
+     * midnight), which is what MicroTimeConverter receives. The converter has
+     * no precision context, and it used the fixed-width pattern
+     * "HH:mm:ss.SSSSSS", so every value was padded to six fractional digits
+     * whether the source column had them or not.
+     *
+     * <p>16:01:25 is 57685 seconds past midnight.
+     */
+    @Test
+    @DisplayName("Issue #1215: a whole-second TIME must not gain six fractional digits")
+    public void testMicroTimeConverterWholeSecondHasNoFraction() {
+
+        long wholeSecond = 57685L * 1_000_000L;
+
+        Assert.assertEquals("16:01:25",
+                DebeziumConverter.MicroTimeConverter.convert(wholeSecond));
+    }
+
+    /**
+     * Issue #8 (the TIME half): 17:51:04.777 must keep its milliseconds and
+     * must not be padded out to "17:51:04.777000".
+     *
+     * <p>17:51:04 is 64264 seconds past midnight.
+     */
+    @Test
+    @DisplayName("Issue #8: a millisecond TIME keeps its digits without zero padding")
+    public void testMicroTimeConverterMillisecondsAreNotPadded() {
+
+        long milliPrecision = 64264L * 1_000_000L + 777_000L;
+
+        Assert.assertEquals("17:51:04.777",
+                DebeziumConverter.MicroTimeConverter.convert(milliPrecision));
+    }
+
+    /**
+     * Control. A genuine sub-second TIME value must still render every digit
+     * it carries -- the fix trims padding, never significant digits. This
+     * assertion holds both before and after the fix and is here to pin that.
+     */
+    @Test
+    @DisplayName("Control: a genuine microsecond TIME still renders all six digits")
+    public void testMicroTimeConverterKeepsSignificantDigits() {
+
+        long microPrecision = 64264L * 1_000_000L + 123_456L;
+        Assert.assertEquals("17:51:04.123456",
+                DebeziumConverter.MicroTimeConverter.convert(microPrecision));
+
+        long trailingSignificantZero = 64264L * 1_000_000L + 100_000L;
+        Assert.assertEquals("17:51:04.1",
+                DebeziumConverter.MicroTimeConverter.convert(trailingSignificantZero));
+
+        long midnight = 0L;
+        Assert.assertEquals("00:00:00",
+                DebeziumConverter.MicroTimeConverter.convert(midnight));
+    }
 }
