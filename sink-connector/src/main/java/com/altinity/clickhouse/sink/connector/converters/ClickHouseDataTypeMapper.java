@@ -320,7 +320,16 @@ public class ClickHouseDataTypeMapper {
                 // Debezium schema may lag after ALTER (e.g. INT32) while CH column is UInt64
                 ps.setObject(index, value);
             } else {
-                ps.setInt(index, (Integer) value);
+                // INT8 and INT32 share this branch, but an INT8 schema
+                // delivers a Byte, which is not an Integer -- the cast that
+                // used to be here threw ClassCastException and failed the
+                // whole batch for any table with a TINYINT column. The
+                // isWiderIntegerTarget hatch above does not cover it: an INT8
+                // column maps to ClickHouse Int8/UInt8, not Int32/Int64.
+                // Read the value as a Number so the boxed type is irrelevant;
+                // intValue() on an Integer is the identity, so the INT32 case
+                // is unchanged. See issue #385.
+                ps.setInt(index, ((Number) value).intValue());
             }
         } else if (isFieldTypeFloat) {
             if (value instanceof Float) {
