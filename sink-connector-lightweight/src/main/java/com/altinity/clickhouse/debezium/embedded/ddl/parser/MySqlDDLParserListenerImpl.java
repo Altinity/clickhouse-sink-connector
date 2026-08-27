@@ -123,6 +123,28 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     String originalSql;
 
     /**
+     * Index in {@link #query} at which the ALTER TABLE prefix currently being
+     * built starts, or -1 when no ALTER is in flight.
+     *
+     * <p>The prefix is emitted as soon as the table name is seen, before it is
+     * known whether any sub-clause of the statement translates to anything.
+     * Recording where it starts is what makes it removable again.</p>
+     */
+    private int alterPrefixStart = -1;
+
+    /**
+     * The exact prefix text emitted at {@link #alterPrefixStart}, or null when
+     * no ALTER is in flight.
+     *
+     * <p>Held so the offset can be validated before anything is deleted.
+     * Several clause handlers rewrite the buffer wholesale rather than
+     * appending to it, which would leave a bare offset pointing at unrelated
+     * text; comparing the text itself makes a stale offset detectable instead
+     * of destructive.</p>
+     */
+    private String alterPrefixText;
+
+    /**
      * Names of the columns the CREATE TABLE being parsed declares NOT NULL.
      *
      * <p>Used to decide whether a UNIQUE key is safe to adopt as the sorting
@@ -1324,6 +1346,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
             if (tree instanceof TableNameContext) {
                 this.tableName = tree.getText();
+                // The prefix is emitted here, before any sub-clause has been
+                // looked at. Whether the statement translates to anything at
+                // all is only known once every clause has been walked, so
+                // record where the prefix went and what it says; exitAlterTable()
+                // uses that to take it back when nothing followed it.
+                int prefixStart = this.query.length();
                 // If the table name already includes the database name don't include database name in the query.
                 if (this.tableName.contains(".")) {
                     // Split database and table name.
@@ -1332,6 +1360,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 } else {
                     this.query.append(String.format(Constants.ALTER_TABLE, databaseName + "." + this.tableName));
                 }
+                this.alterPrefixStart = prefixStart;
+                this.alterPrefixText = this.query.substring(prefixStart);
             }
 
             if (tree instanceof AlterByAddColumnContext) {
@@ -1390,6 +1420,78 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // A hint in trailing position leaves the separator that preceded it
         // dangling once the hint itself emits nothing.
         removeTrailingComma();
+    }
+
+    /**
+     * Drops the whole statement when none of its sub-clauses translated.
+     *
+     * <p>MySQL has entire families of ALTER sub-clause that ClickHouse has no
+     * equivalent for -- foreign keys, secondary-index DDL, index visibility --
+     * and the clause walk appends nothing for them. The prefix, however, is
+     * appended unconditionally the moment the table name is seen. An ALTER
+     * built only from such clauses therefore translates to the prefix ALONE,
+     * which is not a statement:</p>
+     *
+     * <pre>
+     *   ALTER TABLE db.tbl ADD CONSTRAINT `fk` FOREIGN KEY (c) REFERENCES o(id)
+     *     -&gt; ALTER TABLE db.tbl
+     *     -&gt; Code: 62. DB::Exception: Syntax error: failed at position 32
+     *        (end of query)
+     * </pre>
+     *
+     * <p>That is worse than not applying the change. DDL is retried
+     * indefinitely, so one untranslatable statement stalls the ENTIRE
+     * replication stream instead of skipping the single change it could not
+     * express. Observed across multiple production deployments over 18 months
+     * on dozens of tables, all from ordinary schema maintenance. One
+     * deployment emitted the prefix with a surviving trailing comma, so the
+     * separator is stripped before the emptiness test rather than being
+     * mistaken for content.</p>
+     *
+     * <p>Skipping loses nothing: ClickHouse cannot express a foreign key or a
+     * secondary index in an ALTER, so there was never anything to apply. What
+     * it must not do is drop a change that DID translate, so the test is on
+     * what actually landed in the buffer after the prefix -- not on which
+     * clause types were recognised. That keeps every working branch,
+     * including {@code ADD CHECK CONSTRAINT}, which appends from its own
+     * listener callback and so is only observable here, at exit.</p>
+     *
+     * <p>Logged at WARN naming the table and the source statement: a schema
+     * change that was not applied downstream has to be visible to an operator,
+     * not silent.</p>
+     */
+    @Override
+    public void exitAlterTable(MySqlParser.AlterTableContext alterTableContext) {
+        int start = this.alterPrefixStart;
+        String prefix = this.alterPrefixText;
+        this.alterPrefixStart = -1;
+        this.alterPrefixText = null;
+
+        if (start < 0 || prefix == null) {
+            // No prefix was emitted for this statement, so there is none to
+            // take back.
+            return;
+        }
+        int end = start + prefix.length();
+        // A clause handler may have replaced the buffer wholesale instead of
+        // appending to it (ALTER ... RENAME TO does). Confirm the prefix is
+        // still where it was put before deleting anything: a stale offset must
+        // be a no-op, never a truncation of somebody else's statement.
+        if (this.query.length() < end || !prefix.contentEquals(this.query.subSequence(start, end))) {
+            return;
+        }
+        // Separators are emitted eagerly between clauses, so a comma can
+        // outlive the clauses it was separating. It is not content.
+        String emittedClauses = this.query.substring(end).replace(",", "").trim();
+        if (!emittedClauses.isEmpty()) {
+            return;
+        }
+
+        this.query.delete(start, this.query.length());
+        log.warn("No ClickHouse-applicable clause in ALTER TABLE {}.{}; skipping the statement "
+                        + "entirely rather than sending a bare ALTER, which ClickHouse rejects "
+                        + "with a syntax error and then retries forever. Source DDL: {}",
+                this.databaseName, this.tableName, this.originalSql);
     }
 
     /**
