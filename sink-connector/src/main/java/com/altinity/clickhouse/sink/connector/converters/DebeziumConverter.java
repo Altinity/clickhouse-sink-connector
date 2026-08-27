@@ -299,6 +299,13 @@ public class DebeziumConverter {
     public static class ZonedTimestampConverter {
 
         /**
+         * PostgreSQL timestamptz special values, delivered by Debezium as
+         * these literal strings.
+         */
+        private static final String POSITIVE_INFINITY = "infinity";
+        private static final String NEGATIVE_INFINITY = "-infinity";
+
+        /**
          * Function to convert timestamp(with timezone)
          * to formatted timestamp(DateTime clickhouse)
          * @param value
@@ -309,6 +316,29 @@ public class DebeziumConverter {
             String result = "";
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS")
                     .withZone(serverTimezone);
+
+            // PostgreSQL timestamptz accepts the special values infinity and
+            // -infinity, which Debezium delivers verbatim as these literal
+            // strings (PostgresValueConverter#convertTimestampWithZone). They match
+            // none of the patterns below, so without handling them here the value
+            // silently becomes an empty string. ClickHouse DateTime64 cannot
+            // represent an actual infinity, so saturate to the bounds of the target
+            // type - the same clamping already applied to out-of-range timestamps
+            // below - which preserves the PostgreSQL ordering semantics that
+            // infinity sorts after, and -infinity before, every other timestamp.
+            // https://github.com/Altinity/clickhouse-sink-connector/issues/1231
+            if (value instanceof String) {
+                String literal = ((String) value).trim();
+                if (POSITIVE_INFINITY.equalsIgnoreCase(literal)) {
+                    return ZonedDateTime.ofInstant(
+                            Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX),
+                            serverTimezone).format(destFormatter);
+                } else if (NEGATIVE_INFINITY.equalsIgnoreCase(literal)) {
+                    return ZonedDateTime.ofInstant(
+                            Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN),
+                            serverTimezone).format(destFormatter);
+                }
+            }
 
             // The order of this array matters,
             // for example you might truncate microseconds
