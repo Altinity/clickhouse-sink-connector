@@ -77,4 +77,69 @@ public class ClickHouseDataTypeMapperTest {
         Assert.assertNull(ClickHouseDataTypeMapper.getUnsignedClickHouseType(null));
     }
 
+    @Test
+    public void getUnsignedClickHouseTypeIsAFunctionOfTheSourceTypeAlone() {
+        // Every spelling of one MySQL type must resolve to ONE ClickHouse
+        // type. ZEROFILL implies UNSIGNED in MySQL, so all of these are
+        // "smallint unsigned" and must all be UInt16 -- not UInt16 for some
+        // columns and a wider signed type for others in the same database.
+        String[] smallintUnsignedSpellings = {
+            "SMALLINT UNSIGNED",
+            "smallint unsigned",
+            "SMALLINT(5) UNSIGNED",
+            "SMALLINT UNSIGNED ZEROFILL",
+            "SMALLINT(5) UNSIGNED ZEROFILL",
+            "smallint unsigned zerofill",
+            "  SMALLINT   UNSIGNED  ",
+            "INT2 UNSIGNED",
+        };
+        for (String spelling : smallintUnsignedSpellings) {
+            Assert.assertEquals(
+                    "smallint unsigned must always map to UInt16: " + spelling,
+                    "UInt16",
+                    ClickHouseDataTypeMapper.getUnsignedClickHouseType(spelling));
+        }
+
+        // The other widths, including their MySQL aliases, are equally exact.
+        Assert.assertEquals("UInt8",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("TINYINT UNSIGNED ZEROFILL"));
+        Assert.assertEquals("UInt8",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("INT1 UNSIGNED"));
+        Assert.assertEquals("UInt32",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("MEDIUMINT UNSIGNED ZEROFILL"));
+        Assert.assertEquals("UInt32",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("INT3 UNSIGNED"));
+        Assert.assertEquals("UInt32",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("MIDDLEINT UNSIGNED"));
+        Assert.assertEquals("UInt32",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("INT4 UNSIGNED"));
+        Assert.assertEquals("UInt64",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("BIGINT UNSIGNED ZEROFILL"));
+        Assert.assertEquals("UInt64",
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("INT8 UNSIGNED"));
+
+        // Control: an explicit SIGNED must NOT be mistaken for unsigned, and
+        // stripping "signed" must not strip the "signed" inside "unsigned".
+        Assert.assertNull(
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("SMALLINT SIGNED"));
+        Assert.assertNull(
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("BIGINT SIGNED"));
+        Assert.assertNull(
+                ClickHouseDataTypeMapper.getUnsignedClickHouseType("SMALLINT ZEROFILL"));
+    }
+
+    @Test
+    public void normalizeMysqlTypeName() {
+        Assert.assertEquals("smallint unsigned",
+                ClickHouseDataTypeMapper.normalizeMysqlTypeName("SMALLINT(5) UNSIGNED ZEROFILL"));
+        Assert.assertEquals("smallint",
+                ClickHouseDataTypeMapper.normalizeMysqlTypeName("SMALLINT SIGNED"));
+        Assert.assertEquals("varchar",
+                ClickHouseDataTypeMapper.normalizeMysqlTypeName("VARCHAR(255)"));
+        // "unsigned" survives the "signed" strip -- no word boundary inside it.
+        Assert.assertEquals("bigint unsigned",
+                ClickHouseDataTypeMapper.normalizeMysqlTypeName("BIGINT UNSIGNED"));
+        Assert.assertNull(ClickHouseDataTypeMapper.normalizeMysqlTypeName(null));
+    }
+
 }

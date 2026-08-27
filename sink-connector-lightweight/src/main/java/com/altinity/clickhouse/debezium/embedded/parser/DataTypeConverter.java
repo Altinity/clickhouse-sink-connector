@@ -58,6 +58,8 @@ public class DataTypeConverter {
 
     static {
         overriddenDataTypesMap.put("tinyint", "Int8");
+        // INT1 is a MySQL alias of TINYINT and must map identically.
+        overriddenDataTypesMap.put("int1", "Int8");
         // Centralized MySQL-unsigned -> ClickHouse-UInt mapping, shared with
         // the record-schema auto-create path so both stay in lockstep.
         overriddenDataTypesMap.putAll(
@@ -132,9 +134,21 @@ public class DataTypeConverter {
         // Build the schema via the MySQL converter
         SchemaBuilder schemaBuilder = mysqlConverter.schemaBuilder(column);
 
-        // if the data type is in the overriddenDataTypesMap, then return the overridden data type
-        if (overriddenDataTypesMap.containsKey(dataType.name().toLowerCase())) {
-            return overriddenDataTypesMap.get(dataType.name().toLowerCase());
+        // Look the override up under the NORMALIZED source type name.
+        //
+        // The resolved name is the MySQL declaration as written, so one type
+        // arrives under several names: a display width ("smallint(5)
+        // unsigned"), an explicit SIGNED, and above all ZEROFILL -- which in
+        // MySQL implies UNSIGNED, so even a bare "SMALLINT ZEROFILL" resolves
+        // to the name "SMALLINT UNSIGNED ZEROFILL". Keying this lookup on the
+        // raw name meant each of those spellings missed the unsigned entry and
+        // fell through to the signed Kafka-schema mapping, so the SAME MySQL
+        // type produced different ClickHouse types in the same database
+        // depending only on how the column happened to be declared.
+        String normalizedTypeName =
+                ClickHouseDataTypeMapper.normalizeMysqlTypeName(dataType.name());
+        if (overriddenDataTypesMap.containsKey(normalizedTypeName)) {
+            return overriddenDataTypesMap.get(normalizedTypeName);
         }
 
         // MySQL BIT(n) is a bit-string, not a boolean. Debezium emits it as

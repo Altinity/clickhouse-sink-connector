@@ -191,6 +191,73 @@ public class DataTypeConverterTest {
         return testCases;
     }
 
+    /**
+     * One MySQL source type must resolve to exactly ONE ClickHouse type,
+     * however the column happens to be spelled.
+     *
+     * <p>Regression test: the DDL path looked the unsigned override up under
+     * the raw resolved type name, so a display width, an explicit SIGNED, and
+     * above all ZEROFILL (which in MySQL implies UNSIGNED, making a bare
+     * "SMALLINT ZEROFILL" resolve to the name "SMALLINT UNSIGNED ZEROFILL")
+     * each missed the override and silently fell through to the signed
+     * mapping. The same source type therefore produced different ClickHouse
+     * types within one database, decided only by declaration style.
+     */
+    @Test
+    @DisplayName("Unsigned integer mapping is a function of the source type alone")
+    public void testUnsignedConversionsAreDeterministic() {
+        List<TestCase> cases = new ArrayList<>();
+
+        // ZEROFILL implies UNSIGNED in MySQL, and the DDL parser folds both
+        // into the resolved type name (a bare "SMALLINT ZEROFILL" resolves to
+        // the name "SMALLINT UNSIGNED ZEROFILL"). The override map is keyed on
+        // the exact resolved name, so every ZEROFILL spelling missed the
+        // unsigned entry and silently fell through to the signed mapping --
+        // the same source type landing on two different ClickHouse types
+        // depending only on whether the column was declared ZEROFILL.
+        cases.add(new TestCase("SMALLINT UNSIGNED ZEROFILL", "SMALLINT UNSIGNED ZEROFILL", "UInt16"));
+        cases.add(new TestCase("SMALLINT ZEROFILL (implies UNSIGNED)", "SMALLINT ZEROFILL", "UInt16"));
+        cases.add(new TestCase("SMALLINT(5) UNSIGNED ZEROFILL", "SMALLINT(5) UNSIGNED ZEROFILL", "UInt16"));
+        cases.add(new TestCase("TINYINT UNSIGNED ZEROFILL", "TINYINT UNSIGNED ZEROFILL", "UInt8"));
+        cases.add(new TestCase("TINYINT ZEROFILL (implies UNSIGNED)", "TINYINT ZEROFILL", "UInt8"));
+        cases.add(new TestCase("MEDIUMINT UNSIGNED ZEROFILL", "MEDIUMINT UNSIGNED ZEROFILL", "UInt32"));
+        cases.add(new TestCase("INT UNSIGNED ZEROFILL", "INT UNSIGNED ZEROFILL", "UInt32"));
+        cases.add(new TestCase("INT ZEROFILL (implies UNSIGNED)", "INT ZEROFILL", "UInt32"));
+        cases.add(new TestCase("BIGINT UNSIGNED ZEROFILL", "BIGINT UNSIGNED ZEROFILL", "UInt64"));
+        cases.add(new TestCase("BIGINT ZEROFILL (implies UNSIGNED)", "BIGINT ZEROFILL", "UInt64"));
+
+        // Display width must not change the resolved type either.
+        cases.add(new TestCase("SMALLINT(5) UNSIGNED", "SMALLINT(5) UNSIGNED", "UInt16"));
+
+        // MySQL numeric-type aliases are the same types under another name and
+        // must map identically to their canonical spelling. INT1/INT2 are
+        // TINYINT/SMALLINT, INT3/MIDDLEINT are MEDIUMINT, INT4 is INT and INT8
+        // is BIGINT.
+        cases.add(new TestCase("INT1 UNSIGNED (alias of TINYINT UNSIGNED)", "INT1 UNSIGNED", "UInt8"));
+        cases.add(new TestCase("INT2 UNSIGNED (alias of SMALLINT UNSIGNED)", "INT2 UNSIGNED", "UInt16"));
+        cases.add(new TestCase("INT3 UNSIGNED (alias of MEDIUMINT UNSIGNED)", "INT3 UNSIGNED", "UInt32"));
+        cases.add(new TestCase("MIDDLEINT UNSIGNED (alias of MEDIUMINT UNSIGNED)", "MIDDLEINT UNSIGNED", "UInt32"));
+        cases.add(new TestCase("INT4 UNSIGNED (alias of INT UNSIGNED)", "INT4 UNSIGNED", "UInt32"));
+        cases.add(new TestCase("INT8 UNSIGNED (alias of BIGINT UNSIGNED)", "INT8 UNSIGNED", "UInt64"));
+
+        // Control: the signed aliases keep their signed mapping.
+        cases.add(new TestCase("INT1 (alias of TINYINT)", "INT1", "Int8"));
+        cases.add(new TestCase("INT2 (alias of SMALLINT)", "INT2", "Int16"));
+        cases.add(new TestCase("INT4 (alias of INT)", "INT4", "Int32"));
+        cases.add(new TestCase("INT8 (alias of BIGINT)", "INT8", "Int64"));
+
+        for (TestCase testCase : cases) {
+            MySqlParser.DataTypeContext dataType = parseDataType(testCase.dataTypeString);
+            String result = DataTypeConverter.convertToString(
+                    config, "test_col", testCase.scale, testCase.precision,
+                    dataType, testCase.timezone);
+            Assert.assertEquals(
+                    "Failed for test case: " + testCase.description,
+                    testCase.expectedResult,
+                    result);
+        }
+    }
+
     @Test
     @DisplayName("Test all data type conversions")
     public void testAllDataTypeConversions() {

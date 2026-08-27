@@ -74,6 +74,16 @@ public class ClickHouseDataTypeMapper {
         unsignedMap.put("int unsigned", "UInt32");
         unsignedMap.put("integer unsigned", "UInt32");
         unsignedMap.put("bigint unsigned", "UInt64");
+        // MySQL numeric-type aliases. These are the same types under another
+        // name, so they must resolve to the same ClickHouse type as their
+        // canonical spelling; keying only the canonical names left the
+        // aliases to a prefix fallback that answered UInt32 for all of them.
+        unsignedMap.put("int1 unsigned", "UInt8");
+        unsignedMap.put("int2 unsigned", "UInt16");
+        unsignedMap.put("int3 unsigned", "UInt32");
+        unsignedMap.put("middleint unsigned", "UInt32");
+        unsignedMap.put("int4 unsigned", "UInt32");
+        unsignedMap.put("int8 unsigned", "UInt64");
         UNSIGNED_MYSQL_TO_CLICKHOUSE_TYPE =
                 Collections.unmodifiableMap(unsignedMap);
     }
@@ -616,33 +626,54 @@ public class ClickHouseDataTypeMapper {
         if (mysqlSourceColumnType == null) {
             return null;
         }
-        String normalized = mysqlSourceColumnType.trim().toLowerCase();
-        if (!normalized.contains("unsigned")) {
+        String normalized = normalizeMysqlTypeName(mysqlSourceColumnType);
+        if (normalized == null || !normalized.contains("unsigned")) {
             return null;
         }
+        return UNSIGNED_MYSQL_TO_CLICKHOUSE_TYPE.get(normalized);
+    }
+
+    /**
+     * Normalizes a MySQL type name to the canonical, lower-case
+     * {@code "type [unsigned]"} form used as the key of
+     * {@link #UNSIGNED_MYSQL_TO_CLICKHOUSE_TYPE}.
+     *
+     * <p>Three MySQL spelling features make one source type present itself
+     * under several different names, and a lookup keyed on the raw name sees
+     * each of them as a distinct (unknown) type:
+     * <ul>
+     *   <li>a display width, e.g. {@code "smallint(5) unsigned"};</li>
+     *   <li>the {@code ZEROFILL} attribute, which in MySQL <em>implies</em>
+     *       {@code UNSIGNED} -- so a column declared merely
+     *       {@code SMALLINT ZEROFILL} resolves to the type name
+     *       {@code "SMALLINT UNSIGNED ZEROFILL"};</li>
+     *   <li>an explicit {@code SIGNED} attribute, which is the default and
+     *       carries no information.</li>
+     * </ul>
+     * Removing all three makes every spelling of one MySQL type collapse to
+     * exactly one key, so the mapping is a function of the source type alone.
+     *
+     * <p>Note {@code \\bsigned\\b} cannot match inside
+     * {@code unsigned}: there is no word boundary between {@code n} and
+     * {@code s}, so the unsignedness is never stripped.
+     *
+     * @param mysqlTypeName the raw MySQL type name
+     * @return the normalized name, or {@code null} when the input is null
+     */
+    public static String normalizeMysqlTypeName(String mysqlTypeName) {
+        if (mysqlTypeName == null) {
+            return null;
+        }
+        String normalized = mysqlTypeName.trim().toLowerCase();
         // Strip any display width, e.g. "int(10) unsigned" -> "int unsigned".
         normalized = normalized.replaceAll("\\(.*?\\)", "");
-        // Collapse whitespace introduced by removing the width.
-        normalized = normalized.replaceAll("\\s+", " ").trim();
-
-        String direct = UNSIGNED_MYSQL_TO_CLICKHOUSE_TYPE.get(normalized);
-        if (direct != null) {
-            return direct;
-        }
-        // Fall back to a prefix match to tolerate suffixes such as ZEROFILL.
-        if (normalized.startsWith("tinyint")) {
-            return "UInt8";
-        } else if (normalized.startsWith("smallint")) {
-            return "UInt16";
-        } else if (normalized.startsWith("mediumint")) {
-            return "UInt32";
-        } else if (normalized.startsWith("bigint")) {
-            return "UInt64";
-        } else if (normalized.startsWith("integer")
-                || normalized.startsWith("int")) {
-            return "UInt32";
-        }
-        return null;
+        // ZEROFILL implies UNSIGNED and carries no type information of its own.
+        normalized = normalized.replaceAll("\\bzerofill\\b", "");
+        // An explicit SIGNED is the default; drop it. This cannot touch
+        // UNSIGNED -- there is no word boundary inside that word.
+        normalized = normalized.replaceAll("\\bsigned\\b", "");
+        // Collapse whitespace introduced by the removals above.
+        return normalized.replaceAll("\\s+", " ").trim();
     }
 
     /**
