@@ -20,6 +20,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.sql.PreparedStatement;
+import java.sql.SQLException;
 import java.sql.Types;
 import java.time.ZoneId;
 import java.util.List;
@@ -84,6 +85,149 @@ public class PreparedStatementFieldMapper {
             }
         }
         return false;
+    }
+
+
+    /**
+     * Whether a ClickHouse column declaration can store SQL NULL.
+     *
+     * <p>ClickHouse has no per-column NULL flag: nullability is part of the
+     * type, and {@code Nullable(T)} is the only form that stores NULL. The
+     * type strings compared here are the verbatim
+     * {@code system.columns.type} values that
+     * {@code DBMetadata#getColumnsDataTypesForTable} puts into
+     * {@code columnNameToDataTypeMap}, so this is a read of the target
+     * table's real schema, not a guess.</p>
+     *
+     * <p>Two shapes need care:</p>
+     * <ul>
+     *   <li>{@code LowCardinality(...)} is a storage wrapper, not a type. The
+     *       nullability is the one inside it, so it is unwrapped:
+     *       {@code LowCardinality(Nullable(String))} accepts NULL,
+     *       {@code LowCardinality(String)} does not.</li>
+     *   <li>{@code Array(Nullable(String))} does NOT accept NULL. The array
+     *       itself is required; only its elements may be NULL. Matching
+     *       "contains Nullable" rather than "starts with Nullable" would
+     *       wrongly wave it through.</li>
+     * </ul>
+     *
+     * <p>An unknown (null/blank) type returns true: an undeterminable type is
+     * not proof that the column rejects NULL, and a guess must never fail a
+     * batch that works today.</p>
+     *
+     * @param clickHouseType the verbatim ClickHouse type string, may be null
+     * @return true when the column can store NULL
+     */
+    static boolean acceptsNull(String clickHouseType) {
+        if (clickHouseType == null) {
+            return true;
+        }
+        String type = clickHouseType.trim();
+        while (type.regionMatches(true, 0, LOW_CARDINALITY_PREFIX, 0, LOW_CARDINALITY_PREFIX.length())
+                && type.endsWith(")")) {
+            type = type.substring(LOW_CARDINALITY_PREFIX.length(), type.length() - 1).trim();
+        }
+        if (type.isEmpty()) {
+            return true;
+        }
+        return type.regionMatches(true, 0, NULLABLE_PREFIX, 0, NULLABLE_PREFIX.length());
+    }
+
+    /** {@code LowCardinality(} -- a storage wrapper around the real type. */
+    private static final String LOW_CARDINALITY_PREFIX = "LowCardinality(";
+
+    /** {@code Nullable(} -- the only ClickHouse type that stores NULL. */
+    private static final String NULLABLE_PREFIX = "Nullable(";
+
+    /**
+     * Whether this column is filled in by the connector itself later in
+     * {@code insertPreparedStatement}, rather than by the source record.
+     *
+     * <p>These columns are deliberately bound to NULL first and overwritten by
+     * {@code handleKafkaMetadata} / {@code handleSignColumn} /
+     * {@code handleVersionColumn} / {@code handleReplicationHistoryColumns} /
+     * {@code handleReplacingMergeTreeDeleteColumn} / {@code handleRawDataStorage}
+     * a few lines further down. A placeholder NULL for one of them is not a
+     * source NULL landing in a non-nullable column, so rejecting it would break
+     * working deployments -- every one of these columns is non-nullable in the
+     * schemas the connector generates.</p>
+     *
+     * @param colName the ClickHouse column being bound
+     * @param config the connector configuration, used for the raw-data column name
+     * @return true when the connector populates this column itself
+     */
+    private boolean isConnectorPopulatedColumn(String colName, ClickHouseSinkConnectorConfig config) {
+        if (colName == null) {
+            return false;
+        }
+        if (colName.equalsIgnoreCase(versionColumn)
+                || colName.equalsIgnoreCase(signColumn)
+                || colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)
+                || colName.equalsIgnoreCase(DELETED_TIME_COLUMN)
+                || colName.equalsIgnoreCase(DELETED_FROM_TIME_COLUMN)
+                || colName.equalsIgnoreCase(OPERATION_COLUMN)) {
+            return true;
+        }
+        for (KafkaMetaData metaDataColumn : KafkaMetaData.values()) {
+            if (colName.equalsIgnoreCase(metaDataColumn.getColumn())) {
+                return true;
+            }
+        }
+        if (config == null) {
+            return false;
+        }
+        String rawDataColumn = config.getString(
+                ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN.toString());
+        return rawDataColumn != null && colName.equalsIgnoreCase(rawDataColumn);
+    }
+
+    /**
+     * Binds SQL NULL, refusing when the target ClickHouse column cannot hold it
+     * (issue #1250).
+     *
+     * <p>{@code setNull} on a non-nullable column has no good outcome. The
+     * driver either rejects the whole batch with a message that names neither
+     * the column nor the table -- so the operator has to bisect the batch to
+     * find out what happened -- or coerces the NULL to the type's zero value
+     * ({@code 0}, {@code ''}, the epoch), writing a row that never existed in
+     * the source while the row count still matches. The second outcome is the
+     * dangerous one: count-based checksums report the table clean.</p>
+     *
+     * <p>So the batch is failed here, with the database, table, column and
+     * declared type in the message. Failing is recoverable -- the batch is
+     * retried or surfaced to the operator, and the fix is a one-line ALTER --
+     * whereas a silently coerced row is not detectable after the fact. This is
+     * the same reasoning, and the same exception type, as
+     * {@code rejectUnderivableVersion} above.</p>
+     *
+     * <p>Genuinely {@code Nullable(...)} columns are untouched: they reach
+     * {@code ps.setNull} exactly as before.</p>
+     *
+     * @param ps the prepared statement being populated
+     * @param index the bind index of the column
+     * @param colName the ClickHouse column being bound
+     * @param columnNameToDataTypeMap the target table's column-to-type map
+     * @param config the connector configuration
+     * @param tableName the target ClickHouse table
+     * @throws SQLException if the bind itself fails
+     */
+    private void setNullChecked(PreparedStatement ps, int index, String colName,
+                                Map<String, String> columnNameToDataTypeMap,
+                                ClickHouseSinkConnectorConfig config,
+                                String tableName) throws SQLException {
+        String chType = columnNameToDataTypeMap == null ? null : columnNameToDataTypeMap.get(colName);
+        if (!acceptsNull(chType) && !isConnectorPopulatedColumn(colName, config)) {
+            throw new IllegalStateException(String.format(
+                    "Database(%s), Table(%s): received NULL for column '%s', whose ClickHouse type"
+                            + " is %s -- a type that cannot store NULL. Refusing to bind NULL to a"
+                            + " non-nullable column: the driver would either fail the batch with an"
+                            + " error naming neither the column nor the table, or coerce the NULL to"
+                            + " the type's zero value and silently write a row that does not exist in"
+                            + " the source. Change the column to Nullable(%s) in ClickHouse, or stop"
+                            + " the source from emitting NULL for it.",
+                    databaseName, tableName, colName, chType, chType));
+        }
+        ps.setNull(index, Types.OTHER);
     }
 
 
@@ -223,8 +367,8 @@ public class PreparedStatementFieldMapper {
 
             //String colName = entry.getKey();
 
-            //ToDO: Setting null to a non-nullable field)
-            // will throw an error.
+            // A NULL for a column ClickHouse declares non-nullable is rejected by
+            // setNullChecked below instead of being handed to setNull (issue #1250).
             // If the Received column is not a clickhouse column
             try {
                 Object value = struct.get(colName);
@@ -235,7 +379,7 @@ public class PreparedStatementFieldMapper {
                     value = struct.getWithoutDefault(colName);
                 }
                 if (value == null) {
-                    ps.setNull(index, Types.OTHER);
+                    setNullChecked(ps, index, colName, columnNameToDataTypeMap, config, tableName);
                     continue;
                 }
             } catch (DataException e) {
@@ -249,10 +393,10 @@ public class PreparedStatementFieldMapper {
                 } else {
                     if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
                         log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
-                        log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
+                        log.error(String.format("********** ERROR: Database(%s), Table(%s), Column %s will be bound to NULL; this fails the batch if the column is not Nullable ************", databaseName, tableName, colName));
                     }
                                     }
-                ps.setNull(index, Types.OTHER);
+                setNullChecked(ps, index, colName, columnNameToDataTypeMap, config, tableName);
                 continue;
             }
 
