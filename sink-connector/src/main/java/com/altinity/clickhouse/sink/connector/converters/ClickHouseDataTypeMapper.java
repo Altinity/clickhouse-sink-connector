@@ -105,9 +105,16 @@ public class ClickHouseDataTypeMapper {
         dataTypesMap.put(
                 new MutablePair<>(Schema.FLOAT32_SCHEMA.type(), null),
                 ClickHouseDataType.Float32);
+        // FLOAT64 (MySQL DOUBLE) must be Float64, not Float32. This map
+        // types the columns of auto-created tables, so mapping it to
+        // Float32 truncated every replicated DOUBLE from ~15 significant
+        // decimal digits to ~7 at CREATE TABLE time -- silently, with row
+        // counts still matching. Unlike REAL (see DataTypeConverter), the
+        // value arrives from Debezium at full double width, so the
+        // precision is genuinely there to keep.
         dataTypesMap.put(
                 new MutablePair<>(Schema.FLOAT64_SCHEMA.type(), null),
-                ClickHouseDataType.Float32);
+                ClickHouseDataType.Float64);
 
         // String
         dataTypesMap.put(
