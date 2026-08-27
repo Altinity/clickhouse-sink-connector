@@ -1259,15 +1259,24 @@ public class DebeziumChangeEventCapture {
                 }
             } else {
                 chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
-                chStruct.setSequenceNumber(sequenceNumber);
                 try {
                     if (chStruct != null) {
+                        chStruct.setSequenceNumber(sequenceNumber);
                         ReplicationStatusSingleton rss = ReplicationStatusSingleton.getInstance();
                         rss.setReplicationLag(chStruct.getReplicationLag());
                         rss.setLastRecordTimestamp(chStruct.getTs_ms());
                         rss.setBinLogFile(chStruct.getFile());
                         rss.setBinLogPosition(String.valueOf(chStruct.getPos()));
                         rss.setGtid(String.valueOf(chStruct.getGtid()));
+                    } else {
+                        // parse() returns null for a record it cannot convert, such as
+                        // a null or non-Struct source value. Setting the sequence number
+                        // before this check raised an NPE that the catch-all below then
+                        // swallowed, so the record was dropped silently while the
+                        // snapshot loop logged the same stack trace per record (#1379).
+                        log.warn(String.format(
+                                "Record could not be parsed to a ClickHouseStruct - skipping. Record(%s)",
+                                record));
                     }
                 } catch (Exception e) {
                     log.error("Error retrieving status metrics: Exception" + e.toString());
