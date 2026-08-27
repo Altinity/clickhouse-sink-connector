@@ -569,6 +569,19 @@ public class DebeziumChangeEventCapture {
             log.error("Error stopping debezium engine", e);
         }
 
+        // The single-threaded writer holds one JDBC connection per database
+        // plus a system-database connection, and it is the only thing holding
+        // them. Released after the engine and both executors have stopped, so
+        // no batch can still be writing through them. Issue #1252.
+        try {
+            if (this.singleThreadedWriter != null) {
+                this.singleThreadedWriter.close();
+                this.singleThreadedWriter = null;
+            }
+        } catch (Exception e) {
+            log.error("Error closing the single threaded writer", e);
+        }
+
         Metrics.stop();
     }
 

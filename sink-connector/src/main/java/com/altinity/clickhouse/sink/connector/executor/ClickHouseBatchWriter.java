@@ -35,7 +35,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * tables, and processes record batches, including grouping records
  * by topic, flushing them to ClickHouse, and handling Kafka offsets.
  */
-public class ClickHouseBatchWriter {
+public class ClickHouseBatchWriter implements AutoCloseable {
 
     /**
      * Connector configuration.
@@ -459,14 +459,73 @@ public class ClickHouseBatchWriter {
      * {@code SQLException: Connection is closed}. Fixed in both places so the
      * two executors do not diverge.
      *
+     * <p>Package-private rather than private so the reconnect behaviour can be
+     * exercised directly, in the same style as
+     * {@code PreparedStatementExecutor#updateRelocatesSortingKey}.
+     *
      * @return a usable system-database connection, or null when one cannot be
      *         obtained (callers already handle a null connection).
      */
-    private Connection systemConnection() {
+    Connection systemConnection() {
         if (BaseDbWriter.isUnusable(this.systemConnection)) {
+            // Close before replacing. isUnusable() is also true when the
+            // driver THROWS from isClosed(), in which case the handle is
+            // still open; overwriting the field would orphan a live
+            // connection that nothing can ever release (issue #1252).
+            closeQuietly(this.systemConnection, BaseDbWriter.SYSTEM_DB);
             this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
         }
         return this.systemConnection;
+    }
+
+    /**
+     * Releases every JDBC connection this writer holds: the per-database
+     * connections cached in {@link #databaseToConnectionMap} and the
+     * system-database connection opened by the constructor.
+     *
+     * <p>Nothing else can release them. The connections are opened here and
+     * the handles are not published anywhere, so without this method every
+     * connector stop leaks the whole set -- and the lightweight connector
+     * restarts its event loop in-process (the REST force-start stops the
+     * current {@code DebeziumChangeEventCapture} and builds a new one), so
+     * the leak accumulates without the JVM ever exiting.</p>
+     *
+     * <p>Idempotent and non-throwing: a second call has nothing left to do,
+     * and a connection that fails to close is logged and skipped so the rest
+     * of the set is still released. Shutdown must not be abandoned halfway --
+     * that is the same leak again.</p>
+     */
+    @Override
+    public void close() {
+        for (Map.Entry<String, Connection> entry
+                : this.databaseToConnectionMap.entrySet()) {
+            closeQuietly(entry.getValue(), entry.getKey());
+        }
+        // Cleared, not just closed: a closed handle handed back by
+        // getClickHouseConnection() would fail every subsequent statement.
+        this.databaseToConnectionMap.clear();
+        closeQuietly(this.systemConnection, BaseDbWriter.SYSTEM_DB);
+        this.systemConnection = null;
+    }
+
+    /**
+     * Closes a connection, logging rather than propagating a failure.
+     *
+     * @param connection the connection to close; null and already-closed
+     *                   handles are no-ops
+     * @param databaseName the database the connection belongs to, for logging
+     */
+    private static void closeQuietly(Connection connection,
+                                     String databaseName) {
+        if (connection == null) {
+            return;
+        }
+        try {
+            connection.close();
+        } catch (SQLException e) {
+            log.error("Error closing the ClickHouse connection for database "
+                    + databaseName, e);
+        }
     }
 
     /**
