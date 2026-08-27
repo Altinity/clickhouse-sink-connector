@@ -97,7 +97,8 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     /**
      * Default error table name.
      */
-    private static final String DEFAULT_ERROR_TABLE = "error_table";
+    private static final String DEFAULT_ERROR_TABLE =
+            com.altinity.clickhouse.sink.connector.db.ErrorLogger.DEFAULT_ERROR_TABLE;
 
     /**
      * Order index for config definitions, used for grouping/ordering.
@@ -747,9 +748,17 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ERROR_TABLE_NAME.toString(),
                         Type.STRING,
-                        ERROR_TABLE_NAME.toString(),
+                        // The DEFAULT VALUE, not the config key. Passing the
+                        // key here made the default value the literal string
+                        // "default.error.table", which the error logger then
+                        // qualified with the system database, yielding the
+                        // four-part name "system.default.error.table" -- not a
+                        // valid ClickHouse identifier, so every error report
+                        // failed to be written and left no durable trace.
+                        DEFAULT_ERROR_TABLE,
                         Importance.LOW,
-                        "Default table name for storing error records",
+                        "Table name (unqualified) for storing error records; "
+                                + "the table is created in the system database",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         ORDER_0,
                         ConfigDef.Width.NONE,

@@ -11,6 +11,7 @@ import org.apache.logging.log4j.Logger;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Static class to handle error logging in ClickHouse.
@@ -20,7 +21,18 @@ public class ErrorLogger {
     private static final Logger log = LogManager.getLogger(ErrorLogger.class);
 
     // Default table name if not specified in config
-    private static final String DEFAULT_ERROR_TABLE = "replica_source_error";
+    public static final String DEFAULT_ERROR_TABLE = "replica_source_error";
+
+    /**
+     * A bare, unqualified ClickHouse table identifier: a letter or underscore
+     * followed by letters, digits or underscores. The error table is always
+     * created in {@link BaseDbWriter#SYSTEM_DB}, so the configured value must
+     * be the table name ALONE -- anything containing a dot would be
+     * concatenated into a multi-part name such as "system.a.b.c", which is not
+     * a valid ClickHouse identifier.
+     */
+    private static final Pattern VALID_TABLE_NAME =
+            Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
 
     /**
      * Creates the error table if it doesn't exist.
@@ -37,11 +49,9 @@ public class ErrorLogger {
         if (config == null) {
             throw new SQLException("Config cannot be null");
         }
-        // Read error table name from config
-        String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
-        if (errorTableName == null || errorTableName.isEmpty()) {
-            errorTableName = DEFAULT_ERROR_TABLE;
-        }
+        // Read and validate the error table name from config.
+        String errorTableName = resolveErrorTableName(
+                config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString()));
 
         String createTableQuery = String.format(
             "CREATE TABLE IF NOT EXISTS %s.%s (" +
@@ -90,6 +100,11 @@ public class ErrorLogger {
             error = "Unknown error";
         }
 
+        // The name is interpolated straight into SQL below, so it must be a
+        // valid bare table identifier -- an invalid one produces SQL that can
+        // never execute, which means the error report is silently lost.
+        String validatedTableName = resolveErrorTableName(errorTableName);
+
         String insertQuery = String.format(
             "INSERT INTO %s.%s (" +
                 "error, " +
@@ -102,7 +117,7 @@ public class ErrorLogger {
                 "database_query" +
             ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)", 
             BaseDbWriter.SYSTEM_DB, 
-            errorTableName
+            validatedTableName
         );
 
         try (var statement = connection.prepareStatement(insertQuery)) {
@@ -158,4 +173,44 @@ public class ErrorLogger {
             throw e;
         }
     }
-} 
+
+    /**
+     * Resolves and validates the error table name.
+     *
+     * <p>The error table always lives in {@link BaseDbWriter#SYSTEM_DB} and
+     * the name is interpolated directly into the CREATE/INSERT statements, so
+     * it must be a bare, unqualified identifier. A name containing a dot
+     * yields a multi-part identifier such as
+     * {@code system.default.error.table}, which ClickHouse cannot parse; every
+     * DDL/insert failure report then fails to be written, so the original
+     * error leaves no durable trace at all -- the failure mode this method
+     * exists to prevent.
+     *
+     * @param configuredName the configured name, may be null or empty
+     * @return the validated table name, or {@link #DEFAULT_ERROR_TABLE} when
+     *         nothing was configured
+     * @throws SQLException if the configured name is not a valid bare
+     *                      ClickHouse table identifier
+     */
+    static String resolveErrorTableName(String configuredName) throws SQLException {
+        if (configuredName == null || configuredName.trim().isEmpty()) {
+            return DEFAULT_ERROR_TABLE;
+        }
+        String trimmed = configuredName.trim();
+        if (!VALID_TABLE_NAME.matcher(trimmed).matches()) {
+            throw new SQLException(String.format(
+                    "Invalid %s value '%s': the error table name must be a bare "
+                            + "table identifier (letters, digits and underscores, not "
+                            + "starting with a digit) because the table is always created "
+                            + "in the '%s' database. A qualified or dotted name produces "
+                            + "an invalid identifier such as '%s.%s', and every error "
+                            + "report would then be silently discarded.",
+                    ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME,
+                    trimmed,
+                    BaseDbWriter.SYSTEM_DB,
+                    BaseDbWriter.SYSTEM_DB,
+                    trimmed));
+        }
+        return trimmed;
+    }
+}
