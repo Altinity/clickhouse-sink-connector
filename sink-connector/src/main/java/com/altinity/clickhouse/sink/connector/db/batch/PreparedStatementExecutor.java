@@ -16,7 +16,6 @@ import org.apache.logging.log4j.Logger;
 import java.sql.*;
 import java.time.ZoneId;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation.getCdcSectionBasedOnOperation;
@@ -146,15 +145,15 @@ public class PreparedStatementExecutor {
             log.info(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
             // Create Hashmap of PreparedStatement(Query) -> Set of records
             // because the data will contain a mix of SQL statements(multiple columns)
-            if (!executePreparedStatement(insertQuery, topicName, entry, bmd, config,
-                    conn, tableName, columnToDataTypeMap, engine)) {
-                log.error(String.format("**** ERROR: executing prepared statement for Database(%s), " +
-                        "table(%s), Query(%s) ****", databaseName, tableName, insertQuery));
-                result = false;
-                break;
-            } else {
-                result = true;
-            }
+            //
+            // executePreparedStatement reports a failure by throwing: every failure
+            // path inside it rethrows, so it either wrote the batch or it did not
+            // return at all. It used to also hand back a boolean, which could only
+            // ever be false for an entry that executed NOTHING -- reported to this
+            // loop as a failed batch. See issue #1254.
+            executePreparedStatement(insertQuery, topicName, entry, bmd, config,
+                    conn, tableName, columnToDataTypeMap, engine);
+            result = true;
             if (entry.getValue().isEmpty()) {
                 // All records were processed.
                 iter.remove();
@@ -178,16 +177,16 @@ public class PreparedStatementExecutor {
      * @param tableName The name of the table.
      * @param columnToDataTypeMap A map of column names to data types.
      * @param engine The table engine to use.
-     * @return true if the batch is successfully executed; false otherwise.
-     * @throws Exception if an error occurs during batch execution.
+     * @throws Exception if an error occurs during batch execution. A partition
+     *         that could not be written always leaves this method by exception;
+     *         returning normally means every partition was executed.
      */
-    private boolean executePreparedStatement(String insertQuery, String topicName,
-                                             Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry,
-                                             BlockMetaData bmd, ClickHouseSinkConnectorConfig config,
-                                             Connection conn, String tableName, Map<String, String> columnToDataTypeMap,
-                                             DBMetadata.TABLE_ENGINE engine) throws Exception {
+    private void executePreparedStatement(String insertQuery, String topicName,
+                                          Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry,
+                                          BlockMetaData bmd, ClickHouseSinkConnectorConfig config,
+                                          Connection conn, String tableName, Map<String, String> columnToDataTypeMap,
+                                          DBMetadata.TABLE_ENGINE engine) throws Exception {
 
-        AtomicBoolean result = new AtomicBoolean(false);
         long maxRecordsInBatch = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
         List<ClickHouseStruct> failedRecords = new ArrayList<>();
 
@@ -353,7 +352,6 @@ public class PreparedStatementExecutor {
                         Thread.currentThread().getName() + " Result: " +
                         batchResult.toString() + " Database: "
                         + databaseName + " Table: " + tableName);
-                result.set(true);
 
             } catch (Exception e) {
                 Metrics.updateErrorCounters(topicName, entry.getValue().size());
@@ -364,8 +362,6 @@ public class PreparedStatementExecutor {
             }
 
         });
-
-        return result.get();
     }
 
     /**
