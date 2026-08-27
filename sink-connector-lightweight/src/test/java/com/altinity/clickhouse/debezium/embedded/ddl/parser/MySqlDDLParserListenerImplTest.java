@@ -2653,4 +2653,131 @@ public class MySqlDDLParserListenerImplTest {
         log.info("Create table with RANGE PARTITION BY YEAR function: " + clickHouseQuery);
     }
 
+    /**
+     * Upstream #335: the DDL auto-create path must honor
+     * replacingmergetree.delete.column instead of hardcoding is_deleted.
+     *
+     * Before the fix this emitted `is_deleted` UInt8 and
+     * ReplacingMergeTree(_version,is_deleted) regardless of the setting, so a
+     * user who configured a different name got a table whose delete column did
+     * not match the one the write path binds by the configured name.
+     */
+    @Test
+    public void testCreateTableHonorsConfiguredDeleteColumn() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        Map<String, String> config = new HashMap<>();
+        config.put(ClickHouseSinkConnectorConfigVariables
+                .REPLACING_MERGE_TREE_DELETE_COLUMN.toString(), "_sign");
+
+        MySQLDDLParserService parser = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(config), "employees");
+        parser.parseSql("CREATE TABLE t335(id INT NOT NULL, PRIMARY KEY (id))",
+                "t335", clickHouseQuery);
+
+        String expected = "CREATE TABLE if not exists employees.t335(id Int32 NOT NULL ,"
+                + "`_version` UInt64,`_sign` UInt8) "
+                + "Engine=ReplacingMergeTree(_version,_sign) ORDER BY (id)";
+        Assert.assertEquals(expected, clickHouseQuery.toString());
+    }
+
+    /**
+     * Control for #335: with the key unset the emitted name is unchanged.
+     *
+     * This is the guard on the #243 default question. ClickHouseSinkConnectorConfig
+     * declares the ConfigDef default as "sign", so resolving the value with
+     * getString() would silently start creating `sign` columns for every
+     * deployment that never set the key. Reading originalsStrings() keeps the
+     * historical is_deleted, and this test fails if that ever regresses.
+     */
+    @Test
+    public void testCreateTableDeleteColumnUnsetKeepsHistoricalDefault() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        MySQLDDLParserService parser = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees");
+        parser.parseSql("CREATE TABLE t335ctl(id INT NOT NULL, PRIMARY KEY (id))",
+                "t335ctl", clickHouseQuery);
+
+        String expected = "CREATE TABLE if not exists employees.t335ctl(id Int32 NOT NULL ,"
+                + "`_version` UInt64,`is_deleted` UInt8) "
+                + "Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
+        Assert.assertEquals(expected, clickHouseQuery.toString());
+    }
+
+    /**
+     * A blank configured value carries no column name; the historical default
+     * is used rather than emitting an empty identifier.
+     */
+    @Test
+    public void testCreateTableBlankDeleteColumnFallsBack() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        Map<String, String> config = new HashMap<>();
+        config.put(ClickHouseSinkConnectorConfigVariables
+                .REPLACING_MERGE_TREE_DELETE_COLUMN.toString(), "   ");
+
+        MySQLDDLParserService parser = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(config), "employees");
+        parser.parseSql("CREATE TABLE t335blank(id INT NOT NULL, PRIMARY KEY (id))",
+                "t335blank", clickHouseQuery);
+
+        String expected = "CREATE TABLE if not exists employees.t335blank(id Int32 NOT NULL ,"
+                + "`_version` UInt64,`is_deleted` UInt8) "
+                + "Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
+        Assert.assertEquals(expected, clickHouseQuery.toString());
+    }
+
+    /**
+     * The collision rename must follow the CONFIGURED name, not the constant.
+     *
+     * When the source table already carries a column called _sign and _sign is
+     * also the configured delete column, the connector's own marker is renamed
+     * to __sign. Before the fix the rename was built from IS_DELETED_COLUMN, so
+     * it produced _is_deleted -- a name unrelated to the configured one, and
+     * one that still collides on a source table that has is_deleted too.
+     */
+    @Test
+    public void testConfiguredDeleteColumnCollisionRename() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        Map<String, String> config = new HashMap<>();
+        config.put(ClickHouseSinkConnectorConfigVariables
+                .REPLACING_MERGE_TREE_DELETE_COLUMN.toString(), "_sign");
+
+        MySQLDDLParserService parser = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(config), "employees");
+        parser.parseSql("create table t335col(col1 varchar(255), _sign int);",
+                "t335col", clickHouseQuery);
+
+        String expected = "CREATE TABLE if not exists employees.t335col("
+                + "col1 Nullable(String),_sign Nullable(Int32),"
+                + "`_version` UInt64,`__sign` UInt8) "
+                + "Engine=ReplacingMergeTree(_version,__sign) ORDER BY tuple()";
+        Assert.assertEquals(expected, clickHouseQuery.toString());
+    }
+
+    /**
+     * The replicated engine clause must carry the configured name too.
+     */
+    @Test
+    public void testReplicatedEngineHonorsConfiguredDeleteColumn() {
+        StringBuffer clickHouseQuery = new StringBuffer();
+
+        Map<String, String> config = new HashMap<>();
+        config.put(ClickHouseSinkConnectorConfigVariables
+                .REPLACING_MERGE_TREE_DELETE_COLUMN.toString(), "_sign");
+        config.put(ClickHouseSinkConnectorConfigVariables
+                .AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
+
+        MySQLDDLParserService parser = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(config), "employees");
+        parser.parseSql("CREATE TABLE t335rep(id INT NOT NULL, PRIMARY KEY (id))",
+                "t335rep", clickHouseQuery);
+
+        String expected = "CREATE TABLE if not exists employees.t335rep ON CLUSTER `{cluster}`"
+                + "(id Int32 NOT NULL ,`_version` UInt64,`_sign` UInt8) "
+                + "Engine=ReplicatedReplacingMergeTree(_version, _sign) ORDER BY (id)";
+        Assert.assertEquals(expected, clickHouseQuery.toString());
+    }
 }

@@ -166,6 +166,51 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     /**
+     * Resolves the name of the ReplacingMergeTree delete marker column that
+     * auto-created tables receive.
+     *
+     * <p>The name comes from {@code replacingmergetree.delete.column} when the
+     * user actually set it, and is otherwise {@code is_deleted}. Before this
+     * existed the DDL path hardcoded the constant, so a user who configured a
+     * different name got a table that ignored the setting while the write path
+     * bound the delete flag by the CONFIGURED name -- the column the connector
+     * writes to and the column it created no longer agreed (upstream #335).</p>
+     *
+     * <p>The lookup deliberately goes through {@code originalsStrings()} rather
+     * than {@code getString()}. {@code getString()} substitutes the ConfigDef
+     * default declared in {@code ClickHouseSinkConnectorConfig}, which is
+     * {@code "sign"} -- a third spelling matching neither the {@code is_deleted}
+     * this path has always emitted nor the {@code _sign} of Kafka-era tables
+     * (upstream #243). Reading the originals keeps "user set nothing"
+     * distinguishable from "user asked for the default", so no existing
+     * deployment silently changes the column its tables are created with.
+     * Only an explicit setting moves it.</p>
+     *
+     * @return the configured delete column name, or the historical default.
+     */
+    private String resolveDeleteColumn() {
+        String configured = null;
+        try {
+            configured = this.config.originalsStrings().get(
+                    ClickHouseSinkConnectorConfigVariables
+                            .REPLACING_MERGE_TREE_DELETE_COLUMN.toString());
+        } catch (Exception e) {
+            log.error("resolveDeleteColumn: error reading "
+                    + "replacingmergetree.delete.column, using default: "
+                    + e.toString());
+        }
+        if (configured == null) {
+            return IS_DELETED_COLUMN;
+        }
+        configured = configured.trim();
+        // A blank value carries no name; fall back rather than emit "`` UInt8".
+        if (configured.isEmpty()) {
+            return IS_DELETED_COLUMN;
+        }
+        return configured;
+    }
+
+    /**
      * Function to override the database name based on the source-to-destination map.
      *
      * @param databaseName The original database name from the DDL operation.
@@ -387,7 +432,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             log.error(KeylessTableWarning.banner(this.databaseName, this.tableName));
         }
 
-        String isDeletedColumn = IS_DELETED_COLUMN;
+        String isDeletedColumn = resolveDeleteColumn();
 
         // Iterate through columnNames and match isDeletedColumn with elements in columnNames.
         for (String columnName: columnNames) {
@@ -395,7 +440,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 columnName = columnName.replace("`", "");
             }
             if (columnName.equalsIgnoreCase(isDeletedColumn)) {
-                isDeletedColumn = "_" + IS_DELETED_COLUMN;
+                isDeletedColumn = "_" + isDeletedColumn;
                 break;
             }
         }
