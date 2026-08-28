@@ -4,14 +4,8 @@ import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.Method;
-import java.lang.reflect.Proxy;
 import java.sql.Connection;
-import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Properties;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -58,7 +52,7 @@ public class DebeziumOffsetStorageSqlInjectionTest {
     @Test
     @DisplayName("#1288 delete statement binds the offset key instead of interpolating it")
     void deleteOffsetStorageRow_bindsOffsetKey() throws SQLException {
-        Recorder recorder = new Recorder();
+        OffsetStatementRecorder recorder = new OffsetStatementRecorder();
         Properties props = propsWithName(HOSTILE_NAME);
         DebeziumOffsetStorage storage = new DebeziumOffsetStorage();
 
@@ -66,7 +60,7 @@ public class DebeziumOffsetStorageSqlInjectionTest {
                 recorder.connection());
 
         assertEquals(1, recorder.statements.size(), "exactly one statement prepared");
-        RecordedStatement stmt = recorder.statements.get(0);
+        OffsetStatementRecorder.Recorded stmt = recorder.statements.get(0);
 
         assertNoInjection(stmt.sql, HOSTILE_NAME);
         assertTrue(stmt.sql.contains("offset_key=?"),
@@ -81,14 +75,14 @@ public class DebeziumOffsetStorageSqlInjectionTest {
     @Test
     @DisplayName("#1288 select statement binds the offset key instead of interpolating it")
     void getDebeziumStorageStatusQuery_bindsOffsetKey() throws SQLException {
-        Recorder recorder = new Recorder();
+        OffsetStatementRecorder recorder = new OffsetStatementRecorder();
         Properties props = propsWithName(HOSTILE_NAME);
 
         new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(
                 props, recorder.connection());
 
         assertEquals(1, recorder.statements.size(), "exactly one statement prepared");
-        RecordedStatement stmt = recorder.statements.get(0);
+        OffsetStatementRecorder.Recorded stmt = recorder.statements.get(0);
 
         assertNoInjection(stmt.sql, HOSTILE_NAME);
         assertTrue(stmt.sql.contains("offset_key=?"),
@@ -100,7 +94,7 @@ public class DebeziumOffsetStorageSqlInjectionTest {
     @Test
     @DisplayName("#1288 schema history delete binds the server name instead of interpolating it")
     void deleteSchemaHistoryTable_bindsServerName() throws SQLException {
-        Recorder recorder = new Recorder();
+        OffsetStatementRecorder recorder = new OffsetStatementRecorder();
         Properties props = propsWithName("engine");
 
         new DebeziumOffsetStorage().deleteSchemaHistoryTable(
@@ -109,7 +103,7 @@ public class DebeziumOffsetStorageSqlInjectionTest {
                 recorder.connection(), props);
 
         assertEquals(1, recorder.statements.size());
-        RecordedStatement stmt = recorder.statements.get(0);
+        OffsetStatementRecorder.Recorded stmt = recorder.statements.get(0);
 
         assertNoInjection(stmt.sql, HOSTILE_NAME);
         assertEquals(1, stmt.boundValues.size());
@@ -145,14 +139,14 @@ public class DebeziumOffsetStorageSqlInjectionTest {
     @Test
     @DisplayName("#1288 control -- an ordinary connector name is unaffected")
     void ordinaryConnectorName_producesExpectedStatement() throws SQLException {
-        Recorder recorder = new Recorder();
+        OffsetStatementRecorder recorder = new OffsetStatementRecorder();
         Properties props = propsWithName("engine");
         DebeziumOffsetStorage storage = new DebeziumOffsetStorage();
 
         storage.deleteOffsetStorageRow(storage.getOffsetKey(props), props,
                 recorder.connection());
 
-        RecordedStatement stmt = recorder.statements.get(0);
+        OffsetStatementRecorder.Recorded stmt = recorder.statements.get(0);
         assertEquals("delete from `altinity_sink_connector`."
                         + "`replica_source_info` where offset_key=?",
                 stmt.sql);
@@ -167,14 +161,14 @@ public class DebeziumOffsetStorageSqlInjectionTest {
     @Test
     @DisplayName("#1288 control -- the insert path stays parameterized and quotes the table")
     void updateDebeziumStorageRow_staysParameterized() throws SQLException {
-        Recorder recorder = new Recorder();
+        OffsetStatementRecorder recorder = new OffsetStatementRecorder();
 
         new DebeziumOffsetStorage().updateDebeziumStorageRow(
                 recorder.connection(), OFFSET_TABLE,
                 "[\"engine\",{\"server\":\"embeddedconnector\"}]",
                 "{\"lsn\":1}", 1700000000000L);
 
-        RecordedStatement stmt = recorder.statements.get(0);
+        OffsetStatementRecorder.Recorded stmt = recorder.statements.get(0);
         assertTrue(stmt.sql.startsWith("INSERT INTO `altinity_sink_connector`."
                         + "`replica_source_info`("),
                 "table identifier must be quoted per part, was: " + stmt.sql);
@@ -206,103 +200,5 @@ public class DebeziumOffsetStorageSqlInjectionTest {
                 "the payload must not appear in the statement text: " + sql);
         assertTrue(sql.contains("=?"),
                 "the value must be compared against a bind marker, was: " + sql);
-    }
-
-    /**
-     * One captured prepared statement: its text and the values bound to it.
-     */
-    static final class RecordedStatement {
-        private final String sql;
-        private final List<String> boundValues = new ArrayList<>();
-
-        RecordedStatement(String sql) {
-            this.sql = sql;
-        }
-    }
-
-    /**
-     * Captures every statement prepared on a Connection, and every value
-     * bound to those statements.
-     *
-     * <p>Implemented with a dynamic proxy rather than a hand-written stub:
-     * java.sql.Connection and PreparedStatement declare well over a hundred
-     * methods between them, and the module has no mocking framework on the
-     * test classpath. The proxy answers only what the code under test
-     * actually calls and returns type-appropriate defaults elsewhere.
-     */
-    static final class Recorder implements InvocationHandler {
-
-        private final List<RecordedStatement> statements = new ArrayList<>();
-
-        Connection connection() {
-            return (Connection) Proxy.newProxyInstance(
-                    Connection.class.getClassLoader(),
-                    new Class<?>[]{Connection.class}, this);
-        }
-
-        @Override
-        public Object invoke(Object proxy, Method method, Object[] args) {
-            if ("prepareStatement".equals(method.getName())) {
-                RecordedStatement recorded =
-                        new RecordedStatement((String) args[0]);
-                statements.add(recorded);
-                return statementProxy(recorded);
-            }
-            return defaultValue(method.getReturnType());
-        }
-
-        private PreparedStatement statementProxy(RecordedStatement recorded) {
-            return (PreparedStatement) Proxy.newProxyInstance(
-                    PreparedStatement.class.getClassLoader(),
-                    new Class<?>[]{PreparedStatement.class},
-                    (proxy, method, args) -> {
-                        if ("setString".equals(method.getName())) {
-                            int index = (Integer) args[0];
-                            while (recorded.boundValues.size() < index) {
-                                recorded.boundValues.add(null);
-                            }
-                            recorded.boundValues.set(index - 1,
-                                    (String) args[1]);
-                            return null;
-                        }
-                        if ("executeUpdate".equals(method.getName())) {
-                            return 1;
-                        }
-                        // execute() returning false means "no result set",
-                        // which is what a DELETE produces.
-                        return defaultValue(method.getReturnType());
-                    });
-        }
-
-        private static Object defaultValue(Class<?> returnType) {
-            if (!returnType.isPrimitive()) {
-                return null;
-            }
-            if (returnType == boolean.class) {
-                return false;
-            }
-            if (returnType == void.class) {
-                return null;
-            }
-            if (returnType == long.class) {
-                return 0L;
-            }
-            if (returnType == double.class) {
-                return 0d;
-            }
-            if (returnType == float.class) {
-                return 0f;
-            }
-            if (returnType == short.class) {
-                return (short) 0;
-            }
-            if (returnType == byte.class) {
-                return (byte) 0;
-            }
-            if (returnType == char.class) {
-                return (char) 0;
-            }
-            return 0;
-        }
     }
 }

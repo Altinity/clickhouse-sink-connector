@@ -302,25 +302,72 @@ public class DebeziumOffsetStorage {
      * @param offsetKey  The offset key.
      * @param offsetVal  The offset value as a JSON string.
      * @param currentTs  The current timestamp in milliseconds.
+     * @return the id of the row that was inserted, so the caller can delete the
+     *         rows it supersedes without deleting the row it just wrote.
      * @throws SQLException If a database error occurs.
      */
-    public void updateDebeziumStorageRow(Connection connection,
-                                         String tableName,
-                                         String offsetKey,
-                                         String offsetVal,
-                                         long currentTs)
+    public String updateDebeziumStorageRow(Connection connection,
+                                           String tableName,
+                                           String offsetKey,
+                                           String offsetVal,
+                                           long currentTs)
             throws SQLException {
 
+        String rowId = UUID.randomUUID().toString();
         String insertQuery = String.format(
                 JdbcOffsetBackingStoreConfig.DEFAULT_TABLE_INSERT,
                 quoteTableName(tableName));
         try (PreparedStatement sql = connection.prepareStatement(insertQuery)) {
-            sql.setString(1, UUID.randomUUID().toString());
+            sql.setString(1, rowId);
             sql.setString(2, offsetKey);
             sql.setString(3, offsetVal);
             sql.setTimestamp(4, new Timestamp(currentTs));
             sql.setInt(5, DEFAULT_RECORD_INSERT_SEQ);
             sql.executeUpdate();
         }
+        return rowId;
+    }
+
+    /**
+     * Deletes the offset rows a freshly written row supersedes, keeping the row
+     * just inserted.
+     *
+     * <p>The offset table is a ReplacingMergeTree whose sorting key is
+     * {@code id}, and {@code id} is a fresh UUID on every insert rather than
+     * the offset key, so successive offset rows for one connector never
+     * collapse into one. Superseded rows must therefore be deleted explicitly
+     * or the FINAL read returns the whole history instead of the current
+     * position.
+     *
+     * <p>This is deliberately called AFTER the insert. ClickHouse has no
+     * transactions on this path -- the offset-storage JDBC URL sets
+     * jdbc_ignore_unsupported_values=true precisely so setAutoCommit(false) is
+     * silently ignored -- so the two statements cannot be made atomic.
+     * Ordering them insert-then-delete means a crash in between leaves a
+     * superseded row alongside the new one, which is harmless: the read is
+     * ordered by record_insert_ts so the newer row wins, and the next update
+     * clears the leftover. Deleting first would leave no row at all and lose
+     * the offset.
+     *
+     * @param offsetKey  the offset key whose superseded rows should be removed.
+     * @param keepId     the id of the row just inserted, which must survive.
+     * @param props      connector properties, used to resolve the table name.
+     * @param connection Database connection.
+     * @throws SQLException If a database error occurs.
+     */
+    public void deleteSupersededOffsetRows(String offsetKey, String keepId,
+                                           Properties props,
+                                           Connection connection)
+            throws SQLException {
+
+        String tableName = props.getProperty(
+                JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
+                        JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
+
+        String query = String.format(
+                "delete from %s where offset_key=? and id!=?",
+                quoteTableName(tableName));
+        DBMetadata dbMetadata = new DBMetadata(props);
+        dbMetadata.executeSystemQuery(connection, query, offsetKey, keepId);
     }
 }

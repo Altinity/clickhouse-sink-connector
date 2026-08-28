@@ -407,9 +407,15 @@ public class DebeziumJdbcStorageOperations {
         String offsetKey = this.debeziumOffsetStorage.getOffsetKey(props);
         String updateOffsetValue = this.debeziumOffsetStorage.updateBinLogInformation(
                 offsetValue, binlogFile, binLogPosition, gtid);
-        this.debeziumOffsetStorage.deleteOffsetStorageRow(offsetKey, props, conn);
-        this.debeziumOffsetStorage.updateDebeziumStorageRow(conn, tableName, offsetKey,
-                updateOffsetValue, System.currentTimeMillis());
+        // Insert first, then remove the rows it supersedes. ClickHouse has no
+        // transactions on this path, so the pair cannot be made atomic; this
+        // ordering means a crash in between leaves a superseded row rather
+        // than no row at all. See deleteSupersededOffsetRows.
+        String insertedId = this.debeziumOffsetStorage.updateDebeziumStorageRow(
+                conn, tableName, offsetKey, updateOffsetValue,
+                System.currentTimeMillis());
+        this.debeziumOffsetStorage.deleteSupersededOffsetRows(offsetKey, insertedId,
+                props, conn);
     }
 
     /**
@@ -454,9 +460,15 @@ public class DebeziumJdbcStorageOperations {
         String offsetKey = this.debeziumOffsetStorage.getOffsetKey(props);
         String updateOffsetValue = this.debeziumOffsetStorage.updateLsnInformation(
                 offsetValue, lsn);
-        this.debeziumOffsetStorage.deleteOffsetStorageRow(offsetKey, props, conn);
-        this.debeziumOffsetStorage.updateDebeziumStorageRow(conn, tableName, offsetKey,
-                updateOffsetValue, System.currentTimeMillis());
+        // Insert first, then remove the rows it supersedes. ClickHouse has no
+        // transactions on this path, so the pair cannot be made atomic; this
+        // ordering means a crash in between leaves a superseded row rather
+        // than no row at all. See deleteSupersededOffsetRows.
+        String insertedId = this.debeziumOffsetStorage.updateDebeziumStorageRow(
+                conn, tableName, offsetKey, updateOffsetValue,
+                System.currentTimeMillis());
+        this.debeziumOffsetStorage.deleteSupersededOffsetRows(offsetKey, insertedId,
+                props, conn);
     }
 
     /**
