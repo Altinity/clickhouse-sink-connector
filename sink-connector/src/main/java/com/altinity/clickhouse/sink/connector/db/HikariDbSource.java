@@ -12,8 +12,9 @@ import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 // Singleton class(one per database)
 /**
@@ -35,7 +36,8 @@ public class HikariDbSource {
      * holds only one of them, so each caller destroys the other's pool.
      * Including the server in the key lets concurrent targets coexist.
      */
-    private static Map<String, HikariDataSource> instance = new HashMap<>();
+    private static final Map<String, HikariDataSource> instance =
+            new ConcurrentHashMap<>();
 
     /**
      * Map of database name to the pool key most recently requested for it.
@@ -45,14 +47,8 @@ public class HikariDbSource {
      * database name. This pointer lets that method resolve the pool the most
      * recent caller actually asked for.
      */
-    private static Map<String, String> currentKey = new HashMap<>();
-
-    /**
-     * Map of database name to Connection.
-     */
-    private static Map<String, Connection> connectionPool = new HashMap<>();
-
-    // private static HikariDbSource instance;
+    private static final Map<String, String> currentKey =
+            new ConcurrentHashMap<>();
 
     /**
      * Flag to disable connection pooling.
@@ -67,19 +63,10 @@ public class HikariDbSource {
     // private HikariDataSource dataSource;
 
     /**
-     * The name of the database.
+     * Not instantiable: every member is static and the pools are shared
+     * process-wide.
      */
-    private String databaseName;
-
-    /**
-     * Private constructor.
-     *
-     * @param dataSource   ClickHouseDataSource instance.
-     * @param databaseName name of the database.
-     */
-    private HikariDbSource(ClickHouseDataSource dataSource,
-                           String databaseName) {
-        // this.createConnectionPool(dataSource, databaseName);
+    private HikariDbSource() {
     }
 
     /**
@@ -182,14 +169,14 @@ public class HikariDbSource {
      * Endpoints an acquisition has already succeeded against. An endpoint that
      * has never worked is not evidence of a server that went away.
      */
-    private static final java.util.Set<String> liveEndpoints =
-            new java.util.HashSet<>();
+    private static final Set<String> liveEndpoints =
+            ConcurrentHashMap.newKeySet();
 
     /**
      * Endpoints known to be gone. Cleared per endpoint by {@link #getInstance}.
      */
-    private static final java.util.Set<String> deadEndpoints =
-            new java.util.HashSet<>();
+    private static final Set<String> deadEndpoints =
+            ConcurrentHashMap.newKeySet();
 
     /**
      * Retires every pool for an endpoint once that server has gone for good.
@@ -387,10 +374,17 @@ public class HikariDbSource {
         if (cached != null && !cached.isClosed()) {
             return cached;
         }
-        HikariDataSource hikariDataSource = createConnectionPool(
-                dataSource, databaseName, config, userName, password);
-        instance.put(key, hikariDataSource);
-        return hikariDataSource;
+        // compute() so that concurrent callers for the same key build one pool
+        // between them. A get-then-put would let both build one and the loser's
+        // pool leak: it is never cached, so it is never closed, and it holds
+        // its connections until the process exits.
+        return instance.compute(key, (k, existing) -> {
+            if (existing != null && !existing.isClosed()) {
+                return existing;
+            }
+            return createConnectionPool(
+                    dataSource, databaseName, config, userName, password);
+        });
     }
 
     /**
