@@ -771,7 +771,26 @@ public class DBMetadata {
     private static final java.util.regex.Pattern CLICKHOUSE_ERROR_CODE =
             java.util.regex.Pattern.compile("^[^:]{0,64}?\\bCode:\\s*(\\d+)");
 
-    public String executeSystemQuery(Connection conn, String sql) throws SQLException {
+    /**
+     * Executes a system query, optionally binding values as JDBC parameters.
+     *
+     * <p>Callers whose statement embeds attacker-influenced values must pass
+     * those values here rather than interpolating them into {@code sql}. The
+     * statement is already prepared, so binding costs nothing and removes the
+     * quoting question entirely; the alternative -- escaping by hand at every
+     * call site -- has to be got right every time, and only has to be got
+     * wrong once.
+     *
+     * <p>Declared as varargs so the existing two-argument call sites, whose
+     * statements carry no values, are unchanged.
+     *
+     * @param conn   The database connection.
+     * @param sql    The statement, with {@code ?} placeholders for params.
+     * @param params Values bound to the placeholders, in order.
+     * @return The last value of the first column, or null if no result.
+     * @throws SQLException If a database error occurs.
+     */
+    public String executeSystemQuery(Connection conn, String sql, String... params) throws SQLException {
         // Add retry logic.
         int retryCount = 0;
         String result = null;
@@ -788,6 +807,9 @@ public class DBMetadata {
                                     + sql);
                 }
                 PreparedStatement ps = conn.prepareStatement(sql);
+                for (int i = 0; i < params.length; i++) {
+                    ps.setString(i + 1, params[i]);
+                }
                 // Use execute() so DDL/DML statements (e.g. CREATE DATABASE, CREATE TABLE,
                 // INSERT, SYSTEM ...) that do not produce a ResultSet are supported by
                 // strict JDBC drivers (clickhouse-jdbc >= 0.9.x, which rejects executeQuery()

@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseTableOperationsBase;
 import com.clickhouse.logging.Logger;
 import com.clickhouse.logging.LoggerFactory;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
@@ -48,6 +49,61 @@ public class DebeziumOffsetStorage {
             LoggerFactory.getLogger(DebeziumOffsetStorage.class);
 
     /**
+     * Quotes a possibly qualified table name one identifier part at a time.
+     *
+     * <p>Every value that reaches these statements is configuration- or
+     * connector-supplied, so values are bound as JDBC parameters. A table
+     * name cannot be bound as a parameter, so it is quoted instead, which is
+     * what makes the surrounding statement safe to assemble by concatenation.
+     *
+     * <p>The configured offset table is normally qualified, for example
+     * {@code altinity_sink_connector.replica_source_info}. Quoting the whole
+     * string in one go would produce a single identifier containing a dot,
+     * which names a different (non-existent) table in the connection's
+     * default database, so each dot-separated part is quoted on its own to
+     * yield {@code `altinity_sink_connector`.`replica_source_info`}.
+     *
+     * <p>Surrounding backticks or double quotes already present in the
+     * configured value are stripped first, so an operator who quoted the name
+     * in the config file does not end up with a doubly quoted identifier.
+     * This mirrors {@code splitTableName} in
+     * {@code DebeziumJdbcStorageOperations}, which strips double quotes for
+     * the same reason.
+     *
+     * @param tableName the raw, possibly qualified table name, may be null.
+     * @return the per-part quoted table name, or null if the input was null.
+     */
+    static String quoteTableName(String tableName) {
+        if (tableName == null) {
+            return null;
+        }
+        StringBuilder quoted = new StringBuilder();
+        for (String part : tableName.split("\\.", -1)) {
+            if (quoted.length() > 0) {
+                quoted.append('.');
+            }
+            quoted.append(ClickHouseTableOperationsBase.quoteIdentifier(
+                    stripQuotes(part)));
+        }
+        return quoted.toString();
+    }
+
+    /**
+     * Removes a matching pair of surrounding backticks or double quotes.
+     *
+     * @param part a single identifier part.
+     * @return the unquoted identifier part.
+     */
+    private static String stripQuotes(String part) {
+        if (part.length() > 1
+                && ((part.startsWith("`") && part.endsWith("`"))
+                || (part.startsWith("\"") && part.endsWith("\"")))) {
+            return part.substring(1, part.length() - 1);
+        }
+        return part;
+    }
+
+    /**
      * Generates an offset key based on the provided properties.
      *
      * @param props Startup properties.
@@ -76,9 +132,9 @@ public class DebeziumOffsetStorage {
                         JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
         String query = String.format(
-                "delete from %s where offset_key='%s'", tableName, offsetKey);
+                "delete from %s where offset_key=?", quoteTableName(tableName));
         DBMetadata dbMetadata = new DBMetadata(props);
-        dbMetadata.executeSystemQuery(connection, query);
+        dbMetadata.executeSystemQuery(connection, query, offsetKey);
     }
 
     /**
@@ -94,12 +150,13 @@ public class DebeziumOffsetStorage {
             throws SQLException {
 
         String query = String.format(
-                "delete from `%s` where JSONExtractRaw(JSONExtractRaw(history_data,"
-                        + "'source'), 'server')='%s'",
-                tableName, offsetKey);
-        log.info("Deleting schema history table query: " + query);
+                "delete from %s where JSONExtractRaw(JSONExtractRaw(history_data,"
+                        + "'source'), 'server')=?",
+                quoteTableName(tableName));
+        log.info("Deleting schema history table query: " + query
+                + " for server: " + offsetKey);
         DBMetadata dbMetadata = new DBMetadata(props);
-        dbMetadata.executeSystemQuery(connection, query);
+        dbMetadata.executeSystemQuery(connection, query, offsetKey);
     }
 
     /**
@@ -119,7 +176,8 @@ public class DebeziumOffsetStorage {
                         JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
         String query = String.format(
-                "select max(record_insert_ts) from %s", tableName);
+                "select max(record_insert_ts) from %s",
+                quoteTableName(tableName));
         DBMetadata dbMetadata = new DBMetadata(props);
         return dbMetadata.executeSystemQuery(connection, query);
     }
@@ -141,10 +199,10 @@ public class DebeziumOffsetStorage {
                         JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
         String offsetKey = getOffsetKey(props);
         String query = String.format(
-                "select offset_val from %s where offset_key='%s'",
-                tableName, offsetKey);
+                "select offset_val from %s where offset_key=?",
+                quoteTableName(tableName));
         DBMetadata dbMetadata = new DBMetadata(props);
-        return dbMetadata.executeSystemQuery(connection, query);
+        return dbMetadata.executeSystemQuery(connection, query, offsetKey);
     }
 
     /**
@@ -254,7 +312,8 @@ public class DebeziumOffsetStorage {
             throws SQLException {
 
         String insertQuery = String.format(
-                JdbcOffsetBackingStoreConfig.DEFAULT_TABLE_INSERT, tableName);
+                JdbcOffsetBackingStoreConfig.DEFAULT_TABLE_INSERT,
+                quoteTableName(tableName));
         try (PreparedStatement sql = connection.prepareStatement(insertQuery)) {
             sql.setString(1, UUID.randomUUID().toString());
             sql.setString(2, offsetKey);
