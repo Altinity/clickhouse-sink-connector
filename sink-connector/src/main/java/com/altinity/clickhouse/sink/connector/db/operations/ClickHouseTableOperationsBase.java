@@ -25,6 +25,31 @@ import static com.altinity.clickhouse.sink.connector.config.DefaultColumnDataTyp
 public class ClickHouseTableOperationsBase {
 
     /**
+     * Quotes an identifier for use in a generated ClickHouse statement.
+     *
+     * <p>MySQL identifiers that are perfectly legal at the source are not
+     * necessarily bare ClickHouse identifiers: a hyphen reads as the minus
+     * operator, reserved words collide, and a dot splits the name. Any of
+     * them makes the generated DDL a {@code Code: 62 SYNTAX_ERROR}, which is
+     * non-retryable, so the destination object is never created at all.
+     *
+     * <p>ClickHouse quotes identifiers with backticks and escapes an embedded
+     * backtick by doubling it, so {@code we`ird} is written {@code `we``ird`}
+     *
+     * <p>Quoting a name that needed no quoting does not change which object
+     * it names, so this is safe to apply unconditionally.
+     *
+     * @param identifier the raw identifier, may be null
+     * @return the quoted identifier, or null if the input was null
+     */
+    public static String quoteIdentifier(String identifier) {
+        if (identifier == null) {
+            return null;
+        }
+        return "`" + identifier.replace("`", "``") + "`";
+    }
+
+    /**
      * The schema parameter key for scale.
      */
     public static final String SCALE = "scale";

@@ -9,6 +9,7 @@ import com.altinity.clickhouse.sink.connector.db.*;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
 import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateDatabase;
+import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseTableOperationsBase;
 import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
@@ -250,7 +251,9 @@ public class ClickHouseBatchRunnable implements Runnable {
             new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
             DBMetadata metadata = new DBMetadata(config);
             metadata.executeSystemQuery(systemConn,
-                    "CREATE DATABASE IF NOT EXISTS " + databaseName);
+                    "CREATE DATABASE IF NOT EXISTS "
+                            + ClickHouseTableOperationsBase
+                                    .quoteIdentifier(databaseName));
         } catch (Exception e) {
             log.error("Error creating database " + e);
         } finally {

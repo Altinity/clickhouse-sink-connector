@@ -124,8 +124,8 @@ public class ClickHouseAutoCreateTable
         StringBuilder createTableSyntax = new StringBuilder();
 
         createTableSyntax.append(CREATE_TABLE).append(" ")
-                .append(databaseName).append(".")
-                .append("`").append(tableName).append("`");
+                .append(quoteIdentifier(databaseName)).append(".")
+                .append(quoteIdentifier(tableName));
         if (useReplicatedReplacingMergeTree == true) {
             createTableSyntax.append(" ON CLUSTER `{cluster}` ");
         }
@@ -339,7 +339,8 @@ public class ClickHouseAutoCreateTable
     }
 
     public void createHistoryDatabase(String databaseName, Connection connection, ClickHouseSinkConnectorConfig config) throws SQLException {
-        String sql = "CREATE DATABASE IF NOT EXISTS " + databaseName;
+        String sql = "CREATE DATABASE IF NOT EXISTS "
+                + quoteIdentifier(databaseName);
         log.info(String.format(
                 "**** AUTO CREATE HISTORY DATABASE for database(%s), Query :%s)",
                 databaseName, sql));

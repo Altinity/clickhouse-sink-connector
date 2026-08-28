@@ -71,7 +71,8 @@ public class ClickHouseAlterTable
 
         StringBuilder alterTableSyntax = new StringBuilder();
         alterTableSyntax.append(ClickHouseDbConstants.ALTER_TABLE)
-                .append(" ").append(tableName).append(" ");
+                .append(" ").append(quoteIdentifier(tableName))
+                .append(" ");
 
         for (Map.Entry<String, String> entry
                 : colNameToDataTypesMap.entrySet()) {
