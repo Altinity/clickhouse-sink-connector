@@ -87,6 +87,17 @@ public class DebeziumChangeEventCapture {
      * Matches {@code ALTER TABLE a RENAME [TO|AS] b}, capturing the source table
      * (which precedes the {@code RENAME} keyword) and the destination.
      */
+    /**
+     * The identifier list a DROP or TRUNCATE targets, used only to name the
+     * object in the suppression log when the record itself carries no table
+     * (a DROP DATABASE, for instance).
+     */
+    private static final Pattern DROP_OR_TRUNCATE_TARGET = Pattern.compile(
+            "\\b(?:DROP\\s+(?:TEMPORARY\\s+)?(?:TABLE|DATABASE|SCHEMA|VIEW)"
+                    + "|TRUNCATE(?:\\s+TABLE)?)\\s+(?:IF\\s+EXISTS\\s+)?("
+                    + QUALIFIED_NAME + "(?:\\s*,\\s*" + QUALIFIED_NAME + ")*)",
+            Pattern.CASE_INSENSITIVE);
+
     private static final Pattern ALTER_RENAME = Pattern.compile(
             "ALTER\\s+TABLE\\s+(" + QUALIFIED_NAME + ")\\s+RENAME\\s+(?:TO\\s+|AS\\s+)?("
                     + QUALIFIED_NAME + ")",
@@ -1362,6 +1373,45 @@ public class DebeziumChangeEventCapture {
      * @param sr The source record.
      * @return true if the record is a snapshot DDL; false otherwise.
      */
+    /**
+     * Best-effort names of the objects a suppressed DROP or TRUNCATE would
+     * have destroyed.
+     *
+     * <p>Prefers the table names Debezium reported on the record; falls back
+     * to the identifiers in the DDL text, which is the only source for a
+     * statement the record does not describe as a table change (a
+     * {@code DROP DATABASE}). Returns an empty list rather than throwing --
+     * this only feeds a log line and must never be what fails a DDL.</p>
+     *
+     * @param sr  The source record; may carry the affected tables.
+     * @param ddl The raw DDL statement.
+     * @return The affected object names, possibly empty.
+     */
+    private List<String> destructiveDDLTargets(SourceRecord sr, String ddl) {
+        List<String> names = new ArrayList<>();
+        try {
+            names.addAll(getTableNamesFromDDL(sr, ddl));
+            if (!names.isEmpty()) {
+                return names;
+            }
+            if (ddl == null || ddl.isEmpty()) {
+                return names;
+            }
+            Matcher matcher = DROP_OR_TRUNCATE_TARGET.matcher(ddl);
+            while (matcher.find()) {
+                for (String raw : matcher.group(1).split(",")) {
+                    String name = extractTableFromId(raw.trim());
+                    if (name != null && !name.isEmpty() && !names.contains(name)) {
+                        names.add(name);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not determine the target of a suppressed DDL", e);
+        }
+        return names;
+    }
+
     private boolean isSnapshotDDL(SourceRecord sr) {
         boolean snapshotDDL = false;
 
@@ -1391,7 +1441,22 @@ public class DebeziumChangeEventCapture {
         return false;
     }
 
-    private boolean checkIfDDLNeedsToBeIgnored(String DDL, Properties props, SourceRecord sr, AtomicBoolean isDropOrTruncate) {
+    @VisibleForTesting
+    boolean checkIfDDLNeedsToBeIgnored(String DDL, Properties props, SourceRecord sr, AtomicBoolean isDropOrTruncate) {
+        // Issue #1287. This method used to READ isDropOrTruncate, but the
+        // flag's only writer is parseSql (MySQLDDLParserService line 152) and
+        // performDDLOperation calls parseSql AFTER this guard returns. The
+        // flag was therefore false on every evaluation and
+        // disable.drop.truncate could never suppress anything.
+        //
+        // The verdict is now derived here from the DDL text itself, so it no
+        // longer depends on any other call having run first and the ordering
+        // cannot regress. The out-parameter is still populated -- it now
+        // carries a true value at the point the caller reads it, and parseSql
+        // later recomputes the identical verdict from the same shared
+        // classification helper.
+        isDropOrTruncate.set(MySQLDDLParserService.isDropOrTruncate(DDL));
+
         String disableDDLProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DDL);
         if (disableDDLProperty != null && disableDDLProperty.equalsIgnoreCase("true")) {
             log.debug("Ignoring DDL");
@@ -1431,7 +1496,15 @@ public class DebeziumChangeEventCapture {
 
         String disableDropAndTruncateProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
         if (disableDropAndTruncateProperty != null && disableDropAndTruncateProperty.equalsIgnoreCase("true") && isDropOrTruncate.get() == true) {
-            log.debug("Ignoring Drop or Truncate");
+            // WARN, not debug. A destructive statement that was silently
+            // dropped on the floor is nearly as bad as one that was silently
+            // applied: the target now diverges from the source and nothing in
+            // the log says which object it was.
+            log.warn("SUPPRESSED destructive DDL: {}=true, so this DROP/TRUNCATE was "
+                            + "NOT applied to ClickHouse. Target(s): {}. The ClickHouse "
+                            + "object is now out of sync with the source. DDL: {}",
+                    SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE,
+                    destructiveDDLTargets(sr, DDL), DDL);
             return true;
         }
         if (isSnapshotDDL == true && enableSnapshotDDLPropertyFlag == false) {

@@ -531,6 +531,20 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.DISABLE_DROP_TRUNCATE.toString(),
+                        Type.BOOLEAN,
+                        // Unchanged default: DROP and TRUNCATE keep replicating
+                        // unless the user opts out. Issue #1287 makes the opt-out
+                        // work; it does not change what happens without it.
+                        false,
+                        Importance.HIGH,
+                        "If true, DROP and TRUNCATE are not applied to ClickHouse, "
+                                + "on the DDL path and on the CDC data path.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.DISABLE_DROP_TRUNCATE.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString(),
                         Type.BOOLEAN,
                         false,

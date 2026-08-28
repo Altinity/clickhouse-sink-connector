@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.config;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+
 import java.util.HashMap;
 import java.util.Map;
 
@@ -29,7 +31,14 @@ public class SinkConnectorLightWeightConfig {
      * statements.
      * </p>
      */
-    public static final String DISABLE_DROP_TRUNCATE = "disable.drop.truncate";
+    /*
+     * Deliberately the enum's value rather than a second literal: the setting
+     * is now honoured on the CDC data path too (issue #1287), and two copies
+     * of the string could drift apart into a setting that works on one path
+     * and silently does nothing on the other.
+     */
+    public static final String DISABLE_DROP_TRUNCATE =
+            ClickHouseSinkConnectorConfigVariables.DISABLE_DROP_TRUNCATE.toString();
 
     /**
      * Enable execution of snapshot DDL statements.

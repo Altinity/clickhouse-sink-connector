@@ -213,6 +213,28 @@ public class PreparedStatementExecutor {
                     }
 
                     if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.TRUNCATE.getOperation())) {
+                        // Issue #1287: a MySQL TRUNCATE arrives here as a CDC record as
+                        // well as going through the DDL path, and this branch emptied
+                        // the target unconditionally -- disable.drop.truncate had no
+                        // references anywhere in sink-connector/src/main. A user who set
+                        // it to protect their ClickHouse copy still lost the rows.
+                        //
+                        // Nothing is staged for a TRUNCATE record, so skipping it needs
+                        // no flush: the pre-truncate flush below exists only to order
+                        // rows against a truncate that is actually going to happen.
+                        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables
+                                .DISABLE_DROP_TRUNCATE.toString())) {
+                            // WARN, not debug: the target now diverges from the source
+                            // and the log has to say which table.
+                            log.warn("SUPPRESSED destructive CDC operation: {}=true, so "
+                                            + "TRUNCATE was NOT applied to {}.{}. Rows that "
+                                            + "MySQL discarded are still present in "
+                                            + "ClickHouse.",
+                                    ClickHouseSinkConnectorConfigVariables
+                                            .DISABLE_DROP_TRUNCATE,
+                                    databaseName, tableName);
+                            continue;
+                        }
                         // A TRUNCATE must be applied at its binlog position, not at the
                         // end of the batch. Rows staged before it belong to the
                         // pre-truncate state and have to reach ClickHouse first; rows

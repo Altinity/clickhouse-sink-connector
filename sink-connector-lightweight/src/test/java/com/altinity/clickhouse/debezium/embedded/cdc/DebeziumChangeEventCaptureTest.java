@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.kafka.connect.data.Schema;
@@ -12,7 +13,11 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Properties;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertFalse;
@@ -164,6 +169,115 @@ public class DebeziumChangeEventCaptureTest {
         // Test case insensitivity
         String ddlToIgnoreCaseInsensitive = "alter table trade_prod.bundle_detail drop partition p20230106";
         assertTrue(capture.checkDDLAgainstRegexPatterns(ddlToIgnoreCaseInsensitive));
+    }
+
+
+    // ------------------------------------------------------------------
+    // Issue #1287: disable.drop.truncate never suppressed anything.
+    //
+    // performDDLOperation creates a fresh AtomicBoolean (line 761), hands it
+    // to checkIfDDLNeedsToBeIgnored (line 763), and only afterwards calls
+    // parseSql (line 769) -- and parseSql is the flag's ONLY writer
+    // (MySQLDDLParserService line 152). So the guard's
+    // "isDropOrTruncate.get() == true" clause read false on every single
+    // evaluation and the setting could never suppress a DROP or a TRUNCATE.
+    //
+    // These tests drive the guard exactly as production does: with a flag
+    // that nothing has written yet.
+    // ------------------------------------------------------------------
+
+    /**
+     * A non-snapshot SourceRecord, so the guard's snapshot branch is not what
+     * decides the outcome.
+     */
+    private static SourceRecord ddlSourceRecord() {
+        Map<String, Object> offset = new HashMap<>();
+        offset.put("file", "mysql-bin.000003");
+        offset.put("pos", 1156385L);
+        return new SourceRecord(new HashMap<String, Object>(), offset, "SERVER5432",
+                Schema.STRING_SCHEMA, "ddl");
+    }
+
+    /** Properties as the connector holds them; null means the user left it unset. */
+    private static Properties props(String disableDropTruncate) {
+        Properties props = new Properties();
+        if (disableDropTruncate != null) {
+            props.setProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE,
+                    disableDropTruncate);
+        }
+        return props;
+    }
+
+    private static boolean ignored(String ddl, String disableDropTruncate) {
+        return new DebeziumChangeEventCapture().checkIfDDLNeedsToBeIgnored(
+                ddl, props(disableDropTruncate), ddlSourceRecord(),
+                // Exactly what performDDLOperation passes: a flag whose only
+                // writer has not run yet.
+                new AtomicBoolean(false));
+    }
+
+    @Test
+    @DisplayName("#1287: disable.drop.truncate=true must suppress DROP TABLE")
+    public void disableDropTruncateSuppressesDropTable() {
+        assertTrue("disable.drop.truncate is enabled, so this DROP TABLE must not "
+                        + "reach ClickHouse; the guard read an AtomicBoolean whose only "
+                        + "writer (parseSql) runs after the guard, so it was always false",
+                ignored("DROP TABLE employees.contacts", "true"));
+    }
+
+    @Test
+    @DisplayName("#1287: disable.drop.truncate=true must suppress TRUNCATE TABLE")
+    public void disableDropTruncateSuppressesTruncateTable() {
+        assertTrue("disable.drop.truncate is enabled, so this TRUNCATE must not "
+                        + "reach ClickHouse",
+                ignored("TRUNCATE TABLE employees.contacts", "true"));
+    }
+
+    @Test
+    @DisplayName("#1287: the setting is case-insensitive and covers DROP DATABASE")
+    public void disableDropTruncateSuppressesDropDatabase() {
+        assertTrue("a DROP DATABASE is the most destructive statement the setting "
+                        + "claims to cover",
+                ignored("drop database employees", "TRUE"));
+    }
+
+    // ------------------------------------------------------------------
+    // CONTROLS. The default is unchanged: with the setting off, DROP and
+    // TRUNCATE pass through exactly as every existing deployment relies on.
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("CONTROL: with the setting unset, DROP TABLE still passes through")
+    public void defaultLetsDropThrough() {
+        assertFalse("the default must not change: an unset disable.drop.truncate "
+                        + "leaves DROP TABLE replicating",
+                ignored("DROP TABLE employees.contacts", null));
+    }
+
+    @Test
+    @DisplayName("CONTROL: with the setting unset, TRUNCATE still passes through")
+    public void defaultLetsTruncateThrough() {
+        assertFalse("the default must not change: an unset disable.drop.truncate "
+                        + "leaves TRUNCATE replicating",
+                ignored("TRUNCATE TABLE employees.contacts", null));
+    }
+
+    @Test
+    @DisplayName("CONTROL: disable.drop.truncate=false still lets DROP through")
+    public void explicitFalseLetsDropThrough() {
+        assertFalse("an explicit false must behave exactly like the default",
+                ignored("DROP TABLE employees.contacts", "false"));
+    }
+
+    @Test
+    @DisplayName("CONTROL: disable.drop.truncate=true does not suppress ordinary DDL")
+    public void enabledDoesNotSuppressNonDestructiveDDL() {
+        assertFalse("the setting must only stop DROP and TRUNCATE; an ADD COLUMN "
+                        + "has to keep replicating",
+                ignored("ALTER TABLE employees.contacts ADD COLUMN nickname VARCHAR(50)",
+                        "true"));
+        assertFalse("a CREATE TABLE has to keep replicating",
+                ignored("CREATE TABLE employees.contacts (id INT PRIMARY KEY)", "true"));
     }
 
     /**

@@ -111,6 +111,13 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS("ddl.schema.change.poll.interval.ms"),
 
+    // Issue #1287: MySQL TRUNCATE reaches ClickHouse both as DDL and as a CDC
+    // record. The DDL side read this from the lightweight properties; the CDC
+    // side (PreparedStatementExecutor) had no way to see it at all, so the
+    // table was emptied anyway. Declaring it here puts it on the same
+    // ClickHouseSinkConnectorConfig every other setting on that path uses.
+    DISABLE_DROP_TRUNCATE("disable.drop.truncate"),
+
     DATABASE_HOSTNAME("database.hostname");
 
 
