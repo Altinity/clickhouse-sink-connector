@@ -74,21 +74,28 @@ public class ClickHouseAlterTable
                 .append(" ").append(quoteIdentifier(tableName))
                 .append(" ");
 
+        boolean adding = operation.name().equalsIgnoreCase(
+                ALTER_TABLE_OPERATION.ADD.op);
+
         for (Map.Entry<String, String> entry
                 : colNameToDataTypesMap.entrySet()) {
-            if (operation.name().equalsIgnoreCase(
-                    ALTER_TABLE_OPERATION.ADD.op)) {
+            if (adding) {
                 alterTableSyntax.append(
                                 ClickHouseDbConstants.ALTER_TABLE_ADD_COLUMN)
                         .append(" ");
             } else {
                 alterTableSyntax.append(
-                                ClickHouseDbConstants.ALTER_TABLE_DELETE_COLUMN)
+                                ClickHouseDbConstants.ALTER_TABLE_DROP_COLUMN)
                         .append(" ");
             }
-            alterTableSyntax.append("`").append(entry.getKey())
-                    .append("`").append(" ").append(entry.getValue())
-                    .append(",");
+            alterTableSyntax.append("`").append(entry.getKey()).append("`");
+            // DROP COLUMN names a column and stops there. Appending the data
+            // type after it is a SYNTAX_ERROR (Code: 62), so the type is
+            // emitted only on the ADD path, which declares one.
+            if (adding) {
+                alterTableSyntax.append(" ").append(entry.getValue());
+            }
+            alterTableSyntax.append(",");
         }
         alterTableSyntax.deleteCharAt(
                 alterTableSyntax.lastIndexOf(","));

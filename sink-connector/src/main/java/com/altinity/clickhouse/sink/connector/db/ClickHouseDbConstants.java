@@ -24,10 +24,14 @@ public class ClickHouseDbConstants {
     public static final String ALTER_TABLE_ADD_COLUMN = "add column";
 
     /**
-     * Fragment used to delete a column in an ALTER TABLE
-     * statement.
+     * Fragment used to drop a column in an ALTER TABLE statement.
+     *
+     * <p>ClickHouse spells this DROP COLUMN. The previous value,
+     * "delete column", is not accepted by the parser: DELETE is the
+     * lightweight-delete clause and expects IN PARTITION or WHERE next, so
+     * the column name was rejected with SYNTAX_ERROR (Code: 62).
      */
-    public static final String ALTER_TABLE_DELETE_COLUMN = "delete column";
+    public static final String ALTER_TABLE_DROP_COLUMN = "DROP COLUMN";
 
     /**
      * The CREATE TABLE statement keyword.
