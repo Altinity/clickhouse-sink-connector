@@ -6,7 +6,6 @@ import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.data.value.ClickHouseDoubleValue;
 import com.google.common.io.BaseEncoding;
 import io.debezium.data.*;
-import io.debezium.data.Enum;
 import io.debezium.data.geometry.Geometry;
 import io.debezium.time.*;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -173,7 +172,12 @@ public class ClickHouseDataTypeMapper {
             } else if (schemaName != null && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
                 ps.setTimestamp(index, (java.sql.Timestamp) value);
             } else {
+              if (value instanceof Byte) {
+                // Convert Byte to Integer
+                ps.setInt(index, ((Byte) value).intValue());
+              } else {
                 ps.setInt(index, (Integer) value);
+              }
             }
         } else if (isFieldTypeFloat) {
             if (value instanceof Float) {
@@ -232,19 +236,36 @@ public class ClickHouseDataTypeMapper {
             } else {
                 ps.setString(index, "");
             }
-        } else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(VariableScaleDecimal.LOGICAL_NAME)) {
-            if (value instanceof Struct) {
-                Struct decimalValue = (Struct) value;
-                Object scale = decimalValue.get("scale");
-                Object unscaledValueInBytes =  decimalValue.get("value");
-                BigDecimal bd = new BigDecimal(new BigInteger((byte[]) unscaledValueInBytes), (Integer) scale);
-                ps.setBigDecimal(index, bd);
+            } else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(VariableScaleDecimal.LOGICAL_NAME)) {
+                if (value instanceof Struct) {
+                    Struct decimalValue = (Struct) value;
+                    Object scaleObj = decimalValue.get("scale");
+                    Object unscaledValue = decimalValue.get("value");
 
+                    if (scaleObj == null || unscaledValue == null) {
+                        throw new IllegalArgumentException("Scale or unscaled value is null");
+                    }
 
-            } else {
-                ps.setBigDecimal(index, new BigDecimal(0));
-            }
-        } else if (type == Schema.Type.ARRAY) {
+                    int scale = (Integer) scaleObj;
+                    byte[] unscaledValueInBytes;
+                    if (unscaledValue instanceof ByteBuffer) {
+                        ByteBuffer byteBuffer = (ByteBuffer) unscaledValue;
+                        if (!byteBuffer.hasRemaining()) {
+                            throw new IllegalArgumentException("ByteBuffer is empty");
+                        }
+                        unscaledValueInBytes = new byte[byteBuffer.remaining()];
+                        byteBuffer.get(unscaledValueInBytes);
+                    } else {
+                        throw new IllegalArgumentException("Unscaled value is not a ByteBuffer");
+                    }
+
+                    BigInteger bigIntegerValue = new BigInteger(unscaledValueInBytes);
+                    BigDecimal bd = new BigDecimal(bigIntegerValue, scale);
+                    ps.setBigDecimal(index, bd);
+                } else {
+                    ps.setBigDecimal(index, new BigDecimal(0));
+                }
+            } else if (type == Schema.Type.ARRAY) {
             ClickHouseDataType dt = getClickHouseDataType(Schema.Type.valueOf(schemaName), null);
             ps.setArray(index, ps.getConnection().createArrayOf(dt.name(), ((ArrayList) value).toArray()));
         }
