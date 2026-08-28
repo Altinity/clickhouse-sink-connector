@@ -85,8 +85,6 @@ public class MySQLDDLParserService implements DDLParserService {
     @Override
     public String parseSql(String sql, String tableName, StringBuffer parsedQuery) {
 
-        String clickHouseResult = null;
-
         MySqlLexer lexer = new MySqlLexer(new CaseChangingCharStream(CharStreams.fromString(sql), true));
 
         CommonTokenStream tokens = new CommonTokenStream(lexer);
@@ -101,7 +99,10 @@ public class MySQLDDLParserService implements DDLParserService {
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 
-        return clickHouseResult;
+        // The translation is accumulated into parsedQuery by the listener.
+        // Return it so the documented String contract is honoured; existing
+        // callers that read the StringBuffer are unaffected.
+        return parsedQuery.toString();
     }
 
     /**
@@ -115,7 +116,6 @@ public class MySQLDDLParserService implements DDLParserService {
      */
     @Override
     public String parseSql(String sql, String tableName,  StringBuffer parsedQuery, AtomicBoolean isDropOrTruncate) {
-        String clickHouseResult = null;
 
         MySqlLexer lexer = new MySqlLexer(new CaseChangingCharStream(CharStreams.fromString(sql), true));
 
@@ -134,7 +134,9 @@ public class MySQLDDLParserService implements DDLParserService {
         // Set the drop or truncate flag
         isDropOrTruncate.set(isDropOrTruncateStatement(tokens));
 
-        return clickHouseResult;
+        // See the three-argument overload: return the accumulated translation
+        // rather than an always-null local.
+        return parsedQuery.toString();
     }
 
     /**
