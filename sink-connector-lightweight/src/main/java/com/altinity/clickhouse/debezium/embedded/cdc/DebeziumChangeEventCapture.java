@@ -509,10 +509,11 @@ public class DebeziumChangeEventCapture {
         }
         // A source table with no PRIMARY KEY and no non-null UNIQUE key has no
         // row identity in the binlog, so nothing downstream can keep its
-        // ClickHouse copy correct. Enable MySQL's generated invisible primary
-        // key so tables created from now on get one, and refuse to start on a
-        // source that already holds such a table rather than replicating it
-        // wrongly.
+        // ClickHouse copy correct. Name every such table here, with the ALTER
+        // that fixes it, and carry on replicating: whether to accept that
+        // divergence until a key is added is the operator's call, and refusing
+        // would take every correctly-keyed table on the same source down with
+        // it. This call never throws.
         KeylessTablePreflight.check(props);
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
