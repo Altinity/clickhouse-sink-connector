@@ -13,8 +13,8 @@ import java.util.List;
 import java.util.Properties;
 
 /**
- * Refuses to start when the source holds a table whose rows cannot be
- * identified, reading the source and never writing to it.
+ * Reports, loudly, every source table whose rows cannot be identified --
+ * reading the source, never writing to it, and never blocking startup.
  *
  * <p>A table with no PRIMARY KEY and no non-null UNIQUE key has no row
  * identity in the logical schema. InnoDB does give such a table an internal
@@ -46,14 +46,25 @@ import java.util.Properties;
  *
  * <p>So this check, run once at startup:</p>
  * <ol>
- *   <li>lists the keyless tables that ALREADY exist and refuses to start,
- *       naming them and the single {@code ALTER TABLE} that fixes each one;</li>
- *   <li>refuses outright below MySQL 8.0.30, where GIPK does not exist and no
- *       correct replication of a keyless table is possible;</li>
+ *   <li>lists the keyless tables that ALREADY exist, naming each one and the
+ *       single {@code ALTER TABLE} that fixes it;</li>
+ *   <li>says so explicitly below MySQL 8.0.30, where GIPK does not exist, so
+ *       adding a key by hand is the only remedy available;</li>
  *   <li>reports whether {@code sql_generate_invisible_primary_key} is ON, so
  *       the operator knows whether a keyless table created tomorrow will get
  *       an identity -- and prints the statements to turn it on if not.</li>
  * </ol>
+ *
+ * <p><b>It never refuses to start.</b> Whether a keyless table is worth
+ * replicating imperfectly is the operator's call, not the connector's: the
+ * table may be a migration-bookkeeping row nobody reads, or a key may be
+ * scheduled for a maintenance window that has not arrived yet. Blocking
+ * startup would take the whole pipeline -- every correctly-keyed table on the
+ * same source -- down for one such table. So the connector replicates what it
+ * was asked to replicate and makes the consequence impossible to miss: the
+ * banner is emitted at ERROR at startup, at table creation, and periodically
+ * while replication runs. An operator who wants a keyless table left alone
+ * entirely can name it in {@code table.exclude.list}.</p>
  *
  * <p><b>It does not turn GIPK on itself.</b> The connector is a replication
  * CONSUMER and must not change the server it reads from. That is not a style
@@ -70,9 +81,10 @@ import java.util.Properties;
  * rejects a write, every statement passes {@link #assertReadOnlySql}, and a
  * test fails the build if a mutating keyword appears in this file.</p>
  *
- * <p>Refusing is the point. Replicating a keyless table silently produces a
+ * <p>Being unmissable is the point. Replicating a keyless table produces a
  * ClickHouse table that disagrees with its source, and a checksum job reports
- * it as a mismatch long after the data is wrong.</p>
+ * it as a mismatch long after the data is wrong -- so the operator has to be
+ * told which tables those are, by name, every time.</p>
  */
 public class KeylessTablePreflight {
 
@@ -100,33 +112,25 @@ public class KeylessTablePreflight {
     private KeylessTablePreflight() {
     }
 
-    /** A source the connector refuses to replicate, with the reason. */
-    public static class UnsupportedSourceException extends RuntimeException {
-        public UnsupportedSourceException(String message) {
-            super(message);
-        }
-    }
-
     /**
      * Runs the check against the configured MySQL source.
      *
-     * <p>Only MySQL is checked; other connectors pass through untouched. A
-     * connection or permission failure is logged and allowed through -- this
-     * check must never be the reason a healthy pipeline cannot start -- but a
-     * source that is genuinely unsafe throws.</p>
+     * <p>Only MySQL is checked; other connectors pass through untouched. This
+     * method NEVER throws and never prevents startup: a keyless table is
+     * reported, loudly and repeatedly, and replication proceeds. A connection
+     * or permission failure is likewise logged and allowed through.</p>
      *
      * @param props the connector properties.
-     * @throws UnsupportedSourceException when the source cannot be replicated correctly.
      */
     public static void check(Properties props) {
         if (Boolean.parseBoolean(props.getProperty(SKIP_PROPERTY, "false"))) {
-            // Loud on purpose: the override silences a correctness check, so it
-            // must not itself be quiet.
-            log.error("\n{}\n  !!  {}=true -- KEYLESS-TABLE CHECK DISABLED  !!\n{}\n"
+            // Loud on purpose: the override silences a correctness warning, so
+            // it must not itself be quiet.
+            log.warn("\n{}\n  !!  {}=true -- KEYLESS-TABLE CHECK DISABLED  !!\n{}\n"
                             + "  A source table with no PRIMARY KEY and no non-null UNIQUE key has NO\n"
                             + "  ROW IDENTITY IN THE BINLOG. Any such table WILL silently diverge from\n"
                             + "  MySQL: rows collapse, and UPDATE/DELETE cannot be matched to one row.\n"
-                            + "  This override accepts that risk. Remove it once every table has a key.\n{}",
+                            + "  With this set you will not even be told which tables those are.\n{}",
                     BANNER_RULE, SKIP_PROPERTY, BANNER_RULE, BANNER_RULE);
             return;
         }
@@ -166,11 +170,13 @@ public class KeylessTablePreflight {
                             version, GIPK_MAJOR, GIPK_MINOR, GIPK_PATCH);
                     return;
                 }
-                throw new UnsupportedSourceException(refusalTooOld(version, keyless));
+                log.error(warningTooOld(version, keyless));
+                return;
             }
 
             if (!keyless.isEmpty()) {
-                throw new UnsupportedSourceException(refusalPreExisting(keyless));
+                log.error(warningPreExisting(keyless));
+                return;
             }
             if (gipkEnabledGlobally(conn)) {
                 log.info("Keyless-table check passed: no table without a PRIMARY KEY or UNIQUE key, and "
@@ -180,15 +186,14 @@ public class KeylessTablePreflight {
                 log.warn("Keyless-table check passed: every table currently has a row identity. But "
                         + "sql_generate_invisible_primary_key is OFF on this server, so a table created "
                         + "from now on WITHOUT a PRIMARY KEY will have no row identity in the binlog and "
-                        + "will be refused at the next restart. To have MySQL supply one automatically:\n"
+                        + "will be reported as keyless at the next restart. To have MySQL supply one "
+                        + "automatically:\n"
                         + "    SET GLOBAL sql_generate_invisible_primary_key = ON;\n"
                         + "    # and in my.cnf so it survives a restart:\n"
                         + "    sql_generate_invisible_primary_key = ON\n"
                         + "Note this makes MySQL REJECT keyless CREATE TABLE ... PARTITION BY, so it is "
                         + "the server owner's call -- the connector does not set it.");
             }
-        } catch (UnsupportedSourceException e) {
-            throw e;
         } catch (Exception e) {
             // Never block a healthy pipeline on this check itself.
             log.warn("Keyless-table check could not run ({}). Continuing. If the source holds a table "
@@ -377,7 +382,7 @@ public class KeylessTablePreflight {
         }
         // MariaDB reports MySQL-like versions but has no GIPK. It is not a
         // supported source for a keyless table either way; treat it as old so
-        // the refusal names the real reason.
+        // the report names the real reason.
         if (version.toLowerCase().contains("mariadb")) {
             return false;
         }
@@ -454,7 +459,7 @@ public class KeylessTablePreflight {
      * such as {@code app.*} names no schema literally. Turning it into
      * {@code IN ('app.*')} would match nothing and the check would report a
      * clean source while the replicated schemas go uninspected -- a false PASS,
-     * the one outcome worse than a false refusal. So any entry that is not a
+     * the one outcome worse than a false report. So any entry that is not a
      * plain literal makes this return null, which widens the scan to ALL
      * non-system schemas. Over-scanning can only surface a table that is
      * genuinely keyless; it can never hide one.</p>
@@ -463,11 +468,9 @@ public class KeylessTablePreflight {
      * Drops tables the connector is not actually replicating.
      *
      * <p>A table that is excluded is never read from the binlog, so it cannot
-     * be replicated incorrectly and must not block startup. Without this, an
-     * operator who had already excluded a keyless table still could not start:
-     * the only ways past were adding a key to a table they did not own, or
-     * disabling the whole check and losing the protection for every other
-     * table.</p>
+     * be replicated incorrectly and there is nothing to report. Reporting it
+     * anyway would train operators to ignore the banner, which is the one way
+     * a loud warning stops working.</p>
      *
      * <p>Both Debezium list properties are honoured, with its own semantics:
      * entries are REGULAR EXPRESSIONS matched against the fully-qualified
@@ -475,7 +478,7 @@ public class KeylessTablePreflight {
      * anything NOT listed is excluded. The scan is deliberately conservative in
      * the same direction as {@code databaseFilter}: if a pattern cannot be
      * compiled it is ignored rather than treated as a match, so a malformed
-     * exclude can only leave a keyless table reported (a false refusal), never
+     * exclude can only leave a keyless table reported (a false report), never
      * silently drop one from the check (a false pass).</p>
      *
      * @param keyless fully-qualified {@code db.table} names found keyless.
@@ -492,12 +495,12 @@ public class KeylessTablePreflight {
         for (String table : keyless) {
             if (matchesAny(excludes, table)) {
                 log.info("Keyless table {} is excluded by table.exclude.list, so it is not "
-                        + "replicated and does not block startup.", table);
+                        + "replicated and is not reported.", table);
                 continue;
             }
             if (!includes.isEmpty() && !matchesAny(includes, table)) {
                 log.info("Keyless table {} is outside table.include.list, so it is not "
-                        + "replicated and does not block startup.", table);
+                        + "replicated and is not reported.", table);
                 continue;
             }
             inScope.add(table);
@@ -510,7 +513,7 @@ public class KeylessTablePreflight {
      * compile.
      *
      * <p>An uncompilable pattern is dropped rather than propagated, because
-     * this list can only ever REMOVE tables from the refusal set: treating a
+     * this list can only ever REMOVE tables from the reported set: treating a
      * broken pattern as matching would silently exclude a genuinely keyless
      * table from the check.</p>
      */
@@ -586,19 +589,24 @@ public class KeylessTablePreflight {
         }
     }
 
-    static String refusalTooOld(String version, List<String> keyless) {
+    static String warningTooOld(String version, List<String> keyless) {
         return KeylessTableWarning.banner(keyless, false)
-                + "\nREFUSING TO REPLICATE. MySQL " + version + " is older than "
-                + GIPK_MAJOR + "." + GIPK_MINOR + "." + GIPK_PATCH + ", where the generated invisible "
-                + "primary key was introduced, so MySQL cannot supply an identity for these tables "
-                + "either. Add a primary key to each, or upgrade to MySQL "
-                + GIPK_MAJOR + "." + GIPK_MINOR + "." + GIPK_PATCH + "+.\n"
-                + "Set " + SKIP_PROPERTY + "=true to override, accepting that those tables may diverge.";
+                + "\nREPLICATING ANYWAY -- THESE TABLES WILL DIVERGE. MySQL " + version + " is older "
+                + "than " + GIPK_MAJOR + "." + GIPK_MINOR + "." + GIPK_PATCH + ", where the generated "
+                + "invisible primary key was introduced, so MySQL cannot supply an identity for these "
+                + "tables either. Until a primary key is added to each -- or the server is upgraded to "
+                + "MySQL " + GIPK_MAJOR + "." + GIPK_MINOR + "." + GIPK_PATCH + "+ and each table "
+                + "altered -- their ClickHouse copies are NOT trustworthy: rows collapse and "
+                + "UPDATE/DELETE cannot be matched to one row.\n"
+                + "Set " + SKIP_PROPERTY + "=true to stop reporting them (the divergence remains).";
     }
 
-    static String refusalPreExisting(List<String> keyless) {
+    static String warningPreExisting(List<String> keyless) {
         return KeylessTableWarning.banner(keyless, true)
-                + "\nREFUSING TO REPLICATE until each table above has a primary key.\n"
-                + "Set " + SKIP_PROPERTY + "=true to override, accepting that those tables may diverge.";
+                + "\nREPLICATING ANYWAY -- THESE TABLES WILL DIVERGE until each one above has a "
+                + "primary key. Their ClickHouse copies are NOT trustworthy in the meantime: rows "
+                + "MySQL considers distinct collapse into one, and an UPDATE or DELETE cannot be "
+                + "matched to a single row. Every other table on this source is unaffected.\n"
+                + "Set " + SKIP_PROPERTY + "=true to stop reporting them (the divergence remains).";
     }
 }
