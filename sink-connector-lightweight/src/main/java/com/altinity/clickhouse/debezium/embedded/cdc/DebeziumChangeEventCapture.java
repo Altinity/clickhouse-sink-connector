@@ -1614,8 +1614,21 @@ public class DebeziumChangeEventCapture {
     private void appendToRecords(List<ClickHouseStruct> convertedRecords, ClickHouseSinkConnectorConfig config) {
         // If config is set to single threaded.
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
+            // Runs inline on this thread, so the rows are written (or have
+            // thrown) before control returns. Nothing is ever outstanding
+            // across a quiescence check, so the counter is not involved.
             singleThreadedWriter.persistRecords(convertedRecords);
-        } else if (this.threadPoolSize > 1 && this.routedRecords != null) {
+            return;
+        }
+
+        // Asynchronous handoff from here on. Each unit that a consumer will
+        // acknowledge separately is registered BEFORE it becomes visible: a
+        // consumer polls the queue and only registers the batch in
+        // inFlightBatches once it reaches processBatch, so between those two
+        // points the batch is in neither collection and the pipeline would
+        // falsely read as quiescent. Counting the handoff closes that window
+        // -- see DebeziumOffsetManagement#hasUnwrittenBatches.
+        if (this.threadPoolSize > 1 && this.routedRecords != null) {
             // Hash-based routing mode: group records by table and route to specific threads
             appendToRecordsWithHashRouting(convertedRecords);
         } else {
@@ -1631,8 +1644,13 @@ public class DebeziumChangeEventCapture {
                     if (remainingCapacity == 0) {
                         log.warn("Queue is full! Current size: {}, Total capacity: {}", this.records.size(), totalCapacity);
                     }
+                    DebeziumOffsetManagement.batchHandedOff();
                     this.records.put(convertedRecords);
                 }catch(Exception e){
+                    // The batch never made it onto the queue, so no consumer
+                    // will ever acknowledge it. Release the registration or
+                    // the pipeline would never read as quiescent again.
+                    DebeziumOffsetManagement.batchHandoffFailed();
                     log.error("An unexpected error occurred while putting batch into records queue. Error: {}",e.getMessage(),e);
                 }
             }
@@ -1676,13 +1694,23 @@ public class DebeziumChangeEventCapture {
                     int threadId = RoutedBatch.calculateThreadId(routingKey, this.threadPoolSize);
                     String tableName = RoutedBatch.extractTableName(batch.get(0).getTopic());
                     
-                    // Create routed batch and add to queue
+                    // Create routed batch and add to queue. Each routed group
+                    // is acknowledged by its consumer independently, so each
+                    // one is registered separately -- registering the caller's
+                    // list once would under-count and let a control-record
+                    // offset commit run while sibling groups were unwritten.
                     RoutedBatch routedBatch = new RoutedBatch(batch, threadId, tableName);
+                    DebeziumOffsetManagement.batchHandedOff();
                     this.routedRecords.put(routedBatch);
-                    
+
                     log.debug("Routed {} records for table {} to thread {}", batch.size(), tableName, threadId);
                 }
             } catch (Exception e) {
+                // A group that never reached the queue has no consumer to
+                // acknowledge it; release its registration so the pipeline
+                // can become quiescent again. Groups already enqueued in this
+                // loop keep theirs and are released on acknowledgement.
+                DebeziumOffsetManagement.batchHandoffFailed();
                 log.error("An unexpected error occurred while putting batch into routed records queue. Error: {}", e.getMessage(), e);
             }
         }
