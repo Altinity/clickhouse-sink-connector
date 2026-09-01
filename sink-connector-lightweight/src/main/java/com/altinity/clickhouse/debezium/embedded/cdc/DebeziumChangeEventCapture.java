@@ -311,81 +311,8 @@ public class DebeziumChangeEventCapture {
                 public void handleBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
                                         DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter)
                         throws InterruptedException {
-
-                    if(list.isEmpty()) {
-                        return;
-                    }
-
-                    List<ClickHouseStruct> batch = new ArrayList<>();
-                    for (int i = 0; i < list.size(); i++) {
-                        ChangeEvent<SourceRecord, SourceRecord> record = list.get(i);
-                        boolean lastRecordInBatch = false;
-                        if (i == list.size() - 1) {
-                            lastRecordInBatch = true;
-                        }
-                        // Anchor the version to the SOURCE commit timestamp (source.ts_ms),
-                        // not the envelope/processing timestamp. The source timestamp is
-                        // identical on every Debezium re-delivery, so a re-delivered DELETE
-                        // keeps its original (lower) _version and can no longer out-rank a
-                        // later re-INSERT (issue #1346). The emitted formula is unchanged
-                        // from 2.8.0 (ts_ms * 1_000_000 + counter), so values stay in the
-                        // same numeric domain: upgrades AND downgrades remain safe.
-                        long recordTs = ClickHouseStruct.getSourceTsFromChangeEvent(record);
-
-                        // The intra-second counter is keyed exclusively on the source commit
-                        // clock - never on the binlog file name or position - so it is kept
-                        // across binary log rotations: two commits in the same second on
-                        // either side of a rotation keep incrementing the same counter and
-                        // cannot collide or invert. The anchor is global (survives batch
-                        // boundaries) and never moves backward, so re-delivered events with
-                        // older source timestamps cannot re-arm the counter reset (the
-                        // duplicate-_version race).
-                        //
-                        // First record after start/resume: seed the counter at
-                        // SEQUENCE_START_INITIAL (500m) so events re-published from the last
-                        // committed offset rank strictly below any pre-restart write of the
-                        // same source second (which carried counters in the 1000m range).
-                        if (sequenceAnchorTs == 0L) {
-                            sequenceAnchorTs = recordTs;
-                            sequenceNumber = SEQUENCE_START_INITIAL;
-                        }
-                        int diff = (int) ((recordTs - sequenceAnchorTs) / 1000);
-                        if (diff > 1) {
-                            sequenceNumber = SEQUENCE_START;
-                            sequenceAnchorTs = recordTs;
-                        } else
-                            sequenceNumber++;
-
-                        long recordSequenceNumber = recordTs * 1000000 + sequenceNumber;
-
-                        // A DDL inside this loop is applied to ClickHouse synchronously,
-                        // while the rows read before it in the same Debezium batch are
-                        // still sitting in the local `batch` list -- they are not handed
-                        // to the consumers until after the loop finishes. Those rows were
-                        // captured against the PRE-DDL schema but would reach ClickHouse
-                        // strictly AFTER the schema change, which inverts their order with
-                        // respect to the source. The inversion is guaranteed by control
-                        // flow, not a thread race, so it reproduces on every such batch.
-                        //
-                        // Hand the pending rows over BEFORE the DDL is applied, so the
-                        // schema change lands at its true position in the stream.
-                        if (isDDLRecord(record) && batch.size() > 0) {
-                            appendToRecords(new ArrayList<>(batch), config);
-                            batch.clear();
-                        }
-
-                        ClickHouseStruct chStruct = processEveryChangeRecord(props, record,
-                                debeziumRecordParserService, config, recordCommitter, lastRecordInBatch, recordSequenceNumber);
-                        if (chStruct != null) {
-                            batch.add(chStruct);
-                        }
-                    }
-                    // Add sequence number.
-                    //addVersion(batch);
-
-                    if (batch.size() > 0) {
-                        appendToRecords(batch, config);
-                    }
+                    handleChangeEventBatch(list, recordCommitter, props,
+                            debeziumRecordParserService, config);
                 }
             });
             this.engine = changeEventBuilder
@@ -1181,6 +1108,214 @@ public class DebeziumChangeEventCapture {
 
         long elapsedTime = System.currentTimeMillis() - currentTime;
         Metrics.updateDdlMetrics(DDL, currentTime, elapsedTime, ddlProcessingResult);
+    }
+
+    /**
+     * Handles one batch of change events delivered by the Debezium engine.
+     * <p>
+     * Extracted from the {@code ChangeConsumer} passed to
+     * {@link #setupDebeziumEventCapture} so the batch semantics -- in
+     * particular which records get their offset acknowledged -- can be
+     * exercised without standing up an engine. The consumer is now a single
+     * delegation to this method.
+     * </p>
+     *
+     * @param list                        The batch of change events.
+     * @param recordCommitter             The record committer for offset management.
+     * @param props                       The connector properties.
+     * @param debeziumRecordParserService The service to parse change events.
+     * @param config                      The connector configuration.
+     * @throws InterruptedException if acknowledging the offset is interrupted.
+     */
+    @VisibleForTesting
+    void handleChangeEventBatch(List<ChangeEvent<SourceRecord, SourceRecord>> list,
+                                DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter,
+                                Properties props,
+                                DebeziumRecordParserService debeziumRecordParserService,
+                                ClickHouseSinkConnectorConfig config)
+            throws InterruptedException {
+
+        if (list.isEmpty()) {
+            return;
+        }
+
+        // The newest record in this batch that produced no row, and is not a
+        // DDL (the DDL path acknowledges itself). Heartbeats and
+        // transaction-boundary events land here. See
+        // commitControlRecordOffset for why the newest one is enough.
+        ChangeEvent<SourceRecord, SourceRecord> lastControlRecord = null;
+        // Whether any row from this batch was handed to the writers. Rows
+        // handed off are acknowledged by the writer once they are in
+        // ClickHouse, and until then no control-record offset may be
+        // committed past them.
+        boolean handedOffRows = false;
+
+        List<ClickHouseStruct> batch = new ArrayList<>();
+        for (int i = 0; i < list.size(); i++) {
+            ChangeEvent<SourceRecord, SourceRecord> record = list.get(i);
+            boolean lastRecordInBatch = false;
+            if (i == list.size() - 1) {
+                lastRecordInBatch = true;
+            }
+            // Anchor the version to the SOURCE commit timestamp (source.ts_ms),
+            // not the envelope/processing timestamp. The source timestamp is
+            // identical on every Debezium re-delivery, so a re-delivered DELETE
+            // keeps its original (lower) _version and can no longer out-rank a
+            // later re-INSERT (issue #1346). The emitted formula is unchanged
+            // from 2.8.0 (ts_ms * 1_000_000 + counter), so values stay in the
+            // same numeric domain: upgrades AND downgrades remain safe.
+            long recordTs = ClickHouseStruct.getSourceTsFromChangeEvent(record);
+
+            // The intra-second counter is keyed exclusively on the source commit
+            // clock - never on the binlog file name or position - so it is kept
+            // across binary log rotations: two commits in the same second on
+            // either side of a rotation keep incrementing the same counter and
+            // cannot collide or invert. The anchor is global (survives batch
+            // boundaries) and never moves backward, so re-delivered events with
+            // older source timestamps cannot re-arm the counter reset (the
+            // duplicate-_version race).
+            //
+            // First record after start/resume: seed the counter at
+            // SEQUENCE_START_INITIAL (500m) so events re-published from the last
+            // committed offset rank strictly below any pre-restart write of the
+            // same source second (which carried counters in the 1000m range).
+            if (sequenceAnchorTs == 0L) {
+                sequenceAnchorTs = recordTs;
+                sequenceNumber = SEQUENCE_START_INITIAL;
+            }
+            int diff = (int) ((recordTs - sequenceAnchorTs) / 1000);
+            if (diff > 1) {
+                sequenceNumber = SEQUENCE_START;
+                sequenceAnchorTs = recordTs;
+            } else
+                sequenceNumber++;
+
+            long recordSequenceNumber = recordTs * 1000000 + sequenceNumber;
+
+            // A DDL inside this loop is applied to ClickHouse synchronously,
+            // while the rows read before it in the same Debezium batch are
+            // still sitting in the local `batch` list -- they are not handed
+            // to the consumers until after the loop finishes. Those rows were
+            // captured against the PRE-DDL schema but would reach ClickHouse
+            // strictly AFTER the schema change, which inverts their order with
+            // respect to the source. The inversion is guaranteed by control
+            // flow, not a thread race, so it reproduces on every such batch.
+            //
+            // Hand the pending rows over BEFORE the DDL is applied, so the
+            // schema change lands at its true position in the stream.
+            boolean ddlRecord = isDDLRecord(record);
+            if (ddlRecord && batch.size() > 0) {
+                appendToRecords(new ArrayList<>(batch), config);
+                batch.clear();
+                handedOffRows = true;
+            }
+
+            ClickHouseStruct chStruct = processEveryChangeRecord(props, record,
+                    debeziumRecordParserService, config, recordCommitter, lastRecordInBatch, recordSequenceNumber);
+            if (chStruct != null) {
+                batch.add(chStruct);
+            } else if (!ddlRecord) {
+                lastControlRecord = record;
+            }
+        }
+        // Add sequence number.
+        //addVersion(batch);
+
+        if (batch.size() > 0) {
+            appendToRecords(batch, config);
+            handedOffRows = true;
+        }
+
+        commitControlRecordOffset(lastControlRecord, recordCommitter, handedOffRows);
+    }
+
+    /**
+     * Commits the offset carried by a record that produced no row, when it is
+     * safe to do so.
+     * <p><b>Why this exists (issue #1379, "Initial Snapshot never finishes").</b>
+     * A Debezium batch carries more than row changes. Heartbeats and
+     * transaction-boundary events have a Struct value and no {@code op}
+     * field, so the parser returns null for them -- that null is contract,
+     * not failure. Such a record was then dropped outright: never
+     * {@code markProcessed}, never {@code markBatchFinished}. Only records
+     * that became a row were ever acknowledged.</p>
+     *
+     * <p>That silently strands the end-of-snapshot state. Debezium marks the
+     * snapshot complete AFTER the last snapshot row is emitted
+     * ({@code preSnapshotCompletion} / {@code postSnapshotCompletion} in
+     * {@code RelationalSnapshotChangeEventSource#createDataEvents}), so every
+     * snapshot ROW still carries {@code snapshot=INITIAL,
+     * snapshot_completed=false}. The completed state rides only on records
+     * emitted after the snapshot -- and on an idle source those are
+     * exclusively heartbeats. Dropping them left
+     * {@code replica_source_info} pinned at
+     * {@code snapshot=INITIAL, snapshot_completed=false} forever, which is
+     * both halves of the report: the status view never shows the snapshot
+     * finishing, and on restart
+     * {@code InitialSnapshotter#shouldSnapshotData} reads
+     * {@code snapshotInProgress=true} and re-runs the whole snapshot.</p>
+     *
+     * <p>Committing the newest such record is sufficient: the engine's
+     * committer stages offsets into an {@code OffsetStorageWriter} keyed by
+     * source partition, so the newest offset supersedes the older ones in the
+     * same batch.</p>
+     *
+     * <p><b>Ordering safety.</b> A heartbeat carries the connector's CURRENT
+     * position, which is at or after every row already read. Committing it
+     * while any row is still unwritten would move the committed offset past
+     * that row and lose it on a crash -- the failure mode of issue #1285.
+     * The offset is therefore committed only when nothing is in flight: no
+     * row from this batch was handed off, both handoff queues are empty, and
+     * no batch is awaiting persistence. On a busy pipeline that check fails
+     * and the behaviour is exactly as before -- no regression -- because a
+     * busy pipeline commits its offsets through the rows themselves. It is
+     * precisely the idle case, where no row is coming, that needed this.</p>
+     *
+     * @param controlRecord   The newest record that produced no row; may be null.
+     * @param recordCommitter The record committer for offset management.
+     * @param handedOffRows   True if any row from this batch was handed to the writers.
+     * @return true if the offset was committed.
+     * @throws InterruptedException if acknowledging the offset is interrupted.
+     */
+    @VisibleForTesting
+    boolean commitControlRecordOffset(ChangeEvent<SourceRecord, SourceRecord> controlRecord,
+                                      DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter,
+                                      boolean handedOffRows)
+            throws InterruptedException {
+        if (controlRecord == null || recordCommitter == null) {
+            return false;
+        }
+        if (handedOffRows || !isPipelineQuiescent()) {
+            return false;
+        }
+        DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, controlRecord, true);
+        log.debug("Committed the offset of a record that produced no row; "
+                + "nothing was in flight. Record({})", controlRecord);
+        return true;
+    }
+
+    /**
+     * Reports whether nothing the connector has read is still waiting to be
+     * written to ClickHouse.
+     * <p>
+     * Covers all three handoff paths: the legacy queue, the hash-routing
+     * queue, and the batches the consumers have picked up but not yet
+     * acknowledged. In single-threaded mode the writer runs inline on the
+     * Debezium thread, so both queues stay empty and nothing is registered
+     * in flight -- the predicate is trivially true, which is correct,
+     * because by then the rows are already written.
+     * </p>
+     *
+     * @return true if no record is awaiting persistence.
+     */
+    private boolean isPipelineQuiescent() {
+        if (this.records != null && !this.records.isEmpty()) {
+            return false;
+        }
+        if (this.routedRecords != null && !this.routedRecords.isEmpty()) {
+            return false;
+        }
+        return !DebeziumOffsetManagement.hasUnwrittenBatches();
     }
 
     /**

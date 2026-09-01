@@ -92,6 +92,29 @@ public class DebeziumOffsetManagement {
     }
 
     /**
+     * Reports whether any batch read from the source is still unwritten.
+     * <p>
+     * A batch sits in {@link #inFlightBatches} from the moment a consumer
+     * picks it up until its rows are in ClickHouse and its offsets are
+     * acknowledged, and in {@link #completedBatches} while it waits for an
+     * older overlapping batch to finish. Either map being non-empty means
+     * there are records the connector has read but not yet persisted.
+     * </p>
+     * <p>
+     * The caller is the control-record offset commit in
+     * {@code DebeziumChangeEventCapture}: a heartbeat carries the connector's
+     * CURRENT position, so committing it while these maps are non-empty would
+     * move the committed offset past rows that are not in ClickHouse yet and
+     * lose them on a crash. This predicate is what makes that commit safe.
+     * </p>
+     *
+     * @return true if at least one batch is still awaiting persistence.
+     */
+    public static boolean hasUnwrittenBatches() {
+        return !inFlightBatches.isEmpty() || !completedBatches.isEmpty();
+    }
+
+    /**
      * Calculates the minimum and maximum Debezium timestamps from the given batch.
      *
      * @param batch A list of ClickHouseStruct records.
