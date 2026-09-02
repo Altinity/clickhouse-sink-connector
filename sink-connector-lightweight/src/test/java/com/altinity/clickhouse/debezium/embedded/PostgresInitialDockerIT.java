@@ -107,7 +107,14 @@ public class PostgresInitialDockerIT {
         Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
         Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
-        Assert.assertTrue(tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6))"));
+        // Debezium timestamps are UTC by definition, so the record-schema
+        // auto-create path tags the column with the zone. Verified live on
+        // this branch, PostgreSQL 15 -> ClickHouse 24.8:
+        //   CREATE TABLE `public`.`tm`(... `created`
+        //       Nullable(DateTime64(6, 'UTC')) ...)
+        // The bare-precision expectation predates that change and never
+        // matched what the connector emits.
+        Assert.assertTrue(tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6, 'UTC'))"));
 
         // Get the columns in re_data — poll until available
         Assert.assertTrue("Timed out waiting for 'redata' table columns in ClickHouse",

@@ -121,7 +121,14 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
         Assert.assertTrue("tm table must have columns after snapshot", tmColumns.size() > 0);
         Assert.assertTrue("id column must be UUID type", tmColumns.get("id").equalsIgnoreCase("UUID"));
         Assert.assertTrue("secid column must be Nullable(UUID)", tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
-        Assert.assertTrue("created column must be Nullable(DateTime64(6))", tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6))"));
+        // Debezium timestamps are UTC by definition, so the record-schema
+        // auto-create path tags the column with the zone. Verified live on
+        // this branch, PostgreSQL 15 -> ClickHouse 24.8:
+        //   CREATE TABLE `public`.`tm`(... `created`
+        //       Nullable(DateTime64(6, 'UTC')) ...)
+        // The bare-precision expectation predates that change and never
+        // matched what the connector emits.
+        Assert.assertTrue("created column must be Nullable(DateTime64(6))", tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6, 'UTC'))"));
 
         int tmCount = 0;
         ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from public.tm").executeQuery();
