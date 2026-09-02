@@ -193,10 +193,81 @@ public class DebeziumOffsetManagement {
      * marked as finished.
      * </p>
      *
+     * <p><b>Delivery semantics.</b> {@code markBatchFinished()} REQUESTS an
+     * offset flush; it does not guarantee one. Debezium's embedded engine
+     * honours the request no more often than {@code offset.flush.interval.ms}
+     * (5000 in the shipped configs), so the committed position in
+     * {@code altinity_sink_connector.replica_source_info} can lag the data
+     * already written to ClickHouse by up to that interval. A crash in that
+     * window re-delivers every event after the last flushed position on
+     * restart. Delivery is therefore AT-LEAST-ONCE, not exactly-once.</p>
+     *
+     * <p>Measured on 2026-08-25 against ClickHouse 24.8.14 by hard-killing the
+     * connector mid-flight ({@code podman kill}, no graceful flush). The same
+     * batch and the same DDL were both re-executed after restart:</p>
+     * <pre>
+     *   05:29:57.959  EXECUTED BATCH Successfully Records: 3
+     *   05:29:58.090  Executed Source DB DDL: ... ADD COLUMN burstcol
+     *   --- hard kill + restart ---
+     *   05:30:03.553  EXECUTED BATCH Successfully Records: 3      &lt;- re-sent
+     *   05:30:03.672  Executed Source DB DDL: ... ADD COLUMN burstcol
+     * </pre>
+     *
+     * <p>No data was corrupted, and the reason is worth stating precisely,
+     * because it is NOT that the replayed event reproduces its original
+     * {@code _version} -- it deliberately does not. On resume the counter is
+     * seeded at {@code SEQUENCE_START_INITIAL} (500m) rather than
+     * {@code SEQUENCE_START} (1000m), so a re-published event in the same
+     * source second is issued a strictly LOWER version than the pre-restart
+     * write of that same event. Combined with a stable row key (MySQL's
+     * generated invisible primary key) as the ReplacingMergeTree sorting key,
+     * the replayed copy therefore LOSES to the row already stored and is
+     * discarded, rather than winning and overwriting it. Measured:
+     * {@code mysql=8 ch_raw=8 ch_live=8}, per-row raw copies 1.</p>
+     *
+     * <p>That ordering is the safety property, and it is load-bearing in a way
+     * that is easy to break by accident. It depends on the version being
+     * anchored to the SOURCE commit timestamp ({@code source.ts_ms}), which is
+     * identical on every re-delivery. Anchoring it to any processing-side or
+     * wall-clock value instead would give the replayed copy a HIGHER version,
+     * so it would supersede the correct row -- silently, with row counts still
+     * matching. See the anchoring comment in
+     * {@code DebeziumChangeEventCapture#handleBatch} before changing either
+     * the sequence seeding or the timestamp source.</p>
+     *
+     * <p><b>KNOWN DEFECT, not fixed here.</b> The guarantee above holds only
+     * for the SAME event re-delivered. It does not generalise, because the
+     * encoding {@code sourceTsMs * 1_000_000 + sequence} leaves six decimal
+     * digits for the sequence while the seeds are ten digits, so the addition
+     * carries into the timestamp field and acts as a ~1000&nbsp;ms shift.
+     * A genuinely NEWER event arriving just after a resume can then rank BELOW
+     * an older pre-restart event and be discarded:</p>
+     *
+     * <pre>
+     *   older, pre-restart  (T)     -&gt; T*1e6 + 1_000_000_000 = 1787635798000000000
+     *   newer, post-restart (T+1ms) -&gt; (T+1)*1e6 + 500_000_000 = 1787635797501000000
+     * </pre>
+     *
+     * <p>The {@code diff &gt; 1} second reset does not cover it: a 1&nbsp;ms
+     * advance yields {@code diff == 0}, so the 500m seed still applies. Fixing
+     * it means widening the multiplier (or shrinking the seeds) so the
+     * sequence cannot carry -- a change to the version scheme itself, which
+     * needs its own review and a migration story for existing versions.
+     * {@code ReplaySafetyTest} pins the arithmetic so the gap cannot be
+     * mistaken for intended behaviour.</p>
+     *
+     * <p>The engine matters too. ReplacingMergeTree resolves a duplicate by
+     * version, so a losing replay is simply dropped. CollapsingMergeTree sign
+     * rows are ADDITIVE: a replayed {@code +1} sums to {@code +2} and never
+     * cancels against a single {@code -1}, so the same replay would corrupt.
+     * The connector never auto-creates that engine -- auto-create emits only
+     * ReplacingMergeTree / ReplicatedReplacingMergeTree -- so it is reachable
+     * only for a pre-existing table a user points the connector at.</p>
+     *
      * @param batch The batch of ClickHouseStruct records to acknowledge.
      * @throws InterruptedException If the commit operation is interrupted.
      */
-    static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch) 
+    static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch)
                                             throws InterruptedException {
         // acknowledge records
         // Iterate through the records

@@ -126,18 +126,19 @@ public class CreateTableUniqueKeySortKeyTest {
      * emptied the table completely. See {@link CreateTableNoKeySortKeyTest}.</p>
      */
     @Test
-    public void testNoKeyAtAllUsesAllColumnsSortKey() {
+    public void testNoKeyAtAllHasNoInventedSortKey() {
         String createQuery = "CREATE TABLE nokey (a INT, v VARCHAR(64)) ENGINE=InnoDB;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "nokey", clickHouseQuery);
 
         String query = clickHouseQuery.toString().toLowerCase();
-        Assert.assertFalse("ORDER BY tuple() collapses the whole table to one row, was: "
-                        + clickHouseQuery, query.contains("order by tuple()"));
-        Assert.assertTrue("the generated row-key column must be the sorting key, was: " + clickHouseQuery,
-                query.contains("order by `_row_key`"));
-        Assert.assertTrue("every column must feed the fingerprint, was: " + clickHouseQuery,
-                query.contains("isnull(`a`)") && query.contains("isnull(`v`)"));
+        // No identity is invented from the data. Such a table is refused by
+        // KeylessTablePreflight; reaching here at all means the check was
+        // skipped, and an invented key would cost the table its schema.
+        Assert.assertFalse("no data column may be made the sorting key, was: " + clickHouseQuery,
+                query.contains("order by (a,v)"));
+        Assert.assertFalse("a data column in the sorting key freezes the schema, was: "
+                        + clickHouseQuery, query.contains("allow_nullable_key=1"));
     }
 
     /**
@@ -171,15 +172,12 @@ public class CreateTableUniqueKeySortKeyTest {
         mySQLDDLParserService.parseSql(createQuery, "nopk_nullable_uk", clickHouseQuery);
 
         String query = clickHouseQuery.toString().toLowerCase();
-        Assert.assertTrue("a nullable UNIQUE key is not a row identity -- MySQL allows many "
-                        + "NULL-keyed rows -- so the row fingerprint must be used instead, was: "
+        Assert.assertFalse("a nullable UNIQUE key is not a row identity -- MySQL allows many "
+                        + "NULL-keyed rows -- so it must not become the sorting key, was: "
                         + clickHouseQuery,
-                query.contains("order by `_row_key`"));
-        Assert.assertTrue("every column must feed the fingerprint, was: " + clickHouseQuery,
-                query.contains("isnull(`a`)") && query.contains("isnull(`v`)"));
-        Assert.assertFalse("the fingerprint is a non-Nullable UInt64, so allow_nullable_key must "
-                        + "not be emitted, was: " + clickHouseQuery,
-                query.contains("allow_nullable_key"));
+                query.contains("order by (a)"));
+        Assert.assertFalse("no identity is invented from the data columns either, was: "
+                        + clickHouseQuery, query.contains("order by (a,v)"));
     }
 
     /**
@@ -194,15 +192,11 @@ public class CreateTableUniqueKeySortKeyTest {
         mySQLDDLParserService.parseSql(createQuery, "nopk_mixed_uk", clickHouseQuery);
 
         String query = clickHouseQuery.toString().toLowerCase();
-        Assert.assertTrue("one nullable member makes the whole UNIQUE key unusable as an "
-                        + "identity, so the row fingerprint must be used, was: " + clickHouseQuery,
-                query.contains("order by `_row_key`"));
-        Assert.assertTrue("every column must feed the fingerprint, was: " + clickHouseQuery,
-                query.contains("isnull(`a`)") && query.contains("isnull(`b`)")
-                        && query.contains("isnull(`v`)"));
-        Assert.assertFalse("the fingerprint is a non-Nullable UInt64, so allow_nullable_key must "
-                        + "not be emitted, was: " + clickHouseQuery,
-                query.contains("allow_nullable_key"));
+        Assert.assertFalse("one nullable member makes the whole UNIQUE key unusable as an "
+                        + "identity, so it must not become the sorting key, was: " + clickHouseQuery,
+                query.contains("order by (a,b)"));
+        Assert.assertFalse("no identity is invented from the data columns either, was: "
+                        + clickHouseQuery, query.contains("order by (a,b,v)"));
     }
 
     /**

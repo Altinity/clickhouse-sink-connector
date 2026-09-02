@@ -72,40 +72,68 @@ public class Constants {
     public static final String NOT_NULLABLE = "NOT NULL";
 
     /**
-     * Template for adding a column, e.g. "ADD COLUMN %s %s".
+     * Template for adding a column, e.g.
+     * "ADD COLUMN IF NOT EXISTS %s %s".
+     *
+     * <p>The existence guard is what makes DDL replay survivable. Debezium
+     * flushes offsets periodically, so a restart re-delivers every DDL event
+     * committed since the last flush -- including ones already applied to
+     * ClickHouse. Without the guard the replayed statement fails, and because
+     * DDL is retried indefinitely that failure STALLS THE ENTIRE REPLICATION
+     * STREAM, not merely the offending table. Measured on 24.8.14: a replayed
+     * unguarded ADD COLUMN returns
+     * {@code Code: 15 DUPLICATE_COLUMN "column with this name already exists"}.</p>
      */
-    public static final String ADD_COLUMN = "ADD COLUMN %s %s";
+    public static final String ADD_COLUMN = "ADD COLUMN IF NOT EXISTS %s %s";
 
     /**
      * Template for adding a nullable column, e.g.
-     * "ADD COLUMN %s Nullable(%s)".
+     * "ADD COLUMN IF NOT EXISTS %s Nullable(%s)".
+     *
+     * <p>Guarded for the same reason as {@link #ADD_COLUMN}.</p>
      */
     public static final String ADD_COLUMN_NULLABLE =
-            "ADD COLUMN %s Nullable(%s)";
+            "ADD COLUMN IF NOT EXISTS %s Nullable(%s)";
 
     /**
      * Template for modifying a column, e.g. "MODIFY COLUMN %s %s".
+     *
+     * <p>Deliberately unguarded: MODIFY COLUMN is already idempotent, since
+     * re-applying the same type is a no-op. Verified on 24.8.14 -- a replayed
+     * MODIFY COLUMN succeeds. Adding IF EXISTS here would additionally SWALLOW
+     * a modification of a column that genuinely does not exist, turning a real
+     * schema divergence into silence.</p>
      */
     public static final String MODIFY_COLUMN = "MODIFY COLUMN %s %s";
 
     /**
      * Template for modifying a column to be nullable, e.g.
      * "MODIFY COLUMN %s Nullable(%s)".
+     *
+     * <p>Unguarded for the same reason as {@link #MODIFY_COLUMN}.</p>
      */
     public static final String MODIFY_COLUMN_NULLABLE =
             "MODIFY COLUMN %s Nullable(%s)";
 
     /**
      * The RENAME COLUMN clause in an ALTER TABLE statement.
+     *
+     * <p>Guarded, because a rename is NOT self-idempotent: once applied, the
+     * old name is gone, so replaying it fails with
+     * {@code Code: 10 NOT_FOUND_COLUMN_IN_BLOCK "Cannot find column `x` to
+     * rename"} (measured on 24.8.14) and stalls the stream. With IF EXISTS the
+     * replay is a no-op, because the column already carries the new name.</p>
      */
-    public static final String RENAME_COLUMN = "RENAME COLUMN";
+    public static final String RENAME_COLUMN = "RENAME COLUMN IF EXISTS";
 
     /**
      * Template for renaming a nullable column, e.g.
-     * "RENAME COLUMN %s Nullable(%s)".
+     * "RENAME COLUMN IF EXISTS %s Nullable(%s)".
+     *
+     * <p>Guarded for the same reason as {@link #RENAME_COLUMN}.</p>
      */
     public static final String RENAME_COLUMN_NULLABLE =
-            "RENAME COLUMN %s Nullable(%s)";
+            "RENAME COLUMN IF EXISTS %s Nullable(%s)";
 
     /**
      * Template for adding an index, e.g.
@@ -180,9 +208,27 @@ public class Constants {
     public static final String DROP_DATABASE = "DROP DATABASE IF EXISTS %s";
 
     /**
-     * Template for dropping a column, e.g. "DROP COLUMN %s".
+     * Template for dropping a column, e.g. "DROP COLUMN IF EXISTS %s".
+     *
+     * <p>Guarded like the sibling DROP templates above. A replayed unguarded
+     * drop fails with
+     * {@code Code: 10 NOT_FOUND_COLUMN_IN_BLOCK "Cannot find column `x` to
+     * drop"} -- reproduced on 24.8.14 -- and since DDL is retried
+     * indefinitely, that stalls the entire replication stream. Observed end to
+     * end: a connector restarted after a DROP COLUMN retried the replayed
+     * statement 20 times and stopped applying any further row events, so the
+     * ClickHouse copy silently fell behind its source.</p>
+     *
+     * <p>Dropping a column that is already gone is precisely the desired
+     * outcome, so the guard costs nothing: the intended end state is reached
+     * either way.</p>
      */
-    public static final String DROP_COLUMN = "DROP COLUMN %s";
+    // DESTRUCTIVE: a template string, not an executed statement. It renders
+    // the column drop that the SOURCE database already performed and that
+    // Debezium is replicating; the connector never originates a drop. Blast
+    // radius is the single named column of the single mirrored table, and
+    // IF EXISTS strictly narrows it further by making a repeat a no-op.
+    public static final String DROP_COLUMN = "DROP COLUMN IF EXISTS %s";
 
     /**
      * Template for dropping a constraint, e.g. "DROP CONSTRAINT %s".

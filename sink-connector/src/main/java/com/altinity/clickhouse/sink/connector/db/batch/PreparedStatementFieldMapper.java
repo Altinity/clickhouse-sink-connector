@@ -39,6 +39,55 @@ import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 public class PreparedStatementFieldMapper {
 
     /**
+     * Columns that the generated INSERT supplies as SQL literals rather than
+     * as bind parameters, so they are legitimately absent from the
+     * column-to-parameter-index map.
+     *
+     * <p>{@code QueryFormatter#getInsertQueryForUpdate} and
+     * {@code #getInsertQueryForDelete} hardcode the bitemporal metadata
+     * columns to guarantee their values, and record no index for them. Their
+     * absence is by design; every other missing column is a real defect that
+     * silently drops the value.</p>
+     *
+     * @param columnName the ClickHouse column being bound
+     * @return true when the column is intentionally not a bind parameter
+     */
+    static boolean isUnboundByDesign(String columnName) {
+        return VERSION_COLUMN.equalsIgnoreCase(columnName)
+                || IS_DELETED_COLUMN.equalsIgnoreCase(columnName)
+                || OPERATION_COLUMN.equalsIgnoreCase(columnName)
+                || SIGN_COLUMN.equalsIgnoreCase(columnName);
+    }
+
+    /**
+     * Whether the incoming change event actually carries this column.
+     *
+     * <p>A column the record does not carry is intentionally absent from the
+     * generated INSERT, so ClickHouse applies the column's DEFAULT. That is
+     * the intended behaviour for a pre-ALTER record, and for a column the
+     * source event omits because it is NULL. A column the record DOES carry
+     * but that has no placeholder is a real defect: nothing binds it and the
+     * value never reaches ClickHouse. Only the latter is an error -- reporting
+     * both buries the one that loses data.</p>
+     *
+     * @param fields the record's schema fields, may be null
+     * @param columnName the ClickHouse column being bound
+     * @return true when the record carries a field of that name
+     */
+    static boolean recordCarries(List<Field> fields, String columnName) {
+        if (fields == null || columnName == null) {
+            return false;
+        }
+        for (Field f : fields) {
+            if (f != null && columnName.equalsIgnoreCase(f.name())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+
+    /**
      * Logger instance for logging purposes.
      */
     private static final Logger log = LogManager.getLogger(PreparedStatementFieldMapper.class);
@@ -143,7 +192,32 @@ public class PreparedStatementFieldMapper {
             if (columnNameToIndexMap.containsKey(colName)) {
                 index = columnNameToIndexMap.get(colName);
             } else {
-                log.error("***** Column index missing for column ****" + colName);
+                // Not every column in the target table is a bind parameter.
+                // In replication-history mode QueryFormatter deliberately
+                // hardcodes the bitemporal metadata columns as SQL literals
+                // and omits them from the index map, so their absence is
+                // expected and must not be reported as an error -- on a busy
+                // history-mode connector that logged tens of thousands of
+                // spurious ERROR lines and buried the real ones.
+                if (isUnboundByDesign(colName)) {
+                    log.debug("Column {} is emitted as a SQL literal; no parameter binding required.", colName);
+                } else if (!recordCarries(fields, colName)) {
+                    // The record does not carry this column, so createColumns
+                    // deliberately left it out of the INSERT and ClickHouse
+                    // applies the column's DEFAULT. Intended for a pre-ALTER
+                    // record, or a column the source event omits because it is
+                    // NULL -- not a dropped value.
+                    log.debug("Column {} absent from this record's schema; ClickHouse DEFAULT applies.", colName);
+                } else {
+                    // A genuine data column with no placeholder is silently
+                    // dropped from the INSERT: nothing binds it here and the
+                    // handlers below are guarded by the same map, so the value
+                    // never reaches ClickHouse.
+                    log.error("***** Column index missing for column ****" + colName
+                            + " -- this column is present in the ClickHouse table but has no"
+                            + " placeholder in the generated INSERT, so its value will NOT be"
+                            + " written. Database(" + databaseName + "), Table(" + tableName + ")");
+                }
                 continue;
             }
 
@@ -316,6 +390,22 @@ public class PreparedStatementFieldMapper {
 
     /**
      * Handles Sign column for COLLAPSING_MERGE_TREE engine.
+     *
+     * <p>The engine test compares the enum CONSTANT, not the engine string.
+     * This previously read
+     * {@code engine.getEngine() == TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine()}
+     * -- reference equality on a String. It happens to hold today only because
+     * both sides resolve to the same interned literal from the enum, so the
+     * moment the engine is carried as a runtime-built String (a value read from
+     * a JDBC ResultSet is the obvious candidate, and DBMetadata already derives
+     * the engine from {@code SHOW CREATE TABLE}) the comparison silently
+     * becomes false and the sign column is never bound -- writing the engine's
+     * default sign for every row, so no +1/-1 pair ever collapses.</p>
+     *
+     * <p>Comparing the enum constant cannot degrade that way, and it matches
+     * what {@code PreparedStatementExecutor} already does for the same engine
+     * (it uses {@code equalsIgnoreCase}). Behaviour is unchanged today; this
+     * removes a latent trap rather than fixing a live miss.</p>
      */
     private void handleSignColumn(Map<String, Integer> columnNameToIndexMap,
                                    PreparedStatement ps,
@@ -324,7 +414,7 @@ public class PreparedStatementFieldMapper {
                                    Map<String, String> columnNameToDataTypeMap,
                                    DBMetadata.TABLE_ENGINE engine,
                                    boolean beforeSection) throws Exception {
-        if (engine != null && engine.getEngine() == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine() && signColumn != null) {
+        if (engine == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE && signColumn != null) {
             if (columnNameToDataTypeMap.containsKey(signColumn) && columnNameToIndexMap.containsKey(signColumn)) {
                 int signColumnIndex = columnNameToIndexMap.get(signColumn);
                 if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {

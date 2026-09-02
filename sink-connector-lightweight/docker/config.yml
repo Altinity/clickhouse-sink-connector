@@ -56,7 +56,26 @@ snapshot.mode: "initial"
 # Snapshot.locking.mode Required for Debezium 2.7.0 and later. The snapshot.locking.mode configuration property specifies the mode that the connector uses to lock tables during snapshotting.
 #snapshot.locking.mode: "minimal"
 
-# offset.flush.interval.ms: The number of milliseconds to wait before flushing recent offsets to Kafka. This ensures that offsets are committed within the specified time interval.
+# offset.flush.interval.ms: how often the committed binlog position is flushed
+# to altinity_sink_connector.replica_source_info.
+#
+# THIS VALUE IS THE REPLAY WINDOW. markBatchFinished() only REQUESTS a flush;
+# Debezium honours it no more often than this interval, so the committed
+# position can lag the data already written to ClickHouse by up to this long.
+# A crash in that window re-delivers every event after the last flushed
+# position on restart -- delivery is AT-LEAST-ONCE, not exactly-once.
+#
+# Verified by hard-killing the connector mid-flight (ClickHouse 24.8.14):
+# the same batch of 3 records and the same ALTER were both re-executed after
+# restart. No data was corrupted, because the APPLY is idempotent -- a stable
+# row key plus a deterministic _version means the replayed copy collapses onto
+# the original rather than adding a row.
+#
+# Lowering this shrinks the replay window at the cost of more frequent offset
+# writes; raising it widens the window. Either way the sink must stay
+# replay-safe: do not introduce a write whose version is derived from
+# wall-clock time, or two deliveries of one event will produce two distinct
+# versions and stop collapsing.
 offset.flush.interval.ms: 5000
 
 # connector.class: The Java class for the connector. This must be set to io.debezium.connector.mysql.MySqlConnector.
@@ -117,7 +136,24 @@ schema.history.internal.jdbc.table.name: "altinity_sink_connector.replicate_sche
 # enable.snapshot.ddl: If set to true, the connector will parse the DDL statements from the initial load
 enable.snapshot.ddl: "true"
 
-# persist.raw.bytes: If set to true, the connector will persist raw bytes as received in a String column.
+# persist.raw.bytes: how BLOB/BINARY/VARBINARY/BIT values are written. Both
+# modes target a String column; they differ in what that column contains.
+#
+#   false (default) -- the bytes are HEX-ENCODED and the hex TEXT is stored.
+#                      MySQL x'0102030405' becomes the 10-character string
+#                      "0102030405", so hex(col) in ClickHouse returns
+#                      30313032303330343035 (the hex OF THAT TEXT), not
+#                      0102030405. A byte-for-byte comparison against the
+#                      source therefore does not match, and the column takes
+#                      twice the space. The value is recoverable with
+#                      unhex(col).
+#   true            -- the raw bytes are stored unchanged, so the column is
+#                      byte-identical to MySQL and hex(col) matches HEX(col)
+#                      on the source. Use this when binary values are compared
+#                      against MySQL, e.g. by the db_compare checksum jobs.
+#
+# The default stays false for backward compatibility: flipping it changes the
+# stored representation, so existing tables would need to be rewritten.
 persist.raw.bytes: "false"
 
 # auto.create.tables: If set to true, the connector will create tables in the target based on the schema received in the incoming message.
