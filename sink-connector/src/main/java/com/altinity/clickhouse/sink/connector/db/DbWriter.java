@@ -359,12 +359,19 @@ public class DbWriter extends BaseDbWriter {
      * Retrieves the offset storage database name from the connector
      * configuration, if it exists.
      *
-     * @return The offset storage database name, or null if none is found.
+     * <p>The property is a qualified table name, {@code database.table} --
+     * exactly two parts. Every sample config in this repository ships
+     * {@code altinity_sink_connector.replica_source_info}, and
+     * {@link DebeziumJdbcStorageOperations} parses the same value with the
+     * same two-part shape.</p>
+     *
+     * @return the offset storage database name, or {@code null} when the
+     *         property is unset or is not a qualified {@code database.table}.
      */
     public String getOffsetStorageDatabaseName() {
-        String offsetSchemaHistoryTable = null;
+        String offsetStorageTable = null;
         try {
-            offsetSchemaHistoryTable = config.getString(
+            offsetStorageTable = config.getString(
                     OFFSET_STORAGE_PREFIX
                             + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name()
             );
@@ -372,23 +379,46 @@ public class DbWriter extends BaseDbWriter {
             log.error("***** Error retrieving offset store configuration ****",
                     e);
         }
-        if (offsetSchemaHistoryTable == null
-                || offsetSchemaHistoryTable.isEmpty()) {
-            log.warn("Skipping creating offset schema history table as the "
-                    + "query was not provided in configuration");
-            return null;
-        }
-        String[] offsetStorageDatabaseNameArray = offsetSchemaHistoryTable.split(
-                "\\.");
-        if (offsetStorageDatabaseNameArray.length <= 2) {
-            log.warn("Skipping creating offset schema history table as the "
-                    + "query was not provided in configuration");
-            return null;
-        }
-        String offsetStorageDatabaseName = offsetStorageDatabaseNameArray[0];
-        String offsetStorageTableName = offsetStorageDatabaseNameArray[1];
+        return databaseOfOffsetTable(offsetStorageTable);
+    }
 
-        return offsetStorageDatabaseName;
+    /**
+     * Extracts the database from a qualified offset table name.
+     *
+     * <p>Package-private and static so the parsing can be tested without
+     * standing up a ClickHouse connection -- {@link DbWriter}'s constructor
+     * opens one, so a test that builds a writer just to read a config string
+     * spends the full connection-retry budget first.</p>
+     *
+     * @param offsetStorageTable the configured {@code database.table} value.
+     * @return the database segment, or {@code null} when the value is unset
+     *         or carries no database.
+     */
+    static String databaseOfOffsetTable(String offsetStorageTable) {
+        String propName = OFFSET_STORAGE_PREFIX
+                + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name();
+        if (offsetStorageTable == null || offsetStorageTable.isEmpty()) {
+            log.warn("Skipping the offset storage database: '{}' is not set "
+                    + "in the configuration.", propName);
+            return null;
+        }
+        String[] parts = offsetStorageTable.split("\\.");
+        // Two parts, not three. A correctly configured
+        // 'altinity_sink_connector.replica_source_info' splits into exactly
+        // two, so the previous '<= 2' rejected every valid value and this
+        // method always returned null -- the offset storage database was
+        // never created from here, and the operator was told the "query was
+        // not provided" when it had been. Reported as #1379, where the
+        // resulting WARN sent the reporter looking for a schema-history
+        // misconfiguration that does not exist on the PostgreSQL path.
+        if (parts.length < 2) {
+            log.warn("Skipping the offset storage database: '{}' is '{}', "
+                            + "which is not a qualified database.table name.",
+                    propName, offsetStorageTable);
+            return null;
+        }
+
+        return parts[0];
     }
 
     /**
