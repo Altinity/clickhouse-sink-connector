@@ -205,6 +205,17 @@ public class DataTypeConverter {
         if (dataType.jdbcType() == Types.REAL) {
             return ClickHouseDataType.Float32.toString();
         }
+        // Types.FLOAT must be answered here too, not left to the shared map.
+        // MySQL FLOAT is a 4-byte value, but Debezium widens it to a FLOAT64
+        // Kafka schema, and the shared map answers FLOAT64 -> Float64 because
+        // that is the only correct answer for the DOUBLE it cannot tell apart.
+        // Falling through therefore created every FLOAT column as Float64.
+        // The resolved source JDBC type is available on this DDL path, so the
+        // 4-byte type is stated explicitly rather than inferred from a schema
+        // that has already lost the distinction.
+        if (dataType.jdbcType() == Types.FLOAT) {
+            return ClickHouseDataType.Float32.toString();
+        }
 
         // Map the schema to the corresponding ClickHouse data type
         ClickHouseDataType chDataType = ClickHouseDataTypeMapper.getClickHouseDataType(
