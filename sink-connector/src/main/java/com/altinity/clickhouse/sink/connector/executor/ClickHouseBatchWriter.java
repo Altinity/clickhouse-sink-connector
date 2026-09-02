@@ -185,7 +185,14 @@ public class ClickHouseBatchWriter {
      * <p>This method groups records by topic, processes each group, and
      * acknowledges the records if processing is successful.
      *
+     * <p>A batch that cannot be written raises
+     * {@link BatchPersistenceException} rather than returning quietly, so the
+     * Debezium engine stops instead of committing an offset past records that
+     * never reached ClickHouse.
+     *
      * @param records a list of ClickHouseStruct records to persist
+     * @throws BatchPersistenceException if any topic in the batch could not be
+     *         persisted
      */
     public void persistRecords(List<ClickHouseStruct> records) {
         log.info("****** Thread: " +
@@ -222,9 +229,24 @@ public class ClickHouseBatchWriter {
                 result = processRecordsByTopic(entry.getKey(),
                         entry.getValue());
                 if (result == false) {
-                    log.error("Error processing records for topic: " +
-                            entry.getKey());
-                    break;
+                    // Do NOT break and fall out of this method normally. A
+                    // normal return tells the caller the batch was handled:
+                    // the acknowledgement block below is skipped, so this
+                    // batch is never committed, but the engine goes straight
+                    // on to the NEXT batch and commits ITS offsets -- which
+                    // are higher. The unwritten records are then behind the
+                    // committed offset and are never replayed. That is the
+                    // silent loss in issue #1285.
+                    throw new BatchPersistenceException(String.format(
+                            "Failed to persist %d record(s) for topic %s to "
+                            + "ClickHouse. The most common cause is that the "
+                            + "target table does not exist and "
+                            + "auto.create.tables is disabled (see the "
+                            + "TABLE METADATA not retrieved errors above). "
+                            + "Failing the batch so its offset is not "
+                            + "committed; the records are replayed from the "
+                            + "last committed offset once the table exists.",
+                            entry.getValue().size(), entry.getKey()));
                 }
             }
             // acknowledge the records.
@@ -248,7 +270,73 @@ public class ClickHouseBatchWriter {
                 });
             }
         } catch (Exception e) {
-            log.error("Error persisting records to ClickHouse" + e);
+            if (isInterrupt(e)) {
+                // The task is being shut down. Nothing was acknowledged, so
+                // this batch is replayed from the last committed offset on the
+                // next start; treating a shutdown as a persistence failure
+                // would turn a clean stop into a restart loop.
+                Thread.currentThread().interrupt();
+                log.warn("Interrupted while persisting records to ClickHouse. "
+                        + "The batch was not acknowledged and will be replayed "
+                        + "from the last committed offset.", e);
+                return;
+            }
+            // Anything else means the batch did not reach ClickHouse.
+            // Swallowing it here has exactly the same effect as the break
+            // above: the batch is dropped, the engine moves on, and a later
+            // batch commits an offset past these records. Unlike
+            // ClickHouseBatchRunnable -- which keeps currentBatch non-null and
+            // re-polls the SAME batch, so a failure there is retried -- this
+            // writer is called once per batch and has no retry loop. The only
+            // way for it to avoid losing data is to fail loudly.
+            log.error("Error persisting records to ClickHouse", e);
+            throw e instanceof BatchPersistenceException
+                    ? (BatchPersistenceException) e
+                    : new BatchPersistenceException(
+                            "Failed to persist a batch of records to ClickHouse", e);
+        }
+    }
+
+    /**
+     * Whether this failure is an interrupt, i.e. the task is shutting down
+     * rather than failing to write.
+     *
+     * @param e the exception to inspect
+     * @return true when an InterruptedException appears in the cause chain
+     */
+    private static boolean isInterrupt(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof InterruptedException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return Thread.currentThread().isInterrupted();
+    }
+
+    /**
+     * Signals that a batch could not be written to ClickHouse.
+     *
+     * <p>Thrown so the failure reaches the Debezium engine instead of being
+     * logged and forgotten. The engine stops and restarts from the last
+     * committed offset, which replays the records this batch failed to write.
+     * The alternative -- returning normally -- leaves those records behind an
+     * offset that a later batch commits, and they are lost for good.
+     *
+     * <p>See issue #1285.
+     */
+    public static class BatchPersistenceException extends RuntimeException {
+
+        private static final long serialVersionUID = 1L;
+
+        public BatchPersistenceException(String message) {
+            super(message);
+        }
+
+        public BatchPersistenceException(String message, Throwable cause) {
+            super(message, cause);
         }
     }
 

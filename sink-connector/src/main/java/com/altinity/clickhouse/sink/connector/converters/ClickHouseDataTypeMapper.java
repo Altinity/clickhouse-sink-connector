@@ -105,9 +105,16 @@ public class ClickHouseDataTypeMapper {
         dataTypesMap.put(
                 new MutablePair<>(Schema.FLOAT32_SCHEMA.type(), null),
                 ClickHouseDataType.Float32);
+        // FLOAT64 (MySQL DOUBLE) must be Float64, not Float32. This map
+        // types the columns of auto-created tables, so mapping it to
+        // Float32 truncated every replicated DOUBLE from ~15 significant
+        // decimal digits to ~7 at CREATE TABLE time -- silently, with row
+        // counts still matching. Unlike REAL (see DataTypeConverter), the
+        // value arrives from Debezium at full double width, so the
+        // precision is genuinely there to keep.
         dataTypesMap.put(
                 new MutablePair<>(Schema.FLOAT64_SCHEMA.type(), null),
-                ClickHouseDataType.Float32);
+                ClickHouseDataType.Float64);
 
         // String
         dataTypesMap.put(
@@ -320,7 +327,16 @@ public class ClickHouseDataTypeMapper {
                 // Debezium schema may lag after ALTER (e.g. INT32) while CH column is UInt64
                 ps.setObject(index, value);
             } else {
-                ps.setInt(index, (Integer) value);
+                // INT8 and INT32 share this branch, but an INT8 schema
+                // delivers a Byte, which is not an Integer -- the cast that
+                // used to be here threw ClassCastException and failed the
+                // whole batch for any table with a TINYINT column. The
+                // isWiderIntegerTarget hatch above does not cover it: an INT8
+                // column maps to ClickHouse Int8/UInt8, not Int32/Int64.
+                // Read the value as a Number so the boxed type is irrelevant;
+                // intValue() on an Integer is the identity, so the INT32 case
+                // is unchanged. See issue #385.
+                ps.setInt(index, ((Number) value).intValue());
             }
         } else if (isFieldTypeFloat) {
             if (value instanceof Float) {
@@ -525,8 +541,14 @@ public class ClickHouseDataTypeMapper {
         } else if (type == Schema.Type.ARRAY) {
             ClickHouseDataType dt = getClickHouseDataType(
                     Schema.Type.valueOf(schemaName), null);
+            // Kafka Connect delivers an ARRAY field as a java.util.List, and
+            // not necessarily an ArrayList: an empty array arrives as
+            // Collections.emptyList(), and immutable/Arrays.asList forms are
+            // equally legal. Bind through Collection so every implementation
+            // works; toArray() produces the identical Object[] an ArrayList
+            // did. See issue #749.
             ps.setArray(index, ps.getConnection().createArrayOf(
-                    dt.name(), ((ArrayList) value).toArray()));
+                    dt.name(), ((Collection<?>) value).toArray()));
         } else {
             result = false;
         }

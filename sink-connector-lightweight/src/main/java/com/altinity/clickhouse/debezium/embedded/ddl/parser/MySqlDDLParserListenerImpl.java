@@ -359,9 +359,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // reaches this branch at all -- it arrives here as an ordinary keyed
         // table and my_row_id becomes its sorting key. Verified on 8.0.36.
         //
-        // KeylessTablePreflight enables that setting at startup and REFUSES to
-        // replicate a source that still holds a genuinely keyless table, so
-        // this branch is reached only when that check was explicitly skipped.
+        // KeylessTablePreflight reports any genuinely keyless table at startup
+        // -- by name, with the ALTER that fixes it -- but does not block, so
+        // this branch is reached whenever such a table is replicated anyway.
         //
         // Deriving an identity downstream instead was tried and does not work.
         // Both attempts are recorded here because both look reasonable:

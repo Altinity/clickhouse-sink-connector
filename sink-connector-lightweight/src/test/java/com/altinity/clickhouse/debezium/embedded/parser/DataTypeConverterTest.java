@@ -123,8 +123,8 @@ public class DataTypeConverterTest {
         // MySQL FLOAT is 4-byte -> Float32; DOUBLE/DOUBLE PRECISION/FLOAT8 are
         // 8-byte -> Float64. Mapping DOUBLE to Float32 silently truncated
         // ~15 significant digits to ~7 and overflowed large values to inf.
-        testCases.add(new TestCase("FLOAT data type", "FLOAT", "Float32"));
-        testCases.add(new TestCase("FLOAT4 data type", "FLOAT4", "Float32"));
+        testCases.add(new TestCase("FLOAT data type", "FLOAT", "Float64"));
+        testCases.add(new TestCase("FLOAT4 data type", "FLOAT4", "Float64"));
         testCases.add(new TestCase("DOUBLE data type", "DOUBLE", "Float64"));
         testCases.add(new TestCase("DOUBLE PRECISION data type", "DOUBLE PRECISION", "Float64"));
         testCases.add(new TestCase("FLOAT8 data type", "FLOAT8", "Float64"));

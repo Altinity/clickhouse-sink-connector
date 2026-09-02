@@ -818,6 +818,29 @@ public class ClickHouseStruct {
      * Calculates and sets the version based on gtid, sequenceNumber, or lsn.
      * Uses SnowFlakeId algorithm if useSnowflakeId is true and gtid is available.
      *
+     * <p>When none of those three ordering keys is present, the version is derived
+     * from the source commit timestamp combined with the Kafka offset (issue #1213).
+     * A MySQL source with GTID disabled supplies no gtid, and the Kafka Connect path
+     * never assigns a sequence number (only the lightweight
+     * {@code DebeziumChangeEventCapture} does), so before this fallback existed the
+     * method returned with {@code version} still at {@link #UNINITIALIZED_VALUE}.
+     * That {@code -1} was then bound with {@code setLong} into the {@code UInt64}
+     * {@code _version} column and stored as 18446744073709551615 -- the maximum
+     * UInt64, a version no later row can ever supersede, so every subsequent UPDATE
+     * and DELETE for that key was silently discarded on ReplacingMergeTree merge.</p>
+     *
+     * <p>The fallback deliberately reuses the connector's existing SnowFlakeId
+     * formula, substituting the Kafka offset for the absent GTID: both are
+     * monotonically increasing per source, so the resulting versions order by commit
+     * time first and by offset within the same millisecond, exactly as the GTID form
+     * does. It is applied regardless of {@code useSnowflakeId}, because with no GTID
+     * there is no raw transaction id for the non-snowflake branch to use, and any
+     * derived version is strictly better than the corrupt sentinel.</p>
+     *
+     * <p>The version is left at the sentinel only when even the source timestamp is
+     * missing, i.e. when nothing at all can be derived. The bind sites reject such a
+     * record rather than write it.</p>
+     *
      * @param useSnowflakeId Whether to use SnowFlakeId algorithm for version generation
      */
     public void calculateVersion(boolean useSnowflakeId) {
@@ -831,6 +854,10 @@ public class ClickHouseStruct {
             this.version = this.sequenceNumber;
         } else if (this.lsn != UNINITIALIZED_VALUE) {
             this.version = this.lsn;
+        } else if (this.ts_ms > 0) {
+            // No ordering key from the source (e.g. MySQL with GTID disabled).
+            // Fall back to the source commit timestamp plus the Kafka offset.
+            this.version = SnowFlakeId.generate(this.ts_ms, this.kafkaOffset, false);
         }
     }
 }

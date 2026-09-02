@@ -34,7 +34,8 @@ database.connectionTimeZone: "America/Chicago"
 # The shared employees fixture (sql/data_types.sql) deliberately declares
 # keyless tables -- ship_class and add_test have no PRIMARY KEY and no UNIQUE
 # key -- because the DDL-parser suites exercise ALTER/RENAME/TRUNCATE against
-# them. The keyless preflight is right to refuse such a source in production,
-# but here the keyless-ness IS the fixture, so the check is opted out of.
+# them. The keyless check never blocks startup, so this is no longer required
+# to make the ITs run; it is kept only to stop every MySQL IT logging a
+# multi-line ERROR banner about a fixture whose keyless-ness is the point.
 # KeylessTablePreflightTest covers the check itself directly.
 keyless.table.check.skip: "true"

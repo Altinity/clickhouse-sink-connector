@@ -351,6 +351,7 @@ public class PreparedStatementFieldMapper {
                 record.calculateVersion(config.getBoolean(
                         ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString()));
             }
+            rejectUnderivableVersion(record);
             long tombstoneVersion = record.getVersion() > 0 ? record.getVersion() - 1 : record.getVersion();
             ps.setLong(columnNameToIndexMap.get(this.versionColumn), tombstoneVersion);
         }
@@ -480,6 +481,37 @@ public class PreparedStatementFieldMapper {
     }
 
     /**
+     * Refuses to bind a version that could not be derived (issue #1213).
+     *
+     * <p>{@code ClickHouseStruct.version} starts at the {@code -1} uninitialized
+     * sentinel. Binding it with {@code setLong} into the {@code UInt64}
+     * {@code _version} column stores 18446744073709551615 -- the maximum UInt64.
+     * Under ReplacingMergeTree that row then wins every future deduplication
+     * permanently, so every later UPDATE and DELETE for the same key is silently
+     * discarded on merge: unbounded, undetectable data loss. Failing the batch is
+     * strictly preferable, since the batch is retried or surfaced to the operator
+     * whereas the corrupt row is not recoverable once merged.</p>
+     *
+     * <p>After {@code calculateVersion()} this is only reachable when the record
+     * carries no ordering key AND no source commit timestamp, which indicates a
+     * malformed or unsupported change event rather than a normal GTID-less source.</p>
+     *
+     * @param record The CDC record whose version is about to be bound.
+     */
+    private static void rejectUnderivableVersion(ClickHouseStruct record) {
+        if (record.getVersion() == -1) {
+            throw new IllegalStateException(
+                    "Cannot derive a _version for record from topic '" + record.getTopic()
+                            + "' at kafka offset " + record.getKafkaOffset()
+                            + ": no GTID, sequence number, LSN or source timestamp is present. "
+                            + "Refusing to write the uninitialized sentinel, which is stored as "
+                            + "UInt64 18446744073709551615 and would win every ReplacingMergeTree "
+                            + "deduplication for this key permanently, silently discarding all "
+                            + "later updates and deletes.");
+        }
+    }
+
+    /**
      * Handles Version column for REPLACING_MERGE_TREE engines.
      * Uses the version already calculated and stored in the ClickHouseStruct.
      */
@@ -500,6 +532,7 @@ public class PreparedStatementFieldMapper {
                         boolean useSnowflakeId = config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString());
                         record.calculateVersion(useSnowflakeId);
                     }
+                    rejectUnderivableVersion(record);
                     ps.setLong(columnNameToIndexMap.get(versionColumn), record.getVersion());
                 }
             }
