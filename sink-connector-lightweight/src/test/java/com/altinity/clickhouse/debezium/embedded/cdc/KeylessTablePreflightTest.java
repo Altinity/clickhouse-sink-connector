@@ -12,13 +12,13 @@ import java.util.List;
 import java.util.Properties;
 
 /**
- * The version gate and the refusal messages.
+ * The version gate and the warning messages.
  *
  * <p>MySQL 8.0.30 is the boundary that matters: below it the generated
  * invisible primary key does not exist, so MySQL cannot supply an identity for
  * a keyless table and no correct replication of one is possible. The connector
- * refuses rather than producing a ClickHouse copy that silently disagrees with
- * its source.</p>
+ * replicates it anyway -- that is the operator's call -- but says so in terms
+ * nobody can miss, naming each table and the ALTER that fixes it.</p>
  */
 public class KeylessTablePreflightTest {
 
@@ -53,9 +53,9 @@ public class KeylessTablePreflightTest {
     }
 
     /**
-     * An unreadable version must not become a silent refusal. The
-     * pre-existing-table scan still runs, so a keyless table is still caught --
-     * with the accurate message rather than a wrong claim about the version.
+     * An unreadable version must not become a wrong claim about the version.
+     * The pre-existing-table scan still runs, so a keyless table is still
+     * reported -- with the accurate message.
      */
     @Test
     public void testUnparseableVersionDoesNotBlockOnVersionGrounds() {
@@ -64,11 +64,15 @@ public class KeylessTablePreflightTest {
     }
 
     /**
-     * The refusal has to be actionable: which tables, why, and the exact fix.
+     * The warning has to be actionable: which tables, why, and the exact fix.
+     *
+     * <p>It must also be unambiguous that replication CONTINUES. A message that
+     * merely describes the hazard, without saying the connector is proceeding,
+     * would leave an operator hunting for a startup failure that never happens.
      */
     @Test
-    public void testRefusalNamesTheTablesAndTheFix() {
-        String msg = KeylessTablePreflight.refusalPreExisting(
+    public void testWarningNamesTheTablesAndTheFix() {
+        String msg = KeylessTablePreflight.warningPreExisting(
                 Arrays.asList("app.events", "app.audit"));
 
         Assert.assertTrue("must name every offending table", msg.contains("app.events"));
@@ -81,17 +85,139 @@ public class KeylessTablePreflightTest {
                 msg.contains("NOT retroactive"));
         Assert.assertTrue("must state the override exists, so nobody has to guess",
                 msg.contains(KeylessTablePreflight.SKIP_PROPERTY));
+        Assert.assertTrue("must say replication continues, so nobody waits for a refusal "
+                        + "that never comes",
+                msg.toUpperCase().contains("REPLICATING ANYWAY"));
+        Assert.assertFalse("must not claim the connector is refusing",
+                msg.toUpperCase().contains("REFUSING TO REPLICATE"));
     }
 
     @Test
-    public void testTooOldRefusalExplainsTheVersion() {
-        String msg = KeylessTablePreflight.refusalTooOld("5.7.44", Arrays.asList("app.events"));
+    public void testTooOldWarningExplainsTheVersion() {
+        String msg = KeylessTablePreflight.warningTooOld("5.7.44", Arrays.asList("app.events"));
 
         Assert.assertTrue(msg.contains("5.7.44"));
         Assert.assertTrue("must state the version where GIPK arrives", msg.contains("8.0.30"));
         Assert.assertTrue(msg.contains("app.events"));
         Assert.assertTrue("must say how to turn GIPK on once upgraded",
                 msg.contains("sql_generate_invisible_primary_key"));
+        Assert.assertTrue("must say replication continues",
+                msg.toUpperCase().contains("REPLICATING ANYWAY"));
+        Assert.assertFalse("must not claim the connector is refusing",
+                msg.toUpperCase().contains("REFUSING TO REPLICATE"));
+    }
+
+    /**
+     * The contract this change exists to establish: whatever the check finds,
+     * it never prevents the connector from starting.
+     *
+     * <p>Guarded structurally rather than by wording, because the failure mode
+     * is a regression in behaviour, not in text: {@code check} declares no
+     * checked exception, so a future {@code throw} would compile silently and
+     * only surface as a dead pipeline. Every entry path is exercised -- the
+     * skip override, a non-MySQL source, an unreachable MySQL source, and a
+     * source that cannot be inspected -- and none may propagate.</p>
+     */
+    @Test
+    public void testCheckNeverThrowsWhateverTheSourceLooksLike() {
+        Properties skipped = new Properties();
+        skipped.setProperty(KeylessTablePreflight.SKIP_PROPERTY, "true");
+
+        Properties postgres = new Properties();
+        postgres.setProperty("connector.class",
+                "io.debezium.connector.postgresql.PostgresConnector");
+
+        Properties unreachable = new Properties();
+        unreachable.setProperty("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+        unreachable.setProperty("database.hostname", "nonexistent.invalid");
+        unreachable.setProperty("database.port", "3306");
+        unreachable.setProperty("database.user", "u");
+        unreachable.setProperty("database.password", "p");
+
+        Properties incomplete = new Properties();
+        incomplete.setProperty("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+
+        for (Properties props : Arrays.asList(skipped, postgres, unreachable, incomplete)) {
+            try {
+                KeylessTablePreflight.check(props);
+            } catch (Throwable t) {
+                Assert.fail("check() must never prevent startup, but threw " + t);
+            }
+        }
+    }
+
+    /**
+     * The blocking behaviour must be gone from the SOURCE, not merely
+     * unreachable in the paths a unit test can drive.
+     *
+     * <p>{@link #testCheckNeverThrowsWhateverTheSourceLooksLike} can only
+     * exercise the entry paths that need no live MySQL -- the skip override, a
+     * non-MySQL source, an unreachable host. The two sites that actually
+     * decided to refuse sit AFTER a successful connection and a completed
+     * table scan, so no unit test reaches them, and a reinstated {@code throw}
+     * there would pass every behavioural test in this class. Verified: with
+     * the refusal restored, only the structural check below failed.</p>
+     *
+     * <p>So the file is scanned directly, the same way
+     * {@link #testPreflightNeverSetsAGlobalOnTheSource} guards the read-only
+     * property: {@code check} must contain no {@code throw} at all, since the
+     * whole point of this class is that it reports and returns.</p>
+     */
+    @Test
+    public void testCheckContainsNoThrowStatement() throws Exception {
+        List<String> lines = Files.readAllLines(sourceFile());
+
+        int start = -1;
+        for (int i = 0; i < lines.size(); i++) {
+            if (lines.get(i).contains("public static void check(Properties props)")) {
+                start = i;
+                break;
+            }
+        }
+        Assert.assertTrue("cannot locate check() in the source -- this test must not pass "
+                + "vacuously", start >= 0);
+
+        // Walk to the end of the method by brace depth, starting from its
+        // opening brace, so the scan covers exactly check() and nothing after.
+        int depth = 0;
+        boolean entered = false;
+        for (int i = start; i < lines.size(); i++) {
+            String line = lines.get(i);
+            String code = line.trim();
+            Assert.assertFalse("check() must never prevent startup, but line " + (i + 1)
+                            + " throws: " + code,
+                    entered && code.startsWith("throw "));
+            for (char c : line.toCharArray()) {
+                if (c == '{') {
+                    depth++;
+                    entered = true;
+                } else if (c == '}') {
+                    depth--;
+                }
+            }
+            if (entered && depth == 0) {
+                return;
+            }
+        }
+        Assert.fail("never found the end of check() -- the brace walk did not terminate");
+    }
+
+    /**
+     * No refusal-era API may survive: a caller catching a now-deleted exception
+     * type, or a message builder still named {@code refusal*}, would mean the
+     * blocking behaviour is only half removed.
+     */
+    @Test
+    public void testNoRefusalApiRemains() {
+        for (Class<?> nested : KeylessTablePreflight.class.getDeclaredClasses()) {
+            Assert.assertFalse("the refusal exception type must be gone, found "
+                            + nested.getName(),
+                    Throwable.class.isAssignableFrom(nested));
+        }
+        for (java.lang.reflect.Method m : KeylessTablePreflight.class.getDeclaredMethods()) {
+            Assert.assertFalse("a refusal-era message builder remains: " + m.getName(),
+                    m.getName().startsWith("refusal"));
+        }
     }
 
     /**
@@ -111,11 +237,10 @@ public class KeylessTablePreflightTest {
 
     /**
      * An unreachable source must not stop a pipeline on the strength of a check
-     * that could not run. The refusal is for a source proven unsafe, not for
-     * one that could not be inspected.
+     * that could not run -- nor log a scary banner naming no table.
      */
     @Test
-    public void testUnreachableSourceDoesNotRefuse() {
+    public void testUnreachableSourceIsHandledQuietly() {
         Properties props = new Properties();
         props.setProperty("connector.class", "io.debezium.connector.mysql.MySqlConnector");
         props.setProperty("database.hostname", "nonexistent.invalid");
@@ -309,7 +434,7 @@ public class KeylessTablePreflightTest {
     /**
      * A malformed pattern must fail SAFE -- toward reporting, not hiding.
      *
-     * <p>This list can only remove tables from the refusal set, so treating an
+     * <p>This list can only remove tables from the reported set, so treating an
      * uncompilable pattern as matching would silently drop a genuinely keyless
      * table from the check. It is ignored instead, and the valid entry beside
      * it still applies.</p>
@@ -556,9 +681,10 @@ public class KeylessTablePreflightTest {
      *
      * <p>{@code sql/data_types.sql} deliberately declares keyless tables
      * ({@code ship_class}, {@code add_test}) that the DDL-parser suites
-     * exercise, so the preflight correctly refuses that source. Without the
-     * opt-out every MySQL IT in the module fails at startup -- 19 errors
-     * across 15 suites in the run that prompted this change.</p>
+     * exercise. The check no longer blocks startup, so the opt-out is no
+     * longer load-bearing for the ITs to pass; it is kept so those suites do
+     * not each emit a multi-line ERROR banner about a fixture whose
+     * keyless-ness is the point.</p>
      */
     @Test
     public void testItConfigOptsOutOfTheKeylessCheck() throws Exception {
@@ -578,7 +704,8 @@ public class KeylessTablePreflightTest {
         }
         Assert.assertTrue(
                 KeylessTablePreflight.SKIP_PROPERTY + " must be true in " + cfg + ": the shared "
-                        + "employees fixture declares keyless tables on purpose",
+                        + "employees fixture declares keyless tables on purpose, and the banner "
+                        + "would otherwise fire in every MySQL IT",
                 optedOut);
     }
 

@@ -35,6 +35,7 @@ import org.apache.logging.log4j.Logger;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -122,6 +123,14 @@ public class Metrics {
      * HTTP server used to expose Prometheus metrics.
      */
     private static HttpServer server;
+
+    /**
+     * Content type of the Prometheus text exposition format, as served on
+     * {@code /metrics}. Prometheus 3.x rejects a scrape response that does not
+     * declare one.
+     */
+    private static final String PROMETHEUS_CONTENT_TYPE =
+            "text/plain; version=0.0.4; charset=utf-8";
 
     /**
      * Flag indicating whether metrics collection is enabled.
@@ -250,9 +259,21 @@ public class Metrics {
             server = HttpServer.create(new InetSocketAddress(port), 0);
             server.createContext("/metrics", httpExchange -> {
                 String response = prometheusMeterRegistry.scrape();
-                httpExchange.sendResponseHeaders(200, response.getBytes().length);
+                // Encode once: the length declared in the response headers has
+                // to be the length of the bytes actually written. Calling
+                // getBytes() separately for each used the platform default
+                // charset twice and could disagree for non-ASCII metric labels,
+                // leaving the scraper short of the promised Content-Length.
+                byte[] body = response.getBytes(StandardCharsets.UTF_8);
+                // Prometheus 3.x fails a scrape whose response carries no
+                // Content-Type ("non-compliant scrape target sending blank
+                // Content-Type"). Must be set before sendResponseHeaders,
+                // which commits the headers. See issue #1096.
+                httpExchange.getResponseHeaders()
+                        .set("Content-Type", PROMETHEUS_CONTENT_TYPE);
+                httpExchange.sendResponseHeaders(200, body.length);
                 try (OutputStream os = httpExchange.getResponseBody()) {
-                    os.write(response.getBytes());
+                    os.write(body);
                 }
             });
 

@@ -92,6 +92,15 @@ def get_primary_key_columns(conn, table_schema, table_name):
     return res
 
 
+# Metadata columns managed by the sink connector itself. The un-exclusion rule in
+# get_table_checksum_query() exists only for these (e.g. the is_deleted/_is_deleted
+# pair): a user-supplied excluded column must never be silently re-added just
+# because an unrelated underscore-prefixed column happens to share its name.
+SINK_METADATA_COLUMNS = frozenset(
+    {"_sign", "_version", "is_deleted", "_is_deleted", "__is_deleted"}
+)
+
+
 def get_table_checksum_query(conn, table):
     excluded_columns = "','".join(args.exclude_columns)
     excluded_columns = [f'{column}' for column in excluded_columns.split(',')]
@@ -113,7 +122,9 @@ def get_table_checksum_query(conn, table):
     filtered_columns_metadata = []
     for row in columns_metadata:   
         prefixed_column = "_"+row[0]
-        if row[0] in excluded_columns and prefixed_column in columns_metadata_map:
+        if (row[0] in excluded_columns
+                and prefixed_column in columns_metadata_map
+                and row[0] in SINK_METADATA_COLUMNS):
             logging.info(f"Not excluding column {row[0]} as {prefixed_column} is also excluded")
         elif row[0] in excluded_columns:
             logging.info(f"Excluding column {row[0]}")

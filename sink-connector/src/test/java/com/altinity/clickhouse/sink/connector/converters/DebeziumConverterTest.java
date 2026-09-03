@@ -242,6 +242,22 @@ public class DebeziumConverterTest {
     }
 
     @Test
+    @DisplayName("Test ZonedTimestamp converter with PostgreSQL infinity values.")
+    public void testZonedTimestampConverterInfinity() {
+
+        // PostgreSQL timestamptz accepts the special values infinity and
+        // -infinity. Debezium delivers them verbatim as these literal strings
+        // (PostgresValueConverter#convertTimestampWithZone), so the converter has
+        // to map them onto the representable DateTime64 range instead of silently
+        // producing an empty string. See Altinity/clickhouse-sink-connector#1231.
+        String positiveInfinity = DebeziumConverter.ZonedTimestampConverter.convert("infinity", ZoneId.of("UTC"));
+        Assert.assertEquals("2299-12-31 23:59:59.000000", positiveInfinity);
+
+        String negativeInfinity = DebeziumConverter.ZonedTimestampConverter.convert("-infinity", ZoneId.of("UTC"));
+        Assert.assertEquals("1900-01-01 00:00:00.000000", negativeInfinity);
+    }
+
+    @Test
     public void testMicroTimeConverter() {
 
         Object timeInMicroSeconds = LocalTime.of(10, 1, 1, 1).toEpochSecond(LocalDate.now(), ZoneOffset.UTC);

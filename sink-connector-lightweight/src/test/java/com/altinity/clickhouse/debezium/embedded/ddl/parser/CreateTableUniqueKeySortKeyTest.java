@@ -132,9 +132,9 @@ public class CreateTableUniqueKeySortKeyTest {
         mySQLDDLParserService.parseSql(createQuery, "nokey", clickHouseQuery);
 
         String query = clickHouseQuery.toString().toLowerCase();
-        // No identity is invented from the data. Such a table is refused by
-        // KeylessTablePreflight; reaching here at all means the check was
-        // skipped, and an invented key would cost the table its schema.
+        // No identity is invented from the data. KeylessTablePreflight reports
+        // such a table loudly but lets it through, so this branch is live --
+        // and an invented key would cost the table its schema.
         Assert.assertFalse("no data column may be made the sorting key, was: " + clickHouseQuery,
                 query.contains("order by (a,v)"));
         Assert.assertFalse("a data column in the sorting key freezes the schema, was: "

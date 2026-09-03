@@ -55,8 +55,8 @@ import java.util.HashMap;
  * </ul>
  *
  * <p>So the parser invents nothing. {@link com.altinity.clickhouse.debezium.embedded.cdc.KeylessTablePreflight}
- * refuses such a source at startup, and a loud banner names the table and the
- * {@code ALTER TABLE} that fixes it.</p>
+ * reports such a table at startup -- a loud banner naming it and the
+ * {@code ALTER TABLE} that fixes it -- and replication continues.</p>
  */
 public class CreateTableNoKeySortKeyTest {
 

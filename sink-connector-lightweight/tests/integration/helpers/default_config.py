@@ -31,7 +31,7 @@ default_config = {
     `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
 )
 ENGINE = ReplacingMergeTree(_version)
-ORDER BY id
+ORDER BY offset_key
 SETTINGS index_granularity = 8198""",
     "offset.storage.jdbc.table.delete": "select * from %s",
     "schema.history.internal": "io.debezium.storage.jdbc.history.JdbcSchemaHistory",
