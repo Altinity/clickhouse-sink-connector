@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.db.batch;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
+import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
@@ -12,6 +13,7 @@ import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Field;
+import org.apache.kafka.connect.data.Struct;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -79,6 +81,32 @@ public class GroupInsertQueryWithBatchRecords {
             boolean enableSchemaEvolution = config.getBoolean(
                     ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION
                             .toString());
+
+            // GUARANTEE THE CACHE MATCHES THE SOURCE BEFORE USING IT.
+            //
+            // columnNameToDataTypeMap is a cached view of the ClickHouse table.
+            // It is refreshed when a DDL event is parsed and matched to this
+            // table, which covers the common path but is not a guarantee: the
+            // refresh depends on the DDL being recognised and its table name
+            // resolved, and any DDL that arrives on another connector instance,
+            // is applied out of band, or whose table name does not resolve
+            // leaves this map describing a table that no longer exists in that
+            // shape.
+            //
+            // The record itself is the cheapest available witness of the source
+            // metadata. If it carries a column the cached map does not know
+            // about, the cache is provably behind the source and must not be
+            // used to build an INSERT -- doing so drops that column's value
+            // silently, with row counts intact.
+            //
+            // Re-reading costs one metadata query and only happens on an actual
+            // mismatch, so the steady state is unaffected.
+            Map<String, String> verified = refreshIfRecordHasUnknownColumn(
+                    record, columnNameToDataTypeMap, tableName, databaseName,
+                    connection, config);
+            if (verified != null) {
+                columnNameToDataTypeMap = verified;
+            }
 
             if (CdcRecordState.CDC_RECORD_STATE_BEFORE ==
                     getCdcSectionBasedOnOperation(record.getCdcOperation())) {
@@ -234,6 +262,99 @@ public class GroupInsertQueryWithBatchRecords {
             queryToRecordsMap.put(mp, recordsList);
         }
         return true;
+    }
+
+    /**
+     * Re-reads the table's column map from ClickHouse when the incoming record
+     * carries a column the cached map does not contain.
+     *
+     * <p>The record's schema is a witness of the source table's shape at the
+     * moment the event was captured. A column present there but missing from
+     * the cached ClickHouse column map means the cache predates a schema change
+     * -- the DDL either has not been seen by this instance, was applied out of
+     * band, or was seen but not matched to this table. Whatever the reason, the
+     * cache is behind the source and building an INSERT from it drops that
+     * column's value with no error and no row-count change.</p>
+     *
+     * <p>Only connector-managed columns are excluded from the comparison; they
+     * are populated by the connector and never appear in the ClickHouse table
+     * under a source-record name.</p>
+     *
+     * <p>Returns {@code null} when the cache is already consistent (the common
+     * case, costing one set lookup per column) or when the re-read fails. A
+     * failed re-read is logged and the caller keeps the existing map: the
+     * bind-time check in {@code PreparedStatementFieldMapper} is the backstop
+     * and will fail the batch rather than write a dropped column, so a metadata
+     * outage degrades to a retry rather than to silent loss.</p>
+     *
+     * @param record           the CDC record whose schema is the witness.
+     * @param cached           the currently cached column-to-type map.
+     * @param tableName        the ClickHouse table name.
+     * @param databaseName     the ClickHouse database name.
+     * @param connection       the ClickHouse connection to re-read with.
+     * @param config           the connector configuration.
+     * @return a freshly read column map, or null to keep the cached one.
+     */
+    private Map<String, String> refreshIfRecordHasUnknownColumn(
+            ClickHouseStruct record, Map<String, String> cached,
+            String tableName, String databaseName, Connection connection,
+            ClickHouseSinkConnectorConfig config) {
+
+        if (cached == null || cached.isEmpty() || connection == null) {
+            return null;
+        }
+
+        Struct struct = record.getAfterStruct() != null
+                ? record.getAfterStruct() : record.getBeforeStruct();
+        if (struct == null || struct.schema() == null) {
+            return null;
+        }
+
+        Set<String> known = new HashSet<>();
+        for (String column : cached.keySet()) {
+            if (column != null) {
+                known.add(column.toLowerCase());
+            }
+        }
+
+        String unknown = null;
+        for (Field field : struct.schema().fields()) {
+            if (field == null || field.name() == null) {
+                continue;
+            }
+            if (!known.contains(field.name().toLowerCase())) {
+                unknown = field.name();
+                break;
+            }
+        }
+        if (unknown == null) {
+            return null;
+        }
+
+        log.warn("Cached schema for {}.{} does not contain column '{}' carried by the "
+                        + "incoming record; the cache is stale relative to the source. "
+                        + "Re-reading table metadata before building the INSERT.",
+                databaseName, tableName, unknown);
+        try {
+            Map<String, String> fresh = new DBMetadata(config)
+                    .getColumnsDataTypesForTable(tableName, connection, databaseName);
+            if (fresh != null && !fresh.isEmpty()) {
+                // Bump the shared version so every other cached writer for this
+                // table rebuilds too, rather than each one rediscovering the
+                // staleness independently on its own next batch.
+                CacheInvalidationManager.getInstance()
+                        .invalidateTable(databaseName + "." + tableName);
+                return fresh;
+            }
+            log.warn("Re-read of {}.{} returned no columns; keeping the cached map. The "
+                            + "bind-time check will fail the batch if a value would be dropped.",
+                    databaseName, tableName);
+        } catch (Exception e) {
+            log.warn("Could not re-read metadata for {}.{}; keeping the cached map. The "
+                            + "bind-time check will fail the batch if a value would be dropped.",
+                    databaseName, tableName, e);
+        }
+        return null;
     }
 
     /**

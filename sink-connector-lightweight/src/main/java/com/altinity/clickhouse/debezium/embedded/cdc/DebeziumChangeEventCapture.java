@@ -624,31 +624,47 @@ public class DebeziumChangeEventCapture {
     private void drainBeforeDDL() {
         long deadline = System.currentTimeMillis() + DDL_DRAIN_TIMEOUT_MS;
 
-        // Step 1: let the pool consume what is already queued.
+        // Step 1: no new batches may start. This MUST come first. Draining the
+        // queue while the pool is still free to pick work up is a race the
+        // drain cannot win: every batch it waits out may be replaced by another
+        // one, and on a busy table the queue never reaches empty. Pausing first
+        // makes the remaining work a fixed set.
+        this.executor.pause();
+
+        // Step 2: let the already-running batches consume what is queued.
         while (this.records != null && !this.records.isEmpty()) {
             if (System.currentTimeMillis() >= deadline) {
-                log.warn("DDL drain: {} record batch(es) still queued after {} ms; applying the DDL anyway. "
-                                + "Records buffered under the previous schema may be written against the new one.",
-                        this.records.size(), DDL_DRAIN_TIMEOUT_MS);
-                break;
+                // NOT survivable. Applying the ALTER now writes records that
+                // were read under the PREVIOUS schema against the NEW table --
+                // the rows insert successfully with wrong contents and matching
+                // row counts, which is the exact production failure. Aborting
+                // instead routes into the DDL retry path, which drains again
+                // from a consistent point.
+                throw new IllegalStateException(String.format(
+                        "DDL drain: %d record batch(es) still queued after %d ms. Applying "
+                                + "the DDL now would write records captured under the previous "
+                                + "schema against the altered table, silently corrupting them. "
+                                + "Aborting this DDL attempt so it can be retried.",
+                        this.records.size(), DDL_DRAIN_TIMEOUT_MS));
             }
             try {
                 Thread.sleep(50);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
-                break;
+                throw new IllegalStateException(
+                        "DDL drain interrupted before the writer was quiescent; aborting "
+                                + "this DDL attempt rather than applying it over in-flight writes.");
             }
         }
 
-        // Step 2: no new batches may start.
-        this.executor.pause();
-
-        // Step 3: wait out the batches already running.
+        // Step 3: wait out the batches already inside a task body.
         long remaining = Math.max(0, deadline - System.currentTimeMillis());
         if (!this.executor.awaitQuiescent(remaining)) {
-            log.warn("DDL drain: writer did not become quiescent within {} ms; applying the DDL anyway. "
-                            + "Records buffered under the previous schema may be written against the new one.",
-                    DDL_DRAIN_TIMEOUT_MS);
+            throw new IllegalStateException(String.format(
+                    "DDL drain: writer did not become quiescent within %d ms. Applying the "
+                            + "DDL now would interleave it with in-flight writes captured under "
+                            + "the previous schema. Aborting this DDL attempt so it can be "
+                            + "retried.", DDL_DRAIN_TIMEOUT_MS));
         }
     }
 
@@ -724,12 +740,39 @@ public class DebeziumChangeEventCapture {
                             invalidationDatabaseName = databaseOverrideMap.get(invalidationDatabaseName);
                         }
                     }
-                    for (String tableName : getTableNamesFromDDL(sr, DDL)) {
-                        CacheInvalidationManager.getInstance()
-                                .invalidateTable(invalidationDatabaseName + "." + tableName);
+                    List<String> affected = getTableNamesFromDDL(sr, DDL);
+                    if (affected == null || affected.isEmpty()) {
+                        // The DDL changed something, but which table could not be
+                        // resolved from the event or the statement text. Leaving
+                        // every cache in place would let writers keep binding
+                        // against a schema this DDL just changed -- exactly the
+                        // staleness that drops column values silently.
+                        //
+                        // Invalidate EVERYTHING instead. The cost is one metadata
+                        // re-read per active table on its next batch; the cost of
+                        // guessing wrong is undetectable data corruption.
+                        log.warn("Could not resolve any table name for DDL [{}]; invalidating "
+                                + "every cached schema rather than risk writing against a "
+                                + "stale one.", DDL);
+                        CacheInvalidationManager.getInstance().invalidateAll();
+                    } else {
+                        for (String tableName : affected) {
+                            CacheInvalidationManager.getInstance()
+                                    .invalidateTable(invalidationDatabaseName + "." + tableName);
+                        }
                     }
                 } catch (Exception e) {
-                    log.warn("Error invalidating cache for DDL: " + DDL, e);
+                    // Same reasoning: a failure to work out WHAT to invalidate must
+                    // never leave stale caches in service after a DDL.
+                    log.warn("Error invalidating cache for DDL [{}]; invalidating every "
+                            + "cached schema as a fail-safe.", DDL, e);
+                    try {
+                        CacheInvalidationManager.getInstance().invalidateAll();
+                    } catch (Exception inner) {
+                        log.error("Fail-safe cache invalidation also failed after DDL [{}]. "
+                                + "Cached schemas may be stale; the bind-time check will fail "
+                                + "affected batches rather than write dropped columns.", DDL, inner);
+                    }
                 }
 
                 try {
@@ -1383,15 +1426,26 @@ public class DebeziumChangeEventCapture {
                     // count-based checksums report the table clean.
                     //
                     // Drain first, then apply the DDL.
-                    drainBeforeDDL();
+                    //
+                    // The resume MUST be in a finally: drainBeforeDDL() and
+                    // performDDLOperation() can both throw (a drain that does
+                    // not reach quiescence now aborts rather than applying the
+                    // DDL over in-flight writes), and on that path the pool
+                    // would stay paused forever -- replication stops dead with
+                    // no error after the first one. Resuming unconditionally
+                    // keeps a failed DDL a retryable event instead of a stall.
+                    try {
+                        drainBeforeDDL();
 
-                    Map<String, Object> sourceObjStruct = new ClickHouseConverter().convertValue(sr);
+                        Map<String, Object> sourceObjStruct = new ClickHouseConverter().convertValue(sr);
 
-                    ClickHouseStruct ddlStruct = new ClickHouseStruct();
-                    ddlStruct.setAdditionalMetaData(sourceObjStruct);
-                    ddlStruct.setSequenceNumber(sequenceNumber);
-                    performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
-                    this.executor.resume();
+                        ClickHouseStruct ddlStruct = new ClickHouseStruct();
+                        ddlStruct.setAdditionalMetaData(sourceObjStruct);
+                        ddlStruct.setSequenceNumber(sequenceNumber);
+                        performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
+                    } finally {
+                        this.executor.resume();
+                    }
                 }
             } else {
                 chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
