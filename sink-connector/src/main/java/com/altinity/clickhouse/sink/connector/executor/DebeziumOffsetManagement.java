@@ -92,6 +92,78 @@ public class DebeziumOffsetManagement {
     }
 
     /**
+     * Reports whether any batch read from the source is still unwritten.
+     * <p>
+     * A batch sits in {@link #inFlightBatches} from the moment a consumer
+     * picks it up until its rows are in ClickHouse and its offsets are
+     * acknowledged, and in {@link #completedBatches} while it waits for an
+     * older overlapping batch to finish. Either map being non-empty means
+     * there are records the connector has read but not yet persisted.
+     * </p>
+     * <p>
+     * The caller is the control-record offset commit in
+     * {@code DebeziumChangeEventCapture}: a heartbeat carries the connector's
+     * CURRENT position, so committing it while these maps are non-empty would
+     * move the committed offset past rows that are not in ClickHouse yet and
+     * lose them on a crash. This predicate is what makes that commit safe.
+     * </p>
+     *
+     * @return true if at least one batch is still awaiting persistence.
+     */
+    public static boolean hasUnwrittenBatches() {
+        return outstandingBatches.get() > 0
+                || !inFlightBatches.isEmpty()
+                || !completedBatches.isEmpty();
+    }
+
+    /**
+     * Batches handed to the asynchronous consumers that have not yet been
+     * acknowledged.
+     * <p>
+     * The two maps above cannot answer this on their own. A consumer
+     * {@code poll()}s a batch off the handoff queue and only registers it in
+     * {@link #inFlightBatches} once it reaches
+     * {@code ClickHouseBatchRunnable#processBatch}; in between -- which
+     * includes the replication-history write -- the batch is in neither
+     * collection and the pipeline would falsely read as quiescent. A
+     * control-record offset committed inside that window would advance past
+     * rows that are not in ClickHouse yet and lose them on a crash.
+     * </p>
+     * <p>
+     * This counter closes that window because it is incremented by the
+     * PRODUCER at handoff, before the batch is visible to any consumer, and
+     * decremented only after the batch has been acknowledged. The producer is
+     * also the thread that reads it, so its own increments happen-before its
+     * own read and no batch it has handed off can be missed. A batch that
+     * fails and is retried is never decremented until it finally succeeds,
+     * so the predicate stays conservative -- it can only ever withhold a
+     * commit, never permit an unsafe one.
+     * </p>
+     */
+    private static final java.util.concurrent.atomic.AtomicLong outstandingBatches =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /**
+     * Records that a batch has been handed to the asynchronous consumers.
+     * Call on the producer thread immediately before the batch becomes
+     * visible to a consumer.
+     */
+    public static void batchHandedOff() {
+        outstandingBatches.incrementAndGet();
+    }
+
+    /**
+     * Releases a registration made by {@link #batchHandedOff()} for a batch
+     * that never reached a consumer, so no acknowledgement will ever arrive
+     * for it. Without this the counter would stay above zero forever and no
+     * control-record offset could be committed again for the life of the
+     * process.
+     */
+    public static void batchHandoffFailed() {
+        outstandingBatches.updateAndGet(v -> v > 0 ? v - 1 : 0);
+    }
+
+    /**
      * Calculates the minimum and maximum Debezium timestamps from the given batch.
      *
      * @param batch A list of ClickHouseStruct records.
@@ -292,6 +364,19 @@ public class DebeziumOffsetManagement {
         // Remove the batch from the inFlightBatches
         Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
         inFlightBatches.remove(pair);
+
+        // The batch is acknowledged, so it no longer blocks a control-record
+        // offset commit. Decremented only here, after markProcessed, so the
+        // counter can never drop while rows are still unwritten.
+        //
+        // Floored at zero because a batch that was parked in completedBatches
+        // and then retried can reach this method more than once; letting the
+        // counter go negative would make the pipeline read as quiescent while
+        // work is outstanding, which is the one direction that is unsafe. The
+        // map checks in hasUnwrittenBatches remain as the second line of
+        // defence for exactly that case -- a retried batch is back in
+        // inFlightBatches, so it is still seen.
+        outstandingBatches.updateAndGet(v -> v > 0 ? v - 1 : 0);
     }
 
     /**

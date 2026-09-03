@@ -209,14 +209,31 @@ public class PreparedStatementFieldMapper {
                     // NULL -- not a dropped value.
                     log.debug("Column {} absent from this record's schema; ClickHouse DEFAULT applies.", colName);
                 } else {
-                    // A genuine data column with no placeholder is silently
-                    // dropped from the INSERT: nothing binds it here and the
-                    // handlers below are guarded by the same map, so the value
-                    // never reaches ClickHouse.
-                    log.error("***** Column index missing for column ****" + colName
-                            + " -- this column is present in the ClickHouse table but has no"
-                            + " placeholder in the generated INSERT, so its value will NOT be"
-                            + " written. Database(" + databaseName + "), Table(" + tableName + ")");
+                    // A genuine data column with no placeholder is dropped from
+                    // the INSERT: nothing binds it here and the handlers below
+                    // are guarded by the same map, so the value never reaches
+                    // ClickHouse.
+                    //
+                    // This is UNCONDITIONALLY a correctness failure and must
+                    // never be survivable. Logging and continuing is what let
+                    // 65,577 of these writes land in production over two days
+                    // with full row counts and no failed batch -- the daily
+                    // value-level checksum was the only thing that noticed.
+                    //
+                    // The condition means the index map was built from a
+                    // different view of the table than the column map the
+                    // binder is walking now, i.e. the cached schema is stale
+                    // with respect to the source metadata. Failing the batch
+                    // turns a silent divergence into a retry against freshly
+                    // read metadata, which is the only outcome that preserves
+                    // the data.
+                    throw new StaleSchemaCacheException(String.format(
+                            "Column %s is present in the ClickHouse table and carried by the "
+                                    + "record, but has no placeholder in the generated INSERT. "
+                                    + "The cached schema is stale relative to the source "
+                                    + "metadata, so this column's value would be silently "
+                                    + "dropped. Failing the batch instead. Database(%s), Table(%s)",
+                            colName, databaseName, tableName));
                 }
                 continue;
             }
@@ -239,21 +256,44 @@ public class PreparedStatementFieldMapper {
                     continue;
                 }
             } catch (DataException e) {
-                // Struct .get throws a DataException
-                // if the field is not present.
-                // If the record was not supplied, we need to set it as null.
-                // Ignore version and sign columns.
+                // Struct.get throws a DataException when the field is not
+                // present in the record's schema.
+                //
+                // Reaching here for a genuine data column is the SAME
+                // cache-staleness condition as the missing-index branch above,
+                // arriving from the opposite direction: there, the index map
+                // was behind the column map; here, the record is behind the
+                // column map. Both mean the cached schema and the source
+                // metadata disagree.
+                //
+                // Binding NULL is the dangerous response. The column exists in
+                // the ClickHouse table and already holds a value for this row
+                // on an UPDATE, so writing NULL over it destroys real data --
+                // again with matching row counts and a successful batch. This
+                // is the RENAME half of the NULL-fill defect noted as a known
+                // limitation in #1389.
+                //
+                // Connector-managed columns legitimately never appear in the
+                // source record and keep the previous behaviour.
                 if (colName.equalsIgnoreCase(versionColumn) || colName.equalsIgnoreCase(signColumn) ||
                         colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)) {
                     // Ignore version and sign columns
-                } else {
-                    if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
-                        log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
-                        log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
-                    }
-                                    }
-                ps.setNull(index, Types.OTHER);
-                continue;
+                    ps.setNull(index, Types.OTHER);
+                    continue;
+                }
+                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                    // History mode carries its own bitemporal metadata columns
+                    // that are absent from the source record by design.
+                    ps.setNull(index, Types.OTHER);
+                    continue;
+                }
+                throw new StaleSchemaCacheException(String.format(
+                        "Column %s is present in the ClickHouse table but absent from the "
+                                + "record's schema, and the INSERT reserved a placeholder for "
+                                + "it. Binding NULL here would overwrite the stored value with "
+                                + "NULL. The cached schema is stale relative to the source "
+                                + "metadata. Failing the batch instead. Database(%s), Table(%s)",
+                        colName, databaseName, tableName));
             }
 
             // If the column is not in the column data type map, log an error.

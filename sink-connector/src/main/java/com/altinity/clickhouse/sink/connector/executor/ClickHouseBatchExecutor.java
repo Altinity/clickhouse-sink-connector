@@ -57,30 +57,74 @@ public class ClickHouseBatchExecutor extends
     }
 
     /**
+     * Guards the pause flag and the in-flight counter together.
+     *
+     * <p>Testing {@code isPaused} and incrementing {@code activeBatches} must
+     * be ONE atomic step. Performed separately they form a check-then-act race
+     * that defeats the drain entirely:</p>
+     *
+     * <pre>
+     *   pool thread              Debezium thread
+     *   ---------------------    ------------------------------------------
+     *   reads isPaused == false
+     *                            pause()           -&gt; isPaused = true
+     *                            awaitQuiescent()  -&gt; activeBatches == 0, TRUE
+     *                            applies the ALTER
+     *   activeBatches++
+     *   writes the batch                           &lt;- pre-ALTER rows, post-ALTER table
+     * </pre>
+     *
+     * <p>The drain reports a quiescent writer while a batch is about to run,
+     * and the rows that batch carries were read under the previous schema. That
+     * is the DDL/DML race behind the silent column loss: the writer binds a
+     * record captured before the ALTER against the table as it exists after it,
+     * and the row inserts successfully with the wrong contents.</p>
+     */
+    private final Object gate = new Object();
+
+    /**
      * Pauses the executor, causing tasks to wait before execution.
+     *
+     * <p>Publishes the flag under {@link #gate}, so any thread that has not yet
+     * completed its check-and-register step in {@link #beforeExecute} is
+     * guaranteed to observe it.</p>
      */
     public void pause() {
-        isPaused = true;
+        synchronized (gate) {
+            isPaused = true;
+            gate.notifyAll();
+        }
     }
 
     /**
      * Invoked before execution of a task.
      *
-     * <p>This method polls until the executor is resumed.
+     * <p>Waits while the executor is paused and registers this batch as
+     * in-flight atomically with that check, under {@link #gate}.</p>
      *
      * @param t the thread that will run task r
      * @param r the task that will be executed
      */
     @Override
     public void beforeExecute(Thread t, Runnable r) {
-        while (isPaused) {
-            try {
-                TimeUnit.MILLISECONDS.sleep(POLLING_INTERVAL_MS);
-            } catch (InterruptedException ie) {
-                t.interrupt();
+        synchronized (gate) {
+            while (isPaused) {
+                try {
+                    // Waiting on the monitor rather than sleeping releases the
+                    // lock while parked, so a concurrent pause()/resume() or
+                    // awaitQuiescent() is never blocked by a waiting pool
+                    // thread, and the resume is observed immediately.
+                    gate.wait(POLLING_INTERVAL_MS);
+                } catch (InterruptedException ie) {
+                    t.interrupt();
+                    return;
+                }
             }
+            // Same critical section as the check above: if this increments,
+            // isPaused was false and awaitQuiescent() is guaranteed to see
+            // this batch rather than racing past it.
+            activeBatches.incrementAndGet();
         }
-        activeBatches.incrementAndGet();
     }
 
     /**
@@ -91,7 +135,10 @@ public class ClickHouseBatchExecutor extends
      */
     @Override
     public void afterExecute(Runnable r, Throwable t) {
-        activeBatches.decrementAndGet();
+        synchronized (gate) {
+            activeBatches.decrementAndGet();
+            gate.notifyAll();
+        }
         super.afterExecute(r, t);
     }
 
@@ -100,31 +147,39 @@ public class ClickHouseBatchExecutor extends
      *
      * <p>Call after {@link #pause()} so that {@link #pause()} (no new batches)
      * plus this (no running batches) together give a genuinely quiescent
-     * writer, which is what applying a DDL safely requires.</p>
+     * writer, which is what applying a DDL safely requires. Because the pause
+     * check and the in-flight increment share {@link #gate}, a {@code true}
+     * result now means no batch is running AND none can start.</p>
      *
      * @param timeoutMs maximum time to wait, in milliseconds.
      * @return true if the executor became quiescent within the timeout.
      */
     public boolean awaitQuiescent(long timeoutMs) {
         long deadline = System.currentTimeMillis() + timeoutMs;
-        while (activeBatches.get() > 0) {
-            if (System.currentTimeMillis() >= deadline) {
-                return false;
+        synchronized (gate) {
+            while (activeBatches.get() > 0) {
+                long remaining = deadline - System.currentTimeMillis();
+                if (remaining <= 0) {
+                    return false;
+                }
+                try {
+                    gate.wait(Math.min(remaining, POLLING_INTERVAL_MS));
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
             }
-            try {
-                TimeUnit.MILLISECONDS.sleep(POLLING_INTERVAL_MS);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                return false;
-            }
+            return true;
         }
-        return true;
     }
 
     /**
      * Resumes the executor, allowing tasks to execute.
      */
     public void resume() {
-        isPaused = false;
+        synchronized (gate) {
+            isPaused = false;
+            gate.notifyAll();
+        }
     }
 }
