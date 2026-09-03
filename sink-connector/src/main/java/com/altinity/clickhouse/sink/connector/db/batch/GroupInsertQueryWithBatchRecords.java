@@ -180,6 +180,20 @@ public class GroupInsertQueryWithBatchRecords {
         }
 
         // Step 2: Create the Prepared Statement Query.
+        //
+        // `modifiedFields` is value-filtered: ClickHouseStruct#setAfterStruct
+        // keeps only the fields whose value is != null, so a column that is
+        // genuinely NULL in the source row is missing from it. Deciding INSERT
+        // membership from that list drops the column from the statement and
+        // ClickHouse substitutes the column DEFAULT (0 / '' / 1970-01-01)
+        // instead of NULL -- silent divergence with matching row counts.
+        //
+        // The record's unfiltered SCHEMA is the correct authority for
+        // membership, so it is passed alongside. A column absent from the
+        // SCHEMA is genuinely not in this record (the pre-ALTER case, #1389)
+        // and is still omitted.
+        List<Field> schemaFields = schemaFieldsFor(record, modifiedFields);
+
         MutablePair<String, Map<String, Integer>> response =
                 new QueryFormatter().getInsertQueryUsingInputFunction(
                         tableName, modifiedFields, columnNameToDataTypeMap,
@@ -195,7 +209,8 @@ public class GroupInsertQueryWithBatchRecords {
                         record.getDatabase(),
                         config.getString(
                                 ClickHouseSinkConnectorConfigVariables
-                                        .REPLACING_MERGE_TREE_DELETE_COLUMN.toString()));
+                                        .REPLACING_MERGE_TREE_DELETE_COLUMN.toString()),
+                        schemaFields);
 
         String insertQueryTemplate = response.getKey();
         if (response.getKey() == null || response.getValue() == null) {
@@ -219,6 +234,40 @@ public class GroupInsertQueryWithBatchRecords {
             queryToRecordsMap.put(mp, recordsList);
         }
         return true;
+    }
+
+    /**
+     * Returns the unfiltered schema fields of whichever image
+     * {@code modifiedFields} was derived from.
+     *
+     * <p>The caller passes either {@code getBeforeModifiedFields()} or
+     * {@code getAfterModifiedFields()}, both of which are value-filtered copies
+     * of their struct's schema. Identity comparison picks the matching struct,
+     * so the before-image is never resolved against the after-image's schema
+     * (they differ for an UPDATE that changes which columns are NULL).</p>
+     *
+     * <p>Returns null when the originating struct cannot be identified, which
+     * makes {@code getInsertQueryUsingInputFunction} fall back to the
+     * value-filtered list -- the previous behaviour.</p>
+     *
+     * @param record         the CDC record carrying the before/after structs.
+     * @param modifiedFields the value-filtered list handed to this call.
+     * @return the corresponding struct's full schema fields, or null.
+     */
+    private List<Field> schemaFieldsFor(ClickHouseStruct record,
+                                        List<Field> modifiedFields) {
+        if (record == null || modifiedFields == null) {
+            return null;
+        }
+        if (modifiedFields == record.getAfterModifiedFields()
+                && record.getAfterStruct() != null) {
+            return record.getAfterStruct().schema().fields();
+        }
+        if (modifiedFields == record.getBeforeModifiedFields()
+                && record.getBeforeStruct() != null) {
+            return record.getBeforeStruct().schema().fields();
+        }
+        return null;
     }
 
     /**
