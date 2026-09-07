@@ -10,6 +10,7 @@ import static org.apache.commons.lang3.StringUtils.containsIgnoreCase;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Utils;
+import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -132,6 +133,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private final Set<String> notNullColumnNames = new HashSet<>();
 
     /**
+     * Pre-computed clean table name (backticks and database prefix stripped).
+     */
+    String cleanTableName;
+
+    /**
      * Constructor for initializing the MySqlDDLParserListenerImpl instance.
      *
      * @param writer         The database writer instance.
@@ -163,6 +169,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.writer = writer;
         this.userProvidedTimeZone = parseTimeZone();
         this.originalSql = originalSql;
+        this.cleanTableName = Utils.extractPlainTableName(tableName);
     }
 
     /**
@@ -202,6 +209,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
         return userProvidedTimeZoneId;
     }
+
+
 
     /**
      * Override the enterCreateDatabase method from the parser listener to handle CREATE DATABASE statements.
@@ -272,8 +281,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             this.query.append(Constants.CREATE_TABLE).append(" ").append(originalTableName).append(" ")
                     .append(Constants.AS).append(" ").append(newTableName);
         } else {
-            this.query.append(Constants.CREATE_TABLE).append(" ").append(databaseName).append(".").append(originalTableName).append(" ")
-                    .append(Constants.AS).append(" ").append(databaseName).append(".").append(newTableName);
+            this.query.append(Constants.CREATE_TABLE).append(" ").append("`").append(databaseName).append("`").append(".").append(originalTableName).append(" ")
+                    .append(Constants.AS).append(" ").append("`").append(databaseName).append("`").append(".").append(newTableName);
         }
     }
 
@@ -424,6 +433,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     .append(",");
         }
 
+
+        // ALIAS columns from column_type_override.alias.*
+        if (this.config != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
+            if (overrideConfig.hasOverrides()) {
+                String cleanTableName = this.cleanTableName;
+                List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                        overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);
+                for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                    this.query.append("`").append(entry.getAliasColumnName()).append("` ")
+                            .append(entry.getAliasType())
+                            .append(" ALIAS ").append(entry.getExpression()).append(",");
+                }
+            }
+        }
 
         if (DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine) {
             this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
@@ -695,9 +720,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if (tableName.contains(".")) {
                     // Split tableName into databaseName and tableName
                     String[] tableNameSplit = tableName.split("\\.");
-                    this.query.append(this.databaseName).append(".").append(tableNameSplit[1]);
+                    this.query.append("`").append(this.databaseName).append("`").append(".").append(tableNameSplit[1]);
                 } else {
-                    this.query.append(databaseName).append(".").append(tree.getText());
+                    this.query.append("`").append(databaseName).append("`").append(".").append(tree.getText());
                 }
 
                 // If it's ReplicatedReplacingMergeTree, add ON CLUSTER {cluster} to the query.
@@ -1026,6 +1051,21 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             chDataType = defaultColumnDataTypeMap.getOrDefault(columnName, chDataType);
         }
 
+        // column_type_override.direct.* takes highest priority (over default_column_datatype_mapping)
+        if (this.config != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
+            if (overrideConfig.hasOverrides()) {
+                String cleanColumnName = columnName != null ? columnName.replace("`", "") : columnName;
+                String cleanTableName = this.cleanTableName;
+                Optional<String> directOverride =
+                        overrideConfig.getDirectOverride(this.databaseName, cleanTableName, cleanColumnName);
+                if (directOverride.isPresent()) {
+                    chDataType = directOverride.get();
+                }
+            }
+        }
+
         return chDataType;
     }
 
@@ -1241,6 +1281,28 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             postProcessModifyColumn(this.tableName, columnName, newColumnName, columnType);
         }
 
+        // Check for ALIAS companion column for ADD operations
+        if (tree instanceof AlterByAddColumnContext && this.config != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
+            if (overrideConfig.hasOverrides()) {
+                String cleanTableName = this.cleanTableName;
+                String cleanColumnName = columnName != null ? columnName.replace("`", "") : "";
+                List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                        overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);
+                for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                    if (entry.getColumn().equalsIgnoreCase(cleanColumnName)) {
+                        // Append companion ALIAS column as additional ALTER TABLE statement
+                        this.query.append("\n")
+                                .append("ALTER TABLE ").append(this.tableName)
+                                .append(" ADD COLUMN `").append(entry.getAliasColumnName()).append("` ")
+                                .append(entry.getAliasType())
+                                .append(" ALIAS ").append(entry.getExpression());
+                    }
+                }
+            }
+        }
+
         String trimmedQuery = this.query.toString().trim();
         this.query.delete(0, this.query.toString().length()).append(trimmedQuery);
     }
@@ -1268,7 +1330,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (tableName.contains(".")) {
             this.query.append(String.format(rename, tableName, oldCol, newCol));
         } else {
-            this.query.append(String.format(rename, databaseName + "." + tableName, oldCol, newCol));
+            this.query.append(String.format(rename, "`" + databaseName + "`." + tableName, oldCol, newCol));
         }
     }
 
@@ -1283,9 +1345,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if (this.tableName.contains(".")) {
                     // Split database and table name.
                     String[] tableNameSplit = this.tableName.split("\\.");
-                    this.query.append(String.format(Constants.ALTER_TABLE, databaseName+ "." + tableNameSplit[1]));
+                    this.query.append(String.format(Constants.ALTER_TABLE, "`" + databaseName+ "`." + tableNameSplit[1]));
                 } else {
-                    this.query.append(String.format(Constants.ALTER_TABLE, databaseName + "." + this.tableName));
+                    this.query.append(String.format(Constants.ALTER_TABLE, "`" + databaseName + "`." + this.tableName));
                 }
             }
 
@@ -1310,6 +1372,25 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         for (ParseTree dropColumnChild: ((MySqlParser.UidContext) dropColumnTree).children) {
                             if (dropColumnChild instanceof MySqlParser.SimpleIdContext || dropColumnChild instanceof TerminalNodeImpl) {
                                 this.query.append(String.format(Constants.DROP_COLUMN, dropColumnChild.getText()));
+
+                                // Check for ALIAS column companion drops
+                                if (this.config != null) {
+                                    ColumnTypeOverrideConfig overrideConfig =
+                                            ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
+                                    if (overrideConfig.hasOverrides()) {
+                                        String cleanTableName = this.cleanTableName;
+                                        String droppedColName = dropColumnChild.getText().replace("`", "");
+                                        List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                                                overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);
+                                        for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                                            if (entry.getColumn().equalsIgnoreCase(droppedColName)) {
+                                                this.query.append(",");
+                                                this.query.append(String.format(Constants.DROP_COLUMN,
+                                                        entry.getAliasColumnName()));
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1385,7 +1466,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     (Constants.ALTER_RENAME_TABLE, originalTableName, newTableName));
         } else {
             this.query.delete(0, this.query.toString().length()).append(String.format
-                    (Constants.ALTER_RENAME_TABLE, databaseName + "." + originalTableName, databaseName + "." + newTableName));
+                    (Constants.ALTER_RENAME_TABLE, "`" + databaseName + "`." + originalTableName, "`" + databaseName + "`." + newTableName));
         }
     }
 
@@ -1508,9 +1589,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 String tableName = child.getText();
                 if (tableName.contains(".")) {
                     String[] parts = tableName.split("\\.");
-                    this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + parts[1]));
+                    this.query.append(String.format(Constants.TRUNCATE_TABLE,
+                            "`" + databaseName + "`." + parts[1]));
                 } else {
-                    this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + tableName));
+                    this.query.append(String.format(Constants.TRUNCATE_TABLE,
+                            "`" + databaseName + "`." + tableName));
                 }
             }
         }

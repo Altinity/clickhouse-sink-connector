@@ -29,4 +29,5 @@
         <replica>clickhouse</replica>
         <shard>02</shard>
     </macros>
+    <keeper_map_path_prefix>/keeper_map</keeper_map_path_prefix>
 </clickhouse>

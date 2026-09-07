@@ -82,14 +82,52 @@ public class CacheInvalidationManager {
         if (tableName == null || tableName.isEmpty()) {
             return 0L;
         }
-        return tableVersions.getOrDefault(tableName, 0L);
+        // The epoch is folded in so that invalidateAll() reaches tables that
+        // have no entry of their own. A per-table map alone cannot express
+        // "everything is stale": a table never individually invalidated would
+        // read version 0 before and after the sweep and keep its cached schema.
+        return globalEpoch.get() + tableVersions.getOrDefault(tableName, 0L);
     }
+
+    /**
+     * Invalidates every cached schema, including those of tables that have
+     * never been invalidated individually.
+     *
+     * <p>This is the fail-safe for a DDL whose affected table cannot be
+     * determined -- an unparsed statement, an unresolvable table name, or an
+     * error while working it out. In those cases the connector knows the
+     * schema changed but not where, and leaving caches in service lets writers
+     * bind against a table shape that no longer exists. That produces rows
+     * which insert successfully with wrong contents and identical row counts,
+     * which is undetectable without a value-level checksum.</p>
+     *
+     * <p>Bumping a monotonic epoch invalidates every writer at once without
+     * having to enumerate them, and costs one metadata re-read per active
+     * table on its next batch.</p>
+     */
+    public void invalidateAll() {
+        long epoch = globalEpoch.incrementAndGet();
+        log.warn("Invalidating ALL cached schemas after a DDL whose affected table could "
+                + "not be determined (epoch {}). Every writer will re-read its metadata "
+                + "before its next write.", epoch);
+    }
+
+    /**
+     * Monotonic counter bumped by {@link #invalidateAll()}.
+     *
+     * <p>Added to every per-table version, so one increment makes every cached
+     * writer -- including those for tables absent from the version map --
+     * observe a version change and rebuild.</p>
+     */
+    private final java.util.concurrent.atomic.AtomicLong globalEpoch =
+            new java.util.concurrent.atomic.AtomicLong();
 
     /**
      * Clears all invalidation versions. Useful for testing.
      */
     public void clearAll() {
         tableVersions.clear();
+        globalEpoch.set(0L);
     }
 
     /**

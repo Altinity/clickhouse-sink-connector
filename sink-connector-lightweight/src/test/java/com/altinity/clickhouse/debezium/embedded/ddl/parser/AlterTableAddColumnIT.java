@@ -64,7 +64,7 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
             }
         });
 
-        Thread.sleep(10000);//
+        Thread.sleep(10000); // Allow engine to start
 
         Connection conn = connectToMySQL();
         // alter table ship_class change column class_name class_name_new int;
@@ -85,12 +85,21 @@ public class AlterTableAddColumnIT extends DDLBaseIT {
         conn.prepareStatement(" alter table add_test add column col6 JSON;").execute();
         conn.prepareStatement(" alter table add_test drop col4").execute();
 
-        Thread.sleep(25000);
-
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
         DBMetadata dbMetadata = new DBMetadata(getDebeziumProperties());
-        Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
-        Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
+
+        // Poll until columns are added/modified in ClickHouse
+        Map<String, String> shipClassColumns = null;
+        Map<String, String> addTestColumns = null;
+        for (int retry = 0; retry < 40; retry++) {
+            shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
+            addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
+            if (shipClassColumns.containsKey("ship_spec") && shipClassColumns.containsKey("customer_name")
+                    && addTestColumns.containsKey("col6") && addTestColumns.containsKey("col5")) {
+                break;
+            }
+            Thread.sleep(5000);
+        }
 
         // Validate all ship_class columns.
         Assert.assertTrue(shipClassColumns.get("ship_spec").equalsIgnoreCase("Nullable(String)"));
