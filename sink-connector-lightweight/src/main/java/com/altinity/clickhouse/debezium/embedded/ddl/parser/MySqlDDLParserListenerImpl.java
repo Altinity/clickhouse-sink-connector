@@ -934,7 +934,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         this.query.append(colDataType);
                     }
 
-                    this.query.append(" ").append(Constants.ALIAS).append(" ").append(generatedColumn).append(",");
+                    // DEFAULT, not MATERIALIZED. A MATERIALIZED column REJECTS
+                    // an INSERT that names it (Code: 44 ILLEGAL_COLUMN), and
+                    // Debezium carries generated columns in the row image --
+                    // so the value MySQL computed can never be replicated, and
+                    // the replica silently keeps its own locally-derived answer
+                    // whenever the two expressions disagree. DEFAULT keeps the
+                    // same derive-when-omitted behaviour while accepting the
+                    // binlog value, so the source stays authoritative.
+                    this.query.append(" ").append(Constants.GENERATED_COLUMN_KIND)
+                            .append(" ").append(generatedColumn).append(",");
                     continue;
                 }
 
