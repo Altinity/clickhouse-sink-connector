@@ -67,15 +67,23 @@ public class PostgresSchemaReconcilerTest {
 
     static Stream<Arguments> debeziumLogicalTypes() {
         return Stream.of(
+                // The timestamp logical types carry an explicit 'UTC' zone.
+                // ClickHouseDataTypeMapper#mapDebeziumSchemaToDDL emits it (and
+                // documents it in its Javadoc table) so the column's zone is
+                // pinned rather than inheriting the server's local timezone.
+                // These three expectations still asserted the pre-#1435
+                // zone-less form; the assertions were stale, not the mapper.
+                // Nothing caught it because this whole suite was silently
+                // executing zero tests in CI.
                 Arguments.of("io.debezium.time.MicroTimestamp",
                         SchemaBuilder.int64().name("io.debezium.time.MicroTimestamp").optional().build(),
-                        "Nullable(DateTime64(6))"),
+                        "Nullable(DateTime64(6, 'UTC'))"),
                 Arguments.of("io.debezium.time.Timestamp",
                         SchemaBuilder.int64().name("io.debezium.time.Timestamp").optional().build(),
-                        "Nullable(DateTime64(3))"),
+                        "Nullable(DateTime64(3, 'UTC'))"),
                 Arguments.of("io.debezium.time.NanoTimestamp",
                         SchemaBuilder.int64().name("io.debezium.time.NanoTimestamp").optional().build(),
-                        "Nullable(DateTime64(9))"),
+                        "Nullable(DateTime64(9, 'UTC'))"),
                 Arguments.of("io.debezium.time.ZonedTimestamp",
                         SchemaBuilder.string().name("io.debezium.time.ZonedTimestamp").optional().build(),
                         "Nullable(DateTime64(6, 'UTC'))"),
