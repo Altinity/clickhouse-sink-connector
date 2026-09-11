@@ -760,14 +760,22 @@ public class DebeziumChangeEventCapture {
     private void drainBeforeDDL() {
         long deadline = System.currentTimeMillis() + DDL_DRAIN_TIMEOUT_MS;
 
-        // Step 1: no new batches may start. This MUST come first. Draining the
-        // queue while the pool is still free to pick work up is a race the
-        // drain cannot win: every batch it waits out may be replaced by another
-        // one, and on a busy table the queue never reaches empty. Pausing first
-        // makes the remaining work a fixed set.
-        this.executor.pause();
-
-        // Step 2: let the already-running batches consume what is queued.
+        // Step 1: let the pool consume what is already queued.
+        //
+        // The pool MUST still be running here. Pausing before the queue is
+        // drained is a deadlock, not a safety measure: `pause()` parks every
+        // pool thread in beforeExecute(), so nothing can dequeue, and this
+        // loop then waits out the full timeout on a queue that is guaranteed
+        // never to shrink. It always ends in the abort below.
+        //
+        // Pausing first was introduced to close a "the queue never reaches
+        // empty on a busy table" race. That race cannot occur: this queue has
+        // exactly ONE producer -- appendToRecords(), called only from
+        // handleChangeEventBatch(), which runs on the very Debezium thread
+        // that is executing this drain. While we are in here, no new batch can
+        // be appended, so the queued set is already fixed and the pool is free
+        // to consume it to empty. Step 2 then closes the pause window
+        // properly.
         while (this.records != null && !this.records.isEmpty()) {
             if (System.currentTimeMillis() >= deadline) {
                 // NOT survivable. Applying the ALTER now writes records that
@@ -793,7 +801,17 @@ public class DebeziumChangeEventCapture {
             }
         }
 
+        // Step 2: no new batches may start.
+        this.executor.pause();
+
         // Step 3: wait out the batches already inside a task body.
+        //
+        // pause() + awaitQuiescent() together are what make the writer
+        // genuinely quiescent, and the check-then-act window between them is
+        // already closed inside ClickHouseBatchExecutor (the pause test and
+        // the in-flight increment share one monitor). A batch that slipped
+        // onto a thread just before the pause is therefore counted, and waited
+        // out here, rather than racing the ALTER.
         long remaining = Math.max(0, deadline - System.currentTimeMillis());
         if (!this.executor.awaitQuiescent(remaining)) {
             throw new IllegalStateException(String.format(
