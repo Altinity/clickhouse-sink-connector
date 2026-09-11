@@ -1756,7 +1756,16 @@ public class DebeziumChangeEventCapture {
             } else {
                 // Schema drift detection: check before writing to ClickHouse so that
                 // any newly-added PostgreSQL columns are present in ClickHouse first.
-                if (pgConfig.getSchemaChangeDetector() != null) {
+                //
+                // pgConfig is assigned in setup(); it is null on any path that
+                // reaches record processing without it (notably MySQL-only unit
+                // tests driving handleChangeEventBatch directly). Dereferencing
+                // it unguarded threw an NPE BEFORE parse() was reached, which
+                // re-broke the #1379 contract this branch is meant to preserve:
+                // the record was dropped without being acknowledged. Schema
+                // drift detection is PostgreSQL-only and optional, so its
+                // absence must skip the check, never fail the record.
+                if (pgConfig != null && pgConfig.getSchemaChangeDetector() != null) {
                     try {
                         String dmlTopic = sr.topic();
                         String dmlTable = Utils.getTableNameFromTopic(dmlTopic, pgConfig.isSchemaPrefixEnabled(), pgConfig.getCommonSchemaTemplate());
