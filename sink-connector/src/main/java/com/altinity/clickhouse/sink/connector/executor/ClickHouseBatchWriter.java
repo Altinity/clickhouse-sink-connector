@@ -252,24 +252,59 @@ public class ClickHouseBatchWriter {
             // acknowledge the records.
             if (result) {
                 log.info("****** Acknowledging records ******");
-                records.forEach(record -> {
+                // Route through DebeziumOffsetManagement so this path uses the
+                // SAME OFFSET_COMMIT_LOCK as the batch-runnable path. Calling
+                // markProcessed()/markBatchFinished() directly here bypassed
+                // the serialization entirely: markProcessed() mutates the
+                // OffsetStorageWriter's pending-offset map, which is exactly
+                // the state beginFlush() snapshots, so an unserialized
+                // markProcessed() racing another thread's flush is what drives
+                // "OffsetStorageWriter is already flushing".
+                for (ClickHouseStruct record : records) {
+                    if (record.getCommitter() == null
+                            || record.getSourceRecord() == null) {
+                        continue;
+                    }
                     try {
-                        record.getCommitter().markProcessed(
-                                record.getSourceRecord());
+                        DebeziumOffsetManagement.acknowledgeRecord(
+                                record.getCommitter(),
+                                record.getSourceRecord(),
+                                record.isLastRecordInBatch());
                     } catch (InterruptedException e) {
-                        //throw new RuntimeException(e);
-                        log.error("Error marking records as processed" + e);
+                        // Preserve the interrupt and stop acknowledging:
+                        // silently continuing would advance offsets for
+                        // records whose commit never completed.
+                        Thread.currentThread().interrupt();
+                        log.error("Interrupted while acknowledging records", e);
+                        throw new RuntimeException(e);
                     }
-                    if (record.isLastRecordInBatch()) {
-                        try {
-                            record.getCommitter().markBatchFinished();
-                        } catch (InterruptedException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }
-                });
+                    // NOTE: markBatchFinished() is deliberately NOT re-invoked
+                    // here. acknowledgeRecord() above already performs it,
+                    // under the shared OFFSET_COMMIT_LOCK, when
+                    // isLastRecordInBatch() is true. Calling it again outside
+                    // that lock is the unserialized second flush path that
+                    // produced the stuck writer. It must stay removed.
+                }
             }
         } catch (Exception e) {
+            if (isOffsetWriterPoisoned(e)) {
+                // Once the flush semaphore is leaked, offsets can never be
+                // committed again in this JVM. Logging and returning normally
+                // would let ClickHouse writes continue against a frozen binlog
+                // position -- silent divergence, which is how
+                // txnrepo-sink-staging ran ~8h behind while every batch
+                // reported success. Propagate so the task stops.
+                log.error("FATAL: the Debezium OffsetStorageWriter is stuck in "
+                        + "the 'already flushing' state. Offsets can no longer "
+                        + "be committed, so replication would keep writing rows "
+                        + "while the binlog position stays frozen. Propagating "
+                        + "to stop processing and prevent silent data "
+                        + "divergence.");
+                throw new BatchPersistenceException(
+                        "OffsetStorageWriter is permanently stuck flushing; "
+                                + "stopping to prevent silent data divergence",
+                        e);
+            }
             if (isInterrupt(e)) {
                 // The task is being shut down. Nothing was acknowledged, so
                 // this batch is replayed from the last committed offset on the
@@ -295,6 +330,36 @@ public class ClickHouseBatchWriter {
                     : new BatchPersistenceException(
                             "Failed to persist a batch of records to ClickHouse", e);
         }
+    }
+
+    /**
+     * Detects the unrecoverable "OffsetStorageWriter is already flushing"
+     * condition.
+     * <p>
+     * {@code EmbeddedEngine.commitOffsets} returns early when {@code doFlush}
+     * returns null WITHOUT calling {@code cancelFlush}, leaking the
+     * OffsetStorageWriter's {@code flushInProgress} semaphore permanently.
+     * Every subsequent {@code beginFlush()} in this JVM then throws. Because
+     * the offset store writes asynchronously, ClickHouse inserts keep
+     * succeeding while the committed binlog position never advances.
+     * </p>
+     *
+     * @param e the exception thrown while persisting or acknowledging records.
+     * @return true when offset commits can no longer succeed in this JVM.
+     */
+    private static boolean isOffsetWriterPoisoned(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String message = t.getMessage();
+            if (message != null
+                    && message.contains(
+                            "OffsetStorageWriter is already flushing")) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
     }
 
     /**

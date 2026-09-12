@@ -355,6 +355,31 @@ public class ClickHouseBatchRunnable implements Runnable {
                 logErrorToClickHouse(e, taskId, errorTableName);
             }
 
+            // A poisoned OffsetStorageWriter is NOT retriable, and must be
+            // checked before the ClickHouse classifier, which sees no
+            // ClickHouse error code and defaults it to UNKNOWN/retriable. With
+            // errors.max.retries = -1 that means retrying forever, and because
+            // the offset store writes asynchronously the ClickHouse inserts
+            // keep succeeding while the committed binlog position stays
+            // frozen -- replication silently diverges instead of failing.
+            // Observed on txnrepo-sink-staging (2026-09-10/11): ~8h of
+            // "Retriable ClickHouse error (Code: -1, Category: UNKNOWN)" while
+            // the committed offset never moved past its 13:29 event.
+            if (isOffsetWriterPoisoned(e)) {
+                log.error("FATAL: the Debezium OffsetStorageWriter is stuck in "
+                        + "the 'already flushing' state -- Task({}). Offsets "
+                        + "can no longer be committed in this JVM, so "
+                        + "replication would keep writing rows against a "
+                        + "frozen binlog position. Stopping the task to "
+                        + "prevent silent data divergence; a restart resumes "
+                        + "from the last committed offset.", taskId);
+                currentBatch = null;
+                throw new RuntimeException(
+                        "OffsetStorageWriter is permanently stuck flushing; "
+                                + "stopping to prevent silent data divergence",
+                        e);
+            }
+
             // Classify the error to decide whether to retry or stop
             ClickHouseErrorClassifier.ErrorCategory category = ClickHouseErrorClassifier.classify(e);
             int errorCode = ClickHouseErrorClassifier.extractErrorCode(e);
@@ -375,6 +400,33 @@ public class ClickHouseBatchRunnable implements Runnable {
         }
     }
 
+    /**
+     * Detects the unrecoverable "OffsetStorageWriter is already flushing"
+     * condition.
+     * <p>
+     * {@code EmbeddedEngine.commitOffsets} returns early when {@code doFlush}
+     * returns null WITHOUT calling {@code cancelFlush}, leaking the
+     * OffsetStorageWriter's {@code flushInProgress} semaphore permanently, so
+     * every subsequent {@code beginFlush()} in this JVM throws.
+     * </p>
+     *
+     * @param e the exception thrown while processing a batch.
+     * @return true when offset commits can no longer succeed in this JVM.
+     */
+    private static boolean isOffsetWriterPoisoned(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String message = t.getMessage();
+            if (message != null
+                    && message.contains(
+                            "OffsetStorageWriter is already flushing")) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
 
     /**
      * Run loop for hash-based routing mode.
