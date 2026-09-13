@@ -434,9 +434,12 @@ public class GroupInsertQueryWithBatchRecords {
      *       source sends a value and the replica keeps a DIFFERENT one,
      *       silently: no error, no failed batch, identical row counts, so
      *       only a value-level checksum would ever reveal it. The
-     *       MATERIALIZED definition is what is wrong, so it is removed with
-     *       {@code ALTER TABLE ... MODIFY COLUMN}, leaving an ordinary column
-     *       the source value lands in. Returns true on success.</li>
+     *       MATERIALIZED definition is what is wrong, so the column is
+     *       converted to DEFAULT over the same expression with
+     *       {@code ALTER TABLE ... MODIFY COLUMN <col> <type> DEFAULT
+     *       <expr>}. The source value now lands as sent, and the replica
+     *       still derives the column whenever the connector omits it.
+     *       Returns true on success.</li>
      *   <li><b>unknown</b> -- the kind could not be read, so there is nothing
      *       safe to alter. Logged at warn rather than assumed benign;
      *       returns false.</li>
@@ -452,6 +455,13 @@ public class GroupInsertQueryWithBatchRecords {
      * type does not rewrite existing parts, so it neither blocks nor costs
      * I/O. It runs on the same path and privilege the connector already uses
      * for schema evolution ({@code ClickHouseAlterTable}).</p>
+     *
+     * <p>Converting to DEFAULT rather than to a bare column is what keeps
+     * the change safe to apply automatically. A bare column would stop the
+     * replica deriving the value at all, so any row the connector writes
+     * without that column would store a type zero -- trading a divergence
+     * for a data-loss path. DEFAULT preserves the derivation and merely
+     * lets the source override it.</p>
      *
      * @param columnName              the source column that cannot be written.
      * @param tableName               the ClickHouse table name.
@@ -489,8 +499,9 @@ public class GroupInsertQueryWithBatchRecords {
                                 + "so ClickHouse stores its own computed value and the "
                                 + "source's value is never written -- but the column's "
                                 + "declared type could not be read, so the definition "
-                                + "cannot be corrected automatically. Redefine '{}' as an "
-                                + "ordinary column so the replicated value is stored.",
+                                + "cannot be corrected automatically. Redefine '{}' as "
+                                + "DEFAULT over the same expression so the replicated "
+                                + "value is stored.",
                         fullyQualifiedTableName, columnName, columnName);
                 return false;
             }
@@ -499,8 +510,10 @@ public class GroupInsertQueryWithBatchRecords {
                             + "ClickHouse has been storing its own computed value instead "
                             + "of the source's. The source is the authority for replicated "
                             + "data, so the ClickHouse definition is being corrected: "
-                            + "dropping the MATERIALIZED expression from '{}' ({}) so the "
-                            + "replicated value is stored from now on.",
+                            + "converting '{}' ({}) from MATERIALIZED to DEFAULT over the "
+                            + "same expression, so the replicated value is stored from now "
+                            + "on and the column is still derived when the connector omits "
+                            + "it.",
                     fullyQualifiedTableName, columnName, columnName, columnType);
 
             if (metadata.makeColumnWritable(tableName, databaseName, columnName,

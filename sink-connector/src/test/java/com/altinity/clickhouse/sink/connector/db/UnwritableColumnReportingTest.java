@@ -196,9 +196,15 @@ public class UnwritableColumnReportingTest {
      * Enforcement: the connector rewrites the column definition so the source
      * value can be stored. This is the whole point -- the replica is made to
      * conform, rather than the divergence being reported and left in place.
+     *
+     * <p>The statement converts the column to DEFAULT over its existing
+     * expression. Restating the type alone would be a no-op: ClickHouse
+     * reads an omitted default clause as "leave the existing default alone",
+     * so the column would still be MATERIALIZED and the source value would
+     * go on being discarded.</p>
      */
     @Test
-    public void testMakeColumnWritableIssuesModifyColumn() {
+    public void testMakeColumnWritableConvertsMaterializedToDefault() {
         List<String> issued = new ArrayList<>();
         boolean ok = new DBMetadata(config()).makeColumnWritable(
                 "orders", "sales", "total_with_tax", "Nullable(UInt8)",
@@ -208,8 +214,104 @@ public class UnwritableColumnReportingTest {
         Assert.assertEquals(1, issued.size());
         Assert.assertEquals(
                 "ALTER TABLE `sales`.`orders` MODIFY COLUMN `total_with_tax` "
-                        + "Nullable(UInt8)",
+                        + "Nullable(UInt8) DEFAULT ifNull(base, 0) * 2",
                 issued.get(0));
+    }
+
+    /**
+     * The DDL must carry a DEFAULT clause. Asserted as a property of the
+     * emitted statement rather than by string equality, so it still holds if
+     * the statement is reformatted -- and so that reverting the emitter to a
+     * bare {@code MODIFY COLUMN <type>} fails here regardless of spacing.
+     */
+    @Test
+    public void testConversionNeverEmitsABareModifyColumn() {
+        List<String> issued = new ArrayList<>();
+        new DBMetadata(config()).makeColumnWritable(
+                "orders", "sales", "total_with_tax", "Nullable(UInt8)",
+                recordingConnection(issued, false));
+
+        Assert.assertEquals(1, issued.size());
+        String ddl = issued.get(0);
+        Assert.assertTrue(
+                "a MODIFY COLUMN without a DEFAULT clause is a silent no-op "
+                        + "against a MATERIALIZED column: " + ddl,
+                ddl.contains(" DEFAULT "));
+        Assert.assertFalse(
+                "MATERIALIZED must not be restated -- that is the state being "
+                        + "corrected: " + ddl,
+                ddl.toUpperCase().contains("MATERIALIZED"));
+    }
+
+    /**
+     * The expression is restated verbatim from system.columns, never
+     * reconstructed. Reconstructing it would translate the source expression
+     * a second time and could leave the replica deriving something different
+     * from what it derived before the conversion.
+     */
+    @Test
+    public void testConversionRestatesTheExistingExpressionVerbatim() {
+        List<String> issued = new ArrayList<>();
+        String expression = "multiIf(status = 'x', toDecimal64(0, 4), amount * rate)";
+
+        boolean ok = new DBMetadata(config()).makeColumnWritable(
+                "orders", "sales", "total_with_tax", "Nullable(Decimal(30, 10))",
+                recordingConnection(issued, false, "DEFAULT", expression));
+
+        Assert.assertTrue(ok);
+        Assert.assertEquals(1, issued.size());
+        Assert.assertTrue("the existing expression must be restated as-is: "
+                        + issued.get(0),
+                issued.get(0).endsWith(" DEFAULT " + expression));
+    }
+
+    /**
+     * When the expression cannot be read the conversion is abandoned, and no
+     * DDL is issued at all.
+     *
+     * <p>The alternative -- emitting {@code MODIFY COLUMN <col> <type>}
+     * without a default clause -- is the silent no-op that leaves the column
+     * MATERIALIZED while reporting success. Were ClickHouse ever to treat it
+     * as a removal instead, the outcome would be worse still: the replica
+     * would stop deriving the column, and every row written without it would
+     * store a type zero. Neither outcome is acceptable, so nothing is
+     * issued.</p>
+     */
+    @Test
+    public void testUnreadableExpressionIssuesNoDdlAndReportsFailure() {
+        List<String> issued = new ArrayList<>();
+        boolean ok = new DBMetadata(config()).makeColumnWritable(
+                "orders", "sales", "total_with_tax", "Nullable(UInt8)",
+                recordingConnection(issued, false, "MATERIALIZED", null));
+
+        Assert.assertFalse(
+                "an unreadable expression cannot be converted", ok);
+        Assert.assertTrue(
+                "no DDL may be issued when the expression is unknown: " + issued,
+                issued.isEmpty());
+    }
+
+    /**
+     * Success is asserted positively: the column must read back as DEFAULT.
+     *
+     * <p>A negative check ("no longer MATERIALIZED") would also accept a bare
+     * column with no default at all. That is the failure this conversion
+     * exists to avoid -- the replica would no longer derive the column, so
+     * any row the connector writes without it would store a type zero,
+     * trading a value divergence for a data-loss path.</p>
+     */
+    @Test
+    public void testColumnLeftWithoutADefaultIsNotReportedAsSuccess() {
+        List<String> issued = new ArrayList<>();
+        boolean ok = new DBMetadata(config()).makeColumnWritable(
+                "orders", "sales", "total_with_tax", "Nullable(UInt8)",
+                recordingConnection(issued, false, "", "ifNull(base, 0) * 2"));
+
+        Assert.assertEquals("the ALTER was submitted", 1, issued.size());
+        Assert.assertFalse(
+                "a column left with no default at all is not a successful "
+                        + "conversion -- the replica has stopped deriving it",
+                ok);
     }
 
     /**
@@ -262,63 +364,12 @@ public class UnwritableColumnReportingTest {
         List<String> issued = new ArrayList<>();
         boolean ok = new DBMetadata(config()).makeColumnWritable(
                 "orders", "sales", "total_with_tax", "Nullable(UInt8)",
-                ineffectiveAlterConnection(issued));
+                recordingConnection(issued, false, "MATERIALIZED",
+                        "ifNull(base, 0) * 2"));
 
         Assert.assertEquals("the ALTER was submitted", 1, issued.size());
         Assert.assertFalse(
                 "an ALTER that did not change default_kind is not success", ok);
-    }
-
-    /**
-     * A connection that accepts the ALTER without error but reports the
-     * column as still MATERIALIZED, i.e. the statement had no effect.
-     */
-    private static Connection ineffectiveAlterConnection(
-            final List<String> issued) {
-        InvocationHandler connection = (proxy, method, args) -> {
-            String name = method.getName();
-            if ("prepareStatement".equals(name) && args != null && args.length > 0) {
-                issued.add(String.valueOf(args[0]));
-                InvocationHandler prepared = (p2, m2, a2) ->
-                        "execute".equals(m2.getName())
-                                ? Boolean.FALSE : defaultFor(m2.getReturnType());
-                return Proxy.newProxyInstance(
-                        UnwritableColumnReportingTest.class.getClassLoader(),
-                        new Class<?>[]{PreparedStatement.class}, prepared);
-            }
-            if ("createStatement".equals(name)) {
-                final boolean[] consumed = {false};
-                InvocationHandler resultSet = (p3, m3, a3) -> {
-                    switch (m3.getName()) {
-                        case "next":
-                            if (consumed[0]) {
-                                return false;
-                            }
-                            consumed[0] = true;
-                            return true;
-                        case "getString":
-                            return "MATERIALIZED";
-                        case "close":
-                            return null;
-                        default:
-                            return defaultFor(m3.getReturnType());
-                    }
-                };
-                final ResultSet rs = (ResultSet) Proxy.newProxyInstance(
-                        UnwritableColumnReportingTest.class.getClassLoader(),
-                        new Class<?>[]{ResultSet.class}, resultSet);
-                InvocationHandler stmt = (p4, m4, a4) ->
-                        "executeQuery".equals(m4.getName())
-                                ? rs : defaultFor(m4.getReturnType());
-                return Proxy.newProxyInstance(
-                        UnwritableColumnReportingTest.class.getClassLoader(),
-                        new Class<?>[]{Statement.class}, stmt);
-            }
-            return defaultFor(method.getReturnType());
-        };
-        return (Connection) Proxy.newProxyInstance(
-                UnwritableColumnReportingTest.class.getClassLoader(),
-                new Class<?>[]{Connection.class}, connection);
     }
 
     /** Enforcement never runs on incomplete inputs. */
@@ -358,10 +409,32 @@ public class UnwritableColumnReportingTest {
     private static Connection recordingConnection(final List<String> issued,
                                                   final boolean reject) {
         // What the post-ALTER verification read sees. When the ALTER is
-        // rejected the column is still MATERIALIZED; when it succeeds the
-        // default_kind is empty, i.e. an ordinary writable column.
-        final String kindAfter = reject ? "MATERIALIZED" : "";
+        // rejected the column is still MATERIALIZED; when it succeeds it is
+        // DEFAULT -- writable by the source, still derived when omitted.
+        return recordingConnection(issued, reject,
+                reject ? "MATERIALIZED" : "DEFAULT", "ifNull(base, 0) * 2");
+    }
 
+    /**
+     * Recording connection with the two metadata reads stated separately.
+     *
+     * <p>The reads are answered by inspecting the SQL rather than by
+     * returning one canned string, because the conversion path issues two
+     * different ones against {@code system.columns}: the default expression
+     * it has to restate, and the default_kind it verifies afterwards. A stub
+     * that answered both identically could not tell a successful conversion
+     * from a column left MATERIALIZED.</p>
+     *
+     * @param issued     collects the DDL submitted.
+     * @param reject     when true the ALTER is denied outright.
+     * @param kindAfter  default_kind reported by the post-ALTER verification.
+     * @param expression default_expression reported before the ALTER; null
+     *                   models a column whose expression cannot be read.
+     */
+    private static Connection recordingConnection(final List<String> issued,
+                                                  final boolean reject,
+                                                  final String kindAfter,
+                                                  final String expression) {
         InvocationHandler connection = (proxy, method, args) -> {
             String name = method.getName();
 
@@ -387,32 +460,43 @@ public class UnwritableColumnReportingTest {
                         new Class<?>[]{PreparedStatement.class}, prepared);
             }
 
-            // Verification path: getColumnDefaultKind re-reads system.columns
-            // through createStatement().executeQuery(...).
+            // Metadata read path: getColumnDefaultExpression before the ALTER
+            // and getColumnDefaultKind after it, both through
+            // createStatement().executeQuery(...).
             if ("createStatement".equals(name)) {
-                final boolean[] consumed = {false};
-                InvocationHandler resultSet = (p3, m3, a3) -> {
-                    switch (m3.getName()) {
-                        case "next":
-                            if (consumed[0]) {
-                                return false;
-                            }
-                            consumed[0] = true;
-                            return true;
-                        case "getString":
-                            return kindAfter;
-                        case "close":
-                            return null;
-                        default:
-                            return defaultFor(m3.getReturnType());
+                InvocationHandler stmt = (p4, m4, a4) -> {
+                    if (!"executeQuery".equals(m4.getName())
+                            || a4 == null || a4.length == 0) {
+                        return defaultFor(m4.getReturnType());
                     }
+                    String sql = String.valueOf(a4[0]);
+                    final String value = sql.contains("default_expression")
+                            ? expression : kindAfter;
+                    // A column with no readable expression returns no row at
+                    // all, which is how ClickHouse reports it and what the
+                    // caller must handle.
+                    final boolean hasRow = value != null;
+                    final boolean[] consumed = {false};
+                    InvocationHandler resultSet = (p3, m3, a3) -> {
+                        switch (m3.getName()) {
+                            case "next":
+                                if (!hasRow || consumed[0]) {
+                                    return false;
+                                }
+                                consumed[0] = true;
+                                return true;
+                            case "getString":
+                                return value;
+                            case "close":
+                                return null;
+                            default:
+                                return defaultFor(m3.getReturnType());
+                        }
+                    };
+                    return Proxy.newProxyInstance(
+                            UnwritableColumnReportingTest.class.getClassLoader(),
+                            new Class<?>[]{ResultSet.class}, resultSet);
                 };
-                final ResultSet rs = (ResultSet) Proxy.newProxyInstance(
-                        UnwritableColumnReportingTest.class.getClassLoader(),
-                        new Class<?>[]{ResultSet.class}, resultSet);
-                InvocationHandler stmt = (p4, m4, a4) ->
-                        "executeQuery".equals(m4.getName())
-                                ? rs : defaultFor(m4.getReturnType());
                 return Proxy.newProxyInstance(
                         UnwritableColumnReportingTest.class.getClassLoader(),
                         new Class<?>[]{Statement.class}, stmt);
