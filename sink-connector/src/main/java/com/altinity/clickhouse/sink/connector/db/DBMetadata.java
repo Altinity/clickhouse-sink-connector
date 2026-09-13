@@ -628,9 +628,60 @@ public class DBMetadata {
     }
 
     /**
-     * Strips a column's DEFAULT-kind expression so the connector can write
-     * the source's value into it, and returns whether the column is now
-     * writable.
+     * Returns the {@code default_expression} of a single column, or null when
+     * the column has none or it cannot be read.
+     *
+     * <p>Read for the same reason as {@link #getColumnType}: converting a
+     * MATERIALIZED column to DEFAULT has to restate the expression, and the
+     * only faithful source for it is {@code system.columns}. Reconstructing
+     * it from the source DDL would translate it a second time and could
+     * produce a different expression than the one already in place.</p>
+     *
+     * <p>The names are bound as parameters rather than interpolated. They are
+     * replicated identifiers, so a single quote in one would otherwise make
+     * the query malformed -- and the failure would be invisible, because it
+     * is caught below and reported as "no expression", which the caller reads
+     * as "abandon the conversion".</p>
+     *
+     * @param tableName    the ClickHouse table name.
+     * @param databaseName the ClickHouse database name.
+     * @param columnName   the column to look up; matched case-insensitively.
+     * @param conn         the connection to read metadata with.
+     * @return the column's default expression, or null when absent/unreadable.
+     */
+    public String getColumnDefaultExpression(String tableName,
+                                             String databaseName,
+                                             String columnName,
+                                             Connection conn) {
+        if (tableName == null || databaseName == null || columnName == null
+                || conn == null) {
+            return null;
+        }
+        String query = "SELECT default_expression FROM system.columns WHERE "
+                + "database = ? AND table = ? AND lower(name) = lower(?)";
+        try (PreparedStatement ps = conn.prepareStatement(query)) {
+            ps.setString(1, databaseName);
+            ps.setString(2, tableName);
+            ps.setString(3, columnName);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs != null && rs.next()) {
+                    String expression = rs.getString(1);
+                    if (expression != null && !expression.trim().isEmpty()) {
+                        return expression;
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not read the default expression of {}.{}.{}",
+                    databaseName, tableName, columnName, e);
+        }
+        return null;
+    }
+
+    /**
+     * Converts a MATERIALIZED column into a DEFAULT column so the connector
+     * can write the source's value into it, and returns whether the column is
+     * now writable.
      *
      * <p>This is the enforcement half of the replication contract. The source
      * database is the authority on what the data is, and this connector is
@@ -641,10 +692,45 @@ public class DBMetadata {
      * counts. Reporting that is not enough. The ClickHouse definition is the
      * thing that is wrong, so the connector corrects it.</p>
      *
-     * <p>{@code ALTER TABLE ... MODIFY COLUMN <col> <type>} restates the
-     * column with no default expression, which drops the MATERIALIZED clause
-     * and leaves an ordinary column. It is a metadata-only change: existing
-     * parts are not rewritten, so it is cheap and does not block.</p>
+     * <p><b>The conversion is to DEFAULT, not to an ordinary column.</b>
+     * The two differ in what happens when the connector does NOT send the
+     * column, which is the common case for a table whose source declares it
+     * generated: DEFAULT re-derives the value from the same expression,
+     * exactly as MATERIALIZED did, whereas a bare column would store a type
+     * zero. DEFAULT additionally accepts an explicit value, so the binlog
+     * value lands as sent. That is the whole property being bought here --
+     * the source becomes authoritative without the replica losing its
+     * ability to derive the column on its own.</p>
+     *
+     * <p>Restating the column without any default clause does NOT achieve
+     * this, and is not merely a weaker form of it. ClickHouse reads an
+     * omitted default clause as "leave the existing default alone", so
+     * {@code MODIFY COLUMN <col> <type>} against a MATERIALIZED column is
+     * accepted, returns no error, and leaves {@code default_kind} exactly as
+     * it was. Verified on 24.8.14, 25.8.12 and 26.1.6:</p>
+     *
+     * <pre>
+     *   ALTER TABLE t MODIFY COLUMN c Nullable(Int64)
+     *       -&gt; default_kind: MATERIALIZED   (unchanged, no error)
+     *   ALTER TABLE t MODIFY COLUMN c Nullable(Int64) DEFAULT ifNull(base,0)*2
+     *       -&gt; default_kind: DEFAULT
+     * </pre>
+     *
+     * <p>The expression is read back from {@code system.columns} and restated
+     * verbatim rather than reconstructed, so the replica keeps deriving
+     * precisely what it derived before. CODEC, COMMENT and column TTL are
+     * carried across by ClickHouse itself and do not need restating --
+     * verified on the same builds by comparing {@code create_table_query}
+     * either side of the conversion.</p>
+     *
+     * <p>When the expression cannot be read the conversion is abandoned
+     * rather than attempted without it. Emitting {@code MODIFY COLUMN <col>
+     * <type>} in that situation is the silent no-op above, and any statement
+     * that did take effect would strip the replica's ability to derive the
+     * column at all -- a worse state than the divergence being corrected.</p>
+     *
+     * <p>It is a metadata-only change: existing parts are not rewritten, so
+     * it is cheap and does not block.</p>
      *
      * <p><b>It fixes the write path forward, not history.</b> Rows written
      * while the column was MATERIALIZED still hold ClickHouse's computed
@@ -652,7 +738,7 @@ public class DBMetadata {
      *
      * @param tableName    the ClickHouse table name.
      * @param databaseName the ClickHouse database name.
-     * @param columnName   the column whose default expression is removed.
+     * @param columnName   the column being converted to DEFAULT.
      * @param columnType   the column's declared type, restated verbatim.
      * @param conn         the connection to issue the DDL on.
      * @return true when the column was successfully made writable.
@@ -664,11 +750,31 @@ public class DBMetadata {
                 || columnType == null || columnType.isEmpty() || conn == null) {
             return false;
         }
+
+        // The existing expression, restated verbatim. Without it the DDL
+        // below degenerates into the silent no-op described above, so the
+        // conversion is abandoned rather than issued blind.
+        String defaultExpression = getColumnDefaultExpression(
+                tableName, databaseName, columnName, conn);
+        if (defaultExpression == null) {
+            log.warn("Could not read the expression behind {}.{}.{}, so it "
+                            + "cannot be converted to DEFAULT. Restating the "
+                            + "column without one would not remove "
+                            + "MATERIALIZED anyway -- ClickHouse treats an "
+                            + "omitted default clause as 'leave it alone'. "
+                            + "Redefine the column by hand as "
+                            + "DEFAULT <expression> so the replicated value "
+                            + "is stored.",
+                    databaseName, tableName, columnName);
+            return false;
+        }
+
         // Backticks, not plain identifiers: replicated table and column names
         // routinely contain characters ClickHouse would otherwise parse.
         String ddl = String.format(
-                "ALTER TABLE `%s`.`%s` MODIFY COLUMN `%s` %s",
-                databaseName, tableName, columnName, columnType);
+                "ALTER TABLE `%s`.`%s` MODIFY COLUMN `%s` %s DEFAULT %s",
+                databaseName, tableName, columnName, columnType,
+                defaultExpression);
         try {
             log.info("Enforcing source conformance on {}.{}: {}",
                     databaseName, tableName, ddl);
@@ -689,17 +795,21 @@ public class DBMetadata {
         // success there would be the worst possible outcome: the caller would
         // believe the replica had been corrected and stop warning, while the
         // source value continued to be silently discarded.
+        //
+        // Asserted positively: the column must now read back as DEFAULT.
+        // A negative check ("no longer MATERIALIZED") would also accept an
+        // ordinary column with no default at all, which is the outcome this
+        // change exists to avoid -- the replica would stop deriving the
+        // column and store a type zero whenever the connector omits it.
         String kindAfter = getColumnDefaultKind(tableName, databaseName,
                 columnName, conn);
-        boolean stillShadowed = "MATERIALIZED".equalsIgnoreCase(kindAfter)
-                || "ALIAS".equalsIgnoreCase(kindAfter);
-        if (stillShadowed || kindAfter == null) {
-            log.warn("Enforcement did not take effect on {}.{}.{}: its "
-                            + "default_kind is still '{}' after the ALTER. The "
-                            + "source value for this column is still not being "
-                            + "stored -- correct the ClickHouse definition by "
-                            + "hand, or grant the connector ALTER TABLE on this "
-                            + "table.",
+        if (!"DEFAULT".equalsIgnoreCase(kindAfter)) {
+            log.warn("Conversion did not take effect on {}.{}.{}: its "
+                            + "default_kind is '{}' after the ALTER, not "
+                            + "DEFAULT. The source value for this column is "
+                            + "still not being stored -- redefine the column "
+                            + "by hand as DEFAULT <expression>, or grant the "
+                            + "connector ALTER TABLE on this table.",
                     databaseName, tableName, columnName,
                     kindAfter == null ? "unreadable" : kindAfter);
             return false;
