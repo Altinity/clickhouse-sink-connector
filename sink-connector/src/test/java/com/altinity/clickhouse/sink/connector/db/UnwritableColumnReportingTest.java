@@ -292,6 +292,54 @@ public class UnwritableColumnReportingTest {
     }
 
     /**
+     * The identifiers in the expression lookup are bound, not interpolated.
+     *
+     * <p>They are replicated names, so one containing a single quote would
+     * make an interpolated query malformed -- and the failure would be
+     * invisible, because the lookup catches it and reports "no expression",
+     * which the caller reads as "abandon the conversion". Asserted on the SQL
+     * the connection is handed: it must carry placeholders and must not carry
+     * the identifier values.</p>
+     */
+    @Test
+    public void testExpressionLookupBindsIdentifiersRatherThanInterpolating() {
+        final List<String> prepared = new ArrayList<>();
+        final List<Object> bound = new ArrayList<>();
+
+        InvocationHandler connection = (proxy, method, args) -> {
+            if ("prepareStatement".equals(method.getName())
+                    && args != null && args.length > 0) {
+                prepared.add(String.valueOf(args[0]));
+                InvocationHandler ps = (p, m, a) -> {
+                    if ("setString".equals(m.getName()) && a != null && a.length > 1) {
+                        bound.add(a[1]);
+                    }
+                    return defaultFor(m.getReturnType());
+                };
+                return Proxy.newProxyInstance(
+                        UnwritableColumnReportingTest.class.getClassLoader(),
+                        new Class<?>[]{PreparedStatement.class}, ps);
+            }
+            return defaultFor(method.getReturnType());
+        };
+        Connection conn = (Connection) Proxy.newProxyInstance(
+                UnwritableColumnReportingTest.class.getClassLoader(),
+                new Class<?>[]{Connection.class}, connection);
+
+        new DBMetadata(config()).getColumnDefaultExpression(
+                "order's-items", "sales'db", "total's_tax", conn);
+
+        Assert.assertEquals(1, prepared.size());
+        String sql = prepared.get(0);
+        Assert.assertFalse("identifiers must not be interpolated: " + sql,
+                sql.contains("order's-items") || sql.contains("sales'db")
+                        || sql.contains("total's_tax"));
+        Assert.assertTrue("the lookup must use bind placeholders: " + sql,
+                sql.contains("?"));
+        Assert.assertEquals("all three identifiers must be bound", 3, bound.size());
+    }
+
+    /**
      * Success is asserted positively: the column must read back as DEFAULT.
      *
      * <p>A negative check ("no longer MATERIALIZED") would also accept a bare
@@ -438,6 +486,42 @@ public class UnwritableColumnReportingTest {
         InvocationHandler connection = (proxy, method, args) -> {
             String name = method.getName();
 
+            // Expression read: getColumnDefaultExpression binds the
+            // identifiers as parameters, so it arrives as a prepareStatement
+            // whose SQL names default_expression and is then executeQuery'd.
+            if ("prepareStatement".equals(name) && args != null && args.length > 0
+                    && String.valueOf(args[0]).contains("default_expression")) {
+                final boolean[] consumed = {false};
+                InvocationHandler resultSet = (p5, m5, a5) -> {
+                    switch (m5.getName()) {
+                        case "next":
+                            // A column with no readable expression returns no
+                            // row at all, which is how ClickHouse reports it
+                            // and what the caller must handle.
+                            if (expression == null || consumed[0]) {
+                                return false;
+                            }
+                            consumed[0] = true;
+                            return true;
+                        case "getString":
+                            return expression;
+                        case "close":
+                            return null;
+                        default:
+                            return defaultFor(m5.getReturnType());
+                    }
+                };
+                final ResultSet rs = (ResultSet) Proxy.newProxyInstance(
+                        UnwritableColumnReportingTest.class.getClassLoader(),
+                        new Class<?>[]{ResultSet.class}, resultSet);
+                InvocationHandler prepared = (p6, m6, a6) ->
+                        "executeQuery".equals(m6.getName())
+                                ? rs : defaultFor(m6.getReturnType());
+                return Proxy.newProxyInstance(
+                        UnwritableColumnReportingTest.class.getClassLoader(),
+                        new Class<?>[]{PreparedStatement.class}, prepared);
+            }
+
             // DDL submission path: executeSystemQuery prepares and execute()s.
             if ("prepareStatement".equals(name) && args != null && args.length > 0) {
                 if (reject) {
@@ -460,21 +544,15 @@ public class UnwritableColumnReportingTest {
                         new Class<?>[]{PreparedStatement.class}, prepared);
             }
 
-            // Metadata read path: getColumnDefaultExpression before the ALTER
-            // and getColumnDefaultKind after it, both through
-            // createStatement().executeQuery(...).
+            // Verification path: getColumnDefaultKind re-reads system.columns
+            // after the ALTER through createStatement().executeQuery(...).
             if ("createStatement".equals(name)) {
                 InvocationHandler stmt = (p4, m4, a4) -> {
                     if (!"executeQuery".equals(m4.getName())
                             || a4 == null || a4.length == 0) {
                         return defaultFor(m4.getReturnType());
                     }
-                    String sql = String.valueOf(a4[0]);
-                    final String value = sql.contains("default_expression")
-                            ? expression : kindAfter;
-                    // A column with no readable expression returns no row at
-                    // all, which is how ClickHouse reports it and what the
-                    // caller must handle.
+                    final String value = kindAfter;
                     final boolean hasRow = value != null;
                     final boolean[] consumed = {false};
                     InvocationHandler resultSet = (p3, m3, a3) -> {

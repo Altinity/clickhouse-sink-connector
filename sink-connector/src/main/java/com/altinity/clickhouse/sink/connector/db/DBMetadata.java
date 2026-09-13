@@ -637,6 +637,12 @@ public class DBMetadata {
      * it from the source DDL would translate it a second time and could
      * produce a different expression than the one already in place.</p>
      *
+     * <p>The names are bound as parameters rather than interpolated. They are
+     * replicated identifiers, so a single quote in one would otherwise make
+     * the query malformed -- and the failure would be invisible, because it
+     * is caught below and reported as "no expression", which the caller reads
+     * as "abandon the conversion".</p>
+     *
      * @param tableName    the ClickHouse table name.
      * @param databaseName the ClickHouse database name.
      * @param columnName   the column to look up; matched case-insensitively.
@@ -651,16 +657,18 @@ public class DBMetadata {
                 || conn == null) {
             return null;
         }
-        String query = String.format(
-                "SELECT default_expression FROM system.columns WHERE "
-                        + "database = '%s' AND table = '%s' "
-                        + "AND lower(name) = lower('%s')",
-                databaseName, tableName, columnName);
-        try (ResultSet rs = conn.createStatement().executeQuery(query)) {
-            if (rs != null && rs.next()) {
-                String expression = rs.getString(1);
-                if (expression != null && !expression.trim().isEmpty()) {
-                    return expression;
+        String query = "SELECT default_expression FROM system.columns WHERE "
+                + "database = ? AND table = ? AND lower(name) = lower(?)";
+        try (PreparedStatement ps = conn.prepareStatement(query)) {
+            ps.setString(1, databaseName);
+            ps.setString(2, tableName);
+            ps.setString(3, columnName);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs != null && rs.next()) {
+                    String expression = rs.getString(1);
+                    if (expression != null && !expression.trim().isEmpty()) {
+                        return expression;
+                    }
                 }
             }
         } catch (Exception e) {
