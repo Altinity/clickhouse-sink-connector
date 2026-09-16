@@ -2,7 +2,8 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
@@ -146,6 +147,13 @@ public class DebeziumChangeEventCapture {
     BaseDbWriter writer;
 
     /**
+     * PostgreSQL-specific configuration and state (schema change detection,
+     * schema prefix, database suffix, etc.).  Initialised in
+     * {@link #setup} from the connector properties.
+     */
+    private PostgresConnectorConfig pgConfig;
+
+    /**
      * Connection to the system database.
      */
     Connection systemDbConnection;
@@ -244,6 +252,7 @@ public class DebeziumChangeEventCapture {
 
         DBCredentials dbCredentials = parseDBConfiguration(config);
         systemDbConnection = setSystemDbConnection(dbCredentials, config);
+        pgConfig.initSchemaChangeDetector(props, config, writer);
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             replicationHistoryDbConnection = setReplicationHistoryDbConnection(dbCredentials, config);
         }
@@ -391,10 +400,9 @@ public class DebeziumChangeEventCapture {
                 Thread.currentThread().setName("Sink connector Debezium Event Thread");
                 try {
                     Class.forName("com.clickhouse.jdbc.ClickHouseDriver");
-
                     engine.run();
                 } catch (Exception e) {
-                    log.error("Debezium event capture starting Exception", e);
+                    log.error("Debezium event thread: engine.run() threw exception", e);
                 }
             });
         } catch (Exception e) {
@@ -446,6 +454,9 @@ public class DebeziumChangeEventCapture {
         KeylessTablePreflight.check(props);
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
+
+        // Initialize PostgreSQL-specific configuration from properties.
+        this.pgConfig = new PostgresConnectorConfig(props);
 
         // Log if replication history mode is enabled
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
@@ -516,6 +527,77 @@ public class DebeziumChangeEventCapture {
      */
     static final String V1_DRIVER_MARKER = "clickhouse.jdbc.v1";
 
+    /** Debezium's heartbeat interval property. Defaults to 0 (disabled). */
+    static final String HEARTBEAT_INTERVAL_MS = "heartbeat.interval.ms";
+
+    /**
+     * Default heartbeat interval applied when the user has not set one.
+     *
+     * <p>Short enough that a snapshot of a small, idle database reaches its
+     * committed end-of-snapshot state within seconds rather than never; long
+     * enough to be irrelevant to a busy source, where rows are flowing and
+     * the heartbeat path is not what advances the offset.</p>
+     */
+    static final String DEFAULT_HEARTBEAT_INTERVAL_MS = "5000";
+
+    /**
+     * Ensures Debezium emits heartbeats, because the connector's
+     * end-of-snapshot state depends on them.
+     *
+     * <p><b>Why this is not optional (issue #1379, "Initial Snapshot never
+     * finishes").</b> Debezium marks a snapshot complete only AFTER the last
+     * snapshot row is emitted, so every snapshot ROW still carries
+     * {@code snapshot=INITIAL, snapshot_completed=false}. The completed state
+     * rides exclusively on records emitted after the snapshot. On a source
+     * that is idle once the snapshot ends -- which is the normal case for the
+     * small test databases people first try the connector on -- there are no
+     * such records except heartbeats.</p>
+     *
+     * <p>Committing the offset from those control records is what
+     * {@code commitControlRecordOffset} exists to do. But that machinery can
+     * only act on a heartbeat that is actually emitted, and Debezium's
+     * {@code heartbeat.interval.ms} defaults to 0, which disables heartbeats
+     * entirely. The connector never set it. So on an idle source the fix had
+     * nothing to fire on and the offset stayed at
+     * {@code snapshot_completed=false} forever.</p>
+     *
+     * <p><b>Why that is destructive rather than cosmetic.</b> On restart
+     * Debezium reads the persisted offset, sees a snapshot that never
+     * completed, and re-runs the whole snapshot from the beginning
+     * ({@code InitialSnapshotter#shouldSnapshotData} keys off exactly this
+     * state). Every restart re-snapshots, so the connector can never make
+     * forward progress past its first snapshot and the target is rewritten
+     * from scratch each time.</p>
+     *
+     * <p>A user-supplied value always wins: this only fills in a default when
+     * the property is absent or blank. Setting it to {@code 0} explicitly is
+     * honoured, which keeps the escape hatch for anyone who has a reason to
+     * disable heartbeats and accepts the consequence.</p>
+     *
+     * @param props the Debezium properties, mutated in place.
+     */
+    static void ensureHeartbeatInterval(Properties props) {
+        if (props == null) {
+            return;
+        }
+        String configured = props.getProperty(HEARTBEAT_INTERVAL_MS);
+        if (configured != null && !configured.trim().isEmpty()) {
+            log.info("Heartbeat interval is set to {}ms by configuration; leaving it "
+                            + "unchanged. Note that a value of 0 disables heartbeats, and "
+                            + "on a source that goes idle after the initial snapshot the "
+                            + "snapshot's completed state will then never be committed "
+                            + "(issue #1379).",
+                    configured);
+            return;
+        }
+        props.setProperty(HEARTBEAT_INTERVAL_MS, DEFAULT_HEARTBEAT_INTERVAL_MS);
+        log.info("No {} configured; defaulting to {}ms. Heartbeats are what carry the "
+                        + "end-of-snapshot state to the offset store on an idle source, so "
+                        + "leaving them disabled would make the initial snapshot re-run on "
+                        + "every restart (issue #1379).",
+                HEARTBEAT_INTERVAL_MS, DEFAULT_HEARTBEAT_INTERVAL_MS);
+    }
+
     /**
      * Ensures the ClickHouse JDBC URL in the given property key has the
      * {@code jdbc_ignore_unsupported_values=true} parameter, which prevents
@@ -583,6 +665,56 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
+     * Flushes all buffered records and pauses the batch executor so that
+     * no further writes reach ClickHouse until {@link #resumeAfterFlush()}
+     * is called.
+     *
+     * <p>This is used by the checksum tool to quiesce the connector without
+     * fully stopping it:
+     * <ol>
+     *   <li>Set the executor's pause flag — any currently executing batch
+     *       finishes, but no new batch starts.</li>
+     *   <li>Wait for the in-flight batch to drain (up to 30 seconds).</li>
+     * </ol>
+     *
+     * <p>After this method returns the connector is still running (Debezium
+     * still captures WAL events into the internal queue), but nothing is
+     * written to ClickHouse.
+     *
+     * @throws IllegalStateException if the executor is not initialised.
+     */
+    public void flushAndPause() {
+        if (this.executor == null) {
+            throw new IllegalStateException("Executor is not initialised — cannot flush");
+        }
+        log.info("FLUSH: Pausing batch executor (drain buffered records)...");
+        this.executor.pause();
+
+        // Wait briefly for any in-flight batch to complete.
+        // The pause flag is checked in beforeExecute(), so the currently running
+        // task will finish normally; we just need to give it time.
+        try {
+            TimeUnit.SECONDS.sleep(5);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+        log.info("FLUSH: Batch executor paused — no new writes will reach ClickHouse");
+    }
+
+    /**
+     * Resumes the batch executor after a previous {@link #flushAndPause()}.
+     *
+     * @throws IllegalStateException if the executor is not initialised.
+     */
+    public void resumeAfterFlush() {
+        if (this.executor == null) {
+            throw new IllegalStateException("Executor is not initialised — cannot resume");
+        }
+        log.info("FLUSH: Resuming batch executor — writes to ClickHouse will restart");
+        this.executor.resume();
+    }
+
+    /**
      * Parses the database configuration from the connector configuration.
      *
      * @param config The ClickHouse sink connector configuration.
@@ -632,30 +764,64 @@ public class DebeziumChangeEventCapture {
         long deadline = System.currentTimeMillis() + DDL_DRAIN_TIMEOUT_MS;
 
         // Step 1: let the pool consume what is already queued.
+        //
+        // The pool MUST still be running here. Pausing before the queue is
+        // drained is a deadlock, not a safety measure: `pause()` parks every
+        // pool thread in beforeExecute(), so nothing can dequeue, and this
+        // loop then waits out the full timeout on a queue that is guaranteed
+        // never to shrink. It always ends in the abort below.
+        //
+        // Pausing first was introduced to close a "the queue never reaches
+        // empty on a busy table" race. That race cannot occur: this queue has
+        // exactly ONE producer -- appendToRecords(), called only from
+        // handleChangeEventBatch(), which runs on the very Debezium thread
+        // that is executing this drain. While we are in here, no new batch can
+        // be appended, so the queued set is already fixed and the pool is free
+        // to consume it to empty. Step 2 then closes the pause window
+        // properly.
         while (this.records != null && !this.records.isEmpty()) {
             if (System.currentTimeMillis() >= deadline) {
-                log.warn("DDL drain: {} record batch(es) still queued after {} ms; applying the DDL anyway. "
-                                + "Records buffered under the previous schema may be written against the new one.",
-                        this.records.size(), DDL_DRAIN_TIMEOUT_MS);
-                break;
+                // NOT survivable. Applying the ALTER now writes records that
+                // were read under the PREVIOUS schema against the NEW table --
+                // the rows insert successfully with wrong contents and matching
+                // row counts, which is the exact production failure. Aborting
+                // instead routes into the DDL retry path, which drains again
+                // from a consistent point.
+                throw new IllegalStateException(String.format(
+                        "DDL drain: %d record batch(es) still queued after %d ms. Applying "
+                                + "the DDL now would write records captured under the previous "
+                                + "schema against the altered table, silently corrupting them. "
+                                + "Aborting this DDL attempt so it can be retried.",
+                        this.records.size(), DDL_DRAIN_TIMEOUT_MS));
             }
             try {
                 Thread.sleep(50);
             } catch (InterruptedException ie) {
                 Thread.currentThread().interrupt();
-                break;
+                throw new IllegalStateException(
+                        "DDL drain interrupted before the writer was quiescent; aborting "
+                                + "this DDL attempt rather than applying it over in-flight writes.");
             }
         }
 
         // Step 2: no new batches may start.
         this.executor.pause();
 
-        // Step 3: wait out the batches already running.
+        // Step 3: wait out the batches already inside a task body.
+        //
+        // pause() + awaitQuiescent() together are what make the writer
+        // genuinely quiescent, and the check-then-act window between them is
+        // already closed inside ClickHouseBatchExecutor (the pause test and
+        // the in-flight increment share one monitor). A batch that slipped
+        // onto a thread just before the pause is therefore counted, and waited
+        // out here, rather than racing the ALTER.
         long remaining = Math.max(0, deadline - System.currentTimeMillis());
         if (!this.executor.awaitQuiescent(remaining)) {
-            log.warn("DDL drain: writer did not become quiescent within {} ms; applying the DDL anyway. "
-                            + "Records buffered under the previous schema may be written against the new one.",
-                    DDL_DRAIN_TIMEOUT_MS);
+            throw new IllegalStateException(String.format(
+                    "DDL drain: writer did not become quiescent within %d ms. Applying the "
+                            + "DDL now would interleave it with in-flight writes captured under "
+                            + "the previous schema. Aborting this DDL attempt so it can be "
+                            + "retried.", DDL_DRAIN_TIMEOUT_MS));
         }
     }
 
@@ -687,8 +853,8 @@ public class DebeziumChangeEventCapture {
             return;
         }
 
-        MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(writer, config, databaseName);
-        mySQLDDLParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
+        DDLParserService ddlParserService = DDLParserFactory.getParser(props, writer, config, databaseName);
+        ddlParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
 
 
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
@@ -731,12 +897,58 @@ public class DebeziumChangeEventCapture {
                             invalidationDatabaseName = databaseOverrideMap.get(invalidationDatabaseName);
                         }
                     }
-                    for (String tableName : getTableNamesFromDDL(sr, DDL)) {
-                        CacheInvalidationManager.getInstance()
-                                .invalidateTable(invalidationDatabaseName + "." + tableName);
+                    List<String> affected = getTableNamesFromDDL(sr, DDL);
+                    if (affected == null || affected.isEmpty()) {
+                        // A PostgreSQL schema-change event may name no table in its
+                        // tableChanges array, yet the topic still identifies it
+                        // unambiguously. Resolve that before falling back, so the
+                        // common Postgres DDL does not trigger a fleet-wide sweep.
+                        String topicTable = Utils.getTableNameFromTopic(
+                                sr.topic(), pgConfig.isSchemaPrefixEnabled(),
+                                pgConfig.getCommonSchemaTemplate());
+                        if (topicTable != null) {
+                            affected = Collections.singletonList(topicTable);
+                        }
+                    }
+                    if (affected == null || affected.isEmpty()) {
+                        // The DDL changed something, but which table could not be
+                        // resolved from the event, the statement text, or the topic.
+                        // Leaving every cache in place would let writers keep binding
+                        // against a schema this DDL just changed -- exactly the
+                        // staleness that drops column values silently.
+                        //
+                        // Invalidate EVERYTHING instead. The cost is one metadata
+                        // re-read per active table on its next batch; the cost of
+                        // guessing wrong is undetectable data corruption.
+                        log.warn("Could not resolve any table name for DDL [{}]; invalidating "
+                                + "every cached schema rather than risk writing against a "
+                                + "stale one.", DDL);
+                        CacheInvalidationManager.getInstance().invalidateAll();
+                    } else {
+                        for (String tableName : affected) {
+                            String tableKey = invalidationDatabaseName + "." + tableName;
+                            CacheInvalidationManager.getInstance().invalidateTable(tableKey);
+                            // Also invalidate the schema-drift detector cache so the next DML event
+                            // re-fetches the updated ClickHouse schema immediately, without waiting
+                            // for the TTL to expire.
+                            if (pgConfig.getSchemaChangeDetector() != null) {
+                                pgConfig.getSchemaChangeDetector().invalidateCache(tableKey);
+                                log.debug("Schema-drift cache invalidated for {} after DDL: {}", tableKey, DDL);
+                            }
+                        }
                     }
                 } catch (Exception e) {
-                    log.warn("Error invalidating cache for DDL: " + DDL, e);
+                    // Same reasoning: a failure to work out WHAT to invalidate must
+                    // never leave stale caches in service after a DDL.
+                    log.warn("Error invalidating cache for DDL [{}]; invalidating every "
+                            + "cached schema as a fail-safe.", DDL, e);
+                    try {
+                        CacheInvalidationManager.getInstance().invalidateAll();
+                    } catch (Exception inner) {
+                        log.error("Fail-safe cache invalidation also failed after DDL [{}]. "
+                                + "Cached schemas may be stale; the bind-time check will fail "
+                                + "affected batches rather than write dropped columns.", DDL, inner);
+                    }
                 }
 
                 try {
@@ -889,6 +1101,7 @@ public class DebeziumChangeEventCapture {
         return conn;
     }
 
+
     /**
      * Sets up the replication history database connection using the provided database
      * credentials and connector configuration.
@@ -918,13 +1131,32 @@ public class DebeziumChangeEventCapture {
      * @return The database name.
      */
     private String getDatabaseName(SourceRecord sr) {
+        String dbName = "system";
         if (sr != null && sr.key() instanceof Struct) {
-            String recordDbName = (String) ((Struct) sr.key()).get("databaseName");
+            Struct keyStruct = (Struct) sr.key();
+            String recordDbName = null;
+            // Try "databaseName" first (MySQL DDL key struct)
+            if (keyStruct.schema().field("databaseName") != null) {
+                recordDbName = (String) keyStruct.get("databaseName");
+            }
+            // Fall back to "db" (PostgreSQL key struct)
+            if ((recordDbName == null || recordDbName.isEmpty()) && keyStruct.schema().field("db") != null) {
+                recordDbName = (String) keyStruct.get("db");
+            }
             if (recordDbName != null && !recordDbName.isEmpty()) {
-                return recordDbName;
+                dbName = recordDbName;
             }
         }
-        return "system";
+        // Apply database prefix if configured (before suffix)
+        dbName = Utils.applyDatabasePrefix(dbName, pgConfig.getCommonDatabasePrefix());
+        // Apply database schema suffix if configured
+        if (pgConfig.isDatabaseSchemaSuffix() && pgConfig.getCommonSchemaTemplate() != null
+                && !pgConfig.getCommonSchemaTemplate().isEmpty()) {
+            String topic = sr != null ? sr.topic() : null;
+            String schema = Utils.extractSchemaFromTopic(topic);
+            dbName = Utils.applyDatabaseSchemaSuffix(dbName, pgConfig.getCommonSchemaTemplate(), schema);
+        }
+        return dbName;
     }
 
     /**
@@ -938,7 +1170,8 @@ public class DebeziumChangeEventCapture {
             try {
                 String tableName = (String) ((Struct) sr.key()).get("tableName");
                 if (tableName != null && !tableName.isEmpty()) {
-                    return tableName;
+                    return Utils.getTableNameForSchemaPrefix(
+                            tableName, sr.topic(), pgConfig.isSchemaPrefixEnabled(), pgConfig.getCommonSchemaTemplate());
                 }
             } catch (Exception e) {
                 // tableName field may not exist in the struct
@@ -1069,6 +1302,118 @@ public class DebeziumChangeEventCapture {
         String cleaned = id.replace("\"", "").replace("`", "");
         int dot = cleaned.lastIndexOf('.');
         return dot >= 0 ? cleaned.substring(dot + 1) : cleaned;
+    }
+
+    /**
+     * Extracts the table name from a Debezium DML topic.
+     *
+     * <p>For PostgreSQL, the topic format is:
+     * {@code {topic.prefix}.{schema}.{table}}
+     * The table name is the last dot-separated segment.
+     *
+     * @param topic Kafka topic string from a {@link SourceRecord}
+     * @return the table name, or {@code null} if the topic is null/empty
+     */
+    private static String extractTableNameFromTopic(String topic) {
+        return extractTableNameFromTopic(topic, false);
+    }
+
+    /**
+     * Extracts the table name from a Debezium DML topic.
+     *
+     * <p>When {@code schemaPrefix} is true, returns {@code __<schema>__<table>}
+     * using the second-to-last and last dot-separated segments.
+     *
+     * @param topic        Kafka topic string from a {@link SourceRecord}
+     * @param schemaPrefix when true, prepend the schema segment
+     * @return the table name, or {@code null} if the topic is null/empty
+     */
+    private static String extractTableNameFromTopic(String topic,
+                                                     boolean schemaPrefix) {
+        return extractTableNameFromTopic(topic, schemaPrefix, null);
+    }
+
+    /**
+     * Extracts the table name from a Debezium DML topic with template support.
+     *
+     * <p>When {@code schemaPrefix} is true and {@code schemaTemplate} is
+     * non-empty, the template is resolved and prepended.  Otherwise falls
+     * back to the hardcoded {@code __<schema>__<table>} format.
+     *
+     * @param topic          Kafka topic string from a {@link SourceRecord}
+     * @param schemaPrefix   when true, prepend the schema segment
+     * @param schemaTemplate the shared template ({@code clickhouse.common.schema.template})
+     * @return the table name, or {@code null} if the topic is null/empty
+     */
+    private static String extractTableNameFromTopic(String topic,
+                                                     boolean schemaPrefix,
+                                                     String schemaTemplate) {
+        if (topic == null || topic.isEmpty()) {
+            return null;
+        }
+        if (schemaPrefix) {
+            // Delegate to the shared utility that handles schema prefix extraction
+            return Utils.getTableNameFromTopic(topic, true, schemaTemplate);
+        }
+        int lastDot = topic.lastIndexOf('.');
+        if (lastDot < 0 || lastDot == topic.length() - 1) {
+            return topic; // no dot → the whole topic is treated as the table name
+        }
+        return topic.substring(lastDot + 1);
+    }
+
+    /**
+     * Extracts the ClickHouse target database name from a DML {@link SourceRecord}.
+     *
+     * <p>The database name is read from the {@code source} struct embedded in the
+     * record value.  For PostgreSQL the relevant field is {@code db}.
+     * Falls back to the existing {@link #getDatabaseName(SourceRecord)} logic
+     * (which reads from the key struct – used for DDL records).
+     *
+     * @param sr the DML source record
+     * @return the database name, or {@code null} if it cannot be determined
+     */
+    private String extractDatabaseNameFromRecord(SourceRecord sr) {
+        String dbName = null;
+        // Try to read from the value's 'source' struct (standard Debezium envelope).
+        try {
+            if (sr.value() instanceof Struct) {
+                Struct valueStruct = (Struct) sr.value();
+                Object sourceObj = valueStruct.get("source");
+                if (sourceObj instanceof Struct) {
+                    Struct sourceStruct = (Struct) sourceObj;
+                    // PostgreSQL uses "db" field; MySQL uses "db" as well.
+                    try {
+                        String db = (String) sourceStruct.get("db");
+                        if (db != null && !db.isEmpty()) {
+                            dbName = db;
+                        }
+                    } catch (Exception e) {
+                        log.trace("'db' field not present in source struct: {}", e.getMessage());
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not extract database name from source struct: {}", e.getMessage());
+        }
+        // Fall back to key-based extraction (used by DDL path).
+        if (dbName == null) {
+            String fallback = getDatabaseName(sr);
+            dbName = "system".equals(fallback) ? null : fallback;
+        }
+        // Apply database prefix if configured (before suffix)
+        if (dbName != null) {
+            dbName = Utils.applyDatabasePrefix(dbName, pgConfig.getCommonDatabasePrefix());
+        }
+        // Apply database schema suffix if configured
+        if (dbName != null && pgConfig.isDatabaseSchemaSuffix()
+                && pgConfig.getCommonSchemaTemplate() != null
+                && !pgConfig.getCommonSchemaTemplate().isEmpty()) {
+            String topic = sr != null ? sr.topic() : null;
+            String schema = Utils.extractSchemaFromTopic(topic);
+            dbName = Utils.applyDatabaseSchemaSuffix(dbName, pgConfig.getCommonSchemaTemplate(), schema);
+        }
+        return dbName;
     }
 
     /**
@@ -1390,18 +1735,61 @@ public class DebeziumChangeEventCapture {
                     // count-based checksums report the table clean.
                     //
                     // Drain first, then apply the DDL.
-                    drainBeforeDDL();
+                    //
+                    // The resume MUST be in a finally: drainBeforeDDL() and
+                    // performDDLOperation() can both throw (a drain that does
+                    // not reach quiescence now aborts rather than applying the
+                    // DDL over in-flight writes), and on that path the pool
+                    // would stay paused forever -- replication stops dead with
+                    // no error after the first one. Resuming unconditionally
+                    // keeps a failed DDL a retryable event instead of a stall.
+                    try {
+                        drainBeforeDDL();
 
-                    Map<String, Object> sourceObjStruct = new ClickHouseConverter().convertValue(sr);
+                        Map<String, Object> sourceObjStruct = new ClickHouseConverter().convertValue(sr);
 
-                    ClickHouseStruct ddlStruct = new ClickHouseStruct();
-                    ddlStruct.setAdditionalMetaData(sourceObjStruct);
-                    ddlStruct.setSequenceNumber(sequenceNumber);
-                    performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
-                    this.executor.resume();
+                        ClickHouseStruct ddlStruct = new ClickHouseStruct();
+                        ddlStruct.setAdditionalMetaData(sourceObjStruct);
+                        ddlStruct.setSequenceNumber(sequenceNumber);
+                        performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
+                    } finally {
+                        this.executor.resume();
+                    }
                 }
             } else {
+                // Schema drift detection: check before writing to ClickHouse so that
+                // any newly-added PostgreSQL columns are present in ClickHouse first.
+                //
+                // pgConfig is assigned in setup(); it is null on any path that
+                // reaches record processing without it (notably MySQL-only unit
+                // tests driving handleChangeEventBatch directly). Dereferencing
+                // it unguarded threw an NPE BEFORE parse() was reached, which
+                // re-broke the #1379 contract this branch is meant to preserve:
+                // the record was dropped without being acknowledged. Schema
+                // drift detection is PostgreSQL-only and optional, so its
+                // absence must skip the check, never fail the record.
+                if (pgConfig != null && pgConfig.getSchemaChangeDetector() != null) {
+                    try {
+                        String dmlTopic = sr.topic();
+                        String dmlTable = Utils.getTableNameFromTopic(dmlTopic, pgConfig.isSchemaPrefixEnabled(), pgConfig.getCommonSchemaTemplate());
+                        String dmlDatabase = extractDatabaseNameFromRecord(sr);
+                        if (dmlTable != null && dmlDatabase != null) {
+                            pgConfig.getSchemaChangeDetector().checkAndReconcile(sr, dmlTable, dmlDatabase);
+                        }
+                    } catch (Exception schemaEx) {
+                        log.warn("Schema drift detection threw unexpectedly; continuing replication. Cause: {}",
+                                schemaEx.getMessage(), schemaEx);
+                    }
+                }
                 chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
+                // NOTE: do NOT early-return on a null chStruct here. A null is
+                // contract (heartbeat / transaction-boundary record), and the
+                // caller -- handleChangeEventBatch -- must still see this record
+                // so commitControlRecordOffset can acknowledge its offset. That
+                // acknowledgement is the whole of the #1379 fix (#1428): on an
+                // idle source the post-snapshot state rides exclusively on
+                // heartbeats, so returning early here strands
+                // snapshot_completed=false forever and re-snapshots on restart.
                 try {
                     if (chStruct != null) {
                         chStruct.setSequenceNumber(sequenceNumber);

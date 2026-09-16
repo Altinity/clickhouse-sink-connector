@@ -18,6 +18,7 @@ import org.testcontainers.utility.DockerImageName;
 
 import java.sql.Connection;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -57,7 +58,7 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
             }
         });
 
-        Thread.sleep(10000);
+        Thread.sleep(10000); // Allow engine to start
 
         Connection conn = connectToMySQL();
 
@@ -68,20 +69,49 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         conn.prepareStatement("alter table add_test modify column col3 int first;").execute();
         conn.prepareStatement("alter table add_test modify column col2 int after col3;").execute();
 
-
-        Thread.sleep(15000);
-
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
         DBMetadata dbMetadata = new DBMetadata(getDebeziumProperties());
-        Map<String, String> shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
-        Map<String, String> addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
 
-        Assert.assertTrue(shipClassColumns.get("class_name").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(shipClassColumns.get("tonange").equalsIgnoreCase("Nullable(Decimal(10, 10))"));
+        // Poll until EVERY column this test asserts on has been replicated.
+        //
+        // The six source ALTERs above are replicated one at a time, so the
+        // schema passes through intermediate states in which some columns are
+        // converted and others are not yet. Waiting on a subset and then
+        // asserting on a superset makes the test pass or fail on where the
+        // replication stream happened to be when the last poll ran.
+        //
+        // Observed: the loop exited as soon as class_name and col2 were
+        // converted, and testModifyColumn then failed on tonange 0.8s later,
+        // because only the class_name ALTER had been applied at that point.
+        // The remaining five ALTERs arrived afterwards.
+        Map<String, String> expectedShipClass = new LinkedHashMap<>();
+        expectedShipClass.put("class_name", "Nullable(Int32)");
+        expectedShipClass.put("tonange", "Nullable(Decimal(10, 10))");
 
-        Assert.assertTrue(addTestColumns.get("col1").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(addTestColumns.get("col2").equalsIgnoreCase("Nullable(Int32)"));
-        Assert.assertTrue(addTestColumns.get("col3").equalsIgnoreCase("Nullable(Int32)"));
+        Map<String, String> expectedAddTest = new LinkedHashMap<>();
+        expectedAddTest.put("col1", "Nullable(Int32)");
+        expectedAddTest.put("col2", "Nullable(Int32)");
+        expectedAddTest.put("col3", "Nullable(Int32)");
+
+        Map<String, String> shipClassColumns = null;
+        Map<String, String> addTestColumns = null;
+        for (int retry = 0; retry < 10; retry++) {
+            shipClassColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "ship_class", "employees");
+            addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
+            if (matchesExpected(shipClassColumns, expectedShipClass)
+                    && matchesExpected(addTestColumns, expectedAddTest)) {
+                break;
+            }
+            Thread.sleep(5000);
+        }
+
+        // Asserted with the observed value in the message. A bare assertTrue
+        // on equalsIgnoreCase reports only "java.lang.AssertionError", which
+        // says neither which column failed nor what it actually held -- and
+        // it throws NullPointerException instead of failing when the column
+        // is missing entirely.
+        assertColumns(shipClassColumns, expectedShipClass, "ship_class");
+        assertColumns(addTestColumns, expectedAddTest, "add_test");
 
         // Validate logic of adding Nullable based on the existing schema.
         conn.prepareStatement("alter table office modify column office_code int").execute();
@@ -93,5 +123,48 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         // Files.deleteIfExists(tmpFilePath);
         executorService.shutdown();
         HikariDbSource.close();
+    }
+
+    /**
+     * True when every expected column is present with the expected type.
+     *
+     * <p>Used as the poll predicate so the loop waits for the same set the
+     * assertions check, rather than a subset of it.</p>
+     */
+    private static boolean matchesExpected(Map<String, String> actual,
+                                           Map<String, String> expected) {
+        if (actual == null || actual.isEmpty()) {
+            return false;
+        }
+        for (Map.Entry<String, String> e : expected.entrySet()) {
+            String observed = actual.get(e.getKey());
+            if (observed == null || !observed.equalsIgnoreCase(e.getValue())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Asserts each expected column, naming the column and the observed value.
+     *
+     * <p>A missing column fails with that message instead of throwing
+     * NullPointerException, so an unreplicated ALTER is reported as the test
+     * failure it is rather than as an error in the test itself.</p>
+     */
+    private static void assertColumns(Map<String, String> actual,
+                                      Map<String, String> expected,
+                                      String tableName) {
+        Assert.assertNotNull("no columns were read back for " + tableName, actual);
+        for (Map.Entry<String, String> e : expected.entrySet()) {
+            String column = e.getKey();
+            String observed = actual.get(column);
+            Assert.assertNotNull(tableName + "." + column
+                    + " is absent from ClickHouse; the ALTER was not replicated. "
+                    + "Columns present: " + actual, observed);
+            Assert.assertTrue(tableName + "." + column + " expected "
+                    + e.getValue() + " but was " + observed,
+                    observed.equalsIgnoreCase(e.getValue()));
+        }
     }
 }

@@ -110,9 +110,60 @@ public class QueryFormatter {
             boolean includeKafkaMetaData,
             boolean includeRawData,
             String rawDataColumn, String dbName, String deleteColumn) {
+        return getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypeMap,
+                includeKafkaMetaData, includeRawData, rawDataColumn, dbName, deleteColumn, null);
+    }
+
+    /**
+     * Overload taking the record's FULL schema fields separately from the
+     * value-filtered {@code fields} list.
+     *
+     * <p>{@code fields} is the caller's "modified fields" list, which
+     * {@code ClickHouseStruct#setAfterStruct} builds by keeping only the fields
+     * whose value is {@code != null}. A column that is genuinely NULL in the
+     * source row is therefore MISSING from that list even though the record
+     * carries the column. Deciding INSERT membership from it drops NULL-valued
+     * columns out of the statement entirely, so ClickHouse applies the column
+     * DEFAULT (0 / '' / 1970-01-01) instead of NULL. MySQL NULL and ClickHouse 0
+     * then differ, silently, with row counts still matching -- which is exactly
+     * what a value-level checksum job reports and a count-based one misses.
+     *
+     * <p>{@code schemaFields} is the record's unfiltered schema
+     * ({@code struct.schema().fields()}), which carries the column regardless of
+     * its value. That is the correct authority for membership: a column absent
+     * from the SCHEMA is genuinely not in this record -- the pre-ALTER case from
+     * #1389, where omission is required so the ALTER's DEFAULT applies -- while a
+     * column present in the schema must always be bound, NULL or not.</p>
+     *
+     * <p>When {@code schemaFields} is null the method falls back to
+     * {@code fields}, preserving the previous behaviour for callers that have no
+     * schema to offer.</p>
+     *
+     * @param tableName               the name of the ClickHouse table.
+     * @param fields                  the value-filtered modified-fields list.
+     * @param columnNameToDataTypeMap a map of column names to their corresponding data types.
+     * @param includeKafkaMetaData    flag indicating whether Kafka metadata columns should be included.
+     * @param includeRawData          flag indicating whether raw data should be included in the query.
+     * @param rawDataColumn           the name of the raw data column.
+     * @param dbName                  the name of the database.
+     * @param deleteColumn            the configured ReplacingMergeTree delete column, may be null.
+     * @param schemaFields            the record's full schema fields, may be null.
+     * @return a MutablePair containing the generated INSERT query and a map of column names to their indices.
+     */
+    public MutablePair<String, Map<String, Integer>> getInsertQueryUsingInputFunction(
+            String tableName, List<Field> fields,
+            Map<String, String> columnNameToDataTypeMap,
+            boolean includeKafkaMetaData,
+            boolean includeRawData,
+            String rawDataColumn, String dbName, String deleteColumn,
+            List<Field> schemaFields) {
+
+        // Membership is decided by the record's SCHEMA, never by the
+        // value-filtered modified-fields list -- see the javadoc above.
+        List<Field> membershipFields = (schemaFields != null) ? schemaFields : fields;
 
         // Create column data structures
-        ColumnData columnData = createColumns(tableName, fields, columnNameToDataTypeMap,
+        ColumnData columnData = createColumns(tableName, membershipFields, columnNameToDataTypeMap,
                 includeKafkaMetaData, includeRawData, rawDataColumn, dbName, deleteColumn);
 
         if (columnData == null) {
@@ -180,8 +231,13 @@ public class QueryFormatter {
         // Check DateTime64 before DateTime since "DateTime64" contains "DateTime"
         // Check Date32 before Date since "Date32" contains "Date"
         if (upperDataType.contains("DATETIME64")) {
-            // Extract precision from DateTime64(precision) or DateTime64(precision, 'timezone')
+            // Extract precision and optional timezone from DateTime64(precision)
+            // or DateTime64(precision, 'timezone')
             String precision = extractDateTime64Precision(dataType);
+            String tz = extractDateTime64Timezone(dataType);
+            if (tz != null) {
+                return "toDateTime64(?, " + precision + ", '" + tz + "')";
+            }
             return "toDateTime64(?, " + precision + ")";
         } else if (upperDataType.contains("DATETIME")) {
             return "toDateTime(?)";
@@ -217,6 +273,26 @@ public class QueryFormatter {
             return "3"; // Default precision
         }
         return dataType.substring(start + 1, end).trim();
+    }
+
+    /**
+     * Extracts the timezone from a DateTime64 data type string.
+     * Handles formats like "DateTime64(3, 'UTC')" or "Nullable(DateTime64(6, 'UTC'))".
+     *
+     * @param dataType the DateTime64 data type string
+     * @return the timezone string (e.g. "UTC"), or null if no timezone is specified
+     */
+    private String extractDateTime64Timezone(String dataType) {
+        // Look for single-quoted timezone: DateTime64(6, 'UTC')
+        int singleQuoteStart = dataType.indexOf('\'');
+        if (singleQuoteStart == -1) {
+            return null;
+        }
+        int singleQuoteEnd = dataType.indexOf('\'', singleQuoteStart + 1);
+        if (singleQuoteEnd == -1) {
+            return null;
+        }
+        return dataType.substring(singleQuoteStart + 1, singleQuoteEnd);
     }
 
     /**

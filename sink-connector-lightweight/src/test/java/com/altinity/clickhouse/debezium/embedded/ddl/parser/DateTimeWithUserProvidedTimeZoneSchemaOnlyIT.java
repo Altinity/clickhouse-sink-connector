@@ -26,6 +26,7 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.sql.Statement;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -104,6 +105,25 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         Thread.sleep(10000);
 
         writer = ITCommon.getDBWriter(clickHouseContainer);
+
+        // Poll until data is replicated into employees.temporal_types_DATETIME
+        boolean dataReady = false;
+        for (int i = 0; i < 20; i++) {
+            try {
+                Statement stmt = writer.getConnection().createStatement();
+                ResultSet countRs = stmt.executeQuery(
+                        "SELECT count(*) as cnt FROM employees.temporal_types_DATETIME");
+                if (countRs.next() && countRs.getLong("cnt") > 0) {
+                    dataReady = true;
+                    break;
+                }
+            } catch (Exception e) {
+                // Table may not exist yet in schema-only mode
+            }
+            Thread.sleep(3000);
+        }
+        Assert.assertTrue("Data should be replicated to employees.temporal_types_DATETIME", dataReady);
+
         /**
          * DATE TIME
          * 1969-12-31 18:00:00.0
