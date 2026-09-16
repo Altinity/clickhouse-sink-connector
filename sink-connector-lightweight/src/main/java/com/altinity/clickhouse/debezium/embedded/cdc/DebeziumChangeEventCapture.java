@@ -292,6 +292,8 @@ public class DebeziumChangeEventCapture {
             useValidatingDriver(props, "schema.history.internal.jdbc.url");
         }
 
+        keepTruncateOperations(props);
+
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder =
                     DebeziumEngine.create(Connect.class);
@@ -540,6 +542,25 @@ public class DebeziumChangeEventCapture {
         }
         String separator = url.contains("?") ? "&" : "?";
         props.setProperty(propKey, url + separator + param);
+    }
+
+    /**
+     * Keeps TRUNCATE replicating by opting out of Debezium's default
+     * {@code skipped.operations=t}.
+     * <p>
+     * Until Debezium 3.3.0 a {@code TRUNCATE TABLE} reached the DDL path and
+     * was replicated from there, so that default was harmless. From 3.3.0
+     * {@code BinlogStreamingChangeEventSource} matches the statement against
+     * {@code TRUNCATE_STATEMENT_PATTERN} and routes it to the truncate
+     * operation instead, which the default then drops, silently ending
+     * truncate replication.
+     * <p>
+     * An explicit {@code skipped.operations} in the user configuration wins.
+     *
+     * @param props the Debezium properties, modified in place.
+     */
+    static void keepTruncateOperations(Properties props) {
+        props.putIfAbsent("skipped.operations", "none");
     }
 
     /**
