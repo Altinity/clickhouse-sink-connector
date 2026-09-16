@@ -7,11 +7,7 @@ import java.util.Properties;
 
 import static org.junit.Assert.assertEquals;
 
-/**
- * Debezium skips truncate operations by default, and from 3.3.0 a
- * {@code TRUNCATE TABLE} no longer reaches the DDL path, so that default
- * silently ends truncate replication unless it is opted out of.
- */
+/** From Debezium 3.3.0 a TRUNCATE no longer reaches the DDL path, so the default skip ends truncate replication. */
 public class TruncateOperationDefaultTest {
 
     @Test

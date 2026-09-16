@@ -544,21 +544,7 @@ public class DebeziumChangeEventCapture {
         props.setProperty(propKey, url + separator + param);
     }
 
-    /**
-     * Keeps TRUNCATE replicating by opting out of Debezium's default
-     * {@code skipped.operations=t}.
-     * <p>
-     * Until Debezium 3.3.0 a {@code TRUNCATE TABLE} reached the DDL path and
-     * was replicated from there, so that default was harmless. From 3.3.0
-     * {@code BinlogStreamingChangeEventSource} matches the statement against
-     * {@code TRUNCATE_STATEMENT_PATTERN} and routes it to the truncate
-     * operation instead, which the default then drops, silently ending
-     * truncate replication.
-     * <p>
-     * An explicit {@code skipped.operations} in the user configuration wins.
-     *
-     * @param props the Debezium properties, modified in place.
-     */
+    /** Defaults {@code skipped.operations} to {@code none}, without which Debezium 3.3.0 drops TRUNCATE. */
     static void keepTruncateOperations(Properties props) {
         props.putIfAbsent("skipped.operations", "none");
     }
