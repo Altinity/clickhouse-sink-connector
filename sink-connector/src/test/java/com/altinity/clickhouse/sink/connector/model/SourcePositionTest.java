@@ -69,6 +69,25 @@ public class SourcePositionTest {
     }
 
     @Test
+    @DisplayName("the order stays transitive when numeric and non-numeric suffixes are mixed")
+    public void mixedSuffixesKeepATransitiveOrder() {
+        // Numeric 20 < numeric 100; the non-numeric name shares the prefix and sorts
+        // after both. A lexical fallback alone would give a < b, b < c and a > c.
+        SourcePosition a = SourcePosition.ofBinlog("log.20", 1L, 0);
+        SourcePosition b = SourcePosition.ofBinlog("log.100", 1L, 0);
+        SourcePosition c = SourcePosition.ofBinlog("log.15a", 1L, 0);
+
+        assertTrue(a.compareTo(b) < 0, "a < b");
+        assertTrue(b.compareTo(c) < 0, "b < c");
+        assertTrue(a.compareTo(c) < 0, "a < c (transitivity)");
+
+        // Different prefixes group first, whatever the suffixes.
+        SourcePosition d = SourcePosition.ofBinlog("alpha.999999", 1L, 0);
+        assertTrue(d.compareTo(a) < 0);
+        assertTrue(d.compareTo(c) < 0);
+    }
+
+    @Test
     @DisplayName("records without binlog coordinates have no position")
     public void missingCoordinatesYieldNoPosition() {
         assertNull(SourcePosition.ofBinlog(null, 10L, 0));

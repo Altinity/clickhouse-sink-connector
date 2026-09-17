@@ -28,6 +28,8 @@ import java.util.Objects;
 public final class SourcePosition implements Comparable<SourcePosition> {
 
     private final long fileSequence;
+    /** File name up to the numeric suffix ({@code mysql-bin} for {@code mysql-bin.000123}); the whole name when there is no numeric suffix. */
+    private final String filePrefix;
     private final String file;
     private final long position;
     private final long row;
@@ -35,6 +37,7 @@ public final class SourcePosition implements Comparable<SourcePosition> {
     private SourcePosition(long fileSequence, String file, long position, long row) {
         this.fileSequence = fileSequence;
         this.file = file;
+        this.filePrefix = fileSequence >= 0 ? file.substring(0, file.lastIndexOf('.')) : file;
         this.position = position;
         this.row = row;
     }
@@ -65,13 +68,15 @@ public final class SourcePosition implements Comparable<SourcePosition> {
         if (lsn == null || lsn <= 0) {
             return null;
         }
-        return new SourcePosition(0L, "", lsn, 0L);
+        // No file name: fileSequence -1 keeps the (empty) prefix equal to the name.
+        return new SourcePosition(-1L, "", lsn, 0L);
     }
 
     /**
      * Numeric suffix of a binlog file name ({@code mysql-bin.000123} -> 123).
-     * A name without a numeric suffix yields -1 and falls back to a lexical
-     * comparison of the whole name, which is still deterministic.
+     * A name without a numeric suffix yields -1; such names order lexically,
+     * after every numerically-suffixed name sharing their prefix (see
+     * {@link #compareTo}).
      */
     static long binlogFileSequence(String file) {
         int dot = file.lastIndexOf('.');
@@ -91,20 +96,32 @@ public final class SourcePosition implements Comparable<SourcePosition> {
         }
     }
 
+    /**
+     * A total order (lexicographic on the tuple {@code (filePrefix, hasNumericSuffix,
+     * fileSequence | file, position, row)}), so it is transitive even when numerically
+     * and non-numerically suffixed names are mixed: names are grouped by prefix first,
+     * within a prefix the numerically suffixed ones order by their number and come
+     * before any non-numeric ones, which order lexically among themselves.
+     */
     @Override
     public int compareTo(SourcePosition other) {
-        if (fileSequence >= 0 && other.fileSequence >= 0) {
-            int c = Long.compare(fileSequence, other.fileSequence);
-            if (c != 0) {
-                return c;
-            }
-        } else {
-            int c = file.compareTo(other.file);
-            if (c != 0) {
-                return c;
-            }
+        int c = filePrefix.compareTo(other.filePrefix);
+        if (c != 0) {
+            return c;
         }
-        int c = Long.compare(position, other.position);
+        boolean numeric = fileSequence >= 0;
+        boolean otherNumeric = other.fileSequence >= 0;
+        if (numeric && otherNumeric) {
+            c = Long.compare(fileSequence, other.fileSequence);
+        } else if (numeric != otherNumeric) {
+            c = numeric ? -1 : 1;
+        } else {
+            c = file.compareTo(other.file);
+        }
+        if (c != 0) {
+            return c;
+        }
+        c = Long.compare(position, other.position);
         if (c != 0) {
             return c;
         }
@@ -124,7 +141,7 @@ public final class SourcePosition implements Comparable<SourcePosition> {
 
     @Override
     public int hashCode() {
-        return Objects.hash(fileSequence >= 0 ? fileSequence : file.hashCode(), position, row);
+        return Objects.hash(filePrefix, fileSequence, fileSequence >= 0 ? "" : file, position, row);
     }
 
     @Override

@@ -18,7 +18,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
@@ -95,11 +94,12 @@ public class LateCommitVersionOrderIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
+        // MySQLContainer's own readiness check (a JDBC 'SELECT 1' probe) is used; no
+        // wait-strategy override.
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
-                .withExtraHost("mysql-server", "0.0.0.0")
-                .waitingFor(new HttpWaitStrategy().forPort(3306));
+                .withExtraHost("mysql-server", "0.0.0.0");
 
         BasicConfigurator.configure();
         mySqlContainer.start();
