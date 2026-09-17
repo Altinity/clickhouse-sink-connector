@@ -551,12 +551,16 @@ public class MySQLDemoIT  {
         int mysqlPaymentsAfter = getCount(mysqlConn, "SELECT COUNT(*) FROM payments");
         int mysqlCustomersAfter = getCount(mysqlConn, "SELECT COUNT(*) FROM customers");
 
-        // Poll until ClickHouse reflects the deletes
-        ITCommon.waitForRowCount(writer.getConnection(),
-                "SELECT count(*) FROM employees.`payments` FINAL", 0,
+        // Poll until ClickHouse reflects the deletes. waitForRowCount waits for
+        // a count AT OR ABOVE a floor, so with a floor of 0 it returned on its
+        // first poll -- before the deletes had been applied -- and the
+        // assertions below compared MySQL's 1/1 against ClickHouse's still
+        // undeleted 4/3. Wait for the exact post-delete counts instead.
+        ITCommon.waitForRowCountEquals(writer.getConnection(),
+                "SELECT count(*) FROM employees.`payments` FINAL", mysqlPaymentsAfter,
                 120_000, 5_000);
-        ITCommon.waitForRowCount(writer.getConnection(),
-                "SELECT count(*) FROM employees.`customers` FINAL", 0,
+        ITCommon.waitForRowCountEquals(writer.getConnection(),
+                "SELECT count(*) FROM employees.`customers` FINAL", mysqlCustomersAfter,
                 120_000, 5_000);
 
         int chPaymentsAfter = getCount(writer.getConnection(), "SELECT COUNT(*) FROM employees.`payments` FINAL");

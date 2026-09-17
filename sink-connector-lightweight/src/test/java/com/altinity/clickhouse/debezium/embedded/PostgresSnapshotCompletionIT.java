@@ -150,13 +150,13 @@ public class PostgresSnapshotCompletionIT {
             // heartbeat is ever emitted to carry the state.
             String offset = awaitSnapshotCompleted(writer);
             Assert.assertNotNull(
-                    "the offset should record the snapshot as completed within "
+                    "the offset should record the snapshot as finished within "
                             + HEARTBEAT_WAIT_MS + "ms of the snapshot ending, but it "
                             + "still reads: " + readOffset(writer),
                     offset);
             Assert.assertTrue(
-                    "snapshot_completed must be true in the persisted offset, got: " + offset,
-                    offset.contains("\"snapshot_completed\":true"));
+                    "the persisted offset must not report an unfinished snapshot, got: " + offset,
+                    ITCommon.offsetSaysSnapshotFinished(offset));
 
             // Stop the connector the way a restart would.
             if (engine.get() != null) {
@@ -185,10 +185,10 @@ public class PostgresSnapshotCompletionIT {
                 BaseDbWriter writerAfter = ITCommon.getDBWriter(clickHouseContainer);
                 String offsetAfterRestart = readOffset(writerAfter);
                 Assert.assertTrue(
-                        "after a restart the snapshot must still be recorded as completed, "
+                        "after a restart the snapshot must still be recorded as finished, "
                                 + "otherwise the next restart re-snapshots again; offset: "
                                 + offsetAfterRestart,
-                        offsetAfterRestart.contains("\"snapshot_completed\":true"));
+                        ITCommon.offsetSaysSnapshotFinished(offsetAfterRestart));
 
                 // A re-run snapshot re-inserts every source row. The target is
                 // a ReplacingMergeTree, so the duplicates may or may not have
@@ -215,16 +215,27 @@ public class PostgresSnapshotCompletionIT {
     }
 
     /**
-     * Polls the persisted offset until it reports the snapshot as completed.
+     * Polls the persisted offset until it reports the snapshot as finished.
+     * <p>
+     * "Finished" is not spelled {@code "snapshot_completed":true} for long:
+     * Debezium writes the snapshot keys only while the offset context is in
+     * snapshot mode, and the first post-snapshot heartbeat on an idle source is
+     * normally emitted once streaming has started, so the offset it carries is
+     * a plain streaming offset ({@code lsn}/{@code txId}/{@code ts_usec}) with
+     * no snapshot keys at all. Both forms make a restart resume streaming; the
+     * broken state this test guards against is the one that never changes,
+     * {@code "snapshot_completed":false}. See
+     * {@link ITCommon#offsetSaysSnapshotFinished}.
+     * </p>
      *
-     * @return the offset value once completed, or null if it never was.
+     * @return the offset value once finished, or null if it never was.
      */
     private String awaitSnapshotCompleted(BaseDbWriter writer) throws Exception {
         long deadline = System.currentTimeMillis() + HEARTBEAT_WAIT_MS;
         String last = null;
         while (System.currentTimeMillis() < deadline) {
             last = readOffset(writer);
-            if (last != null && last.contains("\"snapshot_completed\":true")) {
+            if (ITCommon.offsetSaysSnapshotFinished(last)) {
                 return last;
             }
             Thread.sleep(POLL_MS);
