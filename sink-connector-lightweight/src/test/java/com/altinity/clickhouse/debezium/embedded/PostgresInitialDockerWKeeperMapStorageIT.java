@@ -3,7 +3,6 @@ package com.altinity.clickhouse.debezium.embedded;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
@@ -142,13 +141,22 @@ public class PostgresInitialDockerWKeeperMapStorageIT {
         Assert.assertTrue("redata.total_amount must be Decimal(21, 5)", reDataColumns.get("total_amount").equalsIgnoreCase("Decimal(21, 5)"));
         Assert.assertTrue("tm should have 2 rows after initial snapshot", tmCount == 2);
 
-        // Validate offset storage is functioning (non-null, contains replication fields)
-        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(getProperties(), writer.getConnection());
-        Assert.assertTrue("Offset must contain last_snapshot_record", offsetValue.contains("last_snapshot_record"));
-        Assert.assertTrue("Offset must contain lsn", offsetValue.contains("lsn"));
-        Assert.assertTrue("Offset must contain txId", offsetValue.contains("txId"));
-        Assert.assertTrue("Offset must contain ts_usec", offsetValue.contains("ts_usec"));
-        Assert.assertTrue("Offset must contain snapshot", offsetValue.contains("snapshot"));
+        // Validate offset storage is functioning. The offset is flushed on
+        // Debezium's schedule, not together with the rows, and the
+        // end-of-snapshot state of an idle source only travels on the first
+        // heartbeat once streaming has started: reading it once here returned
+        // null (NPE) on every CI run and locally. Poll until the snapshot is
+        // recorded as finished, then check the position fields, which every
+        // form of the PostgreSQL offset carries (the snapshot keys exist only
+        // while the snapshot is running).
+        String offsetValue = ITCommon.waitForOffset(getProperties(), writer.getConnection(),
+                120_000, 2_000, ITCommon::offsetSaysSnapshotFinished);
+        Assert.assertNotNull("no offset was persisted within 120s of the snapshot rows arriving", offsetValue);
+        Assert.assertTrue("Offset must not report an unfinished snapshot: " + offsetValue,
+                ITCommon.offsetSaysSnapshotFinished(offsetValue));
+        Assert.assertTrue("Offset must contain lsn: " + offsetValue, offsetValue.contains("lsn"));
+        Assert.assertTrue("Offset must contain txId: " + offsetValue, offsetValue.contains("txId"));
+        Assert.assertTrue("Offset must contain ts_usec: " + offsetValue, offsetValue.contains("ts_usec"));
 
         // Verify TRUNCATE replication
         ITCommon.connectToPostgreSQL(postgreSQLContainer).prepareStatement("truncate table public.tm").execute();

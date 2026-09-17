@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded;
 
+import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -355,5 +356,101 @@ public class ITCommon {
             }
         }
         return false;
+    }
+
+    /**
+     * Wait until a count query returns EXACTLY {@code expected}, polling every
+     * {@code pollIntervalMs} milliseconds until {@code timeoutMs} elapses.
+     * <p>
+     * {@link #waitForRowCount} returns as soon as the count is at or ABOVE its
+     * floor, so it cannot wait for a count to come DOWN after a DELETE: with a
+     * floor of 0 it returns on the first poll, before the deletes have been
+     * applied. Use this when the expected value is known.
+     * </p>
+     *
+     * @param conn           ClickHouse JDBC connection
+     * @param countQuery     SQL query that returns a single count column
+     * @param expected       the exact count to wait for
+     * @param timeoutMs      maximum time to wait in milliseconds
+     * @param pollIntervalMs interval between polls in milliseconds
+     * @return the last observed count, or -1 if the query never succeeded
+     */
+    static public long waitForRowCountEquals(Connection conn, String countQuery, long expected, long timeoutMs, long pollIntervalMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        long lastCount = -1;
+        while (System.currentTimeMillis() < deadline) {
+            try (ResultSet rs = conn.prepareStatement(countQuery).executeQuery()) {
+                if (rs.next()) {
+                    lastCount = rs.getLong(1);
+                    if (lastCount == expected) {
+                        return lastCount;
+                    }
+                }
+            } catch (Exception e) {
+                // Table/database may not exist yet — keep polling
+            }
+            try {
+                Thread.sleep(pollIntervalMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return lastCount;
+    }
+
+    /**
+     * Polls the connector's persisted Debezium offset until it satisfies
+     * {@code accept}, polling every {@code pollIntervalMs} milliseconds until
+     * {@code timeoutMs} elapses.
+     * <p>
+     * The offset is not written together with the rows. Debezium flushes it on
+     * its own schedule ({@code offset.flush.interval.ms}), and on a source that
+     * goes idle after the snapshot the end-of-snapshot state travels on the first
+     * heartbeat, which is only emitted once streaming has started -- tens of
+     * seconds after the snapshot rows are already visible in ClickHouse. Reading
+     * the offset once, right after the rows appear, races that flush and returns
+     * null. Poll instead.
+     * </p>
+     *
+     * @param props          the connector properties (offset table and key are derived from them)
+     * @param conn           ClickHouse JDBC connection
+     * @param timeoutMs      maximum time to wait in milliseconds
+     * @param pollIntervalMs interval between polls in milliseconds
+     * @param accept         predicate the offset value must satisfy; it is never called with null
+     * @return the accepted offset value, or the last value observed (possibly null) on timeout
+     */
+    static public String waitForOffset(Properties props, Connection conn, long timeoutMs, long pollIntervalMs,
+                                       java.util.function.Predicate<String> accept) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        String last = null;
+        while (System.currentTimeMillis() < deadline) {
+            last = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, conn);
+            if (last != null && !last.isEmpty() && accept.test(last)) {
+                return last;
+            }
+            Thread.sleep(pollIntervalMs);
+        }
+        return last;
+    }
+
+    /**
+     * Whether a persisted offset says the initial snapshot is finished.
+     * <p>
+     * Debezium writes the {@code snapshot} / {@code snapshot_completed} keys only
+     * while the offset context is in snapshot mode. Once streaming has started the
+     * offset carries position fields only ({@code lsn}/{@code txId}/{@code ts_usec}
+     * for PostgreSQL, {@code file}/{@code pos} for MySQL) and no snapshot keys at
+     * all -- and a connector restarted on such an offset resumes streaming, it does
+     * not re-snapshot. The only state that means "snapshot still in progress" is
+     * an explicit {@code "snapshot_completed":false}, which is what issue #1379
+     * left behind forever.
+     * </p>
+     *
+     * @param offset the persisted offset value, may be null
+     * @return true when the offset exists and does not report an unfinished snapshot
+     */
+    static public boolean offsetSaysSnapshotFinished(String offset) {
+        return offset != null && !offset.isEmpty() && !offset.contains("\"snapshot_completed\":false");
     }
 }

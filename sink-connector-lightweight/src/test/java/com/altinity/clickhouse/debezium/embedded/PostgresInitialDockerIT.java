@@ -1,7 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
@@ -125,14 +124,23 @@ public class PostgresInitialDockerIT {
         Assert.assertTrue(reDataColumns.get("amount").equalsIgnoreCase("Decimal(64, 18)"));
         Assert.assertTrue(reDataColumns.get("total_amount").equalsIgnoreCase("Decimal(21, 5)"));
 
-        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(getProperties(), writer.getConnection());
+        // The offset is flushed on Debezium's schedule, not together with the
+        // rows, and the end-of-snapshot state of an idle source only travels on
+        // the first heartbeat once streaming has started. Reading it once here
+        // returned null (NPE) on every CI run and locally: poll until the
+        // snapshot is recorded as finished.
+        String offsetValue = ITCommon.waitForOffset(getProperties(), writer.getConnection(),
+                120_000, 2_000, ITCommon::offsetSaysSnapshotFinished);
+        Assert.assertNotNull("no offset was persisted within 120s of the snapshot rows arriving", offsetValue);
+        Assert.assertTrue("the persisted offset must not report an unfinished snapshot, got: " + offsetValue,
+                ITCommon.offsetSaysSnapshotFinished(offsetValue));
 
-        // Parse offsetvalue json and check the keys
-        Assert.assertTrue(offsetValue.contains("last_snapshot_record"));
-        Assert.assertTrue(offsetValue.contains("lsn"));
-        Assert.assertTrue(offsetValue.contains("txId"));
-        Assert.assertTrue(offsetValue.contains("ts_usec"));
-        Assert.assertTrue(offsetValue.contains("snapshot"));
+        // Position fields are present in every form of the PostgreSQL offset.
+        // The snapshot keys (last_snapshot_record, snapshot) exist only while
+        // the snapshot is running, so their presence cannot be asserted here.
+        Assert.assertTrue("offset must carry lsn: " + offsetValue, offsetValue.contains("lsn"));
+        Assert.assertTrue("offset must carry txId: " + offsetValue, offsetValue.contains("txId"));
+        Assert.assertTrue("offset must carry ts_usec: " + offsetValue, offsetValue.contains("ts_usec"));
 
         if(engine.get() != null) {
             engine.get().stop();
