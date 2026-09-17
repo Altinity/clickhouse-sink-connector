@@ -26,6 +26,7 @@ import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.altinity.clickhouse.sink.connector.model.RoutedBatch;
 import com.altinity.clickhouse.sink.connector.model.SinkRecordColumns;
+import com.altinity.clickhouse.sink.connector.model.SourcePosition;
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import io.debezium.embedded.Connect;
@@ -233,6 +234,47 @@ public class DebeziumChangeEventCapture {
      * receive an identical or inverted {@code _version} (see issue #1346).</p>
      */
     public static long sequenceAnchorTs = 0L;
+
+    /**
+     * High-water mark of the source-log position ({@link SourcePosition}) versioned in
+     * this run.
+     *
+     * <p>Debezium delivers events in log order, and log order IS commit order. The only
+     * time a lower position follows a higher one is a redelivery after an offset rewind.
+     * The mark therefore separates the two cases the version sequence has to treat
+     * differently:</p>
+     * <ul>
+     *   <li><b>first delivery</b> (position above the mark): the event committed after
+     *   every event already versioned, so its {@code _version} must rank above all of
+     *   them - whatever its source timestamp says (see {@link #sequenceMaxSourceTs});</li>
+     *   <li><b>redelivery</b> (position at or below the mark, or no position at all):
+     *   the redelivery-stable, source-timestamp anchored assignment of issue #1346 is
+     *   kept unchanged.</li>
+     * </ul>
+     */
+    public static SourcePosition sequenceHighWaterPosition = null;
+
+    /**
+     * Highest effective timestamp (ms) versioned in this run - the floor applied to the
+     * timestamp component of every first delivery.
+     *
+     * <p>It is raised by every record that goes through the sequence, positioned or not
+     * (a heartbeat carrying a newer envelope timestamp moves the anchor and resets the
+     * counter exactly like a newer commit does, so it must move the floor too), and it
+     * is applied only to first deliveries - redeliveries keep their own timestamp.</p>
+     *
+     * <p>On MySQL {@code source.ts_ms} is the timestamp of the STATEMENT that produced
+     * the row event, not of the commit. A transaction that stays open while others
+     * commit reaches the binlog after them but with an OLDER timestamp. Without a floor
+     * such an event would be versioned as {@code olderTs * 1e6 + counter} - and if the
+     * counter had been reset by the newer-timestamped events in between, its version
+     * ranked BELOW the earlier write of the same key (same source second, higher
+     * counter). ReplacingMergeTree then kept the stale row and the later UPDATE was
+     * lost, with row counts still matching on both sides. Clamping the timestamp
+     * component of every first delivery to this floor keeps {@code _version}
+     * monotonic in commit order, which is the only order ReplacingMergeTree needs.</p>
+     */
+    public static long sequenceMaxSourceTs = 0L;
 
 
     /**
@@ -1515,31 +1557,15 @@ public class DebeziumChangeEventCapture {
             // same numeric domain: upgrades AND downgrades remain safe.
             long recordTs = ClickHouseStruct.getSourceTsFromChangeEvent(record);
 
-            // The intra-second counter is keyed exclusively on the source commit
-            // clock - never on the binlog file name or position - so it is kept
-            // across binary log rotations: two commits in the same second on
-            // either side of a rotation keep incrementing the same counter and
-            // cannot collide or invert. The anchor is global (survives batch
-            // boundaries) and never moves backward, so re-delivered events with
-            // older source timestamps cannot re-arm the counter reset (the
-            // duplicate-_version race).
-            //
-            // First record after start/resume: seed the counter at
-            // SEQUENCE_START_INITIAL (500m) so events re-published from the last
-            // committed offset rank strictly below any pre-restart write of the
-            // same source second (which carried counters in the 1000m range).
-            if (sequenceAnchorTs == 0L) {
-                sequenceAnchorTs = recordTs;
-                sequenceNumber = SEQUENCE_START_INITIAL;
-            }
-            int diff = (int) ((recordTs - sequenceAnchorTs) / 1000);
-            if (diff > 1) {
-                sequenceNumber = SEQUENCE_START;
-                sequenceAnchorTs = recordTs;
-            } else
-                sequenceNumber++;
-
-            long recordSequenceNumber = recordTs * 1000000 + sequenceNumber;
+            // The intra-second counter is keyed on the source commit clock and its
+            // anchor is global (survives batch boundaries and binlog rotations)
+            // and never moves backward. The log position decides whether this
+            // record is a FIRST delivery - which must rank above everything
+            // already versioned, however old its statement timestamp is - or a
+            // redelivery, which keeps its #1346 redelivery-stable version. See
+            // nextSequenceNumber.
+            long recordSequenceNumber = nextSequenceNumber(recordTs,
+                    ClickHouseStruct.getSourcePositionFromChangeEvent(record));
 
             // A DDL inside this loop is applied to ClickHouse synchronously,
             // while the rows read before it in the same Debezium batch are
@@ -2111,43 +2137,93 @@ public class DebeziumChangeEventCapture {
 
 
     /**
+     * Assigns the next ReplacingMergeTree {@code _version} for a record whose source
+     * timestamp is {@code recordTs} (ms) and whose source-log position is
+     * {@code position} ({@code null} when the record carries none).
+     *
+     * <p>The emitted value keeps the 2.8.0 formula, {@code ts * 1_000_000 + counter},
+     * so upgrades AND downgrades remain safe:</p>
+     * <ul>
+     *   <li>The counter is keyed on the source commit clock: it resets to
+     *   {@link #SEQUENCE_START} only when the clock advances by more than one second
+     *   past {@link #sequenceAnchorTs}, and the anchor never moves backward - so it is
+     *   kept across binlog rotations and a redelivered older event cannot re-arm the
+     *   reset (the duplicate-{@code _version} race).</li>
+     *   <li>The first record after start/resume seeds the counter at
+     *   {@link #SEQUENCE_START_INITIAL} (500m), so events re-published from the last
+     *   committed offset rank strictly below any pre-restart write of the same source
+     *   second (which carried counters in the 1000m range).</li>
+     *   <li>A FIRST delivery - a position above {@link #sequenceHighWaterPosition} -
+     *   committed after every event already versioned in this run, so its timestamp
+     *   component is floored at {@link #sequenceMaxSourceTs}. On MySQL
+     *   {@code source.ts_ms} is the statement time, not the commit time: a long or
+     *   concurrent transaction reaches the binlog AFTER transactions that committed
+     *   while it was open, carrying an OLDER timestamp. Versioning it by that older
+     *   timestamp put it below the earlier write of the same key whenever the counter
+     *   had been reset in between, and ReplacingMergeTree discarded the newer row.</li>
+     *   <li>A redelivery - a position at or below the mark - or a record without a
+     *   position keeps the source-timestamp anchored assignment of issue #1346
+     *   unchanged: identical on every redelivery, so a replayed DELETE can never
+     *   out-rank the later re-INSERT.</li>
+     * </ul>
+     *
+     * @param recordTs source timestamp of the record in ms (envelope timestamp for
+     *                 records without one)
+     * @param position source-log position of the record, or {@code null}
+     * @return the {@code _version} to store with the record
+     */
+    static synchronized long nextSequenceNumber(long recordTs, SourcePosition position) {
+        if (sequenceAnchorTs == 0L) {
+            sequenceAnchorTs = recordTs;
+            sequenceNumber = SEQUENCE_START_INITIAL;
+        }
+        long effectiveTs = recordTs;
+        if (position != null
+                && (sequenceHighWaterPosition == null
+                        || position.compareTo(sequenceHighWaterPosition) > 0)) {
+            sequenceHighWaterPosition = position;
+            if (effectiveTs < sequenceMaxSourceTs) {
+                effectiveTs = sequenceMaxSourceTs;
+            }
+        }
+        // Every record that can move the anchor (and so reset the counter) also
+        // raises the floor - including records without a position, such as a
+        // heartbeat carrying a newer envelope timestamp. Otherwise the counter
+        // reset would happen without the floor following it, and the next late
+        // first delivery would again be versioned in its own older second.
+        if (effectiveTs > sequenceMaxSourceTs) {
+            sequenceMaxSourceTs = effectiveTs;
+        }
+        int diff = (int) ((effectiveTs - sequenceAnchorTs) / 1000);
+        if (diff > 1) {
+            sequenceNumber = SEQUENCE_START;
+            sequenceAnchorTs = effectiveTs;
+        } else {
+            sequenceNumber++;
+        }
+        return effectiveTs * 1_000_000L + sequenceNumber;
+    }
+
+    /**
      * Adds a version (sequence number) to every record.
      * <p>
-     * The sequence starts at SEQUENCE_START, increments for every record,
-     * and resets if more than one second has elapsed since the first record.
+     * Same assignment as the streaming loop - see {@link #nextSequenceNumber}: anchored
+     * on the SOURCE commit timestamp when available (redelivery-stable, issue #1346),
+     * falling back to the processing timestamp for records without one, and floored at
+     * the newest first-delivery timestamp for records whose log position proves them
+     * to be first deliveries.
      * </p>
      *
      * @param chStructs The list of {@link ClickHouseStruct} records.
      */
     public static void addVersion(List<ClickHouseStruct> chStructs) {
-        // Start the sequence from SEQUENCE_START and increment for every record
         if (chStructs.isEmpty()) {
             return;
         }
         for (ClickHouseStruct chStruct : chStructs) {
-            // Anchor on the SOURCE commit timestamp when available (redelivery-stable,
-            // issue #1346); fall back to the processing timestamp for records without one.
-            // The intra-second counter is keyed exclusively on the source clock and the
-            // shared anchor survives batch boundaries and binlog rotations - it is never
-            // reset by file/position changes and never moves backward.
             long recordTs = chStruct.getTs_ms() > 0
                     ? chStruct.getTs_ms() : chStruct.getDebezium_ts_ms();
-            if (sequenceAnchorTs == 0L) {
-                // First record after start/resume: seed at SEQUENCE_START_INITIAL
-                // (500m) so re-published events of the same source second rank
-                // strictly below the pre-restart writes (1000m range).
-                sequenceAnchorTs = recordTs;
-                sequenceNumber = SEQUENCE_START_INITIAL;
-            }
-            int diff = (int) ((recordTs - sequenceAnchorTs) / 1000);
-            if (diff > 1) {
-                sequenceNumber = SEQUENCE_START;
-                sequenceAnchorTs = recordTs;
-            } else {
-                sequenceNumber++;
-            }
-            // Pad the sequence number with zeros and set the sequence number in the record.
-            chStruct.setSequenceNumber(recordTs * 1000000 + sequenceNumber);
+            chStruct.setSequenceNumber(nextSequenceNumber(recordTs, chStruct.getSourcePosition()));
         }
     }
 }
