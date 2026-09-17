@@ -109,9 +109,9 @@ public class CommitOrderVersionClampTest {
     @DisplayName("a late DELETE from a long transaction still retires the row")
     public void lateDeleteRanksAboveEarlierWrite() {
         versionOf(at(TS - 10_000, 100));
-        long insert = versionOf(at(TS, 200));
+        versionOf(at(TS, 200));               // other writes in second T ...
         versionOf(at(TS, 201));
-        versionOf(at(TS, 202));
+        long insert = versionOf(at(TS, 202)); // ... then the key's INSERT (counter +2)
         versionOf(at(TS + 3_000, 300)); // counter reset by a newer commit
         long delete = versionOf(at(TS, 400)); // DELETE executed in second T, committed last
 
@@ -201,7 +201,9 @@ public class CommitOrderVersionClampTest {
     @DisplayName("a binary log rotation resets pos but is still a first delivery")
     public void rotationIsAFirstDelivery() {
         versionOf(at(TS - 10_000, "mysql-bin.000001", 900_000, 0));
-        long early = versionOf(at(TS, "mysql-bin.000001", 900_100, 0));
+        versionOf(at(TS, "mysql-bin.000001", 900_050, 0));
+        versionOf(at(TS, "mysql-bin.000001", 900_060, 0));
+        long early = versionOf(at(TS, "mysql-bin.000001", 900_100, 0)); // counter +2 in second T
         versionOf(at(TS + 5_000, "mysql-bin.000001", 900_200, 0));
 
         // First event of the new file: a LOWER pos in a HIGHER file number.
@@ -216,7 +218,10 @@ public class CommitOrderVersionClampTest {
     @DisplayName("rows of one multi-row event are ordered by their row index")
     public void rowsWithinOneEventAreFirstDeliveries() {
         versionOf(at(TS - 10_000, 100));
-        long early = versionOf(at(TS, 200));
+        for (int i = 0; i < 5; i++) {
+            versionOf(at(TS, 200 + i));
+        }
+        long early = versionOf(at(TS, 205)); // counter +5 in second T
         versionOf(at(TS + 5_000, 300));
 
         long row0 = versionOf(at(TS, "mysql-bin.000007", 400, 0));
