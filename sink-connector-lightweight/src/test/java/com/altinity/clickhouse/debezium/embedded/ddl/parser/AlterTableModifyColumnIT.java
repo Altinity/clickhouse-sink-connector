@@ -150,8 +150,14 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         // 2. ADD COLUMN and MODIFY COLUMN ... NOT NULL (must keep col1 Nullable to prevent Code: 36)
         conn.prepareStatement("alter table add_test add column col4 varchar(100), modify column col1 int not null;").execute();
 
-        // 3. Multi-clause ALTER with ADD PRIMARY KEY as first clause (must not leave leading comma)
-        conn.prepareStatement("alter table office add primary key (office_id), modify column office_name varchar(100) not null, add column office_status varchar(20) not null;").execute();
+        // 3. Multi-clause ALTER with ADD PRIMARY KEY as first clause (must not leave leading comma).
+        //
+        // Runs against `branch`, which the init script creates WITHOUT a primary
+        // key. `office` already declares one, and MySQL rejects a second
+        // ("Multiple primary key defined") before anything reaches the
+        // connector -- so the statement has to target a keyless table for the
+        // translation under test to be exercised at all.
+        conn.prepareStatement("alter table branch add primary key (branch_id), modify column branch_name varchar(100) not null, add column branch_status varchar(20) not null;").execute();
 
         // 4. Insert data after the DDLs to prove replication continues cleanly without stalling
         conn.prepareStatement("insert into add_test (col1, col2, col3, col4) values (101, 202, 303, 'active');").execute();
@@ -163,16 +169,27 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         expectedAddTest.put("col1", "Nullable(Int32)");
         expectedAddTest.put("col4", "Nullable(String)");
 
+        // From the multi-clause ALTER in step 3: ADD PRIMARY KEY emits nothing,
+        // MODIFY ... NOT NULL keeps the existing column Nullable, and ADD COLUMN
+        // ... NOT NULL is honored because a new column has no rows to violate it.
+        Map<String, String> expectedBranch = new LinkedHashMap<>();
+        expectedBranch.put("branch_name", "Nullable(String)");
+        expectedBranch.put("branch_status", "String");
+
         Map<String, String> addTestColumns = null;
+        Map<String, String> branchColumns = null;
         for (int retry = 0; retry < 10; retry++) {
             addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
-            if (matchesExpected(addTestColumns, expectedAddTest)) {
+            branchColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "branch", "employees");
+            if (matchesExpected(addTestColumns, expectedAddTest)
+                    && matchesExpected(branchColumns, expectedBranch)) {
                 break;
             }
             Thread.sleep(5000);
         }
 
         assertColumns(addTestColumns, expectedAddTest, "add_test");
+        assertColumns(branchColumns, expectedBranch, "branch");
 
         // Verify the row inserted after the DDLs replicated into ClickHouse
         boolean rowFound = false;
