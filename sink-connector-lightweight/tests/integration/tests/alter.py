@@ -398,7 +398,14 @@ def modify_column_null(self, node=None):
     )
 )
 def modify_column_not_null(self, node=None):
-    """Check that after `MODIFY COLUMN data_type NOT NULL` query MySQL and Clickhouse has the same columns."""
+    """Check that after `MODIFY COLUMN data_type NOT NULL` query MySQL and Clickhouse has the same columns.
+
+    NOT NULL is honored only for ADD COLUMN. For MODIFY COLUMN the ClickHouse
+    column stays Nullable: converting an existing Nullable column to
+    non-Nullable needs a DEFAULT expression, otherwise ClickHouse rejects the
+    ALTER (Code: 36) and, because DDL is retried indefinitely, the whole
+    replication stream stalls. Nullable(T) is a superset of T, so no source
+    value is lost."""
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
@@ -433,7 +440,10 @@ def modify_column_not_null(self, node=None):
                         self.context.cluster.node("clickhouse").query,
                         timeout=100,
                         delay=5,
-                    )(f"DESC test.{table_name} FORMAT CSV", message='"x","String"')
+                    )(
+                        f"DESC test.{table_name} FORMAT CSV",
+                        message='"x","Nullable(String)"',
+                    )
 
 
 @TestFeature
@@ -557,7 +567,12 @@ def change_column_name_to_new_name_null(self, node=None):
     )
 )
 def change_column_name_to_new_name_not_null(self, node=None):
-    """Check that after `CHANGE COLUMN old_name new_name data_type NOT NULL` query MySQL and Clickhouse has the same columns."""
+    """Check that after `CHANGE COLUMN old_name new_name data_type NOT NULL` query MySQL and Clickhouse has the same columns.
+
+    As for MODIFY COLUMN, NOT NULL is not applied to an existing column: the
+    renamed ClickHouse column stays Nullable, because converting it to
+    non-Nullable needs a DEFAULT expression and would otherwise be rejected
+    with Code: 36, stalling the replication stream."""
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
@@ -593,7 +608,10 @@ def change_column_name_to_new_name_not_null(self, node=None):
                         self.context.cluster.node("clickhouse").query,
                         timeout=100,
                         delay=5,
-                    )(f"DESC test.{table_name} FORMAT CSV", message='"x2","String"')
+                    )(
+                        f"DESC test.{table_name} FORMAT CSV",
+                        message='"x2","Nullable(String)"',
+                    )
 
 
 @TestFeature
