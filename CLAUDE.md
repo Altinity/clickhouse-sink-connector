@@ -2,8 +2,13 @@
 
 Read [AGENTS.md](AGENTS.md) before making any change to this repository.
 
-It carries the prime directive for this codebase, which decides most design
-questions here:
+This repository operates strictly under **Spec-Driven Development (SDD)**:
+- **Spec First**: Every agentic change to the code must first declare the specification in `specs/` and implement exactly what was declared.
+- **Smart Ralph Protocol**: Follow the agentic workflow rules in [`specs/SMART_RALPH_PROTOCOL.md`](specs/SMART_RALPH_PROTOCOL.md) and [`specs/CONSTITUTION.md`](specs/CONSTITUTION.md).
+- **Formal Verification**: Ensure changes align with the Lean 4 formal verification proofs in `formal_specs/lean/`.
+- **Validation**: Always run `python3 scripts/validate_specs.py` before proposing code changes.
+
+It carries the prime directive for this codebase, which decides most design questions here:
 
 > **This project is a replication engine from a transactional source
 > database (MySQL, PostgreSQL) into ClickHouse. The source data is the

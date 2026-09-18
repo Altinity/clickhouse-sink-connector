@@ -5,6 +5,28 @@ on this codebase. Read it before proposing, writing, reviewing, or merging
 any change. It is not background reading — it is the rule that decides
 arguments.
 
+---
+
+## ⛔ THE SPEC-DRIVEN DEVELOPMENT MANDATE (Smart Ralph Protocol)
+
+**This repository operates strictly under Spec-Driven Development (SDD).**
+Inspired by [Smart Ralph](https://github.com/tzachbon/smart-ralph), every change in this repository is spec-governed:
+
+1. **Spec First, Code Second**:
+   **Every agentic change to the code must first declare the spec for the change and implement exactly what was declared.**
+   You must never modify, add, or delete `.java` files, configuration files, or build scripts without first declaring or updating the specification in the `specs/` directory.
+2. **Strict Implementation Fidelity**:
+   Implement *exactly* what was declared in the specification. Do not add unrequested features, speculative abstractions, extra helper functions, or unsolicited refactorings.
+3. **Dual Verification Requirement**:
+   Every change must be verified against:
+   - **Empirical Tests**: Unit tests, integration tests, and value-level comparisons.
+   - **Formal Verification Alignment**: The formal Lean 4 replication model in `formal_specs/lean/` proving that the change preserves log sequence monotonicity, version consistency, and convergence.
+   - **Spec Validation Tool**: Run `python3 scripts/validate_specs.py` before submitting any PR.
+
+See [`specs/CONSTITUTION.md`](specs/CONSTITUTION.md) for core invariants (I1–I10) and [`specs/SMART_RALPH_PROTOCOL.md`](specs/SMART_RALPH_PROTOCOL.md) for the complete agentic development protocol.
+
+---
+
 ## ⛔ THE PRIME DIRECTIVE: MySQL is the source of truth
 
 **This project is a replication engine from a transactional source
@@ -130,24 +152,30 @@ loud:
 
 ## Working rules for changes in this repo
 
-1. **Verify against the live source, not the code.** Reading a DDL file or
+1. **Declare the spec first.** Create or update the relevant document under
+   `specs/` before modifying code.
+2. **Verify against the live source, not the code.** Reading a DDL file or
    a config does not tell you what MySQL holds. Query it.
-2. **Trace the full path before changing a flag.** config → generator →
+3. **Trace the full path before changing a flag.** config → generator →
    template → consumer → runtime effect. A flag whose mechanism does not
    achieve the intent is not a fix.
-3. **Do not break existing behaviour to fix new behaviour.** Search for
+4. **Do not break existing behaviour to fix new behaviour.** Search for
    consumers of anything you change; fix them in the same change or
    abandon it.
-4. **Add a regression test that fails without your fix.** Mutation-check
+5. **Add a regression test that fails without your fix.** Mutation-check
    it: break the fix, confirm the test goes red. A test that passes either
    way protects nothing.
-5. **Schema-cache and metadata code is high-risk.** It decides INSERT
+6. **Schema-cache and metadata code is high-risk.** It decides INSERT
    column membership, so a mistake there is silent data divergence, not a
    crash. Changes here need value-level verification, not just green unit
    tests.
+7. **Run `python3 scripts/validate_specs.py`** to confirm specification integrity.
 
 ## Repository shape
 
+- `specs/` — Component and system specifications (001–009, Constitution, Smart Ralph protocol).
+- `formal_specs/lean/` — Formal verification state machine models and machine-checked proofs in Lean 4.
+- `scripts/` — Spec validation and developer tooling.
 - `sink-connector/` — the Kafka Connect sink: batching, schema cache,
   query construction, ClickHouse writes.
 - `sink-connector-lightweight/` — the standalone (embedded Debezium)
