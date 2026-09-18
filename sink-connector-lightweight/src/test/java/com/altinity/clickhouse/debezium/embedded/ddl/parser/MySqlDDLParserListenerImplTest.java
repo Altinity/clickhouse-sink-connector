@@ -733,11 +733,18 @@ public class MySqlDDLParserListenerImplTest {
 
     @Test
     public void testModifyColumnWithNotNull() {
+        // A MODIFY that tightens a column to NOT NULL must stay Nullable in
+        // ClickHouse. If the column already exists as Nullable (the common case
+        // after this translator emitted the column via ADD COLUMN), a
+        // non-Nullable MODIFY is rejected with Code: 36 "Please specify DEFAULT
+        // expression" and, retried forever, stalls the whole stream. Nullable(T)
+        // loses no source value and is checksum-safe. This assertion previously
+        // expected the non-Nullable form and encoded that stream-stalling bug.
         StringBuffer clickHouseQuery = new StringBuffer();
         String sql = "ALTER TABLE `employees`.add_test MODIFY COLUMN col1 INT NOT NULL;";
         mySQLDDLParserService.parseSql(sql, "add_test", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.add_test MODIFY COLUMN col1 Int32"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.add_test MODIFY COLUMN col1 Nullable(Int32)"));
     }
 
     @Test
@@ -751,9 +758,13 @@ public class MySqlDDLParserListenerImplTest {
 
     @Test
     public void testChangeColumnWithNotNull() {
+        // Same rationale as testModifyColumnWithNotNull: CHANGE COLUMN with
+        // NOT NULL keeps the ClickHouse column Nullable to avoid a Code: 36
+        // Nullable -> non-Nullable conversion that stalls the stream. Previously
+        // this expected "MODIFY COLUMN stocks Bool" (non-Nullable).
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE `employees`.add_test MODIFY COLUMN stocks Bool\n" +
+        String expectedCHQuery = "ALTER TABLE `employees`.add_test MODIFY COLUMN stocks Nullable(Bool) \n" +
                 "ALTER TABLE `employees`.add_test RENAME COLUMN IF EXISTS stocks to options";
         String sql = "alter table add_test change column stocks options bool not null";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
@@ -2711,6 +2722,93 @@ public class MySqlDDLParserListenerImplTest {
         // Verify that MySQL's YEAR(order_date) partition is converted to ClickHouse's toYear(order_date)
        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
         log.info("Create table with RANGE PARTITION BY YEAR function: " + clickHouseQuery);
+    }
+
+    // ------------------------------------------------------------------
+    // Regression tests for a bitemporal surrogate-key migration that added a
+    // surrogate AUTO_INCREMENT PRIMARY KEY and tightened just-added columns to
+    // NOT NULL, producing malformed ClickHouse ALTERs (leading/only comma from
+    // the dropped ADD PRIMARY KEY, and a Nullable -> non-Nullable MODIFY the
+    // server rejected with Code: 36).
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("ADD PRIMARY KEY as the only clause emits nothing, not a bare ALTER TABLE")
+    public void testAlterAddPrimaryKeyOnlyIsSkipped() {
+        // A lone ADD PRIMARY KEY has no ClickHouse equivalent (the RMT sorting
+        // key is fixed at CREATE). It must translate to an empty statement so
+        // executeDDL skips it, not to "ALTER TABLE t" which ClickHouse rejects
+        // with Code: 62 and, being retried forever, stalls the stream.
+        String alter = "ALTER TABLE sample_tbl ADD PRIMARY KEY (sample_id)";
+        StringBuffer out = new StringBuffer();
+        mySQLDDLParserService.parseSql(alter, "employees", out);
+        log.info("CLICKHOUSE QUERY[addpk-only]:" + out);
+        Assert.assertEquals("", out.toString().trim());
+    }
+
+    @Test
+    @DisplayName("ADD PRIMARY KEY as the first clause does not leave a leading comma")
+    public void testAlterAddPrimaryKeyFirstNoLeadingComma() {
+        // Order matters: when the no-op ADD PRIMARY KEY is the first clause, the
+        // separator that followed it used to be emitted, producing
+        // "ALTER TABLE t, MODIFY ..." (leading comma, Code: 62).
+        String alter = "ALTER TABLE sample_tbl "
+                + "ADD PRIMARY KEY (ref_id), "
+                + "MODIFY COLUMN legacy_id SMALLINT UNSIGNED NOT NULL, "
+                + "ADD COLUMN ref_id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST";
+        String expected = "ALTER TABLE `employees`.sample_tbl "
+                + "MODIFY COLUMN legacy_id Nullable(UInt16), "
+                + "ADD COLUMN IF NOT EXISTS ref_id UInt32 FIRST";
+        StringBuffer out = new StringBuffer();
+        mySQLDDLParserService.parseSql(alter, "employees", out);
+        log.info("CLICKHOUSE QUERY[addpk-first]:" + out);
+        Assert.assertEquals(expected, out.toString());
+        Assert.assertFalse("leading comma after table name", out.toString().contains("sample_tbl,"));
+    }
+
+    @Test
+    @DisplayName("ADD COLUMN then ADD PRIMARY KEY drops only the key clause")
+    public void testAlterAddColumnThenAddPrimaryKey() {
+        String alter = "ALTER TABLE sample_tbl "
+                + "ADD COLUMN sample_id INT UNSIGNED NOT NULL AUTO_INCREMENT, "
+                + "ADD PRIMARY KEY (sample_id)";
+        String expected = "ALTER TABLE `employees`.sample_tbl "
+                + "ADD COLUMN IF NOT EXISTS sample_id UInt32";
+        StringBuffer out = new StringBuffer();
+        mySQLDDLParserService.parseSql(alter, "employees", out);
+        log.info("CLICKHOUSE QUERY[col-then-addpk]:" + out);
+        Assert.assertEquals(expected, out.toString());
+    }
+
+    @Test
+    @DisplayName("MODIFY COLUMN ... NOT NULL stays Nullable to avoid Code 36 on an existing Nullable column")
+    public void testAlterModifyColumnNotNullStaysNullable() {
+        // MySQL tightens a just-added column to NOT NULL. The column already
+        // exists as Nullable in ClickHouse (this translator emits ADD COLUMN as
+        // Nullable), so a non-Nullable MODIFY would be rejected with Code: 36
+        // "Please specify DEFAULT expression". Keep it Nullable: no source
+        // value is lost and the change is checksum-safe.
+        String alter = "ALTER TABLE sample_tbl MODIFY dt_from DATETIME(6) NOT NULL";
+        String expected = "ALTER TABLE `employees`.sample_tbl "
+                + "MODIFY COLUMN dt_from Nullable(DateTime64(6, 0))";
+        StringBuffer out = new StringBuffer();
+        mySQLDDLParserService.parseSql(alter, "employees", out);
+        log.info("CLICKHOUSE QUERY[modify-notnull]:" + out);
+        Assert.assertEquals(expected, out.toString());
+    }
+
+    @Test
+    @DisplayName("ADD COLUMN ... NOT NULL keeps honoring NOT NULL (non-Nullable)")
+    public void testAlterAddColumnNotNullStaysNonNullable() {
+        // The MODIFY fix must not weaken ADD COLUMN: a brand-new NOT NULL column
+        // has no existing rows to violate the constraint, so it stays non-Nullable.
+        String alter = "ALTER TABLE members ADD COLUMN joined DATE NOT NULL";
+        String expected = "ALTER TABLE `employees`.members "
+                + "ADD COLUMN IF NOT EXISTS joined Date32";
+        StringBuffer out = new StringBuffer();
+        mySQLDDLParserService.parseSql(alter, "employees", out);
+        log.info("CLICKHOUSE QUERY[addcol-notnull]:" + out);
+        Assert.assertEquals(expected, out.toString());
     }
 
 }

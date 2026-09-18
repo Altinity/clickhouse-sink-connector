@@ -20,7 +20,31 @@ public class ErrorLogger {
     private static final Logger log = LogManager.getLogger(ErrorLogger.class);
 
     // Default table name if not specified in config
-    private static final String DEFAULT_ERROR_TABLE = "replica_source_error";
+    static final String DEFAULT_ERROR_TABLE = "replica_source_error";
+
+    /**
+     * Resolves the error table name, falling back to {@link #DEFAULT_ERROR_TABLE}
+     * when the supplied name is null, empty, or the literal string "null".
+     *
+     * <p>The DDL path reads the error-table name straight from the connector
+     * properties, which returns {@code null} when the property is unset, while
+     * {@link #createErrorTable} resolves it via config with a default. Left
+     * unreconciled, the INSERT targeted {@code system.`null`} (the literal
+     * string "null") and logging one failure raised a SECOND error --
+     * {@code Code: 60 UNKNOWN_TABLE "Table system.`null` does not exist"} -- so
+     * the real error was never recorded. Centralizing the fallback here keeps
+     * {@code logError} and {@code createErrorTable} pointed at the same table.</p>
+     *
+     * @param errorTableName the configured error table name, possibly null.
+     * @return a non-empty error table name.
+     */
+    static String resolveErrorTableName(String errorTableName) {
+        if (errorTableName == null || errorTableName.isEmpty()
+                || errorTableName.equalsIgnoreCase("null")) {
+            return DEFAULT_ERROR_TABLE;
+        }
+        return errorTableName;
+    }
 
     /**
      * Creates the error table if it doesn't exist.
@@ -38,10 +62,8 @@ public class ErrorLogger {
             throw new SQLException("Config cannot be null");
         }
         // Read error table name from config
-        String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
-        if (errorTableName == null || errorTableName.isEmpty()) {
-            errorTableName = DEFAULT_ERROR_TABLE;
-        }
+        String errorTableName = resolveErrorTableName(
+            config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString()));
 
         String createTableQuery = String.format(
             "CREATE TABLE IF NOT EXISTS `%s`.`%s` (" +
@@ -89,6 +111,11 @@ public class ErrorLogger {
         if (error == null || error.isEmpty()) {
             error = "Unknown error";
         }
+
+        // Fall back to the same default table createErrorTable() uses, so a
+        // missing/"null" name does not turn one logged failure into a second
+        // "Table system.`null` does not exist" error. See resolveErrorTableName.
+        errorTableName = resolveErrorTableName(errorTableName);
 
         String insertQuery = String.format(
             "INSERT INTO `%s`.`%s` (" +

@@ -1215,8 +1215,32 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                             isNullColumn = true;
                         else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
-                            // if (!modifier.equalsIgnoreCase(Constants.ADD_COLUMN))
-                            {
+                            // Honor NOT NULL only for ADD COLUMN. A brand-new
+                            // column has no existing rows to violate the
+                            // constraint, so ClickHouse accepts a non-Nullable
+                            // ADD.
+                            //
+                            // For MODIFY/CHANGE COLUMN it is unsafe: when the
+                            // column already exists as Nullable in ClickHouse --
+                            // which is exactly what this translator emits for a
+                            // preceding ADD COLUMN in the same migration --
+                            // converting Nullable -> non-Nullable requires a
+                            // DEFAULT expression or ClickHouse rejects it with
+                            //   Code: 36 BAD_ARGUMENTS "Cannot convert column
+                            //   '<c>' from nullable type ... to non-nullable
+                            //   type ... Please specify DEFAULT expression in
+                            //   ALTER MODIFY COLUMN statement" (measured on
+                            //   24.8.14). DDL is retried indefinitely, so that
+                            //   single failure stalls the ENTIRE stream.
+                            //
+                            // Keeping the column Nullable loses no source value
+                            // (Nullable(T) is a superset of T), needs no
+                            // fabricated DEFAULT that would overwrite existing
+                            // rows, and is checksum-safe because the comparison
+                            // is value-level, not nullability-level. A MODIFY of
+                            // an already non-Nullable column to Nullable is a
+                            // widening ClickHouse accepts without a DEFAULT.
+                            if (modifier.equalsIgnoreCase(Constants.ADD_COLUMN)) {
                                 isNullColumn = false;
                             }
                         }
@@ -1346,6 +1370,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     @Override
     public void enterAlterTable(MySqlParser.AlterTableContext alterTableContext) {
         List<ParseTree> pt = alterTableContext.children;
+        // Index in this.query where the "ALTER TABLE <table>" header ends and the
+        // clause list begins. Separators and the empty-statement check below are
+        // measured against this so a clause that emits nothing (ADD PRIMARY KEY,
+        // ALGORITHM/LOCK hints) cannot leave a stray comma or a bare header.
+        int headerEnd = -1;
         for (ParseTree tree : pt) {
 
             if (tree instanceof TableNameContext) {
@@ -1358,6 +1387,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 } else {
                     this.query.append(String.format(Constants.ALTER_TABLE, "`" + databaseName + "`." + this.tableName));
                 }
+                headerEnd = this.query.length();
             }
 
             if (tree instanceof AlterByAddColumnContext) {
@@ -1407,7 +1437,24 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             } else if (tree instanceof MySqlParser.AlterByRenameColumnContext) {
                 parseRenameColumn(tree);
             } else if (tree instanceof MySqlParser.AlterByAddPrimaryKeyContext) {
-                parseAlterTable(tree);
+                // A ClickHouse ReplacingMergeTree fixes its sorting key at CREATE
+                // time; there is no ALTER that adds or changes a primary/sorting
+                // key. MySQL adding a PRIMARY KEY over a surrogate id therefore
+                // has no ClickHouse equivalent -- the id COLUMN it introduces is
+                // still added and replicated by the accompanying ADD COLUMN
+                // clause, so only the un-representable key constraint is dropped
+                // and no source value is lost. Emitting nothing (as parseAlterTable
+                // did for this context) but leaving the separators behind produced
+                // a malformed statement: "ALTER TABLE t, MODIFY ..." (leading
+                // comma) or a bare "ALTER TABLE t" -- both rejected by ClickHouse
+                // with Code: 62 Syntax error (measured on 24.8.14) and, because
+                // DDL is retried indefinitely, that stalls the whole stream.
+                // Drop the separator this clause was preceded by, mirroring the
+                // ALGORITHM/LOCK handling below; the trailing/leading cleanup at
+                // the end removes any that followed it.
+                log.info("ADD PRIMARY KEY has no ClickHouse equivalent (the sorting "
+                        + "key is fixed at CREATE); skipping clause");
+                removeTrailingComma();
             } else if (tree instanceof MySqlParser.AlterByChangeColumnContext) {
                 parseAlterTable(tree);
             } else if (tree instanceof MySqlParser.AlterByAddIndexContext) {
@@ -1426,7 +1473,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 removeTrailingComma();
             } else if (tree instanceof TerminalNodeImpl) {
                 if (((TerminalNodeImpl) tree).symbol.getType() == MySqlParser.COMMA) {
-                    this.query.append(",");
+                    // Emit a separator only when a clause has already produced
+                    // output after the header and the query does not already end
+                    // in one. Appending eagerly let a no-op clause (ADD PRIMARY
+                    // KEY / ALGORITHM / LOCK) leave a leading "ALTER TABLE t,"
+                    // or a doubled comma, which ClickHouse rejects (Code: 62).
+                    appendClauseSeparator(headerEnd);
                 }
             } else if(tree instanceof MySqlParser.AlterByRenameContext) {
                 parseAlterTableByRename(tableName, (MySqlParser.AlterByRenameContext) tree);
@@ -1435,6 +1487,69 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // A hint in trailing position leaves the separator that preceded it
         // dangling once the hint itself emits nothing.
         removeTrailingComma();
+        // Every clause emitted nothing (e.g. a lone ADD PRIMARY KEY): the query
+        // is just "ALTER TABLE t", which ClickHouse rejects with Code: 62. Clear
+        // it so executeDDL's `!query.isEmpty()` guard skips it instead of
+        // stalling the stream on an un-representable, retried-forever statement.
+        //
+        // Only clear when EVERY specification is a no-op handled in this loop.
+        // Some clauses (ADD CONSTRAINT ... CHECK) are appended by a separate
+        // listener that fires after this method and relies on the header being
+        // present, so an empty body here does not mean an empty statement.
+        if (headerEnd >= 0 && this.query.length() <= headerEnd
+                && alterHasOnlyNoOpSpecifications(alterTableContext)) {
+            this.query.setLength(0);
+        }
+    }
+
+    /**
+     * Returns true when every ALTER specification is one this translator
+     * deliberately drops (ADD PRIMARY KEY, ALGORITHM/LOCK hints), so the
+     * statement has no ClickHouse equivalent at all and must be skipped rather
+     * than sent as a bare "ALTER TABLE t". Any other specification -- including
+     * ADD CONSTRAINT ... CHECK, which a separate listener appends after
+     * enterAlterTable -- means the statement is representable and must be kept.
+     */
+    private boolean alterHasOnlyNoOpSpecifications(MySqlParser.AlterTableContext alterTableContext) {
+        for (ParseTree tree : alterTableContext.children) {
+            if (tree instanceof TableNameContext || tree instanceof TerminalNodeImpl
+                    || tree instanceof MySqlParser.AlterByAddPrimaryKeyContext
+                    || tree instanceof MySqlParser.AlterBySetAlgorithmContext
+                    || tree instanceof MySqlParser.AlterByLockContext) {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Appends a clause separator comma only when it is safe to do so: at least
+     * one clause has already emitted output past the ALTER TABLE header, and the
+     * query does not already end in a comma. This prevents a leading comma
+     * ("ALTER TABLE t, ...") or a doubled comma when a preceding ALTER clause
+     * emits nothing (ADD PRIMARY KEY, ALGORITHM/LOCK hints).
+     *
+     * @param headerEnd index at which the "ALTER TABLE <table>" header ends.
+     */
+    private void appendClauseSeparator(int headerEnd) {
+        if (headerEnd < 0) {
+            this.query.append(",");
+            return;
+        }
+        int end = this.query.length();
+        while (end > 0 && Character.isWhitespace(this.query.charAt(end - 1))) {
+            end--;
+        }
+        if (end <= headerEnd) {
+            // No clause content emitted yet after the header.
+            return;
+        }
+        if (this.query.charAt(end - 1) == ',') {
+            // Already separated.
+            return;
+        }
+        this.query.append(",");
     }
 
     /**
