@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.postgres.schema;
 
+import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -110,14 +111,17 @@ public class PostgresSchemaChangeDetectorTest {
     }
 
     @Test
-    @DisplayName("invalidateCache: removes previously cached key")
+    @DisplayName("invalidateCache: removes previously cached key and increments CacheInvalidationManager version")
     public void testInvalidateCacheRemovesKey() {
-        // First call to checkAndReconcile with a null writer will try to fetchClickHouseSchema
-        // and fail silently (null connection). But invalidateCache is still testable directly.
-        // We simply verify that a second invalidateCache on the same key does not throw.
         String key = "mydb.mytable";
+        long v0 = CacheInvalidationManager.getInstance().getVersion(key);
         detector.invalidateCache(key);
+        long v1 = CacheInvalidationManager.getInstance().getVersion(key);
+        assertTrue(v1 > v0, "invalidateCache must bump CacheInvalidationManager table version");
+
         detector.invalidateCache(key); // idempotent
+        long v2 = CacheInvalidationManager.getInstance().getVersion(key);
+        assertTrue(v2 > v1, "second invalidateCache must bump table version again");
     }
 
     // ------------------------------------------------------------------

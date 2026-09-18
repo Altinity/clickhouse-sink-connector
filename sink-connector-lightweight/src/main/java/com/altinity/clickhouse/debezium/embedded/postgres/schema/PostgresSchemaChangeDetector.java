@@ -3,6 +3,7 @@ package com.altinity.clickhouse.debezium.embedded.postgres.schema;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
 import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -283,13 +284,18 @@ public class PostgresSchemaChangeDetector {
     }
 
     /**
-     * Invalidates the cached ClickHouse schema for the specified table key.
+     * Invalidates the cached ClickHouse schema for the specified table key,
+     * and signals worker threads via {@link CacheInvalidationManager} to
+     * refresh their DbWriter schema cache.
      * The key format is {@code "database.table"}.
      *
      * @param tableKey the fully-qualified table key ({@code "database.table"})
      */
     public void invalidateCache(String tableKey) {
         clickHouseSchemaCache.remove(tableKey);
+        if (tableKey != null) {
+            CacheInvalidationManager.getInstance().invalidateTable(tableKey);
+        }
         log.debug("Schema cache invalidated for {}", tableKey);
     }
 

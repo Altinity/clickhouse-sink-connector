@@ -336,17 +336,9 @@ public class ClickHouseBatchRunnable implements Runnable {
         // Get server timezone from config
         String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
         String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
-        
-        // Determine which mode we're in: hash-based routing or legacy
-        boolean useHashRouting = (threadId >= 0 && routedRecords != null);
-        useHashRouting = false;
+
         try {
-//            if (useHashRouting) {
-//                runWithHashRouting(taskId, sourceTimeZone, serverTimeZone, errorTableName);
-//            } else
-           {
-                runLegacyMode(taskId, sourceTimeZone, serverTimeZone, errorTableName);
-            }
+            runLegacyMode(taskId, sourceTimeZone, serverTimeZone, errorTableName);
         } catch (Exception e) {
             log.error(String.format(
                             "ClickHouseBatchRunnable exception - Task(%s)", taskId),
@@ -734,31 +726,20 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
-     * Processes records for the specified topic.
+     * Resolves the target ClickHouse database name for a topic and first record.
+     * Applies replication history override, database prefix, schema template suffix,
+     * and database override mapping.
      *
-     * <p>This function groups records by topic, retrieves the corresponding
-     * table name and DbWriter, and processes the batch by grouping records
-     * into insert queries and flushing them to ClickHouse.
-     *
-     * @param topicName the topic name
-     * @param records   a list of ClickHouseStruct records for the topic
-     * @return true if processing succeeds; false otherwise
-     * @throws Exception if an error occurs during processing
+     * @param topicName   the Kafka/Debezium topic name
+     * @param firstRecord the first record in the batch
+     * @return the resolved ClickHouse database name
      */
-    private boolean processRecordsByTopic(String topicName,
-                                          List<ClickHouseStruct> records)
-            throws Exception {
-        boolean result = false;
-        //The user parameter will override the topic mapping to table.
-        String tableName = getTableFromTopic(topicName);
-        // Note: getting records.get(0) is safe as the topic name is same
-        // for all records.
-        ClickHouseStruct firstRecord = records.get(0);
-        String databaseName = firstRecord.getDatabase();
+    String resolveDatabaseName(String topicName, ClickHouseStruct firstRecord) {
+        String databaseName = firstRecord != null ? firstRecord.getDatabase() : null;
 
         // If replication history is enabled, set database name to the replication history database name
-        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
-            databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            return config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
         }
 
         // Apply database prefix if configured (mirrors DebeziumChangeEventCapture.extractDatabaseNameFromRecord)
@@ -780,6 +761,40 @@ public class ClickHouseBatchRunnable implements Runnable {
             }
         }
 
+        // Check if user has overridden the database name (check both post-transform and pre-transform raw db)
+        if (this.databaseOverrideMap.containsKey(databaseName)) {
+            databaseName = this.databaseOverrideMap.get(databaseName);
+        } else if (firstRecord != null && firstRecord.getDatabase() != null
+                && this.databaseOverrideMap.containsKey(firstRecord.getDatabase())) {
+            databaseName = this.databaseOverrideMap.get(firstRecord.getDatabase());
+        }
+
+        return databaseName;
+    }
+
+    /**
+     * Processes records for the specified topic.
+     *
+     * <p>This function groups records by topic, retrieves the corresponding
+     * table name and DbWriter, and processes the batch by grouping records
+     * into insert queries and flushing them to ClickHouse.
+     *
+     * @param topicName the topic name
+     * @param records   a list of ClickHouseStruct records for the topic
+     * @return true if processing succeeds; false otherwise
+     * @throws Exception if an error occurs during processing
+     */
+    private boolean processRecordsByTopic(String topicName,
+                                          List<ClickHouseStruct> records)
+            throws Exception {
+        boolean result = false;
+        //The user parameter will override the topic mapping to table.
+        String tableName = getTableFromTopic(topicName);
+        // Note: getting records.get(0) is safe as the topic name is same
+        // for all records.
+        ClickHouseStruct firstRecord = records.get(0);
+        String databaseName = resolveDatabaseName(topicName, firstRecord);
+
         return processBatchRecords(records, topicName, tableName, databaseName, firstRecord);
     }
 
@@ -787,12 +802,6 @@ public class ClickHouseBatchRunnable implements Runnable {
                                       String tableName, String databaseName,
                                       ClickHouseStruct firstRecord) throws Exception {
         boolean result = false;
-
-
-        // Check if user has overridden the database name.
-        if (this.databaseOverrideMap.containsKey(databaseName))
-            databaseName = this.databaseOverrideMap.get(
-                    databaseName);
 
         Connection databaseConn = getClickHouseConnection(databaseName);
 
@@ -805,26 +814,31 @@ public class ClickHouseBatchRunnable implements Runnable {
         // writer would then silently skip the UPDATE tombstone.
         final DbWriter sortingKeySource = writer;
         PreparedStatementExecutor preparedStatementExecutor = new
-                PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
-                writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(),
-                writer.getVersionColumn(), writer.getDatabaseName(),
-                getServerTimeZone(this.config),
-                sortingKeySource::getSortingKeyColumns);
+                PreparedStatementExecutor(
+                        writer != null ? writer.getReplacingMergeTreeDeleteColumn() : null,
+                        writer != null && writer.isReplacingMergeTreeWithIsDeletedColumn(),
+                        writer != null ? writer.getSignColumn() : null,
+                        writer != null ? writer.getVersionColumn() : null,
+                        writer != null ? writer.getDatabaseName() : databaseName,
+                        getServerTimeZone(this.config),
+                        sortingKeySource != null ? sortingKeySource::getSortingKeyColumns : null);
         if (writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error(String.format("*** TABLE METADATA not retrieved for " +
                             "Database(%s), table(%s) retrying",
-                    writer.getDatabaseName(), writer.getTableName()));
+                    writer != null ? writer.getDatabaseName() : databaseName,
+                    writer != null ? writer.getTableName() : tableName));
             if (writer == null) {
                 writer = getDbWriterForTable(topicName, tableName, databaseName,
                         firstRecord, databaseConn);
             }
-            if (writer.wasTableMetaDataRetrieved() == false)
+            if (writer != null && writer.wasTableMetaDataRetrieved() == false)
                 writer.updateColumnNameToDataTypeMap();
             if (writer == null ||
                     writer.wasTableMetaDataRetrieved() == false) {
                 log.error(String.format("*** TABLE METADATA not retrieved for " +
                                 "Database(%s), table(%s), retrying on next attempt",
-                        writer.getDatabaseName(), writer.getTableName()));
+                        writer != null ? writer.getDatabaseName() : databaseName,
+                        writer != null ? writer.getTableName() : tableName));
                 return false;
             }
         }

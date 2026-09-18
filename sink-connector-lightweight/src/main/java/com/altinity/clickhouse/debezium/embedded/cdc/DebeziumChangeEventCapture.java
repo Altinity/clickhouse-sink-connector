@@ -927,13 +927,34 @@ public class DebeziumChangeEventCapture {
                 // (getDatabaseName(sr)), not the replication-history override above.
                 try {
                     String invalidationDatabaseName = getDatabaseName(sr);
+                    String rawDb = invalidationDatabaseName;
                     String overrideMapConfig = config.getString(
                             ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString());
+                    Map<String, String> databaseOverrideMap = null;
                     if (overrideMapConfig != null) {
-                        Map<String, String> databaseOverrideMap =
+                        databaseOverrideMap =
                                 Utils.parseSourceToDestinationDatabaseMap(overrideMapConfig);
+                    }
+                    if (invalidationDatabaseName != null) {
+                        String dbPrefix = config.getString(
+                                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_DATABASE_PREFIX.toString());
+                        invalidationDatabaseName = Utils.applyDatabasePrefix(invalidationDatabaseName, dbPrefix);
+                    }
+                    if (invalidationDatabaseName != null && config.getBoolean(
+                            ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString())) {
+                        String schemaTemplate = config.getString(
+                                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString());
+                        if (schemaTemplate != null && !schemaTemplate.isEmpty()) {
+                            String topic = sr != null ? sr.topic() : null;
+                            String schema = Utils.extractSchemaFromTopic(topic);
+                            invalidationDatabaseName = Utils.applyDatabaseSchemaSuffix(invalidationDatabaseName, schemaTemplate, schema);
+                        }
+                    }
+                    if (databaseOverrideMap != null) {
                         if (databaseOverrideMap.containsKey(invalidationDatabaseName)) {
                             invalidationDatabaseName = databaseOverrideMap.get(invalidationDatabaseName);
+                        } else if (rawDb != null && databaseOverrideMap.containsKey(rawDb)) {
+                            invalidationDatabaseName = databaseOverrideMap.get(rawDb);
                         }
                     }
                     List<String> affected = getTableNamesFromDDL(sr, DDL);
@@ -1413,6 +1434,10 @@ public class DebeziumChangeEventCapture {
      * @return the database name, or {@code null} if it cannot be determined
      */
     private String extractDatabaseNameFromRecord(SourceRecord sr) {
+        return extractDatabaseNameFromRecord(sr, null);
+    }
+
+    private String extractDatabaseNameFromRecord(SourceRecord sr, ClickHouseSinkConnectorConfig config) {
         String dbName = null;
         // Try to read from the value's 'source' struct (standard Debezium envelope).
         try {
@@ -1440,17 +1465,36 @@ public class DebeziumChangeEventCapture {
             String fallback = getDatabaseName(sr);
             dbName = "system".equals(fallback) ? null : fallback;
         }
+        String rawDbName = dbName;
         // Apply database prefix if configured (before suffix)
-        if (dbName != null) {
+        if (dbName != null && pgConfig != null) {
             dbName = Utils.applyDatabasePrefix(dbName, pgConfig.getCommonDatabasePrefix());
         }
         // Apply database schema suffix if configured
-        if (dbName != null && pgConfig.isDatabaseSchemaSuffix()
+        if (dbName != null && pgConfig != null && pgConfig.isDatabaseSchemaSuffix()
                 && pgConfig.getCommonSchemaTemplate() != null
                 && !pgConfig.getCommonSchemaTemplate().isEmpty()) {
             String topic = sr != null ? sr.topic() : null;
             String schema = Utils.extractSchemaFromTopic(topic);
             dbName = Utils.applyDatabaseSchemaSuffix(dbName, pgConfig.getCommonSchemaTemplate(), schema);
+        }
+        // Apply database override map if configured
+        if (config != null && dbName != null) {
+            String overrideMapConfig = config.getString(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString());
+            if (overrideMapConfig != null && !overrideMapConfig.isEmpty()) {
+                try {
+                    Map<String, String> databaseOverrideMap =
+                            Utils.parseSourceToDestinationDatabaseMap(overrideMapConfig);
+                    if (databaseOverrideMap.containsKey(dbName)) {
+                        dbName = databaseOverrideMap.get(dbName);
+                    } else if (rawDbName != null && databaseOverrideMap.containsKey(rawDbName)) {
+                        dbName = databaseOverrideMap.get(rawDbName);
+                    }
+                } catch (Exception e) {
+                    log.error("Error parsing database override map in extractDatabaseNameFromRecord: {}", e.getMessage());
+                }
+            }
         }
         return dbName;
     }
@@ -1795,7 +1839,7 @@ public class DebeziumChangeEventCapture {
                     try {
                         String dmlTopic = sr.topic();
                         String dmlTable = Utils.getTableNameFromTopic(dmlTopic, pgConfig.isSchemaPrefixEnabled(), pgConfig.getCommonSchemaTemplate());
-                        String dmlDatabase = extractDatabaseNameFromRecord(sr);
+                        String dmlDatabase = extractDatabaseNameFromRecord(sr, config);
                         if (dmlTable != null && dmlDatabase != null) {
                             pgConfig.getSchemaChangeDetector().checkAndReconcile(sr, dmlTable, dmlDatabase);
                         }
