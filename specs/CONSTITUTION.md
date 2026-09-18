@@ -98,21 +98,23 @@ The connector is strictly a replication tool. Business logic transformations, cr
 
 ---
 
-## 4. Architectural Component Taxonomy
+## 4. Architectural Domain Taxonomy
 
-The codebase is organized into specialized components governed by explicit specs:
+Specifications are modularized into 11 specialized domains with fine-grained micro-encapsulations:
 
-| Spec ID | Component Name | Primary Java Artifacts |
-|---|---|---|
-| `001` | CDC Ingestion & Binlog Stream | `ClickHouseDebeziumEmbeddedApplication`, `DebeziumChangeEventCapture` |
-| `002` | Monotonic Versioning & Ordering | `DebeziumChangeEventCapture.nextSequenceNumber` |
-| `003` | ClickHouse Batch Writer | `ClickHouseBatchRunnable`, `ClickHouseBatchWriter`, `PreparedStatementExecutor` |
-| `004` | Sorting Key Mutation | `PreparedStatementFieldMapper`, `GroupInsertQueryWithBatchRecords` |
-| `005` | DDL Barrier Synchronization | `MySqlDDLParserService`, `ClickHouseBatchExecutor`, `drainBeforeDDL` |
-| `006` | Data Type Mapping & Conversion | `ClickHouseDataTypeMapper`, `PreparedStatementFieldMapper` |
-| `007` | Schema Catalog & Invalidation | `DbWriter`, `DBMetadata`, `CacheInvalidationManager`, `ClickHouseAutoCreateTable` |
-| `008` | Offset Management & Quiescence | `DebeziumOffsetManagement`, `JdbcOffsetBackingStore` |
-| `009` | Error Handling & Status Monitoring | `ClickHouseErrorClassifier`, `DebeziumJdbcStorageOperations` |
+| Domain | Topic | Path | Scope |
+|---|---|---|---|
+| `01` | CDC Ingestion | `specs/01-cdc-engine/` | Debezium bootstrap, coordinates, dispatch loop, boundaries, queues, heartbeats |
+| `02` | Versioning | `specs/02-versioning/` | Version formula, commit monotonicity floor, intra-second rollover, redelivery |
+| `03` | Execution Engine | `specs/03-execution-engine/` | Batch executor, multi/single-threaded modes, routing, connection pooling, flushes |
+| `04` | Query Generation | `specs/04-query-generation/` | Templates, parameterized insert formatting, explicit NULLs, update splitting |
+| `05` | Sorting Key Mutation | `specs/05-sorting-key-mutation/` | Relocation detection, tombstone synthesis, live row insertion, sign binding |
+| `06` | DDL Replication | `specs/06-ddl-replication/` | Pre-DDL drain, barrier pause, ANTLR parser, alter translation, nullability |
+| `07` | Type System | `specs/07-type-system/` | Numerics, decimals, temporals, strings, bit endianness, spatial WKB, nullability |
+| `08` | Schema Catalog | `specs/08-schema-catalog/` | DbWriter cache, multi-epoch invalidation, query storm prevention, MATERIALIZED |
+| `09` | Offset Management | `specs/09-offset-management/` | FIFO batch tracking, OFFSET_COMMIT_LOCK, replica_source_info, control commits |
+| `10` | Resilience & Monitoring | `specs/10-resilience-monitoring/` | Error taxonomy, backoff retries, replica status view, loud failure guarantee |
+| `11` | Verification Tooling | `specs/11-verification-tooling/` | Spec validator, db_compare value checksums, Lean 4 formal simulation |
 
 ---
 
@@ -125,5 +127,3 @@ To provide mathematical proof of system correctness, the invariants and state tr
 - `Replication.Engine`: Operational semantics of event translation and PK update splitting.
 - `Replication.Invariants`: Mathematical propositions corresponding to Invariants I1 through I7.
 - `Replication.Proofs`: Machine-checked proofs of convergence, monotonicity, and PK update soundness.
-
-Every modification to the core ingestion, versioning, or sorting key logic must maintain compliance with these proofs.

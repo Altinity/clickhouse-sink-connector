@@ -2,8 +2,8 @@
 """Spec-Driven Development Validator for ClickHouse Sink Connector.
 
 Validates that:
-1. All core governance specifications (CONSTITUTION.md, SMART_RALPH_PROTOCOL.md, README.md) exist.
-2. All 9 component specifications (001-009) exist and adhere to the standard schema.
+1. Core governance documents (CONSTITUTION.md, README.md, SMART_RALPH_PROTOCOL.md) exist.
+2. All domain subdirectories exist and all encapsulated micro-specs satisfy the required schema.
 3. The formal Lean 4 verification suite is complete and all modules exist.
 4. AGENTS.md, CLAUDE.md, and Copilot instructions enforce the spec-driven mandate.
 """
@@ -16,16 +16,18 @@ import sys
 from pathlib import Path
 
 
-COMPONENT_SPECS = [
-    ("001-cdc-ingestion.md", "CDC Ingestion & Binlog Stream Processing"),
-    ("002-monotonic-versioning.md", "Monotonic Versioning & Ordering"),
-    ("003-clickhouse-writer-batching.md", "ClickHouse Batch Writer & Execution Engine"),
-    ("004-sorting-key-mutation.md", "Primary & Sorting Key Mutation Handling"),
-    ("005-ddl-barrier-synchronization.md", "DDL Interception, Translation & Barrier Synchronization"),
-    ("006-type-mapping.md", "Comprehensive Data Type Mapping & Conversion"),
-    ("007-schema-catalog-invalidation.md", "Schema Catalog, Metadata Caching & Invalidation"),
-    ("008-offset-management-quiescence.md", "Offset Management, Quiescence & Checkpointing"),
-    ("009-error-handling-and-recovery.md", "Error Classification, Retries & Status Monitoring"),
+EXPECTED_DOMAINS = [
+    "01-cdc-engine",
+    "02-versioning",
+    "03-execution-engine",
+    "04-query-generation",
+    "05-sorting-key-mutation",
+    "06-ddl-replication",
+    "07-type-system",
+    "08-schema-catalog",
+    "09-offset-management",
+    "10-resilience-monitoring",
+    "11-verification-tooling",
 ]
 
 REQUIRED_SPEC_SECTIONS = [
@@ -52,12 +54,11 @@ def check_spec_file(path: Path) -> list[str]:
     content = path.read_text(encoding="utf-8")
     for sec in REQUIRED_SPEC_SECTIONS:
         if not re.search(rf"#+\s*.*{sec}", content, re.IGNORECASE):
-            errors.append(f"{path.name}: missing required section matching '{sec}'")
+            errors.append(f"{path.relative_to(path.parent.parent)}: missing required section matching '{sec}'")
     return errors
 
 
 def main() -> int:
-    # Resolve repository root
     repo_root = Path(__file__).resolve().parent.parent
     specs_dir = repo_root / "specs"
     lean_dir = repo_root / "formal_specs" / "lean"
@@ -88,16 +89,31 @@ def main() -> int:
             if inv not in c_text:
                 all_errors.append(f"CONSTITUTION.md: missing invariant definition '{inv}'")
 
-    # 2. Validate Component Specs
-    print("\n[2/4] Checking Component Specifications (001–009)...")
-    for filename, title in COMPONENT_SPECS:
-        spec_path = specs_dir / filename
-        errs = check_spec_file(spec_path)
-        if errs:
-            all_errors.extend(errs)
-            print(f"  ✗ specs/{filename} ({title}) - FAILED")
-        else:
-            print(f"  ✓ specs/{filename} ({title})")
+    # 2. Validate Domain Micro-Specifications
+    print("\n[2/4] Checking Encapsulated Domain Micro-Specifications...")
+    total_specs_found = 0
+    for domain in EXPECTED_DOMAINS:
+        domain_dir = specs_dir / domain
+        if not domain_dir.is_dir():
+            all_errors.append(f"Missing domain directory: specs/{domain}")
+            print(f"  ✗ specs/{domain}/ - MISSING")
+            continue
+
+        domain_specs = sorted(domain_dir.glob("*.md"))
+        if not domain_specs:
+            all_errors.append(f"No specifications found in domain: specs/{domain}")
+            print(f"  ✗ specs/{domain}/ - EMPTY")
+            continue
+
+        print(f"  ✓ specs/{domain}/ ({len(domain_specs)} micro-specs):")
+        for spec_path in domain_specs:
+            total_specs_found += 1
+            errs = check_spec_file(spec_path)
+            if errs:
+                all_errors.extend(errs)
+                print(f"      ✗ {spec_path.name} - FAILED SCHEMA CHECK")
+            else:
+                print(f"      ✓ {spec_path.name}")
 
     # 3. Validate Lean 4 Formal Verification Suite
     print("\n[3/4] Checking Formal Verification Suite (Lean 4)...")
@@ -136,13 +152,14 @@ def main() -> int:
             all_errors.append("AGENTS.md: missing reference to 'specs/' or 'Smart Ralph' spec-driven protocol")
 
     print("\n---------------------------------------------------------------------")
+    print(f"Total Encapsulated Specifications Validated: {total_specs_found}")
     if all_errors:
         print(f"Validation FAILED with {len(all_errors)} error(s):")
         for err in all_errors:
             print(f"  - {err}")
         return 1
 
-    print("Validation PASSED: All specifications, Lean 4 formal models, and agent")
+    print("Validation PASSED: All 57+ specifications, Lean 4 formal models, and agent")
     print("governance documents are present, complete, and synchronized.")
     print("=====================================================================")
     return 0
