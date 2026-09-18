@@ -125,6 +125,77 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
         HikariDbSource.close();
     }
 
+    @Test
+    @DisplayName("End-to-end test for ADD PRIMARY KEY (no-op skipped) and MODIFY COLUMN NOT NULL (stays Nullable)")
+    public void testAlterAddPrimaryKeyAndModifyNotNull() throws Exception {
+        AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
+
+        ExecutorService executorService = Executors.newFixedThreadPool(1);
+        executorService.execute(() -> {
+            try {
+                engine.set(new DebeziumChangeEventCapture());
+                engine.get().setup(getDebeziumProperties(), new SourceRecordParserService(), false);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+
+        Thread.sleep(10000); // Allow engine to start
+
+        Connection conn = connectToMySQL();
+
+        // 1. ADD PRIMARY KEY alone (no ClickHouse equivalent; must translate to empty and be skipped without Code: 62)
+        conn.prepareStatement("alter table ship_class add primary key (id);").execute();
+
+        // 2. ADD COLUMN and MODIFY COLUMN ... NOT NULL (must keep col1 Nullable to prevent Code: 36)
+        conn.prepareStatement("alter table add_test add column col4 varchar(100), modify column col1 int not null;").execute();
+
+        // 3. Multi-clause ALTER with ADD PRIMARY KEY as first clause (must not leave leading comma)
+        conn.prepareStatement("alter table office add primary key (office_id), modify column office_name varchar(100) not null, add column office_status varchar(20) not null;").execute();
+
+        // 4. Insert data after the DDLs to prove replication continues cleanly without stalling
+        conn.prepareStatement("insert into add_test (col1, col2, col3, col4) values (101, 202, 303, 'active');").execute();
+
+        BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+        DBMetadata dbMetadata = new DBMetadata(getDebeziumProperties());
+
+        Map<String, String> expectedAddTest = new LinkedHashMap<>();
+        expectedAddTest.put("col1", "Nullable(Int32)");
+        expectedAddTest.put("col4", "Nullable(String)");
+
+        Map<String, String> addTestColumns = null;
+        for (int retry = 0; retry < 10; retry++) {
+            addTestColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "add_test", "employees");
+            if (matchesExpected(addTestColumns, expectedAddTest)) {
+                break;
+            }
+            Thread.sleep(5000);
+        }
+
+        assertColumns(addTestColumns, expectedAddTest, "add_test");
+
+        // Verify the row inserted after the DDLs replicated into ClickHouse
+        boolean rowFound = false;
+        for (int retry = 0; retry < 10; retry++) {
+            java.sql.ResultSet rs = writer.getConnection().createStatement().executeQuery(
+                    "select col1, col4 from employees.add_test where col1 = 101");
+            if (rs.next()) {
+                Assert.assertEquals(101, rs.getInt("col1"));
+                Assert.assertEquals("active", rs.getString("col4"));
+                rowFound = true;
+                break;
+            }
+            Thread.sleep(3000);
+        }
+        Assert.assertTrue("Row inserted after ALTER TABLE was not replicated; stream may be stalled", rowFound);
+
+        if (engine.get() != null) {
+            engine.get().stop();
+        }
+        executorService.shutdown();
+        HikariDbSource.close();
+    }
+
     /**
      * True when every expected column is present with the expected type.
      *
