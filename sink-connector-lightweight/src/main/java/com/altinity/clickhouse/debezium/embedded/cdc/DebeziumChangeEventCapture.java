@@ -343,9 +343,7 @@ public class DebeziumChangeEventCapture {
             useValidatingDriver(props, "schema.history.internal.jdbc.url");
         }
 
-        // Guarantee that end-of-snapshot state can actually reach the offset
-        // store. See ensureHeartbeatInterval for why this is not optional.
-        ensureHeartbeatInterval(props);
+        keepTruncateOperations(props);
 
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder =
@@ -668,6 +666,11 @@ public class DebeziumChangeEventCapture {
         }
         String separator = url.contains("?") ? "&" : "?";
         props.setProperty(propKey, url + separator + param);
+    }
+
+    /** Defaults {@code skipped.operations} to {@code none}, without which Debezium 3.3.0 drops TRUNCATE. */
+    static void keepTruncateOperations(Properties props) {
+        props.putIfAbsent("skipped.operations", "none");
     }
 
     /**
