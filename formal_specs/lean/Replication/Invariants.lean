@@ -51,8 +51,8 @@ def PKRelocationSoundness (events : List BinlogEvent) (k_old k_new : Key) (row :
 Invariant I8: Replay Idempotency.
 Re-executing an earlier prefix of the binlog stream does not mutate or regress the current FINAL state.
 -/
-def ReplayIdempotency (events prefix : List BinlogEvent) : Prop :=
-  (∀ e ∈ prefix, ∃ e' ∈ events, e.pos.fileSeq < e'.pos.fileSeq ∨ (e.pos.fileSeq = e'.pos.fileSeq ∧ e.pos.offset ≤ e'.pos.offset)) →
-  ∀ k : Key, chFinalView (replicateStream (events ++ prefix)) k = chFinalView (replicateStream events) k
+def ReplayIdempotency (events replayed : List BinlogEvent) : Prop :=
+  (∀ e ∈ replayed, ∃ e' ∈ events, e.pos.fileSeq < e'.pos.fileSeq ∨ (e.pos.fileSeq = e'.pos.fileSeq ∧ e.pos.offset ≤ e'.pos.offset)) →
+  ∀ k : Key, chFinalView (replicateStream (events ++ replayed)) k = chFinalView (replicateStream events) k
 
 end Replication

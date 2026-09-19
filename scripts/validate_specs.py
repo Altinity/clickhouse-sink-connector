@@ -132,7 +132,17 @@ def main() -> int:
         if not mod_path.is_file():
             all_errors.append(f"Missing Lean source module: Replication/{mod}")
         else:
-            print(f"  ✓ formal_specs/lean/Replication/{mod}")
+            # A `sorry` (or `admit`) means an incomplete proof: the formal
+            # verification would build but prove nothing. Reject it so the
+            # "machine-checked" claim stays honest.
+            mod_text = mod_path.read_text(encoding="utf-8")
+            if re.search(r"\bsorry\b", mod_text) or re.search(r"\badmit\b", mod_text):
+                all_errors.append(
+                    f"Replication/{mod}: contains 'sorry'/'admit' — proof is incomplete"
+                )
+                print(f"  ✗ formal_specs/lean/Replication/{mod} - INCOMPLETE PROOF")
+            else:
+                print(f"  ✓ formal_specs/lean/Replication/{mod}")
 
     # 4. Validate Agent & Guidance Files
     print("\n[4/4] Checking Agent Instructions & Workflow Guidance...")

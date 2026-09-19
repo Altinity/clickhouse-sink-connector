@@ -17,8 +17,7 @@ structure CHRecord where
 deriving DecidableEq, Repr
 
 /-- ClickHouse table storage represented as an append-only sequence of records. -/
-def CHTable := List CHRecord
-deriving DecidableEq, Repr
+abbrev CHTable := List CHRecord
 
 def emptyCH : CHTable := []
 
@@ -26,13 +25,16 @@ def emptyCH : CHTable := []
 def filterKey (table : CHTable) (k : Key) : List CHRecord :=
   table.filter (fun r => r.key == k)
 
-/-- Finds the record with the strictly maximal version among a list of records. -/
+/-- One step of the max-version fold: keep the record with the larger version
+    (ties resolve to the later record via `>=`). -/
+def maxStep (acc : Option CHRecord) (r : CHRecord) : Option CHRecord :=
+  match acc with
+  | none   => some r
+  | some m => if r.version >= m.version then some r else some m
+
+/-- Finds the record with the maximal version among a list of records. -/
 def findMaxVersion (records : List CHRecord) : Option CHRecord :=
-  records.foldl (fun acc r =>
-    match acc with
-    | none   => some r
-    | some m => if r.version >= m.version then some r else some m
-  ) none
+  records.foldl maxStep none
 
 /--
 Mathematical evaluation of ClickHouse ReplacingMergeTree `FINAL` semantics:
@@ -40,8 +42,7 @@ For a given key k, collapses all records to the one possessing the highest versi
 If the highest version is marked deleted, the row evaluates to `none`; otherwise `some row`.
 -/
 def chFinalView (table : CHTable) (k : Key) : Option Row :=
-  let keyRecords := filterKey table k
-  match findMaxVersion keyRecords with
+  match findMaxVersion (filterKey table k) with
   | none   => none
   | some r => if r.is_deleted then none else some r.row
 
