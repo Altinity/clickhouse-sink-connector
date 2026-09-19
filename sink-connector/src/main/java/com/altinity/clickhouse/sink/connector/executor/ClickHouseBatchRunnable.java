@@ -250,7 +250,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
             DBMetadata metadata = new DBMetadata(config);
             metadata.executeSystemQuery(systemConn,
-                    "CREATE DATABASE IF NOT EXISTS " + databaseName);
+                    "CREATE DATABASE IF NOT EXISTS `" + databaseName + "`");
         } catch (Exception e) {
             log.error("Error creating database " + e);
         } finally {
@@ -336,15 +336,15 @@ public class ClickHouseBatchRunnable implements Runnable {
         // Get server timezone from config
         String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
         String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
-        
-        // Determine which mode we're in: hash-based routing or legacy
-        boolean useHashRouting = (threadId >= 0 && routedRecords != null);
-        useHashRouting = false;
+
         try {
-//            if (useHashRouting) {
-//                runWithHashRouting(taskId, sourceTimeZone, serverTimeZone, errorTableName);
-//            } else
-           {
+            // Hash-routing mode (threadId >= 0 with a dedicated routed queue)
+            // vs legacy single shared queue. In routing mode this runnable owns
+            // exactly one queue and drains it in FIFO order, so same-table
+            // batches (all routed to this thread) are applied in source order.
+            if (this.routedRecords != null && this.threadId >= 0) {
+                runWithHashRouting(taskId, sourceTimeZone, serverTimeZone, errorTableName);
+            } else {
                 runLegacyMode(taskId, sourceTimeZone, serverTimeZone, errorTableName);
             }
         } catch (Exception e) {
@@ -353,6 +353,31 @@ public class ClickHouseBatchRunnable implements Runnable {
                     e);
             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())){
                 logErrorToClickHouse(e, taskId, errorTableName);
+            }
+
+            // A poisoned OffsetStorageWriter is NOT retriable, and must be
+            // checked before the ClickHouse classifier, which sees no
+            // ClickHouse error code and defaults it to UNKNOWN/retriable. With
+            // errors.max.retries = -1 that means retrying forever, and because
+            // the offset store writes asynchronously the ClickHouse inserts
+            // keep succeeding while the committed binlog position stays
+            // frozen -- replication silently diverges instead of failing.
+            // Observed on txnrepo-sink-staging (2026-09-10/11): ~8h of
+            // "Retriable ClickHouse error (Code: -1, Category: UNKNOWN)" while
+            // the committed offset never moved past its 13:29 event.
+            if (isOffsetWriterPoisoned(e)) {
+                log.error("FATAL: the Debezium OffsetStorageWriter is stuck in "
+                        + "the 'already flushing' state -- Task({}). Offsets "
+                        + "can no longer be committed in this JVM, so "
+                        + "replication would keep writing rows against a "
+                        + "frozen binlog position. Stopping the task to "
+                        + "prevent silent data divergence; a restart resumes "
+                        + "from the last committed offset.", taskId);
+                currentBatch = null;
+                throw new RuntimeException(
+                        "OffsetStorageWriter is permanently stuck flushing; "
+                                + "stopping to prevent silent data divergence",
+                        e);
             }
 
             // Classify the error to decide whether to retry or stop
@@ -375,38 +400,63 @@ public class ClickHouseBatchRunnable implements Runnable {
         }
     }
 
+    /**
+     * Detects the unrecoverable "OffsetStorageWriter is already flushing"
+     * condition.
+     * <p>
+     * {@code EmbeddedEngine.commitOffsets} returns early when {@code doFlush}
+     * returns null WITHOUT calling {@code cancelFlush}, leaking the
+     * OffsetStorageWriter's {@code flushInProgress} semaphore permanently, so
+     * every subsequent {@code beginFlush()} in this JVM throws.
+     * </p>
+     *
+     * @param e the exception thrown while processing a batch.
+     * @return true when offset commits can no longer succeed in this JVM.
+     */
+    private static boolean isOffsetWriterPoisoned(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String message = t.getMessage();
+            if (message != null
+                    && message.contains(
+                            "OffsetStorageWriter is already flushing")) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
 
     /**
      * Run loop for hash-based routing mode.
-     * Only processes batches assigned to this thread.
+     * <p>
+     * This runnable owns a dedicated queue ({@code routedRecords}) that receives
+     * ONLY the batches routed to this thread (all batches for a given table hash
+     * to one thread). It therefore drains its own queue in FIFO order and never
+     * needs to inspect {@code assignedThreadId} or re-enqueue a sibling's batch.
+     * The old shared-queue design (one queue, every thread filtering by id and
+     * putting non-matching batches back at the tail) reordered same-table batches
+     * under contention; per-thread queues remove that race.
      */
     private void runWithHashRouting(Long taskId, String sourceTimeZone, String serverTimeZone, String errorTableName) throws Exception {
-        // Poll from Queue until its empty.
+        // Poll from this thread's own queue until it is empty.
         while (routedRecords.size() > 0 || currentBatch != null) {
-            // If the thread is interrupted, the exit.
+            // If the thread is interrupted, exit.
             if (Thread.currentThread().isInterrupted()) {
                 log.info("Thread {} is interrupted, exiting - Java Thread ID: {}",
                         threadId, Thread.currentThread().getId());
                 return;
             }
-            
+
             if (currentBatch == null) {
                 RoutedBatch routedBatch = routedRecords.poll();
                 if (routedBatch == null) {
                     // No records in the queue.
                     continue;
                 }
-                
-                // Only process if this batch is assigned to this thread
-                if (routedBatch.getAssignedThreadId() == threadId) {
-                    currentBatch = routedBatch.getBatch();
-                    log.debug("Thread {} picked up batch for table: {}", threadId, routedBatch.getTableName());
-                } else {
-                    // Put it back for another thread to pick up
-                    routedRecords.put(routedBatch);
-                    Thread.sleep(10); // Small sleep to avoid busy waiting
-                    continue;
-                }
+                currentBatch = routedBatch.getBatch();
+                log.debug("Thread {} picked up batch for table: {}", threadId, routedBatch.getTableName());
             } else {
                 log.debug("***** Thread {} RETRYING the same batch again", threadId);
             }
@@ -549,7 +599,16 @@ public class ClickHouseBatchRunnable implements Runnable {
     public String getTableFromTopic(String topicName) {
         String tableName = null;
         if (this.topic2TableMap.containsKey(topicName) == false) {
-            tableName = Utils.getTableNameFromTopic(topicName);
+            boolean schemaPrefix = this.config != null &&
+                    this.config.getBoolean(
+                            ClickHouseSinkConnectorConfigVariables
+                                    .CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString());
+            String schemaTemplate = this.config != null
+                    ? this.config.getString(
+                            ClickHouseSinkConnectorConfigVariables
+                                    .CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString())
+                    : null;
+            tableName = Utils.getTableNameFromTopic(topicName, schemaPrefix, schemaTemplate);
             this.topic2TableMap.put(topicName, tableName);
         } else {
             tableName = this.topic2TableMap.get(topicName);
@@ -673,6 +732,53 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
+     * Resolves the target ClickHouse database name for a topic and first record.
+     * Applies replication history override, database prefix, schema template suffix,
+     * and database override mapping.
+     *
+     * @param topicName   the Kafka/Debezium topic name
+     * @param firstRecord the first record in the batch
+     * @return the resolved ClickHouse database name
+     */
+    String resolveDatabaseName(String topicName, ClickHouseStruct firstRecord) {
+        String databaseName = firstRecord != null ? firstRecord.getDatabase() : null;
+
+        // If replication history is enabled, set database name to the replication history database name
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            return config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+        }
+
+        // Apply database prefix if configured (mirrors DebeziumChangeEventCapture.extractDatabaseNameFromRecord)
+        if (databaseName != null && this.config != null) {
+            String dbPrefix = this.config.getString(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_DATABASE_PREFIX.toString());
+            databaseName = Utils.applyDatabasePrefix(databaseName, dbPrefix);
+        }
+
+        // Apply database schema suffix if configured (mirrors DebeziumChangeEventCapture.extractDatabaseNameFromRecord)
+        if (databaseName != null && this.config != null) {
+            boolean dbSchemaSuffix = this.config.getBoolean(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString());
+            String schemaTemplate = this.config.getString(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString());
+            if (dbSchemaSuffix && schemaTemplate != null && !schemaTemplate.isEmpty()) {
+                String schema = Utils.extractSchemaFromTopic(topicName);
+                databaseName = Utils.applyDatabaseSchemaSuffix(databaseName, schemaTemplate, schema);
+            }
+        }
+
+        // Check if user has overridden the database name (check both post-transform and pre-transform raw db)
+        if (this.databaseOverrideMap.containsKey(databaseName)) {
+            databaseName = this.databaseOverrideMap.get(databaseName);
+        } else if (firstRecord != null && firstRecord.getDatabase() != null
+                && this.databaseOverrideMap.containsKey(firstRecord.getDatabase())) {
+            databaseName = this.databaseOverrideMap.get(firstRecord.getDatabase());
+        }
+
+        return databaseName;
+    }
+
+    /**
      * Processes records for the specified topic.
      *
      * <p>This function groups records by topic, retrieves the corresponding
@@ -693,12 +799,7 @@ public class ClickHouseBatchRunnable implements Runnable {
         // Note: getting records.get(0) is safe as the topic name is same
         // for all records.
         ClickHouseStruct firstRecord = records.get(0);
-        String databaseName = firstRecord.getDatabase();
-
-        // If replication history is enabled, set database name to the replication history database name
-        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
-            databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
-        }
+        String databaseName = resolveDatabaseName(topicName, firstRecord);
 
         return processBatchRecords(records, topicName, tableName, databaseName, firstRecord);
     }
@@ -707,12 +808,6 @@ public class ClickHouseBatchRunnable implements Runnable {
                                       String tableName, String databaseName,
                                       ClickHouseStruct firstRecord) throws Exception {
         boolean result = false;
-
-
-        // Check if user has overridden the database name.
-        if (this.databaseOverrideMap.containsKey(databaseName))
-            databaseName = this.databaseOverrideMap.get(
-                    databaseName);
 
         Connection databaseConn = getClickHouseConnection(databaseName);
 
@@ -725,26 +820,31 @@ public class ClickHouseBatchRunnable implements Runnable {
         // writer would then silently skip the UPDATE tombstone.
         final DbWriter sortingKeySource = writer;
         PreparedStatementExecutor preparedStatementExecutor = new
-                PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
-                writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(),
-                writer.getVersionColumn(), writer.getDatabaseName(),
-                getServerTimeZone(this.config),
-                sortingKeySource::getSortingKeyColumns);
+                PreparedStatementExecutor(
+                        writer != null ? writer.getReplacingMergeTreeDeleteColumn() : null,
+                        writer != null && writer.isReplacingMergeTreeWithIsDeletedColumn(),
+                        writer != null ? writer.getSignColumn() : null,
+                        writer != null ? writer.getVersionColumn() : null,
+                        writer != null ? writer.getDatabaseName() : databaseName,
+                        getServerTimeZone(this.config),
+                        sortingKeySource != null ? sortingKeySource::getSortingKeyColumns : null);
         if (writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error(String.format("*** TABLE METADATA not retrieved for " +
                             "Database(%s), table(%s) retrying",
-                    writer.getDatabaseName(), writer.getTableName()));
+                    writer != null ? writer.getDatabaseName() : databaseName,
+                    writer != null ? writer.getTableName() : tableName));
             if (writer == null) {
                 writer = getDbWriterForTable(topicName, tableName, databaseName,
                         firstRecord, databaseConn);
             }
-            if (writer.wasTableMetaDataRetrieved() == false)
+            if (writer != null && writer.wasTableMetaDataRetrieved() == false)
                 writer.updateColumnNameToDataTypeMap();
             if (writer == null ||
                     writer.wasTableMetaDataRetrieved() == false) {
                 log.error(String.format("*** TABLE METADATA not retrieved for " +
                                 "Database(%s), table(%s), retrying on next attempt",
-                        writer.getDatabaseName(), writer.getTableName()));
+                        writer != null ? writer.getDatabaseName() : databaseName,
+                        writer != null ? writer.getTableName() : tableName));
                 return false;
             }
         }

@@ -10,6 +10,7 @@ import static org.apache.commons.lang3.StringUtils.containsIgnoreCase;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Utils;
+import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -78,6 +79,40 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     /**
+     * Extracts the generation expression text from a
+     * {@code GENERATED ALWAYS AS (expr)} clause, with MySQL charset introducers
+     * stripped so the result is valid ClickHouse.
+     * <p>
+     * Shared by the CREATE TABLE and ALTER TABLE column paths so the two cannot
+     * diverge: a generated column's expression must become a {@code DEFAULT}
+     * expression, and must NEVER be mistaken for the column's data type. The
+     * {@code IsNullPredicateContext} branch mirrors the grammar quirk the CREATE
+     * path handles for expressions such as {@code (a IS NULL)}.
+     *
+     * @param ctx the {@code GeneratedColumnConstraintContext} parse node.
+     * @return the expression text (charset introducers stripped), or "" if none.
+     */
+    static String extractGeneratedExpression(MySqlParser.GeneratedColumnConstraintContext ctx) {
+        String expr = "";
+        for (ParseTree child : ctx.children) {
+            if (child instanceof MySqlParser.ExpressionContext) {
+                for (ParseTree exprChild : ((MySqlParser.ExpressionContext) child).children) {
+                    if (exprChild instanceof MySqlParser.IsNullPredicateContext) {
+                        for (ParseTree inner : ((MySqlParser.IsNullPredicateContext) exprChild).children) {
+                            if (inner instanceof MySqlParser.ExpressionAtomPredicateContext) {
+                                expr = inner.getText();
+                            }
+                        }
+                    } else {
+                        expr = exprChild.getText();
+                    }
+                }
+            }
+        }
+        return stripCharsetIntroducers(expr);
+    }
+
+    /**
      * The query string that will be transformed.
      */
     StringBuffer query;
@@ -132,6 +167,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private final Set<String> notNullColumnNames = new HashSet<>();
 
     /**
+     * Pre-computed clean table name (backticks and database prefix stripped).
+     */
+    String cleanTableName;
+
+    /**
      * Constructor for initializing the MySqlDDLParserListenerImpl instance.
      *
      * @param writer         The database writer instance.
@@ -163,6 +203,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.writer = writer;
         this.userProvidedTimeZone = parseTimeZone();
         this.originalSql = originalSql;
+        this.cleanTableName = Utils.extractPlainTableName(tableName);
     }
 
     /**
@@ -202,6 +243,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
         return userProvidedTimeZoneId;
     }
+
+
 
     /**
      * Override the enterCreateDatabase method from the parser listener to handle CREATE DATABASE statements.
@@ -272,8 +315,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             this.query.append(Constants.CREATE_TABLE).append(" ").append(originalTableName).append(" ")
                     .append(Constants.AS).append(" ").append(newTableName);
         } else {
-            this.query.append(Constants.CREATE_TABLE).append(" ").append(databaseName).append(".").append(originalTableName).append(" ")
-                    .append(Constants.AS).append(" ").append(databaseName).append(".").append(newTableName);
+            this.query.append(Constants.CREATE_TABLE).append(" ").append("`").append(databaseName).append("`").append(".").append(originalTableName).append(" ")
+                    .append(Constants.AS).append(" ").append("`").append(databaseName).append("`").append(".").append(newTableName);
         }
     }
 
@@ -424,6 +467,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     .append(",");
         }
 
+
+        // ALIAS columns from column_type_override.alias.*
+        if (this.config != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
+            if (overrideConfig.hasOverrides()) {
+                String cleanTableName = this.cleanTableName;
+                List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                        overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);
+                for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                    this.query.append("`").append(entry.getAliasColumnName()).append("` ")
+                            .append(entry.getAliasType())
+                            .append(" ALIAS ").append(entry.getExpression()).append(",");
+                }
+            }
+        }
 
         if (DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine) {
             this.query.append("`").append(VERSION_COLUMN).append("` ").append(VERSION_COLUMN_DATA_TYPE).append(",");
@@ -695,9 +754,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if (tableName.contains(".")) {
                     // Split tableName into databaseName and tableName
                     String[] tableNameSplit = tableName.split("\\.");
-                    this.query.append(this.databaseName).append(".").append(tableNameSplit[1]);
+                    this.query.append("`").append(this.databaseName).append("`").append(".").append(tableNameSplit[1]);
                 } else {
-                    this.query.append(databaseName).append(".").append(tree.getText());
+                    this.query.append("`").append(databaseName).append("`").append(".").append(tree.getText());
                 }
 
                 // If it's ReplicatedReplacingMergeTree, add ON CLUSTER {cluster} to the query.
@@ -909,7 +968,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         this.query.append(colDataType);
                     }
 
-                    this.query.append(" ").append(Constants.ALIAS).append(" ").append(generatedColumn).append(",");
+                    // DEFAULT, not MATERIALIZED. A MATERIALIZED column REJECTS
+                    // an INSERT that names it (Code: 44 ILLEGAL_COLUMN), and
+                    // Debezium carries generated columns in the row image --
+                    // so the value MySQL computed can never be replicated, and
+                    // the replica silently keeps its own locally-derived answer
+                    // whenever the two expressions disagree. DEFAULT keeps the
+                    // same derive-when-omitted behaviour while accepting the
+                    // binlog value, so the source stays authoritative.
+                    this.query.append(" ").append(Constants.GENERATED_COLUMN_KIND)
+                            .append(" ").append(generatedColumn).append(",");
                     continue;
                 }
 
@@ -1024,6 +1092,21 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // Use a single null check with optional.
         if (defaultColumnDataTypeMap != null) {
             chDataType = defaultColumnDataTypeMap.getOrDefault(columnName, chDataType);
+        }
+
+        // column_type_override.direct.* takes highest priority (over default_column_datatype_mapping)
+        if (this.config != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
+            if (overrideConfig.hasOverrides()) {
+                String cleanColumnName = columnName != null ? columnName.replace("`", "") : columnName;
+                String cleanTableName = this.cleanTableName;
+                Optional<String> directOverride =
+                        overrideConfig.getDirectOverride(this.databaseName, cleanTableName, cleanColumnName);
+                if (directOverride.isPresent()) {
+                    chDataType = directOverride.get();
+                }
+            }
         }
 
         return chDataType;
@@ -1166,8 +1249,32 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                             isNullColumn = true;
                         else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
-                            // if (!modifier.equalsIgnoreCase(Constants.ADD_COLUMN))
-                            {
+                            // Honor NOT NULL only for ADD COLUMN. A brand-new
+                            // column has no existing rows to violate the
+                            // constraint, so ClickHouse accepts a non-Nullable
+                            // ADD.
+                            //
+                            // For MODIFY/CHANGE COLUMN it is unsafe: when the
+                            // column already exists as Nullable in ClickHouse --
+                            // which is exactly what this translator emits for a
+                            // preceding ADD COLUMN in the same migration --
+                            // converting Nullable -> non-Nullable requires a
+                            // DEFAULT expression or ClickHouse rejects it with
+                            //   Code: 36 BAD_ARGUMENTS "Cannot convert column
+                            //   '<c>' from nullable type ... to non-nullable
+                            //   type ... Please specify DEFAULT expression in
+                            //   ALTER MODIFY COLUMN statement" (measured on
+                            //   24.8.14). DDL is retried indefinitely, so that
+                            //   single failure stalls the ENTIRE stream.
+                            //
+                            // Keeping the column Nullable loses no source value
+                            // (Nullable(T) is a superset of T), needs no
+                            // fabricated DEFAULT that would overwrite existing
+                            // rows, and is checksum-safe because the comparison
+                            // is value-level, not nullability-level. A MODIFY of
+                            // an already non-Nullable column to Nullable is a
+                            // widening ClickHouse accepts without a DEFAULT.
+                            if (modifier.equalsIgnoreCase(Constants.ADD_COLUMN)) {
                                 isNullColumn = false;
                             }
                         }
@@ -1177,6 +1284,24 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         }
                     } else if (columnDefChild instanceof MySqlParser.CommentColumnConstraintContext) {
                         // Ignore comment for now.
+                    } else if (columnDefChild instanceof MySqlParser.GeneratedColumnConstraintContext) {
+                        // GENERATED ALWAYS AS (expr) on an ALTER: map the
+                        // generation expression to a DEFAULT expression, NOT to
+                        // the column type. Without this branch the clause fell
+                        // into the catch-all `else` below and OVERWROTE
+                        // columnType with the raw expression text, producing
+                        // malformed DDL like "ADD COLUMN c AS(a+b)" instead of
+                        // "ADD COLUMN c Int32 DEFAULT a+b". This mirrors the
+                        // CREATE TABLE path (Constants.GENERATED_COLUMN_KIND =
+                        // DEFAULT): the column keeps its declared type, and the
+                        // source value still wins because Debezium carries the
+                        // generated column's value in the row image (a
+                        // MATERIALIZED column would reject that INSERT, Code 44).
+                        String genExpr = extractGeneratedExpression(
+                                (MySqlParser.GeneratedColumnConstraintContext) columnDefChild);
+                        if (!genExpr.isEmpty()) {
+                            defaultModifier = Constants.GENERATED_COLUMN_KIND + " " + genExpr;
+                        }
                     }
                     else {
                         columnType = columnDefChild.getText();
@@ -1241,6 +1366,28 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             postProcessModifyColumn(this.tableName, columnName, newColumnName, columnType);
         }
 
+        // Check for ALIAS companion column for ADD operations
+        if (tree instanceof AlterByAddColumnContext && this.config != null) {
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
+            if (overrideConfig.hasOverrides()) {
+                String cleanTableName = this.cleanTableName;
+                String cleanColumnName = columnName != null ? columnName.replace("`", "") : "";
+                List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                        overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);
+                for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                    if (entry.getColumn().equalsIgnoreCase(cleanColumnName)) {
+                        // Append companion ALIAS column as additional ALTER TABLE statement
+                        this.query.append("\n")
+                                .append("ALTER TABLE ").append(this.tableName)
+                                .append(" ADD COLUMN `").append(entry.getAliasColumnName()).append("` ")
+                                .append(entry.getAliasType())
+                                .append(" ALIAS ").append(entry.getExpression());
+                    }
+                }
+            }
+        }
+
         String trimmedQuery = this.query.toString().trim();
         this.query.delete(0, this.query.toString().length()).append(trimmedQuery);
     }
@@ -1268,13 +1415,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (tableName.contains(".")) {
             this.query.append(String.format(rename, tableName, oldCol, newCol));
         } else {
-            this.query.append(String.format(rename, databaseName + "." + tableName, oldCol, newCol));
+            this.query.append(String.format(rename, "`" + databaseName + "`." + tableName, oldCol, newCol));
         }
     }
 
     @Override
     public void enterAlterTable(MySqlParser.AlterTableContext alterTableContext) {
         List<ParseTree> pt = alterTableContext.children;
+        // Index in this.query where the "ALTER TABLE <table>" header ends and the
+        // clause list begins. Separators and the empty-statement check below are
+        // measured against this so a clause that emits nothing (ADD PRIMARY KEY,
+        // ALGORITHM/LOCK hints) cannot leave a stray comma or a bare header.
+        int headerEnd = -1;
         for (ParseTree tree : pt) {
 
             if (tree instanceof TableNameContext) {
@@ -1283,10 +1435,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if (this.tableName.contains(".")) {
                     // Split database and table name.
                     String[] tableNameSplit = this.tableName.split("\\.");
-                    this.query.append(String.format(Constants.ALTER_TABLE, databaseName+ "." + tableNameSplit[1]));
+                    this.query.append(String.format(Constants.ALTER_TABLE, "`" + databaseName+ "`." + tableNameSplit[1]));
                 } else {
-                    this.query.append(String.format(Constants.ALTER_TABLE, databaseName + "." + this.tableName));
+                    this.query.append(String.format(Constants.ALTER_TABLE, "`" + databaseName + "`." + this.tableName));
                 }
+                headerEnd = this.query.length();
             }
 
             if (tree instanceof AlterByAddColumnContext) {
@@ -1310,6 +1463,25 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         for (ParseTree dropColumnChild: ((MySqlParser.UidContext) dropColumnTree).children) {
                             if (dropColumnChild instanceof MySqlParser.SimpleIdContext || dropColumnChild instanceof TerminalNodeImpl) {
                                 this.query.append(String.format(Constants.DROP_COLUMN, dropColumnChild.getText()));
+
+                                // Check for ALIAS column companion drops
+                                if (this.config != null) {
+                                    ColumnTypeOverrideConfig overrideConfig =
+                                            ColumnTypeOverrideConfig.fromProperties(this.config.originalsStrings());
+                                    if (overrideConfig.hasOverrides()) {
+                                        String cleanTableName = this.cleanTableName;
+                                        String droppedColName = dropColumnChild.getText().replace("`", "");
+                                        List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                                                overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);
+                                        for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                                            if (entry.getColumn().equalsIgnoreCase(droppedColName)) {
+                                                this.query.append(",");
+                                                this.query.append(String.format(Constants.DROP_COLUMN,
+                                                        entry.getAliasColumnName()));
+                                            }
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -1317,7 +1489,24 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             } else if (tree instanceof MySqlParser.AlterByRenameColumnContext) {
                 parseRenameColumn(tree);
             } else if (tree instanceof MySqlParser.AlterByAddPrimaryKeyContext) {
-                parseAlterTable(tree);
+                // A ClickHouse ReplacingMergeTree fixes its sorting key at CREATE
+                // time; there is no ALTER that adds or changes a primary/sorting
+                // key. MySQL adding a PRIMARY KEY over a surrogate id therefore
+                // has no ClickHouse equivalent -- the id COLUMN it introduces is
+                // still added and replicated by the accompanying ADD COLUMN
+                // clause, so only the un-representable key constraint is dropped
+                // and no source value is lost. Emitting nothing (as parseAlterTable
+                // did for this context) but leaving the separators behind produced
+                // a malformed statement: "ALTER TABLE t, MODIFY ..." (leading
+                // comma) or a bare "ALTER TABLE t" -- both rejected by ClickHouse
+                // with Code: 62 Syntax error (measured on 24.8.14) and, because
+                // DDL is retried indefinitely, that stalls the whole stream.
+                // Drop the separator this clause was preceded by, mirroring the
+                // ALGORITHM/LOCK handling below; the trailing/leading cleanup at
+                // the end removes any that followed it.
+                log.info("ADD PRIMARY KEY has no ClickHouse equivalent (the sorting "
+                        + "key is fixed at CREATE); skipping clause");
+                removeTrailingComma();
             } else if (tree instanceof MySqlParser.AlterByChangeColumnContext) {
                 parseAlterTable(tree);
             } else if (tree instanceof MySqlParser.AlterByAddIndexContext) {
@@ -1336,7 +1525,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 removeTrailingComma();
             } else if (tree instanceof TerminalNodeImpl) {
                 if (((TerminalNodeImpl) tree).symbol.getType() == MySqlParser.COMMA) {
-                    this.query.append(",");
+                    // Emit a separator only when a clause has already produced
+                    // output after the header and the query does not already end
+                    // in one. Appending eagerly let a no-op clause (ADD PRIMARY
+                    // KEY / ALGORITHM / LOCK) leave a leading "ALTER TABLE t,"
+                    // or a doubled comma, which ClickHouse rejects (Code: 62).
+                    appendClauseSeparator(headerEnd);
                 }
             } else if(tree instanceof MySqlParser.AlterByRenameContext) {
                 parseAlterTableByRename(tableName, (MySqlParser.AlterByRenameContext) tree);
@@ -1345,6 +1539,69 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // A hint in trailing position leaves the separator that preceded it
         // dangling once the hint itself emits nothing.
         removeTrailingComma();
+        // Every clause emitted nothing (e.g. a lone ADD PRIMARY KEY): the query
+        // is just "ALTER TABLE t", which ClickHouse rejects with Code: 62. Clear
+        // it so executeDDL's `!query.isEmpty()` guard skips it instead of
+        // stalling the stream on an un-representable, retried-forever statement.
+        //
+        // Only clear when EVERY specification is a no-op handled in this loop.
+        // Some clauses (ADD CONSTRAINT ... CHECK) are appended by a separate
+        // listener that fires after this method and relies on the header being
+        // present, so an empty body here does not mean an empty statement.
+        if (headerEnd >= 0 && this.query.length() <= headerEnd
+                && alterHasOnlyNoOpSpecifications(alterTableContext)) {
+            this.query.setLength(0);
+        }
+    }
+
+    /**
+     * Returns true when every ALTER specification is one this translator
+     * deliberately drops (ADD PRIMARY KEY, ALGORITHM/LOCK hints), so the
+     * statement has no ClickHouse equivalent at all and must be skipped rather
+     * than sent as a bare "ALTER TABLE t". Any other specification -- including
+     * ADD CONSTRAINT ... CHECK, which a separate listener appends after
+     * enterAlterTable -- means the statement is representable and must be kept.
+     */
+    private boolean alterHasOnlyNoOpSpecifications(MySqlParser.AlterTableContext alterTableContext) {
+        for (ParseTree tree : alterTableContext.children) {
+            if (tree instanceof TableNameContext || tree instanceof TerminalNodeImpl
+                    || tree instanceof MySqlParser.AlterByAddPrimaryKeyContext
+                    || tree instanceof MySqlParser.AlterBySetAlgorithmContext
+                    || tree instanceof MySqlParser.AlterByLockContext) {
+                continue;
+            }
+            return false;
+        }
+        return true;
+    }
+
+    /**
+     * Appends a clause separator comma only when it is safe to do so: at least
+     * one clause has already emitted output past the ALTER TABLE header, and the
+     * query does not already end in a comma. This prevents a leading comma
+     * ("ALTER TABLE t, ...") or a doubled comma when a preceding ALTER clause
+     * emits nothing (ADD PRIMARY KEY, ALGORITHM/LOCK hints).
+     *
+     * @param headerEnd index at which the "ALTER TABLE <table>" header ends.
+     */
+    private void appendClauseSeparator(int headerEnd) {
+        if (headerEnd < 0) {
+            this.query.append(",");
+            return;
+        }
+        int end = this.query.length();
+        while (end > 0 && Character.isWhitespace(this.query.charAt(end - 1))) {
+            end--;
+        }
+        if (end <= headerEnd) {
+            // No clause content emitted yet after the header.
+            return;
+        }
+        if (this.query.charAt(end - 1) == ',') {
+            // Already separated.
+            return;
+        }
+        this.query.append(",");
     }
 
     /**
@@ -1385,7 +1642,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     (Constants.ALTER_RENAME_TABLE, originalTableName, newTableName));
         } else {
             this.query.delete(0, this.query.toString().length()).append(String.format
-                    (Constants.ALTER_RENAME_TABLE, databaseName + "." + originalTableName, databaseName + "." + newTableName));
+                    (Constants.ALTER_RENAME_TABLE, "`" + databaseName + "`." + originalTableName, "`" + databaseName + "`." + newTableName));
         }
     }
 
@@ -1508,9 +1765,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 String tableName = child.getText();
                 if (tableName.contains(".")) {
                     String[] parts = tableName.split("\\.");
-                    this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + parts[1]));
+                    this.query.append(String.format(Constants.TRUNCATE_TABLE,
+                            "`" + databaseName + "`." + parts[1]));
                 } else {
-                    this.query.append(String.format(Constants.TRUNCATE_TABLE, databaseName + "." + tableName));
+                    this.query.append(String.format(Constants.TRUNCATE_TABLE,
+                            "`" + databaseName + "`." + tableName));
                 }
             }
         }

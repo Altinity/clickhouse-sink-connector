@@ -1,4 +1,4 @@
-// Generated from /home/kanthi/Documents/GITHUB/ALTINITY/clickhouse-debezium-embedded/src/main/antlr4/MySqlLexer.g4 by ANTLR 4.10.1
+// Generated from src/main/antlr4/MySqlLexer.g4 by ANTLR 4.10.1
 import org.antlr.v4.runtime.Lexer;
 import org.antlr.v4.runtime.CharStream;
 import org.antlr.v4.runtime.Token;

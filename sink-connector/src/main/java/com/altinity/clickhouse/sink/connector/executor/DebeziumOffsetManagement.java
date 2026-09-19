@@ -25,18 +25,52 @@ public class DebeziumOffsetManagement {
             DebeziumOffsetManagement.class);
 
     /**
-     * A concurrent map holding the in-flight batch timestamps. The key is a
-     * Pair of minimum and maximum timestamps, and the value is the list of
-     * corresponding ClickHouseStruct records.
+     * Identity key for a tracked batch.
+     * <p>
+     * The maps below MUST be keyed by the batch's object identity, not by its
+     * {@code (minTs, maxTs)} timestamp range. Two distinct batches routinely
+     * share a timestamp range — a single multi-row statement split across
+     * batches, or two batches whose rows all fall in the same millisecond — and
+     * keying by the range made them collide: {@code put} silently overwrote the
+     * earlier batch's entry and {@code remove} deleted the wrong one, so a batch
+     * that was still unwritten stopped blocking the offset commit. The committed
+     * binlog position could then advance past rows not yet in ClickHouse, losing
+     * them on a crash. Keying by identity makes every batch a distinct entry
+     * regardless of its timestamps. {@code equals}/{@code hashCode} are by
+     * reference so this stays correct on a {@link ConcurrentHashMap} (whose
+     * default keying would otherwise fall back to {@code List} content equality).
      */
-    static ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>>
+    static final class BatchKey {
+        final List<ClickHouseStruct> batch;
+
+        BatchKey(List<ClickHouseStruct> batch) {
+            this.batch = batch;
+        }
+
+        @Override
+        public int hashCode() {
+            return System.identityHashCode(batch);
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof BatchKey && ((BatchKey) o).batch == this.batch;
+        }
+    }
+
+    /**
+     * A concurrent map holding the in-flight batches, keyed by batch identity
+     * (see {@link BatchKey}). The value is the list of ClickHouseStruct records.
+     */
+    static ConcurrentHashMap<BatchKey, List<ClickHouseStruct>>
             inFlightBatches = new ConcurrentHashMap<>();
 
     /**
-     * A concurrent map holding the completed batches. Once a batch is
-     * fully processed, it is moved from inFlightBatches to completedBatches.
+     * A concurrent map holding the completed batches, keyed by batch identity.
+     * Once a batch is fully processed, it is moved from inFlightBatches to
+     * completedBatches.
      */
-    static ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>>
+    static ConcurrentHashMap<BatchKey, List<ClickHouseStruct>>
             completedBatches = new ConcurrentHashMap<>();
 
     /**
@@ -54,40 +88,39 @@ public class DebeziumOffsetManagement {
      * @param inFlightBatches A map containing the in-flight batches.
      */
     public DebeziumOffsetManagement(
-            ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>>
+            ConcurrentHashMap<BatchKey, List<ClickHouseStruct>>
                     inFlightBatches) {
         this.inFlightBatches = inFlightBatches;
     }
 
     /**
-     * Adds the given batch's timestamp range to the in-flight batches map.
+     * Registers the given batch as in-flight, keyed by its identity.
      *
      * @param batch A list of ClickHouseStruct records.
      */
     public static void addToBatchTimestamps(List<ClickHouseStruct> batch) {
-        Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
         if (inFlightBatches.size() > 1000) {
             log.error("*********** Requests in Flight is greater than 1000 "
                     + "***********");
         }
-        inFlightBatches.put(pair, batch);
+        inFlightBatches.put(new BatchKey(batch), batch);
     }
 
     /**
-     * Removes the batch corresponding to the given timestamp range.
+     * Removes the given batch from the in-flight map (by identity).
      *
-     * @param pair The Pair of minimum and maximum timestamps.
+     * @param batch The batch to remove.
      */
-    public void removeFromBatchTimestamps(Pair<Long, Long> pair) {
-        inFlightBatches.remove(pair);
+    public void removeFromBatchTimestamps(List<ClickHouseStruct> batch) {
+        inFlightBatches.remove(new BatchKey(batch));
     }
 
     /**
-     * Returns the map of in-flight batch timestamps.
+     * Returns the map of in-flight batches, keyed by batch identity.
      *
-     * @return A map of timestamp pairs to their associated record lists.
+     * @return A map of batch keys to their associated record lists.
      */
-    public Map<Pair<Long, Long>, List<ClickHouseStruct>> getBatchTimestamps() {
+    public Map<BatchKey, List<ClickHouseStruct>> getBatchTimestamps() {
         return inFlightBatches;
     }
 
@@ -197,18 +230,21 @@ public class DebeziumOffsetManagement {
         boolean result = false;
         Pair<Long, Long> currentBatchPair =
                 calculateMinMaxTimestampFromBatch(currentBatch);
-        // Iterate through inFlightBatches and check if there is any batch
-        // which is lower than the current batch.
-        for (Map.Entry<Pair<Long, Long>, List<ClickHouseStruct>> entry
+        // Iterate through inFlightBatches and check if there is any OTHER batch
+        // that overlaps the current one.
+        for (Map.Entry<BatchKey, List<ClickHouseStruct>> entry
                 : inFlightBatches.entrySet()) {
-            Pair<Long, Long> key = entry.getKey();
-            // Ignore the same batch.
-            if (currentBatchPair.getLeft().longValue() == key.getLeft().longValue()
-                    && currentBatchPair.getRight().longValue() == key.getRight().longValue()) {
+            // Ignore the same batch -- by IDENTITY, not by timestamp range. Two
+            // different batches can share a range; comparing ranges here made a
+            // batch treat a distinct overlapping sibling as "itself" and skip
+            // it, so an unwritten older batch stopped blocking the commit.
+            if (entry.getKey().batch == currentBatch) {
                 continue;
             }
+            Pair<Long, Long> otherPair =
+                    calculateMinMaxTimestampFromBatch(entry.getValue());
             // Check if max of current batch is greater than min of inflight batch.
-            if (currentBatchPair.getRight().longValue() > key.getLeft().longValue()) {
+            if (currentBatchPair.getRight().longValue() > otherPair.getLeft().longValue()) {
                 result = true;
                 break;
             }
@@ -233,10 +269,11 @@ public class DebeziumOffsetManagement {
         boolean result = false;
         if (true == checkIfThereAreInflightRequests(batch)) {
             // Remove the record from inFlightBatches and move it to
-            // completedBatches.
-            Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
-            inFlightBatches.remove(pair);
-            completedBatches.put(pair, batch);
+            // completedBatches -- keyed by identity so equal-timestamp batches
+            // do not clobber each other.
+            BatchKey key = new BatchKey(batch);
+            inFlightBatches.remove(key);
+            completedBatches.put(key, batch);
         } else {
             // Acknowledge current batch
             acknowledgeRecords(batch);
@@ -344,26 +381,34 @@ public class DebeziumOffsetManagement {
         // acknowledge records
         // Iterate through the records
         // and use the record committer to commit the offsets.
-        for(ClickHouseStruct record: batch) {
-            if (record.getCommitter() != null && record.getSourceRecord() != null) {
+        // markProcessed() and markBatchFinished() MUST run inside the SAME
+        // critical section. Serializing only markBatchFinished() is not
+        // sufficient: markProcessed() mutates the OffsetStorageWriter's
+        // pending-offset map, which is exactly the state beginFlush()
+        // snapshots, and neither is thread-safe. Debezium also builds a NEW
+        // RecordCommitter per batch (EmbeddedEngine.buildRecordCommitter), so
+        // its own `synchronized` methods lock different monitors for different
+        // batches and give no mutual exclusion across worker threads. The
+        // single shared OFFSET_COMMIT_LOCK is the only thing serialising
+        // access to the OffsetStorageWriter underneath.
+        synchronized (OFFSET_COMMIT_LOCK) {
+            for (ClickHouseStruct record : batch) {
+                if (record.getCommitter() != null && record.getSourceRecord() != null) {
 
-                record.getCommitter().markProcessed(record.getSourceRecord());
-//                log.debug("***** Record successfully marked as processed ****" + "Binlog file:" +
-//                        record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
-//                + "Sequence Number: " + record.getSequenceNumber() + "Debezium Timestamp: " + record.getDebezium_ts_ms());
+                    record.getCommitter().markProcessed(record.getSourceRecord());
 
-                if(record.isLastRecordInBatch()) {
-                    markBatchFinishedSafely(record.getCommitter());
-                    log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
-                            record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
-                            + " Sequence Number: " + record.getSequenceNumber() + " Debezium Timestamp: " + record.getDebezium_ts_ms());
+                    if (record.isLastRecordInBatch()) {
+                        record.getCommitter().markBatchFinished();
+                        log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
+                                record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
+                                + " Sequence Number: " + record.getSequenceNumber() + " Debezium Timestamp: " + record.getDebezium_ts_ms());
+                    }
                 }
             }
         }
 
-        // Remove the batch from the inFlightBatches
-        Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
-        inFlightBatches.remove(pair);
+        // Remove the batch from the inFlightBatches (by identity).
+        inFlightBatches.remove(new BatchKey(batch));
 
         // The batch is acknowledged, so it no longer blocks a control-record
         // offset commit. Decremented only here, after markProcessed, so the
@@ -395,37 +440,47 @@ public class DebeziumOffsetManagement {
             boolean lastRecordInBatch)
             throws InterruptedException {
         if (sourceRecord != null) {
-            recordCommitter.markProcessed(sourceRecord);
-            if (lastRecordInBatch == true) {
-                markBatchFinishedSafely(recordCommitter);
+            // Same critical section as the batch variant above -- see the
+            // comment there for why markProcessed() must be inside it too.
+            synchronized (OFFSET_COMMIT_LOCK) {
+                recordCommitter.markProcessed(sourceRecord);
+                if (lastRecordInBatch == true) {
+                    recordCommitter.markBatchFinished();
+                }
             }
         }
     }
 
     /**
-     * Finishes a Debezium batch (which triggers an offset flush).
+     * Acknowledges a single record on the shared offset-commit lock.
      * <p>
-     * All connector-driven commits are serialized on {@link #OFFSET_COMMIT_LOCK}
-     * so that worker threads never issue overlapping
-     * {@code markBatchFinished()} / {@code beginFlush()} calls against the same,
-     * non-thread-safe {@code OffsetStorageWriter}. This serialization, combined
-     * with Debezium's own single {@code RecordCommitter} whose methods are
-     * {@code synchronized}, prevents concurrent flushes. Any exception is
-     * allowed to propagate so it is handled by the caller's existing
-     * retriable-error path rather than being silently swallowed.
+     * Exposed so that every offset-committing path in the connector funnels
+     * through the SAME lock. Any path that calls {@code markProcessed()} /
+     * {@code markBatchFinished()} directly bypasses the serialization and can
+     * drive concurrent {@code beginFlush()} calls into the non-thread-safe
+     * OffsetStorageWriter, which throws
+     * {@code ConnectException: OffsetStorageWriter is already flushing}.
+     * </p>
      *
-     * @param committer The Debezium record committer.
-     * @throws InterruptedException If the commit is interrupted.
+     * @param recordCommitter    The record committer to be used.
+     * @param sourceRecord       The source record to mark as processed.
+     * @param lastRecordInBatch  True if this is the last record in the batch.
+     * @throws InterruptedException If the commit operation is interrupted.
      */
-    private static void markBatchFinishedSafely(
+    public static void acknowledgeRecord(
             DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>>
-                    committer)
+                    recordCommitter,
+            ChangeEvent<SourceRecord, SourceRecord> sourceRecord,
+            boolean lastRecordInBatch)
             throws InterruptedException {
-        if (committer == null) {
+        if (recordCommitter == null || sourceRecord == null) {
             return;
         }
         synchronized (OFFSET_COMMIT_LOCK) {
-            committer.markBatchFinished();
+            recordCommitter.markProcessed(sourceRecord);
+            if (lastRecordInBatch) {
+                recordCommitter.markBatchFinished();
+            }
         }
     }
 }

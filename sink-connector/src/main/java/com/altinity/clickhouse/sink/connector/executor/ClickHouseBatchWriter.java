@@ -11,6 +11,7 @@ import com.altinity.clickhouse.sink.connector.db.DbKafkaOffsetWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
 import com.altinity.clickhouse.sink.connector.db.batch.PreparedStatementExecutor;
+import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
@@ -202,6 +203,11 @@ public class ClickHouseBatchWriter {
         // Group records by topic name.
         // Create a new map of topic name to list of records.
         try {
+            // If replication history is enabled, add the records to the history table.
+            String sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+            String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
+            addRecordsToHistoryTable(records, sourceTimeZone, serverTimeZone);
+
             Map<String, List<ClickHouseStruct>> topicToRecordsMap =
                     new ConcurrentHashMap<>();
             records.forEach(record -> {
@@ -252,24 +258,59 @@ public class ClickHouseBatchWriter {
             // acknowledge the records.
             if (result) {
                 log.info("****** Acknowledging records ******");
-                records.forEach(record -> {
+                // Route through DebeziumOffsetManagement so this path uses the
+                // SAME OFFSET_COMMIT_LOCK as the batch-runnable path. Calling
+                // markProcessed()/markBatchFinished() directly here bypassed
+                // the serialization entirely: markProcessed() mutates the
+                // OffsetStorageWriter's pending-offset map, which is exactly
+                // the state beginFlush() snapshots, so an unserialized
+                // markProcessed() racing another thread's flush is what drives
+                // "OffsetStorageWriter is already flushing".
+                for (ClickHouseStruct record : records) {
+                    if (record.getCommitter() == null
+                            || record.getSourceRecord() == null) {
+                        continue;
+                    }
                     try {
-                        record.getCommitter().markProcessed(
-                                record.getSourceRecord());
+                        DebeziumOffsetManagement.acknowledgeRecord(
+                                record.getCommitter(),
+                                record.getSourceRecord(),
+                                record.isLastRecordInBatch());
                     } catch (InterruptedException e) {
-                        //throw new RuntimeException(e);
-                        log.error("Error marking records as processed" + e);
+                        // Preserve the interrupt and stop acknowledging:
+                        // silently continuing would advance offsets for
+                        // records whose commit never completed.
+                        Thread.currentThread().interrupt();
+                        log.error("Interrupted while acknowledging records", e);
+                        throw new RuntimeException(e);
                     }
-                    if (record.isLastRecordInBatch()) {
-                        try {
-                            record.getCommitter().markBatchFinished();
-                        } catch (InterruptedException e) {
-                            throw new RuntimeException(e);
-                        }
-                    }
-                });
+                    // NOTE: markBatchFinished() is deliberately NOT re-invoked
+                    // here. acknowledgeRecord() above already performs it,
+                    // under the shared OFFSET_COMMIT_LOCK, when
+                    // isLastRecordInBatch() is true. Calling it again outside
+                    // that lock is the unserialized second flush path that
+                    // produced the stuck writer. It must stay removed.
+                }
             }
         } catch (Exception e) {
+            if (isOffsetWriterPoisoned(e)) {
+                // Once the flush semaphore is leaked, offsets can never be
+                // committed again in this JVM. Logging and returning normally
+                // would let ClickHouse writes continue against a frozen binlog
+                // position -- silent divergence, which is how
+                // txnrepo-sink-staging ran ~8h behind while every batch
+                // reported success. Propagate so the task stops.
+                log.error("FATAL: the Debezium OffsetStorageWriter is stuck in "
+                        + "the 'already flushing' state. Offsets can no longer "
+                        + "be committed, so replication would keep writing rows "
+                        + "while the binlog position stays frozen. Propagating "
+                        + "to stop processing and prevent silent data "
+                        + "divergence.");
+                throw new BatchPersistenceException(
+                        "OffsetStorageWriter is permanently stuck flushing; "
+                                + "stopping to prevent silent data divergence",
+                        e);
+            }
             if (isInterrupt(e)) {
                 // The task is being shut down. Nothing was acknowledged, so
                 // this batch is replayed from the last committed offset on the
@@ -295,6 +336,36 @@ public class ClickHouseBatchWriter {
                     : new BatchPersistenceException(
                             "Failed to persist a batch of records to ClickHouse", e);
         }
+    }
+
+    /**
+     * Detects the unrecoverable "OffsetStorageWriter is already flushing"
+     * condition.
+     * <p>
+     * {@code EmbeddedEngine.commitOffsets} returns early when {@code doFlush}
+     * returns null WITHOUT calling {@code cancelFlush}, leaking the
+     * OffsetStorageWriter's {@code flushInProgress} semaphore permanently.
+     * Every subsequent {@code beginFlush()} in this JVM then throws. Because
+     * the offset store writes asynchronously, ClickHouse inserts keep
+     * succeeding while the committed binlog position never advances.
+     * </p>
+     *
+     * @param e the exception thrown while persisting or acknowledging records.
+     * @return true when offset commits can no longer succeed in this JVM.
+     */
+    private static boolean isOffsetWriterPoisoned(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String message = t.getMessage();
+            if (message != null
+                    && message.contains(
+                            "OffsetStorageWriter is already flushing")) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
     }
 
     /**
@@ -341,6 +412,26 @@ public class ClickHouseBatchWriter {
     }
 
     /**
+     * Function to persist records to binlog history table when replication history mode is enabled.
+     * @param records
+     * @param sourceTimeZone
+     * @param serverTimeZone
+     * @throws SQLException
+     */
+    private void addRecordsToHistoryTable(List<ClickHouseStruct> records, String sourceTimeZone, String serverTimeZone) throws SQLException {
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString()) && records != null && !records.isEmpty()) {
+            String databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+            String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
+            Connection databaseConn = getClickHouseConnection(databaseName);
+            DbWriter writer = getDbWriterForTable(databaseName + "." + tableName, tableName, databaseName,
+                    records.get(0), databaseConn);
+
+            BinLogHistory binLogHistory = new BinLogHistory();
+            binLogHistory.addRecordsToHistoryTable(config, tableName, writer.getConnection(), "", records, sourceTimeZone, serverTimeZone);
+        }
+    }
+
+    /**
      * Function to retrieve table name from topic name.
      *
      * @param topicName the topic name
@@ -349,7 +440,16 @@ public class ClickHouseBatchWriter {
     public String getTableFromTopic(String topicName) {
         String tableName = null;
         if (this.topic2TableMap.containsKey(topicName) == false) {
-            tableName = Utils.getTableNameFromTopic(topicName);
+            boolean schemaPrefix = this.config != null &&
+                    this.config.getBoolean(
+                            ClickHouseSinkConnectorConfigVariables
+                                    .CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString());
+            String schemaTemplate = this.config != null
+                    ? this.config.getString(
+                            ClickHouseSinkConnectorConfigVariables
+                                    .CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString())
+                    : null;
+            tableName = Utils.getTableNameFromTopic(topicName, schemaPrefix, schemaTemplate);
             this.topic2TableMap.put(topicName, tableName);
         } else {
             tableName = this.topic2TableMap.get(topicName);
@@ -470,6 +570,60 @@ public class ClickHouseBatchWriter {
     }
 
     /**
+     * Resolves the target ClickHouse database name for a topic and first record.
+     * Applies replication history override, database prefix, schema template suffix,
+     * and database override mapping.
+     *
+     * @param topicName   the Kafka/Debezium topic name
+     * @param firstRecord the first record in the batch
+     * @return the resolved ClickHouse database name
+     */
+    String resolveDatabaseName(String topicName, ClickHouseStruct firstRecord) {
+        String databaseName = firstRecord != null ? firstRecord.getDatabase() : null;
+
+        // If replication history is enabled or replication_log_only is enabled,
+        // use the replication history database name
+        boolean replicationHistoryEnabled = config.getBoolean(
+                ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
+        boolean replicationLogOnly = config.getBoolean(
+                ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString());
+
+        if (replicationHistoryEnabled || replicationLogOnly) {
+            return config.getString(
+                    ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+        }
+
+        // Apply database prefix if configured (mirrors DebeziumChangeEventCapture and ClickHouseBatchRunnable)
+        if (databaseName != null && this.config != null) {
+            String dbPrefix = this.config.getString(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_DATABASE_PREFIX.toString());
+            databaseName = Utils.applyDatabasePrefix(databaseName, dbPrefix);
+        }
+
+        // Apply database schema suffix if configured (mirrors DebeziumChangeEventCapture and ClickHouseBatchRunnable)
+        if (databaseName != null && this.config != null) {
+            boolean dbSchemaSuffix = this.config.getBoolean(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString());
+            String schemaTemplate = this.config.getString(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString());
+            if (dbSchemaSuffix && schemaTemplate != null && !schemaTemplate.isEmpty()) {
+                String schema = Utils.extractSchemaFromTopic(topicName);
+                databaseName = Utils.applyDatabaseSchemaSuffix(databaseName, schemaTemplate, schema);
+            }
+        }
+
+        // Check if user has overridden the database name (check both post-transform and pre-transform raw db)
+        if (this.databaseOverrideMap.containsKey(databaseName)) {
+            databaseName = this.databaseOverrideMap.get(databaseName);
+        } else if (firstRecord != null && firstRecord.getDatabase() != null
+                && this.databaseOverrideMap.containsKey(firstRecord.getDatabase())) {
+            databaseName = this.databaseOverrideMap.get(firstRecord.getDatabase());
+        }
+
+        return databaseName;
+    }
+
+    /**
      * Processes records for the specified topic.
      *
      * <p>This function groups records by topic, retrieves the
@@ -491,24 +645,8 @@ public class ClickHouseBatchWriter {
         // Note: getting records.get(0) is safe as the topic name is same
         // for all records.
         ClickHouseStruct firstRecord = records.get(0);
-        String databaseName = firstRecord.getDatabase();
+        String databaseName = resolveDatabaseName(topicName, firstRecord);
 
-        // If replication history is enabled or replication_log_only is enabled,
-        // use the replication history database name
-        boolean replicationHistoryEnabled = config.getBoolean(
-                ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
-        boolean replicationLogOnly = config.getBoolean(
-                ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString());
-
-        if (replicationHistoryEnabled || replicationLogOnly) {
-            databaseName = config.getString(
-                    ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
-        }
-
-        // Check if user has overridden the database name.
-        if (this.databaseOverrideMap.containsKey(firstRecord.getDatabase()))
-            databaseName = this.databaseOverrideMap.get(
-                    firstRecord.getDatabase());
         Connection databaseConn = getClickHouseConnection(databaseName);
         DbWriter writer = getDbWriterForTable(topicName, tableName, databaseName,
                 firstRecord, databaseConn);
@@ -517,24 +655,27 @@ public class ClickHouseBatchWriter {
         // by DDL (rather than by auto-create) first gets its sorting key. A
         // value captured here would still be empty, and the writer would then
         // silently skip the UPDATE tombstone.
+        final DbWriter sortingKeySource = writer;
         PreparedStatementExecutor preparedStatementExecutor =
-                new PreparedStatementExecutor(writer.
-                        getReplacingMergeTreeDeleteColumn(),
-                        writer.isReplacingMergeTreeWithIsDeletedColumn(),
-                        writer.getSignColumn(), writer.getVersionColumn(),
-                        writer.getDatabaseName(),
+                new PreparedStatementExecutor(
+                        writer != null ? writer.getReplacingMergeTreeDeleteColumn() : null,
+                        writer != null && writer.isReplacingMergeTreeWithIsDeletedColumn(),
+                        writer != null ? writer.getSignColumn() : null,
+                        writer != null ? writer.getVersionColumn() : null,
+                        writer != null ? writer.getDatabaseName() : databaseName,
                         getServerTimeZone(this.config),
-                        writer::getSortingKeyColumns);
+                        sortingKeySource != null ? sortingKeySource::getSortingKeyColumns : null);
         if (writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error(String.format(
                     "*** TABLE METADATA not retrieved for " +
                             "Database(%s), table(%s) retrying",
-                    writer.getDatabaseName(), writer.getTableName()));
+                    writer != null ? writer.getDatabaseName() : databaseName,
+                    writer != null ? writer.getTableName() : tableName));
             if (writer == null) {
                 writer = getDbWriterForTable(topicName, tableName,
                         databaseName, firstRecord, databaseConn);
             }
-            if (writer.wasTableMetaDataRetrieved() == false)
+            if (writer != null && writer.wasTableMetaDataRetrieved() == false)
                 writer.updateColumnNameToDataTypeMap();
             if (writer == null ||
                     writer.wasTableMetaDataRetrieved() == false) {
@@ -542,7 +683,8 @@ public class ClickHouseBatchWriter {
                         "*** TABLE METADATA not retrieved for " +
                                 "Database(%s), table(%s), retrying on next " +
                                 "attempt",
-                        writer.getDatabaseName(), writer.getTableName()));
+                        writer != null ? writer.getDatabaseName() : databaseName,
+                        writer != null ? writer.getTableName() : tableName));
                 return false;
             }
         }

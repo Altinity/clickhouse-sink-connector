@@ -612,6 +612,90 @@ public class ClickHouseStruct {
     }
 
     /**
+     * Gets the position of the change event in the source transaction log
+     * ({@code source.file}/{@code source.pos}/{@code source.row} for MySQL and
+     * MariaDB, {@code source.lsn} for PostgreSQL).
+     *
+     * <p>The source timestamp returned by {@link #getSourceTsFromChangeEvent} is NOT
+     * monotonic in commit order on MySQL: a row event carries the timestamp of the
+     * statement that produced it, and a transaction commits - and reaches the binlog -
+     * after every transaction that committed while it was open. The log position IS
+     * commit order, so the version sequence uses it to recognise a first delivery
+     * (position beyond the high-water mark) and enforce commit ordering on it, while a
+     * redelivery (position at or below the mark) keeps its source-timestamp anchored,
+     * redelivery-stable version.</p>
+     *
+     * @param changeEvent The change event.
+     * @return the position, or {@code null} when the record carries no usable position
+     *         (heartbeats, transaction markers, MongoDB, records without a
+     *         {@code source} struct)
+     */
+    public static SourcePosition getSourcePositionFromChangeEvent(ChangeEvent<SourceRecord, SourceRecord> changeEvent) {
+        if (changeEvent == null || changeEvent.value() == null) {
+            return null;
+        }
+        SourceRecord srd = changeEvent.value();
+        Object value = srd.value();
+        if (!(value instanceof Struct)) {
+            return null;
+        }
+        Struct kafkaStruct = (Struct) value;
+        if (kafkaStruct.schema() == null
+                || kafkaStruct.schema().field(SinkRecordColumns.SOURCE) == null) {
+            return null;
+        }
+        Object sourceObj = kafkaStruct.get(SinkRecordColumns.SOURCE);
+        if (!(sourceObj instanceof Struct)) {
+            return null;
+        }
+        return sourcePositionOf((Struct) sourceObj);
+    }
+
+    /**
+     * Reads the log position out of a Debezium {@code source} struct.
+     *
+     * @param source the {@code source} struct of a change event
+     * @return the position, or {@code null} when the struct carries none
+     */
+    static SourcePosition sourcePositionOf(Struct source) {
+        Schema schema = source.schema();
+        if (schema == null) {
+            return null;
+        }
+        if (schema.field(BINLOG_FILE) != null && schema.field(BINLOG_POS) != null) {
+            Object binlogFile = source.get(BINLOG_FILE);
+            Object binlogPos = source.get(BINLOG_POS);
+            Object binlogRow = schema.field(ROW) != null ? source.get(ROW) : null;
+            if (binlogFile instanceof String && binlogPos instanceof Long) {
+                return SourcePosition.ofBinlog((String) binlogFile, (Long) binlogPos,
+                        binlogRow instanceof Integer ? (Integer) binlogRow : null);
+            }
+        }
+        if (schema.field(LSN) != null) {
+            Object walLsn = source.get(LSN);
+            if (walLsn instanceof Long) {
+                return SourcePosition.ofLsn((Long) walLsn);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The position of this record in the source transaction log, built from the
+     * {@code file}/{@code pos}/{@code row} (MySQL, MariaDB) or {@code lsn} (PostgreSQL)
+     * captured from the record's {@code source} struct.
+     *
+     * @return the position, or {@code null} when the record carries none
+     */
+    public SourcePosition getSourcePosition() {
+        SourcePosition binlogPosition = SourcePosition.ofBinlog(file, pos, row);
+        if (binlogPosition != null) {
+            return binlogPosition;
+        }
+        return SourcePosition.ofLsn(lsn);
+    }
+
+    /**
      * Converts a Kafka Connect Struct to a Map for JSON serialization.
      *
      * @param struct The Kafka Connect Struct to convert

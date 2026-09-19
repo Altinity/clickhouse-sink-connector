@@ -15,6 +15,7 @@ services:
       - ./log4j2.xml:/log4j2.xml
       - ./config-2.yml:/config.yml
     logging:
+      driver: json-file
       options:
         max-size: "100m"
-        max-file: "5"
+        max-file: "1"
