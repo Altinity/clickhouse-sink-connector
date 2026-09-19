@@ -106,11 +106,19 @@ public class DebeziumChangeEventCapture {
     private LinkedBlockingQueue<List<ClickHouseStruct>> records;
 
     /**
-     * Queue to hold routed batches with thread assignment.
-     * Used for hash-based routing to ensure all records for the same table
-     * are processed by the same thread.
+     * One routed queue PER worker thread (index == thread id). Hash-based
+     * routing sends every batch for a given table to a single thread's queue,
+     * and that thread drains only its own queue in FIFO order, so same-table
+     * batches are applied in source order.
+     * <p>
+     * This is deliberately a per-thread queue, not one shared queue. A single
+     * shared queue that workers filter by thread id (putting non-matching
+     * batches back at the tail) reorders same-table batches under contention:
+     * a worker that polls a sibling's batch and re-enqueues it moves it behind
+     * later batches for the same table. Per-thread queues remove that race
+     * entirely.
      */
-    private LinkedBlockingQueue<RoutedBatch> routedRecords;
+    private java.util.List<LinkedBlockingQueue<RoutedBatch>> routedQueues;
 
     /**
      * Number of threads in the thread pool (for hash-based routing).
@@ -1748,8 +1756,12 @@ public class DebeziumChangeEventCapture {
         if (this.records != null && !this.records.isEmpty()) {
             return false;
         }
-        if (this.routedRecords != null && !this.routedRecords.isEmpty()) {
-            return false;
+        if (this.routedQueues != null) {
+            for (LinkedBlockingQueue<RoutedBatch> queue : this.routedQueues) {
+                if (!queue.isEmpty()) {
+                    return false;
+                }
+            }
         }
         return !DebeziumOffsetManagement.hasUnwrittenBatches();
     }
@@ -2102,9 +2114,15 @@ public class DebeziumChangeEventCapture {
         if (this.threadPoolSize > 1) {
             log.info("********* Using hash-based routing with {} threads *********", this.threadPoolSize);
             int maxQueueSize = config.getInt(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString());
+            // One queue per thread; each runnable drains ONLY its own queue, so
+            // all batches for a table (routed to one thread) stay in FIFO order.
+            this.routedQueues = new ArrayList<>(this.threadPoolSize);
+            for (int i = 0; i < this.threadPoolSize; i++) {
+                this.routedQueues.add(new LinkedBlockingQueue<>(maxQueueSize));
+            }
             for (int i = 0; i < this.threadPoolSize; i++) {
                 this.executor.scheduleAtFixedRate(
-                        new ClickHouseBatchRunnable(this.records, config, new HashMap<>()),
+                        new ClickHouseBatchRunnable(this.routedQueues.get(i), i, config, new HashMap<>()),
                         0,
                         config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()),
                         TimeUnit.MILLISECONDS);
@@ -2145,7 +2163,7 @@ public class DebeziumChangeEventCapture {
         // points the batch is in neither collection and the pipeline would
         // falsely read as quiescent. Counting the handoff closes that window
         // -- see DebeziumOffsetManagement#hasUnwrittenBatches.
-        if (this.threadPoolSize > 1 && this.routedRecords != null) {
+        if (this.threadPoolSize > 1 && this.routedQueues != null) {
             // Hash-based routing mode: group records by table and route to specific threads
             appendToRecordsWithHashRouting(convertedRecords);
         } else {
@@ -2189,46 +2207,45 @@ public class DebeziumChangeEventCapture {
             routingGroups.computeIfAbsent(routingKey, k -> new ArrayList<>()).add(record);
         }
         
-        // Create a RoutedBatch for each group and add to queue
-        synchronized (this.routedRecords) {
-            try {
-                int remainingCapacity = this.routedRecords.remainingCapacity();
-                int currentSize = this.routedRecords.size();
-                int totalCapacity = remainingCapacity + currentSize;
-                
-                if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
-                    log.warn("Routed queue is at 90% capacity! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
-                }
-                if (remainingCapacity == 0) {
-                    log.warn("Routed queue is full! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
-                }
-                
-                for (Map.Entry<String, List<ClickHouseStruct>> entry : routingGroups.entrySet()) {
-                    String routingKey = entry.getKey();
-                    List<ClickHouseStruct> batch = entry.getValue();
-                    
-                    // Calculate which thread should process this table
-                    int threadId = RoutedBatch.calculateThreadId(routingKey, this.threadPoolSize);
-                    String tableName = RoutedBatch.extractTableName(batch.get(0).getTopic());
-                    
-                    // Create routed batch and add to queue. Each routed group
-                    // is acknowledged by its consumer independently, so each
-                    // one is registered separately -- registering the caller's
-                    // list once would under-count and let a control-record
-                    // offset commit run while sibling groups were unwritten.
+        // Create a RoutedBatch for each group and enqueue it on its OWNING
+        // thread's queue. Each group is registered (batchHandedOff) individually
+        // and enqueued individually so a failure to enqueue one group releases
+        // only that group's registration.
+        for (Map.Entry<String, List<ClickHouseStruct>> entry : routingGroups.entrySet()) {
+            String routingKey = entry.getKey();
+            List<ClickHouseStruct> batch = entry.getValue();
+
+            // Calculate which thread owns this table. The same table always maps
+            // to the same thread, so its batches are drained in FIFO order.
+            int threadId = RoutedBatch.calculateThreadId(routingKey, this.threadPoolSize);
+            String tableName = RoutedBatch.extractTableName(batch.get(0).getTopic());
+            LinkedBlockingQueue<RoutedBatch> queue = this.routedQueues.get(threadId);
+
+            synchronized (queue) {
+                try {
+                    int remainingCapacity = queue.remainingCapacity();
+                    int currentSize = queue.size();
+                    int totalCapacity = remainingCapacity + currentSize;
+                    if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
+                        log.warn("Routed queue {} is at 90% capacity! Current size: {}, Total capacity: {}",
+                                threadId, currentSize, totalCapacity);
+                    }
+                    if (remainingCapacity == 0) {
+                        log.warn("Routed queue {} is full! Current size: {}, Total capacity: {}",
+                                threadId, currentSize, totalCapacity);
+                    }
                     RoutedBatch routedBatch = new RoutedBatch(batch, threadId, tableName);
                     DebeziumOffsetManagement.batchHandedOff();
-                    this.routedRecords.put(routedBatch);
-
+                    queue.put(routedBatch);
                     log.debug("Routed {} records for table {} to thread {}", batch.size(), tableName, threadId);
+                } catch (Exception e) {
+                    // This group never reached the queue, so no consumer will
+                    // acknowledge it; release its registration or the pipeline
+                    // would never read as quiescent again.
+                    DebeziumOffsetManagement.batchHandoffFailed();
+                    log.error("An unexpected error occurred while putting batch into routed queue {}. Error: {}",
+                            threadId, e.getMessage(), e);
                 }
-            } catch (Exception e) {
-                // A group that never reached the queue has no consumer to
-                // acknowledge it; release its registration so the pipeline
-                // can become quiescent again. Groups already enqueued in this
-                // loop keep theirs and are released on acknowledgement.
-                DebeziumOffsetManagement.batchHandoffFailed();
-                log.error("An unexpected error occurred while putting batch into routed records queue. Error: {}", e.getMessage(), e);
             }
         }
     }

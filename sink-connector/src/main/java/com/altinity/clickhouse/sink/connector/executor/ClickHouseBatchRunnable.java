@@ -338,7 +338,15 @@ public class ClickHouseBatchRunnable implements Runnable {
         String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
 
         try {
-            runLegacyMode(taskId, sourceTimeZone, serverTimeZone, errorTableName);
+            // Hash-routing mode (threadId >= 0 with a dedicated routed queue)
+            // vs legacy single shared queue. In routing mode this runnable owns
+            // exactly one queue and drains it in FIFO order, so same-table
+            // batches (all routed to this thread) are applied in source order.
+            if (this.routedRecords != null && this.threadId >= 0) {
+                runWithHashRouting(taskId, sourceTimeZone, serverTimeZone, errorTableName);
+            } else {
+                runLegacyMode(taskId, sourceTimeZone, serverTimeZone, errorTableName);
+            }
         } catch (Exception e) {
             log.error(String.format(
                             "ClickHouseBatchRunnable exception - Task(%s)", taskId),
@@ -422,35 +430,33 @@ public class ClickHouseBatchRunnable implements Runnable {
 
     /**
      * Run loop for hash-based routing mode.
-     * Only processes batches assigned to this thread.
+     * <p>
+     * This runnable owns a dedicated queue ({@code routedRecords}) that receives
+     * ONLY the batches routed to this thread (all batches for a given table hash
+     * to one thread). It therefore drains its own queue in FIFO order and never
+     * needs to inspect {@code assignedThreadId} or re-enqueue a sibling's batch.
+     * The old shared-queue design (one queue, every thread filtering by id and
+     * putting non-matching batches back at the tail) reordered same-table batches
+     * under contention; per-thread queues remove that race.
      */
     private void runWithHashRouting(Long taskId, String sourceTimeZone, String serverTimeZone, String errorTableName) throws Exception {
-        // Poll from Queue until its empty.
+        // Poll from this thread's own queue until it is empty.
         while (routedRecords.size() > 0 || currentBatch != null) {
-            // If the thread is interrupted, the exit.
+            // If the thread is interrupted, exit.
             if (Thread.currentThread().isInterrupted()) {
                 log.info("Thread {} is interrupted, exiting - Java Thread ID: {}",
                         threadId, Thread.currentThread().getId());
                 return;
             }
-            
+
             if (currentBatch == null) {
                 RoutedBatch routedBatch = routedRecords.poll();
                 if (routedBatch == null) {
                     // No records in the queue.
                     continue;
                 }
-                
-                // Only process if this batch is assigned to this thread
-                if (routedBatch.getAssignedThreadId() == threadId) {
-                    currentBatch = routedBatch.getBatch();
-                    log.debug("Thread {} picked up batch for table: {}", threadId, routedBatch.getTableName());
-                } else {
-                    // Put it back for another thread to pick up
-                    routedRecords.put(routedBatch);
-                    Thread.sleep(10); // Small sleep to avoid busy waiting
-                    continue;
-                }
+                currentBatch = routedBatch.getBatch();
+                log.debug("Thread {} picked up batch for table: {}", threadId, routedBatch.getTableName());
             } else {
                 log.debug("***** Thread {} RETRYING the same batch again", threadId);
             }

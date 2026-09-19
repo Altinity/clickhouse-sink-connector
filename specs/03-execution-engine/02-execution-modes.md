@@ -15,8 +15,14 @@ Specifies the architectural contract of the two batch execution modes: multi-thr
 ## 3. Operational Specification
 
 ### 3.1 Mode Selection
-- `threadPoolSize > 1`: The connector starts `ClickHouseBatchExecutor` with $N$ threads executing `ClickHouseBatchRunnable` scheduled at fixed rate (`buffer.flush.time`).
-- `threadPoolSize == 1`: The connector initializes `ClickHouseBatchWriter` and processes batches inline synchronously on the CDC capture thread.
+`setupProcessingThread` selects the mode as follows:
+- `single.threaded = true`: initialize `ClickHouseBatchWriter` and process batches
+  inline synchronously on the CDC capture thread (no pool).
+- otherwise `thread.pool.size > 1`: start `ClickHouseBatchExecutor` with $N$
+  threads, each running a `ClickHouseBatchRunnable` bound to its OWN routed queue
+  (hash routing — see spec 03.03); same-table batches are drained by one thread
+  in FIFO order.
+- otherwise (`thread.pool.size == 1`): legacy single shared `records` queue.
 
 ### 3.2 Behavioral Parity Contract (Unified in PR #1458)
 Both engines must share identical logic for:
