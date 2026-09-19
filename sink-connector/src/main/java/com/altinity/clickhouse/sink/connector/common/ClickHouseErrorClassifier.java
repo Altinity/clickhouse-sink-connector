@@ -51,7 +51,15 @@ public class ClickHouseErrorClassifier {
         FATAL_ERROR_CODES.add(16);   // NO_SUCH_COLUMN_IN_TABLE
 
         // Configuration / resource limits (deterministic for a given batch)
-        FATAL_ERROR_CODES.add(252);  // TOO_MANY_PARTS
+        //
+        // NOTE: 252 TOO_MANY_PARTS is deliberately NOT here. It is ClickHouse's
+        // insert backpressure signal (active parts above parts_to_throw_insert)
+        // and clears on its own as background merges catch up -- the SAME batch
+        // succeeds on retry once the part count falls. Classifying it FATAL
+        // stopped the whole connector (every table) on a transient, self-healing
+        // condition and required a manual restart. It is left to the RETRIABLE
+        // default so the batch is retried with backoff; offsets never advance
+        // past an unwritten batch, so retrying is safe (no divergence).
         FATAL_ERROR_CODES.add(241);  // MEMORY_LIMIT_EXCEEDED
         FATAL_ERROR_CODES.add(396);  // TOO_MANY_PARTITIONS
 

@@ -30,9 +30,8 @@ public class ClickHouseErrorClassifierTest {
 
     @Test
     public void testClassifyFatal() {
-        int[] fatalCodes = {252, 516, 497, 60, 81, 53, 50, 16, 241, 396, 27};
+        int[] fatalCodes = {516, 497, 60, 81, 53, 50, 16, 241, 396, 27};
         String[] messages = {
-                "Code: 252. DB::Exception: Too many parts (300).",
                 "Code: 516. DB::Exception: Authentication failed: password is incorrect.",
                 "Code: 497. DB::Exception: Access denied.",
                 "Code: 60. DB::Exception: Table default.nonexistent doesn't exist.",
@@ -60,6 +59,23 @@ public class ClickHouseErrorClassifierTest {
                 new RuntimeException("Code: 159. DB::Exception: Timeout exceeded.")));
     }
 
+    /**
+     * 252 TOO_MANY_PARTS is ClickHouse insert backpressure: it clears as
+     * background merges catch up, so the same batch succeeds on retry. It must
+     * be RETRIABLE, not FATAL -- halting the whole connector on a transient,
+     * self-healing condition (and requiring a manual restart) is the regression
+     * this asserts against. Retrying is safe because offsets never advance past
+     * an unwritten batch.
+     */
+    @Test
+    public void testTooManyPartsIsRetriableBackpressure() {
+        assertEquals(ErrorCategory.RETRIABLE, ClickHouseErrorClassifier.classify(
+                new RuntimeException("Code: 252. DB::Exception: Too many parts (300). "
+                        + "Merges are processing significantly slower than inserts.")));
+        assertFalse(ClickHouseErrorClassifier.isFatal(252),
+                "TOO_MANY_PARTS is transient backpressure and must not be fatal");
+    }
+
     @Test
     public void testClassifyUnknownAndNull() {
         assertEquals(ErrorCategory.UNKNOWN, ClickHouseErrorClassifier.classify(
@@ -69,10 +85,11 @@ public class ClickHouseErrorClassifierTest {
 
     @Test
     public void testIsFatal() {
-        assertTrue(ClickHouseErrorClassifier.isFatal(252));
         assertTrue(ClickHouseErrorClassifier.isFatal(516));
         assertTrue(ClickHouseErrorClassifier.isFatal(60));
 
+        // 252 TOO_MANY_PARTS is transient backpressure -- retriable, not fatal.
+        assertFalse(ClickHouseErrorClassifier.isFatal(252));
         assertFalse(ClickHouseErrorClassifier.isFatal(210));
         assertFalse(ClickHouseErrorClassifier.isFatal(159));
         assertFalse(ClickHouseErrorClassifier.isFatal(999));
