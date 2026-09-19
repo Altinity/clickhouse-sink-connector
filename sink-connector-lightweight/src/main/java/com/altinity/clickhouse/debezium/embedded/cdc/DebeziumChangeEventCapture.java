@@ -1649,6 +1649,13 @@ public class DebeziumChangeEventCapture {
             // schema change lands at its true position in the stream.
             boolean ddlRecord = isDDLRecord(record);
             if (ddlRecord && batch.size() > 0) {
+                // Every handed-off batch MUST carry a terminal marker so the
+                // writer path calls markBatchFinished() and flushes this batch's
+                // offset. The Debezium-list index cannot supply it here (the DDL,
+                // not a row, is the current record), so flag the last row of this
+                // sub-batch explicitly. See markTerminalRecord (#1379 offset
+                // progress).
+                markTerminalRecord(batch);
                 appendToRecords(new ArrayList<>(batch), config);
                 batch.clear();
                 handedOffRows = true;
@@ -1666,11 +1673,43 @@ public class DebeziumChangeEventCapture {
         //addVersion(batch);
 
         if (batch.size() > 0) {
+            // Guarantee a terminal marker on the handed-off batch even when the
+            // Debezium batch ended with a control record (heartbeat / tx
+            // boundary): otherwise no row carries isLastRecordInBatch, the writer
+            // never calls markBatchFinished(), and this batch's offset would only
+            // be committed later by a heartbeat. See markTerminalRecord (#1379).
+            markTerminalRecord(batch);
             appendToRecords(batch, config);
             handedOffRows = true;
         }
 
         commitControlRecordOffset(lastControlRecord, recordCommitter, handedOffRows);
+    }
+
+    /**
+     * Flags the last record of a batch about to be handed to the writers as the
+     * batch terminal, so {@code DebeziumOffsetManagement.acknowledgeRecords} calls
+     * {@code markBatchFinished()} and this handoff unit's offset is flushed once
+     * its rows are written.
+     * <p>
+     * {@code handleChangeEventBatch} otherwise sets {@code lastRecordInBatch} from
+     * the record's index in the Debezium batch. When that batch ends with a
+     * control record (a heartbeat or transaction boundary, which produces no
+     * {@link ClickHouseStruct}), or is split ahead of a DDL, the last HANDED-OFF
+     * row is not the last Debezium record and carries {@code false}. The handoff
+     * then has no terminal record, {@code markBatchFinished()} is never called for
+     * it, and its offset commit is deferred to a later heartbeat -- delaying
+     * (on an idle source, stranding) snapshot-completion progress (issue #1379).
+     * Marking the last handed-off row here makes offset progress independent of
+     * where control records fall in the Debezium batch.
+     * </p>
+     *
+     * @param batch the non-empty batch about to be handed off.
+     */
+    static void markTerminalRecord(List<ClickHouseStruct> batch) {
+        if (batch != null && !batch.isEmpty()) {
+            batch.get(batch.size() - 1).setLastRecordInBatch(true);
+        }
     }
 
     /**
