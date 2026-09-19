@@ -7,11 +7,22 @@ The ClickHouse Sink Connector is an exact replication engine that maps a sequenc
 Because this replication problem is a deterministic state machine transition system, its correctness can be **completely modeled, simulated, and mathematically verified using formal methods**.
 
 This package contains a formal specification and machine-checked proof suite written in the [Lean 4 Theorem Prover](https://lean-lang.org/). It formally establishes that:
-1. **Log Sequence Monotonicity**: Monotonically advancing binlog coordinates yield strictly increasing 64-bit ClickHouse versions.
-2. **Replication Convergence (Equivalence)**: For any arbitrary, well-formed sequence of transactions applied to MySQL, the resulting ClickHouse table evaluated under `ReplacingMergeTree` with `FINAL` semantics produces a row state that is identical to MySQL.
-3. **Primary Key Relocation Soundness**: When an `UPDATE` modifies a primary or sorting key, the synthesized delete tombstone on the old key combined with the insert on the new key preserves exact relational equivalence.
-4. **Replay Idempotency**: Replaying an earlier prefix of the binlog stream does not mutate or regress the current `FINAL` state.
-5. **Source Authority**: Column values present in MySQL are strictly preserved over ClickHouse local default expressions.
+1. **Log Sequence Monotonicity**: strictly increasing stream order yields strictly
+   increasing ClickHouse versions (and the coordinate encoding preserves order
+   within its well-formed domain). *(proved)*
+2. **Replication Convergence (Equivalence)**: for ANY sequence of transactions
+   applied to MySQL, the ClickHouse table evaluated under `ReplacingMergeTree`
+   `FINAL` produces a row state identical to MySQL. *(proved)*
+3. **Primary Key Relocation Soundness**: when an `UPDATE` modifies a primary/sorting
+   key, the synthesized tombstone on the old key plus the insert on the new key
+   preserves exact relational equivalence. *(proved)*
+
+The following are **modeled** in the specification but are not (yet) among the
+machine-checked theorems:
+4. **Replay Idempotency**: replaying an earlier prefix does not regress the `FINAL`
+   state — defined as the proposition `ReplayIdempotency`.
+5. **Source Authority**: column values present in MySQL are preserved over
+   ClickHouse default expressions — modeled via `ColumnKind`.
 
 ---
 
@@ -70,15 +81,26 @@ The replication engine maps each binlog event into ClickHouse insertions:
 
 ## 4. Key Theorems Proven in `Proofs.lean`
 
+All six theorems below are machine-checked with **no `sorry`**; each depends only
+on Lean's standard axioms `[propext, Quot.sound]` (verified via `#print axioms`).
+
 | Theorem Name | Mathematical Statement | Significance |
 |---|---|---|
-| `version_strictly_monotonic` | $p_1 < p_2 \implies \text{encode}(p_1) < \text{encode}(p_2)$ | Proves that log order is preserved without version inversion. |
-| `insert_convergence` | $\text{view}_{\text{CH}}(\text{replicate}([e_{\text{insert}}])) = \text{eval}_{\text{MySQL}}([e_{\text{insert}}])$ | Proves single-row insertion equality. |
-| `delete_convergence` | $\text{view}_{\text{CH}}(\text{replicate}([e_{\text{insert}}, e_{\text{delete}}])) = \text{None}$ | Proves that tombstones properly erase rows in `FINAL`. |
-| `update_in_place_convergence` | $\text{view}_{\text{CH}}(\text{replicate}([e_{\text{ins}}, e_{\text{upd}}])) = \text{Some}(v_{\text{new}})$ | Proves in-place updates supersede earlier inserts. |
-| `update_pk_relocation_convergence` | $\text{view}_{\text{CH}}(k_{\text{old}}) = \text{None} \land \text{view}_{\text{CH}}(k_{\text{new}}) = \text{Some}(v)$ | Proves the two-phase tombstone protocol eliminates ghost rows on PK mutation. |
-| `replication_convergence` | $\forall S, \forall k, \text{view}_{\text{CH}}(\text{replicate}(S), k) = \text{eval}_{\text{MySQL}}(S, k)$ | **Master Convergence Theorem**: inductive proof that arbitrary transaction streams achieve exact replica parity. |
-| `replay_idempotence` | $\text{view}_{\text{CH}}(\text{replicate}(S ++ S_{\text{prefix}})) = \text{view}_{\text{CH}}(\text{replicate}(S))$ | Proves offset rewind and redelivery stability. |
+| `version_strictly_monotonic` | $\text{WellFormed}(p_1,p_2) \to p_1 < p_2 \implies \text{encode}(p_1) < \text{encode}(p_2)$ | Coordinate order is preserved without version inversion, within the encoding's well-formed domain. |
+| `insert_convergence_single` | $\text{view}_{\text{CH}}(\text{replicate}([e_{\text{insert}}])) = \text{eval}_{\text{MySQL}}([e_{\text{insert}}])$ | Single-row insertion equality. |
+| `delete_convergence_single` | $\text{view}_{\text{CH}}(\text{replicate}([e_{\text{insert}}, e_{\text{delete}}])) = \text{None}$ | Tombstones erase rows in `FINAL`. |
+| `update_same_key_convergence` | $\text{view}_{\text{CH}}(\text{replicate}([e_{\text{ins}}, e_{\text{upd}}])) = \text{Some}(v_{\text{new}})$ | In-place updates supersede earlier inserts. |
+| `update_pk_relocation_soundness` | $\text{view}_{\text{CH}}(k_{\text{old}}) = \text{None} \land \text{view}_{\text{CH}}(k_{\text{new}}) = \text{Some}(v)$ | The two-phase tombstone protocol eliminates ghost rows on PK mutation. |
+| `master_replication_convergence` | $\forall S, \forall k, \text{view}_{\text{CH}}(\text{replicate}(S), k) = \text{eval}_{\text{MySQL}}(S, k)$ | **Master Convergence Theorem**: inductive proof (via `replicate_converges_gen`) that ANY transaction stream — inserts, updates, relocations, deletes and truncates — achieves exact replica parity. |
+
+> Versioning note: the engine assigns versions by strictly increasing **stream
+> ordinal** (`liveVersion i = 2*i`, tombstone `2*i - 1`), so
+> `master_replication_convergence` needs no monotonic-position hypothesis. The
+> `encode` map above is a separate, documented order-witness proved monotonic only
+> within `BinlogPos.WellFormed`; it is not used by the engine.
+>
+> `ReplayIdempotency` (in `Invariants.lean`) is defined as a proposition but is not
+> among the proved theorems; it is retained as a stated invariant for future work.
 
 ---
 
