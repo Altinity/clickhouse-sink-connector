@@ -25,18 +25,52 @@ public class DebeziumOffsetManagement {
             DebeziumOffsetManagement.class);
 
     /**
-     * A concurrent map holding the in-flight batch timestamps. The key is a
-     * Pair of minimum and maximum timestamps, and the value is the list of
-     * corresponding ClickHouseStruct records.
+     * Identity key for a tracked batch.
+     * <p>
+     * The maps below MUST be keyed by the batch's object identity, not by its
+     * {@code (minTs, maxTs)} timestamp range. Two distinct batches routinely
+     * share a timestamp range — a single multi-row statement split across
+     * batches, or two batches whose rows all fall in the same millisecond — and
+     * keying by the range made them collide: {@code put} silently overwrote the
+     * earlier batch's entry and {@code remove} deleted the wrong one, so a batch
+     * that was still unwritten stopped blocking the offset commit. The committed
+     * binlog position could then advance past rows not yet in ClickHouse, losing
+     * them on a crash. Keying by identity makes every batch a distinct entry
+     * regardless of its timestamps. {@code equals}/{@code hashCode} are by
+     * reference so this stays correct on a {@link ConcurrentHashMap} (whose
+     * default keying would otherwise fall back to {@code List} content equality).
      */
-    static ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>>
+    static final class BatchKey {
+        final List<ClickHouseStruct> batch;
+
+        BatchKey(List<ClickHouseStruct> batch) {
+            this.batch = batch;
+        }
+
+        @Override
+        public int hashCode() {
+            return System.identityHashCode(batch);
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof BatchKey && ((BatchKey) o).batch == this.batch;
+        }
+    }
+
+    /**
+     * A concurrent map holding the in-flight batches, keyed by batch identity
+     * (see {@link BatchKey}). The value is the list of ClickHouseStruct records.
+     */
+    static ConcurrentHashMap<BatchKey, List<ClickHouseStruct>>
             inFlightBatches = new ConcurrentHashMap<>();
 
     /**
-     * A concurrent map holding the completed batches. Once a batch is
-     * fully processed, it is moved from inFlightBatches to completedBatches.
+     * A concurrent map holding the completed batches, keyed by batch identity.
+     * Once a batch is fully processed, it is moved from inFlightBatches to
+     * completedBatches.
      */
-    static ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>>
+    static ConcurrentHashMap<BatchKey, List<ClickHouseStruct>>
             completedBatches = new ConcurrentHashMap<>();
 
     /**
@@ -54,40 +88,39 @@ public class DebeziumOffsetManagement {
      * @param inFlightBatches A map containing the in-flight batches.
      */
     public DebeziumOffsetManagement(
-            ConcurrentHashMap<Pair<Long, Long>, List<ClickHouseStruct>>
+            ConcurrentHashMap<BatchKey, List<ClickHouseStruct>>
                     inFlightBatches) {
         this.inFlightBatches = inFlightBatches;
     }
 
     /**
-     * Adds the given batch's timestamp range to the in-flight batches map.
+     * Registers the given batch as in-flight, keyed by its identity.
      *
      * @param batch A list of ClickHouseStruct records.
      */
     public static void addToBatchTimestamps(List<ClickHouseStruct> batch) {
-        Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
         if (inFlightBatches.size() > 1000) {
             log.error("*********** Requests in Flight is greater than 1000 "
                     + "***********");
         }
-        inFlightBatches.put(pair, batch);
+        inFlightBatches.put(new BatchKey(batch), batch);
     }
 
     /**
-     * Removes the batch corresponding to the given timestamp range.
+     * Removes the given batch from the in-flight map (by identity).
      *
-     * @param pair The Pair of minimum and maximum timestamps.
+     * @param batch The batch to remove.
      */
-    public void removeFromBatchTimestamps(Pair<Long, Long> pair) {
-        inFlightBatches.remove(pair);
+    public void removeFromBatchTimestamps(List<ClickHouseStruct> batch) {
+        inFlightBatches.remove(new BatchKey(batch));
     }
 
     /**
-     * Returns the map of in-flight batch timestamps.
+     * Returns the map of in-flight batches, keyed by batch identity.
      *
-     * @return A map of timestamp pairs to their associated record lists.
+     * @return A map of batch keys to their associated record lists.
      */
-    public Map<Pair<Long, Long>, List<ClickHouseStruct>> getBatchTimestamps() {
+    public Map<BatchKey, List<ClickHouseStruct>> getBatchTimestamps() {
         return inFlightBatches;
     }
 
@@ -197,18 +230,21 @@ public class DebeziumOffsetManagement {
         boolean result = false;
         Pair<Long, Long> currentBatchPair =
                 calculateMinMaxTimestampFromBatch(currentBatch);
-        // Iterate through inFlightBatches and check if there is any batch
-        // which is lower than the current batch.
-        for (Map.Entry<Pair<Long, Long>, List<ClickHouseStruct>> entry
+        // Iterate through inFlightBatches and check if there is any OTHER batch
+        // that overlaps the current one.
+        for (Map.Entry<BatchKey, List<ClickHouseStruct>> entry
                 : inFlightBatches.entrySet()) {
-            Pair<Long, Long> key = entry.getKey();
-            // Ignore the same batch.
-            if (currentBatchPair.getLeft().longValue() == key.getLeft().longValue()
-                    && currentBatchPair.getRight().longValue() == key.getRight().longValue()) {
+            // Ignore the same batch -- by IDENTITY, not by timestamp range. Two
+            // different batches can share a range; comparing ranges here made a
+            // batch treat a distinct overlapping sibling as "itself" and skip
+            // it, so an unwritten older batch stopped blocking the commit.
+            if (entry.getKey().batch == currentBatch) {
                 continue;
             }
+            Pair<Long, Long> otherPair =
+                    calculateMinMaxTimestampFromBatch(entry.getValue());
             // Check if max of current batch is greater than min of inflight batch.
-            if (currentBatchPair.getRight().longValue() > key.getLeft().longValue()) {
+            if (currentBatchPair.getRight().longValue() > otherPair.getLeft().longValue()) {
                 result = true;
                 break;
             }
@@ -233,10 +269,11 @@ public class DebeziumOffsetManagement {
         boolean result = false;
         if (true == checkIfThereAreInflightRequests(batch)) {
             // Remove the record from inFlightBatches and move it to
-            // completedBatches.
-            Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
-            inFlightBatches.remove(pair);
-            completedBatches.put(pair, batch);
+            // completedBatches -- keyed by identity so equal-timestamp batches
+            // do not clobber each other.
+            BatchKey key = new BatchKey(batch);
+            inFlightBatches.remove(key);
+            completedBatches.put(key, batch);
         } else {
             // Acknowledge current batch
             acknowledgeRecords(batch);
@@ -370,9 +407,8 @@ public class DebeziumOffsetManagement {
             }
         }
 
-        // Remove the batch from the inFlightBatches
-        Pair<Long, Long> pair = calculateMinMaxTimestampFromBatch(batch);
-        inFlightBatches.remove(pair);
+        // Remove the batch from the inFlightBatches (by identity).
+        inFlightBatches.remove(new BatchKey(batch));
 
         // The batch is acknowledged, so it no longer blocks a control-record
         // offset commit. Decremented only here, after markProcessed, so the
