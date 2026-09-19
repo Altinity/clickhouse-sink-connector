@@ -39,7 +39,8 @@ formal_specs/lean/
     ├── ClickHouse.lean                # Replica Model: ReplacingMergeTree storage, FINAL semantics
     ├── Engine.lean                    # Translation: Coordinate-to-version, PK splitting, Stream Replicator
     ├── Invariants.lean                # Formal Propositions: Monotonicity, Convergence, Invariants I1-I7
-    └── Proofs.lean                    # Machine-Checked Theorems: Inductive proofs of convergence
+    ├── Proofs.lean                    # Machine-Checked Theorems: Inductive proofs of convergence
+    └── Upgrade.lean                   # Drop-in Upgrade Safety (Invariant I11): convergence for any gap-monotone version scheme
 ```
 
 ---
@@ -101,6 +102,14 @@ on Lean's standard axioms `[propext, Quot.sound]` (verified via `#print axioms`)
 >
 > `ReplayIdempotency` (in `Invariants.lean`) is defined as a proposition but is not
 > among the proved theorems; it is retained as a stated invariant for future work.
+
+### Drop-in upgrade safety (Invariant I11, `Upgrade.lean`)
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `replicate_convergesV` | for any gap-monotone version scheme `v`, `view_CH(replicateStreamV v S) = eval_MySQL(S)` | Convergence depends only on version ORDER, not on the absolute numbers a given connector version emits. |
+| `upgrade_safe` | replicating a stream whose first `n` ordinals use the OLD version scheme and the rest use the NEW scheme converges, when the combined scheme stays gap-monotone | **Upgrading never ruins data**: pre-upgrade and post-upgrade rows coexist and the correct row wins under `FINAL`. |
+| `liveVersion_gapMono` | the shipped ordinal scheme `2*i` is gap-monotone | The general result specialises to the shipped engine. |
 
 ---
 

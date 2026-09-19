@@ -96,6 +96,23 @@ Replication errors, checksum mismatches, and schema translation failures must fa
 ### Invariant I10: Structural Separation of Concerns
 The connector is strictly a replication tool. Business logic transformations, cross-database joins, and data enrichment belong in downstream transformation layers (views, dbt), not inside the replication pipeline.
 
+### Invariant I11: Drop-in Upgrade Safety
+A newer connector version MUST be a drop-in replacement for an older one:
+upgrading in place (e.g. 2.8.0 / 2.9.1 / 2.10.x → 2.11.0) — same ClickHouse
+tables, same persisted offset store, same schema history, same config — MUST NOT
+ruin data already in ClickHouse. Rows written by the old version and rows written
+by the new version coexist in one `ReplacingMergeTree` table and the `FINAL` view
+must still equal the source. This holds iff the version assignment is preserved
+across the boundary: both versions assign `_version` strictly increasing in source
+commit order, and the new version continues that ordering ABOVE the last version
+the old version wrote (across the restart the source commit clock only advances).
+Concretely this requires: the `_version` formula precedence and arithmetic are
+preserved; the persisted offset store and schema-history table formats (and the
+Debezium version that serialises them) are compatible so committed positions are
+readable; no config key is removed or renamed and no hardcoded default that maps
+to an existing table column changes. Formalised as `upgrade_safe` in
+`formal_specs/lean/Replication/Upgrade.lean`.
+
 ---
 
 ## 4. Architectural Domain Taxonomy
