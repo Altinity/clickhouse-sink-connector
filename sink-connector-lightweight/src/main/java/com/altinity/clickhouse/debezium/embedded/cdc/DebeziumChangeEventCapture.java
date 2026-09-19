@@ -800,6 +800,17 @@ public class DebeziumChangeEventCapture {
      * and the warning names the condition so it is visible rather than silent.</p>
      */
     private void drainBeforeDDL() {
+        // Single-threaded mode has no worker pool and no async handoff queue:
+        // singleThreadedWriter.persistRecords() runs inline on this same
+        // Debezium thread, so every row read before this DDL is already in
+        // ClickHouse and there is nothing to drain. `this.executor` is never
+        // created in that mode (setupProcessingThread returns early), so the
+        // pause()/awaitQuiescent() below would NPE and drop the DDL. Treat the
+        // absence of a pool as "already quiescent".
+        if (this.executor == null) {
+            return;
+        }
+
         long deadline = System.currentTimeMillis() + DDL_DRAIN_TIMEOUT_MS;
 
         // Step 1: let the pool consume what is already queued.
@@ -1050,7 +1061,13 @@ public class DebeziumChangeEventCapture {
                 numRetries++;
             }
             if (numRetries >= MAX_DDL_RETRIES) {
-                throw new RuntimeException("Max retries exceeded for DDL");
+                // Terminal DDL failure. Raise the loud, non-swallowed type so
+                // the pipeline halts here instead of advancing past a schema
+                // change that never reached ClickHouse. See
+                // DDLReplicationException and the catch in
+                // processEveryChangeRecord.
+                throw new DDLReplicationException(
+                        "Max retries exceeded applying DDL to ClickHouse: [" + DDL + "]", null);
             }
         }
         updateMetrics(DDL);
@@ -1810,6 +1827,27 @@ public class DebeziumChangeEventCapture {
                     // would stay paused forever -- replication stops dead with
                     // no error after the first one. Resuming unconditionally
                     // keeps a failed DDL a retryable event instead of a stall.
+                    //
+                    // A DDL failure must escape this method LOUDLY. The
+                    // catch-all at the bottom of processEveryChangeRecord
+                    // exists to stop one bad DML record from killing the
+                    // stream; a DDL failure is the opposite case -- skipping
+                    // the schema change but continuing the stream writes every
+                    // later row against a schema that no longer matches MySQL,
+                    // a silent count-clean divergence. So any failure here is
+                    // wrapped in DDLReplicationException, which is re-thrown
+                    // ahead of that catch-all (see below) and halts the engine:
+                    // offsets are not committed past the unapplied DDL, and on
+                    // restart Debezium re-delivers it from the last committed
+                    // position -- the genuine retry the drain abort was always
+                    // meant to enable.
+                    //
+                    // In single-threaded mode there is no worker pool: rows are
+                    // persisted inline by singleThreadedWriter before this DDL
+                    // record is ever handled, so there is nothing to drain and
+                    // no executor to pause/resume. Guard both against the null
+                    // executor -- dereferencing it here dropped the FIRST DDL in
+                    // that mode with an NPE straight into the catch-all.
                     try {
                         drainBeforeDDL();
 
@@ -1819,8 +1857,18 @@ public class DebeziumChangeEventCapture {
                         ddlStruct.setAdditionalMetaData(sourceObjStruct);
                         ddlStruct.setSequenceNumber(sequenceNumber);
                         performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
+                    } catch (DDLReplicationException dre) {
+                        // Already the loud, terminal type -- do not re-wrap.
+                        throw dre;
+                    } catch (Exception ddlEx) {
+                        throw new DDLReplicationException(
+                                "DDL replication failed for [" + DDL + "]; stopping the pipeline "
+                                        + "rather than advancing offsets past an unapplied schema "
+                                        + "change and silently diverging from MySQL.", ddlEx);
                     } finally {
-                        this.executor.resume();
+                        if (this.executor != null) {
+                            this.executor.resume();
+                        }
                     }
                 }
             } else {
@@ -1880,6 +1928,13 @@ public class DebeziumChangeEventCapture {
                     log.error("Error retrieving status metrics: Exception" + e.toString());
                 }
             }
+        } catch (DDLReplicationException dre) {
+            // A DDL that could not be applied must NOT be swallowed like a bad
+            // DML record. Re-throw so it leaves handleBatch and halts the
+            // engine; continuing here would advance offsets past an unapplied
+            // schema change and silently diverge from MySQL. Kept ahead of the
+            // catch-all below, which would otherwise absorb it.
+            throw dre;
         } catch (Exception e) {
             log.error("Exception processing record", e);
         }
