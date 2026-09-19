@@ -45,6 +45,7 @@ LEAN_MODULES = [
     "Invariants.lean",
     "Proofs.lean",
     "Upgrade.lean",
+    "Snapshot.lean",
 ]
 
 

@@ -40,7 +40,8 @@ formal_specs/lean/
     ├── Engine.lean                    # Translation: Coordinate-to-version, PK splitting, Stream Replicator
     ├── Invariants.lean                # Formal Propositions: Monotonicity, Convergence, Invariants I1-I7
     ├── Proofs.lean                    # Machine-Checked Theorems: Inductive proofs of convergence
-    └── Upgrade.lean                   # Drop-in Upgrade Safety (Invariant I11): convergence for any gap-monotone version scheme
+    ├── Upgrade.lean                   # Drop-in Upgrade Safety (Invariant I11): convergence for any gap-monotone version scheme
+    └── Snapshot.lean                  # Snapshot Completion & control-record offset commit (Invariant I12, issue #1379)
 ```
 
 ---
@@ -110,6 +111,14 @@ on Lean's standard axioms `[propext, Quot.sound]` (verified via `#print axioms`)
 | `replicate_convergesV` | for any gap-monotone version scheme `v`, `view_CH(replicateStreamV v S) = eval_MySQL(S)` | Convergence depends only on version ORDER, not on the absolute numbers a given connector version emits. |
 | `upgrade_safe` | replicating a stream whose first `n` ordinals use the OLD version scheme and the rest use the NEW scheme converges, when the combined scheme stays gap-monotone | **Upgrading never ruins data**: pre-upgrade and post-upgrade rows coexist and the correct row wins under `FINAL`. |
 | `liveVersion_gapMono` | the shipped ordinal scheme `2*i` is gap-monotone | The general result specialises to the shipped engine. |
+
+### Snapshot completion & control-record offset commit (Invariant I12, `Snapshot.lean`, issue #1379)
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `control_commit_safe` | a control record advances the committed offset only when `outstanding = 0` | Safety: never commit past unwritten rows (no #1285 data loss). |
+| `quiescent_control_commits` | a control record on a quiescent pipeline commits its offset | Liveness: the end-of-snapshot heartbeat's offset IS committed. |
+| `snapshot_completes` | after the snapshot's rows are handed off and written, the end-of-snapshot control record commits its offset (`committed = snapPos`) | **Issue #1379**: `snapshot_completed` persists; a restart does not re-run the snapshot. |
 
 ---
 

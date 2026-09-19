@@ -113,6 +113,20 @@ readable; no config key is removed or renamed and no hardcoded default that maps
 to an existing table column changes. Formalised as `upgrade_safe` in
 `formal_specs/lean/Replication/Upgrade.lean`.
 
+### Invariant I12: Snapshot Completion & Control-Record Offset Progress
+A record that produces no ClickHouse row (a heartbeat or transaction-boundary
+event) MUST be handled so that: (safety) its source offset is committed ONLY when
+the pipeline is quiescent — no rows handed to the writers are still unwritten — so
+the durable position never advances past data not yet in ClickHouse; and
+(liveness) its offset IS committed once the pipeline is quiescent. Because a
+snapshot's `snapshot_completed=true` state rides only on a post-snapshot control
+record, violating liveness strands the snapshot and re-runs it on every restart
+(issue #1379). Offset progress must not depend on where control records fall in a
+Debezium batch: every batch handed to the writers carries a terminal marker so its
+offset is flushed once written. Formalised as `control_commit_safe`,
+`quiescent_control_commits`, and `snapshot_completes` in
+`formal_specs/lean/Replication/Snapshot.lean`.
+
 ---
 
 ## 4. Architectural Domain Taxonomy
