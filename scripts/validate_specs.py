@@ -46,6 +46,7 @@ LEAN_MODULES = [
     "Proofs.lean",
     "Upgrade.lean",
     "Snapshot.lean",
+    "GeneratedColumn.lean",
 ]
 
 

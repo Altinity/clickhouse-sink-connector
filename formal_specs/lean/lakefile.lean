@@ -12,4 +12,5 @@ lean_lib «Replication» where
              `Replication.Invariants,
              `Replication.Proofs,
              `Replication.Upgrade,
-             `Replication.Snapshot]
+             `Replication.Snapshot,
+             `Replication.GeneratedColumn]

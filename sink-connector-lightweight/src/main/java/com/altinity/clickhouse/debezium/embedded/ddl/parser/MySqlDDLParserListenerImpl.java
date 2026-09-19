@@ -79,6 +79,40 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     /**
+     * Extracts the generation expression text from a
+     * {@code GENERATED ALWAYS AS (expr)} clause, with MySQL charset introducers
+     * stripped so the result is valid ClickHouse.
+     * <p>
+     * Shared by the CREATE TABLE and ALTER TABLE column paths so the two cannot
+     * diverge: a generated column's expression must become a {@code DEFAULT}
+     * expression, and must NEVER be mistaken for the column's data type. The
+     * {@code IsNullPredicateContext} branch mirrors the grammar quirk the CREATE
+     * path handles for expressions such as {@code (a IS NULL)}.
+     *
+     * @param ctx the {@code GeneratedColumnConstraintContext} parse node.
+     * @return the expression text (charset introducers stripped), or "" if none.
+     */
+    static String extractGeneratedExpression(MySqlParser.GeneratedColumnConstraintContext ctx) {
+        String expr = "";
+        for (ParseTree child : ctx.children) {
+            if (child instanceof MySqlParser.ExpressionContext) {
+                for (ParseTree exprChild : ((MySqlParser.ExpressionContext) child).children) {
+                    if (exprChild instanceof MySqlParser.IsNullPredicateContext) {
+                        for (ParseTree inner : ((MySqlParser.IsNullPredicateContext) exprChild).children) {
+                            if (inner instanceof MySqlParser.ExpressionAtomPredicateContext) {
+                                expr = inner.getText();
+                            }
+                        }
+                    } else {
+                        expr = exprChild.getText();
+                    }
+                }
+            }
+        }
+        return stripCharsetIntroducers(expr);
+    }
+
+    /**
      * The query string that will be transformed.
      */
     StringBuffer query;
@@ -1250,6 +1284,24 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         }
                     } else if (columnDefChild instanceof MySqlParser.CommentColumnConstraintContext) {
                         // Ignore comment for now.
+                    } else if (columnDefChild instanceof MySqlParser.GeneratedColumnConstraintContext) {
+                        // GENERATED ALWAYS AS (expr) on an ALTER: map the
+                        // generation expression to a DEFAULT expression, NOT to
+                        // the column type. Without this branch the clause fell
+                        // into the catch-all `else` below and OVERWROTE
+                        // columnType with the raw expression text, producing
+                        // malformed DDL like "ADD COLUMN c AS(a+b)" instead of
+                        // "ADD COLUMN c Int32 DEFAULT a+b". This mirrors the
+                        // CREATE TABLE path (Constants.GENERATED_COLUMN_KIND =
+                        // DEFAULT): the column keeps its declared type, and the
+                        // source value still wins because Debezium carries the
+                        // generated column's value in the row image (a
+                        // MATERIALIZED column would reject that INSERT, Code 44).
+                        String genExpr = extractGeneratedExpression(
+                                (MySqlParser.GeneratedColumnConstraintContext) columnDefChild);
+                        if (!genExpr.isEmpty()) {
+                            defaultModifier = Constants.GENERATED_COLUMN_KIND + " " + genExpr;
+                        }
                     }
                     else {
                         columnType = columnDefChild.getText();
