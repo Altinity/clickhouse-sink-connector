@@ -10,4 +10,5 @@ lean_lib «Replication» where
              `Replication.ClickHouse,
              `Replication.Engine,
              `Replication.Invariants,
-             `Replication.Proofs]
+             `Replication.Proofs,
+             `Replication.Upgrade]
