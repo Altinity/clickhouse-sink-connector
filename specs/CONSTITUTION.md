@@ -127,6 +127,17 @@ offset is flushed once written. Formalised as `control_commit_safe`,
 `quiescent_control_commits`, and `snapshot_completes` in
 `formal_specs/lean/Replication/Snapshot.lean`.
 
+### Invariant I13: Generated-Column Type Integrity
+When translating a source column declared `GENERATED ALWAYS AS (expr)`, the
+ClickHouse column MUST keep its DECLARED data type and the generation expression
+MUST be emitted as a `DEFAULT` clause — never as the column type. This holds on
+BOTH the CREATE TABLE and ALTER TABLE ADD/MODIFY paths (they share one extraction
+helper so they cannot diverge). Mapping to `DEFAULT` rather than `MATERIALIZED`
+keeps the source value authoritative (I6); mistaking the expression for the type
+emits malformed DDL and breaks the stream. Formalised as `alter_preserves_type`,
+`type_is_never_expression`, and `generated_has_default` in
+`formal_specs/lean/Replication/GeneratedColumn.lean`.
+
 ---
 
 ## 4. Architectural Domain Taxonomy
