@@ -8,6 +8,7 @@ Specifies the non-negotiable policy that unrecoverable replication errors must t
 ## 2. Codebase Mapping on 2.11.0
 - **System Constitution**: Invariant I9
 - **Error Classifier**: `ClickHouseErrorClassifier`
+- **DDL failure type**: `DDLReplicationException` (`...embedded/cdc/DDLReplicationException.java`), re-thrown ahead of the catch-all in `DebeziumChangeEventCapture#processEveryChangeRecord`
 
 ---
 
@@ -30,6 +31,24 @@ When an unrecoverable failure occurs:
 2. Log full stack trace, binlog coordinates, and table name at `FATAL` level.
 3. Throw an unchecked runtime exception to terminate the JVM process or task thread.
 4. Leaves `replica_source_info` intact at the last known good commit.
+
+### 3.3 DDL Path Anti-Swallowing (DDLReplicationException)
+
+The DDL path has its own catch-all in
+`DebeziumChangeEventCapture#processEveryChangeRecord`
+(`catch (Exception e) { log.error("Exception processing record", e); }`) whose
+legitimate purpose is to keep one malformed DML record from killing the stream.
+A DDL failure absorbed by that catch is a §3.1 violation with a worse blast
+radius: the schema change is lost, offsets advance past it, and every later row
+diverges silently from MySQL.
+
+Therefore a DDL that cannot be applied — a `drainBeforeDDL()` abort, or retry
+exhaustion in `performDDLOperation()` — is raised as `DDLReplicationException`
+and re-thrown **ahead of** the generic catch, so it leaves the Debezium
+`handleBatch` consumer and halts the engine. The offset is not committed past
+the DDL, so a restart re-delivers it — the same loud-but-recoverable contract as
+§3.2. This mirrors `ClickHouseBatchRunnable`'s FATAL rethrow, which stops the
+scheduled executor rather than retrying a doomed batch forever.
 
 ---
 
