@@ -12,7 +12,6 @@
 
 # 01.05 -- cites DebeziumChangeEventCaptureTest.testAppendToRecordsBackpressure(),
 # which does not exist; also carries stale buffer defaults.
-specs/01-cdc-engine/05-batch-buffering-handoff.md
 
 # 02.05 -- cites ClickHouseStructTest.testRejectUnderivableVersion(), which does not exist.
 specs/02-versioning/05-version-validation.md
@@ -26,13 +25,8 @@ specs/04-query-generation/03-field-membership-rules.md
 specs/05-sorting-key-mutation/02-tombstone-synthesis.md
 
 # Domain 06 -- DDL replication specs are being rewritten together.
-specs/06-ddl-replication/01-ddl-interception-drain.md
 specs/06-ddl-replication/02-executor-barrier-pause.md
 specs/06-ddl-replication/03-mysql-ddl-parsing.md
-specs/06-ddl-replication/04-alter-table-translation.md
-specs/06-ddl-replication/05-nullability-rules.md
-specs/06-ddl-replication/07-primary-key-alteration-rules.md
-specs/06-ddl-replication/08-pipeline-resumption.md
 
 # 07.01 / 07.03 / 07.07 -- cite ClickHouseDataTypeMapperTest methods and a
 # PreparedStatementFieldMapperTest class that do not exist; 07.07 also carries
@@ -49,7 +43,5 @@ specs/08-schema-catalog/05-auto-table-creation.md
 
 # 09.04 -- cites DebeziumChangeEventCaptureTest.testControlRecordOffsetQuiescence(),
 # which does not exist.
-specs/09-offset-management/04-quiescent-control-commit.md
 
 # 10.02 -- cites ClickHouseBatchRunnableTest.testExponentialBackoff(), which does not exist.
-specs/10-resilience-monitoring/02-retry-exponential-backoff.md

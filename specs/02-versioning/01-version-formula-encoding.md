@@ -34,7 +34,10 @@ $$V = \text{effectiveTs} \times 1{,}000{,}000 + \text{sequenceNumber}$$
 
 ---
 
-## 4. Known Defect (tracked, not yet fixed)
+## 4. Inherited behaviour (2.8.0 formula, preserved for upgrade/downgrade compatibility)
+
+> **Compatibility constraint (governing rule).** The emitted `_version` domain — `ts_ms × 1_000_000 + counter` with the 2.8.0 seeds — is the contract shared with 2.8.0, 2.9.1 and 2.10.x. It MUST NOT change: a version written by any of those releases must rank consistently against one written by 2.11.0 in BOTH directions (upgrade and downgrade). The restart carry described here is therefore inherited 2.8.0 behaviour that is preserved deliberately; any improvement is confined to WHERE the restart floor starts (seeding the anchor from the target's `max(_version)` or a persisted last-emitted version) and must ship with an explicit upgrade/downgrade matrix against 2.8.0, 2.9.1 and 2.10.x.
+
 Because of the carry in §3.3 a genuinely newer event versioned just after a resume (counter seeded at 500m) can rank **below** an older pre-restart event (counter in the 1000m range). `DebeziumOffsetManagement` states it (quoted verbatim):
 
 > **KNOWN DEFECT, not fixed here.** The guarantee above holds only for the SAME event re-delivered. It does not generalise, because the encoding `sourceTsMs * 1_000_000 + sequence` leaves six decimal digits for the sequence while the seeds are ten digits, so the addition carries into the timestamp field and acts as a ~1000 ms shift. A genuinely NEWER event arriving just after a resume can then rank BELOW an older pre-restart event and be discarded:

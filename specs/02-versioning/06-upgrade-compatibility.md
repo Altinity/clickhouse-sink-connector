@@ -83,7 +83,10 @@ ordinal) across the upgrade boundary. The shipped code does **not** establish th
 hypothesis in three situations. None of them is a data-format break; all three are
 version-ordering gaps that the theorem, by construction, does not cover.
 
-### 6.1 The restart carry defect
+### 6.1 The restart carry (inherited 2.8.0 behaviour, preserved by design)
+
+> **Compatibility constraint (governing rule).** The emitted `_version` domain — `ts_ms × 1_000_000 + counter` with the 2.8.0 seeds — is the contract shared with 2.8.0, 2.9.1 and 2.10.x. It MUST NOT change: a version written by any of those releases must rank consistently against one written by 2.11.0 in BOTH directions (upgrade and downgrade). The restart carry described here is therefore inherited 2.8.0 behaviour that is preserved deliberately; any improvement is confined to WHERE the restart floor starts (seeding the anchor from the target's `max(_version)` or a persisted last-emitted version) and must ship with an explicit upgrade/downgrade matrix against 2.8.0, 2.9.1 and 2.10.x.
+
 An upgrade is a restart, so the first record after it is versioned with the
 counter seeded at `SEQUENCE_START_INITIAL` (500m) in the formula
 `effectiveTs * 1_000_000 + seq`, whose six low digits the ten-digit seeds

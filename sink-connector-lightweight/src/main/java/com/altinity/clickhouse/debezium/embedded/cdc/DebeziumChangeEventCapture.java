@@ -121,8 +121,24 @@ public class DebeziumChangeEventCapture {
     private java.util.List<LinkedBlockingQueue<RoutedBatch>> routedQueues;
 
     /**
+     * The scheduled future of every worker task (spec 03.01 section 3.3).
+     * <p>
+     * ScheduledThreadPoolExecutor cancels a periodic task whose run throws and
+     * tells nobody. A worker that rethrows a FATAL classification therefore
+     * used to die silently: its batch stayed outstanding, every later unit
+     * stayed parked, its queue filled, and the Debezium thread eventually
+     * blocked in put -- a stall with no error after the first one. These
+     * futures are inspected at the top of every handleChangeEventBatch so a
+     * dead worker stops the engine loudly instead.
+     * </p>
+     */
+    final java.util.List<java.util.concurrent.ScheduledFuture<?>> workerFutures =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
      * Number of threads in the thread pool (for hash-based routing).
      */
+
     private int threadPoolSize;
 
     /**
@@ -799,13 +815,18 @@ public class DebeziumChangeEventCapture {
      * Brings the writer to a standstill before a DDL is applied.
      *
      * <p>Three steps, in order: let the queued records be picked up and written
-     * while the pool is still running; stop new batches from starting; then wait
-     * for the batches still inside a task body to finish. Only then is every
-     * record that was read under the pre-ALTER schema actually in ClickHouse.</p>
+     * while the pool is still running -- on EVERY handoff path: the legacy
+     * queue, every per-thread routed queue, and the batches a worker has
+     * already dequeued but not yet acknowledged; stop new batches from
+     * starting; then wait for the batches still inside a task body to finish.
+     * Only then is every record that was read under the pre-ALTER schema
+     * actually in ClickHouse.</p>
      *
-     * <p>On timeout the DDL proceeds anyway and a warning is logged. Blocking
-     * replication indefinitely would be worse than the corruption this avoids,
-     * and the warning names the condition so it is visible rather than silent.</p>
+     * <p>On timeout the DDL attempt is ABORTED with an {@link IllegalStateException}
+     * naming the backlog; the caller raises it as a {@link DDLReplicationException}
+     * and the engine halts. Applying the DDL over pending rows would write them
+     * against the altered table with matching row counts -- silent corruption --
+     * so the loud abort is the only safe outcome.</p>
      */
     private void drainBeforeDDL() {
         // Single-threaded mode has no worker pool and no async handoff queue:
@@ -821,23 +842,36 @@ public class DebeziumChangeEventCapture {
 
         long deadline = System.currentTimeMillis() + DDL_DRAIN_TIMEOUT_MS;
 
-        // Step 1: let the pool consume what is already queued.
+        // Step 1: let the pool consume what is already queued -- on EVERY
+        // handoff path, not just the legacy queue.
         //
-        // The pool MUST still be running here. Pausing before the queue is
+        // The barrier predicate is isPipelineQuiescent(): the legacy `records`
+        // queue is empty AND every per-thread routed queue is empty AND no
+        // handed-off batch is still unacknowledged. In hash-routing mode
+        // (thread.pool.size > 1, the default) rows never touch `records` at
+        // all; they sit on `routedQueues` until the owning worker's next tick.
+        // Waiting only on `records` therefore observed an always-empty queue,
+        // and step 3's awaitQuiescent() sees only batches inside a task body
+        // RIGHT NOW -- zero between ticks even with every routed queue full.
+        // The DDL was then applied while pre-DDL rows were still queued, and
+        // those rows were written against the altered table: successful
+        // inserts, matching row counts, wrong contents.
+        //
+        // The pool MUST still be running here. Pausing before the queues are
         // drained is a deadlock, not a safety measure: `pause()` parks every
         // pool thread in beforeExecute(), so nothing can dequeue, and this
-        // loop then waits out the full timeout on a queue that is guaranteed
+        // loop then waits out the full timeout on queues that are guaranteed
         // never to shrink. It always ends in the abort below.
         //
         // Pausing first was introduced to close a "the queue never reaches
-        // empty on a busy table" race. That race cannot occur: this queue has
-        // exactly ONE producer -- appendToRecords(), called only from
-        // handleChangeEventBatch(), which runs on the very Debezium thread
-        // that is executing this drain. While we are in here, no new batch can
-        // be appended, so the queued set is already fixed and the pool is free
-        // to consume it to empty. Step 2 then closes the pause window
-        // properly.
-        while (this.records != null && !this.records.isEmpty()) {
+        // empty on a busy table" race. That race cannot occur: both producers
+        // -- appendToRecords() and appendToRecordsWithHashRouting() -- are
+        // called only from handleChangeEventBatch(), which runs on the very
+        // Debezium thread that is executing this drain. While we are in here,
+        // no new batch can be appended, so the queued set is already fixed and
+        // the pool is free to consume it to empty. Step 2 then closes the
+        // pause window properly.
+        while (!isPipelineQuiescent()) {
             if (System.currentTimeMillis() >= deadline) {
                 // NOT survivable. Applying the ALTER now writes records that
                 // were read under the PREVIOUS schema against the NEW table --
@@ -846,11 +880,11 @@ public class DebeziumChangeEventCapture {
                 // instead routes into the DDL retry path, which drains again
                 // from a consistent point.
                 throw new IllegalStateException(String.format(
-                        "DDL drain: %d record batch(es) still queued after %d ms. Applying "
-                                + "the DDL now would write records captured under the previous "
-                                + "schema against the altered table, silently corrupting them. "
-                                + "Aborting this DDL attempt so it can be retried.",
-                        this.records.size(), DDL_DRAIN_TIMEOUT_MS));
+                        "DDL drain: %s still pending after %d ms. Applying the DDL now would "
+                                + "write records captured under the previous schema against the "
+                                + "altered table, silently corrupting them. Aborting this DDL "
+                                + "attempt so it can be retried.",
+                        describePendingHandoff(), DDL_DRAIN_TIMEOUT_MS));
             }
             try {
                 Thread.sleep(50);
@@ -928,6 +962,10 @@ public class DebeziumChangeEventCapture {
         if (retryDDL != null && retryDDL.equalsIgnoreCase("true")) {
             retryDDLProperty = true;
         }
+
+        // The most recent failure, carried as the cause of the terminal
+        // exception so the operator sees the actual ClickHouse error.
+        Exception lastFailure = null;
 
         while (numRetries < MAX_DDL_RETRIES) {
             try {
@@ -1049,8 +1087,10 @@ public class DebeziumChangeEventCapture {
                 DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
                 break;
             } catch (Exception e) {
+                lastFailure = e;
                 log.error("Error executing DDL", e);
-                // insert data into the error table
+                // insert data into the error table -- BEFORE the retry
+                // decision, so the record exists whether or not we halt.
                 try {
                     ErrorLogger.createErrorTable(systemDbConnection, config);
                     ErrorLogger.logError(systemDbConnection, e.getMessage(),
@@ -1059,7 +1099,18 @@ public class DebeziumChangeEventCapture {
                     log.error("Failed to log DDL error to ClickHouse", ex);
                 }
                 if (retryDDLProperty == false) {
-                    break;
+                    // ddl.retry decides only whether to try AGAIN; it never
+                    // makes a failed DDL survivable. Leaving the loop normally
+                    // here (the previous behaviour) acknowledged the DDL offset
+                    // and let the row stream continue against a schema that no
+                    // longer matched MySQL: the table stayed without the column
+                    // while rows kept flowing, count-clean. Terminal and loud
+                    // instead -- see DDLReplicationException and the catch in
+                    // processEveryChangeRecord.
+                    throw new DDLReplicationException(
+                            "DDL failed and ddl.retry is not enabled, so it is not retried; "
+                                    + "halting the pipeline rather than skipping the schema "
+                                    + "change: [" + DDL + "]", e);
                 }
                 try {
                     Thread.sleep(SLEEP_TIME);
@@ -1075,7 +1126,7 @@ public class DebeziumChangeEventCapture {
                 // DDLReplicationException and the catch in
                 // processEveryChangeRecord.
                 throw new DDLReplicationException(
-                        "Max retries exceeded applying DDL to ClickHouse: [" + DDL + "]", null);
+                        "Max retries exceeded applying DDL to ClickHouse: [" + DDL + "]", lastFailure);
             }
         }
         updateMetrics(DDL);
@@ -1595,9 +1646,15 @@ public class DebeziumChangeEventCapture {
                                 ClickHouseSinkConnectorConfig config)
             throws InterruptedException {
 
+        // A dead worker must stop the engine, not stall it (spec 03.01
+        // section 3.3). Checked before anything else, including the empty-batch
+        // return, so the failure surfaces on the very next source batch.
+        failIfWorkerDied();
+
         if (list.isEmpty()) {
             return;
         }
+
 
         // The newest record in this batch that produced no row, and is not a
         // DDL (the DDL path acknowledges itself). Heartbeats and
@@ -1687,8 +1744,54 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
+     * Stops the engine loudly if any worker's scheduled task has terminated.
+     * <p>
+     * {@code ScheduledThreadPoolExecutor} cancels a periodic task whose run
+     * throws; the task's future completes exceptionally and nothing else
+     * happens. The worker's batch stays outstanding (correct: no offset may
+     * pass it) but the process stays alive with one queue filling until the
+     * source reader blocks in {@code put} -- a silent stall. Re-raising the
+     * worker's cause from the Debezium thread leaves the {@code ChangeConsumer},
+     * so the engine stops through its completion callback with the worker's
+     * stack trace in the log; a restart resumes from the last committed offset.
+     * </p>
+     *
+     * @throws RuntimeException carrying the dead worker's cause.
+     */
+    @VisibleForTesting
+    void failIfWorkerDied() {
+        for (int i = 0; i < this.workerFutures.size(); i++) {
+            java.util.concurrent.ScheduledFuture<?> future = this.workerFutures.get(i);
+            if (future == null || !future.isDone()) {
+                continue;
+            }
+            Throwable cause = null;
+            try {
+                future.get();
+            } catch (java.util.concurrent.ExecutionException e) {
+                cause = e.getCause() != null ? e.getCause() : e;
+            } catch (java.util.concurrent.CancellationException e) {
+                cause = e;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                cause = e;
+            }
+            String message = String.format("Sink worker %d of %d is dead: its scheduled task "
+                    + "has terminated%s. Batches queued for it can never be written, offsets can "
+                    + "never advance past them, and its queue would fill until the source reader "
+                    + "blocks. Stopping the engine so the failure is visible; a restart resumes "
+                    + "from the last committed offset.", i, this.workerFutures.size(),
+                    cause == null ? " normally (a worker task must run for the life of the engine)"
+                            : "");
+            log.error(message, cause);
+            throw new RuntimeException(message, cause);
+        }
+    }
+
+    /**
      * Flags the last record of a batch about to be handed to the writers as the
      * batch terminal, so {@code DebeziumOffsetManagement.acknowledgeRecords} calls
+
      * {@code markBatchFinished()} and this handoff unit's offset is flushed once
      * its rows are written.
      * <p>
@@ -1803,6 +1906,27 @@ public class DebeziumChangeEventCapture {
             }
         }
         return !DebeziumOffsetManagement.hasUnwrittenBatches();
+    }
+
+    /**
+     * Names what {@link #isPipelineQuiescent()} is still waiting on, for the
+     * DDL drain abort message: batches on the legacy queue, batches across the
+     * routed queues, and whether handed-off batches are still unacknowledged.
+     *
+     * @return a human-readable summary of the pending handoff backlog.
+     */
+    private String describePendingHandoff() {
+        int legacy = this.records == null ? 0 : this.records.size();
+        int routed = 0;
+        if (this.routedQueues != null) {
+            for (LinkedBlockingQueue<RoutedBatch> queue : this.routedQueues) {
+                routed += queue.size();
+            }
+        }
+        return String.format(
+                "%d legacy queue batch(es), %d routed queue batch(es), "
+                        + "unacknowledged handed-off batches: %s",
+                legacy, routed, DebeziumOffsetManagement.hasUnwrittenBatches() ? "yes" : "no");
     }
 
     /**
@@ -1965,12 +2089,27 @@ public class DebeziumChangeEventCapture {
                         rss.setBinLogFile(chStruct.getFile());
                         rss.setBinLogPosition(String.valueOf(chStruct.getPos()));
                         rss.setGtid(String.valueOf(chStruct.getGtid()));
+                    } else if (isControlRecord(sr)) {
+                        // A heartbeat or transaction-metadata record: it has no
+                        // `op` field, so parse() returns null BY CONTRACT --
+                        // there is no row to write. Its offset is still
+                        // committed by commitControlRecordOffset once the
+                        // pipeline is quiescent (#1379). Logging this at WARN
+                        // produced one warning per heartbeat interval for the
+                        // life of the process and buried the warnings that
+                        // matter.
+                        log.debug("Control record (heartbeat/transaction metadata) - no row to "
+                                + "write; its offset is committed once the pipeline is quiescent. "
+                                + "Record({})", record);
                     } else {
                         // parse() returns null for a record it cannot convert, such as
                         // a null or non-Struct source value. Setting the sequence number
                         // before this check raised an NPE that the catch-all below then
                         // swallowed, so the record was dropped silently while the
                         // snapshot loop logged the same stack trace per record (#1379).
+                        // This branch is reached only for a record that DOES carry an
+                        // `op` field (or no Struct at all): a real row was dropped, so
+                        // it must stay visible.
                         log.warn(String.format(
                                 "Record could not be parsed to a ClickHouseStruct - skipping. Record(%s)",
                                 record));
@@ -1991,6 +2130,42 @@ public class DebeziumChangeEventCapture {
         }
 
         return chStruct;
+    }
+
+    /** Prefix of the topic Debezium emits heartbeat records on. */
+    static final String HEARTBEAT_TOPIC_PREFIX = "__debezium-heartbeat";
+
+    /**
+     * Reports whether a record is a control record -- one that carries no row
+     * by contract, so {@code parse()} returning null for it is expected: a
+     * heartbeat (recognised by its topic) or any Struct-valued record whose
+     * schema has no {@code op} field (heartbeat payloads carry only
+     * {@code ts_ms}; transaction metadata carries {@code status}/{@code id}/
+     * {@code event_count}).
+     * <p>
+     * A null or non-Struct value is NOT a control record: a null parse result
+     * for such a record is a dropped record and must stay visible at WARN.
+     * </p>
+     *
+     * @param sr the source record; may be null.
+     * @return true if the record is a heartbeat or transaction-metadata record.
+     */
+    @VisibleForTesting
+    static boolean isControlRecord(SourceRecord sr) {
+        if (sr == null) {
+            return false;
+        }
+        String topic = sr.topic();
+        if (topic != null && topic.startsWith(HEARTBEAT_TOPIC_PREFIX)) {
+            return true;
+        }
+        Object value = sr.value();
+        if (!(value instanceof Struct)) {
+            return false;
+        }
+        Struct struct = (Struct) value;
+        return struct.schema() != null
+                && struct.schema().field(SinkRecordColumns.OPERATION) == null;
     }
 
     /**
@@ -2160,96 +2335,108 @@ public class DebeziumChangeEventCapture {
                 this.routedQueues.add(new LinkedBlockingQueue<>(maxQueueSize));
             }
             for (int i = 0; i < this.threadPoolSize; i++) {
-                this.executor.scheduleAtFixedRate(
+                this.workerFutures.add(this.executor.scheduleAtFixedRate(
                         new ClickHouseBatchRunnable(this.routedQueues.get(i), i, config, new HashMap<>()),
                         0,
                         config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()),
-                        TimeUnit.MILLISECONDS);
+                        TimeUnit.MILLISECONDS));
             }
+
         } else {
             // Single thread - use legacy mode
             log.info("********* Using legacy mode with single thread *********");
             for (int i = 0; i < this.threadPoolSize; i++) {
-                this.executor.scheduleAtFixedRate(
+                this.workerFutures.add(this.executor.scheduleAtFixedRate(
                         new ClickHouseBatchRunnable(this.records, config, new HashMap<>()),
-                        0, 
-                        config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), 
-                        TimeUnit.MILLISECONDS);
+                        0,
+                        config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()),
+                        TimeUnit.MILLISECONDS));
             }
+
         }
     }
 
     /**
-     * Appends the given records to the processing queue.
+     * Hands the given records to the writers (spec 01.05).
      *
-     * @param convertedRecords The list of {@link ClickHouseStruct} records.
+     * @param convertedRecords The list of {@link ClickHouseStruct} records, in
+     *                         binlog order, terminal marker on the last row.
      * @param config           The connector configuration.
+     * @throws InterruptedException if the handoff is interrupted; the unit's
+     *                              registration is deliberately kept, so no
+     *                              offset can pass rows that never reached a
+     *                              queue, and the engine stops loudly.
      */
-    private void appendToRecords(List<ClickHouseStruct> convertedRecords, ClickHouseSinkConnectorConfig config) {
+    private void appendToRecords(List<ClickHouseStruct> convertedRecords, ClickHouseSinkConnectorConfig config)
+            throws InterruptedException {
         // If config is set to single threaded.
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
             // Runs inline on this thread, so the rows are written (or have
             // thrown) before control returns. Nothing is ever outstanding
-            // across a quiescence check, so the counter is not involved.
+            // across a quiescence check, so no handoff sequence is involved.
             singleThreadedWriter.persistRecords(convertedRecords);
             return;
         }
 
-        // Asynchronous handoff from here on. Each unit that a consumer will
-        // acknowledge separately is registered BEFORE it becomes visible: a
-        // consumer polls the queue and only registers the batch in
-        // inFlightBatches once it reaches processBatch, so between those two
-        // points the batch is in neither collection and the pipeline would
-        // falsely read as quiescent. Counting the handoff closes that window
-        // -- see DebeziumOffsetManagement#hasUnwrittenBatches.
+        // Asynchronous handoff from here on. The unit is registered with its
+        // handoff sequence BEFORE it becomes visible to any consumer: the
+        // sequence is what orders its offset acknowledgement against every
+        // other outstanding batch (binlog order, spec 09.01), and the
+        // registration is what makes the batch read as unwritten from this
+        // instant -- including the window between a worker's poll() and its
+        // write -- see DebeziumOffsetManagement#hasUnwrittenBatches.
         if (this.threadPoolSize > 1 && this.routedQueues != null) {
             // Hash-based routing mode: group records by table and route to specific threads
             appendToRecordsWithHashRouting(convertedRecords);
         } else {
-            // Legacy mode: single queue
+            // Legacy mode: single queue; the unit is its own single group.
             synchronized (this.records) {
-                try {
-                    int remainingCapacity = this.records.remainingCapacity();
-                    int currentSize = this.records.size();
-                    int totalCapacity = remainingCapacity + currentSize;
-                    if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
-                        log.warn("Queue is at 90% capacity! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
-                    }
-                    if (remainingCapacity == 0) {
-                        log.warn("Queue is full! Current size: {}, Total capacity: {}", this.records.size(), totalCapacity);
-                    }
-                    DebeziumOffsetManagement.batchHandedOff();
-                    this.records.put(convertedRecords);
-                }catch(Exception e){
-                    // The batch never made it onto the queue, so no consumer
-                    // will ever acknowledge it. Release the registration or
-                    // the pipeline would never read as quiescent again.
-                    DebeziumOffsetManagement.batchHandoffFailed();
-                    log.error("An unexpected error occurred while putting batch into records queue. Error: {}",e.getMessage(),e);
+                int remainingCapacity = this.records.remainingCapacity();
+                int currentSize = this.records.size();
+                int totalCapacity = remainingCapacity + currentSize;
+                if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
+                    log.warn("Queue is at 90% capacity! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
                 }
+                if (remainingCapacity == 0) {
+                    log.warn("Queue is full! Current size: {}, Total capacity: {}", this.records.size(), totalCapacity);
+                }
+                long sequence = DebeziumOffsetManagement.registerHandoff(convertedRecords,
+                        java.util.Collections.singletonList(convertedRecords));
+                this.records.put(convertedRecords);
+                log.debug("Handed off {} records as sequence {}", convertedRecords.size(), sequence);
             }
         }
     }
 
     /**
-     * Appends records using hash-based routing.
-     * Groups records by table and assigns each group to a specific thread.
+     * Hands records to the writers using hash-based routing (spec 01.05 section 3.3).
+     * Groups records by table and enqueues each group on its owning thread's
+     * queue. The whole list is ONE handoff unit with ONE sequence: its offset
+     * is acknowledged as a whole, in binlog order, once every group is written
+     * and every earlier unit is acknowledged (spec 09.01 section 3.3).
      *
      * @param convertedRecords The list of {@link ClickHouseStruct} records.
+     * @throws InterruptedException if enqueueing a group is interrupted.
      */
-    private void appendToRecordsWithHashRouting(List<ClickHouseStruct> convertedRecords) {
-        // Group records by routing key (database.table)
-        Map<String, List<ClickHouseStruct>> routingGroups = new HashMap<>();
-        
+    private void appendToRecordsWithHashRouting(List<ClickHouseStruct> convertedRecords)
+            throws InterruptedException {
+        // Group records by routing key (database.table), preserving each
+        // group's binlog order. Insertion-ordered so enqueueing is deterministic.
+        Map<String, List<ClickHouseStruct>> routingGroups = new java.util.LinkedHashMap<>();
+
         for (ClickHouseStruct record : convertedRecords) {
             String routingKey = RoutedBatch.createRoutingKey(record.getTopic());
             routingGroups.computeIfAbsent(routingKey, k -> new ArrayList<>()).add(record);
         }
-        
-        // Create a RoutedBatch for each group and enqueue it on its OWNING
-        // thread's queue. Each group is registered (batchHandedOff) individually
-        // and enqueued individually so a failure to enqueue one group releases
-        // only that group's registration.
+
+        // Register the unit with ALL its groups BEFORE any group is visible to
+        // a worker: an idle worker can finish its group before a busy worker
+        // has dequeued its sibling, and the unit must already exist -- with the
+        // sibling counted as unwritten -- when that happens.
+        long sequence = DebeziumOffsetManagement.registerHandoff(convertedRecords,
+                new ArrayList<>(routingGroups.values()));
+
+        // Enqueue each group on its OWNING thread's queue.
         for (Map.Entry<String, List<ClickHouseStruct>> entry : routingGroups.entrySet()) {
             String routingKey = entry.getKey();
             List<ClickHouseStruct> batch = entry.getValue();
@@ -2261,33 +2448,27 @@ public class DebeziumChangeEventCapture {
             LinkedBlockingQueue<RoutedBatch> queue = this.routedQueues.get(threadId);
 
             synchronized (queue) {
-                try {
-                    int remainingCapacity = queue.remainingCapacity();
-                    int currentSize = queue.size();
-                    int totalCapacity = remainingCapacity + currentSize;
-                    if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
-                        log.warn("Routed queue {} is at 90% capacity! Current size: {}, Total capacity: {}",
-                                threadId, currentSize, totalCapacity);
-                    }
-                    if (remainingCapacity == 0) {
-                        log.warn("Routed queue {} is full! Current size: {}, Total capacity: {}",
-                                threadId, currentSize, totalCapacity);
-                    }
-                    RoutedBatch routedBatch = new RoutedBatch(batch, threadId, tableName);
-                    DebeziumOffsetManagement.batchHandedOff();
-                    queue.put(routedBatch);
-                    log.debug("Routed {} records for table {} to thread {}", batch.size(), tableName, threadId);
-                } catch (Exception e) {
-                    // This group never reached the queue, so no consumer will
-                    // acknowledge it; release its registration or the pipeline
-                    // would never read as quiescent again.
-                    DebeziumOffsetManagement.batchHandoffFailed();
-                    log.error("An unexpected error occurred while putting batch into routed queue {}. Error: {}",
-                            threadId, e.getMessage(), e);
+                int remainingCapacity = queue.remainingCapacity();
+                int currentSize = queue.size();
+                int totalCapacity = remainingCapacity + currentSize;
+                if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
+                    log.warn("Routed queue {} is at 90% capacity! Current size: {}, Total capacity: {}",
+                            threadId, currentSize, totalCapacity);
                 }
+                if (remainingCapacity == 0) {
+                    log.warn("Routed queue {} is full! Current size: {}, Total capacity: {}",
+                            threadId, currentSize, totalCapacity);
+                }
+                // A failure here (InterruptedException) propagates: the unit
+                // stays outstanding, nothing is acknowledged, the engine stops,
+                // and a restart redelivers from the last committed offset.
+                queue.put(new RoutedBatch(batch, threadId, tableName, sequence));
+                log.debug("Routed {} records for table {} to thread {} as sequence {}",
+                        batch.size(), tableName, threadId, sequence);
             }
         }
     }
+
 
 
 

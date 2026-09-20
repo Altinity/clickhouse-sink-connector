@@ -1,7 +1,9 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
+import com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.altinity.clickhouse.sink.connector.model.RoutedBatch;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -58,6 +60,9 @@ public class DdlDrainDeadlockTest {
 
     /** Shortened so a regression fails fast instead of hanging the suite. */
     private static final long DRAIN_BUDGET_MS = 60_000;
+
+    /** How long the routed-queue worker / acknowledging writer holds back. */
+    private static final long RELEASE_DELAY_MS = 500;
 
     private static Object invokeDrain(DebeziumChangeEventCapture capture) throws Exception {
         Method drain = DebeziumChangeEventCapture.class.getDeclaredMethod("drainBeforeDDL");
@@ -217,6 +222,216 @@ public class DdlDrainDeadlockTest {
             assertEquals(1, records.size(), "the undrained batch must not have been discarded");
             assertFalse(records.isEmpty(), "sanity: the queue really was non-empty");
         } finally {
+            executor.shutdownNow();
+        }
+    }
+
+
+    // ------------------------------------------------------------------
+    // Hash-routing mode (thread.pool.size > 1, the default): the barrier
+    // must also cover the per-thread routed queues and the batches a
+    // worker has taken off a queue but not yet acknowledged.
+    // ------------------------------------------------------------------
+
+    /**
+     * Wires the capture as setupProcessingThread does for hash routing: an
+     * EMPTY legacy queue plus one routed queue per worker thread.
+     */
+    private static List<LinkedBlockingQueue<RoutedBatch>> wireHashRouting(DebeziumChangeEventCapture capture,
+                                                                         ClickHouseBatchExecutor executor,
+                                                                         int threads) throws Exception {
+        List<LinkedBlockingQueue<RoutedBatch>> routed = new ArrayList<>();
+        for (int i = 0; i < threads; i++) {
+            routed.add(new LinkedBlockingQueue<>());
+        }
+        setField(capture, "executor", executor);
+        setField(capture, "records", new LinkedBlockingQueue<List<ClickHouseStruct>>());
+        setField(capture, "routedQueues", routed);
+        setField(capture, "threadPoolSize", threads);
+        return routed;
+    }
+
+    /**
+     * Clears the handoff FIFO's static bookkeeping so a registration left by an
+     * earlier test in this JVM cannot make the drain wait on a ghost unit.
+     * Mirrors the sink-connector test helper {@code OffsetTestSupport.resetFifo()}.
+     */
+    private static void resetOffsetFifo() throws Exception {
+        for (String name : new String[] {"outstandingSequences", "groupToUnit", "completedUnits"}) {
+            Field f = DebeziumOffsetManagement.class.getDeclaredField(name);
+            f.setAccessible(true);
+            Object collection = f.get(null);
+            if (collection instanceof java.util.Map) {
+                ((java.util.Map<?, ?>) collection).clear();
+            } else if (collection instanceof java.util.Collection) {
+                ((java.util.Collection<?>) collection).clear();
+            }
+        }
+    }
+
+    private static RoutedBatch routedBatch(int threadId) {
+        return new RoutedBatch(new ArrayList<>(), threadId, "orders", 0L);
+    }
+
+    /**
+     * The regression: with the legacy queue empty and pre-DDL batches sitting
+     * on a routed queue, the drain must wait for that queue.
+     *
+     * <p>Against the pre-fix code this fails: the only wait was on the legacy
+     * queue, so the drain paused the pool and returned within milliseconds
+     * while the routed batches were still queued -- they were then written
+     * against the altered table.</p>
+     */
+    @Test
+    @DisplayName("drainBeforeDDL waits for the per-thread routed queues, not only the legacy queue")
+    public void testDrainWaitsForRoutedQueues() throws Exception {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(2, FACTORY);
+        AtomicBoolean stop = new AtomicBoolean(false);
+
+        try {
+            List<LinkedBlockingQueue<RoutedBatch>> routed = wireHashRouting(capture, executor, 2);
+            LinkedBlockingQueue<RoutedBatch> busy = routed.get(1);
+            for (int i = 0; i < 3; i++) {
+                busy.put(routedBatch(1));
+            }
+
+            // The owning worker, as ClickHouseBatchRunnable in routing mode:
+            // scheduled on the pool, drains ONLY its own queue, and -- to make
+            // the wait observable -- only from RELEASE_DELAY_MS onwards.
+            long releaseAt = System.currentTimeMillis() + RELEASE_DELAY_MS;
+            executor.scheduleAtFixedRate(() -> {
+                if (!stop.get() && System.currentTimeMillis() >= releaseAt) {
+                    busy.poll();
+                }
+            }, 0, 10, TimeUnit.MILLISECONDS);
+
+            long started = System.currentTimeMillis();
+            invokeDrain(capture);
+            long elapsed = System.currentTimeMillis() - started;
+
+            assertTrue(busy.isEmpty(),
+                    "the drain returned with " + busy.size() + " routed batch(es) still queued; "
+                            + "applying the DDL now would write them against the altered table");
+            assertTrue(elapsed >= RELEASE_DELAY_MS,
+                    "the drain returned after " + elapsed + " ms, before the routed queue could "
+                            + "have been emptied -- it did not wait on the routed queues at all");
+            assertTrue(isPaused(executor),
+                    "the pool must be paused when the drain returns, or a batch could start "
+                            + "while the ALTER is being applied");
+        } finally {
+            stop.set(true);
+            executor.resume();
+            executor.shutdownNow();
+        }
+    }
+
+    /**
+     * A routed queue that never drains must abort the DDL attempt, exactly as
+     * an undrainable legacy queue does, and the message must say what was
+     * pending.
+     *
+     * <p>Against the pre-fix code this fails: the drain never looked at the
+     * routed queue and returned normally.</p>
+     */
+    @Test
+    @DisplayName("A routed queue that cannot be drained aborts the DDL rather than applying it")
+    public void testUndrainableRoutedQueueAborts() throws Exception {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(2, FACTORY);
+
+        try {
+            List<LinkedBlockingQueue<RoutedBatch>> routed = wireHashRouting(capture, executor, 2);
+            routed.get(0).put(routedBatch(0));
+
+            // No worker at all: the routed queue cannot drain for a real reason.
+            boolean aborted = false;
+            try {
+                invokeDrain(capture);
+            } catch (IllegalStateException expected) {
+                aborted = true;
+                assertTrue(expected.getMessage().contains("DDL drain"),
+                        "the abort must name the drain as the cause: " + expected.getMessage());
+                assertTrue(expected.getMessage().toLowerCase().contains("routed"),
+                        "the abort must name the routed backlog it timed out on: "
+                                + expected.getMessage());
+            }
+
+            assertTrue(aborted,
+                    "an undrainable routed queue must abort the DDL attempt; applying the ALTER "
+                            + "over records captured under the previous schema is the silent "
+                            + "corruption this guard exists to prevent");
+            assertEquals(1, routed.get(0).size(), "the undrained batch must not have been discarded");
+        } finally {
+            executor.resume();
+            executor.shutdownNow();
+        }
+    }
+
+    /**
+     * Both queue sets empty is still not quiescent while a worker holds a
+     * batch it has dequeued but not yet written and acknowledged. Such a batch
+     * is registered with {@code DebeziumOffsetManagement} at handoff and
+     * released only on acknowledgement; the drain must wait for that release.
+     *
+     * <p>Against the pre-fix code this fails: nothing consulted
+     * {@code hasUnwrittenBatches()}, so the drain returned at once.</p>
+     */
+    @Test
+    @DisplayName("drainBeforeDDL waits for handed-off batches that are not yet acknowledged")
+    public void testDrainWaitsForUnacknowledgedBatches() throws Exception {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(2, FACTORY);
+        AtomicBoolean released = new AtomicBoolean(false);
+
+        // A unit the producer handed to the writers (registered with its
+        // handoff sequence, as appendToRecords does); no consumer has written
+        // it yet, so the pipeline is NOT quiescent even though every queue is
+        // empty. The record carries no committer, so acknowledging it later is
+        // a pure bookkeeping release.
+        resetOffsetFifo();
+        List<ClickHouseStruct> unit = java.util.Collections.singletonList(new ClickHouseStruct());
+        DebeziumOffsetManagement.registerHandoff(unit, java.util.Collections.singletonList(unit));
+        // The writer finishing that unit, RELEASE_DELAY_MS from now: reporting
+        // the group written acknowledges the unit (it is the FIFO head).
+        Thread writer = new Thread(() -> {
+            try {
+                Thread.sleep(RELEASE_DELAY_MS);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+            released.set(true);
+            try {
+                DebeziumOffsetManagement.checkIfBatchCanBeCommitted(unit);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
+        }, "ddl-drain-ack-test");
+        writer.setDaemon(true);
+
+        try {
+            wireHashRouting(capture, executor, 2);
+            writer.start();
+
+            long started = System.currentTimeMillis();
+            invokeDrain(capture);
+            long elapsed = System.currentTimeMillis() - started;
+
+            assertTrue(released.get(),
+                    "the drain returned while a handed-off batch was still unacknowledged; "
+                            + "that batch would be written against the altered table");
+            assertTrue(elapsed >= RELEASE_DELAY_MS,
+                    "the drain returned after " + elapsed + " ms, before the batch could have "
+                            + "been acknowledged -- it did not wait on unacknowledged batches");
+            assertFalse(DebeziumOffsetManagement.hasUnwrittenBatches(),
+                    "sanity: nothing may be outstanding once the drain has returned");
+        } finally {
+            writer.join(5_000);
+            if (DebeziumOffsetManagement.hasUnwrittenBatches()) {
+                // Do not leak the registration into later tests in this JVM.
+                resetOffsetFifo();
+            }
+            executor.resume();
             executor.shutdownNow();
         }
     }

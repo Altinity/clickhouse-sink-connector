@@ -12,7 +12,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.MySQLContainer;
-import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
@@ -32,12 +31,21 @@ public class AlterTableModifyColumnIT extends DDLBaseIT {
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
+        // This class has two tests and the base @AfterEach stops the shared
+        // static ClickHouse container after each one; without this the second
+        // test obtains a mapped port from a stopped container (see
+        // DDLBaseIT.ensureClickHouseContainerStarted).
+        ensureClickHouseContainerStarted();
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("alter_ddl_modify_column.sql")
                 .withExtraHost("mysql-server", "0.0.0.0")
-                .waitingFor(new HttpWaitStrategy().forPort(3306));
+                // Same readiness probe as DDLBaseIT: MySQL does not speak HTTP,
+                // so wait for the port to accept TCP connections instead.
+                .waitingFor(org.testcontainers.containers.wait.strategy.Wait
+                        .forListeningPort()
+                        .withStartupTimeout(java.time.Duration.ofMinutes(5)));
 
         BasicConfigurator.configure();
         mySqlContainer.start();

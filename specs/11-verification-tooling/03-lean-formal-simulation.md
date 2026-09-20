@@ -17,6 +17,9 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
   - `Replication.Upgrade`: Drop-in upgrade safety (I11)
   - `Replication.Snapshot`: Snapshot completion and control-record offset commit (I12)
   - `Replication.GeneratedColumn`: Generated-column type integrity (I13)
+  - `Replication.DdlBarrier`: DDL barrier covers every handoff path (Invariant I5, spec 06.01)
+  - `Replication.OffsetFifo`: Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01)
+  - `Replication.DdlTranslation`: ALTER clause classification (specs 06.03/06.04/06.05/06.07)
 - **CI**: `.github/workflows/spec-governance.yml`
 - **Empirical gap registries**: `sink-connector-lightweight/tests/integration/regression_manual.py` (TestFlows `xfails`), `@Disabled` annotations under `sink-connector/src/test` and `sink-connector-lightweight/src/test`
 
@@ -60,6 +63,16 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
 7. `Upgrade.lean`: `replicate_convergesV`, `upgrade_safe`, `liveVersion_gapMono` (I11; see spec 02.06 §6 for the hypothesis the code does not yet establish).
 8. `Snapshot.lean`: `control_commit_safe`, `committed_stable_while_outstanding`, `quiescent_control_commits`, `handoffs_preserve_committed`, `snapshot_completes` (I12).
 9. `GeneratedColumn.lean`: `alter_preserves_type`, `generated_expr_is_default`, `type_is_never_expression`, `generated_has_default` (I13).
+10. `OffsetFifo.commit_never_passes_outstanding`, `acked_downward_closed`,
+   `commitPoint_acked`, `outstanding_ge_commitPoint`: in every reachable state
+   of the handoff FIFO, acknowledged sequences are a prefix of the handoff order
+   and no outstanding sequence lies below the commit point.
+11. `OffsetFifo.write_at_most_once`, `written_batch_not_reexecuted`: a batch's
+   write event occurs at most once; a written (parked) batch is never executed
+   again.
+12. `OffsetFifo.old_overlap_rule_unsafe`: concrete counterexample — two batches
+   with equal timestamps where the strict timestamp-overlap rule acknowledges
+   the later-finished one while the other is outstanding, and the FIFO does not.
 
 The proposition `ReplayIdempotency` in `Invariants.lean` is stated but has no theorem.
 
