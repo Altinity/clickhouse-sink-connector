@@ -799,13 +799,18 @@ public class DebeziumChangeEventCapture {
      * Brings the writer to a standstill before a DDL is applied.
      *
      * <p>Three steps, in order: let the queued records be picked up and written
-     * while the pool is still running; stop new batches from starting; then wait
-     * for the batches still inside a task body to finish. Only then is every
-     * record that was read under the pre-ALTER schema actually in ClickHouse.</p>
+     * while the pool is still running -- on EVERY handoff path: the legacy
+     * queue, every per-thread routed queue, and the batches a worker has
+     * already dequeued but not yet acknowledged; stop new batches from
+     * starting; then wait for the batches still inside a task body to finish.
+     * Only then is every record that was read under the pre-ALTER schema
+     * actually in ClickHouse.</p>
      *
-     * <p>On timeout the DDL proceeds anyway and a warning is logged. Blocking
-     * replication indefinitely would be worse than the corruption this avoids,
-     * and the warning names the condition so it is visible rather than silent.</p>
+     * <p>On timeout the DDL attempt is ABORTED with an {@link IllegalStateException}
+     * naming the backlog; the caller raises it as a {@link DDLReplicationException}
+     * and the engine halts. Applying the DDL over pending rows would write them
+     * against the altered table with matching row counts -- silent corruption --
+     * so the loud abort is the only safe outcome.</p>
      */
     private void drainBeforeDDL() {
         // Single-threaded mode has no worker pool and no async handoff queue:
@@ -821,23 +826,36 @@ public class DebeziumChangeEventCapture {
 
         long deadline = System.currentTimeMillis() + DDL_DRAIN_TIMEOUT_MS;
 
-        // Step 1: let the pool consume what is already queued.
+        // Step 1: let the pool consume what is already queued -- on EVERY
+        // handoff path, not just the legacy queue.
         //
-        // The pool MUST still be running here. Pausing before the queue is
+        // The barrier predicate is isPipelineQuiescent(): the legacy `records`
+        // queue is empty AND every per-thread routed queue is empty AND no
+        // handed-off batch is still unacknowledged. In hash-routing mode
+        // (thread.pool.size > 1, the default) rows never touch `records` at
+        // all; they sit on `routedQueues` until the owning worker's next tick.
+        // Waiting only on `records` therefore observed an always-empty queue,
+        // and step 3's awaitQuiescent() sees only batches inside a task body
+        // RIGHT NOW -- zero between ticks even with every routed queue full.
+        // The DDL was then applied while pre-DDL rows were still queued, and
+        // those rows were written against the altered table: successful
+        // inserts, matching row counts, wrong contents.
+        //
+        // The pool MUST still be running here. Pausing before the queues are
         // drained is a deadlock, not a safety measure: `pause()` parks every
         // pool thread in beforeExecute(), so nothing can dequeue, and this
-        // loop then waits out the full timeout on a queue that is guaranteed
+        // loop then waits out the full timeout on queues that are guaranteed
         // never to shrink. It always ends in the abort below.
         //
         // Pausing first was introduced to close a "the queue never reaches
-        // empty on a busy table" race. That race cannot occur: this queue has
-        // exactly ONE producer -- appendToRecords(), called only from
-        // handleChangeEventBatch(), which runs on the very Debezium thread
-        // that is executing this drain. While we are in here, no new batch can
-        // be appended, so the queued set is already fixed and the pool is free
-        // to consume it to empty. Step 2 then closes the pause window
-        // properly.
-        while (this.records != null && !this.records.isEmpty()) {
+        // empty on a busy table" race. That race cannot occur: both producers
+        // -- appendToRecords() and appendToRecordsWithHashRouting() -- are
+        // called only from handleChangeEventBatch(), which runs on the very
+        // Debezium thread that is executing this drain. While we are in here,
+        // no new batch can be appended, so the queued set is already fixed and
+        // the pool is free to consume it to empty. Step 2 then closes the
+        // pause window properly.
+        while (!isPipelineQuiescent()) {
             if (System.currentTimeMillis() >= deadline) {
                 // NOT survivable. Applying the ALTER now writes records that
                 // were read under the PREVIOUS schema against the NEW table --
@@ -846,11 +864,11 @@ public class DebeziumChangeEventCapture {
                 // instead routes into the DDL retry path, which drains again
                 // from a consistent point.
                 throw new IllegalStateException(String.format(
-                        "DDL drain: %d record batch(es) still queued after %d ms. Applying "
-                                + "the DDL now would write records captured under the previous "
-                                + "schema against the altered table, silently corrupting them. "
-                                + "Aborting this DDL attempt so it can be retried.",
-                        this.records.size(), DDL_DRAIN_TIMEOUT_MS));
+                        "DDL drain: %s still pending after %d ms. Applying the DDL now would "
+                                + "write records captured under the previous schema against the "
+                                + "altered table, silently corrupting them. Aborting this DDL "
+                                + "attempt so it can be retried.",
+                        describePendingHandoff(), DDL_DRAIN_TIMEOUT_MS));
             }
             try {
                 Thread.sleep(50);
@@ -928,6 +946,10 @@ public class DebeziumChangeEventCapture {
         if (retryDDL != null && retryDDL.equalsIgnoreCase("true")) {
             retryDDLProperty = true;
         }
+
+        // The most recent failure, carried as the cause of the terminal
+        // exception so the operator sees the actual ClickHouse error.
+        Exception lastFailure = null;
 
         while (numRetries < MAX_DDL_RETRIES) {
             try {
@@ -1049,8 +1071,10 @@ public class DebeziumChangeEventCapture {
                 DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
                 break;
             } catch (Exception e) {
+                lastFailure = e;
                 log.error("Error executing DDL", e);
-                // insert data into the error table
+                // insert data into the error table -- BEFORE the retry
+                // decision, so the record exists whether or not we halt.
                 try {
                     ErrorLogger.createErrorTable(systemDbConnection, config);
                     ErrorLogger.logError(systemDbConnection, e.getMessage(),
@@ -1059,7 +1083,18 @@ public class DebeziumChangeEventCapture {
                     log.error("Failed to log DDL error to ClickHouse", ex);
                 }
                 if (retryDDLProperty == false) {
-                    break;
+                    // ddl.retry decides only whether to try AGAIN; it never
+                    // makes a failed DDL survivable. Leaving the loop normally
+                    // here (the previous behaviour) acknowledged the DDL offset
+                    // and let the row stream continue against a schema that no
+                    // longer matched MySQL: the table stayed without the column
+                    // while rows kept flowing, count-clean. Terminal and loud
+                    // instead -- see DDLReplicationException and the catch in
+                    // processEveryChangeRecord.
+                    throw new DDLReplicationException(
+                            "DDL failed and ddl.retry is not enabled, so it is not retried; "
+                                    + "halting the pipeline rather than skipping the schema "
+                                    + "change: [" + DDL + "]", e);
                 }
                 try {
                     Thread.sleep(SLEEP_TIME);
@@ -1075,7 +1110,7 @@ public class DebeziumChangeEventCapture {
                 // DDLReplicationException and the catch in
                 // processEveryChangeRecord.
                 throw new DDLReplicationException(
-                        "Max retries exceeded applying DDL to ClickHouse: [" + DDL + "]", null);
+                        "Max retries exceeded applying DDL to ClickHouse: [" + DDL + "]", lastFailure);
             }
         }
         updateMetrics(DDL);
@@ -1803,6 +1838,27 @@ public class DebeziumChangeEventCapture {
             }
         }
         return !DebeziumOffsetManagement.hasUnwrittenBatches();
+    }
+
+    /**
+     * Names what {@link #isPipelineQuiescent()} is still waiting on, for the
+     * DDL drain abort message: batches on the legacy queue, batches across the
+     * routed queues, and whether handed-off batches are still unacknowledged.
+     *
+     * @return a human-readable summary of the pending handoff backlog.
+     */
+    private String describePendingHandoff() {
+        int legacy = this.records == null ? 0 : this.records.size();
+        int routed = 0;
+        if (this.routedQueues != null) {
+            for (LinkedBlockingQueue<RoutedBatch> queue : this.routedQueues) {
+                routed += queue.size();
+            }
+        }
+        return String.format(
+                "%d legacy queue batch(es), %d routed queue batch(es), "
+                        + "unacknowledged handed-off batches: %s",
+                legacy, routed, DebeziumOffsetManagement.hasUnwrittenBatches() ? "yes" : "no");
     }
 
     /**

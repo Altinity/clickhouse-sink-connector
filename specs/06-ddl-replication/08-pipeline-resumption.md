@@ -40,8 +40,9 @@ count-clean divergence (violates the Prime Directive and Invariant I9).
 
 1. **Wrapping**: The DDL branch of `processEveryChangeRecord()` wraps
    `drainBeforeDDL()` + `performDDLOperation()`. Any failure — a drain abort
-   (`IllegalStateException`), or retry exhaustion in `performDDLOperation()` —
-   is raised as `DDLReplicationException`.
+   (`IllegalStateException`), or a failed DDL execution in
+   `performDDLOperation()` (first attempt when `ddl.retry` is off, retry
+   exhaustion when it is on; see §3.2) — is raised as `DDLReplicationException`.
 2. **Non-swallowing**: `processEveryChangeRecord()` catches
    `DDLReplicationException` **ahead of** its generic `catch (Exception e)`
    catch-all (which exists only to keep one malformed DML record from killing
@@ -57,6 +58,31 @@ count-clean divergence (violates the Prime Directive and Invariant I9).
    `executor == null` (no worker pool; rows are persisted inline before the DDL
    record is handled), so the first DDL is applied rather than dropped by an NPE.
 
+### 3.2 `ddl.retry` decides whether to RETRY, never whether a failure is loud
+
+`performDDLOperation()` executes the translated statement(s) inside a bounded
+retry loop (`MAX_RETRIES` attempts, 10 s apart). The `ddl.retry` property
+(`SinkConnectorLightWeightConfig.DDL_RETRY`, default unset = `false`) controls
+only whether further attempts are made after a failure. It never permits the
+loop to be left normally after a failure.
+
+1. **Error record first.** Every failed attempt is logged and written to the
+   error table (`ErrorLogger.createErrorTable` + `ErrorLogger.logError`) BEFORE
+   the retry decision, so the record exists whether or not the pipeline halts.
+2. **`ddl.retry` unset / `false` (the default): terminal on the first attempt.**
+   `DDLReplicationException` is thrown immediately, carrying the underlying
+   exception as its cause. Leaving the retry loop normally is forbidden: it
+   acknowledges the DDL offset and lets the row stream continue against a
+   ClickHouse schema that no longer matches MySQL. This was observed in a
+   production deployment — an `ALTER TABLE` rejected by ClickHouse was logged
+   and skipped, the table stayed without the new column, and later rows were
+   written count-clean against the stale schema.
+3. **`ddl.retry=true`: bounded retries, then terminal.** After `MAX_RETRIES`
+   failed attempts `DDLReplicationException` is thrown, carrying the LAST
+   failure as its cause.
+4. In both cases the exception leaves through §3.1 (re-thrown ahead of the
+   catch-all, engine halts, offset not advanced, restart re-delivers the DDL).
+
 ---
 
 ## 4. Invariants Preserved
@@ -66,7 +92,16 @@ count-clean divergence (violates the Prime Directive and Invariant I9).
 ---
 
 ## 5. Verification Criteria
-- `DebeziumChangeEventCaptureTest.testPerformDDLOperationAndResume()`
 - `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()` — a DDL whose drain aborts throws `DDLReplicationException` out of `processEveryChangeRecord` rather than returning null.
 - `DdlFailureLoudTest.drainIsNoOpWhenExecutorIsNull()` — single-threaded mode drains as a no-op instead of an NPE.
-- `DdlDrainDeadlockTest` — the drain still aborts a genuinely undrainable queue and stays quiescent+paused when it returns (unchanged).
+- `DdlFailureLoudTest.ddlExecutionFailureWithoutRetryIsLoud()` — `ddl.retry`
+  unset, single-threaded (`executor == null`), a writer whose connection rejects
+  the statement with a non-retryable ClickHouse error: `processEveryChangeRecord`
+  throws `DDLReplicationException` whose cause is that `SQLException`. Fails on
+  the pre-fix code, which left the retry loop normally and returned null.
+- `DdlFailureLoudTest.ddlExecutionFailureAfterRetriesExhaustedIsLoud()` —
+  `ddl.retry=true` with the retry budget exhausted: `DDLReplicationException`
+  carrying the last failure as its cause.
+- `DdlDrainDeadlockTest` — the drain still aborts a genuinely undrainable queue and stays quiescent+paused when it returns (spec 06.01).
+- Mutation check: restoring `if (retryDDLProperty == false) { break; }` turns
+  `ddlExecutionFailureWithoutRetryIsLoud` red.
