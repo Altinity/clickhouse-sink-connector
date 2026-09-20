@@ -35,6 +35,10 @@ jobs:
       - name: Check out (full history for the spec-first diff)
         uses: actions/checkout@v4
         with:
+          # On pull_request the default ref is the synthetic merge commit, whose
+          # auto-generated message never carries [spec-exempt: ...]; check out
+          # the PR head so HEAD and its message are the contributor's own.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
 
       - name: Install elan (toolchain resolved from formal_specs/lean/lean-toolchain)

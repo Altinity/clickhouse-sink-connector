@@ -294,6 +294,27 @@ class AllowlistTests(FixtureCase):
         self.assertEqual(allow.files, {"specs/a/b.md"})
         self.assertEqual(allow.tokens, {("specs/c/d.md", "SomeTest.x()")})
 
+    def test_allowlist_hash_form_token_is_not_a_comment(self) -> None:
+        path = write(
+            self.root,
+            "scripts/spec_validator_allowlist.txt",
+            "specs/c/d.md | FooTest#missingMethod  # hash inside the token is not a comment\n   # indented comment\n",
+        )
+        allow = vs.Allowlist.load(path)
+        self.assertEqual(allow.files, set())
+        self.assertEqual(allow.tokens, {("specs/c/d.md", "FooTest#missingMethod")})
+
+    def test_hash_form_token_waiver_applies_end_to_end(self) -> None:
+        spec = spec_path(self.root)
+        rel = spec.relative_to(self.root).as_posix()
+        spec.write_text(spec.read_text(encoding="utf-8").replace("FooTest.testBar()", "FooTest#testMissing"), encoding="utf-8")
+        self.assertEqual(len(run(self.root).errors), 1)
+        path = write(self.root, "scripts/spec_validator_allowlist.txt", f"{rel} | FooTest#testMissing  # waived\n")
+        report = run(self.root, vs.Allowlist.load(path))
+        self.assertEqual(report.errors, [])
+        self.assertEqual(len(report.warnings), 1)
+        self.assertIn("(allowlisted)", report.warnings[0])
+
 
 class ChangedBaseTests(FixtureCase):
     """The spec-first gate, exercised against a real temporary git repository."""
@@ -346,6 +367,28 @@ class ChangedBaseTests(FixtureCase):
     def test_spec_exempt_marker_in_head_message_passes(self) -> None:
         self.commit("chore: typo\n\n[spec-exempt: comment-only change]", (MAIN_JAVA, "package com.altinity.fixture;\n// note\npublic class Foo {}\n"))
         self.assertEqual(run(self.root, changed_base="base").errors, [])
+
+    def test_marker_on_an_earlier_commit_in_the_range_passes(self) -> None:
+        self.commit("chore: comment\n\n[spec-exempt: comment-only change]", (MAIN_JAVA, "package com.altinity.fixture;\n// note\npublic class Foo {}\n"))
+        self.commit("chore: follow-up without marker", (MAIN_JAVA, "package com.altinity.fixture;\n// note two\npublic class Foo {}\n"))
+        self.assertEqual(run(self.root, changed_base="base").errors, [])
+
+    def test_marker_is_honoured_from_a_merge_commit_checkout(self) -> None:
+        # The pull_request shape: a PR branch whose head carries the marker,
+        # checked out as a no-ff merge commit whose own message lacks it.
+        self.git("checkout", "-q", "-b", "pr", "base")
+        self.commit("chore: comment\n\n[spec-exempt: comment-only change]", (MAIN_JAVA, "package com.altinity.fixture;\n// note\npublic class Foo {}\n"))
+        self.git("checkout", "-q", "-b", "merge-target", "base")
+        self.git("merge", "--no-ff", "-q", "-m", "Merge pull request #1 from fork/pr", "pr")
+        self.assertEqual(self.git("rev-list", "--parents", "-1", "HEAD").split().__len__(), 3, "precondition: HEAD is a merge commit")
+        self.assertEqual(run(self.root, changed_base="base").errors, [])
+
+    def test_merge_commit_checkout_without_marker_still_fails(self) -> None:
+        self.git("checkout", "-q", "-b", "pr", "base")
+        self.commit("fix: tweak", (MAIN_JAVA, "package com.altinity.fixture;\npublic class Foo { int x; }\n"))
+        self.git("checkout", "-q", "-b", "merge-target", "base")
+        self.git("merge", "--no-ff", "-q", "-m", "Merge pull request #1 from fork/pr", "pr")
+        self.assertOneErrorContaining(run(self.root, changed_base="base"), MAIN_JAVA)
 
     def test_test_only_change_passes(self) -> None:
         self.commit("test: more", (TEST_JAVA, "package com.altinity.fixture;\npublic class FooTest {\n  @Test\n  public void testBar() {}\n  @Test\n  public void testBaz() {}\n}\n"))

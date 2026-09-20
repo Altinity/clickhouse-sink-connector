@@ -27,8 +27,9 @@ Checks, in order (each pass appends to one error list; exit code 1 if any):
 6. Agent guidance files exist and point at the spec-driven mandate.
 7. With --changed-base <ref>: if `git diff --name-only <ref>...HEAD` touches a
    file under `*/src/main/**` or a `*.g4` grammar but nothing under `specs/` or
-   `formal_specs/`, fail -- unless the HEAD commit message carries
-   `[spec-exempt: <reason>]`.
+   `formal_specs/`, fail -- unless some commit message in `<ref>..HEAD` carries
+   `[spec-exempt: <reason>]` (any commit in the range, so a pull_request run
+   that checks out the synthetic merge commit still sees the marker).
 
 Findings in passes 4 and 5 can be waived per spec file (or per spec file and
 token) through scripts/spec_validator_allowlist.txt; waived findings are
@@ -90,6 +91,7 @@ FORBIDDEN_LEAN_TOKENS = ("sorry", "admit", "native_decide")
 SPEC_GOVERNED_PATTERNS = ("*/src/main/*", "*.g4")
 SPEC_DIRS = ("specs/", "formal_specs/")
 SPEC_EXEMPT_RE = re.compile(r"\[spec-exempt:\s*[^\]]+\]")
+ALLOWLIST_COMMENT_RE = re.compile(r"(?:^|\s)#")
 
 HEADING_RE = re.compile(r"^(#+)\s*(.*?)\s*$", re.MULTILINE)
 BACKTICK_RE = re.compile(r"`([^`\n]+)`")
@@ -126,7 +128,9 @@ class Allowlist:
         if not path.is_file():
             return allow
         for raw in path.read_text(encoding="utf-8").splitlines():
-            line = raw.split("#", 1)[0].strip()
+            # A '#' starts a comment only at line start or after whitespace, so
+            # a hash-form method token such as `FooTest#method` survives.
+            line = ALLOWLIST_COMMENT_RE.split(raw, 1)[0].strip()
             if not line:
                 continue
             if "|" in line:
@@ -484,7 +488,10 @@ def is_spec_change(path: str) -> bool:
 def check_changed_base(repo_root: Path, base: str) -> list[str]:
     try:
         changed = [p for p in _git(repo_root, "diff", "--name-only", f"{base}...HEAD").splitlines() if p.strip()]
-        head_message = _git(repo_root, "log", "-1", "--format=%B", "HEAD")
+        # Every commit message in the range, not only HEAD's: on a pull_request
+        # run HEAD may be the synthetic merge commit, whose auto-generated
+        # message never carries the marker even when the PR's own commit does.
+        range_messages = _git(repo_root, "log", "--format=%B%x00", f"{base}..HEAD")
     except RuntimeError as exc:
         return [f"--changed-base: {exc}"]
     governed = sorted(p for p in changed if is_spec_governed(p))
@@ -492,15 +499,15 @@ def check_changed_base(repo_root: Path, base: str) -> list[str]:
         return []
     if any(is_spec_change(p) for p in changed):
         return []
-    exempt = SPEC_EXEMPT_RE.search(head_message)
+    exempt = SPEC_EXEMPT_RE.search(range_messages)
     if exempt:
-        print(f"  ! spec-governed files changed without a spec change, exempted by HEAD: {exempt.group(0)}")
+        print(f"  ! spec-governed files changed without a spec change, exempted by a commit in {base}..HEAD: {exempt.group(0)}")
         return []
     listing = "\n    ".join(governed)
     return [
         "spec-governed source changed but no file under specs/ or formal_specs/ changed "
         f"(diff {base}...HEAD). Declare the spec first (AGENTS.md: Spec First, Code Second) "
-        "or mark the HEAD commit with `[spec-exempt: <reason>]`. Files:\n    " + listing
+        f"or mark a commit in {base}..HEAD with `[spec-exempt: <reason>]`. Files:\n    " + listing
     ]
 
 
@@ -574,7 +581,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--allowlist", type=Path, default=None,
                         help="allowlist file (default: scripts/spec_validator_allowlist.txt under the repo root)")
     parser.add_argument("--changed-base", metavar="REF", default=None,
-                        help="fail if `git diff --name-only REF...HEAD` changes */src/main/** or *.g4 without a specs/ or formal_specs/ change")
+                        help="fail if `git diff --name-only REF...HEAD` changes */src/main/** or *.g4 without a specs/ or formal_specs/ change, unless a commit in REF..HEAD carries [spec-exempt: <reason>]")
     parser.add_argument("--lake", action="store_true", help="also run `lake build` in formal_specs/lean")
     parser.add_argument("--report-refs", action="store_true",
                         help="print every test / Lean citation found in Verification sections with its status")
