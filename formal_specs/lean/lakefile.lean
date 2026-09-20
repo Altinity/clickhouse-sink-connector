@@ -3,6 +3,7 @@ open Lake DSL
 
 package «Replication»
 
+@[default_target]
 lean_lib «Replication» where
   -- Library configuration exposing the replication proofs.
   roots := #[`Replication.Basic,
@@ -13,4 +14,5 @@ lean_lib «Replication» where
              `Replication.Proofs,
              `Replication.Upgrade,
              `Replication.Snapshot,
-             `Replication.GeneratedColumn]
+             `Replication.GeneratedColumn,
+             `Replication.DdlTranslation]
