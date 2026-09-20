@@ -24,9 +24,12 @@ so that a later source event always gets a strictly greater version, and the new
 engine continues that ordering ABOVE the last version the old engine wrote (across
 the upgrade the source commit clock only advances). We model an arbitrary version
 scheme `v : Nat -> Nat` (the live version at stream ordinal `i`; the relocation
-tombstone is `v i - 1`) and require only that it is "gap-monotone": strictly
-increasing with a gap of at least two per ordinal, so the tombstone slot of
-ordinal `i` still exceeds every version issued before it.
+tombstone carries the SAME version `v i`, as the connector binds
+`record.getVersion()` for both rows -- Spec 05.02) and require that it is
+"gap-monotone": strictly increasing with a gap of at least two per ordinal. The
+gap is stronger than the tombstone now needs (it dates from the `v i - 1`
+tombstone slot) and is retained unchanged so the I11 hypothesis, and every
+statement built on it, keeps its original form.
 
 `replicate_convergesV` proves convergence for ANY gap-monotone scheme, so the
 absolute version numbers are irrelevant — only their order matters. `upgrade_safe`
@@ -39,7 +42,7 @@ old). That is exactly the drop-in-replacement guarantee.
 namespace Replication
 
 /-- A version scheme: `v i` is the live version assigned at 1-based stream ordinal
-    `i`; the relocation tombstone at ordinal `i` is `v i - 1`. -/
+    `i`; the relocation tombstone at ordinal `i` carries the same `v i`. -/
 def GapMono (v : Nat → Nat) : Prop :=
   2 ≤ v 1 ∧ ∀ i, 1 ≤ i → v i + 2 ≤ v (i + 1)
 
@@ -59,7 +62,7 @@ theorem GapMono.two_le {v : Nat → Nat} (hv : GapMono v) :
         omega
 
 /-- Version-scheme-parameterised translation (mirrors `translateEventAt`, with the
-    live version `v i` and tombstone `v i - 1`). -/
+    live version `v i` and the tombstone at the same `v i`). -/
 def translateEventAtV (v : Nat → Nat) (i : Nat) (e : BinlogEvent) : List CHRecord :=
   match e.op with
   | BinlogOp.insert k row =>
@@ -68,8 +71,8 @@ def translateEventAtV (v : Nat → Nat) (i : Nat) (e : BinlogEvent) : List CHRec
       if k_old == k_new then
         [{ key := k_new, row := row, version := v i, is_deleted := false }]
       else
-        [ { key := k_old, row := [],  version := v i - 1, is_deleted := true },
-          { key := k_new, row := row, version := v i,     is_deleted := false } ]
+        [ { key := k_old, row := [],  version := v i, is_deleted := true },
+          { key := k_new, row := row, version := v i, is_deleted := false } ]
   | BinlogOp.delete k =>
       [{ key := k, row := [], version := v i, is_deleted := true }]
   -- DESTRUCTIVE: formal-model arm — the clear event maps to the empty record
@@ -214,41 +217,44 @@ theorem replicate_converges_genV (v : Nat → Nat) (hv : GapMono v) :
               · rw [htr] at h2; simp at h2; subst h2; show v i < v (i + 1) - 1; omega
             have := ih (i + 1) (acc ++ translateEventAtV v i e) (applyBinlogEvent st e) (by omega) hbound' hview' k
             rw [this]; simp [List.foldl]
-          · let tomb : CHRecord := { key := k_old, row := [], version := v i - 1, is_deleted := true }
+          · let tomb : CHRecord := { key := k_old, row := [], version := v i, is_deleted := true }
             let live : CHRecord := { key := k_new, row := val, version := v i, is_deleted := false }
-            have htomb : tomb = { key := k_old, row := [], version := v i - 1, is_deleted := true } := rfl
+            have htomb : tomb = { key := k_old, row := [], version := v i, is_deleted := true } := rfl
             have hlive : live = { key := k_new, row := val, version := v i, is_deleted := false } := rfl
             have htr : translateEventAtV v i e = [tomb, live] := by
               simp [translateEventAtV, hop, beq_false_of_ne hkk, htomb, hlive]
             have hassoc : acc ++ translateEventAtV v i e = (acc ++ [tomb]) ++ [live] := by
               rw [htr]; simp [List.append_assoc]
+            have hdom_tomb : ∀ r ∈ filterKey acc k_old, r.version < tomb.version := by
+              intro r hr
+              have := hbound r (mem_of_mem_filterKey hr)
+              simp [htomb]; omega
+            have hdom_live : ∀ r ∈ filterKey (acc ++ [tomb]) k_new, r.version < live.version := by
+              intro r hr
+              rw [filterKey_append, List.mem_append] at hr
+              rcases hr with h1 | h2
+              · have := hbound r (mem_of_mem_filterKey h1)
+                simp [hlive]; omega
+              · exfalso
+                have hp := pred_of_mem_filter' h2
+                have hm : r = tomb := by
+                  have := mem_of_mem_filterKey h2; simpa using this
+                subst hm
+                simp [htomb, beq_false_of_ne hkk] at hp
             have hview' : ∀ q, chFinalView (acc ++ translateEventAtV v i e) q = applyBinlogEvent st e q := by
               intro q
               rw [hassoc]
-              have hdom_live : ∀ r ∈ filterKey (acc ++ [tomb]) q, r.version < live.version := by
-                intro r hr
-                rw [filterKey_append, List.mem_append] at hr
-                rcases hr with h1 | h2
-                · have := hbound r (mem_of_mem_filterKey h1)
-                  simp [hlive]; omega
-                · have : r = tomb := by
-                    have := mem_of_mem_filterKey h2; simpa using this
-                  subst this; simp [htomb, hlive]; omega
-              rw [chFinalView_snoc (acc ++ [tomb]) live q hdom_live]
-              have hdom_tomb : ∀ r ∈ filterKey acc q, r.version < tomb.version := by
-                intro r hr
-                have := hbound r (mem_of_mem_filterKey hr)
-                simp [htomb]; omega
-              rw [chFinalView_snoc acc tomb q hdom_tomb]
-              simp only [htomb, hlive]
-              by_cases hqo : k_old = q
-              · subst hqo
-                simp [applyBinlogEvent, hop, beq_false_of_ne hkk, beq_self_eq_true, Ne.symm hkk]
-              · by_cases hqn : k_new = q
-                · subst hqn
-                  simp [applyBinlogEvent, hop, beq_false_of_ne hkk, beq_self_eq_true,
-                        beq_false_of_ne (fun h => hqo h.symm)]
-                · rw [if_neg hqn, if_neg hqo, hview q]
+              by_cases hqn : k_new = q
+              · subst hqn
+                rw [chFinalView_snoc (acc ++ [tomb]) live k_new hdom_live]
+                simp [hlive, applyBinlogEvent, hop, beq_false_of_ne hkk, beq_self_eq_true,
+                      beq_false_of_ne (Ne.symm hkk)]
+              · rw [chFinalView_snoc_other (acc ++ [tomb]) live q (by simp [hlive]; exact hqn)]
+                by_cases hqo : k_old = q
+                · subst hqo
+                  rw [chFinalView_snoc acc tomb k_old hdom_tomb]
+                  simp [htomb, applyBinlogEvent, hop, beq_false_of_ne hkk, beq_self_eq_true]
+                · rw [chFinalView_snoc_other acc tomb q (by simp [htomb]; exact hqo), hview q]
                   simp [applyBinlogEvent, hop, beq_false_of_ne hkk,
                         beq_false_of_ne (fun h => hqo h.symm),
                         beq_false_of_ne (fun h => hqn h.symm)]
@@ -259,7 +265,7 @@ theorem replicate_converges_genV (v : Nat → Nat) (hv : GapMono v) :
               · have := hbound r h1; omega
               · simp [htomb, hlive] at h2
                 rcases h2 with h2a | h2b
-                · subst h2a; show v i - 1 < v (i + 1) - 1; omega
+                · subst h2a; show v i < v (i + 1) - 1; omega
                 · subst h2b; show v i < v (i + 1) - 1; omega
             have := ih (i + 1) (acc ++ translateEventAtV v i e) (applyBinlogEvent st e) (by omega) hbound' hview' k
             rw [this]; simp [List.foldl]

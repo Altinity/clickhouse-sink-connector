@@ -244,13 +244,15 @@ public class PreparedStatementFieldMapper {
             // will throw an error.
             // If the Received column is not a clickhouse column
             try {
-                Object value = struct.get(colName);
-
-                boolean nonDefault = config.getBoolean(ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString());
-                // if config non.default.value is set, use it.
-                if (nonDefault) {
-                    value = struct.getWithoutDefault(colName);
-                }
+                // Read the STORED value, never the Connect-schema default.
+                // Struct.get() returns schema.defaultValue() for a null field,
+                // and Debezium propagates the MySQL column DEFAULT into that
+                // schema, so a source NULL in any column with a MySQL default
+                // would be bound as the default ('new', 0, 1970-01-01) -- with
+                // matching row counts. This used to be gated behind
+                // non.default.value=true, whose default was false; the source
+                // value is the only value there is to bind (Spec 07.07).
+                Object value = struct.getWithoutDefault(colName);
                 if (value == null) {
                     ps.setNull(index, Types.OTHER);
                     continue;
@@ -306,7 +308,8 @@ public class PreparedStatementFieldMapper {
             Field f = getFieldByColumnName(fields, colName);
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
-            Object value = struct.get(f);
+            // Same rule as above: the stored value, not the schema default.
+            Object value = struct.getWithoutDefault(f.name());
             if (type == Schema.Type.ARRAY) {
                 // Check if the ClickHouse column is a non-Array type (e.g. String/Nullable(String)).
                 // PG text[] columns may be auto-created as Nullable(String) in ClickHouse,
@@ -359,10 +362,17 @@ public class PreparedStatementFieldMapper {
      * yields {@code is_deleted = 0}, which would insert a second LIVE row at the
      * old key instead of retiring it.</p>
      *
-     * <p>The tombstone deliberately carries the record's own version, one less
-     * than the after-image is written with, so the after-image is unambiguously
-     * newer. Note the two rows normally land on different sorting keys and so
-     * never compete; the ordering matters for the case where they collide.</p>
+     * <p>The tombstone carries the record's own version {@code V}, the same
+     * version the after-image is written with (Spec 05.02). The two rows never
+     * share a sorting key, so they never compete. What the tombstone must beat
+     * is the live row already stored at the OLD key -- and under GTID
+     * versioning that row can carry the very same {@code V}: an
+     * {@code INSERT (k='a')} followed in the same transaction by
+     * {@code UPDATE ... SET k='b'} gives both events one version. A tombstone
+     * at {@code V - 1} is then OLDER than the live row, loses the
+     * ReplacingMergeTree merge, and leaves a ghost row at {@code 'a'} next to
+     * the new row at {@code 'b'}. At {@code V} it ties, and ClickHouse resolves
+     * an equal-version tie to the later-inserted row, which the tombstone is.</p>
      *
      * @param columnNameToIndexMap A map of column names to prepared-statement indices.
      * @param ps The prepared statement to populate.
@@ -395,7 +405,9 @@ public class PreparedStatementFieldMapper {
             ps.setInt(deleteColumnIndex, this.replacingMergeTreeWithIsDeletedColumn ? 1 : -1);
         }
 
-        // Keep the tombstone strictly older than the after-image.
+        // Bind the record's own version, unchanged. Decrementing it made the
+        // tombstone lose to a same-transaction (same-version) live row at the
+        // old key; see the class comment above and Spec 05.02 section 3.2.
         if (this.versionColumn != null
                 && columnNameToDataTypeMap.containsKey(this.versionColumn)
                 && columnNameToIndexMap.containsKey(this.versionColumn)) {
@@ -404,8 +416,7 @@ public class PreparedStatementFieldMapper {
                         ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString()));
             }
             rejectUnderivableVersion(record);
-            long tombstoneVersion = record.getVersion() > 0 ? record.getVersion() - 1 : record.getVersion();
-            ps.setLong(columnNameToIndexMap.get(this.versionColumn), tombstoneVersion);
+            ps.setLong(columnNameToIndexMap.get(this.versionColumn), record.getVersion());
         }
     }
 
@@ -544,22 +555,33 @@ public class PreparedStatementFieldMapper {
      * strictly preferable, since the batch is retried or surfaced to the operator
      * whereas the corrupt row is not recoverable once merged.</p>
      *
-     * <p>After {@code calculateVersion()} this is only reachable when the record
-     * carries no ordering key AND no source commit timestamp, which indicates a
-     * malformed or unsupported change event rather than a normal GTID-less source.</p>
+     * <p>After {@code calculateVersion()} the sentinel is only reachable when the
+     * record carries no ordering key AND no source commit timestamp, which
+     * indicates a malformed or unsupported change event rather than a normal
+     * GTID-less source.</p>
+     *
+     * <p>{@code 0} is rejected as well (Spec 02.05 section 3.2). No branch of
+     * {@code calculateVersion()} produces it from a real source coordinate --
+     * GTID transaction numbers start at 1, the SnowFlakeId forms embed a
+     * positive timestamp, a PostgreSQL LSN of 0 is invalid and the lightweight
+     * sequence counter starts far above 0 -- so a zero is a corrupt or
+     * hand-built record whose ordering against its own history is undefined.
+     * It is refused for the same reason as the sentinel: fail loudly rather
+     * than write an unordered row.</p>
      *
      * @param record The CDC record whose version is about to be bound.
      */
     private static void rejectUnderivableVersion(ClickHouseStruct record) {
-        if (record.getVersion() == -1) {
+        if (record.getVersion() <= 0) {
             throw new IllegalStateException(
-                    "Cannot derive a _version for record from topic '" + record.getTopic()
-                            + "' at kafka offset " + record.getKafkaOffset()
-                            + ": no GTID, sequence number, LSN or source timestamp is present. "
-                            + "Refusing to write the uninitialized sentinel, which is stored as "
-                            + "UInt64 18446744073709551615 and would win every ReplacingMergeTree "
-                            + "deduplication for this key permanently, silently discarding all "
-                            + "later updates and deletes.");
+                    "Cannot bind _version " + record.getVersion() + " for record from topic '"
+                            + record.getTopic() + "' at kafka offset " + record.getKafkaOffset()
+                            + ": a version must be a positive number derived from the GTID, "
+                            + "sequence number, LSN or source timestamp. The uninitialized "
+                            + "sentinel -1 is stored as UInt64 18446744073709551615 and would win "
+                            + "every ReplacingMergeTree deduplication for this key permanently, "
+                            + "silently discarding all later updates and deletes; 0 is not "
+                            + "producible by any source coordinate. Refusing to write the row.");
         }
     }
 

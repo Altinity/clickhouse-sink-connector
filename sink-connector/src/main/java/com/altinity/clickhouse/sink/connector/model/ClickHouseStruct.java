@@ -381,7 +381,11 @@ public class ClickHouseStruct {
             for (Field f : schemaFields) {
                 // Identify the list of columns that were modified.
                 // Schema.fields() will give the list of columns in the schema.
-                if (s.get(f) != null) {
+                // getWithoutDefault: Struct.get() answers the Connect-schema
+                // default (the MySQL column DEFAULT, via Debezium) for a null
+                // field, which would classify a source NULL as "modified to
+                // the default" (Spec 07.07 section 3.1).
+                if (s.getWithoutDefault(f.name()) != null) {
                     this.beforeModifiedFields.add(f);
                 }
             }
@@ -402,7 +406,8 @@ public class ClickHouseStruct {
             for (Field f : schemaFields) {
                 // Identify the list of columns that were modified.
                 // Schema.fields() will give the list of columns in the schema.
-                if (s.get(f) != null) {
+                // getWithoutDefault: see setBeforeStruct.
+                if (s.getWithoutDefault(f.name()) != null) {
                     this.afterModifiedFields.add(f);
                 }
             }

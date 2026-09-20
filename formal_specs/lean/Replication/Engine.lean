@@ -35,17 +35,29 @@ def BinlogPos.WellFormed (p : BinlogPos) : Prop :=
 
 /--
 The version assigned to the live record produced at 1-based stream ordinal `i`.
-Using `2 * i` leaves the odd slot `2 * i - 1` for the tombstone half of a
-primary-key relocation, so the tombstone strictly exceeds every version issued
-before ordinal `i` (which are all `≤ 2 * (i - 1)`) yet stays below its paired
-live row. This is the abstract form of the connector's guarantee that each
-committed event receives a strictly greater `_version` than every event before
-it.
+`2 * i` strictly exceeds every version issued before ordinal `i` (all
+`≤ 2 * (i - 1)`), which is the abstract form of the connector's guarantee that
+each committed event receives a strictly greater `_version` than every event
+before it. (The factor 2 is historical headroom; nothing now occupies the odd
+slots -- see `tombstoneVersion`.)
 -/
 def liveVersion (i : Nat) : Nat := 2 * i
 
-/-- The tombstone version paired with `liveVersion i` for a relocation at ordinal `i`. -/
-def tombstoneVersion (i : Nat) : Nat := 2 * i - 1
+/--
+The version of the tombstone half of a primary-key relocation at ordinal `i`:
+the SAME version as its paired live row, exactly as the connector binds
+`record.getVersion()` for both rows (Spec 05.02).
+
+The tombstone and the live row never share a key, so they never compete; what
+the tombstone must beat is the live row previously stored at the OLD key. In the
+model that row is strictly older (ordinal versioning), and in the connector it
+may carry the very same version (a relocation in the same transaction as the
+INSERT, under GTID versioning). The equal case is decided by the `FINAL` tie
+rule -- `maxStep` keeps the LATER record on `>=` -- which the tombstone wins by
+being written after the row it retires; see `tombstone_wins_version_tie`.
+A tombstone at `liveVersion i - 1` would lose that tie and leave a ghost row.
+-/
+def tombstoneVersion (i : Nat) : Nat := liveVersion i
 
 /--
 Translates a single MySQL binary log event, at 1-based stream ordinal `i`, into
@@ -88,8 +100,8 @@ def replicateFrom (i : Nat) (acc : CHTable) : List BinlogEvent → CHTable
 
 /--
 Replication Engine State Machine: takes a stream of MySQL binary log events and
-computes the resulting ClickHouse physical table. Ordinals start at 1 so the
-first tombstone version (`2*1 - 1 = 1`) is positive.
+computes the resulting ClickHouse physical table. Ordinals start at 1 so every
+version (`2*i`) is positive, matching the connector's rejection of `_version <= 0`.
 -/
 def replicateStream (events : List BinlogEvent) : CHTable :=
   replicateFrom 1 emptyCH events

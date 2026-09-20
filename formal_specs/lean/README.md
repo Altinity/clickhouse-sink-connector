@@ -80,7 +80,16 @@ The replication engine maps each binlog event into ClickHouse insertions:
   - If $k_{\text{old}} = k_{\text{new}}$:
     $[ \{ k_{\text{new}}, v, \text{encode}(p), \text{false} \} ]$
   - If $k_{\text{old}} \ne k_{\text{new}}$:
-    $[ \{ k_{\text{old}}, \emptyset, \text{encode}(p) - 1, \text{true} \}, \{ k_{\text{new}}, v, \text{encode}(p), \text{false} \} ]$
+    $[ \{ k_{\text{old}}, \emptyset, \text{encode}(p), \text{true} \}, \{ k_{\text{new}}, v, \text{encode}(p), \text{false} \} ]$
+
+    The tombstone and the live row carry the **same** version (the connector
+    binds `record.getVersion()` for both). They never share a key, so they
+    never compete; against an older live row at $k_{\text{old}}$ the tombstone
+    wins by version, or — when that row was written by the same transaction
+    and has the same version — by the `FINAL` tie rule below.
+- `FINAL` tie rule: `maxStep` uses `>=`, so of two records with one key and
+  equal version the one appended **later** wins (ClickHouse keeps the last
+  inserted row). Proved as `tombstone_wins_version_tie`.
 - $\text{translate}(\text{Delete}(k), p) = [ \{ k, \emptyset, \text{encode}(p), \text{true} \} ]$
 
 ---
@@ -97,10 +106,12 @@ on Lean's standard axioms `[propext, Quot.sound]` (verified via `#print axioms`)
 | `delete_convergence_single` | $\text{view}_{\text{CH}}(\text{replicate}([e_{\text{insert}}, e_{\text{delete}}])) = \text{None}$ | Tombstones erase rows in `FINAL`. |
 | `update_same_key_convergence` | $\text{view}_{\text{CH}}(\text{replicate}([e_{\text{ins}}, e_{\text{upd}}])) = \text{Some}(v_{\text{new}})$ | In-place updates supersede earlier inserts. |
 | `update_pk_relocation_soundness` | $\text{view}_{\text{CH}}(k_{\text{old}}) = \text{None} \land \text{view}_{\text{CH}}(k_{\text{new}}) = \text{Some}(v)$ | The two-phase tombstone protocol eliminates ghost rows on PK mutation. |
+| `tombstone_wins_version_tie` | live row $(k, V)$ then tombstone $(k, V)$ appended later $\implies \text{view}_{\text{CH}}(k) = \text{None}$ | Equal versions resolve to the later insert, so a same-transaction relocation (same `_version`) still retires the old key. |
 | `master_replication_convergence` | $\forall S, \forall k, \text{view}_{\text{CH}}(\text{replicate}(S), k) = \text{eval}_{\text{MySQL}}(S, k)$ | **Master Convergence Theorem**: inductive proof (via `replicate_converges_gen`) that ANY transaction stream — inserts, updates, relocations, deletes and truncates — achieves exact replica parity. |
 
 > Versioning note: the engine assigns versions by strictly increasing **stream
-> ordinal** (`liveVersion i = 2*i`, tombstone `2*i - 1`), so
+> ordinal** (`liveVersion i = 2*i`; the relocation tombstone carries the same
+> version, `tombstoneVersion i = liveVersion i`), so
 > `master_replication_convergence` needs no monotonic-position hypothesis. The
 > `encode` map above is a separate, documented order-witness proved monotonic only
 > within `BinlogPos.WellFormed`; it is not used by the engine.

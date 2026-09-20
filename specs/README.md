@@ -56,7 +56,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 
 ### Domain 05: Primary & Sorting Key Relocation (`specs/05-sorting-key-mutation/`)
 - **[05.01: Sorting Key Relocation Detection Algorithm](05-sorting-key-mutation/01-relocation-detection.md)**: `updateRelocatesSortingKey` algorithm.
-- **[05.02: Old Key Tombstone Synthesis & Versioning](05-sorting-key-mutation/02-tombstone-synthesis.md)**: Phase 1 delete tombstone (`is_deleted=1`, $V-1$).
+- **[05.02: Old Key Tombstone Synthesis & Versioning](05-sorting-key-mutation/02-tombstone-synthesis.md)**: Phase 1 delete tombstone (`is_deleted=1`, `_version` $= V$, later-insert-wins tie).
 - **[05.03: New Key Live Row Insertion](05-sorting-key-mutation/03-live-row-insertion.md)**: Phase 2 live row insert (`is_deleted=0`, $V$).
 - **[05.04: Sign Column Handling for CollapsingMergeTree](05-sorting-key-mutation/04-collapsing-merge-tree-sign.md)**: Binding `_sign` ($-1$ and $+1$).
 
@@ -107,6 +107,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 - **[10.02: Exponential Backoff & Retry Interval Calculation](10-resilience-monitoring/02-retry-exponential-backoff.md)**: Backoff intervals and retry ceilings.
 - **[10.03: Replica Status View & Monitoring Metrics](10-resilience-monitoring/03-replica-status-view.md)**: `system.show_replica_status` lag monitoring.
 - **[10.04: Loud Failure Guarantee & Anti-Swallowing Protocol](10-resilience-monitoring/04-loud-failure-guarantee.md)**: Invariant I9 (Loud Failure) enforcement.
+- **[10.05: Redelivered-Record De-duplication](10-resilience-monitoring/05-record-deduplication.md)**: `deduplication.policy` keys on event identity `(topic, partition, offset)`, never on the row key.
 
 ---
 
