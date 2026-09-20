@@ -47,6 +47,7 @@ LEAN_MODULES = [
     "Upgrade.lean",
     "Snapshot.lean",
     "GeneratedColumn.lean",
+    "OffsetFifo.lean",
 ]
 
 
