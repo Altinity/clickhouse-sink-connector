@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.concurrent.LinkedBlockingQueue;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -28,7 +29,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * is routed to a single thread's queue by a stable hash, and that thread drains
  * only its own queue in FIFO order. These tests verify the routing invariant:
  * a table always lands on the same thread's queue (so its batches stay ordered),
- * and each group is a distinct RoutedBatch on the correct queue.</p>
+ * each group is a distinct RoutedBatch on the correct queue, and every group of
+ * one handed-off list carries the list's handoff sequence (spec 01.05 §3.3).</p>
  *
  * <p>The routing method is private; it is driven reflectively. No ClickHouse,
  * MySQL or Debezium engine is required.</p>
@@ -37,13 +39,25 @@ public class HashRoutingPerTableOrderingTest {
 
     private static final int POOL = 4;
 
+    private List<LinkedBlockingQueue<RoutedBatch>> queues;
+
     @AfterEach
-    public void drainCounter() {
-        // appendToRecordsWithHashRouting increments the shared handoff counter
-        // per group; release everything so other tests start quiescent.
-        for (int i = 0; i < 4096 && DebeziumOffsetManagement.hasUnwrittenBatches(); i++) {
-            DebeziumOffsetManagement.batchHandoffFailed();
+    public void drainHandoffs() throws Exception {
+        // Every routed group was registered under a handoff sequence; report
+        // each as written through the production API (the records carry no
+        // committer, so acknowledging them stages nothing) so other tests start
+        // quiescent.
+        if (queues == null) {
+            return;
         }
+        for (LinkedBlockingQueue<RoutedBatch> queue : queues) {
+            RoutedBatch rb;
+            while ((rb = queue.poll()) != null) {
+                DebeziumOffsetManagement.checkIfBatchCanBeCommitted(rb.getBatch());
+            }
+        }
+        assertFalse(DebeziumOffsetManagement.hasUnwrittenBatches(),
+                "every routed group was written, so nothing may remain outstanding");
     }
 
     private static ClickHouseStruct rec(String topic) {
@@ -53,13 +67,13 @@ public class HashRoutingPerTableOrderingTest {
     }
 
     @SuppressWarnings("unchecked")
-    private static List<LinkedBlockingQueue<RoutedBatch>> wireCapture(DebeziumChangeEventCapture capture)
+    private List<LinkedBlockingQueue<RoutedBatch>> wireCapture(DebeziumChangeEventCapture capture)
             throws Exception {
         Field poolField = DebeziumChangeEventCapture.class.getDeclaredField("threadPoolSize");
         poolField.setAccessible(true);
         poolField.setInt(capture, POOL);
 
-        List<LinkedBlockingQueue<RoutedBatch>> queues = new ArrayList<>();
+        queues = new ArrayList<>();
         for (int i = 0; i < POOL; i++) {
             queues.add(new LinkedBlockingQueue<>());
         }
@@ -146,5 +160,47 @@ public class HashRoutingPerTableOrderingTest {
                 .anyMatch(rb -> "customers".equals(rb.getTableName()));
         assertTrue(ordersFound, "orders group must be on its computed owning queue");
         assertTrue(customersFound, "customers group must be on its computed owning queue");
+    }
+
+    @Test
+    @DisplayName("Every group of one handed-off list carries ONE handoff sequence; later handoffs get a greater one")
+    public void routedGroupsCarryTheUnitSequenceInHandoffOrder() throws Exception {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        List<LinkedBlockingQueue<RoutedBatch>> queues = wireCapture(capture);
+
+        List<ClickHouseStruct> first = new ArrayList<>();
+        first.add(rec("srv.db.orders"));
+        first.add(rec("srv.db.customers"));
+        route(capture, first);
+        // The unit is outstanding from the instant of handoff (spec 09.01 §3.1).
+        assertTrue(DebeziumOffsetManagement.hasUnwrittenBatches());
+
+        List<ClickHouseStruct> second = new ArrayList<>();
+        second.add(rec("srv.db.orders"));
+        route(capture, second);
+
+        List<RoutedBatch> all = new ArrayList<>();
+        for (LinkedBlockingQueue<RoutedBatch> q : queues) {
+            all.addAll(q);
+        }
+        assertEquals(3, all.size(), "two groups from the first list, one from the second");
+
+        long firstSeq = -1;
+        long secondSeq = -1;
+        for (RoutedBatch rb : all) {
+            if (rb.getBatch().get(0) == first.get(0) || rb.getBatch().get(0) == first.get(1)) {
+                if (firstSeq < 0) {
+                    firstSeq = rb.getHandoffSequence();
+                } else {
+                    assertEquals(firstSeq, rb.getHandoffSequence(),
+                            "both groups of one Debezium batch must share its handoff sequence");
+                }
+            } else {
+                secondSeq = rb.getHandoffSequence();
+            }
+        }
+        assertTrue(firstSeq >= 0 && secondSeq >= 0);
+        assertTrue(firstSeq < secondSeq,
+                "a later handoff must receive a strictly greater sequence (binlog order)");
     }
 }

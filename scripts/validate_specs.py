@@ -48,6 +48,7 @@ LEAN_MODULES = [
     "Snapshot.lean",
     "GeneratedColumn.lean",
     "DdlBarrier.lean",
+    "OffsetFifo.lean",
 ]
 
 

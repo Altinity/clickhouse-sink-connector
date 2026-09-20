@@ -112,6 +112,15 @@ public class ClickHouseBatchRunnable implements Runnable {
     private static final long ERROR_SLEEP_TIME_MS = 10000;
 
     /**
+     * Paces the retries of a batch that failed to reach ClickHouse: the delay
+     * doubles per consecutive failure of the same batch up to a cap, and is
+     * reset by a successful write (spec 10.02). Without it the scheduled tick
+     * re-ran a failing batch every buffer.flush.time.ms (30 ms) against a
+     * server that had just reported backpressure.
+     */
+    private final RetryBackoff retryBackoff;
+
+    /**
      * Constructs a ClickHouseBatchRunnable (legacy mode without hash-based routing).
      *
      * <p>Backward-compatible overload for callers that do not track durable
@@ -192,6 +201,11 @@ public class ClickHouseBatchRunnable implements Runnable {
         //this.queryToRecordsMap = new HashMap<>();
         this.topicToDbWriterMap = new HashMap<>();
         //this.topicToRecordsMap = new HashMap<>();
+        this.retryBackoff = new RetryBackoff(
+                this.config.getLong(ClickHouseSinkConnectorConfigVariables
+                        .BATCH_RETRY_BACKOFF_INITIAL_MS.toString()),
+                this.config.getLong(ClickHouseSinkConnectorConfigVariables
+                        .BATCH_RETRY_BACKOFF_MAX_MS.toString()));
         this.dbCredentials = parseDBConfiguration();
         this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
         try {
@@ -423,7 +437,9 @@ public class ClickHouseBatchRunnable implements Runnable {
                         + "frozen binlog position. Stopping the task to "
                         + "prevent silent data divergence; a restart resumes "
                         + "from the last committed offset.", taskId);
-                currentBatch = null;
+                // currentBatch is deliberately NOT cleared: its handoff unit
+                // must stay outstanding so no control-record offset can pass
+                // it while the engine is being stopped (spec 03.01 section 3.3).
                 throw new RuntimeException(
                         "OffsetStorageWriter is permanently stuck flushing; "
                                 + "stopping to prevent silent data divergence",
@@ -436,16 +452,28 @@ public class ClickHouseBatchRunnable implements Runnable {
 
             if (category == ClickHouseErrorClassifier.ErrorCategory.FATAL) {
                 log.error("FATAL ClickHouse error (Code: {}) -- this batch will never succeed. " +
-                          "Discarding batch and stopping task to prevent silent data loss. " +
+                          "Stopping this worker; the engine is stopped on the next source " +
+                          "batch (a dead worker is detected by the capture loop). " +
                           "Manual intervention required.", errorCode);
-                // Clear the stuck batch so it is not retried forever
-                currentBatch = null;
-                // Rethrow to stop the scheduled executor -- silent swallowing causes
-                // binlog advancement to stall and blocks replication for ALL tables
+                // currentBatch is deliberately NOT cleared: the batch's handoff
+                // unit stays outstanding, so no control-record offset can pass
+                // its rows and every younger unit stays parked behind it. The
+                // throw ends this scheduled task; DebeziumChangeEventCapture
+                // sees the terminated future and stops the engine LOUDLY with
+                // this cause (spec 03.01 section 3.3) instead of leaving a
+                // silently stalled pipeline behind.
                 throw new RuntimeException("Fatal ClickHouse error, stopping task", e);
             } else {
-                log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- " +
-                         "batch will be retried on next scheduled run.", errorCode, category);
+                long delayMs = retryBackoff.nextDelayMs(currentBatch);
+                log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- the same "
+                         + "batch will be retried in {} ms (consecutive failures: {}). Every "
+                         + "table hashed to this worker waits behind it until it succeeds.",
+                         errorCode, category, delayMs, retryBackoff.consecutiveFailures());
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
     }
@@ -555,8 +583,9 @@ public class ClickHouseBatchRunnable implements Runnable {
         addRecordsToHistoryTable(currentBatch, sourceTimeZone, serverTimeZone);
 
         ///// ***** START PROCESSING BATCH **************************
-        // Step 1: Add to Inflight batches.
-        DebeziumOffsetManagement.addToBatchTimestamps(currentBatch);
+        // The batch was registered with its handoff sequence by the producer
+        // before it was enqueued (spec 09.01 section 3.1); there is nothing to
+        // register on pick-up.
         log.info("****** Thread: " +
                 Thread.currentThread().getName() +
                 " Batch Size: " + currentBatch.size() +
@@ -609,10 +638,27 @@ public class ClickHouseBatchRunnable implements Runnable {
             
         
         if (result) {
-            // Step 2: Check if the batch can be committed.
-            if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {
-                currentBatch = null;
-            }
+            // WRITTEN-ONCE (spec 09.01 section 3.2). The rows are durably in
+            // ClickHouse, so this worker is finished with the batch whatever
+            // happens to its offset: drop it BEFORE handing it to the FIFO.
+            // Keeping a written batch as currentBatch while its offset waited
+            // for older batches made the run loop re-execute it -- and
+            // re-insert its rows -- on every tick until it became committable
+            // (rows present 3x in non-FINAL reads; write amplification).
+            // Whether the offset is acknowledged now (this is the oldest
+            // outstanding unit) or later (parked; drained by whichever call
+            // acknowledges the head) is the FIFO's concern, not the worker's.
+            List<ClickHouseStruct> written = currentBatch;
+            currentBatch = null;
+            retryBackoff.reset();
+            DebeziumOffsetManagement.checkIfBatchCanBeCommitted(written);
+        } else {
+            // Not written (e.g. table metadata not yet retrievable): keep the
+            // batch and retry it, but not every 30 ms (spec 10.02).
+            long delayMs = retryBackoff.nextDelayMs(currentBatch);
+            log.warn("Batch not written to ClickHouse; retrying the same batch in {} ms "
+                    + "(consecutive failures: {})", delayMs, retryBackoff.consecutiveFailures());
+            Thread.sleep(delayMs);
         }
         Thread.sleep(config.getLong(
                 ClickHouseSinkConnectorConfigVariables.
@@ -840,9 +886,10 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @return true if processing succeeds; false otherwise
      * @throws Exception if an error occurs during processing
      */
-    private boolean processRecordsByTopic(String topicName,
-                                          List<ClickHouseStruct> records)
+    boolean processRecordsByTopic(String topicName,
+                                  List<ClickHouseStruct> records)
             throws Exception {
+
         boolean result = false;
         //The user parameter will override the topic mapping to table.
         String tableName = getTableFromTopic(topicName);

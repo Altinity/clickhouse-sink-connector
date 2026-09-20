@@ -251,8 +251,26 @@ public class DdlDrainDeadlockTest {
         return routed;
     }
 
+    /**
+     * Clears the handoff FIFO's static bookkeeping so a registration left by an
+     * earlier test in this JVM cannot make the drain wait on a ghost unit.
+     * Mirrors the sink-connector test helper {@code OffsetTestSupport.resetFifo()}.
+     */
+    private static void resetOffsetFifo() throws Exception {
+        for (String name : new String[] {"outstandingSequences", "groupToUnit", "completedUnits"}) {
+            Field f = DebeziumOffsetManagement.class.getDeclaredField(name);
+            f.setAccessible(true);
+            Object collection = f.get(null);
+            if (collection instanceof java.util.Map) {
+                ((java.util.Map<?, ?>) collection).clear();
+            } else if (collection instanceof java.util.Collection) {
+                ((java.util.Collection<?>) collection).clear();
+            }
+        }
+    }
+
     private static RoutedBatch routedBatch(int threadId) {
-        return new RoutedBatch(new ArrayList<>(), threadId, "orders");
+        return new RoutedBatch(new ArrayList<>(), threadId, "orders", 0L);
     }
 
     /**
@@ -366,13 +384,16 @@ public class DdlDrainDeadlockTest {
         ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(2, FACTORY);
         AtomicBoolean released = new AtomicBoolean(false);
 
-        // A batch the producer handed to the writers; no consumer has
-        // acknowledged it yet, so the pipeline is NOT quiescent even though
-        // every queue is empty.
-        DebeziumOffsetManagement.batchHandedOff();
-        // The writer finishing that batch, RELEASE_DELAY_MS from now. The
-        // public release for a registration is batchHandoffFailed(); the
-        // per-batch acknowledge path is package-private to the executor.
+        // A unit the producer handed to the writers (registered with its
+        // handoff sequence, as appendToRecords does); no consumer has written
+        // it yet, so the pipeline is NOT quiescent even though every queue is
+        // empty. The record carries no committer, so acknowledging it later is
+        // a pure bookkeeping release.
+        resetOffsetFifo();
+        List<ClickHouseStruct> unit = java.util.Collections.singletonList(new ClickHouseStruct());
+        DebeziumOffsetManagement.registerHandoff(unit, java.util.Collections.singletonList(unit));
+        // The writer finishing that unit, RELEASE_DELAY_MS from now: reporting
+        // the group written acknowledges the unit (it is the FIFO head).
         Thread writer = new Thread(() -> {
             try {
                 Thread.sleep(RELEASE_DELAY_MS);
@@ -380,7 +401,11 @@ public class DdlDrainDeadlockTest {
                 Thread.currentThread().interrupt();
             }
             released.set(true);
-            DebeziumOffsetManagement.batchHandoffFailed();
+            try {
+                DebeziumOffsetManagement.checkIfBatchCanBeCommitted(unit);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+            }
         }, "ddl-drain-ack-test");
         writer.setDaemon(true);
 
@@ -404,7 +429,7 @@ public class DdlDrainDeadlockTest {
             writer.join(5_000);
             if (DebeziumOffsetManagement.hasUnwrittenBatches()) {
                 // Do not leak the registration into later tests in this JVM.
-                DebeziumOffsetManagement.batchHandoffFailed();
+                resetOffsetFifo();
             }
             executor.resume();
             executor.shutdownNow();

@@ -121,8 +121,24 @@ public class DebeziumChangeEventCapture {
     private java.util.List<LinkedBlockingQueue<RoutedBatch>> routedQueues;
 
     /**
+     * The scheduled future of every worker task (spec 03.01 section 3.3).
+     * <p>
+     * ScheduledThreadPoolExecutor cancels a periodic task whose run throws and
+     * tells nobody. A worker that rethrows a FATAL classification therefore
+     * used to die silently: its batch stayed outstanding, every later unit
+     * stayed parked, its queue filled, and the Debezium thread eventually
+     * blocked in put -- a stall with no error after the first one. These
+     * futures are inspected at the top of every handleChangeEventBatch so a
+     * dead worker stops the engine loudly instead.
+     * </p>
+     */
+    final java.util.List<java.util.concurrent.ScheduledFuture<?>> workerFutures =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
      * Number of threads in the thread pool (for hash-based routing).
      */
+
     private int threadPoolSize;
 
     /**
@@ -1630,9 +1646,15 @@ public class DebeziumChangeEventCapture {
                                 ClickHouseSinkConnectorConfig config)
             throws InterruptedException {
 
+        // A dead worker must stop the engine, not stall it (spec 03.01
+        // section 3.3). Checked before anything else, including the empty-batch
+        // return, so the failure surfaces on the very next source batch.
+        failIfWorkerDied();
+
         if (list.isEmpty()) {
             return;
         }
+
 
         // The newest record in this batch that produced no row, and is not a
         // DDL (the DDL path acknowledges itself). Heartbeats and
@@ -1722,8 +1744,54 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
+     * Stops the engine loudly if any worker's scheduled task has terminated.
+     * <p>
+     * {@code ScheduledThreadPoolExecutor} cancels a periodic task whose run
+     * throws; the task's future completes exceptionally and nothing else
+     * happens. The worker's batch stays outstanding (correct: no offset may
+     * pass it) but the process stays alive with one queue filling until the
+     * source reader blocks in {@code put} -- a silent stall. Re-raising the
+     * worker's cause from the Debezium thread leaves the {@code ChangeConsumer},
+     * so the engine stops through its completion callback with the worker's
+     * stack trace in the log; a restart resumes from the last committed offset.
+     * </p>
+     *
+     * @throws RuntimeException carrying the dead worker's cause.
+     */
+    @VisibleForTesting
+    void failIfWorkerDied() {
+        for (int i = 0; i < this.workerFutures.size(); i++) {
+            java.util.concurrent.ScheduledFuture<?> future = this.workerFutures.get(i);
+            if (future == null || !future.isDone()) {
+                continue;
+            }
+            Throwable cause = null;
+            try {
+                future.get();
+            } catch (java.util.concurrent.ExecutionException e) {
+                cause = e.getCause() != null ? e.getCause() : e;
+            } catch (java.util.concurrent.CancellationException e) {
+                cause = e;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                cause = e;
+            }
+            String message = String.format("Sink worker %d of %d is dead: its scheduled task "
+                    + "has terminated%s. Batches queued for it can never be written, offsets can "
+                    + "never advance past them, and its queue would fill until the source reader "
+                    + "blocks. Stopping the engine so the failure is visible; a restart resumes "
+                    + "from the last committed offset.", i, this.workerFutures.size(),
+                    cause == null ? " normally (a worker task must run for the life of the engine)"
+                            : "");
+            log.error(message, cause);
+            throw new RuntimeException(message, cause);
+        }
+    }
+
+    /**
      * Flags the last record of a batch about to be handed to the writers as the
      * batch terminal, so {@code DebeziumOffsetManagement.acknowledgeRecords} calls
+
      * {@code markBatchFinished()} and this handoff unit's offset is flushed once
      * its rows are written.
      * <p>
@@ -2267,96 +2335,108 @@ public class DebeziumChangeEventCapture {
                 this.routedQueues.add(new LinkedBlockingQueue<>(maxQueueSize));
             }
             for (int i = 0; i < this.threadPoolSize; i++) {
-                this.executor.scheduleAtFixedRate(
+                this.workerFutures.add(this.executor.scheduleAtFixedRate(
                         new ClickHouseBatchRunnable(this.routedQueues.get(i), i, config, new HashMap<>()),
                         0,
                         config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()),
-                        TimeUnit.MILLISECONDS);
+                        TimeUnit.MILLISECONDS));
             }
+
         } else {
             // Single thread - use legacy mode
             log.info("********* Using legacy mode with single thread *********");
             for (int i = 0; i < this.threadPoolSize; i++) {
-                this.executor.scheduleAtFixedRate(
+                this.workerFutures.add(this.executor.scheduleAtFixedRate(
                         new ClickHouseBatchRunnable(this.records, config, new HashMap<>()),
-                        0, 
-                        config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()), 
-                        TimeUnit.MILLISECONDS);
+                        0,
+                        config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()),
+                        TimeUnit.MILLISECONDS));
             }
+
         }
     }
 
     /**
-     * Appends the given records to the processing queue.
+     * Hands the given records to the writers (spec 01.05).
      *
-     * @param convertedRecords The list of {@link ClickHouseStruct} records.
+     * @param convertedRecords The list of {@link ClickHouseStruct} records, in
+     *                         binlog order, terminal marker on the last row.
      * @param config           The connector configuration.
+     * @throws InterruptedException if the handoff is interrupted; the unit's
+     *                              registration is deliberately kept, so no
+     *                              offset can pass rows that never reached a
+     *                              queue, and the engine stops loudly.
      */
-    private void appendToRecords(List<ClickHouseStruct> convertedRecords, ClickHouseSinkConnectorConfig config) {
+    private void appendToRecords(List<ClickHouseStruct> convertedRecords, ClickHouseSinkConnectorConfig config)
+            throws InterruptedException {
         // If config is set to single threaded.
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString())) {
             // Runs inline on this thread, so the rows are written (or have
             // thrown) before control returns. Nothing is ever outstanding
-            // across a quiescence check, so the counter is not involved.
+            // across a quiescence check, so no handoff sequence is involved.
             singleThreadedWriter.persistRecords(convertedRecords);
             return;
         }
 
-        // Asynchronous handoff from here on. Each unit that a consumer will
-        // acknowledge separately is registered BEFORE it becomes visible: a
-        // consumer polls the queue and only registers the batch in
-        // inFlightBatches once it reaches processBatch, so between those two
-        // points the batch is in neither collection and the pipeline would
-        // falsely read as quiescent. Counting the handoff closes that window
-        // -- see DebeziumOffsetManagement#hasUnwrittenBatches.
+        // Asynchronous handoff from here on. The unit is registered with its
+        // handoff sequence BEFORE it becomes visible to any consumer: the
+        // sequence is what orders its offset acknowledgement against every
+        // other outstanding batch (binlog order, spec 09.01), and the
+        // registration is what makes the batch read as unwritten from this
+        // instant -- including the window between a worker's poll() and its
+        // write -- see DebeziumOffsetManagement#hasUnwrittenBatches.
         if (this.threadPoolSize > 1 && this.routedQueues != null) {
             // Hash-based routing mode: group records by table and route to specific threads
             appendToRecordsWithHashRouting(convertedRecords);
         } else {
-            // Legacy mode: single queue
+            // Legacy mode: single queue; the unit is its own single group.
             synchronized (this.records) {
-                try {
-                    int remainingCapacity = this.records.remainingCapacity();
-                    int currentSize = this.records.size();
-                    int totalCapacity = remainingCapacity + currentSize;
-                    if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
-                        log.warn("Queue is at 90% capacity! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
-                    }
-                    if (remainingCapacity == 0) {
-                        log.warn("Queue is full! Current size: {}, Total capacity: {}", this.records.size(), totalCapacity);
-                    }
-                    DebeziumOffsetManagement.batchHandedOff();
-                    this.records.put(convertedRecords);
-                }catch(Exception e){
-                    // The batch never made it onto the queue, so no consumer
-                    // will ever acknowledge it. Release the registration or
-                    // the pipeline would never read as quiescent again.
-                    DebeziumOffsetManagement.batchHandoffFailed();
-                    log.error("An unexpected error occurred while putting batch into records queue. Error: {}",e.getMessage(),e);
+                int remainingCapacity = this.records.remainingCapacity();
+                int currentSize = this.records.size();
+                int totalCapacity = remainingCapacity + currentSize;
+                if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
+                    log.warn("Queue is at 90% capacity! Current size: {}, Total capacity: {}", currentSize, totalCapacity);
                 }
+                if (remainingCapacity == 0) {
+                    log.warn("Queue is full! Current size: {}, Total capacity: {}", this.records.size(), totalCapacity);
+                }
+                long sequence = DebeziumOffsetManagement.registerHandoff(convertedRecords,
+                        java.util.Collections.singletonList(convertedRecords));
+                this.records.put(convertedRecords);
+                log.debug("Handed off {} records as sequence {}", convertedRecords.size(), sequence);
             }
         }
     }
 
     /**
-     * Appends records using hash-based routing.
-     * Groups records by table and assigns each group to a specific thread.
+     * Hands records to the writers using hash-based routing (spec 01.05 section 3.3).
+     * Groups records by table and enqueues each group on its owning thread's
+     * queue. The whole list is ONE handoff unit with ONE sequence: its offset
+     * is acknowledged as a whole, in binlog order, once every group is written
+     * and every earlier unit is acknowledged (spec 09.01 section 3.3).
      *
      * @param convertedRecords The list of {@link ClickHouseStruct} records.
+     * @throws InterruptedException if enqueueing a group is interrupted.
      */
-    private void appendToRecordsWithHashRouting(List<ClickHouseStruct> convertedRecords) {
-        // Group records by routing key (database.table)
-        Map<String, List<ClickHouseStruct>> routingGroups = new HashMap<>();
-        
+    private void appendToRecordsWithHashRouting(List<ClickHouseStruct> convertedRecords)
+            throws InterruptedException {
+        // Group records by routing key (database.table), preserving each
+        // group's binlog order. Insertion-ordered so enqueueing is deterministic.
+        Map<String, List<ClickHouseStruct>> routingGroups = new java.util.LinkedHashMap<>();
+
         for (ClickHouseStruct record : convertedRecords) {
             String routingKey = RoutedBatch.createRoutingKey(record.getTopic());
             routingGroups.computeIfAbsent(routingKey, k -> new ArrayList<>()).add(record);
         }
-        
-        // Create a RoutedBatch for each group and enqueue it on its OWNING
-        // thread's queue. Each group is registered (batchHandedOff) individually
-        // and enqueued individually so a failure to enqueue one group releases
-        // only that group's registration.
+
+        // Register the unit with ALL its groups BEFORE any group is visible to
+        // a worker: an idle worker can finish its group before a busy worker
+        // has dequeued its sibling, and the unit must already exist -- with the
+        // sibling counted as unwritten -- when that happens.
+        long sequence = DebeziumOffsetManagement.registerHandoff(convertedRecords,
+                new ArrayList<>(routingGroups.values()));
+
+        // Enqueue each group on its OWNING thread's queue.
         for (Map.Entry<String, List<ClickHouseStruct>> entry : routingGroups.entrySet()) {
             String routingKey = entry.getKey();
             List<ClickHouseStruct> batch = entry.getValue();
@@ -2368,33 +2448,27 @@ public class DebeziumChangeEventCapture {
             LinkedBlockingQueue<RoutedBatch> queue = this.routedQueues.get(threadId);
 
             synchronized (queue) {
-                try {
-                    int remainingCapacity = queue.remainingCapacity();
-                    int currentSize = queue.size();
-                    int totalCapacity = remainingCapacity + currentSize;
-                    if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
-                        log.warn("Routed queue {} is at 90% capacity! Current size: {}, Total capacity: {}",
-                                threadId, currentSize, totalCapacity);
-                    }
-                    if (remainingCapacity == 0) {
-                        log.warn("Routed queue {} is full! Current size: {}, Total capacity: {}",
-                                threadId, currentSize, totalCapacity);
-                    }
-                    RoutedBatch routedBatch = new RoutedBatch(batch, threadId, tableName);
-                    DebeziumOffsetManagement.batchHandedOff();
-                    queue.put(routedBatch);
-                    log.debug("Routed {} records for table {} to thread {}", batch.size(), tableName, threadId);
-                } catch (Exception e) {
-                    // This group never reached the queue, so no consumer will
-                    // acknowledge it; release its registration or the pipeline
-                    // would never read as quiescent again.
-                    DebeziumOffsetManagement.batchHandoffFailed();
-                    log.error("An unexpected error occurred while putting batch into routed queue {}. Error: {}",
-                            threadId, e.getMessage(), e);
+                int remainingCapacity = queue.remainingCapacity();
+                int currentSize = queue.size();
+                int totalCapacity = remainingCapacity + currentSize;
+                if (totalCapacity > 0 && currentSize >= (0.9 * totalCapacity)) {
+                    log.warn("Routed queue {} is at 90% capacity! Current size: {}, Total capacity: {}",
+                            threadId, currentSize, totalCapacity);
                 }
+                if (remainingCapacity == 0) {
+                    log.warn("Routed queue {} is full! Current size: {}, Total capacity: {}",
+                            threadId, currentSize, totalCapacity);
+                }
+                // A failure here (InterruptedException) propagates: the unit
+                // stays outstanding, nothing is acknowledged, the engine stops,
+                // and a restart redelivers from the last committed offset.
+                queue.put(new RoutedBatch(batch, threadId, tableName, sequence));
+                log.debug("Routed {} records for table {} to thread {} as sequence {}",
+                        batch.size(), tableName, threadId, sequence);
             }
         }
     }
+
 
 
 
