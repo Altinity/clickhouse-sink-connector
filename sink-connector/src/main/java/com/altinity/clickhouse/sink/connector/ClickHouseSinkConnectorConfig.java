@@ -171,6 +171,33 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     public ClickHouseSinkConnectorConfig(ConfigDef config,
                                          Map<String, String> properties) {
         super(config, properties, false);
+        warnIfNonDefaultValueDisabled(properties);
+    }
+
+    /** Emitted at most once per JVM; the key is a no-op either way. */
+    private static final java.util.concurrent.atomic.AtomicBoolean NON_DEFAULT_VALUE_WARNED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * {@code non.default.value=false} used to make the writer bind the
+     * Connect-schema default (the MySQL column DEFAULT, via Debezium) in place
+     * of a source NULL -- and {@code false} was the hardcoded default. The
+     * source value is the only value there is to bind (Spec 07.07 section
+     * 3.3), so the key no longer does anything; say so once when an operator
+     * has explicitly asked for the old behaviour.
+     */
+    private static void warnIfNonDefaultValueDisabled(Map<String, String> properties) {
+        if (properties == null) {
+            return;
+        }
+        String key = ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString();
+        String value = properties.get(key);
+        if (value != null && "false".equalsIgnoreCase(value.trim())
+                && NON_DEFAULT_VALUE_WARNED.compareAndSet(false, true)) {
+            log.warn("{}=false is deprecated and ignored: the connector always binds the source "
+                            + "value, including NULL, and never substitutes a column DEFAULT for it.",
+                    key);
+        }
     }
 
     /**
@@ -768,9 +795,11 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString(),
                         Type.BOOLEAN,
-                        false,
-                        Importance.HIGH,
-                        "Non default value, if value is NULL, a default value will not be returned, NULL be used instead",
+                        true,
+                        Importance.LOW,
+                        "DEPRECATED, no effect: the connector always binds the source value, "
+                                + "including NULL, and never substitutes the column DEFAULT "
+                                + "(Spec 07.07). Kept so existing configurations still validate.",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         7,
                         ConfigDef.Width.NONE,

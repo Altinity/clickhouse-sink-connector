@@ -68,6 +68,25 @@ theorem findMaxVersion_snoc_dom (xs : List CHRecord) (rec : CHRecord)
       have : m.version < rec.version := h m hm
       simp [maxStep, Nat.le_of_lt this]
 
+/-- Appending a record whose version is at least every version already present
+    makes it the maximum: on a tie the LATER record wins (`maxStep` uses `>=`),
+    which is ClickHouse's ReplacingMergeTree rule for equal versions. -/
+theorem findMaxVersion_snoc_ge (xs : List CHRecord) (rec : CHRecord)
+    (h : ∀ r ∈ xs, r.version ≤ rec.version) :
+    findMaxVersion (xs ++ [rec]) = some rec := by
+  unfold findMaxVersion
+  rw [List.foldl_append]
+  simp only [List.foldl_cons, List.foldl_nil]
+  cases hf : xs.foldl maxStep none with
+  | none => simp [maxStep]
+  | some m =>
+      have hm : m ∈ xs := by
+        rcases foldlMax_mem xs none m hf with h1 | h2
+        · exact h1
+        · exact absurd h2 (by simp)
+      have : m.version ≤ rec.version := h m hm
+      simp [maxStep, this]
+
 /-- `filter` distributes over concatenation (self-contained, core only). -/
 theorem filter_append_self {α : Type _} (p : α → Bool) (l1 l2 : List α) :
     (l1 ++ l2).filter p = l1.filter p ++ l2.filter p := by
@@ -147,6 +166,69 @@ theorem chFinalView_snoc (acc : CHTable) (rec : CHRecord) (k : Key)
       simp [hk]
     rw [hf1]
     simp [hk]
+
+/-- Appending a record of a DIFFERENT key leaves the view for `k` unchanged,
+    whatever its version. This is what lets the relocation tombstone and its
+    paired live row share one version: they never compete. -/
+theorem chFinalView_snoc_other (acc : CHTable) (rec : CHRecord) (k : Key)
+    (h : rec.key ≠ k) : chFinalView (acc ++ [rec]) k = chFinalView acc k := by
+  unfold chFinalView
+  rw [filterKey_append]
+  have hf : filterKey [rec] k = [] := by
+    unfold filterKey
+    simp [h]
+  rw [hf, List.append_nil]
+
+/--
+The equal-version tie (Spec 05.02 section 3.2, Constitution I4): a tombstone for
+key `k` written AFTER a live row of the same key and the SAME version retires
+it -- `FINAL` evaluates `k` to `none`. This is the situation the connector meets
+when an INSERT and a sorting-key relocation of the same row share a transaction
+under GTID versioning (one `_version` for both events), and it is why the
+tombstone binds `record.getVersion()` unchanged: at `V - 1` it would be older
+than the live row and lose.
+-/
+theorem tombstone_wins_version_tie (acc : CHTable) (live tomb : CHRecord) (k : Key)
+    (hlk : live.key = k) (htk : tomb.key = k) (hver : tomb.version = live.version)
+    (hdel : tomb.is_deleted = true)
+    (h : ∀ r ∈ filterKey acc k, r.version ≤ live.version) :
+    chFinalView ((acc ++ [live]) ++ [tomb]) k = none := by
+  unfold chFinalView
+  rw [filterKey_append]
+  have hf : filterKey [tomb] k = [tomb] := by
+    unfold filterKey
+    simp [htk]
+  rw [hf]
+  have hall : ∀ r ∈ filterKey (acc ++ [live]) k, r.version ≤ tomb.version := by
+    intro r hr
+    rw [hver]
+    rw [filterKey_append, List.mem_append] at hr
+    rcases hr with h1 | h2
+    · exact h r h1
+    · have hm := mem_of_mem_filterKey h2
+      simp at hm
+      subst hm
+      exact Nat.le_refl _
+  rw [findMaxVersion_snoc_ge (filterKey (acc ++ [live]) k) tomb hall]
+  simp [hdel]
+
+/-- The contrast: the SAME tombstone written one version lower loses the tie and
+    leaves the live row visible -- the ghost row of the `V - 1` scheme. -/
+theorem decremented_tombstone_loses (live tomb : CHRecord) (k : Key)
+    (hlk : live.key = k) (htk : tomb.key = k) (hlive : live.is_deleted = false)
+    (hver : tomb.version + 1 = live.version) :
+    chFinalView ([live] ++ [tomb]) k = some live.row := by
+  unfold chFinalView
+  rw [filterKey_append]
+  have hf1 : filterKey [live] k = [live] := by
+    unfold filterKey
+    simp [hlk]
+  have hf2 : filterKey [tomb] k = [tomb] := by
+    unfold filterKey
+    simp [htk]
+  rw [hf1, hf2]
+  have hlt : ¬ (tomb.version ≥ live.version) := by omega
+  simp [findMaxVersion, maxStep, hlt, hlive]
 
 /-! ## Version monotonicity of the coordinate encoding -/
 
@@ -303,7 +385,7 @@ theorem replicate_converges_gen :
               · rw [htr] at h2; simp at h2; subst h2; simp [liveVersion]; omega
             have := ih (i + 1) (acc ++ translateEventAt i e) (applyBinlogEvent st e) (by omega) hbound' hview' k
             rw [this]; simp [List.foldl]
-          · -- relocation: tombstone(k_old) + live(k_new)
+          · -- relocation: tombstone(k_old) + live(k_new), both at the event's version
             let tomb : CHRecord := { key := k_old, row := [], version := tombstoneVersion i, is_deleted := true }
             let live : CHRecord := { key := k_new, row := v, version := liveVersion i, is_deleted := false }
             have htomb : tomb = { key := k_old, row := [], version := tombstoneVersion i, is_deleted := true } := rfl
@@ -312,36 +394,44 @@ theorem replicate_converges_gen :
               simp [translateEventAt, hop, beq_false_of_ne hkk, htomb, hlive]
             have hassoc : acc ++ translateEventAt i e = (acc ++ [tomb]) ++ [live] := by
               rw [htr]; simp [List.append_assoc]
+            -- tomb dominates every record for ITS key already in acc
+            have hdom_tomb : ∀ r ∈ filterKey acc k_old, r.version < tomb.version := by
+              intro r hr
+              have := hbound r (mem_of_mem_filterKey hr)
+              simp [htomb, tombstoneVersion, liveVersion]; omega
+            -- live dominates every record for ITS key in acc ++ [tomb]; the
+            -- tomb is not among them (different key), so the shared version
+            -- is never compared.
+            have hdom_live : ∀ r ∈ filterKey (acc ++ [tomb]) k_new, r.version < live.version := by
+              intro r hr
+              rw [filterKey_append, List.mem_append] at hr
+              rcases hr with h1 | h2
+              · have := hbound r (mem_of_mem_filterKey h1)
+                simp [hlive, liveVersion]; omega
+              · exfalso
+                have hp := pred_of_mem_filter' h2
+                have hm : r = tomb := by
+                  have := mem_of_mem_filterKey h2; simpa using this
+                subst hm
+                simp [htomb, beq_false_of_ne hkk] at hp
             have hview' : ∀ q, chFinalView (acc ++ translateEventAt i e) q = applyBinlogEvent st e q := by
               intro q
               rw [hassoc]
-              -- live dominates every record for q in (acc ++ [tomb])
-              have hdom_live : ∀ r ∈ filterKey (acc ++ [tomb]) q, r.version < live.version := by
-                intro r hr
-                rw [filterKey_append, List.mem_append] at hr
-                rcases hr with h1 | h2
-                · have := hbound r (mem_of_mem_filterKey h1)
-                  simp [hlive, liveVersion]; omega
-                · have : r = tomb := by
-                    have := mem_of_mem_filterKey h2; simpa using this
-                  subst this; simp [htomb, hlive, tombstoneVersion, liveVersion]; omega
-              rw [chFinalView_snoc (acc ++ [tomb]) live q hdom_live]
-              -- tomb dominates every record for q in acc
-              have hdom_tomb : ∀ r ∈ filterKey acc q, r.version < tomb.version := by
-                intro r hr
-                have := hbound r (mem_of_mem_filterKey hr)
-                simp [htomb, tombstoneVersion]; omega
-              rw [chFinalView_snoc acc tomb q hdom_tomb]
-              -- now decide by q
-              simp only [htomb, hlive]
-              by_cases hqo : k_old = q
-              · subst hqo
-                simp [applyBinlogEvent, hop, beq_false_of_ne hkk, beq_self_eq_true, Ne.symm hkk]
-              · by_cases hqn : k_new = q
-                · subst hqn
-                  simp [applyBinlogEvent, hop, beq_false_of_ne hkk, beq_self_eq_true,
-                        beq_false_of_ne (fun h => hqo h.symm)]
-                · rw [if_neg hqn, if_neg hqo, hview q]
+              by_cases hqn : k_new = q
+              · -- q is the NEW key: the live row decides it
+                subst hqn
+                rw [chFinalView_snoc (acc ++ [tomb]) live k_new hdom_live]
+                simp [hlive, applyBinlogEvent, hop, beq_false_of_ne hkk, beq_self_eq_true,
+                      beq_false_of_ne (Ne.symm hkk)]
+              · -- q is not the new key: the live row is invisible to it
+                rw [chFinalView_snoc_other (acc ++ [tomb]) live q (by simp [hlive]; exact hqn)]
+                by_cases hqo : k_old = q
+                · -- q is the OLD key: the tombstone decides it
+                  subst hqo
+                  rw [chFinalView_snoc acc tomb k_old hdom_tomb]
+                  simp [htomb, applyBinlogEvent, hop, beq_false_of_ne hkk, beq_self_eq_true]
+                · -- q is neither key: untouched
+                  rw [chFinalView_snoc_other acc tomb q (by simp [htomb]; exact hqo), hview q]
                   simp [applyBinlogEvent, hop, beq_false_of_ne hkk,
                         beq_false_of_ne (fun h => hqo h.symm),
                         beq_false_of_ne (fun h => hqn h.symm)]
@@ -352,7 +442,7 @@ theorem replicate_converges_gen :
               · have := hbound r h1; omega
               · simp [htomb, hlive] at h2
                 rcases h2 with h2a | h2b
-                · subst h2a; simp [tombstoneVersion]; omega
+                · subst h2a; simp [tombstoneVersion, liveVersion]; omega
                 · subst h2b; simp [liveVersion]; omega
             have := ih (i + 1) (acc ++ translateEventAt i e) (applyBinlogEvent st e) (by omega) hbound' hview' k
             rw [this]; simp [List.foldl]

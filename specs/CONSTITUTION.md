@@ -65,8 +65,16 @@ $$\forall K, \quad \text{ClickHouse}_{\text{FINAL}}(K) = \text{MySQL}(K)$$
 
 ### Invariant I4: Sorting Key Mutation Integrity
 Because ClickHouse `ReplacingMergeTree` cannot replace rows across differing `ORDER BY` sorting keys, an `UPDATE` that modifies any sorting key column must execute as an atomic two-phase operation:
-1. An explicit delete tombstone (`is_deleted = 1`, `_version = v - 1`) for the old sorting key.
+1. An explicit delete tombstone (`is_deleted = 1`, `_version = v`) for the old sorting key, written **after** the live row it retires.
 2. A live insert (`is_deleted = 0`, `_version = v`) for the new sorting key.
+
+Both rows carry the event's own version `v`. The tombstone must satisfy
+`v_orig <= v` against the live row already stored at the old key; under GTID
+versioning a relocation in the same transaction as the original INSERT has
+`v_orig = v`, and the equal case is resolved by ClickHouse's ReplacingMergeTree
+tie rule (equal version: the later-inserted row wins), which the tombstone wins
+by being written later. A tombstone at `v - 1` would lose that tie and leave a
+ghost row (Spec 05.02 §3.2).
 
 ### Invariant I5: DDL Barrier Quiescence (Zero Schema Inversion)
 DDL statements alter the relational contract. A DDL event must establish an absolute execution barrier:

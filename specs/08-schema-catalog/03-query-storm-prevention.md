@@ -26,7 +26,15 @@ In high-throughput replication, if an incoming event carries a column that does 
 1. `refreshIfRecordHasUnknownColumn` encounters a record field missing from the cached column map.
 2. It checks `isColumnProvenAbsent(tableKey, column)` (case-insensitive). If true, it returns immediately without issuing SQL.
 3. Otherwise it re-reads the metadata once.
-4. If the column is still absent, it calls `markColumnProvenAbsent(tableKey, column)`, which stores the column with the table's **current** `getVersion(tableKey)`.
+4. If the column is still absent from the writable map **and is an `ALIAS`**
+   (`default_kind = 'ALIAS'`, i.e. ClickHouse owns it and no re-read will ever
+   produce it), it calls `markColumnProvenAbsent(tableKey, column)`, which
+   stores the column with the table's **current** `getVersion(tableKey)`. A
+   `MATERIALIZED` column is converted instead (and fails the batch if the
+   conversion fails), and a column that does not exist at all is added or
+   fails the batch (Spec 08.04 §3.1/§3.3) — neither is ever marked
+   proven-absent, in any outcome, because that would silently drop its value
+   on every later record. `markColumnProvenAbsent` is reserved for `ALIAS`.
 5. The proof is honoured only while `getVersion(tableKey)` still equals the stored version: a later `invalidateTable(tableKey)` or `invalidateAll()` changes the version, `isColumnProvenAbsent` then discards the stale proof and returns false, and the column is probed once against the new schema.
 6. `null`/empty table or column names are inert for both methods.
 

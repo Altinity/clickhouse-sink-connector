@@ -41,4 +41,13 @@ Specifies the synchronization monitor inside `ClickHouseBatchExecutor` that park
 ---
 
 ## 5. Verification Criteria
-- `ClickHouseBatchExecutorTest.testPauseResume()`
+- `PauseDrainAtomicityTest.testNoTaskStartsWhileGateHeld()` — no worker
+  passes `beforeExecute()` while `isPaused` is set.
+- `PauseDrainAtomicityTest.testNothingStartsAfterPauseReturns()` — once
+  `pause()` has returned, no batch begins until `resume()`.
+- `PauseDrainRaceTest.testDrainDoesNotRaceATaskThatIsAboutToStart()` — a task
+  already past the queue but not yet counted cannot slip through the drain.
+- `PauseDrainRaceTest.testTaskQueuedWhilePausedDoesNotRunBeforeResume()` —
+  parked workers wake only on `resume()`.
+- `PauseDrainRaceTest.testRepeatedDrainCyclesUnderLoad()` — repeated
+  pause / `awaitQuiescent` / resume cycles under concurrent submission.

@@ -323,7 +323,7 @@ In `PreparedStatementExecutor.insertBatch()` and `PreparedStatementFieldMapper.i
    - If an UPDATE modifies a column that is part of the ClickHouse `ORDER BY` sorting key:
      - `updateRelocatesSortingKey()` detects the mismatch between `beforeStruct` and `afterStruct`.
      - An explicit tombstone row is inserted for the *old* sorting key:
-       `insertTombstonePreparedStatement()` binds the before-image values with `is_deleted = 1` and `_version = record.getVersion() - 1`.
+       `insertTombstonePreparedStatement()` binds the before-image values with `is_deleted = 1` and `_version = record.getVersion()` (the same version as the after-image; a same-transaction relocation shares its version with the row it retires, and ClickHouse's equal-version tie resolves to the later-inserted row, i.e. the tombstone).
      - The live after-image row is then inserted for the *new* sorting key with `is_deleted = 0` and `_version = record.getVersion()`.
 2. **Type Conversion (`ClickHouseDataTypeMapper.convert`)**:
    - Binds values to `PreparedStatement` parameter positions:
@@ -497,7 +497,7 @@ The following catalog specifies the behavioral contract, synchronization boundar
 - **Purpose**: Binds an explicit `ReplacingMergeTree` delete tombstone row for an UPDATE that changes the row sorting key.
 - **Inputs**: Column index map, statement `ps`, before-image fields, record, before struct, config, column types, engine, table name.
 - **Outputs**: None.
-- **Mutations**: Calls `insertPreparedStatement` with `beforeSection = true`. Overrides delete column to `1` (or `-1`) and overrides version column to `record.getVersion() - 1`.
+- **Mutations**: Calls `insertPreparedStatement` with `beforeSection = true`. Overrides delete column to `1` (or `-1`) and binds the version column to `record.getVersion()` unchanged.
 
 ---
 

@@ -25,20 +25,39 @@ public class DebeziumConverter {
 
 
     public static class MicroTimeConverter {
+
+        private static final long MICROS_PER_SECOND = 1_000_000L;
+        private static final long MICROS_PER_MINUTE = 60L * MICROS_PER_SECOND;
+        private static final long MICROS_PER_HOUR = 60L * MICROS_PER_MINUTE;
+
         /**
-         * Function to convert Long(Epoch)
-         * to Formatted String(Time)
-         * @param value
-         * @return
+         * Formats a Debezium {@code io.debezium.time.MicroTime} value -- the
+         * MySQL {@code TIME} as a SIGNED total of microseconds -- as
+         * {@code [-]HH:mm:ss.ffffff} for a ClickHouse {@code String} column.
+         *
+         * <p>MySQL {@code TIME} is a duration in {@code -838:59:59 .. 838:59:59},
+         * not a time of day, so the hours field is unbounded and the value may
+         * be negative. Reducing it modulo 24 h through a {@code LocalTime} (the
+         * previous implementation) turned {@code -01:00:00} into
+         * {@code 23:00:00} and {@code 25:30:00} into {@code 01:30:00}, silently
+         * (Spec 07.03 section 3.2).</p>
+         *
+         * @param value the signed microsecond total (a {@link Long})
+         * @return the formatted time
          */
         public static String convert(Object value) {
-
-            Instant i = Instant.EPOCH.plus((Long) value, ChronoUnit.MICROS);
-
-            LocalTime time = i.atZone(ZoneOffset.UTC).toLocalTime();
-            String formattedSecondsTimestamp= time.format(DateTimeFormatter.ofPattern("HH:mm:ss.SSSSSS"));
-
-            return formattedSecondsTimestamp;
+            long micros = ((Number) value).longValue();
+            if (micros == Long.MIN_VALUE) {
+                // Not a MySQL TIME (|value| > 838 h); refuse rather than misformat.
+                throw new IllegalArgumentException("MicroTime value out of range: " + micros);
+            }
+            String sign = micros < 0 ? "-" : "";
+            long magnitude = Math.abs(micros);
+            long hours = magnitude / MICROS_PER_HOUR;
+            long minutes = (magnitude % MICROS_PER_HOUR) / MICROS_PER_MINUTE;
+            long seconds = (magnitude % MICROS_PER_MINUTE) / MICROS_PER_SECOND;
+            long fraction = magnitude % MICROS_PER_SECOND;
+            return String.format("%s%02d:%02d:%02d.%06d", sign, hours, minutes, seconds, fraction);
         }
     }
 

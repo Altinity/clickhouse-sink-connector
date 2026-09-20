@@ -29,15 +29,21 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
 
 ### 3.0 Model design (what is abstracted, and faithfully)
 - **Versioning is by stream ordinal.** `replicateFrom` assigns each event a
-  strictly increasing version (`liveVersion i = 2*i`, with the relocation
-  tombstone at `2*i - 1`). This is the abstract form of the connector's
-  guarantee that every committed event receives a strictly greater `_version`
-  than the events before it — the property the high-water floor and sequence
-  counter enforce concretely. Because the ordinal is strictly monotonic by
-  construction, convergence holds for ANY stream, with no monotonic-position
-  hypothesis required. **The shipped formula `effectiveTs * 1_000_000 + seq`,
+  strictly increasing version (`liveVersion i = 2*i`; the relocation tombstone
+  carries the SAME version, `tombstoneVersion i = liveVersion i`, exactly as
+  the connector binds `record.getVersion()` for both rows). This is the
+  abstract form of the connector's guarantee that every committed event
+  receives a strictly greater `_version` than the events before it — the
+  property the high-water floor and sequence counter enforce concretely.
+  Because the ordinal is strictly monotonic by construction, convergence holds
+  for ANY stream, with no monotonic-position hypothesis required. **The shipped formula `effectiveTs * 1_000_000 + seq`,
   the floor `sequenceMaxSourceTs`, the counter seeds and the GTID precedence are
   not modelled** (specs 02.01–02.04 state the consequences).
+- **`FINAL` resolves equal versions to the later-inserted row.** `maxStep`
+  compares with `>=`, so among records of one key with equal version the one
+  appended later wins — ClickHouse's ReplacingMergeTree tie rule. This is what
+  makes a tombstone written at the same version as an earlier live row (the
+  same-transaction relocation case, Spec 05.02 §3.2) retire it.
 - **`encodeVersion` is a separate, documented order-witness.** The
   `(fileSeq, offset, rowIdx)` → integer encoding is proved strictly monotonic
   only within `BinlogPos.WellFormed` (offset/rowIdx bounded so the fields do
@@ -55,8 +61,11 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
 2. `insert_convergence_single`: single-row insert parity between MySQL and ClickHouse `FINAL`.
 3. `delete_convergence_single`: tombstone erasure in ClickHouse `FINAL`.
 4. `update_same_key_convergence`: in-place updates converge to the latest row.
-5. `update_pk_relocation_soundness`: two-phase tombstoning cleans up the old key and establishes the new key.
-6. `master_replication_convergence`: global convergence for ALL binlog streams
+5. `update_pk_relocation_soundness`: two-phase tombstoning cleans up the old key and establishes the new key (tombstone and live row share the version).
+6. `tombstone_wins_version_tie`: a tombstone appended after a live row of the
+   same key and the SAME version evaluates the key to `none` — the tie rule
+   the equal-version relocation relies on.
+7. `master_replication_convergence`: global convergence for ALL binlog streams
    (`chFinalView (replicateStream events) k = evalMySQL events emptyMySQL k`),
    proved via the general lemma `replicate_converges_gen` by induction on the
    stream with a coherence + version-bound invariant.
@@ -77,7 +86,12 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
 The proposition `ReplayIdempotency` in `Invariants.lean` is stated but has no theorem.
 
 ### 3.2 Build, axiom verification and CI gate
-- `lake build` in `formal_specs/lean/` type-checks every theorem.
+- `lake build` in `formal_specs/lean/` type-checks every theorem. The
+  `lean_lib` is marked `@[default_target]` in `lakefile.lean`; without that
+  attribute a bare `lake build` has no target, reports success and compiles
+  nothing (observed before this was added), so the attribute is part of the
+  verification contract. Proof of a real build is the per-module
+  `Built Replication.<Module>` lines.
 - Each theorem depends only on Lean's standard axioms `[propext, Quot.sound]` —
   verified with `#print axioms` — and on NO `sorryAx`.
 - **CI builds the proofs on every pull request and on every push to `2.11.0`**:

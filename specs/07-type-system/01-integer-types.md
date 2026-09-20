@@ -24,7 +24,22 @@ Specifies the conversion of signed and unsigned MySQL integer types to ClickHous
 | `INT` / `INTEGER` | `INT32` | `Int32` | Standard 32-bit signed int |
 | `INT UNSIGNED` | `INT64` | `UInt32` | Handled via `Long.longValue()`, stored as `UInt32` |
 | `BIGINT` | `INT64` | `Int64` | Standard 64-bit signed long |
-| `BIGINT UNSIGNED` | `BYTES` / `Decimal` | `UInt64` | Bound via `BigInteger` to prevent sign inversion |
+| `BIGINT UNSIGNED` | `INT64` (default `bigint.unsigned.handling.mode=long`) | `UInt64` | Values $\ge 2^{63}$ arrive as a **negative** `long` (two's-complement wrap); the mapper restores the unsigned magnitude before binding (§3.1) |
+| `BIGINT UNSIGNED` | `BYTES` / `Decimal` (only if `bigint.unsigned.handling.mode=precise` is configured on the source) | `UInt64` | Bound as `BigDecimal`; no wrap occurs |
+
+### 3.1 `BIGINT UNSIGNED` under Debezium's default `long` mode
+No connector configuration sets `bigint.unsigned.handling.mode=precise`, so the
+default `long` applies: Debezium emits `INT64` and a MySQL value in
+$[2^{63}, 2^{64})$ wraps to a negative Java `long` (e.g. `18446744073709551615`
+arrives as `-1L`). `ClickHouseDataTypeMapper.convert` previously bound that
+`long` with `ps.setObject`, so ClickHouse either rejected the row (negative into
+`UInt64`) or, through driver coercion, stored a different number.
+
+Rule: when the Kafka type is `INT64` (no logical name), the ClickHouse target
+column is `UInt64`, and the value is a negative `Long`, bind
+`new BigInteger(Long.toUnsignedString(value))` — the exact MySQL value. Values
+$< 2^{63}$ are unaffected. A negative `long` bound for a *signed* `Int64`
+target is left untouched (it is a genuine negative `BIGINT`).
 
 ---
 
@@ -34,4 +49,18 @@ Specifies the conversion of signed and unsigned MySQL integer types to ClickHous
 ---
 
 ## 5. Verification Criteria
-- `ClickHouseDataTypeMapperTest.testIntegerConversions()`
+- `ClickHouseDataTypeMapperTest.getClickHouseDataType()` — signed MySQL
+  integer types map to `Int8`/`Int16`/`Int32`/`Int64`.
+- `ClickHouseDataTypeMapperTest.getUnsignedClickHouseType()` — `TINYINT` /
+  `SMALLINT` / `MEDIUMINT` / `INT` / `BIGINT UNSIGNED` map to `UInt8` /
+  `UInt16` / `UInt32` / `UInt32` / `UInt64`; display width and `ZEROFILL`
+  are tolerated; signed types are not remapped.
+- `ClickHouseDataTypeMapperInt8Test.int8ByteIsBoundToInt8Column()`,
+  `ClickHouseDataTypeMapperInt8Test.int8ByteIsBoundToUInt8Column()`,
+  `ClickHouseDataTypeMapperInt8Test.negativeInt8KeepsItsSign()` — a
+  `TINYINT` arrives as `INT8` and is bound without sign loss or truncation.
+- `ClickHouseDataTypeMapperUInt64Test.testWrappedUnsignedBigintIsRestoredForUInt64Target()`
+  — `-1L` → `18446744073709551615`, `Long.MIN_VALUE` → `9223372036854775808`
+  (pre-fix code binds the negative `long`).
+- `ClickHouseDataTypeMapperUInt64Test.testNegativeLongForSignedInt64TargetIsUnchanged()`
+  — a real negative `BIGINT` stays negative.

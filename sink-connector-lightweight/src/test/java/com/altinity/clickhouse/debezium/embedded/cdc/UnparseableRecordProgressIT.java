@@ -14,6 +14,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LogEvent;
 import org.apache.logging.log4j.core.Logger;
 import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.logging.log4j.core.config.Property;
 import org.junit.Assert;
 import org.junit.jupiter.api.AfterEach;
@@ -68,7 +69,12 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProp
  *   <li>the unparseable path was actually reached during the run -- either a
  *       deliberate skip (fixed) or a NullPointerException (broken). If
  *       neither appears, no such record was ever produced and the test would
- *       be proving nothing, so it fails;</li>
+ *       be proving nothing, so it fails. A deliberate skip is logged at
+ *       DEBUG for a control record (heartbeat / transaction metadata,
+ *       Spec 01.06 section 3.1 -- WARN per heartbeat is forbidden there) and
+ *       at WARN for a row record the parser could not convert, so the
+ *       capture's logger is opened to DEBUG for the run and both lines
+ *       count;</li>
  *   <li>no NullPointerException was raised while processing records, and the
  *       rows written after those records are all in ClickHouse -- the
  *       pipeline kept making progress.</li>
@@ -154,9 +160,15 @@ public class UnparseableRecordProgressIT {
         // Attach before the engine starts, so nothing logged during startup or
         // the snapshot is missed.
         Logger coreLogger = (Logger) LogManager.getLogger(DebeziumChangeEventCapture.class);
+        Level savedLevel = coreLogger.getLevel();
         CapturingAppender appender = new CapturingAppender();
         appender.start();
         coreLogger.addAppender(appender);
+        // Control records are skipped at DEBUG (Spec 01.06 section 3.1); the
+        // logger must be opened up or the deliberate skip is invisible and
+        // assertion (1) below cannot tell "handled quietly" from "never
+        // produced". Restored in the finally block.
+        Configurator.setLevel(coreLogger.getName(), Level.DEBUG);
 
         ClickHouseDebeziumEmbeddedApplication application =
                 new ClickHouseDebeziumEmbeddedApplication();
@@ -191,8 +203,16 @@ public class UnparseableRecordProgressIT {
 
             // (1) The unparseable path must have been reached, otherwise this
             // test asserts nothing. Post-fix that shows up as the deliberate
-            // skip; pre-fix as the NullPointerException asserted on below.
-            long skips = appender.events.stream()
+            // skip -- the DEBUG control-record line for a heartbeat or
+            // transaction-boundary record (Spec 01.06 section 3.1), or the
+            // WARN skip for a row record the parser could not convert;
+            // pre-fix as the NullPointerException asserted on below.
+            long controlRecordSkips = appender.events.stream()
+                    .filter(e -> e.getLevel() == Level.DEBUG)
+                    .filter(e -> e.getMessage().getFormattedMessage().toLowerCase()
+                            .contains("control record"))
+                    .count();
+            long rowRecordSkips = appender.events.stream()
                     .filter(e -> e.getLevel().isMoreSpecificThan(Level.WARN))
                     .filter(e -> e.getMessage().getFormattedMessage().toLowerCase()
                             .contains("skipping"))
@@ -200,8 +220,9 @@ public class UnparseableRecordProgressIT {
             List<Throwable> npes = collectNullPointerExceptions(appender);
             Assert.assertTrue("no unparseable record reached the connector during this run, so "
                             + "this test exercised nothing; expected transaction-boundary or "
-                            + "heartbeat records to be produced",
-                    skips > 0 || !npes.isEmpty());
+                            + "heartbeat records to be produced (DEBUG control-record skip or "
+                            + "WARN row-record skip from DebeziumChangeEventCapture)",
+                    controlRecordSkips > 0 || rowRecordSkips > 0 || !npes.isEmpty());
 
             // (2) The regression itself. A record the parser cannot convert
             // must be skipped deliberately, never by way of an NPE.
@@ -224,6 +245,7 @@ public class UnparseableRecordProgressIT {
             Assert.assertEquals("every row inserted after the unparseable records must reach "
                     + "ClickHouse", ROWS, landed);
         } finally {
+            Configurator.setLevel(coreLogger.getName(), savedLevel);
             coreLogger.removeAppender(appender);
             appender.stop();
             try {
