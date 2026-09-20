@@ -1,0 +1,98 @@
+name: Spec Governance
+
+# Makes the spec-driven-development rules in AGENTS.md enforceable:
+#   * the Lean 4 proofs under formal_specs/lean must build (lake build) with the
+#     toolchain pinned in formal_specs/lean/lean-toolchain;
+#   * no proof may be left as `sorry` / `admit` / `native_decide`;
+#   * scripts/validate_specs.py must pass, including the spec-first gate: a
+#     change under */src/main/** or to a *.g4 grammar must come with a change
+#     under specs/ or formal_specs/ (or carry `[spec-exempt: <reason>]` in the
+#     HEAD commit message).
+#
+# Intended to be marked "required" in branch protection for the release branch.
+
+on:
+  pull_request:
+    branches:
+      - '**'
+  push:
+    branches:
+      - '2.11.0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spec-governance-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spec-governance:
+    name: Lean proofs and spec validator
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out (full history for the spec-first diff)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install elan (toolchain resolved from formal_specs/lean/lean-toolchain)
+        run: |
+          set -euo pipefail
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh -o /tmp/elan-init.sh
+          # No default toolchain: elan installs exactly the version pinned in
+          # lean-toolchain when lake/lean are first invoked inside that directory.
+          sh /tmp/elan-init.sh -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Cache the Lake build directory
+        uses: actions/cache@v4
+        with:
+          path: formal_specs/lean/.lake
+          key: lake-${{ runner.os }}-${{ hashFiles('formal_specs/lean/lean-toolchain', 'formal_specs/lean/lakefile.lean', 'formal_specs/lean/Replication/**') }}
+          restore-keys: |
+            lake-${{ runner.os }}-
+
+      - name: Build the formal proofs (lake build)
+        working-directory: formal_specs/lean
+        run: |
+          set -euo pipefail
+          echo "pinned toolchain: $(cat lean-toolchain)"
+          lean --version
+          lake build
+
+      - name: Reject incomplete or unchecked proofs (sorry / admit / native_decide)
+        run: |
+          set -euo pipefail
+          if find formal_specs/lean -name '*.lean' -not -path '*/.lake/*' -print0 \
+               | xargs -0 grep -nE '\b(sorry|admit|native_decide)\b'; then
+            echo "::error::forbidden proof marker found in formal_specs/lean"
+            exit 1
+          fi
+          echo "no sorry/admit/native_decide in formal_specs/lean"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Validator self-tests
+        run: python3 -m unittest discover -s scripts/tests -v
+
+      - name: Spec validator with the spec-first gate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
+            python3 scripts/validate_specs.py --changed-base "origin/${BASE_REF}"
+          elif [ -n "$BEFORE_SHA" ] && ! echo "$BEFORE_SHA" | grep -qE '^0+$' && git cat-file -e "$BEFORE_SHA" 2>/dev/null; then
+            python3 scripts/validate_specs.py --changed-base "$BEFORE_SHA"
+          else
+            # First push of a branch: no previous tip to diff against.
+            python3 scripts/validate_specs.py
+          fi
