@@ -14,6 +14,7 @@ import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.altinity.clickhouse.sink.connector.model.RoutedBatch;
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.source.SourceRecord;
@@ -217,6 +218,21 @@ public class ClickHouseBatchRunnable implements Runnable {
         String jdbcUrl = BaseDbWriter.getConnectionString(
                 this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), "system");
+        return openConnection(jdbcUrl, databaseName);
+    }
+
+    /**
+     * The single place this worker obtains a JDBC connection. Every
+     * connection the worker uses -- system, per-database, bootstrap -- comes
+     * through here, so a test can substitute recording or null connections
+     * without a ClickHouse server.
+     *
+     * @param jdbcUrl      the server URL to connect to
+     * @param databaseName the database the connection is for (pool key)
+     * @return a connection, or null when one cannot be obtained
+     */
+    @VisibleForTesting
+    Connection openConnection(String jdbcUrl, String databaseName) {
         return BaseDbWriter.createConnection(jdbcUrl,
                 BaseDbWriter.DATABASE_CLIENT_NAME,
                 this.dbCredentials.getUserName(),
@@ -224,61 +240,95 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
+     * {@code host:port/database} keys whose {@code CREATE DATABASE IF NOT
+     * EXISTS} has succeeded in this process. Shared by every worker: the
+     * statement is needed once per database per process, not once per worker
+     * per cache miss -- and never again on every batch while a connection to
+     * that database cannot be obtained.
+     */
+    private static final java.util.Set<String> ENSURED_DATABASES =
+            ConcurrentHashMap.newKeySet();
+
+    /**
      * Retrieves the ClickHouse connection for the specified database.
      *
-     * <p>If no connection exists, this method creates the database (if
-     * needed) and returns a new connection.
+     * <p>If no connection is cached, this method ensures the database exists
+     * (once per process, see {@link #ensureDatabaseExists}) and opens a new
+     * connection. A connection that cannot be obtained is reported at ERROR
+     * naming the database and is NOT cached, so the next lookup retries.
      *
      * @param databaseName the target database name
-     * @return a Connection to the specified database
+     * @return a Connection to the specified database, or null if none could
+     *         be obtained
      */
     private Connection getClickHouseConnection(String databaseName) {
         if (this.databaseToConnectionMap.containsKey(databaseName)) {
             return this.databaseToConnectionMap.get(databaseName);
         }
-        // Create database if it doesnt exist.
-        String systemJdbcUrl = BaseDbWriter.getConnectionString(
-                this.dbCredentials.getHostName(),
-                this.dbCredentials.getPort(), "system");
-        Connection systemConn = BaseDbWriter.createConnection(systemJdbcUrl,
-                BaseDbWriter.DATABASE_CLIENT_NAME,
-                this.dbCredentials.getUserName(),
-                this.dbCredentials.getPassword(), "system", config);
-        try {
-            boolean useOnCluster = this.config.
-                    getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
-            new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
-            DBMetadata metadata = new DBMetadata(config);
-            metadata.executeSystemQuery(systemConn,
-                    "CREATE DATABASE IF NOT EXISTS `" + databaseName + "`");
-        } catch (Exception e) {
-            log.error("Error creating database " + e);
-        } finally {
-            try {
-                // createConnection() returns null when ClickHouse is
-                // unreachable, closing it would throw a NullPointerException
-                // that the handler below does not catch.
-                if (systemConn != null) {
-                    systemConn.close();
-                }
-            } catch (SQLException e) {
-                log.error("Error closing connection when creating database" + e);
-            }
-        }
+        ensureDatabaseExists(databaseName);
         String jdbcUrl = BaseDbWriter.getConnectionString(
                 this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName);
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl,
-                BaseDbWriter.DATABASE_CLIENT_NAME,
-                this.dbCredentials.getUserName(),
-                this.dbCredentials.getPassword(), databaseName, config);
+        Connection conn = openConnection(jdbcUrl, databaseName);
         // Only cache a usable connection. containsKey() above returns true for
         // a key mapped to null, so caching a failed connection would keep
         // returning null for this database until the connector restarts.
         if (conn != null) {
             this.databaseToConnectionMap.put(databaseName, conn);
+        } else {
+            // Never silent: the caller retries on the next tick, and the
+            // operator must be able to see WHICH database cannot be reached.
+            log.error("Could not obtain a ClickHouse connection to database `{}` on {}:{}; "
+                            + "the batch will be retried on the next tick.",
+                    databaseName, this.dbCredentials.getHostName(), this.dbCredentials.getPort());
         }
         return conn;
+    }
+
+    /**
+     * Issues {@code CREATE DATABASE IF NOT EXISTS} for {@code databaseName}
+     * unless this process has already done so successfully.
+     *
+     * <p>Exactly one statement per database per process. A failure -- no
+     * system connection, or a rejected statement -- is reported at ERROR
+     * naming the database and is NOT recorded as ensured, so the next cache
+     * miss tries again. The caller still attempts the database connection in
+     * either case: a user that may write to an existing database but lacks
+     * {@code CREATE DATABASE} must not be blocked.
+     *
+     * @param databaseName the destination database
+     */
+    private void ensureDatabaseExists(String databaseName) {
+        String host = this.dbCredentials.getHostName();
+        Integer port = this.dbCredentials.getPort();
+        String key = host + ":" + port + "/" + databaseName;
+        if (ENSURED_DATABASES.contains(key)) {
+            return;
+        }
+        String systemJdbcUrl = BaseDbWriter.getConnectionString(host, port, "system");
+        Connection systemConn = openConnection(systemJdbcUrl, "system");
+        if (systemConn == null) {
+            log.error("Cannot ensure database `{}` exists on {}:{}: no ClickHouse connection could "
+                            + "be obtained (server unreachable or credentials rejected). Will retry "
+                            + "on the next lookup.", databaseName, host, port);
+            return;
+        }
+        try {
+            boolean useOnCluster = this.config.
+                    getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
+            new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
+            ENSURED_DATABASES.add(key);
+        } catch (Exception e) {
+            log.error("Error creating database `{}` on {}:{}: {}", databaseName, host, port,
+                    e.toString(), e);
+        } finally {
+            try {
+                systemConn.close();
+            } catch (SQLException e) {
+                log.error("Error closing connection after ensuring database `{}`: {}",
+                        databaseName, e.toString());
+            }
+        }
     }
 
     /**
