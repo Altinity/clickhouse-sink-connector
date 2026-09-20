@@ -70,9 +70,9 @@ Because ClickHouse `ReplacingMergeTree` cannot replace rows across differing `OR
 
 ### Invariant I5: DDL Barrier Quiescence (Zero Schema Inversion)
 DDL statements alter the relational contract. A DDL event must establish an absolute execution barrier:
-1. All DML records preceding the DDL in the binlog stream must be flushed and durably committed under the pre-DDL schema.
-2. Worker execution must quiesce (`activeBatches == 0`).
-3. DDL must be translated and executed on ClickHouse.
+1. All DML records preceding the DDL in the binlog stream must be flushed and durably committed under the pre-DDL schema — on **every** handoff path: the legacy shared queue, **every** per-thread hash-routing queue, and the batches a worker has already dequeued but not yet acknowledged. The barrier predicate is `isPipelineQuiescent()` (spec 06.01); formally `Replication.DdlBarrier.barrierReady`. Observing only one path is not a barrier (`Replication.DdlBarrier.old_predicate_insufficient`).
+2. Worker execution must quiesce (`activeBatches == 0`) with the pool paused.
+3. DDL must be translated and executed on ClickHouse. A DDL that cannot be applied is terminal and loud (I9) regardless of `ddl.retry`, which only decides whether attempts are repeated first (spec 06.08 §3.2).
 4. Schema caches must be invalidated before any post-DDL records are dispatched to workers.
 
 ### Invariant I6: Column Authority & Shadowing Prohibition
@@ -89,6 +89,17 @@ All data types must preserve value fidelity across boundaries:
 
 ### Invariant I8: Durable Offset Quiescence
 Kafka / Debezium offsets committed to persistent storage (`replica_source_info`) must be strictly monotonically advancing and must reflect only data that has been durably acknowledged by ClickHouse JDBC batches. Heartbeat / control record offsets may only commit when the entire pipeline is quiescent.
+
+Concretely, batches handed to the writers are acknowledged in **handoff
+sequence** order — the order the Debezium thread handed them off, which is
+binlog order — never by wall-clock timestamp: a batch's offset is staged only
+when every lower-sequence batch (queued, in flight, or parked) has been
+acknowledged, and a batch written out of turn is parked, not re-executed. A
+handed-off batch is outstanding from the instant of handoff until its
+acknowledgement, and the pipeline is quiescent iff no sequence is outstanding.
+Formalised in `formal_specs/lean/Replication/OffsetFifo.lean`
+(`commit_never_passes_outstanding`, `acked_downward_closed`,
+`outstanding_ge_commitPoint`, `write_at_most_once`, `old_overlap_rule_unsafe`).
 
 ### Invariant I9: Loud Failure (Zero Silence)
 Replication errors, checksum mismatches, and schema translation failures must fail loudly. No replication exception shall be caught and suppressed to allow a batch to proceed. Row count parity shall never substitute for value-level checksum verification.
@@ -122,8 +133,11 @@ the durable position never advances past data not yet in ClickHouse; and
 snapshot's `snapshot_completed=true` state rides only on a post-snapshot control
 record, violating liveness strands the snapshot and re-runs it on every restart
 (issue #1379). Offset progress must not depend on where control records fall in a
-Debezium batch: every batch handed to the writers carries a terminal marker so its
-offset is flushed once written. Formalised as `control_commit_safe`,
+Debezium batch: every list handed to the writers (a handoff unit) carries exactly
+one terminal marker, on its last row in binlog order, and is acknowledged as a
+whole — one `markBatchFinished()` — once all of its routed groups are written and
+every earlier handoff unit is acknowledged, so its offset is flushed exactly once
+regardless of which worker finished last. Formalised as `control_commit_safe`,
 `quiescent_control_commits`, and `snapshot_completes` in
 `formal_specs/lean/Replication/Snapshot.lean`.
 
@@ -169,3 +183,5 @@ To provide mathematical proof of system correctness, the invariants and state tr
 - `Replication.Engine`: Operational semantics of event translation and PK update splitting.
 - `Replication.Invariants`: Mathematical propositions corresponding to Invariants I1 through I7.
 - `Replication.Proofs`: Machine-checked proofs of convergence, monotonicity, and PK update soundness.
+- `Replication.DdlBarrier`: The pre-DDL barrier of Invariant I5 — the DDL step is enabled only when the legacy queue, every routed queue and the unacknowledged-batch counter are all empty, and a machine-checked counterexample showing that an empty legacy queue alone does not imply that.
+- `Replication.OffsetFifo`: Handoff-sequence FIFO for offset acknowledgement (Invariant I8): commit never passes an outstanding batch, written-once, and the timestamp-overlap counterexample.

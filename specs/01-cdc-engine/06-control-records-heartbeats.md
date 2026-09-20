@@ -39,24 +39,55 @@ early-return on it: it null-guards `setSequenceNumber`/status updates, returns
 `null`, and `handleChangeEventBatch` records the (non-DDL) no-row record as the
 batch's `lastControlRecord`.
 
+**Why `parse` returns null for them.** `SourceRecordParserService.parse` builds a
+row only when the value Struct carries an `op` field (`c`/`r`/`u`/`d`/`t`). A
+heartbeat (topic `__debezium-heartbeat.<server>`, value `{ts_ms}`) and a
+transaction-metadata record (topic `<server>.transaction`, value
+`{status,id,event_count,data_collections}`) have no `op`, so `parse` returns
+null by contract — there is no row to write.
+
+**Log level.** A null parse result is classified BEFORE it is logged
+(`DebeziumChangeEventCapture.isControlRecord(SourceRecord)`):
+- **Control record** — the topic starts with `__debezium-heartbeat`, OR the value
+  Struct's schema has no `op` field: logged at **DEBUG** as
+  `Control record (heartbeat/transaction metadata) - no row to write; ...`.
+  Its offset is still committed under §3.2/§3.3. WARN is forbidden here:
+  heartbeats arrive every `heartbeat.interval.ms` (seconds apart) for the life
+  of the process, and a WARN per heartbeat buries the warnings that matter.
+- **Row record** — the value Struct HAS an `op` field and `parse` still returned
+  null: a real row was dropped, logged at **WARN** as
+  `Record could not be parsed to a ClickHouseStruct - skipping ...` (issue #1379
+  visibility requirement).
+
 ### 3.2 Safety — quiescence gate on the control-record commit
 `commitControlRecordOffset` commits the control offset ONLY when both:
 1. `handedOffRows == false` — this batch handed no rows to the writers; and
 2. `isPipelineQuiescent() == true`, i.e. ALL of:
    - `records` is null/empty (legacy handoff queue),
    - every per-thread queue in `routedQueues` is empty (hash routing), and
-   - `!DebeziumOffsetManagement.hasUnwrittenBatches()` (nothing in flight).
+   - `!DebeziumOffsetManagement.hasUnwrittenBatches()` — the outstanding
+     handoff-sequence set is empty (nothing handed off is unwritten, in
+     flight, or parked; spec 09.01 §3.6).
 
 Otherwise it returns `false` without advancing the offset. This prevents
 committing a control offset past rows not yet in ClickHouse (issue #1285).
 
 ### 3.3 Liveness — offset progress independent of batch shape
-1. **Terminal marker on every handoff.** `handleChangeEventBatch` marks the last
-   row of each handed-off batch via `markTerminalRecord` before handoff. Without
-   it, a Debezium batch that ends with a control record (or is split ahead of a
-   DDL) leaves no row flagged `isLastRecordInBatch`, so `acknowledgeRecords`
-   never calls `markBatchFinished()` and that batch's offset is only committed by
-   a later heartbeat — delaying, and on an idle source stranding, progress.
+1. **Terminal marker on every handed-off unit — precisely.** A *unit* is one
+   list passed to `appendToRecords` (the rows of one Debezium batch, or the
+   rows ahead of a DDL when the batch is split). `handleChangeEventBatch` calls
+   `markTerminalRecord(unit)` immediately before every handoff, so the LAST row
+   of every unit, in binlog order, carries `isLastRecordInBatch == true`, and
+   no other row of that unit does (the Debezium-index flag lands on the same
+   row when the batch is not split, or on the DDL record, which acknowledges
+   itself). In routing mode a unit is split into per-table groups for different
+   workers; the groups carry no marker of their own. The unit is acknowledged
+   as a whole — `markProcessed` for each row in binlog order, then ONE
+   `markBatchFinished()` at the terminal row — once every group is written and
+   every lower handoff sequence is acknowledged (spec 09.01 §3.3). Hence every
+   handed-off unit flushes its offset exactly once, regardless of where control
+   records fall in the Debezium batch and regardless of which worker finished
+   last.
 2. **Guaranteed heartbeats.** `ensureHeartbeatInterval` sets a bounded
    `heartbeat.interval.ms` so the post-snapshot control record actually arrives
    on an idle source and, once quiescent, commits `snapshot_completed=true`.
@@ -72,5 +103,10 @@ committing a control offset past rows not yet in ClickHouse (issue #1285).
 - `Replication.Snapshot.control_commit_safe` — a control offset advances only when `outstanding = 0`.
 - `Replication.Snapshot.quiescent_control_commits` — a quiescent control record commits its offset.
 - `Replication.Snapshot.snapshot_completes` — after the snapshot's rows are written, the end-of-snapshot control record commits its offset (`committed = snapPos`).
-- `SnapshotOffsetProgressTest.marksExactlyTheLastRow` — every handed-off batch gets exactly one terminal marker.
-- `NullParsedRecordSkipTest`, `ControlRecordOffsetCommitTest` — null-skip and the quiescence gate.
+- `SnapshotOffsetProgressTest.marksExactlyTheLastRow` — every handed-off unit gets exactly one terminal marker.
+- `OffsetHandoffOrderTest.routedGroupsAcknowledgedAsOneUnitInBinlogOrder` — one `markBatchFinished` per unit, after all its groups are written.
+- `NullParsedRecordSkipTest` (row record carrying `op`), `ControlRecordOffsetCommitTest` — null-skip at WARN and the quiescence gate.
+- `ControlRecordLogLevelTest.heartbeatIsLoggedAtDebugAndStillCommitsItsOffset` — a heartbeat-only batch through `handleChangeEventBatch` produces no WARN from `DebeziumChangeEventCapture`, one DEBUG control-record line, and its offset is acknowledged (`markProcessed` + `markBatchFinished`). Fails on the pre-fix code (WARN per heartbeat).
+- `ControlRecordLogLevelTest.transactionMetadataIsLoggedAtDebug` — a transaction-boundary record (no `op`, non-heartbeat topic) is DEBUG, not WARN.
+- `ControlRecordLogLevelTest.unparseableRowRecordStillWarns` — a record WITH `op` for which `parse` returns null is still WARN.
+- `ControlRecordLogLevelTest.isControlRecordClassification` — the classifier: heartbeat topic → control; no `op` → control; `op` present → row; null/non-Struct value → row.

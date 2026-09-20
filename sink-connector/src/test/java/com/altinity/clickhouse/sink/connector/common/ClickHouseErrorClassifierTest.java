@@ -30,7 +30,7 @@ public class ClickHouseErrorClassifierTest {
 
     @Test
     public void testClassifyFatal() {
-        int[] fatalCodes = {516, 497, 60, 81, 53, 50, 16, 241, 396, 27};
+        int[] fatalCodes = {516, 497, 60, 81, 53, 50, 16, 396, 27};
         String[] messages = {
                 "Code: 516. DB::Exception: Authentication failed: password is incorrect.",
                 "Code: 497. DB::Exception: Access denied.",
@@ -39,7 +39,6 @@ public class ClickHouseErrorClassifierTest {
                 "Code: 53. DB::Exception: Type mismatch in IN or VALUES section.",
                 "Code: 50. DB::Exception: Number of columns doesn't match.",
                 "Code: 16. DB::Exception: No such column 'foo' in table.",
-                "Code: 241. DB::Exception: Memory limit exceeded.",
                 "Code: 396. DB::Exception: Too many partitions.",
                 "Code: 27. DB::Exception: Cannot parse text.",
         };
@@ -76,6 +75,25 @@ public class ClickHouseErrorClassifierTest {
                 "TOO_MANY_PARTS is transient backpressure and must not be fatal");
     }
 
+    /**
+     * 241 MEMORY_LIMIT_EXCEEDED is usually the per-query / per-user / server
+     * memory budget tripping under CONCURRENT load (merges, other inserts,
+     * other queries); the same batch succeeds once that pressure passes. It
+     * must be RETRIABLE (with backoff), not FATAL: classifying it fatal killed
+     * the worker on a self-healing condition. The genuinely deterministic case
+     * (one batch larger than the budget) surfaces as an unbounded, logged
+     * retry of one batch, never as silence.
+     */
+    @Test
+    public void testMemoryLimitExceededIsRetriable() {
+        assertEquals(ErrorCategory.RETRIABLE, ClickHouseErrorClassifier.classify(
+                new RuntimeException("Code: 241. DB::Exception: Memory limit (total) exceeded: "
+                        + "would use 28.01 GiB (attempt to allocate chunk of 4194304 bytes), "
+                        + "maximum: 28.00 GiB.")));
+        assertFalse(ClickHouseErrorClassifier.isFatal(241),
+                "MEMORY_LIMIT_EXCEEDED is usually transient memory pressure and must not be fatal");
+    }
+
     @Test
     public void testClassifyUnknownAndNull() {
         assertEquals(ErrorCategory.UNKNOWN, ClickHouseErrorClassifier.classify(
@@ -90,6 +108,8 @@ public class ClickHouseErrorClassifierTest {
 
         // 252 TOO_MANY_PARTS is transient backpressure -- retriable, not fatal.
         assertFalse(ClickHouseErrorClassifier.isFatal(252));
+        // 241 MEMORY_LIMIT_EXCEEDED is usually transient memory pressure -- retriable.
+        assertFalse(ClickHouseErrorClassifier.isFatal(241));
         assertFalse(ClickHouseErrorClassifier.isFatal(210));
         assertFalse(ClickHouseErrorClassifier.isFatal(159));
         assertFalse(ClickHouseErrorClassifier.isFatal(999));

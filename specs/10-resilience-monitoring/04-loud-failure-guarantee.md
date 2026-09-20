@@ -50,6 +50,17 @@ the DDL, so a restart re-delivers it — the same loud-but-recoverable contract 
 §3.2. This mirrors `ClickHouseBatchRunnable`'s FATAL rethrow, which stops the
 scheduled executor rather than retrying a doomed batch forever.
 
+### 3.4 Worker death must reach the engine (no silent stall)
+A `RuntimeException` thrown from a `scheduleAtFixedRate` task only cancels
+that task's future; the executor logs nothing and calls nobody. A FATAL
+rethrow in `ClickHouseBatchRunnable#run` therefore used to leave the process
+alive with one worker dead, its queue filling, and offsets frozen — a stall
+with no error after the first one. `DebeziumChangeEventCapture` retains the
+workers' `ScheduledFuture`s and checks them at the top of every
+`handleChangeEventBatch` (`failIfWorkerDied`); a done future is re-raised as
+a `RuntimeException` carrying the worker's cause, which stops the engine
+through its completion callback (spec 03.01 §3.3).
+
 ---
 
 ## 4. Invariants Preserved
@@ -59,3 +70,4 @@ scheduled executor rather than retrying a doomed batch forever.
 
 ## 5. Verification Criteria
 - `ClickHouseBatchRunnableTest.testFatalErrorHaltsExecution()`
+- `WorkerDeathIsLoudTest.deadWorkerFailsTheNextBatchLoudly()`

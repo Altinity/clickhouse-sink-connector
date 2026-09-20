@@ -30,11 +30,27 @@ non-matching batches back at the tail) is also wrong: re-enqueuing a sibling's
 batch moves it behind later batches for the same table. Per-thread queues remove
 the race. Single-thread / legacy mode still uses the shared `records` queue.
 
-### 3.1 Batch Dequeue & Registration
+### 3.0.1 Thread id computation
+`RoutedBatch.calculateThreadId(key, n)` is `Math.floorMod(key.hashCode(), n)`.
+`Math.abs(hashCode) % n` is wrong for `hashCode == Integer.MIN_VALUE`
+(`Math.abs` returns `Integer.MIN_VALUE`, the modulo is negative, and the queue
+lookup throws `IndexOutOfBoundsException` on the Debezium thread).
+
+### 3.1 Batch Dequeue, Write, and Hand-back to the FIFO
 1. In routing mode a worker calls `routedRecords.poll()` on its OWN queue; in
-   legacy mode it polls the shared `records` queue.
-2. If `batch != null && !batch.isEmpty()`:
-   Registers the batch in `DebeziumOffsetManagement.addToBatchTimestamps(batch)`.
+   legacy mode it polls the shared `records` queue. There is no registration
+   step on pick-up: the batch was registered by the producer at handoff
+   (spec 09.01 §3.1) and is already outstanding.
+2. The worker writes the batch (§3.2). Then exactly one of:
+   - **written** (`result == true`): call
+     `DebeziumOffsetManagement.checkIfBatchCanBeCommitted(batch)` ONCE, then
+     `currentBatch = null` regardless of the return value, and continue with
+     the next queued batch. Whether the offset is acknowledged now or later is
+     the FIFO's concern; the worker never runs a written batch again
+     (WRITTEN-ONCE, spec 09.01 §3.2).
+   - **not written** (`result == false`, or an exception classified retriable):
+     keep `currentBatch`, back off (spec 10.02), retry the same batch.
+   - **fatal**: rethrow with `currentBatch` retained (spec 03.01 §3.3).
 
 ### 3.2 Partitioning by Topic / Table
 The raw batch is grouped into a topic map:
@@ -50,6 +66,7 @@ Each topic bucket is then processed independently against its corresponding Clic
 
 ## 4. Invariants Preserved
 - **Per-Table Order Preservation (I1)**: all batches for a table are drained by one thread in FIFO order (routing), and within a batch each topic bucket is applied against its target table.
+- **WRITTEN-ONCE**: a batch whose rows are durably written is dropped by the worker and never re-executed, even while its offset is parked behind older batches.
 
 ---
 
@@ -57,3 +74,5 @@ Each topic bucket is then processed independently against its corresponding Clic
 - `HashRoutingPerTableOrderingTest.sameTableRoutesToOneQueue()` — a table routes to exactly its one owning queue.
 - `HashRoutingPerTableOrderingTest.successiveBatchesForSameTableStayOnSameQueue()` — successive batches for a table stay on the same queue (FIFO).
 - `HashRoutingPerTableOrderingTest.differentTablesRouteByHash()` — each table's group routes to its hash-assigned queue.
+- `RoutedBatchTest.testMinValueHashCodeRoutesInRange()` — `Integer.MIN_VALUE` hash code routes into `[0, n)`.
+- `ParkedBatchWrittenOnceTest.parkedBatchIsNotReinserted()` — a written-but-parked batch is executed exactly once.

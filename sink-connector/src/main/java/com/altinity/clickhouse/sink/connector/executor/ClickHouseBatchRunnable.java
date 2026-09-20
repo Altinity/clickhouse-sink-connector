@@ -14,6 +14,7 @@ import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.altinity.clickhouse.sink.connector.model.RoutedBatch;
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.source.SourceRecord;
@@ -111,6 +112,15 @@ public class ClickHouseBatchRunnable implements Runnable {
     private static final long ERROR_SLEEP_TIME_MS = 10000;
 
     /**
+     * Paces the retries of a batch that failed to reach ClickHouse: the delay
+     * doubles per consecutive failure of the same batch up to a cap, and is
+     * reset by a successful write (spec 10.02). Without it the scheduled tick
+     * re-ran a failing batch every buffer.flush.time.ms (30 ms) against a
+     * server that had just reported backpressure.
+     */
+    private final RetryBackoff retryBackoff;
+
+    /**
      * Constructs a ClickHouseBatchRunnable (legacy mode without hash-based routing).
      *
      * <p>Backward-compatible overload for callers that do not track durable
@@ -191,6 +201,11 @@ public class ClickHouseBatchRunnable implements Runnable {
         //this.queryToRecordsMap = new HashMap<>();
         this.topicToDbWriterMap = new HashMap<>();
         //this.topicToRecordsMap = new HashMap<>();
+        this.retryBackoff = new RetryBackoff(
+                this.config.getLong(ClickHouseSinkConnectorConfigVariables
+                        .BATCH_RETRY_BACKOFF_INITIAL_MS.toString()),
+                this.config.getLong(ClickHouseSinkConnectorConfigVariables
+                        .BATCH_RETRY_BACKOFF_MAX_MS.toString()));
         this.dbCredentials = parseDBConfiguration();
         this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
         try {
@@ -217,6 +232,21 @@ public class ClickHouseBatchRunnable implements Runnable {
         String jdbcUrl = BaseDbWriter.getConnectionString(
                 this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), "system");
+        return openConnection(jdbcUrl, databaseName);
+    }
+
+    /**
+     * The single place this worker obtains a JDBC connection. Every
+     * connection the worker uses -- system, per-database, bootstrap -- comes
+     * through here, so a test can substitute recording or null connections
+     * without a ClickHouse server.
+     *
+     * @param jdbcUrl      the server URL to connect to
+     * @param databaseName the database the connection is for (pool key)
+     * @return a connection, or null when one cannot be obtained
+     */
+    @VisibleForTesting
+    Connection openConnection(String jdbcUrl, String databaseName) {
         return BaseDbWriter.createConnection(jdbcUrl,
                 BaseDbWriter.DATABASE_CLIENT_NAME,
                 this.dbCredentials.getUserName(),
@@ -224,61 +254,95 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
+     * {@code host:port/database} keys whose {@code CREATE DATABASE IF NOT
+     * EXISTS} has succeeded in this process. Shared by every worker: the
+     * statement is needed once per database per process, not once per worker
+     * per cache miss -- and never again on every batch while a connection to
+     * that database cannot be obtained.
+     */
+    private static final java.util.Set<String> ENSURED_DATABASES =
+            ConcurrentHashMap.newKeySet();
+
+    /**
      * Retrieves the ClickHouse connection for the specified database.
      *
-     * <p>If no connection exists, this method creates the database (if
-     * needed) and returns a new connection.
+     * <p>If no connection is cached, this method ensures the database exists
+     * (once per process, see {@link #ensureDatabaseExists}) and opens a new
+     * connection. A connection that cannot be obtained is reported at ERROR
+     * naming the database and is NOT cached, so the next lookup retries.
      *
      * @param databaseName the target database name
-     * @return a Connection to the specified database
+     * @return a Connection to the specified database, or null if none could
+     *         be obtained
      */
     private Connection getClickHouseConnection(String databaseName) {
         if (this.databaseToConnectionMap.containsKey(databaseName)) {
             return this.databaseToConnectionMap.get(databaseName);
         }
-        // Create database if it doesnt exist.
-        String systemJdbcUrl = BaseDbWriter.getConnectionString(
-                this.dbCredentials.getHostName(),
-                this.dbCredentials.getPort(), "system");
-        Connection systemConn = BaseDbWriter.createConnection(systemJdbcUrl,
-                BaseDbWriter.DATABASE_CLIENT_NAME,
-                this.dbCredentials.getUserName(),
-                this.dbCredentials.getPassword(), "system", config);
-        try {
-            boolean useOnCluster = this.config.
-                    getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
-            new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
-            DBMetadata metadata = new DBMetadata(config);
-            metadata.executeSystemQuery(systemConn,
-                    "CREATE DATABASE IF NOT EXISTS `" + databaseName + "`");
-        } catch (Exception e) {
-            log.error("Error creating database " + e);
-        } finally {
-            try {
-                // createConnection() returns null when ClickHouse is
-                // unreachable, closing it would throw a NullPointerException
-                // that the handler below does not catch.
-                if (systemConn != null) {
-                    systemConn.close();
-                }
-            } catch (SQLException e) {
-                log.error("Error closing connection when creating database" + e);
-            }
-        }
+        ensureDatabaseExists(databaseName);
         String jdbcUrl = BaseDbWriter.getConnectionString(
                 this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName);
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl,
-                BaseDbWriter.DATABASE_CLIENT_NAME,
-                this.dbCredentials.getUserName(),
-                this.dbCredentials.getPassword(), databaseName, config);
+        Connection conn = openConnection(jdbcUrl, databaseName);
         // Only cache a usable connection. containsKey() above returns true for
         // a key mapped to null, so caching a failed connection would keep
         // returning null for this database until the connector restarts.
         if (conn != null) {
             this.databaseToConnectionMap.put(databaseName, conn);
+        } else {
+            // Never silent: the caller retries on the next tick, and the
+            // operator must be able to see WHICH database cannot be reached.
+            log.error("Could not obtain a ClickHouse connection to database `{}` on {}:{}; "
+                            + "the batch will be retried on the next tick.",
+                    databaseName, this.dbCredentials.getHostName(), this.dbCredentials.getPort());
         }
         return conn;
+    }
+
+    /**
+     * Issues {@code CREATE DATABASE IF NOT EXISTS} for {@code databaseName}
+     * unless this process has already done so successfully.
+     *
+     * <p>Exactly one statement per database per process. A failure -- no
+     * system connection, or a rejected statement -- is reported at ERROR
+     * naming the database and is NOT recorded as ensured, so the next cache
+     * miss tries again. The caller still attempts the database connection in
+     * either case: a user that may write to an existing database but lacks
+     * {@code CREATE DATABASE} must not be blocked.
+     *
+     * @param databaseName the destination database
+     */
+    private void ensureDatabaseExists(String databaseName) {
+        String host = this.dbCredentials.getHostName();
+        Integer port = this.dbCredentials.getPort();
+        String key = host + ":" + port + "/" + databaseName;
+        if (ENSURED_DATABASES.contains(key)) {
+            return;
+        }
+        String systemJdbcUrl = BaseDbWriter.getConnectionString(host, port, "system");
+        Connection systemConn = openConnection(systemJdbcUrl, "system");
+        if (systemConn == null) {
+            log.error("Cannot ensure database `{}` exists on {}:{}: no ClickHouse connection could "
+                            + "be obtained (server unreachable or credentials rejected). Will retry "
+                            + "on the next lookup.", databaseName, host, port);
+            return;
+        }
+        try {
+            boolean useOnCluster = this.config.
+                    getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
+            new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
+            ENSURED_DATABASES.add(key);
+        } catch (Exception e) {
+            log.error("Error creating database `{}` on {}:{}: {}", databaseName, host, port,
+                    e.toString(), e);
+        } finally {
+            try {
+                systemConn.close();
+            } catch (SQLException e) {
+                log.error("Error closing connection after ensuring database `{}`: {}",
+                        databaseName, e.toString());
+            }
+        }
     }
 
     /**
@@ -373,7 +437,9 @@ public class ClickHouseBatchRunnable implements Runnable {
                         + "frozen binlog position. Stopping the task to "
                         + "prevent silent data divergence; a restart resumes "
                         + "from the last committed offset.", taskId);
-                currentBatch = null;
+                // currentBatch is deliberately NOT cleared: its handoff unit
+                // must stay outstanding so no control-record offset can pass
+                // it while the engine is being stopped (spec 03.01 section 3.3).
                 throw new RuntimeException(
                         "OffsetStorageWriter is permanently stuck flushing; "
                                 + "stopping to prevent silent data divergence",
@@ -386,16 +452,28 @@ public class ClickHouseBatchRunnable implements Runnable {
 
             if (category == ClickHouseErrorClassifier.ErrorCategory.FATAL) {
                 log.error("FATAL ClickHouse error (Code: {}) -- this batch will never succeed. " +
-                          "Discarding batch and stopping task to prevent silent data loss. " +
+                          "Stopping this worker; the engine is stopped on the next source " +
+                          "batch (a dead worker is detected by the capture loop). " +
                           "Manual intervention required.", errorCode);
-                // Clear the stuck batch so it is not retried forever
-                currentBatch = null;
-                // Rethrow to stop the scheduled executor -- silent swallowing causes
-                // binlog advancement to stall and blocks replication for ALL tables
+                // currentBatch is deliberately NOT cleared: the batch's handoff
+                // unit stays outstanding, so no control-record offset can pass
+                // its rows and every younger unit stays parked behind it. The
+                // throw ends this scheduled task; DebeziumChangeEventCapture
+                // sees the terminated future and stops the engine LOUDLY with
+                // this cause (spec 03.01 section 3.3) instead of leaving a
+                // silently stalled pipeline behind.
                 throw new RuntimeException("Fatal ClickHouse error, stopping task", e);
             } else {
-                log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- " +
-                         "batch will be retried on next scheduled run.", errorCode, category);
+                long delayMs = retryBackoff.nextDelayMs(currentBatch);
+                log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- the same "
+                         + "batch will be retried in {} ms (consecutive failures: {}). Every "
+                         + "table hashed to this worker waits behind it until it succeeds.",
+                         errorCode, category, delayMs, retryBackoff.consecutiveFailures());
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
     }
@@ -505,8 +583,9 @@ public class ClickHouseBatchRunnable implements Runnable {
         addRecordsToHistoryTable(currentBatch, sourceTimeZone, serverTimeZone);
 
         ///// ***** START PROCESSING BATCH **************************
-        // Step 1: Add to Inflight batches.
-        DebeziumOffsetManagement.addToBatchTimestamps(currentBatch);
+        // The batch was registered with its handoff sequence by the producer
+        // before it was enqueued (spec 09.01 section 3.1); there is nothing to
+        // register on pick-up.
         log.info("****** Thread: " +
                 Thread.currentThread().getName() +
                 " Batch Size: " + currentBatch.size() +
@@ -559,10 +638,27 @@ public class ClickHouseBatchRunnable implements Runnable {
             
         
         if (result) {
-            // Step 2: Check if the batch can be committed.
-            if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {
-                currentBatch = null;
-            }
+            // WRITTEN-ONCE (spec 09.01 section 3.2). The rows are durably in
+            // ClickHouse, so this worker is finished with the batch whatever
+            // happens to its offset: drop it BEFORE handing it to the FIFO.
+            // Keeping a written batch as currentBatch while its offset waited
+            // for older batches made the run loop re-execute it -- and
+            // re-insert its rows -- on every tick until it became committable
+            // (rows present 3x in non-FINAL reads; write amplification).
+            // Whether the offset is acknowledged now (this is the oldest
+            // outstanding unit) or later (parked; drained by whichever call
+            // acknowledges the head) is the FIFO's concern, not the worker's.
+            List<ClickHouseStruct> written = currentBatch;
+            currentBatch = null;
+            retryBackoff.reset();
+            DebeziumOffsetManagement.checkIfBatchCanBeCommitted(written);
+        } else {
+            // Not written (e.g. table metadata not yet retrievable): keep the
+            // batch and retry it, but not every 30 ms (spec 10.02).
+            long delayMs = retryBackoff.nextDelayMs(currentBatch);
+            log.warn("Batch not written to ClickHouse; retrying the same batch in {} ms "
+                    + "(consecutive failures: {})", delayMs, retryBackoff.consecutiveFailures());
+            Thread.sleep(delayMs);
         }
         Thread.sleep(config.getLong(
                 ClickHouseSinkConnectorConfigVariables.
@@ -790,9 +886,10 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @return true if processing succeeds; false otherwise
      * @throws Exception if an error occurs during processing
      */
-    private boolean processRecordsByTopic(String topicName,
-                                          List<ClickHouseStruct> records)
+    boolean processRecordsByTopic(String topicName,
+                                  List<ClickHouseStruct> records)
             throws Exception {
+
         boolean result = false;
         //The user parameter will override the topic mapping to table.
         String tableName = getTableFromTopic(topicName);

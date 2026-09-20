@@ -15,4 +15,6 @@ lean_lib «Replication» where
              `Replication.Upgrade,
              `Replication.Snapshot,
              `Replication.GeneratedColumn,
+             `Replication.DdlBarrier,
+             `Replication.OffsetFifo,
              `Replication.DdlTranslation]
