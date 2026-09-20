@@ -30,4 +30,6 @@ Specifies the translation and storage of variable-length textual, structured JSO
 ---
 
 ## 5. Verification Criteria
-- `ClickHouseDataTypeMapperTest.testStringAndJsonTypes()`
+- `MySQLJsonIT` — JSON columns replicated end to end.
+- `ClickHouseDataTypeMapperTest.getClickHouseDataType()` — the type-name mapping table.
+- Verification: unit coverage of string/ENUM/SET value binding and UTF-8 round-trip is not yet covered by an automated test (gap). The TestFlows suite lists `types/enum` and `types/json` as expected failures (spec 11.03 §6).

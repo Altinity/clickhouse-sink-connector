@@ -34,7 +34,8 @@ into a hard stop.
   - `27` CANNOT_PARSE_TEXT, `33` CANNOT_READ_ALL_DATA,
     `69` ARGUMENT_OUT_OF_BOUND, `349` INVALID_PARTITION_VALUE
 - **`RETRIABLE`** (default — any code not in `FATAL_ERROR_CODES`) — re-tried on
-  the next scheduled run:
+  the next scheduled run; no backoff is applied between attempts today (the
+  retry interval is simply the executor's fixed schedule — see spec 10.02):
   - `252` TOO_MANY_PARTS — ClickHouse insert backpressure (active parts above
     `parts_to_throw_insert`). It clears on its own as background merges catch
     up, so the SAME batch succeeds on retry. It is deliberately NOT fatal:

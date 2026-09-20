@@ -58,4 +58,7 @@ scheduled executor rather than retrying a doomed batch forever.
 ---
 
 ## 5. Verification Criteria
-- `ClickHouseBatchRunnableTest.testFatalErrorHaltsExecution()`
+- `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()` — §3.3: a DDL failure escapes the catch-all as `DDLReplicationException`.
+- `ClickHouseErrorClassifierTest.testIsFatal()`, `ClickHouseErrorClassifierTest.testClassifyFatal()` — the FATAL set that triggers the rethrow.
+- `ClickHouseBatchWriterMissingTableTest` — a missing target table fails the batch loudly instead of being skipped.
+- Verification: a unit test asserting that `ClickHouseBatchRunnable#run` rethrows on a FATAL classification and stops the scheduled task is not yet covered by an automated test (gap).

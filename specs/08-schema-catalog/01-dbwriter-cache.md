@@ -9,10 +9,11 @@ Specifies the in-memory caching of ClickHouse table schemas inside `DbWriter`, i
 - **Primary Sources**:
   - `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/DbWriter.java`
   - `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/DBMetadata.java`
-- **Fields**:
-  - `Map<String, String> columnNameToDataTypeMap`
-  - `List<String> sortingKeyColumns`
-  - `DBMetadata.TABLE_ENGINE engine`
+- **Fields** (`DbWriter`):
+  - `private Map<String, String> columnNameToDataTypeMap` (a `LinkedHashMap`)
+  - `private List<String> sortingKeyColumns`
+  - `private DBMetadata.TABLE_ENGINE engine`
+- **Metadata readers** (`DBMetadata`): `getColumnsDataTypesForTable(...)`, `getSortingKeyColumns(Connection conn, String database, String tableName)`, engine detection from `SHOW CREATE TABLE` / `system.tables`
 
 ---
 
@@ -20,10 +21,10 @@ Specifies the in-memory caching of ClickHouse table schemas inside `DbWriter`, i
 
 ### 3.1 Metadata Querying
 On initialization or cache eviction:
-1. Queries ClickHouse `system.columns` for `name`, `type`, `default_kind`, and `default_expression`.
-2. Identifies sorting key columns via `DBMetadata.getSortingKeyColumns()` querying `system.tables.sorting_key`.
-3. Resolves table engine (`REPLACING_MERGE_TREE`, `REPLICATED_REPLACING_MERGE_TREE`, or `COLLAPSING_MERGE_TREE`).
-4. Associates the cached `DbWriter` with the active version in `CacheInvalidationManager`.
+1. Queries ClickHouse `system.columns` for the writable column map (`name`, `type`; ClickHouse-owned `MATERIALIZED` / `ALIAS` columns are filtered out of the writable map by design — spec 08.03).
+2. Reads the sorting key via `DBMetadata.getSortingKeyColumns`, which selects `name` from `system.columns` where `is_in_sorting_key = 1` ordered by `position` (it does not parse `system.tables.sorting_key`, whose rendered expression may contain functions).
+3. Resolves the table engine (`REPLACING_MERGE_TREE`, `REPLICATED_REPLACING_MERGE_TREE`, `COLLAPSING_MERGE_TREE`, ...).
+4. The owning writer thread records the `CacheInvalidationManager.getVersion(tableKey)` it built against and rebuilds the `DbWriter` when that version changes (spec 08.02).
 
 ---
 
@@ -33,4 +34,6 @@ On initialization or cache eviction:
 ---
 
 ## 5. Verification Criteria
-- `DbWriterTest.testSchemaResolution()`
+- `DbWriterTest.testGetColumnsDataTypesForTable()`, `DbWriterTest.testGetEngineTypeUsingSystemTables()` (`testGetEngineType` is `@Disabled`, spec 11.03 §6).
+- `DBMetadataTest` — sorting-key extraction via `is_in_sorting_key`.
+- `StaleSchemaCacheIT`, `AlterTableDropColumnCacheIT` — the cache is rebuilt after a schema change.
