@@ -60,7 +60,14 @@ public class ClickHouseErrorClassifier {
         // condition and required a manual restart. It is left to the RETRIABLE
         // default so the batch is retried with backoff; offsets never advance
         // past an unwritten batch, so retrying is safe (no divergence).
-        FATAL_ERROR_CODES.add(241);  // MEMORY_LIMIT_EXCEEDED
+        //
+        // 241 MEMORY_LIMIT_EXCEEDED is NOT here either. The limit that trips is
+        // the per-query / per-user / server memory budget under CONCURRENT load
+        // (merges, other inserts, other queries); the same batch succeeds once
+        // that pressure passes, so it is retried with backoff. The genuinely
+        // deterministic case -- one batch larger than the budget -- shows up as
+        // an unbounded, logged retry of one batch (lower buffer.max.records),
+        // never as silence.
         FATAL_ERROR_CODES.add(396);  // TOO_MANY_PARTITIONS
 
         // Data format errors

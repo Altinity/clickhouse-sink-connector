@@ -76,6 +76,12 @@ public enum ClickHouseSinkConnectorConfigVariables {
     REPLICA_STATUS_VIEW("replica.status.view"),
     MAX_QUEUE_SIZE("sink.connector.max.queue.size"),
 
+    // Pacing of retries for a batch that failed to write to ClickHouse for a
+    // retriable reason: initial delay, doubling per consecutive failure of the
+    // same batch, capped at the max (spec 10.02).
+    BATCH_RETRY_BACKOFF_INITIAL_MS("batch.retry.backoff.initial.ms"),
+    BATCH_RETRY_BACKOFF_MAX_MS("batch.retry.backoff.max.ms"),
+
     SINGLE_THREADED("single.threaded"),
 
     CONNECTION_POOL_MAX_SIZE("connection.pool.max.size"),

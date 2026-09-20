@@ -14,6 +14,10 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
   - `Replication.Engine`: Translation semantics and state machine
   - `Replication.Invariants`: Mathematical definitions of system invariants
   - `Replication.Proofs`: Machine-checked theorems and proofs
+  - `Replication.Upgrade`: Drop-in upgrade safety (Invariant I11)
+  - `Replication.Snapshot`: Control-record offset commit & snapshot completion (Invariant I12)
+  - `Replication.GeneratedColumn`: Generated-column type integrity (Invariant I13)
+  - `Replication.OffsetFifo`: Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01)
 
 ---
 
@@ -50,6 +54,16 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
    (`chFinalView (replicateStream events) k = evalMySQL events emptyMySQL k`),
    proved via the general lemma `replicate_converges_gen` by induction on the
    stream with a coherence + version-bound invariant.
+7. `OffsetFifo.commit_never_passes_outstanding`, `acked_downward_closed`,
+   `commitPoint_acked`, `outstanding_ge_commitPoint`: in every reachable state
+   of the handoff FIFO, acknowledged sequences are a prefix of the handoff order
+   and no outstanding sequence lies below the commit point.
+8. `OffsetFifo.write_at_most_once`, `written_batch_not_reexecuted`: a batch's
+   write event occurs at most once; a written (parked) batch is never executed
+   again.
+9. `OffsetFifo.old_overlap_rule_unsafe`: concrete counterexample — two batches
+   with equal timestamps where the strict timestamp-overlap rule acknowledges
+   the later-finished one while the other is outstanding, and the FIFO does not.
 
 ### 3.2 Build & axiom verification
 - `lake build` in `formal_specs/lean/` type-checks every theorem.

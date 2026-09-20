@@ -42,7 +42,8 @@ formal_specs/lean/
     ├── Proofs.lean                    # Machine-Checked Theorems: Inductive proofs of convergence
     ├── Upgrade.lean                   # Drop-in Upgrade Safety (Invariant I11): convergence for any gap-monotone version scheme
     ├── Snapshot.lean                  # Snapshot Completion & control-record offset commit (Invariant I12, issue #1379)
-    └── GeneratedColumn.lean           # Generated-Column Type Integrity (Invariant I13): expression maps to DEFAULT, never the type
+    ├── GeneratedColumn.lean           # Generated-Column Type Integrity (Invariant I13): expression maps to DEFAULT, never the type
+    └── OffsetFifo.lean                # Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01): commit never passes an outstanding batch, written-once
 ```
 
 ---
@@ -120,6 +121,26 @@ on Lean's standard axioms `[propext, Quot.sound]` (verified via `#print axioms`)
 | `control_commit_safe` | a control record advances the committed offset only when `outstanding = 0` | Safety: never commit past unwritten rows (no #1285 data loss). |
 | `quiescent_control_commits` | a control record on a quiescent pipeline commits its offset | Liveness: the end-of-snapshot heartbeat's offset IS committed. |
 | `snapshot_completes` | after the snapshot's rows are handed off and written, the end-of-snapshot control record commits its offset (`committed = snapPos`) | **Issue #1379**: `snapshot_completed` persists; a restart does not re-run the snapshot. |
+
+### Offset acknowledgement FIFO by handoff sequence (Invariant I8, `OffsetFifo.lean`, spec 09.01)
+
+The model: a monotone handoff counter; an ascending `outstanding` list of
+sequences (handed off, not acknowledged); a `completed` list (written, parked);
+an `acked` list; and a `writes` log. `handoff` appends the next sequence;
+`write s` (enabled only while `s` is outstanding and not yet completed) parks
+`s` and then drains: while the head of `outstanding` is completed it is
+acknowledged. `commitPoint` is the number of leading sequences `0,1,2,…` that
+are all acknowledged.
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `commit_never_passes_outstanding` | in every reachable state, every acknowledged sequence is smaller than every outstanding one | The durable offset never passes a batch that is queued, in flight, or parked — on any worker. |
+| `acked_downward_closed` | if `a` is acknowledged then every `t < a` is acknowledged | Acknowledgements form a prefix of the handoff (binlog) order. |
+| `commitPoint_acked` / `outstanding_ge_commitPoint` | every `t < commitPoint` is acknowledged; every outstanding `t` satisfies `commitPoint ≤ t` | The commit point is exactly the boundary between acknowledged and outstanding. |
+| `write_at_most_once` | the `writes` log has no duplicates in any reachable state | A batch's write event occurs at most once (no re-insertion of a parked batch). |
+| `written_batch_not_reexecuted` | `write s` on an already-completed `s` leaves the state unchanged | A written, parked batch is never executed again. |
+| `old_overlap_rule_unsafe` | with `A = B = (100,100)`, the strict overlap rule `otherMin < curMax` does not block `B`, while in the FIFO `B` is parked and `A` is outstanding | Concrete counterexample to the deleted timestamp-overlap predicate. |
+| `fifo_acknowledges_in_handoff_order` | after handoff, handoff, write 1, write 0 the acknowledgement order is 0 then 1 | The drain acknowledges strictly in handoff order. |
 
 ### Generated-column type integrity (Invariant I13, `GeneratedColumn.lean`)
 

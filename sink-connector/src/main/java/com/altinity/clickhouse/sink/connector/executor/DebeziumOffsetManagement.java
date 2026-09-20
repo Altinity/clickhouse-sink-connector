@@ -3,18 +3,37 @@ package com.altinity.clickhouse.sink.connector.executor;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListMap;
+import java.util.concurrent.ConcurrentSkipListSet;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * This class is used to manage the state of the offsets from all the
- * different consumer threads.
+ * Decides WHEN a batch that has been written to ClickHouse may have its
+ * Debezium offset acknowledged (spec 09.01).
+ *
+ * <p>Worker threads finish batches in arbitrary wall-clock order, and the
+ * offset store keeps the LAST offset staged per partition, so the
+ * acknowledgement order alone decides whether the durable binlog position can
+ * run ahead of rows that are still queued or in flight. This class fixes that
+ * order to the <b>handoff sequence</b>: a monotone counter assigned on the
+ * Debezium thread when a batch is handed to the writers, i.e. binlog order. A
+ * batch is acknowledged only when every lower sequence has been acknowledged;
+ * a batch written out of turn is parked, never re-executed.</p>
+ *
+ * <p>The previous rule compared envelope-timestamp ranges among the batches a
+ * worker had already picked up. Under per-table hash routing one Debezium batch
+ * becomes one group per table on different workers' queues; a group still
+ * queued on a busy worker was invisible to that rule, so an idle worker's group
+ * -- carrying the Debezium batch's terminal marker -- was acknowledged and the
+ * offset was committed past the queued rows. Equal timestamps (strict
+ * {@code >}) did not block either. Both are fixed by ordering on the handoff
+ * sequence; see {@code Replication.OffsetFifo} for the machine-checked model.</p>
  */
 public class DebeziumOffsetManagement {
 
@@ -27,18 +46,17 @@ public class DebeziumOffsetManagement {
     /**
      * Identity key for a tracked batch.
      * <p>
-     * The maps below MUST be keyed by the batch's object identity, not by its
+     * The group map MUST be keyed by the batch's object identity, not by its
      * {@code (minTs, maxTs)} timestamp range. Two distinct batches routinely
      * share a timestamp range — a single multi-row statement split across
      * batches, or two batches whose rows all fall in the same millisecond — and
      * keying by the range made them collide: {@code put} silently overwrote the
      * earlier batch's entry and {@code remove} deleted the wrong one, so a batch
-     * that was still unwritten stopped blocking the offset commit. The committed
-     * binlog position could then advance past rows not yet in ClickHouse, losing
-     * them on a crash. Keying by identity makes every batch a distinct entry
-     * regardless of its timestamps. {@code equals}/{@code hashCode} are by
-     * reference so this stays correct on a {@link ConcurrentHashMap} (whose
-     * default keying would otherwise fall back to {@code List} content equality).
+     * that was still unwritten stopped blocking the offset commit. Keying by
+     * identity makes every batch a distinct entry regardless of its timestamps.
+     * {@code equals}/{@code hashCode} are by reference so this stays correct on
+     * a {@link ConcurrentHashMap} (whose default keying would otherwise fall
+     * back to {@code List} content equality).
      */
     static final class BatchKey {
         final List<ClickHouseStruct> batch;
@@ -59,19 +77,60 @@ public class DebeziumOffsetManagement {
     }
 
     /**
-     * A concurrent map holding the in-flight batches, keyed by batch identity
-     * (see {@link BatchKey}). The value is the list of ClickHouseStruct records.
+     * One list handed to the asynchronous writers by the Debezium thread (one
+     * {@code appendToRecords} call): the unit of acknowledgement.
+     * <p>
+     * {@code records} is the handed-off list in binlog order, with the terminal
+     * marker on its last row. In routing mode the unit is split into per-table
+     * groups that go to different workers; {@code remainingGroups} counts the
+     * groups not yet written. The unit is acknowledged as a whole, in
+     * {@code records} order, so the offsets it stages are monotone even though
+     * its groups interleave in the binlog (spec 09.01 §3.3).
+     * </p>
      */
-    static ConcurrentHashMap<BatchKey, List<ClickHouseStruct>>
-            inFlightBatches = new ConcurrentHashMap<>();
+    static final class HandoffUnit {
+        final long sequence;
+        final List<ClickHouseStruct> records;
+        int remainingGroups;
+
+        HandoffUnit(long sequence, List<ClickHouseStruct> records, int groups) {
+            this.sequence = sequence;
+            this.records = records;
+            this.remainingGroups = groups;
+        }
+    }
 
     /**
-     * A concurrent map holding the completed batches, keyed by batch identity.
-     * Once a batch is fully processed, it is moved from inFlightBatches to
-     * completedBatches.
+     * The next handoff sequence to assign. Monotone for the life of the JVM;
+     * assigned only on the producer (Debezium) thread, in binlog order.
      */
-    static ConcurrentHashMap<BatchKey, List<ClickHouseStruct>>
-            completedBatches = new ConcurrentHashMap<>();
+    private static final AtomicLong handoffCounter = new AtomicLong();
+
+    /**
+     * Sequences handed to the writers and not yet acknowledged, ordered.
+     * {@code first()} is the head: the oldest batch whose offset is still
+     * unstaged. A sequence is added at handoff -- before the batch is visible
+     * to any consumer -- and removed only when its unit is acknowledged, so
+     * {@link #hasUnwrittenBatches()} is conservative in exactly one direction:
+     * it can withhold a control-record commit, never permit an unsafe one.
+     */
+    static final ConcurrentSkipListSet<Long> outstandingSequences =
+            new ConcurrentSkipListSet<>();
+
+    /**
+     * Every group (routed per-table list, or the legacy batch itself) that is
+     * not yet written, keyed by identity, mapped to its unit.
+     */
+    static final ConcurrentHashMap<BatchKey, HandoffUnit> groupToUnit =
+            new ConcurrentHashMap<>();
+
+    /**
+     * Units whose groups are ALL written, parked until every lower sequence is
+     * acknowledged. Keyed by sequence so the drain can match the head of
+     * {@link #outstandingSequences} directly.
+     */
+    static final ConcurrentSkipListMap<Long, HandoffUnit> completedUnits =
+            new ConcurrentSkipListMap<>();
 
     /**
      * Shared lock that serializes every offset commit driven by the connector
@@ -82,216 +141,138 @@ public class DebeziumOffsetManagement {
     private static final Object OFFSET_COMMIT_LOCK = new Object();
 
     /**
-     * Constructor to initialize DebeziumOffsetManagement with a provided
-     * in-flight batch map.
+     * Registers one handed-off unit and assigns its handoff sequence.
+     * <p>
+     * Call on the producer thread BEFORE any of the unit's groups becomes
+     * visible to a consumer: a consumer can then never finish a group before
+     * its unit exists, and the unit reads as unwritten from this instant --
+     * including the window between a worker's {@code poll()} and its write.
+     * </p>
      *
-     * @param inFlightBatches A map containing the in-flight batches.
+     * @param unit   the handed-off list, in binlog order, terminal marker on
+     *               its last row.
+     * @param groups the independently-written parts of {@code unit}: the
+     *               per-table routed lists, or {@code [unit]} in legacy mode.
+     * @return the sequence assigned to the unit.
      */
-    public DebeziumOffsetManagement(
-            ConcurrentHashMap<BatchKey, List<ClickHouseStruct>>
-                    inFlightBatches) {
-        this.inFlightBatches = inFlightBatches;
-    }
-
-    /**
-     * Registers the given batch as in-flight, keyed by its identity.
-     *
-     * @param batch A list of ClickHouseStruct records.
-     */
-    public static void addToBatchTimestamps(List<ClickHouseStruct> batch) {
-        if (inFlightBatches.size() > 1000) {
-            log.error("*********** Requests in Flight is greater than 1000 "
+    public static synchronized long registerHandoff(List<ClickHouseStruct> unit,
+                                                    List<List<ClickHouseStruct>> groups) {
+        if (unit == null || unit.isEmpty()) {
+            throw new IllegalArgumentException("an empty batch cannot be handed off");
+        }
+        if (groups == null || groups.isEmpty()) {
+            throw new IllegalArgumentException("a handed-off batch must have at least one group");
+        }
+        long sequence = handoffCounter.getAndIncrement();
+        HandoffUnit handoffUnit = new HandoffUnit(sequence, unit, groups.size());
+        for (List<ClickHouseStruct> group : groups) {
+            if (groupToUnit.putIfAbsent(new BatchKey(group), handoffUnit) != null) {
+                throw new IllegalStateException(
+                        "batch handed off twice; a batch must be registered exactly once");
+            }
+        }
+        outstandingSequences.add(sequence);
+        if (outstandingSequences.size() > 1000) {
+            log.error("*********** Batches awaiting acknowledgement is greater than 1000 "
                     + "***********");
         }
-        inFlightBatches.put(new BatchKey(batch), batch);
+        return sequence;
     }
 
     /**
-     * Removes the given batch from the in-flight map (by identity).
-     *
-     * @param batch The batch to remove.
-     */
-    public void removeFromBatchTimestamps(List<ClickHouseStruct> batch) {
-        inFlightBatches.remove(new BatchKey(batch));
-    }
-
-    /**
-     * Returns the map of in-flight batches, keyed by batch identity.
-     *
-     * @return A map of batch keys to their associated record lists.
-     */
-    public Map<BatchKey, List<ClickHouseStruct>> getBatchTimestamps() {
-        return inFlightBatches;
-    }
-
-    /**
-     * Reports whether any batch read from the source is still unwritten.
-     * <p>
-     * A batch sits in {@link #inFlightBatches} from the moment a consumer
-     * picks it up until its rows are in ClickHouse and its offsets are
-     * acknowledged, and in {@link #completedBatches} while it waits for an
-     * older overlapping batch to finish. Either map being non-empty means
-     * there are records the connector has read but not yet persisted.
-     * </p>
+     * Reports whether any batch handed to the writers is still unacknowledged:
+     * queued, in flight, or written-but-parked behind an older batch.
      * <p>
      * The caller is the control-record offset commit in
      * {@code DebeziumChangeEventCapture}: a heartbeat carries the connector's
-     * CURRENT position, so committing it while these maps are non-empty would
+     * CURRENT position, so committing it while a sequence is outstanding would
      * move the committed offset past rows that are not in ClickHouse yet and
      * lose them on a crash. This predicate is what makes that commit safe.
      * </p>
      *
-     * @return true if at least one batch is still awaiting persistence.
+     * @return true if at least one handoff sequence is outstanding.
      */
     public static boolean hasUnwrittenBatches() {
-        return outstandingBatches.get() > 0
-                || !inFlightBatches.isEmpty()
-                || !completedBatches.isEmpty();
+        return !outstandingSequences.isEmpty();
     }
 
     /**
-     * Batches handed to the asynchronous consumers that have not yet been
-     * acknowledged.
+     * Reports that a group's rows are durably in ClickHouse and lets the FIFO
+     * decide whether its unit's offset can be acknowledged now.
      * <p>
-     * The two maps above cannot answer this on their own. A consumer
-     * {@code poll()}s a batch off the handoff queue and only registers it in
-     * {@link #inFlightBatches} once it reaches
-     * {@code ClickHouseBatchRunnable#processBatch}; in between -- which
-     * includes the replication-history write -- the batch is in neither
-     * collection and the pipeline would falsely read as quiescent. A
-     * control-record offset committed inside that window would advance past
-     * rows that are not in ClickHouse yet and lose them on a crash.
-     * </p>
-     * <p>
-     * This counter closes that window because it is incremented by the
-     * PRODUCER at handoff, before the batch is visible to any consumer, and
-     * decremented only after the batch has been acknowledged. The producer is
-     * also the thread that reads it, so its own increments happen-before its
-     * own read and no batch it has handed off can be missed. A batch that
-     * fails and is retried is never decremented until it finally succeeds,
-     * so the predicate stays conservative -- it can only ever withhold a
-     * commit, never permit an unsafe one.
-     * </p>
-     */
-    private static final java.util.concurrent.atomic.AtomicLong outstandingBatches =
-            new java.util.concurrent.atomic.AtomicLong();
-
-    /**
-     * Records that a batch has been handed to the asynchronous consumers.
-     * Call on the producer thread immediately before the batch becomes
-     * visible to a consumer.
-     */
-    public static void batchHandedOff() {
-        outstandingBatches.incrementAndGet();
-    }
-
-    /**
-     * Releases a registration made by {@link #batchHandedOff()} for a batch
-     * that never reached a consumer, so no acknowledgement will ever arrive
-     * for it. Without this the counter would stay above zero forever and no
-     * control-record offset could be committed again for the life of the
-     * process.
-     */
-    public static void batchHandoffFailed() {
-        outstandingBatches.updateAndGet(v -> v > 0 ? v - 1 : 0);
-    }
-
-    /**
-     * Calculates the minimum and maximum Debezium timestamps from the given batch.
-     *
-     * @param batch A list of ClickHouseStruct records.
-     * @return A Pair where the left value is the minimum timestamp and the
-     *         right value is the maximum timestamp.
-     */
-    public static Pair<Long, Long> calculateMinMaxTimestampFromBatch(
-            List<ClickHouseStruct> batch) {
-        long min = Long.MAX_VALUE;
-        long max = Long.MIN_VALUE;
-        for (ClickHouseStruct clickHouseStruct : batch) {
-            if (clickHouseStruct.getDebezium_ts_ms() < min) {
-                min = clickHouseStruct.getDebezium_ts_ms();
-            }
-            if (clickHouseStruct.getDebezium_ts_ms() > max) {
-                max = clickHouseStruct.getDebezium_ts_ms();
-            }
-        }
-        return Pair.of(min, max);
-    }
-
-    /**
-     * Checks if there are any in-flight requests that overlap with the current
-     * batch's timestamp range.
-     *
-     * @param currentBatch A list of ClickHouseStruct records.
-     * @return true if there is an overlap; false otherwise.
-     */
-    static boolean checkIfThereAreInflightRequests(
-            List<ClickHouseStruct> currentBatch) {
-        boolean result = false;
-        Pair<Long, Long> currentBatchPair =
-                calculateMinMaxTimestampFromBatch(currentBatch);
-        // Iterate through inFlightBatches and check if there is any OTHER batch
-        // that overlaps the current one.
-        for (Map.Entry<BatchKey, List<ClickHouseStruct>> entry
-                : inFlightBatches.entrySet()) {
-            // Ignore the same batch -- by IDENTITY, not by timestamp range. Two
-            // different batches can share a range; comparing ranges here made a
-            // batch treat a distinct overlapping sibling as "itself" and skip
-            // it, so an unwritten older batch stopped blocking the commit.
-            if (entry.getKey().batch == currentBatch) {
-                continue;
-            }
-            Pair<Long, Long> otherPair =
-                    calculateMinMaxTimestampFromBatch(entry.getValue());
-            // Check if max of current batch is greater than min of inflight batch.
-            if (currentBatchPair.getRight().longValue() > otherPair.getLeft().longValue()) {
-                result = true;
-                break;
-            }
-        }
-        return result;
-    }
-
-    /**
-     * Checks if the batch can be committed.
-     * <p>
-     * If there are no in-flight requests overlapping with the current batch,
-     * the batch is acknowledged and committed. Otherwise, the batch is moved to
-     * completedBatches.
+     * Call EXACTLY ONCE per written group, and then drop the group whatever
+     * this returns: if the unit is not yet commit-eligible it is parked here,
+     * and its acknowledgement is driven by whichever call later acknowledges
+     * the head of the FIFO. Re-running a written batch would re-insert its
+     * rows (WRITTEN-ONCE, spec 09.01 §3.2).
      * </p>
      *
-     * @param batch A list of ClickHouseStruct records.
-     * @return true if the batch can be committed; false otherwise.
-     * @throws InterruptedException If the commit operation is interrupted.
+     * @param batch the written group.
+     * @return true iff the group's unit was acknowledged during this call.
+     * @throws InterruptedException  if acknowledging is interrupted.
+     * @throws IllegalStateException if the batch carries a Debezium committer
+     *                               but was never registered at handoff -- it
+     *                               cannot be ordered and must not be
+     *                               acknowledged silently.
      */
     static synchronized public boolean checkIfBatchCanBeCommitted(
-    List<ClickHouseStruct> batch) throws InterruptedException {
-        boolean result = false;
-        if (true == checkIfThereAreInflightRequests(batch)) {
-            // Remove the record from inFlightBatches and move it to
-            // completedBatches -- keyed by identity so equal-timestamp batches
-            // do not clobber each other.
-            BatchKey key = new BatchKey(batch);
-            inFlightBatches.remove(key);
-            completedBatches.put(key, batch);
-        } else {
-            // Acknowledge current batch
-            acknowledgeRecords(batch);
-            result = true;
-            // Check if completed batches can also be acknowledged.
-            completedBatches.forEach((k, v) -> {
-                if (false == checkIfThereAreInflightRequests(v)) {
-                    try {
-                        acknowledgeRecords(v);
-                    } catch (InterruptedException e) {
-                        log.error("*** Error acknowlegeRecords ***", e);
-                        throw new RuntimeException(e);
-                    }
-                    completedBatches.remove(k);
-                }
-            });
+            List<ClickHouseStruct> batch) throws InterruptedException {
+        HandoffUnit unit = groupToUnit.remove(new BatchKey(batch));
+        if (unit == null) {
+            if (carriesCommitter(batch)) {
+                throw new IllegalStateException("a batch carrying a Debezium committer reached "
+                        + "the writer without a handoff sequence; it cannot be ordered against "
+                        + "the other outstanding batches, so its offset is not acknowledged");
+            }
+            // The Kafka Connect sink path: no Debezium committer, offsets are
+            // committed through the task's own durable watermark. Nothing to
+            // order here.
+            return true;
         }
-        return result;
+        unit.remainingGroups--;
+        if (unit.remainingGroups > 0) {
+            log.debug("Handoff sequence {}: {} group(s) still unwritten", unit.sequence,
+                    unit.remainingGroups);
+            return false;
+        }
+        completedUnits.put(unit.sequence, unit);
+        drainCompletedUnits();
+        return !outstandingSequences.contains(unit.sequence);
+    }
+
+    /**
+     * Acknowledges parked units from the head of the FIFO while the head is
+     * written, and stops at the first outstanding sequence that is not.
+     */
+    private static void drainCompletedUnits() throws InterruptedException {
+        while (!completedUnits.isEmpty()) {
+            if (outstandingSequences.isEmpty()) {
+                throw new IllegalStateException("a completed unit is not outstanding; "
+                        + "the handoff FIFO bookkeeping is corrupt");
+            }
+            Long head = outstandingSequences.first();
+            HandoffUnit unit = completedUnits.get(head);
+            if (unit == null) {
+                log.debug("Handoff sequence {} is written but parked behind unacknowledged "
+                        + "sequence {}", completedUnits.firstKey(), head);
+                return;
+            }
+            acknowledgeRecords(unit.records);
+            completedUnits.remove(head);
+            outstandingSequences.remove(head);
+        }
+    }
+
+    private static boolean carriesCommitter(List<ClickHouseStruct> batch) {
+        if (batch == null) {
+            return false;
+        }
+        for (ClickHouseStruct record : batch) {
+            if (record != null && record.getCommitter() != null) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -373,7 +354,8 @@ public class DebeziumOffsetManagement {
      * ReplacingMergeTree / ReplicatedReplacingMergeTree -- so it is reachable
      * only for a pre-existing table a user points the connector at.</p>
      *
-     * @param batch The batch of ClickHouseStruct records to acknowledge.
+     * @param batch The batch of ClickHouseStruct records to acknowledge, in
+     *              binlog order.
      * @throws InterruptedException If the commit operation is interrupted.
      */
     static synchronized void acknowledgeRecords(List<ClickHouseStruct> batch)
@@ -406,22 +388,6 @@ public class DebeziumOffsetManagement {
                 }
             }
         }
-
-        // Remove the batch from the inFlightBatches (by identity).
-        inFlightBatches.remove(new BatchKey(batch));
-
-        // The batch is acknowledged, so it no longer blocks a control-record
-        // offset commit. Decremented only here, after markProcessed, so the
-        // counter can never drop while rows are still unwritten.
-        //
-        // Floored at zero because a batch that was parked in completedBatches
-        // and then retried can reach this method more than once; letting the
-        // counter go negative would make the pipeline read as quiescent while
-        // work is outstanding, which is the one direction that is unsafe. The
-        // map checks in hasUnwrittenBatches remain as the second line of
-        // defence for exactly that case -- a retried batch is back in
-        // inFlightBatches, so it is still seen.
-        outstandingBatches.updateAndGet(v -> v > 0 ? v - 1 : 0);
     }
 
     /**
