@@ -95,7 +95,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 ---
 
 ### Domain 09: Offset Management, Quiescence & Checkpointing (`specs/09-offset-management/`)
-- **[09.01: FIFO Batch Tracking & Out-of-Order Completion Reconciliation](09-offset-management/01-fifo-batch-tracking.md)**: `inFlightBatches` tracking and FIFO commitment.
+- **[09.01: FIFO Batch Tracking by Handoff Sequence & Written-Once Acknowledgement](09-offset-management/01-fifo-batch-tracking.md)**: handoff-sequence FIFO (binlog order) for offset acknowledgement; a written batch is never re-executed.
 - **[09.02: Mutual Exclusion & Debezium Flush Semaphore Protection](09-offset-management/02-offset-commit-lock.md)**: `OFFSET_COMMIT_LOCK` synchronization.
 - **[09.03: ClickHouse-Backed Durable Offset Storage (`replica_source_info`)](09-offset-management/03-clickhouse-offset-store.md)**: ReplacingMergeTree offset store.
 - **[09.04: Non-DML Control Record Commit & Quiescence Gating](09-offset-management/04-quiescent-control-commit.md)**: Gating control record commits.

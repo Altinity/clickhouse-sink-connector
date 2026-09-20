@@ -46,8 +46,31 @@ public class DDLBaseIT {
                     .forStatusCode(200)
                     .withStartupTimeout(java.time.Duration.ofMinutes(5)));
 
+    /**
+     * Starts the shared ClickHouse container if it is not running.
+     *
+     * <p>{@link #stopContainers()} stops the static {@code clickHouseContainer}
+     * after EVERY test, but the Testcontainers extension starts a static
+     * {@code @Container} only once per class. In a class with two tests the
+     * second one therefore ran against a stopped container and failed with
+     * "Mapped port can only be obtained after the container is started" at its
+     * first {@code getMappedPort} call (observed on
+     * {@code AlterTableModifyColumnIT.testAlterAddPrimaryKeyAndModifyNotNull}).
+     * Restarting here gives each test a fresh container (the init script runs
+     * again), which is also what the per-test MySQL container provides.</p>
+     *
+     * <p>Subclasses that override {@link #startContainers()} must call this
+     * themselves.</p>
+     */
+    protected static void ensureClickHouseContainerStarted() {
+        if (clickHouseContainer != null && !clickHouseContainer.isRunning()) {
+            clickHouseContainer.start();
+        }
+    }
+
     @BeforeEach
     public void startContainers() throws InterruptedException {
+        ensureClickHouseContainerStarted();
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")

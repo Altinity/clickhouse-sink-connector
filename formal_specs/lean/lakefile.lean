@@ -19,4 +19,7 @@ lean_lib «Replication» where
              `Replication.Proofs,
              `Replication.Upgrade,
              `Replication.Snapshot,
-             `Replication.GeneratedColumn]
+             `Replication.GeneratedColumn,
+             `Replication.DdlBarrier,
+             `Replication.OffsetFifo,
+             `Replication.DdlTranslation]

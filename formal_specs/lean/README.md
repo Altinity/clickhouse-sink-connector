@@ -42,7 +42,10 @@ formal_specs/lean/
     ├── Proofs.lean                    # Machine-Checked Theorems: Inductive proofs of convergence
     ├── Upgrade.lean                   # Drop-in Upgrade Safety (Invariant I11): convergence for any gap-monotone version scheme
     ├── Snapshot.lean                  # Snapshot Completion & control-record offset commit (Invariant I12, issue #1379)
-    └── GeneratedColumn.lean           # Generated-Column Type Integrity (Invariant I13): expression maps to DEFAULT, never the type
+    ├── GeneratedColumn.lean           # Generated-Column Type Integrity (Invariant I13): expression maps to DEFAULT, never the type
+    ├── DdlBarrier.lean                # DDL Barrier Quiescence (Invariant I5): the barrier covers legacy + routed queues + unacknowledged batches
+    ├── OffsetFifo.lean                # Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01): commit never passes an outstanding batch, written-once
+    └── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07): no bare ALTER, loud key widening, ADD COLUMN preserved
 ```
 
 ---
@@ -132,6 +135,36 @@ on Lean's standard axioms `[propext, Quot.sound]` (verified via `#print axioms`)
 | `quiescent_control_commits` | a control record on a quiescent pipeline commits its offset | Liveness: the end-of-snapshot heartbeat's offset IS committed. |
 | `snapshot_completes` | after the snapshot's rows are handed off and written, the end-of-snapshot control record commits its offset (`committed = snapPos`) | **Issue #1379**: `snapshot_completed` persists; a restart does not re-run the snapshot. |
 
+### DDL barrier covers every handoff path (Invariant I5, `DdlBarrier.lean`)
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `ddl_applies_only_when_no_pending_rows` | if a `Step` applies the DDL then `pending s = 0` (legacy queue, every routed queue and the in-flight counter are all empty) | No pre-DDL row can be written against the post-DDL schema. |
+| `ddl_step_barrierReady` | a step that applies the DDL was taken from a state satisfying `barrierReady` | The guard is exactly `isPipelineQuiescent()` in `drainBeforeDDL`. |
+| `old_predicate_insufficient` | `∃ s, legacyEmpty s ∧ ¬ barrierReady s` (witness: legacy empty, one routed queue holding a batch) | The pre-fix guard ("legacy queue empty") is NOT a barrier under hash routing. |
+| `old_predicate_admits_pending_rows` | the same witness has `0 < pending s` | The pre-fix guard would apply the DDL over a pending row. |
+| `queues_empty_insufficient` | both queue sets empty but `outstanding = 1` is not `barrierReady` | Dequeued-but-unacknowledged batches must be waited for too. |
+
+### Offset acknowledgement FIFO by handoff sequence (Invariant I8, `OffsetFifo.lean`, spec 09.01)
+
+The model: a monotone handoff counter; an ascending `outstanding` list of
+sequences (handed off, not acknowledged); a `completed` list (written, parked);
+an `acked` list; and a `writes` log. `handoff` appends the next sequence;
+`write s` (enabled only while `s` is outstanding and not yet completed) parks
+`s` and then drains: while the head of `outstanding` is completed it is
+acknowledged. `commitPoint` is the number of leading sequences `0,1,2,…` that
+are all acknowledged.
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `commit_never_passes_outstanding` | in every reachable state, every acknowledged sequence is smaller than every outstanding one | The durable offset never passes a batch that is queued, in flight, or parked — on any worker. |
+| `acked_downward_closed` | if `a` is acknowledged then every `t < a` is acknowledged | Acknowledgements form a prefix of the handoff (binlog) order. |
+| `commitPoint_acked` / `outstanding_ge_commitPoint` | every `t < commitPoint` is acknowledged; every outstanding `t` satisfies `commitPoint ≤ t` | The commit point is exactly the boundary between acknowledged and outstanding. |
+| `write_at_most_once` | the `writes` log has no duplicates in any reachable state | A batch's write event occurs at most once (no re-insertion of a parked batch). |
+| `written_batch_not_reexecuted` | `write s` on an already-completed `s` leaves the state unchanged | A written, parked batch is never executed again. |
+| `old_overlap_rule_unsafe` | with `A = B = (100,100)`, the strict overlap rule `otherMin < curMax` does not block `B`, while in the FIFO `B` is parked and `A` is outstanding | Concrete counterexample to the deleted timestamp-overlap predicate. |
+| `fifo_acknowledges_in_handoff_order` | after handoff, handoff, write 1, write 0 the acknowledgement order is 0 then 1 | The drain acknowledges strictly in handoff order. |
+
 ### Generated-column type integrity (Invariant I13, `GeneratedColumn.lean`)
 
 | Theorem Name | Statement | Significance |
@@ -139,6 +172,25 @@ on Lean's standard axioms `[propext, Quot.sound]` (verified via `#print axioms`)
 | `alter_preserves_type` | the translated ClickHouse column type is always the declared data type | The generated clause never overwrites the type. |
 | `type_is_never_expression` | for a generated column, the emitted type is never the generation expression | The exact bug (`ADD COLUMN c AS(a+b)`) cannot recur. |
 | `generated_has_default` | a generated column always emits a `DEFAULT` | The source value stays authoritative (I6). |
+
+### ALTER TABLE clause classification (Specs 06.03 / 06.04 / 06.05 / 06.07, `DdlTranslation.lean`)
+
+An `ALTER TABLE` is modelled as a list of classified clauses (`addColumn`,
+`dropColumn`, `modifyDataColumn`, `modifyKeyColumnSameOrNarrower`,
+`modifyKeyColumnWider`, `noOp`) and `translate` yields `skip`, `emit kept` or
+`fail`, mirroring `enterAlterTable`.
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `no_bare_alter` | `translate cs ≠ emit []` | The translator never sends a bare `ALTER TABLE db.t` (`Code: 62`); an all-no-op statement yields `skip`. |
+| `all_noop_skips` | every clause unrepresentable and not loud → `translate cs = skip` | Index / key / constraint / charset / option-only statements are acknowledged, not sent. |
+| `wider_key_change_is_loud` | `modifyKeyColumnWider n ∈ cs → translate cs = fail` | A sorting-key widening is refused with `DDLReplicationException` (I9), never emitted to fail with `Code: 524` after retries. |
+| `add_columns_preserved` | `translate cs = emit kept → addColumn n ∈ cs → addColumn n ∈ kept` | Skipping an unrepresentable neighbour never drops an `ADD COLUMN` (I6). |
+| `emitted_are_representable` | `translate cs = emit kept → kept = keep cs` (`keep` = the representable clauses, in source order) | Exactly the representable clauses are emitted, in source order. |
+
+The `lean_lib` is now the package's `@[default_target]`, so a plain `lake build`
+type-checks every module (previously it built only the lakefile; use
+`lake build Replication` on older checkouts).
 
 ---
 

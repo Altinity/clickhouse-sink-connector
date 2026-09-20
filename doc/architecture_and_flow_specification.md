@@ -223,7 +223,8 @@ ClickHouseBatchRunnable / ClickHouseBatchWriter
        v (poll batch from records queue)
 processBatch()
        |
-       +---> Register batch: DebeziumOffsetManagement.addToBatchTimestamps(batch)
+       +---> (the batch was registered with its handoff sequence by the
+       |      Debezium thread at handoff: DebeziumOffsetManagement.registerHandoff)
        |
        +---> Partition records by topic: topicToRecordsMap
        |
@@ -259,16 +260,20 @@ processBatch()
                 |        |        +---> Bind _version, _sign, is_deleted
                 |        +---> ps.executeBatch()
                 |
-                +---> Acknowledge Batch: checkIfBatchCanBeCommitted()
+                +---> Drop the written batch (currentBatch = null; never re-executed)
+                +---> Report it written: checkIfBatchCanBeCommitted()
                          |
-                         +---> Synchronized under OFFSET_COMMIT_LOCK:
-                                  recordCommitter.markProcessed()
-                                  recordCommitter.markBatchFinished()
+                         +---> Unit complete and head of the handoff FIFO?
+                                  yes: acknowledge in binlog order under OFFSET_COMMIT_LOCK:
+                                       recordCommitter.markProcessed() per row,
+                                       recordCommitter.markBatchFinished() once;
+                                       then drain younger parked units in sequence order
+                                  no:  park it (completedUnits) until older units are acknowledged
 ```
 
 #### Step 3.1: Batch Dequeue & Tracking
-- Worker threads in `ClickHouseBatchRunnable.runLegacyMode()` poll batches from `records`.
-- `DebeziumOffsetManagement.addToBatchTimestamps(batch)` calculates the min and max timestamp of the batch and registers it in `inFlightBatches`.
+- Worker threads poll batches from their own routed queue (`runWithHashRouting`, `thread.pool.size > 1`) or from `records` (`runLegacyMode`).
+- Nothing is registered on pick-up: the Debezium thread registered the batch with its handoff sequence (`DebeziumOffsetManagement.registerHandoff`) before enqueueing it, so it counts as unwritten from the instant of handoff (spec 09.01).
 
 #### Step 3.2: Topic Partitioning & Destination Resolution
 - The batch is grouped by Kafka topic: `Map[String, List[ClickHouseStruct]] topicToRecordsMap`.
@@ -343,17 +348,18 @@ In `PreparedStatementExecutor.insertBatch()` and `PreparedStatementFieldMapper.i
    - `ps.executeBatch()` flushes to ClickHouse.
    - Errors are passed to `ClickHouseErrorClassifier`:
      - `FATAL` (syntax errors, illegal column types): Batch is discarded and task stops.
-     - `UNKNOWN` / `RETRIABLE` (network timeouts, connection loss): Retried on next execution cycle.
+     - `UNKNOWN` / `RETRIABLE` (network timeouts, connection loss, `TOO_MANY_PARTS`, `MEMORY_LIMIT_EXCEEDED`): the same batch is retried with exponential backoff (`batch.retry.backoff.initial.ms` doubling to `batch.retry.backoff.max.ms`, no attempt cap; spec 10.02).
+     - `FATAL`: the worker rethrows and its scheduled task ends; the Debezium thread detects the terminated future at the start of its next batch and stops the engine with the cause (spec 03.01).
      - Special Check: If the exception contains `OffsetStorageWriter is already flushing`, the task immediately terminates because Debezium internal offset semaphore has leaked permanently.
 
 #### Step 3.6: Offset Acknowledgement & Commit Serialization
 In `DebeziumOffsetManagement.checkIfBatchCanBeCommitted()` and `acknowledgeRecords()`:
-1. Verifies no older overlapping batches are still in flight.
-2. Acquires `synchronized (OFFSET_COMMIT_LOCK)`.
-3. Iterates over records in the batch:
+1. Looks up the written group's handoff unit by identity and counts the group as written; a unit split across several workers (hash routing) is complete only when every group is written.
+2. A complete unit is acknowledged only if its handoff sequence is the head of the outstanding set (the oldest unacknowledged unit); otherwise it is parked in `completedUnits`.
+3. Acknowledging a unit: acquires `synchronized (OFFSET_COMMIT_LOCK)` and iterates over the unit's records in binlog order:
    - Invokes `recordCommitter.markProcessed(record.getSourceRecord())`.
-   - On the final record of the batch, invokes `recordCommitter.markBatchFinished()`.
-4. Cascades commit checks across `completedBatches` to acknowledge any completed batches that were waiting on this batch.
+   - On the unit's terminal record, invokes `recordCommitter.markBatchFinished()` (once per unit).
+4. Drains `completedUnits` in sequence order while the head of the outstanding set is complete. Commit order is therefore handoff (binlog) order, never wall-clock timestamp order.
 
 ---
 
@@ -500,9 +506,9 @@ The following catalog specifies the behavioral contract, synchronization boundar
 #### `public static synchronized boolean checkIfBatchCanBeCommitted(List[ClickHouseStruct] batch)`
 - **Purpose**: Enforces FIFO in-order offset commitment across concurrently executing worker threads.
 - **Inputs**: Batch of records that completed JDBC execution.
-- **Outputs**: `boolean` (true if batch was committed; false if buffered).
+- **Outputs**: `boolean` (true if the batch's unit was acknowledged during this call; false if it is still incomplete or parked behind an older unit). The caller drops the batch either way -- a written batch is never re-executed.
 - **Locks**: `synchronized (DebeziumOffsetManagement.class)`.
-- **Mutations**: If older overlapping batches exist in `inFlightBatches`, moves batch to `completedBatches`. Otherwise calls `acknowledgeRecords(batch)` and drains qualifying `completedBatches`.
+- **Mutations**: Removes the group from `groupToUnit`; when the unit is complete, puts it in `completedUnits`, then acknowledges from the head of `outstandingSequences` while the head is complete (`acknowledgeRecords(unit.records)` in binlog order, removing the sequence from both collections). A committer-bearing batch that was never registered throws `IllegalStateException`.
 
 #### `public static void acknowledgeRecord(RecordCommitter committer, SourceRecord record, boolean isLastInBatch)`
 - **Purpose**: Thread-safe entry point for committing an individual record offset through Debezium.
@@ -540,7 +546,7 @@ A rigorous analysis of the 2.11.0 codebase reveals that recurring operational bu
 ### 5.3 Global Static State Anti-Pattern & Multi-Tenancy Hazards
 - Critical coordination state across the codebase is held in static variables:
   - `DebeziumChangeEventCapture.sequenceNumber`, `sequenceAnchorTs`, `sequenceHighWaterPosition`, `sequenceMaxSourceTs`.
-  - `DebeziumOffsetManagement.inFlightBatches`, `completedBatches`, `outstandingBatches`, `OFFSET_COMMIT_LOCK`.
+  - `DebeziumOffsetManagement.handoffCounter`, `outstandingSequences`, `groupToUnit`, `completedUnits`, `OFFSET_COMMIT_LOCK`.
   - `CacheInvalidationManager.INSTANCE`.
 - **Consequences**:
   - Multiple connectors or tasks running within the same JVM cross-contaminate state.

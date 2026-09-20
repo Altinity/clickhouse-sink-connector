@@ -65,6 +65,18 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     private static final int DEFAULT_MAX_QUEUE_SIZE = 500000;
 
     /**
+     * Default delay before the first retry of a batch that failed to write to
+     * ClickHouse for a retriable reason (spec 10.02).
+     */
+    private static final long DEFAULT_BATCH_RETRY_BACKOFF_INITIAL_MS = 500L;
+
+    /**
+     * Default cap on the retry delay; the delay doubles per consecutive
+     * failure of the same batch until it reaches this value (spec 10.02).
+     */
+    private static final long DEFAULT_BATCH_RETRY_BACKOFF_MAX_MS = 30000L;
+
+    /**
      * Default timeout period for restarting the event loop (milliseconds).
      */
     private static final long DEFAULT_RESTART_EVENT_LOOP_TIMEOUT_PERIOD = 3000L;
@@ -662,6 +674,30 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.BATCH_RETRY_BACKOFF_INITIAL_MS.toString(),
+                        Type.LONG,
+                        DEFAULT_BATCH_RETRY_BACKOFF_INITIAL_MS,
+                        ConfigDef.Range.atLeast(1),
+                        Importance.LOW,
+                        "Delay in milliseconds before the first retry of a batch that failed to "
+                                + "write to ClickHouse for a retriable reason (e.g. TOO_MANY_PARTS); "
+                                + "doubles on every consecutive failure of the same batch",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.BATCH_RETRY_BACKOFF_INITIAL_MS.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.BATCH_RETRY_BACKOFF_MAX_MS.toString(),
+                        Type.LONG,
+                        DEFAULT_BATCH_RETRY_BACKOFF_MAX_MS,
+                        ConfigDef.Range.atLeast(1),
+                        Importance.LOW,
+                        "Upper bound in milliseconds for the retry delay of a failing batch",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.BATCH_RETRY_BACKOFF_MAX_MS.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString(),
                         Type.BOOLEAN,
