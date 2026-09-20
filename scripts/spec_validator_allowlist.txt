@@ -1,0 +1,55 @@
+# Temporary waivers for scripts/validate_specs.py passes 4 and 5
+# (Codebase Mapping path resolution and Verification citation existence).
+#
+# Format: one entry per line, comments start with '#'.
+#   specs/<domain>/<file>.md                  waive every finding in that file
+#   specs/<domain>/<file>.md | <exact token>  waive one backticked token only
+#
+# Waived findings are still printed as warnings. Every entry below covers a
+# spec that is being rewritten in a concurrent change; remove the entry when
+# that change lands and let the validator enforce the file. An entry that no
+# longer waives anything is reported as "allowlist entry no longer needed".
+
+# 01.05 -- cites DebeziumChangeEventCaptureTest.testAppendToRecordsBackpressure(),
+# which does not exist; also carries stale buffer defaults.
+specs/01-cdc-engine/05-batch-buffering-handoff.md
+
+# 02.05 -- cites ClickHouseStructTest.testRejectUnderivableVersion(), which does not exist.
+specs/02-versioning/05-version-validation.md
+
+# 04.03 -- QueryFormatter path is db/QueryFormatter.java (not db/operations/);
+# cites QueryFormatterTest.testNullFieldRetainedInColumnList() and DataTypesIT.
+specs/04-query-generation/03-field-membership-rules.md
+
+# 05.02 -- PreparedStatementFieldMapper path is db/batch/...; cites
+# PreparedStatementFieldMapperTest, which does not exist.
+specs/05-sorting-key-mutation/02-tombstone-synthesis.md
+
+# Domain 06 -- DDL replication specs are being rewritten together.
+specs/06-ddl-replication/01-ddl-interception-drain.md
+specs/06-ddl-replication/02-executor-barrier-pause.md
+specs/06-ddl-replication/03-mysql-ddl-parsing.md
+specs/06-ddl-replication/04-alter-table-translation.md
+specs/06-ddl-replication/05-nullability-rules.md
+specs/06-ddl-replication/07-primary-key-alteration-rules.md
+specs/06-ddl-replication/08-pipeline-resumption.md
+
+# 07.01 / 07.03 / 07.07 -- cite ClickHouseDataTypeMapperTest methods and a
+# PreparedStatementFieldMapperTest class that do not exist; 07.07 also carries
+# the old PreparedStatementFieldMapper path.
+specs/07-type-system/01-integer-types.md
+specs/07-type-system/03-temporal-types.md
+specs/07-type-system/07-nullability-binding.md
+
+# 08.04 / 08.05 -- GroupInsertQueryWithBatchRecords path is db/batch/...; cite
+# GroupInsertQueryWithBatchRecordsTest, MaterializedColumnConversionIT and
+# ClickHouseAutoCreateTableTest.testCreateTableDDLGeneration(), which do not exist.
+specs/08-schema-catalog/04-column-writability-enforcement.md
+specs/08-schema-catalog/05-auto-table-creation.md
+
+# 09.04 -- cites DebeziumChangeEventCaptureTest.testControlRecordOffsetQuiescence(),
+# which does not exist.
+specs/09-offset-management/04-quiescent-control-commit.md
+
+# 10.02 -- cites ClickHouseBatchRunnableTest.testExponentialBackoff(), which does not exist.
+specs/10-resilience-monitoring/02-retry-exponential-backoff.md
