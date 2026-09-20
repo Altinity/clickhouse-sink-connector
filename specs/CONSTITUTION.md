@@ -70,9 +70,9 @@ Because ClickHouse `ReplacingMergeTree` cannot replace rows across differing `OR
 
 ### Invariant I5: DDL Barrier Quiescence (Zero Schema Inversion)
 DDL statements alter the relational contract. A DDL event must establish an absolute execution barrier:
-1. All DML records preceding the DDL in the binlog stream must be flushed and durably committed under the pre-DDL schema.
-2. Worker execution must quiesce (`activeBatches == 0`).
-3. DDL must be translated and executed on ClickHouse.
+1. All DML records preceding the DDL in the binlog stream must be flushed and durably committed under the pre-DDL schema — on **every** handoff path: the legacy shared queue, **every** per-thread hash-routing queue, and the batches a worker has already dequeued but not yet acknowledged. The barrier predicate is `isPipelineQuiescent()` (spec 06.01); formally `Replication.DdlBarrier.barrierReady`. Observing only one path is not a barrier (`Replication.DdlBarrier.old_predicate_insufficient`).
+2. Worker execution must quiesce (`activeBatches == 0`) with the pool paused.
+3. DDL must be translated and executed on ClickHouse. A DDL that cannot be applied is terminal and loud (I9) regardless of `ddl.retry`, which only decides whether attempts are repeated first (spec 06.08 §3.2).
 4. Schema caches must be invalidated before any post-DDL records are dispatched to workers.
 
 ### Invariant I6: Column Authority & Shadowing Prohibition
@@ -183,4 +183,5 @@ To provide mathematical proof of system correctness, the invariants and state tr
 - `Replication.Engine`: Operational semantics of event translation and PK update splitting.
 - `Replication.Invariants`: Mathematical propositions corresponding to Invariants I1 through I7.
 - `Replication.Proofs`: Machine-checked proofs of convergence, monotonicity, and PK update soundness.
+- `Replication.DdlBarrier`: The pre-DDL barrier of Invariant I5 — the DDL step is enabled only when the legacy queue, every routed queue and the unacknowledged-batch counter are all empty, and a machine-checked counterexample showing that an empty legacy queue alone does not imply that.
 - `Replication.OffsetFifo`: Handoff-sequence FIFO for offset acknowledgement (Invariant I8): commit never passes an outstanding batch, written-once, and the timestamp-overlap counterexample.

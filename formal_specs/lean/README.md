@@ -43,6 +43,7 @@ formal_specs/lean/
     ├── Upgrade.lean                   # Drop-in Upgrade Safety (Invariant I11): convergence for any gap-monotone version scheme
     ├── Snapshot.lean                  # Snapshot Completion & control-record offset commit (Invariant I12, issue #1379)
     ├── GeneratedColumn.lean           # Generated-Column Type Integrity (Invariant I13): expression maps to DEFAULT, never the type
+    ├── DdlBarrier.lean                # DDL Barrier Quiescence (Invariant I5): the barrier covers legacy + routed queues + unacknowledged batches
     └── OffsetFifo.lean                # Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01): commit never passes an outstanding batch, written-once
 ```
 
@@ -121,6 +122,16 @@ on Lean's standard axioms `[propext, Quot.sound]` (verified via `#print axioms`)
 | `control_commit_safe` | a control record advances the committed offset only when `outstanding = 0` | Safety: never commit past unwritten rows (no #1285 data loss). |
 | `quiescent_control_commits` | a control record on a quiescent pipeline commits its offset | Liveness: the end-of-snapshot heartbeat's offset IS committed. |
 | `snapshot_completes` | after the snapshot's rows are handed off and written, the end-of-snapshot control record commits its offset (`committed = snapPos`) | **Issue #1379**: `snapshot_completed` persists; a restart does not re-run the snapshot. |
+
+### DDL barrier covers every handoff path (Invariant I5, `DdlBarrier.lean`)
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `ddl_applies_only_when_no_pending_rows` | if a `Step` applies the DDL then `pending s = 0` (legacy queue, every routed queue and the in-flight counter are all empty) | No pre-DDL row can be written against the post-DDL schema. |
+| `ddl_step_barrierReady` | a step that applies the DDL was taken from a state satisfying `barrierReady` | The guard is exactly `isPipelineQuiescent()` in `drainBeforeDDL`. |
+| `old_predicate_insufficient` | `∃ s, legacyEmpty s ∧ ¬ barrierReady s` (witness: legacy empty, one routed queue holding a batch) | The pre-fix guard ("legacy queue empty") is NOT a barrier under hash routing. |
+| `old_predicate_admits_pending_rows` | the same witness has `0 < pending s` | The pre-fix guard would apply the DDL over a pending row. |
+| `queues_empty_insufficient` | both queue sets empty but `outstanding = 1` is not `barrierReady` | Dequeued-but-unacknowledged batches must be waited for too. |
 
 ### Offset acknowledgement FIFO by handoff sequence (Invariant I8, `OffsetFifo.lean`, spec 09.01)
 

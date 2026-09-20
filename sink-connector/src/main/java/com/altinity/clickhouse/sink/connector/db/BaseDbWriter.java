@@ -210,9 +210,20 @@ public class BaseDbWriter {
     };
 
     /**
+     * Property keys whose removal has already been reported at WARN in this
+     * JVM. {@link #dropV1OnlyProperties} runs on EVERY {@code createConnection()}
+     * call -- with a worker pool, several times a minute for the life of the
+     * process -- and one WARN per call is noise that hides real warnings. The
+     * property is still removed every time; only the first report is a WARN.
+     */
+    private static final java.util.Set<String> WARNED_V1_ONLY_PROPERTIES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
      * Removes V1-only connection properties when the V2 driver is in use, so
      * that a configuration written for the legacy driver keeps working instead
-     * of failing the connection outright. Each removal is logged.
+     * of failing the connection outright. Each removal is logged: at WARN the
+     * first time a key is seen in this process, at DEBUG afterwards.
      * <p>
      * Nothing is dropped on the V1 path — the legacy driver still receives and
      * honours these properties.
@@ -225,10 +236,15 @@ public class BaseDbWriter {
         for (String key : V1_ONLY_PROPERTIES) {
             if (properties.remove(key) != null) {
                 removed++;
-                log.warn("Ignoring JDBC property '{}': it is only supported by the legacy "
-                        + "ClickHouse JDBC V1 driver and the V2 driver rejects the "
-                        + "connection outright when it is present. Set "
-                        + "clickhouse.jdbc.v1=true to keep using the legacy driver.", key);
+                if (WARNED_V1_ONLY_PROPERTIES.add(key)) {
+                    log.warn("Ignoring JDBC property '{}': it is only supported by the legacy "
+                            + "ClickHouse JDBC V1 driver and the V2 driver rejects the "
+                            + "connection outright when it is present. Set "
+                            + "clickhouse.jdbc.v1=true to keep using the legacy driver.", key);
+                } else {
+                    log.debug("Ignoring JDBC property '{}' (V1-only; already reported once "
+                            + "for this process).", key);
+                }
             }
         }
         return removed;
