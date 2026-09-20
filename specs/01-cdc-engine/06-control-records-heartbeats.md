@@ -39,6 +39,26 @@ early-return on it: it null-guards `setSequenceNumber`/status updates, returns
 `null`, and `handleChangeEventBatch` records the (non-DDL) no-row record as the
 batch's `lastControlRecord`.
 
+**Why `parse` returns null for them.** `SourceRecordParserService.parse` builds a
+row only when the value Struct carries an `op` field (`c`/`r`/`u`/`d`/`t`). A
+heartbeat (topic `__debezium-heartbeat.<server>`, value `{ts_ms}`) and a
+transaction-metadata record (topic `<server>.transaction`, value
+`{status,id,event_count,data_collections}`) have no `op`, so `parse` returns
+null by contract — there is no row to write.
+
+**Log level.** A null parse result is classified BEFORE it is logged
+(`DebeziumChangeEventCapture.isControlRecord(SourceRecord)`):
+- **Control record** — the topic starts with `__debezium-heartbeat`, OR the value
+  Struct's schema has no `op` field: logged at **DEBUG** as
+  `Control record (heartbeat/transaction metadata) - no row to write; ...`.
+  Its offset is still committed under §3.2/§3.3. WARN is forbidden here:
+  heartbeats arrive every `heartbeat.interval.ms` (seconds apart) for the life
+  of the process, and a WARN per heartbeat buries the warnings that matter.
+- **Row record** — the value Struct HAS an `op` field and `parse` still returned
+  null: a real row was dropped, logged at **WARN** as
+  `Record could not be parsed to a ClickHouseStruct - skipping ...` (issue #1379
+  visibility requirement).
+
 ### 3.2 Safety — quiescence gate on the control-record commit
 `commitControlRecordOffset` commits the control offset ONLY when both:
 1. `handedOffRows == false` — this batch handed no rows to the writers; and
@@ -73,4 +93,8 @@ committing a control offset past rows not yet in ClickHouse (issue #1285).
 - `Replication.Snapshot.quiescent_control_commits` — a quiescent control record commits its offset.
 - `Replication.Snapshot.snapshot_completes` — after the snapshot's rows are written, the end-of-snapshot control record commits its offset (`committed = snapPos`).
 - `SnapshotOffsetProgressTest.marksExactlyTheLastRow` — every handed-off batch gets exactly one terminal marker.
-- `NullParsedRecordSkipTest`, `ControlRecordOffsetCommitTest` — null-skip and the quiescence gate.
+- `NullParsedRecordSkipTest` (row record carrying `op`), `ControlRecordOffsetCommitTest` — null-skip at WARN and the quiescence gate.
+- `ControlRecordLogLevelTest.heartbeatIsLoggedAtDebugAndStillCommitsItsOffset` — a heartbeat-only batch through `handleChangeEventBatch` produces no WARN from `DebeziumChangeEventCapture`, one DEBUG control-record line, and its offset is acknowledged (`markProcessed` + `markBatchFinished`). Fails on the pre-fix code (WARN per heartbeat).
+- `ControlRecordLogLevelTest.transactionMetadataIsLoggedAtDebug` — a transaction-boundary record (no `op`, non-heartbeat topic) is DEBUG, not WARN.
+- `ControlRecordLogLevelTest.unparseableRowRecordStillWarns` — a record WITH `op` for which `parse` returns null is still WARN.
+- `ControlRecordLogLevelTest.isControlRecordClassification` — the classifier: heartbeat topic → control; no `op` → control; `op` present → row; null/non-Struct value → row.

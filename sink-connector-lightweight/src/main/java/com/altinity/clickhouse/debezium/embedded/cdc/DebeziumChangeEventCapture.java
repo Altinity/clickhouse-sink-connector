@@ -2021,12 +2021,27 @@ public class DebeziumChangeEventCapture {
                         rss.setBinLogFile(chStruct.getFile());
                         rss.setBinLogPosition(String.valueOf(chStruct.getPos()));
                         rss.setGtid(String.valueOf(chStruct.getGtid()));
+                    } else if (isControlRecord(sr)) {
+                        // A heartbeat or transaction-metadata record: it has no
+                        // `op` field, so parse() returns null BY CONTRACT --
+                        // there is no row to write. Its offset is still
+                        // committed by commitControlRecordOffset once the
+                        // pipeline is quiescent (#1379). Logging this at WARN
+                        // produced one warning per heartbeat interval for the
+                        // life of the process and buried the warnings that
+                        // matter.
+                        log.debug("Control record (heartbeat/transaction metadata) - no row to "
+                                + "write; its offset is committed once the pipeline is quiescent. "
+                                + "Record({})", record);
                     } else {
                         // parse() returns null for a record it cannot convert, such as
                         // a null or non-Struct source value. Setting the sequence number
                         // before this check raised an NPE that the catch-all below then
                         // swallowed, so the record was dropped silently while the
                         // snapshot loop logged the same stack trace per record (#1379).
+                        // This branch is reached only for a record that DOES carry an
+                        // `op` field (or no Struct at all): a real row was dropped, so
+                        // it must stay visible.
                         log.warn(String.format(
                                 "Record could not be parsed to a ClickHouseStruct - skipping. Record(%s)",
                                 record));
@@ -2047,6 +2062,42 @@ public class DebeziumChangeEventCapture {
         }
 
         return chStruct;
+    }
+
+    /** Prefix of the topic Debezium emits heartbeat records on. */
+    static final String HEARTBEAT_TOPIC_PREFIX = "__debezium-heartbeat";
+
+    /**
+     * Reports whether a record is a control record -- one that carries no row
+     * by contract, so {@code parse()} returning null for it is expected: a
+     * heartbeat (recognised by its topic) or any Struct-valued record whose
+     * schema has no {@code op} field (heartbeat payloads carry only
+     * {@code ts_ms}; transaction metadata carries {@code status}/{@code id}/
+     * {@code event_count}).
+     * <p>
+     * A null or non-Struct value is NOT a control record: a null parse result
+     * for such a record is a dropped record and must stay visible at WARN.
+     * </p>
+     *
+     * @param sr the source record; may be null.
+     * @return true if the record is a heartbeat or transaction-metadata record.
+     */
+    @VisibleForTesting
+    static boolean isControlRecord(SourceRecord sr) {
+        if (sr == null) {
+            return false;
+        }
+        String topic = sr.topic();
+        if (topic != null && topic.startsWith(HEARTBEAT_TOPIC_PREFIX)) {
+            return true;
+        }
+        Object value = sr.value();
+        if (!(value instanceof Struct)) {
+            return false;
+        }
+        Struct struct = (Struct) value;
+        return struct.schema() != null
+                && struct.schema().field(SinkRecordColumns.OPERATION) == null;
     }
 
     /**

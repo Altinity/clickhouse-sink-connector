@@ -79,12 +79,20 @@ public class NullParsedRecordSkipTest {
         }
     }
 
-    /** A row-change event with no DDL field, so the row branch is taken. */
+    /**
+     * A row-change event with no DDL field, so the row branch is taken. It
+     * carries an {@code op} field, as every real row-change event does: a
+     * value Struct WITHOUT {@code op} is a control record (heartbeat /
+     * transaction metadata) and is logged at DEBUG, not WARN -- see
+     * ControlRecordLogLevelTest and spec 01.06.
+     */
     private static ChangeEvent<SourceRecord, SourceRecord> rowEvent() {
         Schema schema = SchemaBuilder.struct()
+                .field("op", Schema.STRING_SCHEMA)
                 .field("id", Schema.INT32_SCHEMA)
                 .build();
         Struct value = new Struct(schema);
+        value.put("op", "c");
         value.put("id", 1);
         SourceRecord record = new SourceRecord(null, null, "topic", schema, value);
         return new ChangeEvent<SourceRecord, SourceRecord>() {
