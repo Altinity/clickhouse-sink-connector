@@ -96,9 +96,14 @@ public class Constants {
     public static final String ALTER_TABLE = "ALTER TABLE %s";
 
     /**
-     * Template for renaming tables, e.g. "RENAME TABLE %s TO %s".
+     * Template for renaming tables, e.g. "RENAME TABLE IF EXISTS %s TO %s".
+     *
+     * <p>Guarded: a rename is not self-idempotent. Once applied the old
+     * table is gone, so a replay after a connector restart would fail and
+     * stall the stream. With IF EXISTS (accepted by ClickHouse 24.8) the
+     * replay is a no-op.</p>
      */
-    public static final String ALTER_RENAME_TABLE = "RENAME TABLE %s TO %s";
+    public static final String ALTER_RENAME_TABLE = "RENAME TABLE IF EXISTS %s TO %s";
 
     /**
      * CREATE TABLE command.
@@ -158,6 +163,26 @@ public class Constants {
      */
     public static final String MODIFY_COLUMN_NULLABLE =
             "MODIFY COLUMN %s Nullable(%s)";
+
+    /**
+     * Template for the MODIFY half of a translated {@code CHANGE COLUMN old
+     * new <type>}, e.g. "MODIFY COLUMN IF EXISTS %s %s".
+     *
+     * <p>Guarded, unlike {@link #MODIFY_COLUMN}: a CHANGE is emitted as a
+     * MODIFY of the OLD name followed by a RENAME to the new one. Once the
+     * rename has been applied the old name no longer exists, so a replay of
+     * the MODIFY half after a connector restart fails with
+     * {@code Code: 10 NOT_FOUND_COLUMN_IN_BLOCK} and stalls the stream. The
+     * guard is on the synthesised statement only; a user MODIFY stays
+     * unguarded so a genuinely missing column is still reported.</p>
+     */
+    public static final String MODIFY_COLUMN_IF_EXISTS = "MODIFY COLUMN IF EXISTS %s %s";
+
+    /**
+     * Nullable variant of {@link #MODIFY_COLUMN_IF_EXISTS}.
+     */
+    public static final String MODIFY_COLUMN_IF_EXISTS_NULLABLE =
+            "MODIFY COLUMN IF EXISTS %s Nullable(%s)";
 
     /**
      * The RENAME COLUMN clause in an ALTER TABLE statement.

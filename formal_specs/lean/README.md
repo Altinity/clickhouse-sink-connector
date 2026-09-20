@@ -44,7 +44,8 @@ formal_specs/lean/
     ├── Snapshot.lean                  # Snapshot Completion & control-record offset commit (Invariant I12, issue #1379)
     ├── GeneratedColumn.lean           # Generated-Column Type Integrity (Invariant I13): expression maps to DEFAULT, never the type
     ├── DdlBarrier.lean                # DDL Barrier Quiescence (Invariant I5): the barrier covers legacy + routed queues + unacknowledged batches
-    └── OffsetFifo.lean                # Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01): commit never passes an outstanding batch, written-once
+    ├── OffsetFifo.lean                # Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01): commit never passes an outstanding batch, written-once
+    └── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07): no bare ALTER, loud key widening, ADD COLUMN preserved
 ```
 
 ---
@@ -160,6 +161,25 @@ are all acknowledged.
 | `alter_preserves_type` | the translated ClickHouse column type is always the declared data type | The generated clause never overwrites the type. |
 | `type_is_never_expression` | for a generated column, the emitted type is never the generation expression | The exact bug (`ADD COLUMN c AS(a+b)`) cannot recur. |
 | `generated_has_default` | a generated column always emits a `DEFAULT` | The source value stays authoritative (I6). |
+
+### ALTER TABLE clause classification (Specs 06.03 / 06.04 / 06.05 / 06.07, `DdlTranslation.lean`)
+
+An `ALTER TABLE` is modelled as a list of classified clauses (`addColumn`,
+`dropColumn`, `modifyDataColumn`, `modifyKeyColumnSameOrNarrower`,
+`modifyKeyColumnWider`, `noOp`) and `translate` yields `skip`, `emit kept` or
+`fail`, mirroring `enterAlterTable`.
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `no_bare_alter` | `translate cs ≠ emit []` | The translator never sends a bare `ALTER TABLE db.t` (`Code: 62`); an all-no-op statement yields `skip`. |
+| `all_noop_skips` | every clause unrepresentable and not loud → `translate cs = skip` | Index / key / constraint / charset / option-only statements are acknowledged, not sent. |
+| `wider_key_change_is_loud` | `modifyKeyColumnWider n ∈ cs → translate cs = fail` | A sorting-key widening is refused with `DDLReplicationException` (I9), never emitted to fail with `Code: 524` after retries. |
+| `add_columns_preserved` | `translate cs = emit kept → addColumn n ∈ cs → addColumn n ∈ kept` | Skipping an unrepresentable neighbour never drops an `ADD COLUMN` (I6). |
+| `emitted_are_representable` | `translate cs = emit kept → kept = keep cs` (`keep` = the representable clauses, in source order) | Exactly the representable clauses are emitted, in source order. |
+
+The `lean_lib` is now the package's `@[default_target]`, so a plain `lake build`
+type-checks every module (previously it built only the lakefile; use
+`lake build Replication` on older checkouts).
 
 ---
 

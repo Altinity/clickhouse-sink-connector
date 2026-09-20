@@ -49,6 +49,7 @@ LEAN_MODULES = [
     "GeneratedColumn.lean",
     "DdlBarrier.lean",
     "OffsetFifo.lean",
+    "DdlTranslation.lean",
 ]
 
 

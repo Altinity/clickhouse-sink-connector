@@ -43,11 +43,30 @@ public class MySQLDDLParserService implements DDLParserService {
     private BaseDbWriter writer;
 
     /**
+     * Optional override of how the translator learns the existing ClickHouse
+     * schema of an ALTER's target table (nullability, sorting key). Null means
+     * "read it through DBMetadata on the writer's connection"; tests inject a
+     * fixed answer here (Spec 06.03 §3.4).
+     */
+    private TargetSchemaLookup targetSchemaLookup;
+
+    /**
      * Default constructor for MySQLDDLParserService.
      */
     @Inject
     public MySQLDDLParserService() {
 
+    }
+
+    /**
+     * Overrides the target-schema lookup used by every listener this service
+     * creates. Intended for tests; production leaves it unset and reads the
+     * schema from ClickHouse.
+     *
+     * @param targetSchemaLookup the lookup, or null to restore the default.
+     */
+    public void setTargetSchemaLookup(TargetSchemaLookup targetSchemaLookup) {
+        this.targetSchemaLookup = targetSchemaLookup;
     }
 
     /**
@@ -98,6 +117,7 @@ public class MySQLDDLParserService implements DDLParserService {
 
         // Initialize the listener to handle the parsing logic
         MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, config, sql);
+        listener.setTargetSchemaLookup(targetSchemaLookup);
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 
@@ -128,6 +148,7 @@ public class MySQLDDLParserService implements DDLParserService {
 
         // Initialize the listener to handle the parsing logic
         MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, this.config, sql);
+        listener.setTargetSchemaLookup(targetSchemaLookup);
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 
