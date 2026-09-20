@@ -6,8 +6,9 @@ Specifies the critical distinction between columns that are omitted from a CDC e
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/operations/QueryFormatter.java`
-- **Method**: `createColumns()`
+- **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/QueryFormatter.java`
+- **Method**: `getInsertQueryUsingInputFunction(...)` (builds the INSERT column list from the record's unfiltered schema)
+- **Bind-time counterpart**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/PreparedStatementFieldMapper.java` (Spec 07.07 §3.1)
 
 ---
 
@@ -49,5 +50,17 @@ column would be present in the INSERT but bound to the default. See Spec 07.07
 ---
 
 ## 5. Verification Criteria
-- `QueryFormatterTest.testNullFieldRetainedInColumnList()`
-- `DataTypesIT.testExplicitNullPreservation()`
+- `NullValueColumnDropTest.testNullColumnIsBoundOnInsert()` — Case A: a column
+  present in the schema with a `null` value is a member of the INSERT and is
+  bound as SQL NULL.
+- `NullValueColumnDropTest.testUpdateClearingColumnBindsIt()` — an UPDATE that
+  sets a column to `null` binds it (Case A on the after-image).
+- `NullValueColumnDropTest.testPreAlterRecordStillOmitsUnknownColumn()` — Case B:
+  a column absent from a pre-ALTER record's schema is not a member.
+- `NullValueColumnDropTest.testSchemaDefaultIsNotSubstitutedForNull()` — §3.3:
+  the Connect-schema default is never bound in place of a stored `null`.
+- `NullColumnValueRoundTripIT.testNullOnInsertStaysNull()`,
+  `NullColumnValueRoundTripIT.testUpdateToNullClearsTheStoredValue()`,
+  `NullColumnValueRoundTripIT.testPreAlterRowStillReceivesTheColumnDefault()` —
+  end to end against MySQL and ClickHouse: explicit `NULL` lands as NULL,
+  a pre-ALTER row receives the ClickHouse column DEFAULT.

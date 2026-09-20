@@ -109,4 +109,4 @@ committing a control offset past rows not yet in ClickHouse (issue #1285).
 - `ControlRecordLogLevelTest.heartbeatIsLoggedAtDebugAndStillCommitsItsOffset` — a heartbeat-only batch through `handleChangeEventBatch` produces no WARN from `DebeziumChangeEventCapture`, one DEBUG control-record line, and its offset is acknowledged (`markProcessed` + `markBatchFinished`). Fails on the pre-fix code (WARN per heartbeat).
 - `ControlRecordLogLevelTest.transactionMetadataIsLoggedAtDebug` — a transaction-boundary record (no `op`, non-heartbeat topic) is DEBUG, not WARN.
 - `ControlRecordLogLevelTest.unparseableRowRecordStillWarns` — a record WITH `op` for which `parse` returns null is still WARN.
-- `ControlRecordLogLevelTest.isControlRecordClassification` — the classifier: heartbeat topic → control; no `op` → control; `op` present → row; null/non-Struct value → row.
+- The `isControlRecord` classifier (heartbeat topic -> control; no `op` -> control; `op` present -> row; null or non-Struct value -> row) is exercised through the three tests above; a dedicated classifier unit test is not yet covered by an automated test (gap).

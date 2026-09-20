@@ -69,5 +69,7 @@ through its completion callback (spec 03.01 §3.3).
 ---
 
 ## 5. Verification Criteria
-- `ClickHouseBatchRunnableTest.testFatalErrorHaltsExecution()`
+- `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()` — §3.3: a DDL failure escapes the catch-all as `DDLReplicationException`.
+- `ClickHouseErrorClassifierTest.testIsFatal()`, `ClickHouseErrorClassifierTest.testClassifyFatal()` — the FATAL set that triggers the rethrow.
+- `ClickHouseBatchWriterMissingTableTest` — a missing target table fails the batch loudly instead of being skipped.
 - `WorkerDeathIsLoudTest.deadWorkerFailsTheNextBatchLoudly()`

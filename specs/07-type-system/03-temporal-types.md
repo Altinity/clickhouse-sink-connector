@@ -58,7 +58,19 @@ round-trip unchanged), so the full MySQL range is representable; no ClickHouse
 ---
 
 ## 5. Verification Criteria
-- `ClickHouseDataTypeMapperTest.testTemporalConversions()`
+- `DebeziumConverterTest.testTimestampConverter()`,
+  `DebeziumConverterTest.testTimestampConverterMinRange()`,
+  `DebeziumConverterTest.testTimestampConverterMaxRange()` — `DATETIME`
+  round-trips at and beyond the ClickHouse `DateTime64` bounds are clamped,
+  never wrapped.
+- `DebeziumConverterTest.testDateConverterMinRange()`,
+  `DebeziumConverterTest.testDateConverterMaxRange()`,
+  `DebeziumConverterTest.testDateConverterWithinRange()` — `DATE` boundaries.
+- `DebeziumConverterTest.testMicroTimestampConverterMin()`,
+  `DebeziumConverterTest.testMicroTimestampConverterMax()` — microsecond
+  `DATETIME(6)` boundaries.
+- `DebeziumConverterTest.testZonedTimestampConverter()` — `TIMESTAMP` is
+  normalised through the configured zone without date slippage.
 - `DebeziumConverterTest.testMicroTimeConverterSignedAndBeyond24Hours()` —
   `convert(-3_600_000_000L) == "-01:00:00.000000"` and
   `convert(91_800_000_000L) == "25:30:00.000000"` (pre-fix code returns

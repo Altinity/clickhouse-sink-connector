@@ -29,7 +29,8 @@ carry higher versions and correctly supersede pre-upgrade rows; re-delivered
 events (at-least-once) carry versions that LOSE to the already-written rows and
 are discarded. Formalised: `upgrade_safe` proves that a stream whose first `n`
 ordinals use the OLD version scheme and the rest use the NEW scheme converges,
-provided the combined scheme stays gap-monotone.
+provided the combined scheme stays gap-monotone. §6 lists the situations in which
+the shipped code does not yet establish that proviso.
 
 ### 3.2 Verified compatibility surfaces (2.8.0 / 2.9.1 / 2.10.3 vs 2.11.0)
 1. **`_version` formula precedence preserved**: `gtid` (SnowFlakeId(ts, gtid) when
@@ -39,8 +40,8 @@ provided the combined scheme stays gap-monotone.
    with the SAME precedence and arithmetic (only ADDING the lsn and
    ts+offset-fallback branches). The lightweight no-GTID sequence anchor moved
    from the envelope `debezium_ts_ms` (2.8.0) to `source.ts_ms` (#1346), which is
-   ≤ the envelope value; combined with the restart gap this cannot invert a
-   post-upgrade row against a pre-upgrade one.
+   ≤ the envelope value; see §6.2 for the lagging-connector consequence of that
+   anchor change.
 2. **Persisted formats identical**: Debezium is `3.1.3.Final` in all four
    versions, so the offset-store and schema-history serialisation is byte-compatible
    and 2.11.0 reads the committed position written by any of them.
@@ -59,8 +60,8 @@ None alters `_version`, the offset store, or the schema — all upgrade-safe.
 ---
 
 ## 4. Invariants Preserved
-- **Invariant I11 (Drop-in Upgrade Safety)**: upgrading in place never ruins data already in ClickHouse; pre- and post-upgrade rows coexist and the correct (latest) row wins under `FINAL`.
-- **Invariant I2/I3**: version monotonicity and convergence hold across the version boundary.
+- **Invariant I11 (Drop-in Upgrade Safety)**: formats, config keys and version precedence are preserved across the upgrade; pre- and post-upgrade rows coexist and the latest row wins under `FINAL` **wherever version order is continuous across the boundary** (see §6 for where it is not yet).
+- **Invariant I2/I3**: version monotonicity and convergence hold across the version boundary under the same proviso.
 
 ---
 
@@ -69,3 +70,56 @@ None alters `_version`, the offset store, or the schema — all upgrade-safe.
 - `Replication.Upgrade.replicate_convergesV` — convergence for ANY gap-monotone version scheme (absolute version numbers are irrelevant; only order matters).
 - `Replication.Upgrade.liveVersion_gapMono` — the shipped ordinal scheme is gap-monotone.
 - `#print axioms` on the above lists only `[propext, Quot.sound]` (no `sorryAx`).
+- `SequenceSeedOverflowTest`, `DebeziumChangeEventCaptureTest.knownDefectNewerEventAfterRestartRanksBelowOlderPreRestartEvent()` — §6.1 pinned as a present defect.
+- `VersionFallbackWithoutGtidTest.bindMustNotWriteUint64Max()`, `VersionFallbackWithoutGtidTest.calculateVersionMustNotFallThroughToSentinel()` — 2.11.0 no longer writes the sentinel of §6.3.
+- Verification: §6.2 (lagging connector at upgrade time) is not yet covered by an automated test (gap).
+
+---
+
+## 6. Caveats: where the code does not yet establish the theorem's hypothesis
+`upgrade_safe` is conditional on `GapMono (upgradeScheme vOld vNew n)`: the combined
+old/new version scheme must be strictly increasing (gap of at least two per
+ordinal) across the upgrade boundary. The shipped code does **not** establish that
+hypothesis in three situations. None of them is a data-format break; all three are
+version-ordering gaps that the theorem, by construction, does not cover.
+
+### 6.1 The restart carry (inherited 2.8.0 behaviour, preserved by design)
+
+> **Compatibility constraint (governing rule).** The emitted `_version` domain — `ts_ms × 1_000_000 + counter` with the 2.8.0 seeds — is the contract shared with 2.8.0, 2.9.1 and 2.10.x. It MUST NOT change: a version written by any of those releases must rank consistently against one written by 2.11.0 in BOTH directions (upgrade and downgrade). The restart carry described here is therefore inherited 2.8.0 behaviour that is preserved deliberately; any improvement is confined to WHERE the restart floor starts (seeding the anchor from the target's `max(_version)` or a persisted last-emitted version) and must ship with an explicit upgrade/downgrade matrix against 2.8.0, 2.9.1 and 2.10.x.
+
+An upgrade is a restart, so the first record after it is versioned with the
+counter seeded at `SEQUENCE_START_INITIAL` (500m) in the formula
+`effectiveTs * 1_000_000 + seq`, whose six low digits the ten-digit seeds
+overflow. A genuinely newer post-upgrade event within ~1 s of the last
+pre-upgrade event can rank below it (spec 02.01 §4, quoted from
+`DebeziumOffsetManagement`). Across that window the combined scheme is not
+gap-monotone, so `upgrade_safe` does not apply.
+
+### 6.2 A connector that is lagging at upgrade time
+§3.1 assumes every post-upgrade event's source commit time is later than every
+pre-upgrade event's. That is true of the source clock, but not necessarily of the
+*anchor* each release used: 2.8.0 anchored the no-GTID version on the envelope
+(processing) timestamp `debezium_ts_ms`, and 2.11.0 still does so for snapshot
+rows and records without a source struct. For a lagging connector the processing
+time is later than the source time. After the upgrade the no-GTID path anchors on
+`source.ts_ms` (#1346). If the connector was N seconds behind at the upgrade, the
+first N seconds of post-upgrade versions are anchored on source times that can be
+**below** the processing-time-anchored versions of the last pre-upgrade writes for
+the same keys. The combined scheme is not gap-monotone over that range and the
+pre-upgrade row can win under `FINAL` until a later update of the key arrives.
+
+### 6.3 UInt64-max sentinel rows written by older versions
+Before the timestamp+offset fallback in `ClickHouseStruct.calculateVersion`
+existed, a record with no gtid, sequence number or lsn kept `version = -1`,
+which `setLong` stored into the `UInt64` `_version` column as
+`18446744073709551615` (the Javadoc on `calculateVersion` records this, issue
+#1213). Such a row holds the maximum possible version: no later row — from any
+connector version — can ever supersede it under `ReplacingMergeTree`. Upgrading
+does not repair those rows; they must be found and rewritten out-of-band.
+`upgrade_safe` cannot cover them because no gap-monotone scheme can continue
+above the maximum value.
+
+Until 6.1 and 6.2 are closed the honest reading of I11 is: the upgrade preserves
+formats and precedence, and `upgrade_safe` proves convergence **given** version
+order continuity; version order continuity itself is not yet guaranteed by the
+code across the boundary in the two windows described above.

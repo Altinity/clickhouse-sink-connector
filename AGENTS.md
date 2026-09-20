@@ -23,7 +23,7 @@ Inspired by [Smart Ralph](https://github.com/tzachbon/smart-ralph), every change
    - **Formal Verification Alignment**: The formal Lean 4 replication model in `formal_specs/lean/` proving that the change preserves log sequence monotonicity, version consistency, and convergence.
    - **Spec Validation Tool**: Run `python3 scripts/validate_specs.py` before submitting any PR.
 
-See [`specs/CONSTITUTION.md`](specs/CONSTITUTION.md) for core invariants (I1–I10) and [`specs/SMART_RALPH_PROTOCOL.md`](specs/SMART_RALPH_PROTOCOL.md) for the complete agentic development protocol.
+See [`specs/CONSTITUTION.md`](specs/CONSTITUTION.md) for core invariants (I1–I13) and [`specs/SMART_RALPH_PROTOCOL.md`](specs/SMART_RALPH_PROTOCOL.md) for the complete agentic development protocol.
 
 ---
 

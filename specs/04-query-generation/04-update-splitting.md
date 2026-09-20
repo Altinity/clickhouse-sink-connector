@@ -6,7 +6,9 @@ Specifies the handling of MySQL UPDATE operations (`op == 'u'`) across standard 
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/operations/GroupInsertQueryWithBatchRecords.java`
+- **Grouping**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/GroupInsertQueryWithBatchRecords.java`
+- **Binding**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/PreparedStatementExecutor.java` (`executePreparedStatement`) and `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/PreparedStatementFieldMapper.java`
+- **History mode**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/ReplicationHistoryHandler.java`, enabled by `replication.history.enable` (`ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE`)
 
 ---
 
@@ -14,12 +16,12 @@ Specifies the handling of MySQL UPDATE operations (`op == 'u'`) across standard 
 
 ### 3.1 Standard Mode Update Handling
 - In standard replication mode, an UPDATE event carries both a `before` struct and an `after` struct.
-- If the UPDATE does not relocate the sorting key, the `after` image is processed as a standard insert with `is_deleted = 0` and the new monotonic `_version`.
-- If the UPDATE alters any sorting key column, the two-phase tombstone protocol (Spec 004) splits the event into an old-key tombstone and a new-key insert.
+- If the UPDATE does not relocate the sorting key, the `after` image is processed as a standard insert with `is_deleted = 0` and the record's `_version`.
+- If the UPDATE alters any sorting key column (`updateRelocatesSortingKey`, spec 05.01), the two-phase tombstone protocol (specs 05.02 and 05.03) binds an old-key tombstone before the new-key insert in the same batch.
 
 ### 3.2 Replication History Mode (`binlog_history`)
 When `replication.history.enable = true`:
-- The connector maintains SCD Type 2 bitemporal history in `binlog_history` tables.
+- The connector maintains SCD Type 2 bitemporal history in the configured history tables.
 - Both `before` and `after` images are preserved with audit columns:
   - `_operation = 'u'`
   - `_valid_from`, `_valid_to`
@@ -33,5 +35,6 @@ When `replication.history.enable = true`:
 ---
 
 ## 5. Verification Criteria
-- `GroupInsertQueryWithBatchRecordsTest.testUpdateHandling()`
-- `BinLogHistoryIT`
+- `GroupInsertQueryHistoryMultiRowTest.standardModeStillSplitsUpdateIntoBeforeAndAfter()`, `GroupInsertQueryHistoryMultiRowTest.historyModeStillEmitsOneRowPerUpdate()`, `GroupInsertQueryHistoryMultiRowTest.recordsAfterTheFirstUpdateSurviveInHistoryMode()`.
+- `ReplicationHistoryHandlerTest` — history-column population.
+- `BinLogHistoryIT` — end to end history mode.

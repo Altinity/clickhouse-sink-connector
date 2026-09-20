@@ -11,7 +11,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 ## Master Specification Index
 
 ### Core Governance & Protocols
-- **[`specs/CONSTITUTION.md`](CONSTITUTION.md)**: System mission, the Prime Directive, and 10 immutable architectural invariants (`I1`–`I10`).
+- **[`specs/CONSTITUTION.md`](CONSTITUTION.md)**: System mission, the Prime Directive, and 13 immutable architectural invariants (`I1`–`I13`).
 - **[`specs/SMART_RALPH_PROTOCOL.md`](SMART_RALPH_PROTOCOL.md)**: Spec-Driven Agentic Engineering protocol (Smart Ralph).
 
 ---
@@ -29,7 +29,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 ### Domain 02: Monotonic Versioning & Ordering (`specs/02-versioning/`)
 - **[02.01: 64-Bit Monotonic Version Formula & Bit Allocation](02-versioning/01-version-formula-encoding.md)**: Mathematical formula: $V = (\text{effectiveTs} \times 10^6) + \text{seq}$.
 - **[02.02: Commit Monotonicity Floor & Late-Commit Inversion Prevention](02-versioning/02-commit-monotonicity-floor.md)**: High-water clamping (`sequenceMaxSourceTs`).
-- **[02.03: Intra-Second Sequence Counter Lifecycle & Rollover](02-versioning/03-sequence-counter-lifecycle.md)**: Rollover at second boundaries and `SEQUENCE_START`.
+- **[02.03: Intra-Window Sequence Counter Lifecycle & Reset](02-versioning/03-sequence-counter-lifecycle.md)**: Counter reset at the 2000 ms anchor boundary, `SEQUENCE_START` / `SEQUENCE_START_INITIAL` seeds.
 - **[02.04: Redelivery Stability & Offset Rewind Versioning](02-versioning/04-redelivery-stability.md)**: Preserving high-water coordinates during replays.
 - **[02.05: Version Validation & Underivable Version Rejection](02-versioning/05-version-validation.md)**: Fail-fast assertion rejecting non-positive versions.
 
@@ -105,7 +105,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 ### Domain 10: Error Classification, Recovery & Metrics (`specs/10-resilience-monitoring/`)
 - **[10.01: Error Classification Taxonomy & Code Mapping](10-resilience-monitoring/01-error-classifier-taxonomy.md)**: FATAL, RETRIABLE, UNKNOWN classification.
 - **[10.02: Exponential Backoff & Retry Interval Calculation](10-resilience-monitoring/02-retry-exponential-backoff.md)**: Backoff intervals and retry ceilings.
-- **[10.03: Replica Status View & Monitoring Metrics](10-resilience-monitoring/03-replica-status-view.md)**: `system.show_replica_status` lag monitoring.
+- **[10.03: Replica Status View & Monitoring Metrics](10-resilience-monitoring/03-replica-status-view.md)**: `<offset database>.show_replica_status` lag view (configured by `replica.status.view`).
 - **[10.04: Loud Failure Guarantee & Anti-Swallowing Protocol](10-resilience-monitoring/04-loud-failure-guarantee.md)**: Invariant I9 (Loud Failure) enforcement.
 - **[10.05: Redelivered-Record De-duplication](10-resilience-monitoring/05-record-deduplication.md)**: `deduplication.policy` keys on event identity `(topic, partition, offset)`, never on the row key.
 

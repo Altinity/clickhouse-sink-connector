@@ -30,5 +30,6 @@ Specifies the preservation of exact scales, precisions, and IEEE 754 representat
 ---
 
 ## 5. Verification Criteria
-- `ClickHouseDataTypeMapperTest.testDecimalScaling()`
-- `DataTypesIT.testDecimalPrecision()`
+- `ClickHouseDataTypeMapperFloat64Test.float64MapsToFloat64()`, `ClickHouseDataTypeMapperFloat64Test.float32StillMapsToFloat32()`, `ClickHouseDataTypeMapperFloat64Test.float32ColumnCannotRepresentADoubleValue()` — §3.1.
+- `CreateTableDataTypesIT` — auto-created `Decimal(65, 30)` columns for MySQL `DECIMAL` (type mapping, end to end).
+- Verification: a unit test asserting `setBigDecimal` binding without float conversion (§3.2 value path) is not yet covered by an automated test (gap).

@@ -6,7 +6,7 @@ Specifies the handling of binary arrays, BLOBs, and bit fields (`BIT(N)`), forma
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/converters/ClickHouseDataTypeMapper.java`
+- **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/converters/ClickHouseDataTypeMapper.java` — the `Bits.LOGICAL_NAME` (`io.debezium.data.Bits`) branch of the bytes handler
 
 ---
 
@@ -17,7 +17,7 @@ In MySQL / Debezium:
 - ClickHouse expects bit masks and numeric bit fields to follow **big-endian** integer byte order.
 
 ### 3.1 Reversal Logic
-When `ClickHouseDataTypeMapper` processes a `Bits` schema:
+When `ClickHouseDataTypeMapper` processes a value whose schema name is `Bits.LOGICAL_NAME` **and the byte array is longer than one byte** (`rawBytes.length > 1`), the bytes are reversed before binding:
 ```java
 byte[] sourceBytes = (byte[]) value;
 byte[] reversed = new byte[sourceBytes.length];
@@ -26,7 +26,7 @@ for (int i = 0; i < sourceBytes.length; i++) {
 }
 // Bind reversed byte array into ClickHouse UInt64 or String
 ```
-Failure to reverse bytes results in bit transposition (e.g. bit flag `0b00000001` becoming `0b10000000`).
+Single-byte values and BLOB / `ByteBuffer` payloads (non-`Bits` schemas) are bound unchanged. Failure to reverse multi-byte values results in byte transposition (e.g. `BIT(16)` value `0x0001` stored as `0x0100`).
 
 ---
 
@@ -36,4 +36,5 @@ Failure to reverse bytes results in bit transposition (e.g. bit flag `0b00000001
 ---
 
 ## 5. Verification Criteria
-- `ClickHouseDataTypeMapperTest.testBitEndiannessReversal()`
+- `ClickHouseDataTypeMapperBitEndianTest.testBit64AsymmetricValueIsBigEndian()`, `ClickHouseDataTypeMapperBitEndianTest.testBit24AsymmetricValueIsBigEndian()`, `ClickHouseDataTypeMapperBitEndianTest.testBit16HighByteIsBigEndian()`, `ClickHouseDataTypeMapperBitEndianTest.testSingleHighByteUnchanged()`, `ClickHouseDataTypeMapperBitEndianTest.testPalindromicValuesUnchanged()`, `ClickHouseDataTypeMapperBitEndianTest.testBlobByteBufferNotReversed()`.
+- `ClickHouseDataTypeMapperBitBytesTest` — bit / bytes binding.

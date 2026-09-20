@@ -6,7 +6,7 @@ Specifies the lexical and syntactic analysis of raw MySQL DDL statements using A
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/MySqlDDLParserService.java`
+- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/MySQLDDLParserService.java`
 - **Listener Implementation**: `com.altinity.clickhouse.debezium.embedded.ddl.parser.MySqlDDLParserListenerImpl`
 - **Target-schema lookup (injectable)**: `com.altinity.clickhouse.debezium.embedded.ddl.parser.TargetSchemaLookup`
 - **Grammars**: `MySqlLexer.g4`, `MySqlParser.g4` (`alterSpecification` alternatives, `defaultValue`, `indexColumnNames`)

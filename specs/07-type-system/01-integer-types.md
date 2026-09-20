@@ -49,7 +49,16 @@ target is left untouched (it is a genuine negative `BIGINT`).
 ---
 
 ## 5. Verification Criteria
-- `ClickHouseDataTypeMapperTest.testIntegerConversions()`
+- `ClickHouseDataTypeMapperTest.getClickHouseDataType()` — signed MySQL
+  integer types map to `Int8`/`Int16`/`Int32`/`Int64`.
+- `ClickHouseDataTypeMapperTest.getUnsignedClickHouseType()` — `TINYINT` /
+  `SMALLINT` / `MEDIUMINT` / `INT` / `BIGINT UNSIGNED` map to `UInt8` /
+  `UInt16` / `UInt32` / `UInt32` / `UInt64`; display width and `ZEROFILL`
+  are tolerated; signed types are not remapped.
+- `ClickHouseDataTypeMapperInt8Test.int8ByteIsBoundToInt8Column()`,
+  `ClickHouseDataTypeMapperInt8Test.int8ByteIsBoundToUInt8Column()`,
+  `ClickHouseDataTypeMapperInt8Test.negativeInt8KeepsItsSign()` — a
+  `TINYINT` arrives as `INT8` and is bound without sign loss or truncation.
 - `ClickHouseDataTypeMapperUInt64Test.testWrappedUnsignedBigintIsRestoredForUInt64Target()`
   — `-1L` → `18446744073709551615`, `Long.MIN_VALUE` → `9223372036854775808`
   (pre-fix code binds the negative `long`).

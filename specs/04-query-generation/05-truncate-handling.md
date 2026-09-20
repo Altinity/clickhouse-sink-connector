@@ -6,27 +6,28 @@ Specifies the translation and execution of upstream MySQL TRUNCATE operations (`
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/operations/GroupInsertQueryWithBatchRecords.java`
+- **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/PreparedStatementExecutor.java` — the TRUNCATE branch inside `executePreparedStatement` (the per-record loop, lines 215–238 on 2.11.0)
+- **DDL execution**: `DBMetadata.truncateTable(Connection conn, String databaseName, String tableName)` in `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/DBMetadata.java`
 
 ---
 
 ## 3. Operational Specification
 
-When a TRUNCATE event is received:
-1. Preceding DML records for the table are flushed and committed.
-2. The connector constructs a ClickHouse DDL command:
-   ```sql
-   TRUNCATE TABLE `db`.`table`
-   ```
-3. The command is executed via JDBC connection.
-4. Schema caches for the table are invalidated to ensure fresh metadata state.
+A TRUNCATE record is applied **at its position inside the batch**, not at the end of it. When the per-record loop reaches a record whose operation is `TRUNCATE`:
+1. `ps.executeBatch()` flushes every row staged so far for this prepared statement — those rows belong to the pre-truncate state and must reach ClickHouse first. A `SQLException` here is rethrown as `RuntimeException("Failed to flush records staged before TRUNCATE for db.table")`.
+2. `metadata.truncateTable(conn, databaseName, tableName)` executes the truncate on ClickHouse. A `SQLException` here is rethrown as `RuntimeException("TRUNCATE failed for db.table")`.
+3. `continue` — the loop keeps accumulating the records that follow the TRUNCATE, which are the new state and are flushed by the normal `executeBatch()` at the end of the partition.
+
+There is **no schema-cache invalidation step** on this path: a TRUNCATE does not change the table's shape, and the code does not call `CacheInvalidationManager`. (Executing the truncate after the final `executeBatch()` — the previous behaviour — discarded every row the same batch had just inserted whenever a TRUNCATE was followed by more DML.)
 
 ---
 
 ## 4. Invariants Preserved
-- **Relational Parity**: Truncating the source MySQL table empties the ClickHouse replica table completely.
+- **Relational Parity**: truncating the source table empties the replica of the pre-truncate state while rows after the truncate in the same batch survive.
+- **Invariant I9 (Loud Failure)**: both the pre-truncate flush and the truncate itself fail the batch loudly.
 
 ---
 
 ## 5. Verification Criteria
-- `TruncateTableIT`: Verifies that `TRUNCATE TABLE` on MySQL results in 0 rows in ClickHouse.
+- `TruncateTableIT.testIsDeleted()` — a TRUNCATE on MySQL empties the ClickHouse table.
+- `TruncateTableIT.testRowsInsertedAfterTruncateSurvive()` — rows following the TRUNCATE in the same batch are retained.

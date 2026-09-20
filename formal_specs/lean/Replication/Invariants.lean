@@ -48,8 +48,11 @@ def PKRelocationSoundness (events : List BinlogEvent) (k_old k_new : Key) (row :
   chFinalView table k_old = none ∧ chFinalView table k_new = some row
 
 /--
-Invariant I8: Replay Idempotency.
-Re-executing an earlier prefix of the binlog stream does not mutate or regress the current FINAL state.
+Replay Idempotency (redelivery stability, spec 02.04; supports Invariant I3 under
+at-least-once delivery). This is NOT Constitution Invariant I8 — I8 is Durable
+Offset Quiescence, which is modelled on the control-record side in `Snapshot.lean`.
+Re-executing an earlier prefix of the binlog stream does not mutate or regress the
+current FINAL state. Stated as a proposition only; no theorem proves it yet.
 -/
 def ReplayIdempotency (events replayed : List BinlogEvent) : Prop :=
   (∀ e ∈ replayed, ∃ e' ∈ events, e.pos.fileSeq < e'.pos.fileSeq ∨ (e.pos.fileSeq = e'.pos.fileSeq ∧ e.pos.offset ≤ e'.pos.offset)) →

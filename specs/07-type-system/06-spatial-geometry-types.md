@@ -27,4 +27,4 @@ Specifies the extraction, Well-Known Binary (WKB) decoding, and ClickHouse nativ
 ---
 
 ## 5. Verification Criteria
-- `ClickHouseDataTypeMapperTest.testGeometryTypes()`
+- Verification: WKB decoding and Geo-type binding are not yet covered by an automated test (gap).
