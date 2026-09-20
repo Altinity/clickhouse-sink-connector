@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.altinity.clickhouse.sink.connector.model.SourcePosition;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -125,10 +126,107 @@ public class DebeziumChangeEventCaptureTest {
 
     }
 
-    @Test
-    @DisplayName("Should reset sequence number when a second has passed")
-    public void shouldResetSequenceNumberWhenSecondHasPassed() {
+    /**
+     * Puts the static version-sequence state back to what a freshly started
+     * JVM has, so a test observes the real start/resume seeding rather than
+     * whatever an earlier test left behind. The fields are the production
+     * statics themselves (spec 02.02 §2), not copies.
+     */
+    private static void resetSequenceStateAsAfterRestart() {
+        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
+        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
+        DebeziumChangeEventCapture.sequenceHighWaterPosition = null;
+        DebeziumChangeEventCapture.sequenceMaxSourceTs = 0L;
+    }
 
+    /** Counter component of a version emitted by nextSequenceNumber (spec 02.01 §3.2). */
+    private static long counterOf(long version, long effectiveTs) {
+        return version - effectiveTs * 1_000_000L;
+    }
+
+    /**
+     * The reset boundary is NOT one second. nextSequenceNumber computes
+     * {@code diff = (int) ((effectiveTs - sequenceAnchorTs) / 1000)} and resets
+     * only when {@code diff > 1}, i.e. when the clock has advanced by at least
+     * 2000 ms past the anchor (spec 02.03 §3.2). An advance of 1500 ms keeps
+     * incrementing; an advance of 2500 ms resets to SEQUENCE_START and moves
+     * the anchor.
+     */
+    @Test
+    @DisplayName("Should reset sequence number only once the source clock is 2000 ms past the anchor")
+    public void shouldResetSequenceNumberWhenSecondHasPassed() {
+        resetSequenceStateAsAfterRestart();
+        final long ts = 1_757_900_000_000L;
+        SourcePosition p1 = SourcePosition.ofBinlog("mysql-bin.000010", 100L, 0);
+        SourcePosition p2 = SourcePosition.ofBinlog("mysql-bin.000010", 200L, 0);
+        SourcePosition p3 = SourcePosition.ofBinlog("mysql-bin.000010", 300L, 0);
+
+        long first = DebeziumChangeEventCapture.nextSequenceNumber(ts, p1);
+        assertEquals("first record after start seeds the counter at SEQUENCE_START_INITIAL and increments once",
+                DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1, counterOf(first, ts));
+        assertEquals("the anchor is the first record's timestamp",
+                ts, DebeziumChangeEventCapture.sequenceAnchorTs);
+
+        long plus1500 = DebeziumChangeEventCapture.nextSequenceNumber(ts + 1500, p2);
+        assertEquals("1500 ms past the anchor yields diff == 1, which does NOT reset: the counter keeps incrementing",
+                DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 2, counterOf(plus1500, ts + 1500));
+        assertEquals("no reset, so the anchor has not moved",
+                ts, DebeziumChangeEventCapture.sequenceAnchorTs);
+
+        long plus2500 = DebeziumChangeEventCapture.nextSequenceNumber(ts + 2500, p3);
+        assertEquals("2500 ms past the anchor yields diff == 2, which resets the counter to SEQUENCE_START",
+                DebeziumChangeEventCapture.SEQUENCE_START, counterOf(plus2500, ts + 2500));
+        assertEquals("the reset re-anchors the window on the resetting record's timestamp",
+                ts + 2500, DebeziumChangeEventCapture.sequenceAnchorTs);
+
+        assertTrue("versions stay strictly increasing across the boundary within one run",
+                first < plus1500 && plus1500 < plus2500);
+    }
+
+    /**
+     * KNOWN DEFECT (spec 02.01 §4, 02.04 §4; DebeziumOffsetManagement Javadoc),
+     * reproduced through the real {@code nextSequenceNumber} rather than over
+     * copied constants: the ten-digit seeds carry into the six digits the
+     * multiplier leaves them, so after a restart a genuinely NEWER event (1 ms
+     * later, next binlog position) is versioned BELOW an older pre-restart
+     * event and ReplacingMergeTree would keep the stale row.
+     *
+     * <p>This test asserts the inversion EXISTS today. It is named as a defect
+     * so that fixing the encoding makes it fail; at that point flip the final
+     * assertion to {@code newerAfterRestart > olderBeforeRestart} and rename
+     * it to the guarantee. Do not "fix" the test by widening the gap between
+     * the two events: the whole point is the 1 ms window the {@code diff > 1}
+     * reset does not cover.</p>
+     */
+    @Test
+    @DisplayName("KNOWN DEFECT: a newer event versioned right after a restart ranks below an older pre-restart event")
+    public void knownDefectNewerEventAfterRestartRanksBelowOlderPreRestartEvent() {
+        final long olderTs = 1_787_635_797_000L;
+        SourcePosition olderPos = SourcePosition.ofBinlog("mysql-bin.000020", 500L, 0);
+        SourcePosition newerPos = SourcePosition.ofBinlog("mysql-bin.000020", 600L, 0);
+
+        // Run 1 (before the restart): leave the 500m start domain with a >= 2000 ms
+        // advance, then version the older event in the steady-state 1000m domain.
+        resetSequenceStateAsAfterRestart();
+        DebeziumChangeEventCapture.nextSequenceNumber(olderTs - 10_000, SourcePosition.ofBinlog("mysql-bin.000020", 400L, 0));
+        long olderBeforeRestart = DebeziumChangeEventCapture.nextSequenceNumber(olderTs, olderPos);
+        assertEquals("precondition: the pre-restart write carries the steady-state seed",
+                DebeziumChangeEventCapture.SEQUENCE_START, counterOf(olderBeforeRestart, olderTs));
+
+        // Restart: every static is back to its initial value; the first record is
+        // seeded at SEQUENCE_START_INITIAL. The newer event is 1 ms later and at a
+        // higher binlog position, so it is unambiguously newer than the older one.
+        resetSequenceStateAsAfterRestart();
+        long newerAfterRestart = DebeziumChangeEventCapture.nextSequenceNumber(olderTs + 1, newerPos);
+        assertEquals("precondition: the post-restart write carries the resume seed",
+                DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1, counterOf(newerAfterRestart, olderTs + 1));
+
+        assertTrue("KNOWN DEFECT: newer(" + newerAfterRestart + ") should out-rank older("
+                        + olderBeforeRestart + ") but does not. When this assertion fails the "
+                        + "encoding has been fixed -- invert it into newer > older.",
+                newerAfterRestart < olderBeforeRestart);
+
+        resetSequenceStateAsAfterRestart();
     }
 
     @Test
