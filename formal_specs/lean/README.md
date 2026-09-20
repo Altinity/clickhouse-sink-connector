@@ -38,7 +38,7 @@ formal_specs/lean/
     ├── Binlog.lean                    # Source Model: Coordinates, Operations, Event Stream, Eval
     ├── ClickHouse.lean                # Replica Model: ReplacingMergeTree storage, FINAL semantics
     ├── Engine.lean                    # Translation: Coordinate-to-version, PK splitting, Stream Replicator
-    ├── Invariants.lean                # Formal Propositions: Monotonicity, Convergence, Invariants I1-I7
+    ├── Invariants.lean                # Formal Propositions: Monotonicity, Convergence, Invariants I1-I4 (+ stated ReplayIdempotency)
     ├── Proofs.lean                    # Machine-Checked Theorems: Inductive proofs of convergence
     ├── Upgrade.lean                   # Drop-in Upgrade Safety (Invariant I11): convergence for any gap-monotone version scheme
     ├── Snapshot.lean                  # Snapshot Completion & control-record offset commit (Invariant I12, issue #1379)
@@ -131,7 +131,34 @@ on Lean's standard axioms `[propext, Quot.sound]` (verified via `#print axioms`)
 
 ---
 
-## 5. Verification & Toolchain Instructions
+## 5. Coverage of the Constitution's thirteen invariants
+
+Which of `specs/CONSTITUTION.md` I1–I13 have a Lean proposition and theorem today.
+The same table is kept in the Constitution §5.1; this copy is the one next to the code.
+
+| Invariant | Status | Declarations |
+|---|---|---|
+| I1 Log Sequence Monotonicity | proved in the ordinal model; `encodeVersion` order-witness within `BinlogPos.WellFormed` | `VersionMonotonicityProp`, `version_strictly_monotonic` |
+| I2 Deterministic Version Monotonicity | model only: `liveVersion i = 2*i` is monotone by construction; the shipped `effectiveTs * 1e6 + seq` formula, floor and seeds are not modelled | `Engine.lean` |
+| I3 Eventual Convergence | proved | `ReplicationConvergence`, `master_replication_convergence` |
+| I4 Sorting Key Mutation Integrity | proved | `PKRelocationSoundness`, `update_pk_relocation_soundness` |
+| I5 DDL Barrier Quiescence | in progress (concurrent change) | — |
+| I6 Column Authority | none (`ColumnKind` modelled, no theorem) | — |
+| I7 Value-Level Type Equivalence | none | — |
+| I8 Durable Offset Quiescence | in progress (concurrent change); control-record half under I12 | — |
+| I9 Loud Failure | none | — |
+| I10 Separation of Concerns | none (architectural rule) | — |
+| I11 Drop-in Upgrade Safety | proved, conditional on `GapMono` | `upgrade_safe`, `replicate_convergesV`, `liveVersion_gapMono` |
+| I12 Snapshot Completion & Control-Record Offset Progress | proved | `control_commit_safe`, `quiescent_control_commits`, `snapshot_completes` |
+| I13 Generated-Column Type Integrity | proved | `alter_preserves_type`, `type_is_never_expression`, `generated_has_default` |
+
+`ReplayIdempotency` is a stated proposition (spec 02.04), not a numbered invariant and not yet proved.
+
+CI (`.github/workflows/spec-governance.yml`) runs `lake build` with the toolchain
+pinned in `lean-toolchain` on every pull request and on pushes to `2.11.0`, and
+rejects any `sorry` / `admit` / `native_decide`.
+
+## 6. Verification & Toolchain Instructions
 
 ### Prerequisites
 Install `elan` (the Lean version manager):

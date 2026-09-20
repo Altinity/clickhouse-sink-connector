@@ -49,7 +49,7 @@ To eliminate architectural regression, silent data corruption, and complexity dr
 
 ## 3. Core System Invariants
 
-The sink connector must maintain the following ten immutable invariants across all operations:
+The sink connector must maintain the following thirteen immutable invariants (I1–I13) across all operations:
 
 ### Invariant I1: Log Sequence Monotonicity
 The relative ordering of transactional commits in the MySQL binary log must be strictly preserved during ingestion. Transactions committing at coordinate $(F_1, P_1)$ must be processed prior to or assigned an earlier version than transactions committing at $(F_2, P_2)$ where $(F_1, P_1) < (F_2, P_2)$.
@@ -167,5 +167,27 @@ To provide mathematical proof of system correctness, the invariants and state tr
 - `Replication.Binlog`: Formal model of binlog events and MySQL state transitions.
 - `Replication.ClickHouse`: Formal model of `ReplacingMergeTree` storage and `FINAL` evaluation.
 - `Replication.Engine`: Operational semantics of event translation and PK update splitting.
-- `Replication.Invariants`: Mathematical propositions corresponding to Invariants I1 through I7.
+- `Replication.Invariants`: Propositions for Invariants I1–I4 (ordinal / coordinate model) plus the stated-but-unproved `ReplayIdempotency`.
 - `Replication.Proofs`: Machine-checked proofs of convergence, monotonicity, and PK update soundness.
+- `Replication.Upgrade`: Invariant I11. `Replication.Snapshot`: Invariant I12. `Replication.GeneratedColumn`: Invariant I13.
+
+### 5.1 Coverage of the thirteen invariants
+Honest status per invariant. "Lean" means a proposition and a machine-checked theorem exist; "model only" means the property holds in the abstract model but the shipped arithmetic is not modelled.
+
+| Invariant | Lean status | Where |
+|---|---|---|
+| I1 Log Sequence Monotonicity | Lean (ordinal model; `encodeVersion` order-witness within `BinlogPos.WellFormed`) | `VersionMonotonicityProp`, `version_strictly_monotonic` |
+| I2 Deterministic Version Monotonicity | Lean, model only — the ordinal scheme `liveVersion i = 2*i` is monotone by construction; the shipped `effectiveTs * 1e6 + seq` formula, the high-water floor and the counter seeds are **not** modelled (specs 02.01–02.04 record the known defects) | `Engine.lean`, `Proofs.lean` |
+| I3 Eventual Convergence | Lean | `ReplicationConvergence`, `master_replication_convergence` |
+| I4 Sorting Key Mutation Integrity | Lean | `PKRelocationSoundness`, `update_pk_relocation_soundness` |
+| I5 DDL Barrier Quiescence | in progress (a barrier model is being added in a concurrent change) | — |
+| I6 Column Authority & Shadowing Prohibition | none (`ColumnKind` is modelled in `Basic.lean`; no theorem) | — |
+| I7 Value-Level Type Equivalence | none | — |
+| I8 Durable Offset Quiescence | in progress (an offset FIFO model is being added in a concurrent change); the control-record half is covered under I12 | — |
+| I9 Loud Failure | none (empirical only: spec 10.04) | — |
+| I10 Structural Separation of Concerns | none (architectural rule, not a state-machine property) | — |
+| I11 Drop-in Upgrade Safety | Lean, conditional on `GapMono` (spec 02.06 §6 lists where the code does not establish it) | `upgrade_safe`, `replicate_convergesV`, `liveVersion_gapMono` |
+| I12 Snapshot Completion & Control-Record Offset Progress | Lean | `control_commit_safe`, `quiescent_control_commits`, `snapshot_completes` |
+| I13 Generated-Column Type Integrity | Lean | `alter_preserves_type`, `type_is_never_expression`, `generated_has_default` |
+
+`ReplayIdempotency` (`Invariants.lean`) is a stated proposition supporting I3 under at-least-once delivery (spec 02.04); it is not numbered as an invariant and has no theorem.

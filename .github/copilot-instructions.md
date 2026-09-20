@@ -18,6 +18,6 @@ The ClickHouse Sink Connector is strictly defined as an exact, zero-loss replica
    - If MySQL defines a column that ClickHouse marks as MATERIALIZED, the MySQL value wins; the connector converts the ClickHouse column to DEFAULT to permit writing.
 
 3. **Invariants & Formal Verification**:
-   - Every modification must preserve the 10 System Invariants defined in `specs/CONSTITUTION.md`.
+   - Every modification must preserve the 13 System Invariants (I1–I13) defined in `specs/CONSTITUTION.md`.
    - The system state machine is formally modeled in Lean 4 (`formal_specs/lean/`). Do not introduce non-monotonic versioning or un-tombstoned sorting key mutations.
    - Always validate with `python3 scripts/validate_specs.py`.
