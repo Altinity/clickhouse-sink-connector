@@ -411,12 +411,28 @@ public class GroupInsertQueryWithBatchRecords {
                             return enforced;
                         }
                     }
-                    // Enforcement could not be performed (the type could not
-                    // be read, or the DDL was rejected) and has been reported
-                    // with the manual remediation. Record the proof so the
-                    // probe is not repeated per record.
-                    invalidation.markColumnProvenAbsent(fullyQualifiedTableName, unknown);
-                    return fresh;
+                    // Enforcement could not be performed (the type or the
+                    // expression could not be read, the DDL was rejected or
+                    // had no effect) or the re-read still lacks the column.
+                    // Reporting is the fallback when enforcement fails, but
+                    // reporting AND continuing is not: building the INSERT
+                    // from the stale map writes the row with ClickHouse's
+                    // computed value in place of the source's and advances
+                    // the offset past it -- the same silent divergence as a
+                    // missing column, and marking it proven-absent would
+                    // repeat that for every later record. Fail the batch
+                    // instead, naming the remediation (Spec 08.04 section 3.3).
+                    throw new MissingTargetColumnException(String.format(
+                            "Column '%s' is carried by the source record but is MATERIALIZED "
+                                    + "in ClickHouse table %s.%s, so the source value cannot be "
+                                    + "stored, and the automatic conversion (ALTER TABLE `%s`.`%s` "
+                                    + "MODIFY COLUMN `%s` <type> DEFAULT <expression>) did not "
+                                    + "make it writable. Redefine the column as DEFAULT over the "
+                                    + "same expression, or grant the connector ALTER TABLE on "
+                                    + "this table. Writing the row without the source value would "
+                                    + "silently diverge with row counts intact; failing the batch "
+                                    + "instead.",
+                            unknown, databaseName, tableName, databaseName, tableName, unknown));
                 }
 
                 // Neither ALIAS nor MATERIALIZED: the column does not exist in

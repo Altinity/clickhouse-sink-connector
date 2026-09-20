@@ -62,6 +62,10 @@ public class GroupInsertQueryWithBatchRecordsTest {
         final List<String[]> columns = new ArrayList<>();
         /** what the default_kind lookup answers for a column not in {@link #columns}; null = no row */
         String kindForUnknownColumn = null;
+        /** when true the declared-type lookup returns no row (enforcement cannot proceed) */
+        boolean typeUnreadable = false;
+        /** when true the column listing omits {@code note} even after a successful MODIFY */
+        boolean hideNoteFromListing = false;
         final List<String> executed = new ArrayList<>();
 
         FakeClickHouse() {
@@ -90,7 +94,25 @@ public class GroupInsertQueryWithBatchRecordsTest {
                 return rows;
             }
             if (sql.startsWith("SELECT name, type, default_kind FROM system.columns")) {
-                return new ArrayList<>(columns);
+                List<String[]> rows = new ArrayList<>();
+                for (String[] c : columns) {
+                    if (!(hideNoteFromListing && c[0].equals("note"))) {
+                        rows.add(c);
+                    }
+                }
+                return rows;
+            }
+            if (sql.startsWith("SELECT type FROM system.columns")) {
+                if (typeUnreadable) {
+                    return Collections.emptyList();
+                }
+                int start = sql.indexOf("lower('") + 7;
+                String[] c = find(sql.substring(start, sql.indexOf("')", start)));
+                return c == null ? Collections.emptyList()
+                        : Collections.singletonList(new String[]{c[1]});
+            }
+            if (sql.startsWith("SELECT default_expression FROM system.columns")) {
+                return Collections.singletonList(new String[]{"lower(name)"});
             }
             if (sql.startsWith("SELECT default_kind FROM system.columns")) {
                 int start = sql.indexOf("lower('") + 7;
@@ -119,6 +141,15 @@ public class GroupInsertQueryWithBatchRecordsTest {
                         columns.add(new String[]{name, "Nullable(String)", ""});
                     }
                     at = upper.indexOf("ADD COLUMN `", nameStart);
+                }
+            }
+            // MODIFY COLUMN `x` ... DEFAULT ...: the conversion took effect.
+            if (upper.startsWith("ALTER TABLE") && upper.contains("MODIFY COLUMN `")
+                    && upper.contains(" DEFAULT ")) {
+                int nameStart = upper.indexOf("MODIFY COLUMN `") + "MODIFY COLUMN `".length();
+                String[] c = find(sql.substring(nameStart, sql.indexOf('`', nameStart)));
+                if (c != null) {
+                    c[2] = "DEFAULT";
                 }
             }
         }
@@ -179,6 +210,9 @@ public class GroupInsertQueryWithBatchRecordsTest {
                             if ("execute".equals(m.getName())) {
                                 execute(sql);
                                 return false;
+                            }
+                            if ("executeQuery".equals(m.getName())) {
+                                return resultSet(answer(sql), header);
                             }
                             return defaultFor(m.getReturnType());
                         };
@@ -300,6 +334,76 @@ public class GroupInsertQueryWithBatchRecordsTest {
         assertTrue(key.getRight().containsKey("note"),
                 "the INSERT built for this batch must bind note: " + key.getLeft());
         assertFalse(CacheInvalidationManager.getInstance().isColumnProvenAbsent("db.t", "note"));
+    }
+
+    /**
+     * A MATERIALIZED column whose conversion to DEFAULT cannot be performed
+     * (here: the declared type is unreadable, so enforcement returns false)
+     * must fail the batch, not be recorded as proven-absent. Continuing would
+     * write the row with ClickHouse's computed value in place of the source's
+     * and advance the offset past it -- the same silent-divergence class as a
+     * missing column.
+     */
+    @Test
+    @DisplayName("A MATERIALIZED column whose conversion fails fails the batch")
+    public void materializedColumnWhoseConversionFailsFailsBatch() {
+        FakeClickHouse ch = new FakeClickHouse();
+        ch.columns.add(new String[]{"note", "String", "MATERIALIZED"});
+        ch.typeUnreadable = true;
+
+        MissingTargetColumnException e = assertThrows(MissingTargetColumnException.class,
+                () -> group(ch, config(false)));
+
+        assertTrue(e.getMessage().contains("note"), e.getMessage());
+        assertTrue(e.getMessage().contains("MATERIALIZED"), e.getMessage());
+        assertTrue(e.getMessage().contains("MODIFY COLUMN"), e.getMessage());
+        assertFalse(CacheInvalidationManager.getInstance().isColumnProvenAbsent("db.t", "note"),
+                "a failed conversion must never be recorded as proven-absent");
+        assertTrue(ch.executed.isEmpty(), "no DDL can be issued without the type: " + ch.executed);
+    }
+
+    /**
+     * The conversion reads back as DEFAULT but the re-read column map still
+     * lacks the column: the source value still cannot be bound, so the batch
+     * fails rather than proceeding on the stale map.
+     */
+    @Test
+    @DisplayName("A MATERIALIZED column still missing after conversion fails the batch")
+    public void materializedColumnStillMissingAfterConversionFailsBatch() {
+        FakeClickHouse ch = new FakeClickHouse();
+        ch.columns.add(new String[]{"note", "String", "MATERIALIZED"});
+        ch.hideNoteFromListing = true;
+
+        MissingTargetColumnException e = assertThrows(MissingTargetColumnException.class,
+                () -> group(ch, config(false)));
+
+        assertTrue(e.getMessage().contains("note"), e.getMessage());
+        assertFalse(CacheInvalidationManager.getInstance().isColumnProvenAbsent("db.t", "note"));
+        boolean modified = false;
+        for (String sql : ch.executed) {
+            if (sql.toUpperCase().contains("MODIFY COLUMN `NOTE`")) {
+                modified = true;
+            }
+        }
+        assertTrue(modified, "the conversion DDL must have been attempted: " + ch.executed);
+    }
+
+    /** The successful conversion binds the source value in the same batch. */
+    @Test
+    @DisplayName("A MATERIALIZED column converted to DEFAULT is bound in the same batch")
+    public void materializedColumnConvertedIsBoundInSameBatch() {
+        FakeClickHouse ch = new FakeClickHouse();
+        ch.columns.add(new String[]{"note", "String", "MATERIALIZED"});
+
+        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queries =
+                group(ch, config(false));
+
+        assertEquals(1, queries.size());
+        MutablePair<String, Map<String, Integer>> key = queries.keySet().iterator().next();
+        assertTrue(key.getRight().containsKey("note"), key.getLeft());
+        assertFalse(CacheInvalidationManager.getInstance().isColumnProvenAbsent("db.t", "note"));
+        assertEquals("ALTER TABLE `db`.`t` MODIFY COLUMN `note` String DEFAULT lower(name)",
+                ch.executed.get(0));
     }
 
     /** Regression guard: an ALIAS column keeps the pre-existing behaviour. */

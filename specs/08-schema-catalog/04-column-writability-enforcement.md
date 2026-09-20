@@ -27,13 +27,16 @@ After a fresh metadata read still does not produce column $C$, its
 | `default_kind` | Meaning | Action |
 |---|---|---|
 | `ALIAS` | not stored; nothing can diverge | ignore; `markColumnProvenAbsent` so the probe is not repeated per record |
-| `MATERIALIZED` | stored, ClickHouse-computed; shadows the source value | §3.2 convert to `DEFAULT`, re-read, bind the source value |
+| `MATERIALIZED` | stored, ClickHouse-computed; shadows the source value | §3.2 convert to `DEFAULT`, re-read, bind the source value. If the conversion cannot be performed (declared type or expression unreadable, `ALTER` rejected or without effect) or the re-read still lacks the column, **fail the batch** with `MissingTargetColumnException` naming the failed remediation (§3.3); never continue without the source value |
 | `null` (no `system.columns` row: the column does not exist in ClickHouse) or `""` (a stored column the writable map still lacks) | the replica is incomplete | §3.3 |
 | `null` because the kind could not be read at all | unknown | §3.3 as well: with evolution on the `ADD COLUMN` is attempted; otherwise the batch fails and the retry re-probes. Never proven-absent. |
 
-A non-`ALIAS` miss is **never** recorded as proven-absent: doing so made the
-writer drop the column's value on every subsequent record after a single WARN,
-i.e. it treated a missing replica column like an `ALIAS` forever.
+A non-`ALIAS` miss is **never** recorded as proven-absent — not a missing
+column, and not a `MATERIALIZED` column whose conversion failed. Doing so made
+the writer drop the column's value on every subsequent record after a single
+WARN, i.e. it treated the column like an `ALIAS` forever while the offset
+advanced past rows written without the source value. `markColumnProvenAbsent`
+is reserved strictly for `ALIAS`.
 
 ### 3.2 MATERIALIZED: Automated Schema Remediation
 `enforceSourceColumnIsWritable()` constructs and executes:
@@ -59,6 +62,14 @@ side; never a log line only."
    table, column and the `schema.evolution` knob. The batch fails and is
    retried/surfaced; nothing is written with the column silently omitted.
    Rows are never dropped and never written incomplete.
+3. **`MATERIALIZED` whose §3.2 conversion failed** (declared type or
+   expression unreadable, `ALTER` rejected or without effect, or the post-DDL
+   re-read still lacks the column): throw `MissingTargetColumnException`
+   naming the database, table, column and the remediation that failed
+   (`ALTER TABLE ... MODIFY COLUMN ... DEFAULT <expr>`), so the operator
+   applies it by hand or grants the privilege. Reporting is the fallback when
+   enforcement fails, but reporting **and continuing** is not: the batch must
+   not be written with the source value replaced by ClickHouse's computed one.
 
 ---
 
@@ -78,4 +89,13 @@ side; never a log line only."
   \`note\`` is issued and the INSERT built for the batch contains `note`.
 - `GroupInsertQueryWithBatchRecordsTest.aliasColumnIsStillIgnoredAndProvenAbsent()`
   — `default_kind == ALIAS` keeps the pre-existing behaviour.
+- `GroupInsertQueryWithBatchRecordsTest.materializedColumnWhoseConversionFailsFailsBatch()`
+  — `default_kind == MATERIALIZED`, declared type unreadable (enforcement
+  returns false): `MissingTargetColumnException`, no proven-absent entry
+  (pre-fix code marks it proven-absent and omits the value).
+- `GroupInsertQueryWithBatchRecordsTest.materializedColumnStillMissingAfterConversionFailsBatch()`
+  — the `MODIFY COLUMN` reads back as `DEFAULT` but the re-read column map
+  still lacks the column: same exception, no proven-absent entry.
+- `GroupInsertQueryWithBatchRecordsTest.materializedColumnConvertedIsBoundInSameBatch()`
+  — the successful conversion path binds the column in the same batch.
 - `UnwritableColumnReportingTest` — MATERIALIZED → DEFAULT conversion DDL.
