@@ -17,12 +17,38 @@ Specifies the translation and timezone adjustment of MySQL date and time types t
 | `DATE` | `Date` / `Date32` | Converted from epoch days to `java.time.LocalDate` |
 | `DATETIME` | `DateTime64(3)` / `DateTime64(6)` | Microsecond/millisecond resolution; interpreted in source session timezone |
 | `TIMESTAMP` | `DateTime` / `DateTime64(3)` | Stored in UTC; converted to ClickHouse target timezone |
-| `TIME` | `Int64` / `String` | Microseconds since midnight ($0$ to $86{,}400{,}000{,}000$) |
+| `TIME` | `String` | Signed duration, `-838:59:59.000000` .. `838:59:59.000000` (see §3.2) |
 | `YEAR` | `UInt16` / `Int32` | 4-digit calendar year |
 
 ### 3.1 Timezone Normalization
 - Configured via `source.timezone` and `clickhouse.timezone`.
 - Prevents 1-hour shifts during daylight saving transitions when converting timestamps across UTC and local timezones.
+
+### 3.2 `TIME` is a signed duration, not a time of day
+MySQL `TIME` ranges from `-838:59:59` to `838:59:59` (it stores elapsed time and
+differences, not only clock time). Debezium delivers it as
+`io.debezium.time.MicroTime` — an `INT64` holding the **signed** total in
+microseconds, so `-01:00:00` arrives as `-3 600 000 000` and `25:30:00` as
+`91 800 000 000`.
+
+`DebeziumConverter.MicroTimeConverter.convert(Object)` therefore formats the
+signed total directly:
+```
+sign · hours (unbounded, at least 2 digits) : mm : ss . ffffff
+```
+e.g. `-3_600_000_000L -> "-01:00:00.000000"`, `91_800_000_000L -> "25:30:00.000000"`,
+`0L -> "00:00:00.000000"`. It must **not** be reduced modulo 24 h through a
+`java.time.LocalTime`: that mapped `25:30:00` to `01:30:00` and every negative
+value to a wrapped positive one, silently, with row counts intact.
+
+The ClickHouse target column type for `TIME` is `String` (that is what
+`ClickHouseDataTypeMapper.dataTypesMap` assigns to `MicroTime`, and what the DDL
+translator emits). A `String` column stores the formatted text verbatim
+(verified with `clickhouse local`: `'-01:00:00.000000'` and `'25:30:00.000000'`
+round-trip unchanged), so the full MySQL range is representable; no ClickHouse
+`Time`-like type is involved.
+
+---
 
 ---
 
@@ -33,3 +59,9 @@ Specifies the translation and timezone adjustment of MySQL date and time types t
 
 ## 5. Verification Criteria
 - `ClickHouseDataTypeMapperTest.testTemporalConversions()`
+- `DebeziumConverterTest.testMicroTimeConverterSignedAndBeyond24Hours()` —
+  `convert(-3_600_000_000L) == "-01:00:00.000000"` and
+  `convert(91_800_000_000L) == "25:30:00.000000"` (pre-fix code returns
+  `"23:00:00.000000"` and `"01:30:00.000000"`).
+- `DebeziumConverterTest.testMicroTimeConverter()` — an ordinary time of day
+  (`09:01:01`) is unchanged by the fix.

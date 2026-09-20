@@ -33,6 +33,14 @@ Incoming Record Field Evaluation
 ### 3.2 Production Hazard Prevented
 In earlier versions, `null`-valued fields were omitted from the query column list. Consequently, ClickHouse applied column defaults (e.g. converting `NULL` to `0`, `""`, or `1970-01-01`), causing silent data divergence. The 2.11.0 rule strictly preserves explicit `NULL`s.
 
+### 3.3 The Connect-schema default is the same hazard at bind time
+Membership (this spec) is decided from the record's unfiltered schema. The
+*value* bound for a member column is read with `Struct.getWithoutDefault`, never
+`Struct.get`: `Struct.get` substitutes the Connect-schema `defaultValue` (which
+Debezium fills from the MySQL column `DEFAULT`) for a stored `null`, so the
+column would be present in the INSERT but bound to the default. See Spec 07.07
+§3.1. Both halves are required for Case A to actually store `NULL`.
+
 ---
 
 ## 4. Invariants Preserved

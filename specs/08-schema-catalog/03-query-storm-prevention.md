@@ -25,7 +25,13 @@ In high-throughput replication, if an incoming event carries a column that does 
 1. When `refreshIfRecordHasUnknownColumn` encounters a missing column:
 2. Checks `isColumnProvenAbsent(tableKey, column)`. If true, returns immediately without issuing SQL.
 3. If not proven absent, issues a single `system.columns` check.
-4. If the column is still absent in ClickHouse, calls `markColumnProvenAbsent(tableKey, column)`.
+4. If the column is still absent from the writable map **and is an `ALIAS`**
+   (`default_kind = 'ALIAS'`, i.e. ClickHouse owns it and no re-read will ever
+   produce it), calls `markColumnProvenAbsent(tableKey, column)`. A
+   `MATERIALIZED` column is converted instead, and a column that does not exist
+   at all is added or fails the batch (Spec 08.04 §3.1/§3.3) — neither is ever
+   marked proven-absent, because that would silently drop its value on every
+   later record.
 5. The absence remains cached until `invalidateTable(tableKey)` clears the set upon a future DDL event.
 
 ---

@@ -611,15 +611,15 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_NullableDefault_Tru
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_NullableDefault_False = Requirement(
     name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False",
-    version="1.0",
+    version="2.0",
     priority=None,
     group=None,
     type=None,
     uid=None,
     description=(
-        "[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `false` (or omitted) for MySQL columns that have a `DEFAULT` constraint.\n"
+        "[Altinity Sink Connector] SHALL accept the `non.default.value` configuration property set to `false` for backward compatibility, and SHALL treat it as deprecated with no effect.\n"
         "\n"
-        "When `non.default.value` is set to `false` (or is omitted, as `false` is the default) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate the column's specified `DEFAULT` value instead of `NULL` in the corresponding ClickHouse column.\n"
+        "When `non.default.value` is set to `false` (or omitted) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL still replicate the value as `NULL` in the corresponding ClickHouse `Nullable` column; the column's `DEFAULT` value SHALL never be substituted for a source `NULL`. The connector SHALL log a deprecation warning once when the property is explicitly set to `false`.\n"
         "\n"
     ),
     link=None,
@@ -4735,11 +4735,11 @@ version: 1.0
 When `non.default.value` is set to `true` and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate this value as `NULL` in the corresponding ClickHouse `Nullable` column.
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False
-version: 1.0
+version: 2.0
 
-[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `false` (or omitted) for MySQL columns that have a `DEFAULT` constraint.
+[Altinity Sink Connector] SHALL accept the `non.default.value` configuration property set to `false` for backward compatibility, and SHALL treat it as deprecated with no effect.
 
-When `non.default.value` is set to `false` (or is omitted, as `false` is the default) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate the column's specified `DEFAULT` value instead of `NULL` in the corresponding ClickHouse column.
+When `non.default.value` is set to `false` (or omitted) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL still replicate the value as `NULL` in the corresponding ClickHouse `Nullable` column; the column's `DEFAULT` value SHALL never be substituted for a source `NULL`. The connector SHALL log a deprecation warning once when the property is explicitly set to `false`.
 
 ### Enum
 
