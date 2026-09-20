@@ -5,6 +5,7 @@ import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.KeylessTableWarning;
 import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
 import com.clickhouse.data.ClickHouseDataType;
 import com.google.common.annotations.VisibleForTesting;
@@ -112,6 +113,11 @@ public class ClickHouseAutoCreateTable
      *   Engine=ReplacingMergeTree(version_column)
      *   PRIMARY KEY(col1) ORDER BY(col1)
      * </pre>
+     *
+     * <p>Without a usable primary key the sorting key is every source column
+     * ({@code ORDER BY(`col1`,`col2`,...)}, plus {@code SETTINGS
+     * allow_nullable_key=1} if any is Nullable); {@code ORDER BY tuple()} is
+     * never emitted for ReplacingMergeTree (Spec 08.05 section 3.2).</p>
      *
      * @param primaryKey a list of primary key columns
      * @param tableName the name of the table to create
@@ -292,7 +298,12 @@ public class ClickHouseAutoCreateTable
         // Handle ORDER BY clause (primary key is part of ORDER BY in ClickHouse)
         createTableSyntax.append(" ");
 
-        if (primaryKey != null
+        // True only when the keyless fallback key (below) names a Nullable
+        // column, which ClickHouse rejects (Code 44) unless allow_nullable_key
+        // is enabled. The PK path never needs it: a MySQL PRIMARY KEY is NOT NULL.
+        boolean nullableSortingKey = false;
+
+        if (primaryKey != null && !primaryKey.isEmpty()
                 && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
             createTableSyntax.append(PRIMARY_KEY).append("(");
             createTableSyntax.append(primaryKey.stream()
@@ -308,8 +319,48 @@ public class ClickHouseAutoCreateTable
             }
             createTableSyntax.append(")");
         } else {
-            // TODO: Define a default ORDER BY clause.
-            createTableSyntax.append(ORDER_BY_TUPLE);
+            // No usable primary key: the record carries none (a keyless source
+            // table) or names columns the table does not have.
+            //
+            // ORDER BY tuple() is NEVER emitted here. ReplacingMergeTree
+            // deduplicates on the sorting key, and with an empty key every row
+            // compares equal, so merges and FINAL collapse the whole table to
+            // ONE row -- total, silent data loss (two distinct rows in, one
+            // out, measured with clickhouse local). The sorting key is every
+            // source column instead, which reproduces MySQL's own semantics for
+            // a table without a declared identity: rows are distinguished by
+            // value. The banner tells the operator to give the table a real
+            // identity at the source; the schema-override primary_key is the
+            // escape hatch in the meantime (Spec 08.05 section 3.2).
+            List<String> keyColumns = keylessSortingKey(fields, columnToDataTypesMap, isDeletedColumn);
+            if (keyColumns.isEmpty()) {
+                throw new IllegalStateException(String.format(
+                        "Cannot derive a sorting key for %s.%s: the record carries no primary key "
+                                + "and no source column is present in the ClickHouse column map. "
+                                + "Refusing to create a ReplacingMergeTree table with ORDER BY "
+                                + "tuple(), which would collapse every row into one.",
+                        databaseName, tableName));
+            }
+            for (String keyColumn : keyColumns) {
+                if (isNullableColumn(keyColumn, fields, columnToDataTypesMap)) {
+                    nullableSortingKey = true;
+                }
+            }
+            log.error(KeylessTableWarning.banner(databaseName, tableName));
+            log.warn("Table {}.{} has no usable primary key (record key: {}); using every source "
+                            + "column as the ReplacingMergeTree sorting key so distinct rows stay "
+                            + "distinct: {}. Rows identical in every column will still collapse, "
+                            + "and a column added later is not part of this key.",
+                    databaseName, tableName, primaryKey, keyColumns);
+
+            createTableSyntax.append(ORDER_BY).append("(");
+            createTableSyntax.append(keyColumns.stream()
+                    .map(c -> "`" + c + "`")
+                    .collect(Collectors.joining(",")));
+            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                createTableSyntax.append(",`").append(DELETED_TIME_COLUMN).append("`");
+            }
+            createTableSyntax.append(")");
         }
 
         // If Replication history is enabled, add the ORDER BY toDate(deleted_time) , Add TTL deleted_time + toIntervalDay(30)
@@ -317,14 +368,95 @@ public class ClickHouseAutoCreateTable
             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
                 createTableSyntax.append(" TTL `").append(DELETED_TIME_COLUMN).append("` + toIntervalDay(30)");
             }
-        
 
-        // Add SETTINGS if they are provided (SETTINGS should be placed last)
+
+        // Add SETTINGS if they are provided (SETTINGS should be placed last).
+        // The keyless fallback key appends allow_nullable_key=1 when it names a
+        // Nullable column -- added to the user's settings, never replacing
+        // them, and not duplicated if the user already set it.
+        String userSettings = null;
         if (tableConfig != null && tableConfig.getSettings() != null && !tableConfig.getSettings().isEmpty()) {
-            createTableSyntax.append(" SETTINGS ").append(tableConfig.getSettings());
+            userSettings = tableConfig.getSettings();
+        }
+        boolean appendNullableKey = nullableSortingKey
+                && (userSettings == null || !userSettings.toLowerCase().contains(ALLOW_NULLABLE_KEY));
+        if (userSettings != null || appendNullableKey) {
+            createTableSyntax.append(" SETTINGS ");
+            if (userSettings != null) {
+                createTableSyntax.append(userSettings);
+                if (appendNullableKey) {
+                    createTableSyntax.append(",");
+                }
+            }
+            if (appendNullableKey) {
+                createTableSyntax.append(ALLOW_NULLABLE_KEY).append("=1");
+            }
         }
 
         return createTableSyntax.toString();
+    }
+
+    /**
+     * The sorting key for a table whose record carries no usable primary key:
+     * every source column, in record-schema order, that exists in the column
+     * map, excluding the columns the connector manages itself.
+     *
+     * @param fields the record's schema fields (source columns)
+     * @param columnToDataTypesMap the ClickHouse column map
+     * @param rmtDeleteColumn the configured ReplacingMergeTree delete column
+     * @return the key columns, possibly empty
+     */
+    List<String> keylessSortingKey(Field[] fields, Map<String, String> columnToDataTypesMap,
+                                   String rmtDeleteColumn) {
+        List<String> keyColumns = new ArrayList<>();
+        if (fields == null) {
+            return keyColumns;
+        }
+        for (Field f : fields) {
+            String colName = f.name();
+            if (colName == null || !columnToDataTypesMap.containsKey(colName)) {
+                continue;
+            }
+            if (isConnectorManagedColumn(colName, rmtDeleteColumn)) {
+                continue;
+            }
+            keyColumns.add(colName);
+        }
+        return keyColumns;
+    }
+
+    /** Columns populated by the connector, never part of a source-derived key. */
+    private static boolean isConnectorManagedColumn(String colName, String rmtDeleteColumn) {
+        return colName.equalsIgnoreCase(VERSION_COLUMN)
+                || colName.equalsIgnoreCase(SIGN_COLUMN)
+                || colName.equalsIgnoreCase(IS_DELETED_COLUMN)
+                || colName.equalsIgnoreCase(DELETED_TIME_COLUMN)
+                || colName.equalsIgnoreCase(DELETED_FROM_TIME_COLUMN)
+                || colName.equalsIgnoreCase(OPERATION_COLUMN)
+                || (rmtDeleteColumn != null && colName.equalsIgnoreCase(rmtDeleteColumn));
+    }
+
+    /**
+     * Whether the column is emitted as {@code Nullable(...)}: either the column
+     * map already says so, or the schema field is optional and the column
+     * definition loop above wraps it (same rule, kept in step with it).
+     */
+    private static boolean isNullableColumn(String colName, Field[] fields,
+                                            Map<String, String> columnToDataTypesMap) {
+        String dataType = columnToDataTypesMap.get(colName);
+        if (dataType != null && dataType.startsWith("Nullable(")) {
+            return true;
+        }
+        for (Field f : fields) {
+            if (colName.equals(f.name())) {
+                return f.schema().isOptional()
+                        && dataType != null
+                        && !dataType.startsWith("Array(")
+                        && !dataType.startsWith("Map(")
+                        && !dataType.startsWith("Tuple(");
+            }
+        }
+        return false;
     }
 
     /**

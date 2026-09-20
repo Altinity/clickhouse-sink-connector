@@ -2,14 +2,21 @@ package com.altinity.clickhouse.sink.connector.db.batch;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.commons.lang3.tuple.MutablePair;
+import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Proxy;
+import java.sql.PreparedStatement;
+import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -212,5 +219,118 @@ public class NullValueColumnDropTest {
                 key.getRight().containsKey("request"));
         Assert.assertTrue("connector-managed _version must survive",
                 key.getRight().containsKey("_version"));
+    }
+
+    /**
+     * A schema whose {@code status} column carries a Connect-schema default,
+     * which is what Debezium produces for a MySQL column declared
+     * {@code status VARCHAR(16) DEFAULT 'new'}.
+     */
+    private static Schema schemaWithDefault() {
+        return SchemaBuilder.struct()
+                .field("id", Schema.INT32_SCHEMA)
+                .field("status", SchemaBuilder.string().optional().defaultValue("new").build())
+                .build();
+    }
+
+    /**
+     * A PreparedStatement stand-in recording every setNull index and every
+     * setString value. A JDK proxy is used because this module has no mocking
+     * framework on its test classpath.
+     */
+    private static PreparedStatement recordingStatement(List<Integer> nullIndices,
+                                                        List<String> boundStrings) {
+        InvocationHandler h = (proxy, method, args) -> {
+            switch (method.getName()) {
+                case "setNull":
+                    nullIndices.add((Integer) args[0]);
+                    return null;
+                case "setString":
+                    boundStrings.add((String) args[1]);
+                    return null;
+                case "toString":
+                    return "RecordingPreparedStatement";
+                case "hashCode":
+                    return System.identityHashCode(proxy);
+                case "equals":
+                    return proxy == args[0];
+                default:
+                    return null;
+            }
+        };
+        return (PreparedStatement) Proxy.newProxyInstance(
+                PreparedStatement.class.getClassLoader(),
+                new Class<?>[]{PreparedStatement.class}, h);
+    }
+
+    /**
+     * Spec 07.07 section 3.1: the Connect-schema default must never stand in for a
+     * source NULL. Kafka Connect {@code Struct.get} returns
+     * {@code schema.defaultValue()} for a null field, and Debezium propagates
+     * the MySQL column DEFAULT into that schema, so reading the value through
+     * {@code get} writes {@code 'new'} where MySQL holds NULL -- with matching
+     * row counts. The bind path must read with {@code getWithoutDefault},
+     * unconditionally (not only under the old {@code non.default.value=true}).
+     */
+    @Test
+    public void testSchemaDefaultIsNotSubstitutedForNull() throws Exception {
+        Struct after = new Struct(schemaWithDefault()).put("id", 1);
+        // status is deliberately left null; Struct.get("status") would answer "new".
+        Assert.assertEquals("precondition: Struct.get substitutes the schema default",
+                "new", after.get("status"));
+
+        ClickHouseStruct record = new ClickHouseStruct(
+                0L, "topic", null, 0, System.currentTimeMillis(),
+                null, after, null, ClickHouseConverter.CDC_OPERATION.CREATE);
+        record.setDatabase("db");
+
+        Map<String, Integer> columnNameToIndexMap = new LinkedHashMap<>();
+        columnNameToIndexMap.put("id", 1);
+        columnNameToIndexMap.put("status", 2);
+        Map<String, String> columnNameToDataTypeMap = new LinkedHashMap<>();
+        columnNameToDataTypeMap.put("id", "Int32");
+        columnNameToDataTypeMap.put("status", "Nullable(String)");
+
+        List<Integer> nullIndices = new ArrayList<>();
+        List<String> boundStrings = new ArrayList<>();
+
+        new PreparedStatementFieldMapper("is_deleted", true, null, "_version", "db",
+                ZoneId.of("UTC")).insertPreparedStatement(
+                columnNameToIndexMap, recordingStatement(nullIndices, boundStrings),
+                after.schema().fields(), record, after, false, config(),
+                columnNameToDataTypeMap, DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, "t");
+
+        Assert.assertFalse(
+                "the Connect-schema default 'new' was bound in place of the source NULL; "
+                        + "MySQL holds NULL, so ClickHouse must too. Bound strings: " + boundStrings,
+                boundStrings.contains("new"));
+        Assert.assertTrue(
+                "status is NULL at the source and must be bound with setNull(2); "
+                        + "setNull indices were: " + nullIndices,
+                nullIndices.contains(2));
+    }
+
+    /**
+     * The modified-field list is built from the same default-free read, so a
+     * NULL-with-default column is classified as NULL rather than as a field
+     * "modified" to its default value.
+     */
+    @Test
+    public void testNullWithSchemaDefaultIsNotAModifiedField() {
+        Struct after = new Struct(schemaWithDefault()).put("id", 1);
+
+        ClickHouseStruct record = new ClickHouseStruct(
+                0L, "topic", null, 0, System.currentTimeMillis(),
+                null, after, null, ClickHouseConverter.CDC_OPERATION.CREATE);
+
+        List<String> modified = new ArrayList<>();
+        for (Field f : record.getAfterModifiedFields()) {
+            modified.add(f.name());
+        }
+        Assert.assertFalse(
+                "status is NULL at the source; treating it as modified means its schema "
+                        + "default was read in place of NULL. Modified fields: " + modified,
+                modified.contains("status"));
+        Assert.assertTrue(modified.contains("id"));
     }
 }

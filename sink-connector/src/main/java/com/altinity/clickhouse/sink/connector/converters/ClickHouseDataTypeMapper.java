@@ -353,7 +353,22 @@ public class ClickHouseDataTypeMapper {
         } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
             ps.setBoolean(index, (Boolean) value);
         } else if (isFieldTypeBigInt || isFieldTinyInt) {
-            ps.setObject(index, value);
+            if (isFieldTypeBigInt
+                    && clickHouseDataType == ClickHouseDataType.UInt64
+                    && value instanceof Long
+                    && (Long) value < 0) {
+                // BIGINT UNSIGNED under Debezium's default
+                // bigint.unsigned.handling.mode=long arrives as INT64, so a
+                // MySQL value in [2^63, 2^64) wraps to a negative long
+                // (18446744073709551615 arrives as -1). Restore the unsigned
+                // magnitude so the exact MySQL value is stored in the UInt64
+                // column (Spec 07.01 section 3.1). A negative long bound for a
+                // signed Int64 target is a genuine negative BIGINT and is left
+                // alone.
+                ps.setObject(index, new BigInteger(Long.toUnsignedString((Long) value)));
+            } else {
+                ps.setObject(index, value);
+            }
         } else if (isFieldDateTime || isFieldTime) {
             if (isFieldDateTime) {
                 String sourceTimeZone = "UTC";

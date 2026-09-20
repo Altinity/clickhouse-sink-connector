@@ -259,15 +259,39 @@ public class DebeziumConverterTest {
 
     @Test
     public void testMicroTimeConverter() {
-
-        Object timeInMicroSeconds = LocalTime.of(10, 1, 1, 1).toEpochSecond(LocalDate.now(), ZoneOffset.UTC);
+        // Debezium MicroTime carries the TIME value as (signed) microseconds,
+        // i.e. 09:01:01 is 9h 1m 1s worth of microseconds -- not an epoch.
+        Object timeInMicroSeconds = LocalTime.of(9, 1, 1).toNanoOfDay() / 1000L;
         String formattedTime = DebeziumConverter.MicroTimeConverter.convert(timeInMicroSeconds);
+        Assert.assertEquals("09:01:01.000000", formattedTime);
 
-       // Assert.assertTrue(formattedTime.equalsIgnoreCase("00:28:21.424861"));
+        Object withMicros = LocalTime.of(10, 1, 1, 424_861_000).toNanoOfDay() / 1000L;
+        Assert.assertEquals("10:01:01.424861", DebeziumConverter.MicroTimeConverter.convert(withMicros));
 
-        Object timePacificTZ = ZonedDateTime.of(2024, 1, 1, 1, 1, 1, 1, ZoneId.of("America/Los_Angeles")).toEpochSecond() * 1000 * 1000;
-        String formattedTimePacificTZ = DebeziumConverter.MicroTimeConverter.convert(timePacificTZ);
-        Assert.assertTrue(formattedTimePacificTZ.equalsIgnoreCase("09:01:01.000000"));
+        Assert.assertEquals("00:00:00.000000", DebeziumConverter.MicroTimeConverter.convert(0L));
+    }
+
+    /**
+     * Spec 07.03 section 3.2: MySQL TIME is a signed duration in
+     * -838:59:59 .. 838:59:59, and Debezium MicroTime carries the signed
+     * microsecond total. Reducing it modulo 24 h through a LocalTime turned
+     * -01:00:00 into 23:00:00 and 25:30:00 into 01:30:00 -- silently.
+     */
+    @Test
+    public void testMicroTimeConverterSignedAndBeyond24Hours() {
+        Assert.assertEquals("a negative TIME must keep its sign",
+                "-01:00:00.000000", DebeziumConverter.MicroTimeConverter.convert(-3_600_000_000L));
+        Assert.assertEquals("a TIME beyond 24h must not wrap",
+                "25:30:00.000000", DebeziumConverter.MicroTimeConverter.convert(91_800_000_000L));
+        // The MySQL range limits, with fractional seconds.
+        Assert.assertEquals("838:59:59.999999",
+                DebeziumConverter.MicroTimeConverter.convert(
+                        (838L * 3600L + 59L * 60L + 59L) * 1_000_000L + 999_999L));
+        Assert.assertEquals("-838:59:59.000001",
+                DebeziumConverter.MicroTimeConverter.convert(
+                        -((838L * 3600L + 59L * 60L + 59L) * 1_000_000L + 1L)));
+        Assert.assertEquals("-00:00:00.000001",
+                DebeziumConverter.MicroTimeConverter.convert(-1L));
     }
 
 

@@ -360,51 +360,119 @@ public class GroupInsertQueryWithBatchRecords {
                     invalidation.invalidateTable(fullyQualifiedTableName);
                     return fresh;
                 }
-                // The re-read did NOT produce the column, so the cache was
-                // never stale: getColumnsDataTypesForTable excludes ALIAS and
-                // MATERIALIZED columns, because binding either makes
-                // ClickHouse reject the INSERT.
-                //
-                // The two kinds are NOT equivalent. This connector replicates
-                // a source database into ClickHouse, which makes the SOURCE
-                // the authority on what the data is -- and makes this
-                // connector the thing that ENFORCES that on the replica. An
-                // ALIAS column stores nothing, so there is nothing to
-                // disagree about. A MATERIALIZED column DOES store a value,
-                // computed locally, so when the source also supplies that
-                // column the replica silently holds ClickHouse's derived
-                // value instead of the source's. That is a real divergence,
-                // and the ClickHouse definition is what is wrong -- so it is
-                // corrected here rather than merely reported.
-                if (enforceSourceColumnIsWritable(unknown, tableName,
-                        databaseName, fullyQualifiedTableName, connection,
-                        config)) {
-                    // The column is writable now. Re-read so this batch binds
-                    // the source value, and bump the version so every other
-                    // cached writer picks up the corrected schema. Do NOT
-                    // record a proven-absent entry: the column is no longer
-                    // absent, and caching that would suppress the very write
-                    // the enforcement just enabled.
-                    Map<String, String> enforced = new DBMetadata(config)
-                            .getColumnsDataTypesForTable(tableName, connection,
-                                    databaseName);
-                    if (enforced != null && containsColumn(enforced, unknown)) {
-                        invalidation.invalidateTable(fullyQualifiedTableName);
-                        return enforced;
+                // The re-read did NOT produce the column. Either ClickHouse
+                // owns it (ALIAS / MATERIALIZED -- getColumnsDataTypesForTable
+                // excludes both, because binding either makes ClickHouse
+                // reject the INSERT), or the replica simply does not have it.
+                // Its default_kind tells the three cases apart, and they are
+                // NOT equivalent (Spec 08.04 section 3.1).
+                String kind = new DBMetadata(config).getColumnDefaultKind(
+                        tableName, databaseName, unknown, connection);
+
+                if ("ALIAS".equalsIgnoreCase(kind)) {
+                    // Not stored at all: computed at query time from other
+                    // columns, so there is no stored value that can disagree
+                    // with the source and nothing to enforce. Record the proof
+                    // so the metadata read is not repeated for EVERY record --
+                    // without it the invalidateTable() above would make every
+                    // cached writer rebuild on its next batch, producing an
+                    // unbounded system.columns query storm for as long as the
+                    // table keeps receiving traffic. This is the ONLY kind
+                    // that is ever proven absent.
+                    log.debug("Column '{}' is an ALIAS on {} and is not stored, so no stored "
+                                    + "value can disagree with the source and there is nothing "
+                                    + "to enforce. The record's value for it is ignored.",
+                            unknown, fullyQualifiedTableName);
+                    invalidation.markColumnProvenAbsent(fullyQualifiedTableName, unknown);
+                    return fresh;
+                }
+
+                if ("MATERIALIZED".equalsIgnoreCase(kind)) {
+                    // Stored, computed by ClickHouse: when the source also
+                    // supplies the column the replica silently holds
+                    // ClickHouse's derived value instead of the source's. That
+                    // is a real divergence, and the ClickHouse definition is
+                    // what is wrong -- so it is corrected here rather than
+                    // merely reported.
+                    if (enforceSourceColumnIsWritable(unknown, tableName,
+                            databaseName, fullyQualifiedTableName, connection,
+                            config)) {
+                        // The column is writable now. Re-read so this batch
+                        // binds the source value, and bump the version so
+                        // every other cached writer picks up the corrected
+                        // schema. Do NOT record a proven-absent entry: the
+                        // column is no longer absent, and caching that would
+                        // suppress the very write the enforcement just enabled.
+                        Map<String, String> enforced = new DBMetadata(config)
+                                .getColumnsDataTypesForTable(tableName, connection,
+                                        databaseName);
+                        if (enforced != null && containsColumn(enforced, unknown)) {
+                            invalidation.invalidateTable(fullyQualifiedTableName);
+                            return enforced;
+                        }
+                    }
+                    // Enforcement could not be performed (the type could not
+                    // be read, or the DDL was rejected) and has been reported
+                    // with the manual remediation. Record the proof so the
+                    // probe is not repeated per record.
+                    invalidation.markColumnProvenAbsent(fullyQualifiedTableName, unknown);
+                    return fresh;
+                }
+
+                // Neither ALIAS nor MATERIALIZED: the column does not exist in
+                // the replica (no system.columns row, or a row the writable
+                // map still lacks). A column that exists in the source but not
+                // in ClickHouse means the ClickHouse side is incomplete, and
+                // the fix is on the ClickHouse side -- never a log line only.
+                // Omitting it from the INSERT writes the row with the source
+                // value silently lost, row counts intact, and marking it
+                // proven-absent repeats that for every later record. Neither
+                // is acceptable: add the column when allowed, otherwise fail
+                // the batch loudly (Spec 08.04 section 3.3).
+                boolean evolve = config.getBoolean(
+                        ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION.toString());
+                if (evolve) {
+                    log.warn("Column '{}' carried by the record does not exist in {} "
+                                    + "(default_kind {}). schema.evolution is enabled, so it is "
+                                    + "being added with ALTER TABLE ... ADD COLUMN before this "
+                                    + "batch is written.",
+                            unknown, fullyQualifiedTableName,
+                            kind == null ? "not found" : "'" + kind + "'");
+                    try {
+                        new ClickHouseAlterTable().alterTable(struct.schema().fields(),
+                                tableName, connection, fresh, config);
+                        Map<String, String> added = new DBMetadata(config)
+                                .getColumnsDataTypesForTable(tableName, connection,
+                                        databaseName);
+                        if (added != null && containsColumn(added, unknown)) {
+                            invalidation.invalidateTable(fullyQualifiedTableName);
+                            return added;
+                        }
+                    } catch (Exception e) {
+                        log.error("ALTER TABLE ... ADD COLUMN for '{}' on {} failed",
+                                unknown, fullyQualifiedTableName, e);
                     }
                 }
-                // Either nothing needed enforcing (ALIAS), or enforcement did
-                // not succeed. Record the proof so the metadata read is not
-                // repeated for EVERY record -- without it the invalidateTable()
-                // above would make every cached writer rebuild on its next
-                // batch, producing an unbounded system.columns query storm for
-                // as long as the table keeps receiving traffic.
-                invalidation.markColumnProvenAbsent(fullyQualifiedTableName, unknown);
-                return fresh;
+                throw new MissingTargetColumnException(String.format(
+                        "Column '%s' is carried by the source record but does not exist in "
+                                + "ClickHouse table %s.%s (default_kind %s). Writing the row without "
+                                + "it would silently drop the source value with row counts intact. %s "
+                                + "Failing the batch instead.",
+                        unknown, databaseName, tableName,
+                        kind == null ? "not found" : "'" + kind + "'",
+                        evolve
+                                ? "The automatic ALTER TABLE ... ADD COLUMN did not produce a "
+                                        + "writable column; add it to the ClickHouse table."
+                                : "Set " + ClickHouseSinkConnectorConfigVariables
+                                        .ENABLE_SCHEMA_EVOLUTION + "=true to let the connector add "
+                                        + "it, or add the column to the ClickHouse table."));
             }
             log.warn("Re-read of {}.{} returned no columns; keeping the cached map. The "
                             + "bind-time check will fail the batch if a value would be dropped.",
                     databaseName, tableName);
+        } catch (MissingTargetColumnException e) {
+            // Deliberately loud: this is the outcome, not a metadata failure.
+            throw e;
         } catch (Exception e) {
             log.warn("Could not re-read metadata for {}.{}; keeping the cached map. The "
                             + "bind-time check will fail the batch if a value would be dropped.",
@@ -423,7 +491,11 @@ public class GroupInsertQueryWithBatchRecords {
      * that prevents the source value from being stored, the answer is to
      * change the ClickHouse side -- not to note the problem and move on.</p>
      *
-     * <p>What is done depends on why the column is unwritable:</p>
+     * <p>Called only for a column whose {@code default_kind} the caller has
+     * already read as MATERIALIZED (an ALIAS is ignored by the caller, and a
+     * column that does not exist is added or fails the batch there). The kind
+     * is re-read here so the DDL is never issued against a definition that
+     * changed in between.</p>
      *
      * <ul>
      *   <li><b>ALIAS</b> -- not stored at all. The column is computed at
@@ -528,10 +600,8 @@ public class GroupInsertQueryWithBatchRecords {
             return false;
         }
 
-        log.warn("Column '{}' carried by the record is not in {}'s writable column map "
-                        + "after a fresh metadata read, and its default_kind could not be "
-                        + "determined ({}). The value will not be written; verify against "
-                        + "the source whether this column should be replicated.",
+        log.warn("Column '{}' on {} is no longer MATERIALIZED (default_kind now {}); nothing "
+                        + "to convert. The caller decides how a missing column is handled.",
                 columnName, fullyQualifiedTableName, kind == null ? "unknown" : kind);
         return false;
     }
