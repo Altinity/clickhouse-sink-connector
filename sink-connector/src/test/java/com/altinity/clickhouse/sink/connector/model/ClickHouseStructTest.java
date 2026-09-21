@@ -43,6 +43,34 @@ public class ClickHouseStructTest {
 
     }
 
+    /**
+     * The GTID version uses the floored {@code versionTs} when the lightweight
+     * dispatch loop set one, and the raw {@code source.ts_ms} otherwise -- the
+     * Kafka Connect path never sets {@code versionTs}, so its versions are
+     * unchanged (spec 02.01 §3.1).
+     */
+    @Test
+    public void versionTsFallsBackToTsMsWhenUnset() {
+        final long sourceTs = 1_757_900_000_000L;
+        ClickHouseStruct record = new ClickHouseStruct();
+        record.setTs_ms(sourceTs);
+        record.setGtid(4242L);
+
+        record.calculateVersion(true);
+        assertEquals(com.altinity.clickhouse.sink.connector.common.SnowFlakeId.generate(sourceTs, 4242L, false),
+                record.getVersion(), "without a versionTs the raw source timestamp feeds the snowflake");
+
+        record.setVersion(-1L);
+        record.setVersionTs(sourceTs + 5_000);
+        record.calculateVersion(true);
+        assertEquals(com.altinity.clickhouse.sink.connector.common.SnowFlakeId.generate(sourceTs + 5_000, 4242L, false),
+                record.getVersion(), "a floored versionTs replaces the raw timestamp in the snowflake");
+
+        record.setVersion(-1L);
+        record.calculateVersion(false);
+        assertEquals(4242L, record.getVersion(), "snowflake.id=false still binds the raw GTID");
+    }
+
     @Test
     public void testSourceRecordToJson() throws Exception {
         // Create a real SourceRecord for testing

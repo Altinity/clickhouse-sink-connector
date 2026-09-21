@@ -203,6 +203,17 @@ public class ClickHouseStruct {
     @Setter
     private long version = UNINITIALIZED_VALUE;
 
+    /**
+     * Timestamp (ms) that feeds the timestamp field of a GTID (snowflake) version:
+     * the commit-order-floored {@code effectiveTs} of the lightweight version
+     * sequence, set by the dispatch loop next to {@link #sequenceNumber} (spec
+     * 02.01 section 3.1). {@code 0} when unset -- the Kafka Connect path never sets
+     * it -- in which case {@link #calculateVersion} uses {@link #ts_ms} as before.
+     */
+    @Getter
+    @Setter
+    private long versionTs = 0L;
+
     // Inheritance doesn't work because of different package
     // error, composition.
 
@@ -930,12 +941,24 @@ public class ClickHouseStruct {
      * missing, i.e. when nothing at all can be derived. The bind sites reject such a
      * record rather than write it.</p>
      *
+     * <p>On the GTID path the snowflake's timestamp field is {@link #versionTs} when
+     * the lightweight dispatch loop set it -- the {@code effectiveTs} of the version
+     * sequence, clamped up to the run's commit-order floor -- and the raw
+     * {@code source.ts_ms} otherwise. {@code source.ts_ms} is the STATEMENT time on
+     * MySQL: a long transaction that commits after a shorter one carries the older
+     * timestamp, and because the timestamp dominates the snowflake, versioning it on
+     * the raw value ranked the newer commit below the older one and ReplacingMergeTree
+     * kept the stale row. With the floored timestamp the late commit shares (at
+     * least) the earlier commit's timestamp field and wins on its higher GTID
+     * transaction number. The encoding is unchanged (spec 02.01 section 3.1).</p>
+     *
      * @param useSnowflakeId Whether to use SnowFlakeId algorithm for version generation
      */
     public void calculateVersion(boolean useSnowflakeId) {
         if (this.gtid != UNINITIALIZED_VALUE) {
             if (useSnowflakeId) {
-                this.version = SnowFlakeId.generate(this.ts_ms, this.gtid, false);
+                long snowflakeTs = this.versionTs > 0 ? this.versionTs : this.ts_ms;
+                this.version = SnowFlakeId.generate(snowflakeTs, this.gtid, false);
             } else {
                 this.version = this.gtid;
             }

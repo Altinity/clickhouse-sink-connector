@@ -45,7 +45,8 @@ formal_specs/lean/
     ├── GeneratedColumn.lean           # Generated-Column Type Integrity (Invariant I13): expression maps to DEFAULT, never the type
     ├── DdlBarrier.lean                # DDL Barrier Quiescence (Invariant I5): the barrier covers legacy + routed queues + unacknowledged batches
     ├── OffsetFifo.lean                # Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01): commit never passes an outstanding batch, written-once
-    └── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07): no bare ALTER, loud key widening, ADD COLUMN preserved
+    ├── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07): no bare ALTER, loud key widening, ADD COLUMN preserved
+    └── VersionFloor.lean              # Version floor across a restart (Invariant I2 at the boundary, specs 02.02/02.04): seeded floor orders the new run above the old; heartbeats never touch the sequence
 ```
 
 ---
@@ -188,6 +189,27 @@ An `ALTER TABLE` is modelled as a list of classified clauses (`addColumn`,
 | `add_columns_preserved` | `translate cs = emit kept → addColumn n ∈ cs → addColumn n ∈ kept` | Skipping an unrepresentable neighbour never drops an `ADD COLUMN` (I6). |
 | `emitted_are_representable` | `translate cs = emit kept → kept = keep cs` (`keep` = the representable clauses, in source order) | Exactly the representable clauses are emitted, in source order. |
 
+### Version floor across a restart (Invariant I2 at the restart boundary, `VersionFloor.lean`, specs 02.02 §3.5 / 02.04 §3.2)
+
+The model is the shipped `nextSequenceNumber` state machine: `floor`
+(`sequenceMaxSourceTs`), `anchor`, `counter` and `mark` (`sequenceHighWaterPosition`),
+with `version = effTs * 1_000_000 + counter`, the 500m / 1000m seeds and the
+`diff > 1` reset. `seed s v` raises the floor to `v / 1_000_000 + 1`.
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `version_ge_floor` | a first delivery is versioned at least `floor * 1_000_000 + 1` | The clamp is what the boundary proof rests on; no counter bound is needed. |
+| `floor_mono` / `seed_floor_ge` | the floor never decreases within a run, and seeding never lowers it | The seeded bound survives every later record. |
+| `seed_floor_gt` | `v < (seed s v).floor * 1_000_000` | The seeded whole-second slot lies strictly above the high-water version. |
+| `restart_boundary` | if every pre-restart version is `≤ v`, every first delivery of a run started from `seed initial v` is `> v` | **The restart fix**: the new run continues strictly above the old one, whatever the lag, seeds or clock skew. |
+| `first_row_after_restart_is_first` | after a restart the mark is unset, so any positioned record is a first delivery | The boundary theorem applies from the very first row. |
+| `dispatch_control_preserves_state` | a heartbeat / transaction-metadata record leaves the sequence state unchanged | Control records carry the connector clock; they must not feed the floor. |
+| `old_dispatch_control_moves_floor` / `dispatch_control_keeps_source_floor` | the pre-fix loop pinned the floor to the connector clock `W`; the fixed loop leaves it at the source clock | Concrete counterexample to the pre-fix behaviour. |
+| `seeded_restart_example` / `unseeded_restart_inverts` | the unit-test scenario (`W-40000`, heartbeat at `W`, `W-30000`, restart, `W-25000`) executed by `decide`: `v2 > v1` with the seed, `v2 < v1` without | The regression, machine-checked on the real constants. |
+
+Not modelled here: within-run strict monotonicity of the shipped formula (spec
+02.02 §3.3 states it with its counter bound) and the GTID precedence.
+
 The `lean_lib` is now the package's `@[default_target]`, so a plain `lake build`
 type-checks every module (previously it built only the lakefile; use
 `lake build Replication` on older checkouts).
@@ -202,7 +224,7 @@ The same table is kept in the Constitution §5.1; this copy is the one next to t
 | Invariant | Status | Declarations |
 |---|---|---|
 | I1 Log Sequence Monotonicity | proved in the ordinal model; `encodeVersion` order-witness within `BinlogPos.WellFormed` | `VersionMonotonicityProp`, `version_strictly_monotonic` |
-| I2 Deterministic Version Monotonicity | model only: `liveVersion i = 2*i` is monotone by construction; the shipped `effectiveTs * 1e6 + seq` formula, floor and seeds are not modelled | `Engine.lean` |
+| I2 Deterministic Version Monotonicity | proved at the restart boundary on the shipped statics (`VersionFloor.lean`); within-run monotonicity of the shipped formula is model only (`liveVersion i = 2*i`) | `restart_boundary`, `version_ge_floor`, `dispatch_control_preserves_state`; `Engine.lean` |
 | I3 Eventual Convergence | proved | `ReplicationConvergence`, `master_replication_convergence` |
 | I4 Sorting Key Mutation Integrity | proved | `PKRelocationSoundness`, `update_pk_relocation_soundness` |
 | I5 DDL Barrier Quiescence | in progress (concurrent change) | — |
@@ -211,7 +233,7 @@ The same table is kept in the Constitution §5.1; this copy is the one next to t
 | I8 Durable Offset Quiescence | in progress (concurrent change); control-record half under I12 | — |
 | I9 Loud Failure | none | — |
 | I10 Separation of Concerns | none (architectural rule) | — |
-| I11 Drop-in Upgrade Safety | proved, conditional on `GapMono` | `upgrade_safe`, `replicate_convergesV`, `liveVersion_gapMono` |
+| I11 Drop-in Upgrade Safety | proved, conditional on `GapMono`; the boundary clause is proved for the seeded floor | `upgrade_safe`, `replicate_convergesV`, `liveVersion_gapMono`, `VersionFloor.restart_boundary` |
 | I12 Snapshot Completion & Control-Record Offset Progress | proved | `control_commit_safe`, `quiescent_control_commits`, `snapshot_completes` |
 | I13 Generated-Column Type Integrity | proved | `alter_preserves_type`, `type_is_never_expression`, `generated_has_default` |
 

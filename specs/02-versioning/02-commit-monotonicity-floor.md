@@ -1,14 +1,18 @@
 # Spec 02.02: Commit Monotonicity Floor & Late-Commit Inversion Prevention
 
 ## 1. Executive Summary & Purpose
-Specifies the high-water floor (`sequenceMaxSourceTs`) that gives events committing later in the MySQL binary log a timestamp component no lower than earlier commits within one connector run, even when MySQL statement timestamps are non-monotonic — and states the boundaries of that guarantee as implemented on 2.11.0.
+Specifies the high-water floor (`sequenceMaxSourceTs`) that gives events committing later in the MySQL binary log a timestamp component no lower than earlier commits, even when MySQL statement timestamps are non-monotonic: within one connector run by clamping, and **across a restart** by seeding the floor from a durable high-water mark of the versions already handed to the writers. It also states which records may touch the sequence state (rows and DDL — never heartbeats or transaction metadata) and the boundaries of the guarantee as implemented on 2.11.0.
 
 ---
 
 ## 2. Codebase Mapping on 2.11.0
 - **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java`
-- **Method**: `static synchronized long nextSequenceNumber(long recordTs, SourcePosition position)`
-- **Fields** (all `public static`, process-wide, reset only by a JVM restart):
+- **Methods**:
+  - `static synchronized long nextSequenceNumber(long recordTs, SourcePosition position)` — the assignment (§3); delegates to `nextVersionAssignment`, which also returns the clamped `effectiveTs` for the GTID path (spec 02.01 §3.1).
+  - `static synchronized long seedVersionFloor(long highWaterVersion)` — restart seeding (§3.5); raises `sequenceMaxSourceTs` to `Math.floorDiv(highWaterVersion, 1_000_000L) + 1`, never lowers it, ignores `<= 0`, returns the floor in force.
+  - `handleChangeEventBatch` — decides which records enter the sequence (§3.2): DDL and row records do, control records (`isControlRecord`) do not.
+- **Durable high-water mark**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionHighWaterMark.java` — table `replica_version_high_water` in the offset database (spec 09.03 §3.4), written ahead of handoff (§3.5), read at engine start; startup fallback `max(_version)` over the target tables.
+- **Fields** (all `public static`, process-wide; the floor is re-established from the durable mark at engine start, the other three start empty):
   - `public static long sequenceMaxSourceTs = 0L`
   - `public static SourcePosition sequenceHighWaterPosition = null`
   - `public static long sequenceAnchorTs = 0L`
@@ -30,7 +34,7 @@ nextSequenceNumber(recordTs, position):
       if effectiveTs < sequenceMaxSourceTs:
           effectiveTs = sequenceMaxSourceTs       # clamp up to the floor
   if effectiveTs > sequenceMaxSourceTs:
-      sequenceMaxSourceTs = effectiveTs           # raised by EVERY record
+      sequenceMaxSourceTs = effectiveTs           # raised by every record that enters
   diff = (int)((effectiveTs - sequenceAnchorTs) / 1000)
   if diff > 1:                                    # >= 2000 ms past the anchor (spec 02.03)
       sequenceNumber   = SEQUENCE_START
@@ -40,23 +44,43 @@ nextSequenceNumber(recordTs, position):
   return effectiveTs * 1_000_000 + sequenceNumber
 ```
 
-### 3.1 Who is clamped
-Only a **first delivery** — a record with a position strictly above `sequenceHighWaterPosition` — has its timestamp clamped up to the floor. A record at or below the mark (redelivery) or with no position (heartbeat, transaction boundary, snapshot row without coordinates) keeps `effectiveTs = recordTs`.
+The formula, the seeds and the multiplier are the 2.8.0 contract and are unchanged (§5). What this specification governs is what feeds the formula: which records enter it (§3.2) and where the floor starts after a restart (§3.5).
 
-### 3.2 Who raises the floor
-**Every** record raises `sequenceMaxSourceTs` when its `effectiveTs` exceeds it, positioned or not, first delivery or redelivery. The class Javadoc gives the reason: a heartbeat carrying a newer envelope timestamp moves the anchor and resets the counter exactly like a newer commit does, so it must move the floor too — otherwise the next late first delivery would again be versioned in its own older second. A redelivery cannot lower the floor; a redelivery whose timestamp exceeds the floor raises it.
+### 3.1 Who is clamped
+Only a **first delivery** — a record with a position strictly above `sequenceHighWaterPosition` — has its timestamp clamped up to the floor. A record at or below the mark (redelivery) or a row without a position (a source without log coordinates) keeps `effectiveTs = recordTs`. After a restart the mark is empty, so the first positioned record of the run — and, in log order, every record after it — is a first delivery and is clamped (spec 02.04 §3.2).
+
+### 3.2 Who enters the sequence, and who raises the floor
+`handleChangeEventBatch` calls `nextSequenceNumber` for **row records and DDL records only**. A **control record** — a heartbeat or a transaction-metadata record, recognised by `isControlRecord` (spec 01.06 §3.1) — produces no ClickHouse row, needs no `_version`, and is **not** run through the sequence: it leaves `sequenceMaxSourceTs`, `sequenceHighWaterPosition`, `sequenceAnchorTs` and `sequenceNumber` exactly as they were.
+
+The reason is the timestamp such records carry. A heartbeat's only timestamp is the envelope `ts_ms` — the **connector's wall clock**, not a source commit time. Before this rule every heartbeat went through `nextSequenceNumber(envelopeTs, null)` and raised the floor to the connector clock: on a source lagging by $L$ seconds every following row was clamped $L$ seconds into the future of the source clock. Within one run that was harmless; across a restart it was the largest part of the inversion window (§3.5), and it also made the emitted versions depend on the connector host's clock (spec 01.04 §3.2, clock skew).
+
+Among the records that do enter the sequence, **every** one raises `sequenceMaxSourceTs` when its `effectiveTs` exceeds it — first delivery, redelivery or positionless row. A record that moves the anchor and resets the counter must move the floor with it, otherwise the next late first delivery would again be versioned in its own older second. A redelivery cannot lower the floor; a redelivery whose timestamp exceeds the floor raises it.
 
 ### 3.3 What holds within one run
-Let $E_1$ precede $E_2$ in the binlog and both be first deliveries in the same process lifetime. When $E_1$ is versioned the floor becomes $T_1 \ge \text{ts}(E_1)$; $E_2$ gets $T_2 = \max(\text{ts}(E_2), \text{floor}) \ge T_1$. If $T_2 = T_1$ the counter has only incremented, so $V(E_2) > V(E_1)$; if $T_2 \ge T_1 + 2000$ the counter resets to `SEQUENCE_START`, and $V(E_2) - V(E_1) \ge 2{,}000{,}000{,}000 - k > 0$ for any realistic increment count $k$. First deliveries therefore receive strictly increasing versions within one run.
+Let $E_1$ precede $E_2$ in the binlog and both be first deliveries in the same process lifetime. When $E_1$ is versioned the floor becomes $T_1 \ge \text{ts}(E_1)$; $E_2$ gets $T_2 = \max(\text{ts}(E_2), \text{floor}) \ge T_1$. If $T_2 = T_1$ the counter has only incremented, so $V(E_2) > V(E_1)$. If a reset happens between them ($T_2 \ge \text{anchor} + 2000$, and the anchor is never above $T_1$) then $T_2 \ge T_1 + 1$ and $V(E_2) - V(E_1) \ge 1{,}000{,}000 + 1{,}000{,}000{,}000 - c_1$, where $c_1$ is $E_1$'s counter. This is positive as long as fewer than $1{,}000{,}000$ records were versioned in $E_1$'s counter window (counters start at $10^9$, or $5 \cdot 10^8$ after a start, and grow by one per record); a window of two source seconds holding a million rows is beyond the connector's throughput, but the bound is stated because it is the only condition. First deliveries therefore receive strictly increasing versions within one run.
 
-### 3.4 What does not hold
-- **Across a restart**: the floor, mark and anchor are static fields and start empty; the first record after a resume seeds the counter at `SEQUENCE_START_INITIAL`. Combined with the ten-digit seeds carrying into the timestamp field (spec 02.01 §3.3) a newer post-restart event can rank below an older pre-restart event. See §5.
-- **On the GTID path**: `ClickHouseStruct.calculateVersion` prefers the GTID and never consults `nextSequenceNumber`'s result (spec 02.01 §3.1); the floor does not apply there.
+### 3.4 What does not hold within one run
+- **On the GTID path before 2.11.0**: `ClickHouseStruct.calculateVersion` preferred the raw `source.ts_ms`; the floor did not apply there. 2.11.0 feeds the clamped `effectiveTs` into the GTID version instead (spec 02.01 §3.1), so the floor governs both paths.
+- **In-run redeliveries** (engine retry without a restart) are deliberately not clamped (§3.1); they carry the same data as the stored copy they lose to (spec 02.04 §3.3).
+
+### 3.5 Across a restart: the floor is seeded from a durable high-water mark
+The four statics are process-local, so without help a restart put the floor back at `0`: the first rows of the new run were versioned in their own source second, which on a lagging source lies **below** the second the previous run had been clamped to. Rows the previous run wrote for the same keys then kept winning under `FINAL` until a later update arrived — silent, with matching row counts. The window was not the ~1 ms of spec 02.01 §4's arithmetic example but **the replication lag plus the seed carry** (about 0.5 s): with a 30 s lag and the floor pinned by heartbeats at the connector clock $W$, the last pre-restart row carried $W \cdot 10^6 + 10^9 + k$ while the first post-restart row carried $(W - 25000) \cdot 10^6 + 5 \cdot 10^8 + 1$.
+
+2.11.0 closes the window with two rules:
+
+1. **Write-ahead high-water mark.** `VersionHighWaterMark.cover(v)` is called on the dispatch thread for every version the sequence assigns to a row, **before** that row is handed to the writers. It keeps a persisted **horizon** $H$ — a version such that every version ever handed off is $\le H$ — in the table `replica_version_high_water` next to the offset table (spec 09.03 §3.4). When an assigned version exceeds the horizon, the horizon is moved to `v + 5_000 * 1_000_000` (five source seconds ahead) and written synchronously before the row proceeds; while versions stay below the horizon nothing is written, so the table receives at most one row per ~5 s of source time under load and none on an idle source. A write that fails is retried, and if it cannot be made durable the batch fails loudly and the engine stops (I9): no row is ever handed off with a version above the durable horizon. The mark is written **ahead of handoff, not on acknowledgement**, because a unit that a worker has already written can still be parked behind an older unacknowledged sequence (spec 09.01) — its rows are in ClickHouse before any acknowledgement exists, so an acknowledgement-time mark would not cover them.
+2. **Seeding at engine start.** `setupDebeziumEventCapture` reads the mark ($V_{max}$) and calls `seedVersionFloor(V_max)`, which sets `sequenceMaxSourceTs = floorDiv(V_max, 10^6) + 1` (never lowering it). Because $V_{max} < (\lfloor V_{max}/10^6 \rfloor + 1) \cdot 10^6$ and every first delivery is versioned at least `floor * 1_000_000 + 1`, **every first delivery of the new run ranks strictly above every version the previous run assigned** — whatever the lag, the seeds, or the clock skew between MySQL and the connector host (spec 01.04 §3.2). The anchor and counter are left to their start-of-run rules (spec 02.04 §3.1); they are not needed for the bound.
+   When no mark exists yet — the first start after an upgrade from 2.8.0 / 2.9.1 / 2.10.x, or a ClickHouse replica that never saw this connector's writes — the seed falls back to `max(_version)` over every `ReplacingMergeTree` table that has a `_version` column in the databases the connector writes to (`database.include.list` literal names mapped through `clickhouse.database.override.map`; a pattern entry disables the scan with a WARN). A candidate is decoded in both version domains (`v / 10^6` for the sequence domain, `(v >> 22) + snowflakeEpoch` for the GTID/snowflake domain) and each decoding is accepted only when it lies between 2010 and 24 h past the connector clock; the highest plausible decoding is used. This excludes the UInt64-max sentinel rows of spec 02.06 §6.3, raw-GTID and LSN versions (which are not timestamp-anchored and need no floor), and a snowflake read as a sequence value (which would pin the floor a decade ahead). A candidate with no plausible decoding is logged at WARN and ignored. When neither source yields a floor the engine logs at WARN that the restart floor is unseeded and continues.
+3. **A re-setup in the same JVM** (the engine's completion-callback retry) seeds again; because seeding only raises the floor, the in-memory state is never rolled back.
+
+What seeding does to the domain: nothing. The emitted value is still `effectiveTs * 1_000_000 + counter` with the 2.8.0 seeds; only the floor's starting value differs, exactly as §5's constraint allows. The first rows after a restart are clamped to $\lfloor V_{max}/10^6 \rfloor + 1$ — about one second above the last pre-restart source second, plus up to five seconds when the horizon was recently moved — and track the source clock again as soon as it passes the floor.
 
 ---
 
 ## 4. Invariants Preserved
-- **Invariant I2 (Deterministic Version Monotonicity)**: binlog commit order dominates statement timestamps for first deliveries **within one run** on the sequence-number path. Cross-restart and GTID-path monotonicity are open defects (§5).
+- **Invariant I2 (Deterministic Version Monotonicity)**: binlog commit order dominates statement timestamps for first deliveries within one run (§3.3) and across a restart (§3.5) on the sequence-number path, and — through the clamped `effectiveTs` — on the GTID path (spec 02.01 §3.1).
+- **Invariant I11 (Drop-in Upgrade Safety)**: the seed establishes the "continues ABOVE the last version the old version wrote" clause across an upgrade restart (spec 02.06 §3.1, §6.1).
+- **Invariant I9 (Loud Failure)**: a horizon that cannot be made durable stops the engine instead of handing off rows the next start could not order.
 
 ---
 
@@ -64,27 +88,24 @@ Let $E_1$ precede $E_2$ in the binlog and both be first deliveries in the same p
 
 > **Compatibility constraint (governing rule).** The emitted `_version` domain — `ts_ms × 1_000_000 + counter` with the 2.8.0 seeds — is the contract shared with 2.8.0, 2.9.1 and 2.10.x. It MUST NOT change: a version written by any of those releases must rank consistently against one written by 2.11.0 in BOTH directions (upgrade and downgrade). The restart carry described here is therefore inherited 2.8.0 behaviour that is preserved deliberately; any improvement is confined to WHERE the restart floor starts (seeding the anchor from the target's `max(_version)` or a persisted last-emitted version) and must ship with an explicit upgrade/downgrade matrix against 2.8.0, 2.9.1 and 2.10.x.
 
-The cross-restart inversion is documented in `DebeziumOffsetManagement` (quoted verbatim):
-
-> A genuinely NEWER event arriving just after a resume can then rank BELOW an older pre-restart event and be discarded:
-> ```
-> older, pre-restart  (T)     -> T*1e6 + 1_000_000_000 = 1787635798000000000
-> newer, post-restart (T+1ms) -> (T+1)*1e6 + 500_000_000 = 1787635797501000000
-> ```
-> The `diff > 1` second reset does not cover it: a 1 ms advance yields `diff == 0`, so the 500m seed still applies.
-
-The pins for this defect are `SequenceSeedOverflowTest` and `DebeziumChangeEventCaptureTest.knownDefectNewerEventAfterRestartRanksBelowOlderPreRestartEvent()` (not `ReplaySafetyTest`, despite that Javadoc's reference).
+The carry itself is unchanged: the ten-digit seeds still add ~1000 ms (`SEQUENCE_START`) or ~500 ms (`SEQUENCE_START_INITIAL`) to the timestamp field (spec 02.01 §3.3), and `SequenceSeedOverflowTest` still pins that arithmetic. What §3.5 changes is that the carry can no longer produce a cross-restart inversion, because the new run starts above the old run's highest version rather than at its own raw source second. The upgrade/downgrade matrix is in spec 02.06 §6.1.
 
 ### 5.1 Lean status
-`Replication.Proofs.version_strictly_monotonic` proves that the coordinate encoding `encodeVersion (fileSeq, offset, rowIdx)` is order-preserving within `BinlogPos.WellFormed`. The engine model versions by stream ordinal (`liveVersion i = 2 * i`) and does not use that encoding. Neither models the floor, the anchor, the seeds, or the shipped formula; the algorithm in §3 has no machine-checked proof yet.
+`Replication.VersionFloor` models the four statics and the algorithm of §3 as written, and proves: `version_ge_floor` (a first delivery is versioned at least `floor * 1_000_000 + 1`), `floor_mono` (the floor never decreases), `seed_floor_gt` (`v < (v / 1_000_000 + 1) * 1_000_000`), `restart_boundary` (every first delivery of a run seeded from a high-water mark at or above all previous versions exceeds every one of them), `dispatch_control_preserves_state` (a control record leaves the state unchanged) with the pre-fix `old_dispatch_control_moves_floor` counterexample, and the executable scenario `seeded_restart_example` / `unseeded_restart_inverts`. Within-run strict monotonicity of the shipped formula (§3.3, with its counter bound) is stated here but not yet machine-checked; `Replication.Proofs.version_strictly_monotonic` remains a theorem about the coordinate encoding only.
 
 ---
 
 ## 6. Verification Criteria
 - `CommitOrderVersionClampTest.lateCommitWithOlderStatementTimestampRanksAboveEarlierWrite()`, `CommitOrderVersionClampTest.lateDeleteRanksAboveEarlierWrite()` — clamping of first deliveries (§3.1).
-- `CommitOrderVersionClampTest.unpositionedCounterResetRaisesTheFloor()` — a positionless record raises the floor (§3.2).
+- `CommitOrderVersionClampTest.unpositionedCounterResetRaisesTheFloor()` — a positionless **row** that resets the counter raises the floor (§3.2, second paragraph).
+- `DebeziumChangeEventCaptureTest.heartbeatAndTransactionMetadataDoNotTouchTheSequenceState()` — a heartbeat-only and a transaction-metadata-only batch through the real `handleChangeEventBatch` leave all four statics unchanged (§3.2); fails on the pre-fix loop, which raised the floor to the heartbeat's envelope timestamp.
 - `CommitOrderVersionClampTest.redeliveryKeepsRedeliveryStableVersion()`, `CommitOrderVersionClampTest.redeliveryDoesNotDisturbTheFloor()` — redeliveries are not clamped and cannot lower the floor.
 - `CommitOrderVersionClampTest.floorAppliesWithinOneBatch()`, `CommitOrderVersionClampTest.rotationIsAFirstDelivery()`, `CommitOrderVersionClampTest.rowsWithinOneEventAreFirstDeliveries()`, `CommitOrderVersionClampTest.postgresLsnIsAPosition()`.
 - `LateCommitVersionOrderIT` — end to end with `gtid_mode=OFF`.
-- `DebeziumChangeEventCaptureTest.knownDefectNewerEventAfterRestartRanksBelowOlderPreRestartEvent()` — §5 pinned as present behaviour.
-- Lean: `Replication.Proofs.version_strictly_monotonic` (coordinate encoding only — §5.1).
+- `DebeziumChangeEventCaptureTest.newerEventAfterSeededRestartRanksAboveOlderPreRestartEvent()` — §3.5 through the real statics: `nextSequenceNumber(W-40000, p400)`, a heartbeat at the connector clock `W` through `handleChangeEventBatch`, `v1 = nextSequenceNumber(W-30000, p500)`, reset of the statics, `seedVersionFloor(v1)`, `v2 = nextSequenceNumber(W-25000, p600)`, `v2 > v1`. Fails on the pre-fix code (`v2 < v1`).
+- `DebeziumChangeEventCaptureTest.newerEventOneMillisecondAfterSeededRestartRanksAboveOlderPreRestartEvent()` — the seed carry window (spec 02.01 §4): an older event in the 1000m counter domain, a restart, and a newer event 1 ms later; with the seeded floor the newer event is clamped to `T + 1001` and wins. This is the former known-defect pin flipped into the guarantee; the control-record exclusion alone does not make it pass.
+- `DebeziumChangeEventCaptureTest.seedVersionFloorRaisesButNeverLowersTheFloor()` — the seed is `floorDiv(v, 1e6) + 1`, a lower seed is ignored, `<= 0` is ignored.
+- `VersionHighWaterMarkTest.horizonIsWrittenAheadOfHandoffAndReusedUntilExceeded()`, `VersionHighWaterMarkTest.loadReadsTheHighestPersistedMark()`, `VersionHighWaterMarkTest.horizonWriteFailureIsLoud()` — the write-ahead horizon of §3.5 (1).
+- `VersionHighWaterMarkTest.decodesSequenceDomainVersions()`, `VersionHighWaterMarkTest.decodesSnowflakeDomainVersions()`, `VersionHighWaterMarkTest.rejectsImplausibleVersions()`, `VersionHighWaterMarkTest.scanSeedsFromTheHighestPlausibleTargetVersion()` — the startup fallback of §3.5 (2).
+- Lean: `Replication.VersionFloor.restart_boundary`, `Replication.VersionFloor.version_ge_floor`, `Replication.VersionFloor.floor_mono`, `Replication.VersionFloor.seed_floor_gt`, `Replication.VersionFloor.dispatch_control_preserves_state`, `Replication.VersionFloor.old_dispatch_control_moves_floor`, `Replication.VersionFloor.seeded_restart_example`, `Replication.VersionFloor.unseeded_restart_inverts` (§5.1); `Replication.Proofs.version_strictly_monotonic` (coordinate encoding only).
+- Verification: a crash-restart integration test that kills the connector mid-stream on a lagging source and checks the first post-restart updates win under `FINAL` is not yet covered by an automated test (gap).

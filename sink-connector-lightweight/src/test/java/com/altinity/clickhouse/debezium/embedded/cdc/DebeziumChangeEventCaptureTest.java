@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.SourcePosition;
@@ -7,19 +9,148 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import io.debezium.engine.ChangeEvent;
+import io.debezium.engine.DebeziumEngine;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.json.simple.parser.ParseException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Properties;
 
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertEquals;
 
 public class DebeziumChangeEventCaptureTest {
+
+    /*
+     * Minimal harness to push a control record (heartbeat / transaction
+     * metadata) through the REAL handleChangeEventBatch, so the tests below
+     * observe what the dispatch loop does to the version-sequence statics -- not
+     * a restatement of it. Mirrors ControlRecordLogLevelTest; no ClickHouse,
+     * MySQL or Debezium engine is needed.
+     */
+
+    /** A committer that only records what it was asked to do. */
+    private static final class RecordingCommitter
+            implements DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> {
+        @Override
+        public void markProcessed(ChangeEvent<SourceRecord, SourceRecord> record) {
+        }
+
+        @Override
+        public void markBatchFinished() {
+        }
+
+        @Override
+        public void markProcessed(ChangeEvent<SourceRecord, SourceRecord> record,
+                                  DebeziumEngine.Offsets sourceOffsets) {
+        }
+
+        @Override
+        public DebeziumEngine.Offsets buildOffsets() {
+            return new DebeziumEngine.Offsets() {
+                @Override
+                public void set(String key, Object value) {
+                }
+            };
+        }
+    }
+
+    private static ChangeEvent<SourceRecord, SourceRecord> changeEvent(SourceRecord record) {
+        return new ChangeEvent<SourceRecord, SourceRecord>() {
+            @Override
+            public SourceRecord key() {
+                return null;
+            }
+
+            @Override
+            public SourceRecord value() {
+                return record;
+            }
+
+            @Override
+            public String destination() {
+                return record.topic();
+            }
+
+            @Override
+            public Integer partition() {
+                return null;
+            }
+        };
+    }
+
+    private static Map<String, Object> partition() {
+        Map<String, Object> partition = new LinkedHashMap<>();
+        partition.put("server", "db1");
+        return partition;
+    }
+
+    private static Map<String, Object> offset() {
+        Map<String, Object> offset = new LinkedHashMap<>();
+        offset.put("file", "mysql-bin.000020");
+        offset.put("pos", 450L);
+        return offset;
+    }
+
+    /** A heartbeat exactly as Debezium emits one: envelope {@code ts_ms} only, no {@code op}. */
+    private static ChangeEvent<SourceRecord, SourceRecord> heartbeatAt(long connectorClockMs) {
+        Schema valueSchema = SchemaBuilder.struct()
+                .name("io.debezium.connector.common.Heartbeat")
+                .field("ts_ms", Schema.INT64_SCHEMA)
+                .build();
+        Struct value = new Struct(valueSchema);
+        value.put("ts_ms", connectorClockMs);
+        return changeEvent(new SourceRecord(partition(), offset(), "__debezium-heartbeat.db1", 0,
+                null, null, valueSchema, value));
+    }
+
+    /** A transaction-boundary record: regular topic, envelope {@code ts_ms}, no {@code op}. */
+    private static ChangeEvent<SourceRecord, SourceRecord> transactionMetadataAt(long connectorClockMs) {
+        Schema valueSchema = SchemaBuilder.struct()
+                .name("io.debezium.connector.common.TransactionMetadataValue")
+                .field("status", Schema.STRING_SCHEMA)
+                .field("id", Schema.STRING_SCHEMA)
+                .field("event_count", Schema.OPTIONAL_INT64_SCHEMA)
+                .field("ts_ms", Schema.INT64_SCHEMA)
+                .build();
+        Struct value = new Struct(valueSchema);
+        value.put("status", "END");
+        value.put("id", "file=mysql-bin.000020,pos=450");
+        value.put("event_count", 3L);
+        value.put("ts_ms", connectorClockMs);
+        return changeEvent(new SourceRecord(partition(), offset(), "db1.transaction", 0,
+                null, null, valueSchema, value));
+    }
+
+    private static ClickHouseSinkConnectorConfig config() {
+        Map<String, String> props = new HashMap<>();
+        ClickHouseSinkConnectorConfig.setDefaultValues(props);
+        return new ClickHouseSinkConnectorConfig(props);
+    }
+
+    private static void runControlRecordBatch(ChangeEvent<SourceRecord, SourceRecord> record)
+            throws InterruptedException {
+        new DebeziumChangeEventCapture().handleChangeEventBatch(
+                Collections.singletonList(record), new RecordingCommitter(), new Properties(),
+                new SourceRecordParserService(), config());
+    }
+
+    /** The four statics of the version sequence, captured for comparison. */
+    private static List<Object> sequenceState() {
+        return Arrays.asList(
+                DebeziumChangeEventCapture.sequenceMaxSourceTs,
+                DebeziumChangeEventCapture.sequenceAnchorTs,
+                DebeziumChangeEventCapture.sequenceNumber,
+                DebeziumChangeEventCapture.sequenceHighWaterPosition);
+    }
 
     @Test
     @DisplayName("Unit test to check if the LSN record is created properly")
@@ -184,48 +315,186 @@ public class DebeziumChangeEventCaptureTest {
     }
 
     /**
-     * KNOWN DEFECT (spec 02.01 §4, 02.04 §4; DebeziumOffsetManagement Javadoc),
-     * reproduced through the real {@code nextSequenceNumber} rather than over
-     * copied constants: the ten-digit seeds carry into the six digits the
-     * multiplier leaves them, so after a restart a genuinely NEWER event (1 ms
-     * later, next binlog position) is versioned BELOW an older pre-restart
-     * event and ReplacingMergeTree would keep the stale row.
+     * The restart boundary (spec 02.02 §3.5, 02.04 §3.2), through the real
+     * statics. A source lagging 30 s behind the connector clock {@code W}: the
+     * first run versions a row at {@code W-40000}, sees a heartbeat carrying
+     * {@code W}, then versions the key's write at {@code W-30000}. The process
+     * restarts; the floor is seeded from the high-water mark ({@code v1}, the
+     * last version handed off); a genuinely newer write of the key at
+     * {@code W-25000} (next binlog position) must out-rank {@code v1}.
      *
-     * <p>This test asserts the inversion EXISTS today. It is named as a defect
-     * so that fixing the encoding makes it fail; at that point flip the final
-     * assertion to {@code newerAfterRestart > olderBeforeRestart} and rename
-     * it to the guarantee. Do not "fix" the test by widening the gap between
-     * the two events: the whole point is the 1 ms window the {@code diff > 1}
-     * reset does not cover.</p>
+     * <p>Before the fix this exact sequence gave {@code v2 < v1}: the heartbeat
+     * pinned the floor to {@code W}, so {@code v1} was clamped to
+     * {@code W*1e6 + 1e9 + 1}, while the restart put the floor back at 0 and
+     * {@code v2 = (W-25000)*1e6 + 5e8 + 1}. The window was the lag plus the
+     * seed carry, not the ~1 ms of the arithmetic example in spec 02.01 §4 --
+     * which is why this test lags by 25-40 s rather than 1 ms.</p>
      */
     @Test
-    @DisplayName("KNOWN DEFECT: a newer event versioned right after a restart ranks below an older pre-restart event")
-    public void knownDefectNewerEventAfterRestartRanksBelowOlderPreRestartEvent() {
+    @DisplayName("A newer event versioned after a seeded restart ranks above the older pre-restart event")
+    public void newerEventAfterSeededRestartRanksAboveOlderPreRestartEvent() throws InterruptedException {
+        final long connectorClock = 1_787_635_797_000L; // W
+        SourcePosition p400 = SourcePosition.ofBinlog("mysql-bin.000020", 400L, 0);
+        SourcePosition p500 = SourcePosition.ofBinlog("mysql-bin.000020", 500L, 0);
+        SourcePosition p600 = SourcePosition.ofBinlog("mysql-bin.000020", 600L, 0);
+
+        // Run 1.
+        resetSequenceStateAsAfterRestart();
+        DebeziumChangeEventCapture.nextSequenceNumber(connectorClock - 40_000, p400);
+        runControlRecordBatch(heartbeatAt(connectorClock));
+        long v1 = DebeziumChangeEventCapture.nextSequenceNumber(connectorClock - 30_000, p500);
+
+        // Restart: the statics are fresh; the engine seeds the floor from the
+        // durable high-water mark, which is at least v1.
+        resetSequenceStateAsAfterRestart();
+        DebeziumChangeEventCapture.seedVersionFloor(v1);
+        long v2 = DebeziumChangeEventCapture.nextSequenceNumber(connectorClock - 25_000, p600);
+
+        assertTrue("the newer post-restart write (" + v2 + ") must out-rank the older pre-restart "
+                        + "write (" + v1 + "); ReplacingMergeTree keeps the stale row otherwise",
+                v2 > v1);
+        assertTrue("the floor was seeded at floorDiv(v1, 1e6) + 1 before the first record",
+                DebeziumChangeEventCapture.sequenceMaxSourceTs >= Math.floorDiv(v1, 1_000_000L) + 1);
+        assertEquals("the counter still starts in the 500m domain after a start: the seed changes "
+                        + "the floor, not the 2.8.0 arithmetic",
+                DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1,
+                counterOf(v2, connectorClock - 25_000));
+
+        resetSequenceStateAsAfterRestart();
+    }
+
+    /**
+     * The seed carry window (spec 02.01 §4), which the heartbeat exclusion alone
+     * does not close: an older event versioned with the steady-state 1000m
+     * counter, a restart, and a genuinely newer event 1 ms later (next binlog
+     * position) versioned with the 500m start seed. Without the seeded floor
+     * {@code (T+1)*1e6 + 5e8 + 1 < T*1e6 + 1e9}; with it the newer event is
+     * clamped to {@code T + 1001} and out-ranks the older one. This is the
+     * former known-defect pin, flipped into the guarantee.
+     */
+    @Test
+    @DisplayName("A newer event 1 ms after the last pre-restart event ranks above it after a seeded restart")
+    public void newerEventOneMillisecondAfterSeededRestartRanksAboveOlderPreRestartEvent() {
         final long olderTs = 1_787_635_797_000L;
         SourcePosition olderPos = SourcePosition.ofBinlog("mysql-bin.000020", 500L, 0);
         SourcePosition newerPos = SourcePosition.ofBinlog("mysql-bin.000020", 600L, 0);
 
-        // Run 1 (before the restart): leave the 500m start domain with a >= 2000 ms
-        // advance, then version the older event in the steady-state 1000m domain.
         resetSequenceStateAsAfterRestart();
         DebeziumChangeEventCapture.nextSequenceNumber(olderTs - 10_000, SourcePosition.ofBinlog("mysql-bin.000020", 400L, 0));
         long olderBeforeRestart = DebeziumChangeEventCapture.nextSequenceNumber(olderTs, olderPos);
         assertEquals("precondition: the pre-restart write carries the steady-state seed",
                 DebeziumChangeEventCapture.SEQUENCE_START, counterOf(olderBeforeRestart, olderTs));
 
-        // Restart: every static is back to its initial value; the first record is
-        // seeded at SEQUENCE_START_INITIAL. The newer event is 1 ms later and at a
-        // higher binlog position, so it is unambiguously newer than the older one.
         resetSequenceStateAsAfterRestart();
+        DebeziumChangeEventCapture.seedVersionFloor(olderBeforeRestart);
         long newerAfterRestart = DebeziumChangeEventCapture.nextSequenceNumber(olderTs + 1, newerPos);
-        assertEquals("precondition: the post-restart write carries the resume seed",
-                DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1, counterOf(newerAfterRestart, olderTs + 1));
 
-        assertTrue("KNOWN DEFECT: newer(" + newerAfterRestart + ") should out-rank older("
-                        + olderBeforeRestart + ") but does not. When this assertion fails the "
-                        + "encoding has been fixed -- invert it into newer > older.",
-                newerAfterRestart < olderBeforeRestart);
+        assertTrue("newer(" + newerAfterRestart + ") must out-rank older(" + olderBeforeRestart
+                        + "); before the seeded floor it did not", newerAfterRestart > olderBeforeRestart);
+        assertEquals("the newer event is clamped to the seeded slot floorDiv(older, 1e6) + 1 = T + 1001",
+                olderTs + 1001, DebeziumChangeEventCapture.sequenceMaxSourceTs);
+        assertEquals("and still carries the 500m start seed: the arithmetic is the 2.8.0 arithmetic",
+                DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1,
+                counterOf(newerAfterRestart, olderTs + 1001));
 
+        resetSequenceStateAsAfterRestart();
+    }
+
+    /**
+     * {@code seedVersionFloor} only ever raises the floor: a lower or non-positive
+     * seed is ignored, and the floor it establishes is
+     * {@code floorDiv(highWater, 1e6) + 1} -- the first whole-millisecond slot
+     * strictly above the high-water version (spec 02.02 §3.5).
+     */
+    @Test
+    @DisplayName("seedVersionFloor raises the floor to floorDiv(v, 1e6) + 1 and never lowers it")
+    public void seedVersionFloorRaisesButNeverLowersTheFloor() {
+        resetSequenceStateAsAfterRestart();
+        final long highWater = 1_787_635_797_000L * 1_000_000L + 1_000_000_000L + 7;
+
+        assertEquals(0L, DebeziumChangeEventCapture.seedVersionFloor(0L));
+        assertEquals(0L, DebeziumChangeEventCapture.seedVersionFloor(-5L));
+        assertEquals("a non-positive high-water mark leaves the floor untouched",
+                0L, DebeziumChangeEventCapture.sequenceMaxSourceTs);
+
+        long floor = DebeziumChangeEventCapture.seedVersionFloor(highWater);
+        assertEquals(Math.floorDiv(highWater, 1_000_000L) + 1, floor);
+        assertEquals(floor, DebeziumChangeEventCapture.sequenceMaxSourceTs);
+        assertTrue("the seeded slot lies strictly above the high-water version",
+                floor * 1_000_000L > highWater);
+
+        long lower = DebeziumChangeEventCapture.seedVersionFloor(highWater - 5_000L * 1_000_000L);
+        assertEquals("a lower seed (e.g. a re-setup in the same JVM) never lowers the floor",
+                floor, lower);
+        assertEquals(floor, DebeziumChangeEventCapture.sequenceMaxSourceTs);
+
+        assertEquals("the anchor and counter are left to their start-of-run rules",
+                0L, DebeziumChangeEventCapture.sequenceAnchorTs);
+        assertEquals(null, DebeziumChangeEventCapture.sequenceHighWaterPosition);
+
+        resetSequenceStateAsAfterRestart();
+    }
+
+    /**
+     * A heartbeat carries the connector's wall clock, not a source commit time,
+     * and produces no row; it must not enter the version sequence (spec 02.02
+     * §3.2, 01.06 §3.1). Before the fix every control record went through
+     * {@code nextSequenceNumber(envelopeTs, null)} and pinned the floor to the
+     * connector clock, which is the lag-sized part of the restart window.
+     */
+    @Test
+    @DisplayName("A heartbeat and a transaction-metadata record leave the version-sequence statics unchanged")
+    public void heartbeatAndTransactionMetadataDoNotTouchTheSequenceState() throws InterruptedException {
+        final long sourceClock = 1_787_635_797_000L - 40_000;
+        final long connectorClock = 1_787_635_797_000L;
+        resetSequenceStateAsAfterRestart();
+        DebeziumChangeEventCapture.nextSequenceNumber(sourceClock,
+                SourcePosition.ofBinlog("mysql-bin.000020", 400L, 0));
+        List<Object> before = sequenceState();
+
+        runControlRecordBatch(heartbeatAt(connectorClock));
+        assertEquals("a heartbeat must not raise the floor, move the anchor, touch the counter or "
+                + "the high-water position", before, sequenceState());
+
+        runControlRecordBatch(transactionMetadataAt(connectorClock));
+        assertEquals("a transaction-metadata record must not touch the sequence state either",
+                before, sequenceState());
+
+        assertEquals("the floor stays at the source clock", sourceClock,
+                DebeziumChangeEventCapture.sequenceMaxSourceTs);
+        resetSequenceStateAsAfterRestart();
+    }
+
+    /**
+     * After a restart the high-water position is empty, so the events Debezium
+     * re-publishes from the committed offset are first deliveries to the new run:
+     * they are clamped to the seeded floor and rank above the old run (spec
+     * 02.04 §3.2). This replaces the earlier reading that post-restart
+     * redeliveries keep their own (older) timestamps.
+     */
+    @Test
+    @DisplayName("A replayed event after a seeded restart is clamped above the old run's highest version")
+    public void replayAfterSeededRestartIsClampedAboveTheOldRun() {
+        final long ts = 1_757_900_000_000L;
+        SourcePosition p100 = SourcePosition.ofBinlog("mysql-bin.000007", 100L, 0);
+        SourcePosition p200 = SourcePosition.ofBinlog("mysql-bin.000007", 200L, 0);
+        SourcePosition p300 = SourcePosition.ofBinlog("mysql-bin.000007", 300L, 0);
+
+        resetSequenceStateAsAfterRestart();
+        DebeziumChangeEventCapture.nextSequenceNumber(ts, p100);
+        long oldRunHighest = DebeziumChangeEventCapture.nextSequenceNumber(ts + 3_000, p200);
+
+        resetSequenceStateAsAfterRestart();
+        DebeziumChangeEventCapture.seedVersionFloor(oldRunHighest);
+        long replayedFirst = DebeziumChangeEventCapture.nextSequenceNumber(ts, p100);
+        long replayedSecond = DebeziumChangeEventCapture.nextSequenceNumber(ts + 3_000, p200);
+        long genuinelyNew = DebeziumChangeEventCapture.nextSequenceNumber(ts + 3_100, p300);
+
+        assertTrue("the replayed copy is a first delivery to the new run and ranks above the old run",
+                replayedFirst > oldRunHighest);
+        assertTrue("the replay stays in log order", replayedSecond > replayedFirst);
+        assertTrue("a genuinely new event ranks above the replay and the old run",
+                genuinelyNew > replayedSecond);
         resetSequenceStateAsAfterRestart();
     }
 

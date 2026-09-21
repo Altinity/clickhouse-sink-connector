@@ -120,8 +120,8 @@ public class CommitOrderVersionClampTest {
     }
 
     @Test
-    @DisplayName("a record without a position that resets the counter (a heartbeat with a newer "
-            + "envelope timestamp) also raises the floor for the next late first delivery")
+    @DisplayName("a row without a position that resets the counter (a source without log coordinates, "
+            + "versioned on its envelope timestamp) also raises the floor for the next late first delivery")
     public void unpositionedCounterResetRaisesTheFloor() {
         versionOf(at(TS - 10_000, 100));
         long earlyWrite = 0;
@@ -129,19 +129,22 @@ public class CommitOrderVersionClampTest {
             earlyWrite = versionOf(at(TS, 200 + i));
         }
 
-        // A heartbeat / transaction marker: no source struct, envelope timestamp only,
-        // newer than the source clock. It shares the sequence state, moves the anchor
-        // and resets the counter exactly like a newer commit would.
-        ClickHouseStruct heartbeat = new ClickHouseStruct();
-        heartbeat.setDebezium_ts_ms(TS + 5_000);
-        DebeziumChangeEventCapture.addVersion(Arrays.asList(heartbeat));
+        // A ROW without a log position (no source coordinates; envelope timestamp
+        // only), newer than the source clock. It enters the sequence like any row,
+        // moves the anchor and resets the counter exactly like a newer commit would.
+        // Heartbeats and transaction metadata do NOT take this path any more: the
+        // dispatch loop keeps control records out of the sequence entirely (spec
+        // 02.02 section 3.2; DebeziumChangeEventCaptureTest pins that).
+        ClickHouseStruct positionlessRow = new ClickHouseStruct();
+        positionlessRow.setDebezium_ts_ms(TS + 5_000);
+        DebeziumChangeEventCapture.addVersion(Arrays.asList(positionlessRow));
         assertEquals((TS + 5_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START,
-                heartbeat.getSequenceNumber(), "sanity: the heartbeat reset the counter");
+                positionlessRow.getSequenceNumber(), "sanity: the positionless row reset the counter");
 
         long lateCommit = versionOf(at(TS, 400));
 
         assertTrue(lateCommit > earlyWrite,
-                "the counter reset caused by the heartbeat must be accompanied by the floor: "
+                "the counter reset caused by the positionless row must be accompanied by the floor: "
                         + "early=" + earlyWrite + " late=" + lateCommit);
         assertEquals((TS + 5_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START + 1, lateCommit);
     }

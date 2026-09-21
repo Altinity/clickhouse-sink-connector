@@ -59,6 +59,12 @@ null by contract — there is no row to write.
   `Record could not be parsed to a ClickHouseStruct - skipping ...` (issue #1379
   visibility requirement).
 
+**Version sequence.** A control record is never run through the version
+sequence: `handleChangeEventBatch` calls `nextSequenceNumber` only for DDL and
+row records, so a heartbeat's envelope `ts_ms` — the connector's wall clock —
+cannot raise the floor, move the anchor, reset the counter or advance the
+high-water position (spec 02.02 §3.2; `Replication.VersionFloor.dispatch_control_preserves_state`).
+
 ### 3.2 Safety — quiescence gate on the control-record commit
 `commitControlRecordOffset` commits the control offset ONLY when both:
 1. `handedOffRows == false` — this batch handed no rows to the writers; and
@@ -109,4 +115,5 @@ committing a control offset past rows not yet in ClickHouse (issue #1285).
 - `ControlRecordLogLevelTest.heartbeatIsLoggedAtDebugAndStillCommitsItsOffset` — a heartbeat-only batch through `handleChangeEventBatch` produces no WARN from `DebeziumChangeEventCapture`, one DEBUG control-record line, and its offset is acknowledged (`markProcessed` + `markBatchFinished`). Fails on the pre-fix code (WARN per heartbeat).
 - `ControlRecordLogLevelTest.transactionMetadataIsLoggedAtDebug` — a transaction-boundary record (no `op`, non-heartbeat topic) is DEBUG, not WARN.
 - `ControlRecordLogLevelTest.unparseableRowRecordStillWarns` — a record WITH `op` for which `parse` returns null is still WARN.
+- `DebeziumChangeEventCaptureTest.heartbeatAndTransactionMetadataDoNotTouchTheSequenceState` — a heartbeat-only and a transaction-metadata-only batch leave the version-sequence statics unchanged (§3.1, "Version sequence").
 - The `isControlRecord` classifier (heartbeat topic -> control; no `op` -> control; `op` present -> row; null or non-Struct value -> row) is exercised through the three tests above; a dedicated classifier unit test is not yet covered by an automated test (gap).

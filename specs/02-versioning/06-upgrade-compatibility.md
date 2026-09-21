@@ -23,14 +23,20 @@ written by the new version coexist in one `ReplacingMergeTree` table, and the
 ### 3.1 The upgrade-safety condition (version ordering across the boundary)
 `_version` must remain strictly increasing in source commit order across the
 upgrade, and the new version's assignments must continue ABOVE the last version
-the old one wrote. Because an upgrade is a restart, every post-upgrade event's
-source commit time is later than any pre-upgrade event's, so post-upgrade rows
-carry higher versions and correctly supersede pre-upgrade rows; re-delivered
-events (at-least-once) carry versions that LOSE to the already-written rows and
-are discarded. Formalised: `upgrade_safe` proves that a stream whose first `n`
-ordinals use the OLD version scheme and the rest use the NEW scheme converges,
-provided the combined scheme stays gap-monotone. §6 lists the situations in which
-the shipped code does not yet establish that proviso.
+the old one wrote. An upgrade is a restart, and 2.11.0 establishes the "continue
+above" clause explicitly rather than assuming it from the source clock: at engine
+start the version floor is seeded from a durable high-water mark of the versions
+already handed to the writers (spec 02.02 §3.5), so every post-upgrade first
+delivery is versioned strictly above every pre-upgrade row — regardless of
+replication lag, of the clock skew between MySQL and the connector host, and of
+which timestamp the previous release anchored on. Re-delivered events
+(at-least-once) are versioned above the copies already stored and carry the same
+data (spec 02.04 §3.2). Formalised: `upgrade_safe` proves that a stream whose
+first `n` ordinals use the OLD version scheme and the rest use the NEW scheme
+converges, provided the combined scheme stays gap-monotone;
+`Replication.VersionFloor.restart_boundary` proves that seeding makes the new
+scheme's first deliveries exceed the old scheme's versions. §6 records the one
+window the code still leaves and the downgrade behaviour.
 
 ### 3.2 Verified compatibility surfaces (2.8.0 / 2.9.1 / 2.10.3 vs 2.11.0)
 1. **`_version` formula precedence preserved**: `gtid` (SnowFlakeId(ts, gtid) when
@@ -50,18 +56,40 @@ the shipped code does not yet establish that proviso.
    default is `"sign"` in both 2.8.0 and 2.11.0 (only the example `config.properties`
    changed); an existing deployment keeps its own config, so its delete/sign/version
    column names are unchanged.
+5. **Additive high-water table**: 2.11.0 creates `replica_version_high_water` in
+   the offset database (spec 09.03 §3.4) and reads it at start. Older releases do
+   not know the table and ignore it; nothing they read or write changes. No config
+   key is added: the table's database is derived from
+   `offset.storage.jdbc.table.name`.
+
+#### 3.2.1 `snowflake.id=false` with a data snapshot
+With `snowflake.id=false` a GTID-bearing record is versioned with the **raw GTID
+transaction number** (order $10^6$–$10^{10}$), while snapshot rows and no-GTID
+rows take the sequence path (order $1.7 \times 10^{18}$). A streaming row of a
+key that was also read by the snapshot therefore always **loses** to the snapshot
+row, permanently. This is a data-destroying configuration whenever
+`snapshot.mode` reads data (`initial`, `initial_only`, `always`, `when_needed`,
+and `configuration_based` / `custom` when they snapshot data). Under I11 an
+existing configuration may not be refused on upgrade. Today the combination is
+accepted silently (**gap, tracked**: no startup validation exists). A related
+gap: a tagged GTID (`uuid:tag:n`, MySQL 8.3+) is not parsed (spec 02.01 §3.1),
+so such a transaction falls through to the sequence path with `gtid = -1` and
+loses to its snowflake-versioned neighbours.
 
 ### 3.3 Behaviour changes on restart (surfaced, not data-format breaks)
 The merged fixes change failure/ordering behaviour but not any persisted format:
 DDL failures now halt loudly instead of being swallowed; `TOO_MANY_PARTS` retries
-instead of stopping; multi-thread mode now routes per table for FIFO ordering.
-None alters `_version`, the offset store, or the schema — all upgrade-safe.
+instead of stopping; multi-thread mode now routes per table for FIFO ordering;
+the version floor is seeded at start from the high-water table and heartbeats no
+longer enter the version sequence (spec 02.02 §3.2, §3.5). None alters
+`_version`'s formula or encoding, the offset store, or the schema — all
+upgrade-safe.
 
 ---
 
 ## 4. Invariants Preserved
-- **Invariant I11 (Drop-in Upgrade Safety)**: formats, config keys and version precedence are preserved across the upgrade; pre- and post-upgrade rows coexist and the latest row wins under `FINAL` **wherever version order is continuous across the boundary** (see §6 for where it is not yet).
-- **Invariant I2/I3**: version monotonicity and convergence hold across the version boundary under the same proviso.
+- **Invariant I11 (Drop-in Upgrade Safety)**: formats, config keys and version precedence are preserved across the upgrade; pre- and post-upgrade rows coexist and the latest row wins under `FINAL`. Version-order continuity across the boundary is established by the seeded floor (§3.1); §6 records the one remaining window and the downgrade behaviour.
+- **Invariant I2/I3**: version monotonicity and convergence hold across the version boundary under the same conditions.
 
 ---
 
@@ -69,44 +97,78 @@ None alters `_version`, the offset store, or the schema — all upgrade-safe.
 - `Replication.Upgrade.upgrade_safe` — a mixed old-scheme/new-scheme stream converges when the combined scheme is gap-monotone.
 - `Replication.Upgrade.replicate_convergesV` — convergence for ANY gap-monotone version scheme (absolute version numbers are irrelevant; only order matters).
 - `Replication.Upgrade.liveVersion_gapMono` — the shipped ordinal scheme is gap-monotone.
+- `Replication.VersionFloor.restart_boundary` — with the floor seeded from a mark at or above every old-run version, every first delivery of the new run exceeds every old-run version (the "continue above" clause of §3.1).
 - `#print axioms` on the above lists only `[propext, Quot.sound]` (no `sorryAx`).
-- `SequenceSeedOverflowTest`, `DebeziumChangeEventCaptureTest.knownDefectNewerEventAfterRestartRanksBelowOlderPreRestartEvent()` — §6.1 pinned as a present defect.
+- `SequenceSeedOverflowTest` — the unseeded carry arithmetic of §6.1, preserved deliberately.
+- `DebeziumChangeEventCaptureTest.newerEventAfterSeededRestartRanksAboveOlderPreRestartEvent()` — the seeded restart on a lagging source (§6.1, §6.2); `DebeziumChangeEventCaptureTest.newerEventOneMillisecondAfterSeededRestartRanksAboveOlderPreRestartEvent()` — the seeded restart inside the 1 ms carry window (§6.1).
+- `VersionHighWaterMarkTest.scanSeedsFromTheHighestPlausibleTargetVersion()` — the first start after an upgrade, with no mark row, seeds from `max(_version)` of the targets in either version domain (§6.1).
 - `VersionFallbackWithoutGtidTest.bindMustNotWriteUint64Max()`, `VersionFallbackWithoutGtidTest.calculateVersionMustNotFallThroughToSentinel()` — 2.11.0 no longer writes the sentinel of §6.3.
-- Verification: §6.2 (lagging connector at upgrade time) is not yet covered by an automated test (gap).
+- Verification: the `snowflake.id=false` / data-snapshot combination (§3.2.1) is not yet covered by an automated test (gap). An end-to-end upgrade test (2.10.x writes, 2.11.0 restarts on a lagging source) is not yet covered by an automated test (gap).
 
 ---
 
-## 6. Caveats: where the code does not yet establish the theorem's hypothesis
+## 6. Caveats: the theorem's hypothesis across the boundary
 `upgrade_safe` is conditional on `GapMono (upgradeScheme vOld vNew n)`: the combined
 old/new version scheme must be strictly increasing (gap of at least two per
-ordinal) across the upgrade boundary. The shipped code does **not** establish that
-hypothesis in three situations. None of them is a data-format break; all three are
-version-ordering gaps that the theorem, by construction, does not cover.
+ordinal) across the upgrade boundary. The seeded floor establishes the boundary
+part of that hypothesis (§6.1); §6.2 states what remains for a first start with no
+seed source, and §6.3 the rows no scheme can continue above.
 
-### 6.1 The restart carry (inherited 2.8.0 behaviour, preserved by design)
+### 6.1 The restart carry (inherited 2.8.0 behaviour) and the upgrade / downgrade matrix
 
 > **Compatibility constraint (governing rule).** The emitted `_version` domain — `ts_ms × 1_000_000 + counter` with the 2.8.0 seeds — is the contract shared with 2.8.0, 2.9.1 and 2.10.x. It MUST NOT change: a version written by any of those releases must rank consistently against one written by 2.11.0 in BOTH directions (upgrade and downgrade). The restart carry described here is therefore inherited 2.8.0 behaviour that is preserved deliberately; any improvement is confined to WHERE the restart floor starts (seeding the anchor from the target's `max(_version)` or a persisted last-emitted version) and must ship with an explicit upgrade/downgrade matrix against 2.8.0, 2.9.1 and 2.10.x.
 
-An upgrade is a restart, so the first record after it is versioned with the
-counter seeded at `SEQUENCE_START_INITIAL` (500m) in the formula
+The carry is unchanged: the first record after any start is still versioned with
+the counter seeded at `SEQUENCE_START_INITIAL` (500m) in
 `effectiveTs * 1_000_000 + seq`, whose six low digits the ten-digit seeds
-overflow. A genuinely newer post-upgrade event within ~1 s of the last
-pre-upgrade event can rank below it (spec 02.01 §4, quoted from
-`DebeziumOffsetManagement`). Across that window the combined scheme is not
-gap-monotone, so `upgrade_safe` does not apply.
+overflow (spec 02.01 §3.3). What differs in 2.11.0 is `effectiveTs`: the floor
+is seeded from the high-water mark, so the first post-restart record is clamped
+to `floorDiv(V_max, 1e6) + 1` and its version exceeds `V_max` (spec 02.02 §3.5).
+The window this closes was never ~1 ms: on a lagging source it was the lag plus
+the ~0.5 s carry, because the previous run's floor had been pinned to the
+connector clock by heartbeats.
 
-### 6.2 A connector that is lagging at upgrade time
-§3.1 assumes every post-upgrade event's source commit time is later than every
-pre-upgrade event's. That is true of the source clock, but not necessarily of the
-*anchor* each release used: 2.8.0 anchored the no-GTID version on the envelope
-(processing) timestamp `debezium_ts_ms`, and 2.11.0 still does so for snapshot
-rows and records without a source struct. For a lagging connector the processing
-time is later than the source time. After the upgrade the no-GTID path anchors on
-`source.ts_ms` (#1346). If the connector was N seconds behind at the upgrade, the
-first N seconds of post-upgrade versions are anchored on source times that can be
-**below** the processing-time-anchored versions of the last pre-upgrade writes for
-the same keys. The combined scheme is not gap-monotone over that range and the
-pre-upgrade row can win under `FINAL` until a later update of the key arrives.
+**Upgrade (2.8.0 / 2.9.1 / 2.10.x → 2.11.0).** The first 2.11.0 start finds no
+`replica_version_high_water` row and seeds from `max(_version)` over the target
+tables (sequence-domain and snowflake-domain values are both decoded, spec 02.02
+§3.5 (2)); that maximum is, by definition, at or above every version the old
+release wrote — whichever timestamp it anchored on (envelope time in 2.8.0,
+`source.ts_ms` since #1346, or a heartbeat-pinned connector clock). Every
+post-upgrade first delivery therefore ranks above every pre-upgrade row
+(`Replication.VersionFloor.restart_boundary`). From the second start on, the
+table itself supplies the seed.
+
+**Downgrade (2.11.0 → 2.10.x / 2.9.1 / 2.8.0).** The old release ignores the
+table and starts with the floor at `0`; whether its first rows rank above
+2.11.0's last rows depends on the timestamp it anchors on:
+- **2.8.0** anchors the no-GTID version on the envelope (processing) timestamp,
+  which is at or after the source time 2.11.0 anchored on, so 2.8.0's first rows
+  rank above 2.11.0's last rows except within the ~0.5 s counter carry
+  (`SEQUENCE_START_INITIAL` versus `SEQUENCE_START`) — the same window a 2.8.0
+  restart always had.
+- **Releases anchoring on `source.ts_ms` without a seeded floor** re-open the
+  restart window they had before: roughly the carry (~0.5 s) plus, if 2.11.0
+  was restarted within the previous few seconds, the horizon head-room (≤ 5 s of
+  source time, spec 02.02 §3.5 (1)). Because 2.11.0 no longer pins the floor to
+  the connector clock through heartbeats, its steady-state versions track the
+  source clock and the lag no longer widens that window. A downgrade should be
+  performed with the source quiescent for a few seconds to fall outside it.
+- **GTID path**: 2.11.0 feeds the floored `effectiveTs` into the snowflake
+  (spec 02.01 §3.1); an older release feeds the raw `source.ts_ms`. Its first
+  rows rank above 2.11.0's last rows once the source clock passes the last floor
+  2.11.0 used — normally immediately, since in steady state the floor is the
+  source clock — with the same few-seconds caveat after a recent 2.11.0 restart.
+
+### 6.2 A first start with no seed source
+§3.1's guarantee needs a seed. It is absent only when there is no
+`replica_version_high_water` row **and** the target scan finds nothing usable:
+`database.include.list` is empty or contains a pattern, the targets carry no
+`_version` column, or every candidate is implausible (spec 02.02 §3.5 (2)). The
+engine then logs at WARN and runs unseeded, i.e. with the pre-2.11.0 behaviour
+for that one start: for a connector lagging N seconds at that moment, the first
+N seconds of versions can fall below processing-time-anchored rows of the
+previous release. The mark is written from the first handoff on, so every later
+start is seeded.
 
 ### 6.3 UInt64-max sentinel rows written by older versions
 Before the timestamp+offset fallback in `ClickHouseStruct.calculateVersion`
@@ -119,7 +181,9 @@ does not repair those rows; they must be found and rewritten out-of-band.
 `upgrade_safe` cannot cover them because no gap-monotone scheme can continue
 above the maximum value.
 
-Until 6.1 and 6.2 are closed the honest reading of I11 is: the upgrade preserves
-formats and precedence, and `upgrade_safe` proves convergence **given** version
-order continuity; version order continuity itself is not yet guaranteed by the
-code across the boundary in the two windows described above.
+The honest reading of I11 is therefore: the upgrade preserves formats and
+precedence; `upgrade_safe` proves convergence **given** version order continuity;
+and continuity across the boundary is established by the seeded floor
+(`Replication.VersionFloor.restart_boundary`) on every start that has a seed
+source (§6.1), and is not established on a first start without one (§6.2) or
+above sentinel rows (§6.3).
