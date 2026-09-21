@@ -22,7 +22,7 @@ import db_compare.mysql_table_checksum as my  # noqa: E402
 import db_compare.top_level_table_checksum as tl  # noqa: E402
 from db.checksum_common import (  # noqa: E402
     DATETIME_MAX, DATETIME_MIN, canonical_datetime_bound, checksum_from_aggregate,
-    clamp_datetime_expression, clamped_datetime_flag,
+    clamp_datetime_expression, clamped_datetime_flag, shift_datetime_bounds,
 )
 
 CHECKSUM_LINE_RE = re.compile(
@@ -57,6 +57,7 @@ def clickhouse_args(**overrides):
         threads=1, min_datetime_value=DATETIME_MIN,
         max_datetime_value=DATETIME_MAX, max_memory_usage=None,
         include_floating_point_columns=False, include_json_columns=True,
+        source_timezone="UTC", timestamp_columns="",
     )
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -74,6 +75,7 @@ def mysql_args(**overrides):
         max_datetime_value=DATETIME_MAX, debug=False,
         exclude_columns=[], threads_per_table=1, chunk_size=10000, threads=1,
         include_floating_point_columns=False, include_json_columns=True,
+        source_timezone="UTC",
     )
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -312,7 +314,76 @@ class TestMySQLTemporalRendering(unittest.TestCase):
 
 
 MYSQL_DATETIME_RENDERING = "date_format(`d`, '%Y-%m-%d %H:%i:%s.%f')"
-CLICKHOUSE_DATETIME_RENDERING = 'toString(toDateTime64("d", 6))'
+CLICKHOUSE_DATETIME_RENDERING = 'toString(toDateTime64("d", 6), \'UTC\')'
+TOKYO_BOUNDS = ("1900-01-01 09:00:00.000000", "2300-01-01 08:59:59.000000")
+
+
+class TestInstantComparison(unittest.TestCase):
+    """TIMESTAMP compares as an instant in UTC; DATETIME as the wall clock of
+    --source_timezone (spec 11.02 section 3.4)."""
+
+    def test_mysql_session_renders_timestamps_in_utc(self):
+        my.args = mysql_args()
+        statements = my.select_table_statements("t1", "q", "`id`", "", "", "1=1", "0")
+        self.assertIn("set time_zone = '+00:00'", statements)
+        self.assertLess(statements.index("set time_zone = '+00:00'"), len(statements) - 1,
+                        "the session zone must be set before the aggregate query")
+
+    def test_bounds_shift_into_the_source_zone(self):
+        self.assertEqual(shift_datetime_bounds((DATETIME_MIN, DATETIME_MAX), "UTC"), (DATETIME_MIN, DATETIME_MAX))
+        self.assertEqual(shift_datetime_bounds((DATETIME_MIN, DATETIME_MAX), "Asia/Tokyo"), TOKYO_BOUNDS)
+        with self.assertRaises(ValueError):
+            shift_datetime_bounds((DATETIME_MIN, DATETIME_MAX), "CST")
+
+    def test_mysql_datetime_uses_shifted_bounds_and_timestamp_utc_bounds(self):
+        datetime_select = build_mysql_select([mysql_column("d", "datetime", precision=0)], source_timezone="Asia/Tokyo")
+        self.assertEqual(datetime_select,
+                         clamp_datetime_expression(MYSQL_DATETIME_RENDERING, TOKYO_BOUNDS[0], TOKYO_BOUNDS[1], "mysql"))
+        timestamp_select = build_mysql_select([mysql_column("d", "timestamp", precision=0)], source_timezone="Asia/Tokyo")
+        self.assertEqual(timestamp_select,
+                         clamp_datetime_expression(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "mysql"))
+
+    def test_clickhouse_renders_timestamp_columns_in_utc_and_the_rest_in_the_source_zone(self):
+        build = TestClickHouseRowExpression().build
+        timestamp_select = build([("d", "DateTime64(6, 'UTC')", 0, None)],
+                                 source_timezone="Asia/Tokyo", timestamp_columns="d,other")
+        self.assertEqual(timestamp_select,
+                         clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse"))
+        datetime_select = build([("d", "DateTime64(3)", 0, None)], source_timezone="Asia/Tokyo", timestamp_columns="other")
+        self.assertEqual(datetime_select,
+                         clamp_datetime_expression('toString(toDateTime64("d", 6), \'Asia/Tokyo\')',
+                                                   TOKYO_BOUNDS[0], TOKYO_BOUNDS[1], "clickhouse"))
+
+    def test_clickhouse_default_zone_is_utc_for_every_column(self):
+        select = TestClickHouseRowExpression().build([("d", "DateTime64(3)", 0, None)])
+        self.assertEqual(select, clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse"))
+
+    def test_driver_passes_zone_and_timestamp_columns(self):
+        tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="Asia/Tokyo")
+        mysql_cmd = tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None)
+        self.assertIn("--source_timezone Asia/Tokyo", mysql_cmd)
+        clickhouse_cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10,
+                                                            timestamp_columns=["created_at", "updated_at"])
+        self.assertIn("--source_timezone Asia/Tokyo", clickhouse_cmd)
+        self.assertIn("--timestamp_columns created_at,updated_at", clickhouse_cmd)
+        self.assertNotIn("--timestamp_columns", tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10))
+
+    def test_driver_resolves_the_source_zone_from_mysql(self):
+        def zones(session_zone, system_zone):
+            def execute_mysql(conn, sql):
+                self.assertIn("@@session.time_zone", sql)
+                return (FakeMySQLRowset(dict_rows=[{"session_time_zone": session_zone, "system_time_zone": system_zone}]), -1)
+            return execute_mysql
+
+        with patch.object(tl, "execute_mysql", side_effect=zones("SYSTEM", "UTC")):
+            self.assertEqual(tl.resolve_source_timezone(MagicMock(), None), "UTC")
+        with patch.object(tl, "execute_mysql", side_effect=zones("Asia/Tokyo", "UTC")):
+            self.assertEqual(tl.resolve_source_timezone(MagicMock(), None), "Asia/Tokyo")
+        with patch.object(tl, "execute_mysql", side_effect=zones("SYSTEM", "CST")):
+            with self.assertRaises(ValueError):
+                tl.resolve_source_timezone(MagicMock(), None)
+        with patch.object(tl, "execute_mysql", side_effect=AssertionError("must not query when given")):
+            self.assertEqual(tl.resolve_source_timezone(MagicMock(), "Europe/Berlin"), "Europe/Berlin")
 
 
 class TestSharedDatetimeClamp(unittest.TestCase):

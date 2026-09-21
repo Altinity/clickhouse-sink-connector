@@ -60,8 +60,17 @@ enemy"), so it is held to two rules:
 ### 3.2 Protocol (driver)
 For every table selected by `--tables_regex` (and the optional
 `table_include_list` of the YAML config), `top_level_table_checksum.py`:
-1. Reads the integer primary key, its min/max and the partition expression
-   from MySQL `information_schema` on a shared connection.
+1. Reads the integer primary key, its min/max, the partition expression and
+   the list of `TIMESTAMP` columns from MySQL `information_schema` on a
+   shared connection, and resolves the **source time zone**
+   (`resolve_source_timezone()`): `--source_timezone` if given, else
+   `@@session.time_zone`, falling back to `@@system_time_zone` when that is
+   `SYSTEM`. The value must be an IANA name (a `CST`-style abbreviation or a
+   `+05:00` offset is refused with an error naming the flag) and it must be
+   the zone the connector's `database.connectionTimeZone` names, because it
+   defines what instant a MySQL `DATETIME` denotes (§3.4). The zone is passed
+   to both side scripts as `--source_timezone`, the column list to the
+   replica script as `--timestamp_columns`.
 2. If `--lock_tables_on_source` is set, opens a dedicated MySQL connection,
    runs `LOCK TABLES <table> READ` and sleeps `--sleep_after_lock` seconds so
    replication drains. **Only the driver locks.** Neither side script issues
@@ -137,8 +146,47 @@ precision, never trimmed:
 
 - MySQL: `date_format(col, '%Y-%m-%d %H:%i:%s.%f')`
   (`mysql_datetime_rendering()`); ClickHouse:
-  `toString(toDateTime64(col, 6))` (`clickhouse_datetime_rendering()`; the
-  scale is widened, the instant is unchanged).
+  `toString(toDateTime64(col, 6), '<zone>')` (`clickhouse_datetime_rendering()`;
+  the scale is widened, the instant is unchanged, the zone is chosen per
+  column as described next).
+- **Instants, not wall clocks.** A ClickHouse `DateTime64` holds an instant;
+  `toString(col)` prints it in the column's declared zone, so comparing that
+  text with MySQL's text compares two renderings, not two instants. The
+  connector's record-schema path creates `DateTime64(p,'UTC')` columns but
+  formats the value in the server zone, so it stores an instant off by the
+  server offset while the two wall-clock texts still agree; the old tool
+  reported such a table EQUAL (finding C1, spec 08.05 §3.1). The tool now
+  compares instants:
+  - `TIMESTAMP` is an instant in MySQL. The source script runs
+    `set time_zone = '+00:00'` on its session, so `date_format` prints the
+    UTC wall clock; the replica script renders columns named in
+    `--timestamp_columns` with `toString(toDateTime64(col, 6), 'UTC')`. Equal
+    text ⇔ equal instant, and UTC has no daylight-saving fold, so no two
+    instants share a text.
+  - `DATETIME` has no instant in MySQL; the connector defines one by
+    interpreting the wall clock in the source zone (spec 07.03 §3). The
+    source script prints the wall clock unchanged (the session zone does not
+    affect `DATETIME`); the replica script renders every other
+    `DateTime`/`DateTime64` column with `toString(toDateTime64(col, 6),
+    '<--source_timezone>')`. The texts agree exactly when ClickHouse holds the
+    instant that wall clock denotes in the source zone; a value stored as
+    "wall clock read as UTC" in a non-UTC deployment renders shifted and is
+    reported DIFFERENT.
+  - The clamp bounds are instants too (`DataTypeRange` is defined in UTC).
+    For `TIMESTAMP` columns they apply to the UTC text as they are; for
+    `DATETIME` columns both sides use the bounds rendered in the source zone
+    (`shift_datetime_bounds()`, e.g. `2299-12-31 23:59:59` UTC is
+    `2300-01-01 08:59:59` in `Asia/Tokyo`), which is exactly the wall clock
+    the connector writes for an out-of-range value. `--min/--max_datetime_value`
+    are therefore given as UTC instants.
+  - `--source_timezone` defaults to `UTC` on both side scripts (a fully-UTC
+    deployment needs no flags); the driver resolves it from MySQL (§3.2 step
+    1) and passes it, together with `--timestamp_columns`, to the scripts.
+    Standalone runs in a non-UTC deployment must pass both, or they report
+    DIFFERENT for every `TIMESTAMP` column — noise on the safe side, never a
+    masked divergence. The value must be an IANA name accepted by both
+    Python's `zoneinfo` and ClickHouse (`validate_timezone()`).
+  (`test_checksum_fidelity.py::TestInstantComparison`)
 - Why fixed width: the connector widens precision (`datetime(0)` is stored
   as `DateTime64(3)`), so the two sides legitimately print different numbers
   of fraction digits; the old code equalised them by trimming trailing zeros
@@ -268,6 +316,16 @@ connect to a database.
     `DateTime64(6,'UTC')`, `Nullable(DateTime64(3))` all render through the
     six-digit form inside the shared clamp; no `TRIM`/`substr` remains; a
     user bound lands identically on both sides.
+  - `TestInstantComparison` — §3.4 instants: the source session sets
+    `time_zone = '+00:00'`; `shift_datetime_bounds()` is the identity for
+    UTC, shifts into `Asia/Tokyo`, and refuses a non-IANA name; MySQL
+    `timestamp` clamps with the UTC bounds and `datetime` with the shifted
+    bounds; ClickHouse renders `--timestamp_columns` in `UTC` and the other
+    datetime columns in `--source_timezone` with matching bounds, and
+    defaults to `UTC` for every column; the driver passes
+    `--source_timezone` to both scripts and `--timestamp_columns` to the
+    replica script, and resolves the zone from `@@session.time_zone` /
+    `@@system_time_zone` when not given, refusing an abbreviation.
   - `TestClampedRowCounts` — §3.4: both aggregate queries carry
     `coalesce(sum(clamped),0)`; a table without datetime columns contributes
     `0`; a non-zero count is logged as a WARNING that does not change the

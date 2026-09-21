@@ -17,7 +17,8 @@ import os
 import concurrent.futures
 from db.mysql import *
 from db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
-                                clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression)
+                                clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
+                                validate_timezone, shift_datetime_bounds)
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
@@ -119,7 +120,11 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
     nullables = []
     data_types = {}
     clamped_flags = []
-    bounds = datetime_bounds(options)
+    # TIMESTAMP is an instant, rendered in UTC by the session (spec 11.02
+    # section 3.4) and clamped with the UTC bounds; DATETIME is a wall clock of
+    # the source zone and is clamped with the bounds rendered in that zone.
+    utc_bounds = datetime_bounds(options)
+    wall_clock_bounds = shift_datetime_bounds(utc_bounds, options.source_timezone)
     collations = [column['collation'] for column in columns if column['collation'] is not None]
     same_charset = len(collations) <= 1
     for column in columns:
@@ -135,6 +140,7 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
         if not include_json_columns and data_type == 'json':
             logging.info(f"Excluding json column {column_name} of type {column['column_type']}")
             continue
+        bounds = utc_bounds if data_type == 'timestamp' else wall_clock_bounds
         expression = mysql_column_expression(column, options, binary_encoding, same_charset, bounds)
         if data_type in ('datetime', 'timestamp'):
             clamped_flags.append(clamped_datetime_flag(mysql_datetime_rendering(column_name), bounds[0], bounds[1]))
@@ -189,7 +195,9 @@ def fstr(template, partition_expression):
 
 
 def select_table_statements(table, query, select_query, order_by, external_column_types, _where, clamped_expression="0"):
-    statements = ['set names utf8mb4', 'set session wait_timeout=28000']
+    # time_zone = '+00:00': TIMESTAMP columns are printed as UTC instants
+    # (spec 11.02 section 3.4); DATETIME is unaffected by the session zone.
+    statements = ['set names utf8mb4', 'set session wait_timeout=28000', "set time_zone = '+00:00'"]
     # todo make sure the fifo is there
     external_table_name = args.mysql_database+"."+table
     limit = ""
@@ -378,6 +386,8 @@ def main():
     parser.add_argument(
         '--max_date_value', help='Maximum Date32/Datetime64 date', default='2299-12-31', required=False)
     parser.add_argument(
+            '--source_timezone', help='IANA time zone the connector interprets DATETIME values in (its database.connectionTimeZone); only used to clamp DATETIME columns with the same bounds as the ClickHouse side', default='UTC', required=False)
+    parser.add_argument(
             '--min_datetime_value', help='Lower clamp bound for datetime/timestamp values (same value on both sides; default is the ClickHouse DateTime64 minimum)', default=DATETIME_MIN, required=False)
     parser.add_argument(
             '--max_datetime_value', help='Upper clamp bound for datetime/timestamp values (same value on both sides; default is the ClickHouse DateTime64 maximum)', default=DATETIME_MAX, required=False)
@@ -397,6 +407,7 @@ def main():
     global args
     args = parser.parse_args()
     (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
+    validate_timezone(args.source_timezone, '--source_timezone')
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)

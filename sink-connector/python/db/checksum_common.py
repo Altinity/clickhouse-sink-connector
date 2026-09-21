@@ -7,6 +7,7 @@ that the two sides cannot drift apart.
 import datetime
 import hashlib
 import logging
+import zoneinfo
 
 # The ClickHouse DateTime64 range the connector clamps to when it writes
 # (DataTypeRange.DATETIME64_MIN / DATETIME64_MAX: 1900-01-01 00:00:00 and
@@ -92,3 +93,37 @@ def clamped_count_expression(flags):
     if not flags:
         return "0"
     return " + ".join(f"coalesce({flag}, 0)" for flag in flags)
+
+
+def validate_timezone(name, option_name):
+    """Return the zone for an IANA time zone name, the only form both Python's
+    zoneinfo and ClickHouse accept. An abbreviation such as ``CST`` (ambiguous)
+    or an offset such as ``+05:00`` (not a zone for ClickHouse) is refused with a
+    message naming the option to set."""
+    try:
+        return zoneinfo.ZoneInfo(str(name))
+    except (zoneinfo.ZoneInfoNotFoundError, ValueError, TypeError):
+        raise ValueError(f"{option_name}: '{name}' is not an IANA time zone name (for example UTC or Europe/Berlin)")
+
+
+def shift_datetime_bounds(bounds, zone):
+    """Render the canonical UTC bounds as wall clocks of ``zone``.
+
+    A MySQL DATETIME denotes the instant its wall clock reads in the source
+    zone (spec 07.03), so its clamp bounds are the DateTime64 range instants
+    written as source-zone wall clocks -- which is also the text the connector
+    writes for an out-of-range value. Both sides call this with the same zone
+    (spec 11.02 section 3.4).
+    """
+    tz = validate_timezone(zone, "--source_timezone")
+    utc = zoneinfo.ZoneInfo("UTC")
+    shifted = []
+    for bound in bounds:
+        instant = datetime.datetime.strptime(bound, CANONICAL_DATETIME_FORMAT).replace(tzinfo=utc)
+        shifted.append(instant.astimezone(tz).strftime(CANONICAL_DATETIME_FORMAT))
+    return tuple(shifted)
+
+
+def parse_column_list(text):
+    """``'a, b,'`` -> ``{'a', 'b'}``; ``None``/``''`` -> empty set."""
+    return set(name.strip() for name in (text or "").split(",") if name.strip())

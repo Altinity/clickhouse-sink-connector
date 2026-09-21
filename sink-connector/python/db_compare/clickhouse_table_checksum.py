@@ -18,7 +18,8 @@ import os
 import concurrent.futures
 from db.clickhouse import *
 from db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
-                                clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression)
+                                clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
+                                validate_timezone, shift_datetime_bounds, parse_column_list)
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
@@ -103,18 +104,20 @@ def is_datetime_type(data_type):
     return "DateTime" in data_type
 
 
-def clickhouse_datetime_rendering(column_name):
+def clickhouse_datetime_rendering(column_name, zone):
     """Canonical text of a DateTime / DateTime64 column (spec 11.02 section 3.4):
-    'YYYY-MM-DD HH:MM:SS.ffffff', six digits whatever the column's scale."""
-    return f"toString(toDateTime64({column_name}, 6))"
+    'YYYY-MM-DD HH:MM:SS.ffffff', six digits whatever the column's scale, the
+    stored instant rendered in ``zone`` -- 'UTC' for a MySQL TIMESTAMP (an
+    instant), the source zone for a MySQL DATETIME (a wall clock)."""
+    return f"toString(toDateTime64({column_name}, 6), '{zone}')"
 
 
-def clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds=(DATETIME_MIN, DATETIME_MAX)):
+def clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds=(DATETIME_MIN, DATETIME_MAX), zone='UTC'):
     """Text rendering of one ClickHouse column (spec 11.02 section 3.3).
 
     ``column_name`` is already double-quoted. ``options`` is the parsed argument
     namespace (only its rendering options are read). ``bounds`` are the
-    canonical (min, max) datetime clamp bounds.
+    canonical (min, max) datetime clamp bounds in ``zone``.
     """
     if 'Bool' == data_type:
         return "toString(toUInt8(" + column_name + "))"
@@ -122,7 +125,7 @@ def clickhouse_column_expression(column_name, data_type, numeric_scale, options,
         # toString() drops trailing zeros; MySQL prints the declared scale.
         return "toDecimalString(" + column_name + "," + str(numeric_scale) + ")"
     if is_datetime_type(data_type):
-        return clamp_datetime_expression(clickhouse_datetime_rendering(column_name), bounds[0], bounds[1], 'clickhouse')
+        return clamp_datetime_expression(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1], 'clickhouse')
     if column_name.strip('"') in options.hex_columns:
         return "toString(unhex(" + column_name + "))"
     return "toString(" + column_name + ")"
@@ -148,7 +151,12 @@ def build_clickhouse_row_expression(columns_metadata, options):
     columns = []
     data_types = {}
     clamped_flags = []
-    bounds = datetime_bounds(options)
+    # TIMESTAMP-origin columns compare as UTC instants; every other datetime
+    # column as the wall clock of the source zone (spec 11.02 section 3.4).
+    utc_bounds = datetime_bounds(options)
+    source_zone = options.source_timezone
+    wall_clock_bounds = shift_datetime_bounds(utc_bounds, source_zone)
+    timestamp_columns = parse_column_list(options.timestamp_columns)
     for row in columns_metadata:
         column_name = '"' + row[0] + '"'
         data_type = row[1]
@@ -156,6 +164,10 @@ def build_clickhouse_row_expression(columns_metadata, options):
         numeric_scale = row[3]
         columns.append(row[0])
         data_types[row[0]] = data_type
+        if row[0] in timestamp_columns:
+            (zone, bounds) = ('UTC', utc_bounds)
+        else:
+            (zone, bounds) = (source_zone, wall_clock_bounds)
         if not options.include_floating_point_columns:
             if 'Float' in data_type:
                 logging.info(f"Excluding floating point column {column_name} of type {data_type}")
@@ -164,9 +176,9 @@ def build_clickhouse_row_expression(columns_metadata, options):
             if 'json' in data_type:
                 logging.info(f"Excluding json column {column_name} of type {data_type}")
                 continue
-        expression = clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds)
+        expression = clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds, zone)
         if is_datetime_type(data_type):
-            clamped_flags.append(clamped_datetime_flag(clickhouse_datetime_rendering(column_name), bounds[0], bounds[1]))
+            clamped_flags.append(clamped_datetime_flag(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1]))
         if is_nullable == 1:
             nullables.append(column_name)
             expression = "case when " + column_name + " is null then '' else " + expression + " end"
@@ -375,6 +387,8 @@ def main():
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
     parser.add_argument('--exclude_columns', help='columns exclude', nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
     parser.add_argument('--threads', type=int, help='number of parallel threads', default=1)
+    parser.add_argument('--source_timezone', help='IANA time zone the connector interprets MySQL DATETIME values in (its database.connectionTimeZone); DateTime columns not listed in --timestamp_columns are rendered in it', default='UTC', required=False)
+    parser.add_argument('--timestamp_columns', help='comma separated names of the columns that replicate a MySQL TIMESTAMP; they are compared as UTC instants', default='', required=False)
     parser.add_argument('--min_datetime_value', help='Lower clamp bound for datetime values (same value on both sides; default is the ClickHouse DateTime64 minimum)', default=DATETIME_MIN, required=False)
     parser.add_argument('--max_datetime_value', help='Upper clamp bound for datetime values (same value on both sides; default is the ClickHouse DateTime64 maximum)', default=DATETIME_MAX, required=False)
     parser.add_argument('--max_memory_usage', help='increase  max_memory_usage', required=False)
@@ -385,6 +399,7 @@ def main():
     global args
     args = parser.parse_args()
     (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
+    validate_timezone(args.source_timezone, '--source_timezone')
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)

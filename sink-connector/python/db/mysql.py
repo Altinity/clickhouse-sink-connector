@@ -181,6 +181,15 @@ def mysql_pk_columns(conn, mysql_database, mysql_table, is_integer=True):
     return list
 
 
+def mysql_columns_by_data_type(conn, mysql_database, mysql_table, data_types):
+    """Names of the table's columns whose information_schema DATA_TYPE is one of
+    ``data_types`` (bare keywords such as 'timestamp'), in ordinal order."""
+    quoted = ",".join("'" + data_type + "'" for data_type in data_types)
+    sql = f"select column_name as COLUMN_NAME from information_schema.columns where table_schema='{mysql_database}' and table_name = '{mysql_table}' and data_type in ({quoted}) order by ORDINAL_POSITION"
+    df = mysql_execute_df(conn, sql)
+    return df['COLUMN_NAME'].to_list()
+
+
 def divide_table_into_even_chunks(conn, mysql_table, chunk_size, pk, where):
     if not pk:
          yield {}
