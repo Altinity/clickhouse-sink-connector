@@ -132,9 +132,20 @@ public class DataTypeConverter {
         // Build the schema via the MySQL converter
         SchemaBuilder schemaBuilder = mysqlConverter.schemaBuilder(column);
 
-        // if the data type is in the overriddenDataTypesMap, then return the overridden data type
-        if (overriddenDataTypesMap.containsKey(dataType.name().toLowerCase())) {
-            return overriddenDataTypesMap.get(dataType.name().toLowerCase());
+        // The resolver's type name carries the attribute tokens verbatim
+        // (BIGINT UNSIGNED ZEROFILL, INT8 UNSIGNED, SERIAL), so an exact
+        // match against six spellings created every other unsigned spelling
+        // SIGNED. Normalise first, then resolve every unsigned spelling
+        // through the same function the record path uses (Spec 07.01 §3.2).
+        String normalizedName = normalizeIntegerTypeName(dataType.name());
+        if (overriddenDataTypesMap.containsKey(normalizedName)) {
+            return overriddenDataTypesMap.get(normalizedName);
+        }
+        if (normalizedName.contains("unsigned")) {
+            String unsignedType = ClickHouseDataTypeMapper.getUnsignedClickHouseType(normalizedName);
+            if (unsignedType != null) {
+                return unsignedType;
+            }
         }
 
         // MySQL BIT(n) is a bit-string, not a boolean. Debezium emits it as
@@ -201,8 +212,12 @@ public class DataTypeConverter {
             return addTimeZoneToDateTimeType(chDataType, precision, userProvidedTimeZone);
         }
 
-        // Handle Decimal and other numeric types with precision/scale
-        if (precision > 0) {
+        // A (precision[, scale]) suffix exists in ClickHouse only for Decimal
+        // and DateTime64. The declared dimensions of a floating type must not
+        // be copied: FLOAT(7,3) became Float64(7,3), which ClickHouse rejects,
+        // so the statement failed on every retry (Spec 07.02 §3.1).
+        boolean takesDimensions = chDataType == ClickHouseDataType.Decimal || isDateTimeType(chDataType);
+        if (precision > 0 && takesDimensions) {
             StringBuffer convertedStringBuf = new StringBuffer();
             convertedStringBuf.append(chDataType.toString())
                     .append("(")
@@ -222,6 +237,58 @@ public class DataTypeConverter {
         return convertedDataType;
     }
 
+
+    /**
+     * Normalises a resolved MySQL integer type name to one spelling per type
+     * so the unsigned lookup cannot miss (Spec 07.01 §3.2): lower case, the
+     * integer synonyms MySQL defines folded ({@code INT1}/{@code INT2}/
+     * {@code INT3}/{@code MIDDLEINT}/{@code INT4}/{@code INT8}, {@code SERIAL}
+     * = {@code BIGINT UNSIGNED}), {@code ZEROFILL} dropped after applying
+     * MySQL's own rule that it implies {@code UNSIGNED}, and a redundant
+     * {@code SIGNED} dropped. Non-integer names pass through lower-cased.
+     *
+     * @param typeName the resolver's type name, attribute tokens included.
+     * @return the normalised name, e.g. {@code "bigint unsigned"}.
+     */
+    static String normalizeIntegerTypeName(String typeName) {
+        if (typeName == null) {
+            return "";
+        }
+        String name = typeName.trim().toLowerCase().replaceAll("\\s+", " ");
+        boolean zerofill = name.contains("zerofill");
+        name = name.replace("zerofill", "").replaceAll("\\s+", " ").trim();
+        if (name.equals("serial")) {
+            return "bigint unsigned";
+        }
+        int space = name.indexOf(' ');
+        String base = space < 0 ? name : name.substring(0, space);
+        String attributes = space < 0 ? "" : name.substring(space);
+        switch (base) {
+            case "int1":
+                base = "tinyint";
+                break;
+            case "int2":
+                base = "smallint";
+                break;
+            case "int3":
+            case "middleint":
+                base = "mediumint";
+                break;
+            case "int4":
+                base = "int";
+                break;
+            case "int8":
+                base = "bigint";
+                break;
+            default:
+                break;
+        }
+        name = (base + attributes).replace(" signed", "").trim();
+        if (zerofill && !name.contains("unsigned")) {
+            name = name + " unsigned";
+        }
+        return name;
+    }
 
     /**
      * Resolves the ClickHouse type for a MySQL {@code BIT(n)} column.

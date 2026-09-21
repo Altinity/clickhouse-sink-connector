@@ -1007,6 +1007,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 // Get the corresponding ClickHouse data type for the column.
                 colDataType = getClickHouseDataType(colDataTypeDefinition, colDefTree, columnName);
 
+                // SERIAL is BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE
+                // (Spec 07.01 §3.2 rule 5): NOT NULL, and the identity of a
+                // table that declares no PRIMARY KEY.
+                if (isSerial(((MySqlParser.ColumnDefinitionContext) colDefTree).dataType())) {
+                    isNullColumn = false;
+                    if (uniqueKeyColumns.length() == 0 && columnName != null) {
+                        uniqueKeyColumns.append(columnName);
+                    }
+                }
+
                 // Handle constraints such as NOT NULL, PRIMARY KEY, and GENERATED column.
                 for (ParseTree colDefinitionChildTree: ((MySqlParser.ColumnDefinitionContext) colDefTree).children) {
                     if (colDefinitionChildTree instanceof MySqlParser.NullColumnConstraintContext) {
@@ -1123,6 +1133,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private static boolean isAutoIncrement(ParseTree constraint) {
         return constraint instanceof MySqlParser.AutoIncrementColumnConstraintContext
                 && ((MySqlParser.AutoIncrementColumnConstraintContext) constraint).AUTO_INCREMENT() != null;
+    }
+
+    /** True for the {@code SERIAL} pseudo-type (Spec 07.01 §3.2 rule 5). */
+    private static boolean isSerial(MySqlParser.DataTypeContext dataType) {
+        return dataType instanceof MySqlParser.SimpleDataTypeContext
+                && ((MySqlParser.SimpleDataTypeContext) dataType).SERIAL() != null;
     }
 
     /**
@@ -1503,6 +1519,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 // DateTime64(0, 0).
                 String chDataType = getClickHouseDataType(columnDefChild.getText(), columnDefinition, columnName);
                 columnType = chDataType != null ? chDataType : columnDefChild.getText();
+                if (clause == ColumnClause.ADD && isSerial((MySqlParser.DataTypeContext) columnDefChild)) {
+                    // SERIAL implies NOT NULL (Spec 07.01 §3.2 rule 5).
+                    nullExplicitlySet = true;
+                    isNullColumn = false;
+                }
             } else if (columnDefChild instanceof MySqlParser.NullColumnConstraintContext) {
                 nullExplicitlySet = true;
                 if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))

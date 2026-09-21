@@ -7,6 +7,7 @@ Specifies the conversion of signed and unsigned MySQL integer types to ClickHous
 
 ## 2. Codebase Mapping on 2.11.0
 - **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/converters/ClickHouseDataTypeMapper.java`
+- **DDL path (CREATE / ALTER translation)**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/parser/DataTypeConverter.java` (`convertToString`, `normalizeIntegerTypeName`), `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/MySqlDDLParserListenerImpl.java` (`SERIAL` nullability and key candidacy)
 
 ---
 
@@ -41,6 +42,37 @@ column is `UInt64`, and the value is a negative `Long`, bind
 $< 2^{63}$ are unaffected. A negative `long` bound for a *signed* `Int64`
 target is left untouched (it is a genuine negative `BIGINT`).
 
+### 3.2 DDL path: every spelling of an unsigned integer maps to `UInt`
+The DDL translator resolves the declared type through Debezium's
+`DataTypeResolver`, whose type *name* carries the attribute tokens verbatim
+(`BIGINT UNSIGNED ZEROFILL`, `INT8 UNSIGNED`, `SERIAL`). The unsigned lookup
+used to be an exact match against six spellings (`tinyint unsigned` …
+`bigint unsigned`), so every other spelling fell through to the signed Kafka
+schema mapping and was created **signed**: `BIGINT UNSIGNED ZEROFILL` →
+`Int64`, `INT8 UNSIGNED` → `Int64`, `SERIAL` → `Nullable(Int64)`, `INT(10)
+UNSIGNED ZEROFILL` → `Int64`. A value in $[2^{63}, 2^{64})$ (or, for the
+narrower types, above the signed maximum) then cannot be stored — a rejected
+insert or a wrapped value, both divergence.
+
+Rule (`DataTypeConverter.normalizeIntegerTypeName`, applied before any lookup):
+1. Lower-case, collapse whitespace.
+2. Fold the integer synonyms MySQL defines: `INT1` → `TINYINT`, `INT2` →
+   `SMALLINT`, `INT3` / `MIDDLEINT` → `MEDIUMINT`, `INT4` → `INT`, `INT8` →
+   `BIGINT`, `SERIAL` → `BIGINT UNSIGNED`.
+3. `ZEROFILL` implies `UNSIGNED` (MySQL adds the attribute itself); the token
+   is then dropped, as is a redundant `SIGNED`.
+4. A normalised name containing `unsigned` resolves through
+   `ClickHouseDataTypeMapper.getUnsignedClickHouseType` (the same function the
+   record path uses, which also tolerates a display width), so `TINYINT` /
+   `SMALLINT` / `MEDIUMINT` / `INT` / `BIGINT UNSIGNED` in any spelling map to
+   `UInt8` / `UInt16` / `UInt32` / `UInt32` / `UInt64`. A signed name keeps the
+   signed mapping (`TINYINT` and `INT1` → `Int8`).
+5. `SERIAL` is MySQL shorthand for `BIGINT UNSIGNED NOT NULL AUTO_INCREMENT
+   UNIQUE`: the DDL translator maps it to `UInt64`, treats the column as
+   `NOT NULL` (CREATE and `ADD COLUMN`), and on CREATE registers it as the
+   candidate `UNIQUE` key so a table with only a `SERIAL` column is keyed by
+   it (Spec 06.05 §3.6).
+
 ---
 
 ## 4. Invariants Preserved
@@ -64,3 +96,10 @@ target is left untouched (it is a genuine negative `BIGINT`).
   (pre-fix code binds the negative `long`).
 - `ClickHouseDataTypeMapperUInt64Test.testNegativeLongForSignedInt64TargetIsUnchanged()`
   — a real negative `BIGINT` stays negative.
+- §3.2: `MySqlDDLParserListenerImplTest.testUnsignedSynonymsAndZerofillMapToUInt()`
+  — `BIGINT UNSIGNED ZEROFILL`, `INT8 UNSIGNED`, `INT(10) UNSIGNED ZEROFILL`,
+  `INT ZEROFILL`, `INT1 UNSIGNED`, `MIDDLEINT UNSIGNED`, `SMALLINT(5) ZEROFILL`
+  map to the `UInt` types; `INT1` maps to `Int8` (pre-fix code emits the signed
+  types); `MySqlDDLParserListenerImplTest.testSerialIsUnsignedNotNullKey()` —
+  `SERIAL` is `UInt64 NOT NULL` and the sorting key on CREATE, `UInt64` (not
+  `Nullable`) on `ADD COLUMN`.

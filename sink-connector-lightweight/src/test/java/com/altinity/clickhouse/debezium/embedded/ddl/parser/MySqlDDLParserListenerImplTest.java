@@ -87,6 +87,72 @@ public class MySqlDDLParserListenerImplTest {
         Assert.assertTrue(withOverride, withOverride.toLowerCase().endsWith("order by (b)"));
     }
 
+    // ------------------------------------------------------------------
+    // Spec 07.01 §3.2 / 07.02 §3.1: DDL-path type spellings
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("Every spelling of an unsigned integer (ZEROFILL, INTn synonyms, display width) maps to UInt")
+    public void testUnsignedSynonymsAndZerofillMapToUInt() {
+        String expected = "ALTER TABLE `employees`.t "
+                + "ADD COLUMN IF NOT EXISTS a Nullable(UInt64), "
+                + "ADD COLUMN IF NOT EXISTS b Nullable(UInt64), "
+                + "ADD COLUMN IF NOT EXISTS c Nullable(UInt32), "
+                + "ADD COLUMN IF NOT EXISTS d Nullable(UInt32), "
+                + "ADD COLUMN IF NOT EXISTS e Nullable(UInt8), "
+                + "ADD COLUMN IF NOT EXISTS f Nullable(UInt32), "
+                + "ADD COLUMN IF NOT EXISTS g Nullable(Int8), "
+                + "ADD COLUMN IF NOT EXISTS h Nullable(UInt16), "
+                + "ADD COLUMN IF NOT EXISTS i Nullable(Int64)";
+        Assert.assertEquals(expected, squash(translate("ALTER TABLE t "
+                + "ADD COLUMN a BIGINT UNSIGNED ZEROFILL, "
+                + "ADD COLUMN b INT8 UNSIGNED, "
+                + "ADD COLUMN c INT(10) UNSIGNED ZEROFILL, "
+                + "ADD COLUMN d INT ZEROFILL, "
+                + "ADD COLUMN e INT1 UNSIGNED, "
+                + "ADD COLUMN f MIDDLEINT UNSIGNED, "
+                + "ADD COLUMN g INT1, "
+                + "ADD COLUMN h SMALLINT(5) ZEROFILL, "
+                + "ADD COLUMN i BIGINT SIGNED")));
+
+        String create = translate("CREATE TABLE u (id INT UNSIGNED ZEROFILL NOT NULL PRIMARY KEY, "
+                + "big BIGINT UNSIGNED ZEROFILL, amt DECIMAL(10,2) UNSIGNED ZEROFILL)");
+        Assert.assertTrue(create, create.equalsIgnoreCase("CREATE TABLE if not exists `employees`.u("
+                + "id UInt32 NOT NULL ,big Nullable(UInt64),amt Nullable(Decimal(10,2)),"
+                + "`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+    }
+
+    @Test
+    @DisplayName("SERIAL is BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE: UInt64, NOT NULL, the identity")
+    public void testSerialIsUnsignedNotNullKey() {
+        String create = translate("CREATE TABLE s (id SERIAL, v INT)");
+        Assert.assertTrue(create, create.equalsIgnoreCase("CREATE TABLE if not exists `employees`.s("
+                + "id UInt64 NOT NULL ,v Nullable(Int32),"
+                + "`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS s UInt64",
+                translate("ALTER TABLE t ADD COLUMN s SERIAL"));
+    }
+
+    @Test
+    @DisplayName("FLOAT(M,D) is Float64; a dimension suffix is emitted only for Decimal and DateTime64")
+    public void testFloatWithDimensionsIsFloat64() {
+        String expected = "ALTER TABLE `employees`.t "
+                + "ADD COLUMN IF NOT EXISTS f Nullable(Float64), "
+                + "ADD COLUMN IF NOT EXISTS g Nullable(Float64), "
+                + "ADD COLUMN IF NOT EXISTS h Nullable(Float64), "
+                + "ADD COLUMN IF NOT EXISTS r Nullable(Float32), "
+                + "ADD COLUMN IF NOT EXISTS d Nullable(Decimal(7,3)), "
+                + "ADD COLUMN IF NOT EXISTS ts Nullable(DateTime64(3, 0))";
+        Assert.assertEquals(expected, squash(translate("ALTER TABLE t "
+                + "ADD COLUMN f FLOAT(7,3), ADD COLUMN g FLOAT, ADD COLUMN h DOUBLE(10,2), "
+                + "ADD COLUMN r REAL, ADD COLUMN d DECIMAL(7,3), ADD COLUMN ts DATETIME(3)")));
+
+        String create = translate("CREATE TABLE fl (id INT PRIMARY KEY, f FLOAT(7,3) NOT NULL)");
+        Assert.assertTrue(create, create.equalsIgnoreCase("CREATE TABLE if not exists `employees`.fl("
+                + "id Int32 NOT NULL ,f Float64 NOT NULL ,"
+                + "`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+    }
+
     @Test
     @DisplayName("AUTO_INCREMENT implies NOT NULL, so an AUTO_INCREMENT UNIQUE column is the identity")
     public void testAutoIncrementColumnIsNotNull() {
