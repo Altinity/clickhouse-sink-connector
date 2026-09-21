@@ -206,6 +206,19 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private final Set<String> tableLevelPrimaryKeyColumns = new HashSet<>();
 
     /**
+     * Whether the ALTER TABLE being walked carries a {@code DROP PRIMARY KEY}
+     * clause; reset per statement (Spec 06.07 §3.1).
+     */
+    private boolean statementDropsPrimaryKey;
+
+    /**
+     * The column list of the LAST primary-key declaration of the ALTER TABLE
+     * being walked ({@code ADD PRIMARY KEY (...)} or a column-level
+     * {@code PRIMARY KEY}); null when none; reset per statement.
+     */
+    private List<String> statementPrimaryKey;
+
+    /**
      * Statement time of the DDL event being translated ({@code source.ts_ms},
      * epoch milliseconds); 0 when unknown. An {@code ADD COLUMN ... DEFAULT
      * CURRENT_TIMESTAMP} is back-filled on the source with this instant
@@ -1582,6 +1595,15 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 // brand-new column has no existing rows to violate it.
                 nullExplicitlySet = true;
                 isNullColumn = false;
+            } else if (columnDefChild instanceof MySqlParser.PrimaryKeyColumnConstraintContext) {
+                // A column-level PRIMARY KEY declares the statement's identity
+                // (judged in enforcePrimaryKeyPolicy, Spec 06.07 §3.1) and,
+                // like every MySQL key column, implies NOT NULL on ADD.
+                this.statementPrimaryKey = new ArrayList<>(Collections.singletonList(columnName));
+                if (clause == ColumnClause.ADD) {
+                    nullExplicitlySet = true;
+                    isNullColumn = false;
+                }
             } else if (columnDefChild instanceof MySqlParser.DefaultColumnConstraintContext) {
                 // Resolved below, once the type and nullability are known
                 // (Spec 06.04 §3.2).
@@ -2022,6 +2044,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // The target table's existing schema is read at most once per statement.
         this.targetColumnNullability = null;
         this.targetSortingKeyTypes = null;
+        this.statementDropsPrimaryKey = false;
+        this.statementPrimaryKey = null;
         for (ParseTree tree : pt) {
 
             if (tree instanceof TableNameContext) {
@@ -2076,6 +2100,21 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 parseRenameColumn(tree);
             } else if (tree instanceof MySqlParser.AlterByRenameContext) {
                 renameTarget = renameTargetTable((MySqlParser.AlterByRenameContext) tree);
+            } else if (tree instanceof MySqlParser.AlterByAddPrimaryKeyContext) {
+                // No ClickHouse equivalent (the sorting key is fixed at CREATE);
+                // recorded and judged against the target key once the whole
+                // statement is known (Spec 06.07 §3.1).
+                MySqlParser.IndexColumnNamesContext keyColumns =
+                        ((MySqlParser.AlterByAddPrimaryKeyContext) tree).indexColumnNames();
+                this.statementPrimaryKey = keyColumns == null ? new ArrayList<>() : indexColumnNames(keyColumns);
+                log.info("ALTER TABLE clause [{}] declares the primary key; nothing is emitted for it, the "
+                        + "identity is checked against the target sorting key", tree.getText());
+                removeTrailingComma();
+            } else if (tree instanceof MySqlParser.AlterByDropPrimaryKeyContext) {
+                this.statementDropsPrimaryKey = true;
+                log.info("ALTER TABLE clause [{}] drops the primary key; nothing is emitted for it, the "
+                        + "identity is checked against the target sorting key", tree.getText());
+                removeTrailingComma();
             } else if (isNoOpSpecification(tree)) {
                 // Indexes, keys, foreign keys, DROP PRIMARY KEY, column
                 // DEFAULT changes, charset/collation, table options,
@@ -2111,6 +2150,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // A skipped clause in trailing position leaves the separator that
         // preceded it dangling once the clause itself emits nothing.
         removeTrailingComma();
+        // The statement's net row identity versus the replica's (Spec 06.07
+        // §3.1): a change the replica cannot follow is loud, nothing emitted.
+        enforcePrimaryKeyPolicy();
         // Every clause emitted nothing (e.g. a lone ADD PRIMARY KEY): the query
         // is just "ALTER TABLE t", which ClickHouse rejects with Code: 62. Clear
         // it so executeDDL's `!query.isEmpty()` guard skips it instead of
@@ -2128,10 +2170,86 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     /**
+     * Judges the statement's net row identity against the replica's sorting
+     * key (Spec 06.07 §3.1) once every clause has been walked.
+     *
+     * <ul>
+     *   <li>Key unknown (no lookup, table not found, or {@code ORDER BY
+     *       tuple()}): nothing can be checked; the key clauses stay skipped.</li>
+     *   <li>Restatement (the declared key's column set equals the sorting
+     *       key's): skipped at INFO.</li>
+     *   <li>Otherwise -- a different key, or {@code DROP PRIMARY KEY} with no
+     *       replacement -- the source no longer identifies rows the way the
+     *       replica does. ClickHouse cannot re-key a table in place and keeping
+     *       the old key collapses rows the source keeps distinct, so the
+     *       statement is refused loudly, naming the rebuild (Invariant I9).</li>
+     * </ul>
+     */
+    private void enforcePrimaryKeyPolicy() {
+        if (!this.statementDropsPrimaryKey && this.statementPrimaryKey == null) {
+            return;
+        }
+        Set<String> existingKey = new LinkedHashSet<>();
+        for (String keyColumn : targetSortingKeyTypes().keySet()) {
+            if (!isConnectorColumn(keyColumn)) {
+                existingKey.add(keyColumn.toLowerCase());
+            }
+        }
+        if (existingKey.isEmpty()) {
+            log.info("Table {}.{}: sorting key unknown to the DDL translator; ADD/DROP PRIMARY KEY skipped "
+                    + "(Spec 06.07 §3.1 rule 1)", this.databaseName, this.cleanTableName);
+            return;
+        }
+        String existing = "(" + String.join(",", existingKey) + ")";
+        if (this.statementPrimaryKey != null) {
+            Set<String> requestedKey = new LinkedHashSet<>();
+            for (String column : this.statementPrimaryKey) {
+                requestedKey.add(stripBackticks(column).toLowerCase());
+            }
+            if (requestedKey.equals(existingKey)) {
+                log.info("Table {}.{}: PRIMARY KEY {} restates the ClickHouse sorting key; nothing to do",
+                        this.databaseName, this.cleanTableName, existing);
+                return;
+            }
+            throw identityChangeNotRepresentable("(" + String.join(",", requestedKey) + ")", existing);
+        }
+        throw identityChangeNotRepresentable("none (DROP PRIMARY KEY without a replacement)", existing);
+    }
+
+    /** A column the connector manages itself, never part of the source identity. */
+    private static boolean isConnectorColumn(String column) {
+        return column.equalsIgnoreCase(VERSION_COLUMN)
+                || column.equalsIgnoreCase(SIGN_COLUMN)
+                || column.equalsIgnoreCase(IS_DELETED_COLUMN)
+                || column.equalsIgnoreCase("_" + IS_DELETED_COLUMN)
+                || column.equalsIgnoreCase(DELETED_TIME_COLUMN)
+                || column.equalsIgnoreCase(DELETED_FROM_TIME_COLUMN)
+                || column.equalsIgnoreCase(OPERATION_COLUMN);
+    }
+
+    /**
+     * The loud outcome for a change of row identity the replica cannot follow
+     * (Spec 06.07 §3.1 rule 3, Invariant I9).
+     */
+    private DDLReplicationException identityChangeNotRepresentable(String requestedKey, String existingKey) {
+        String message = String.format(
+                "Table %s.%s: the source changes its PRIMARY KEY to %s but the ClickHouse sorting key is %s. "
+                        + "ClickHouse fixes the sorting key at CREATE TABLE (Code: 524), and keeping the old key "
+                        + "would collapse rows the source keeps distinct, so this cannot be applied by ALTER and is "
+                        + "not retried. Manual rebuild required: re-create `%s`.%s with ORDER BY matching the new "
+                        + "key and re-snapshot the table. Source DDL: [%s]",
+                this.databaseName, this.cleanTableName, requestedKey, existingKey, this.databaseName,
+                this.cleanTableName, this.originalSql);
+        log.error(message);
+        return new DDLReplicationException(message, null);
+    }
+
+    /**
      * Returns true for an ALTER specification this translator deliberately
      * drops because ClickHouse has no equivalent and nothing is lost by
-     * skipping it (Spec 06.03 §3.2): indexes and keys of every kind,
-     * {@code DROP PRIMARY KEY}, foreign keys, column DEFAULT changes,
+     * skipping it (Spec 06.03 §3.2): indexes and keys of every kind
+     * ({@code ADD}/{@code DROP PRIMARY KEY} are recorded first and judged by
+     * {@link #enforcePrimaryKeyPolicy}), foreign keys, column DEFAULT changes,
      * CHECK constraints, charset and collation, table options,
      * {@code ALGORITHM}/{@code LOCK} hints, key enable/disable, physical
      * ORDER BY, tablespace and every partition operation.
@@ -2145,9 +2263,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * CHECK is ever created on the replica.</p>
      */
     private static boolean isNoOpSpecification(ParseTree tree) {
-        return tree instanceof MySqlParser.AlterByAddPrimaryKeyContext
-                || tree instanceof MySqlParser.AlterByDropPrimaryKeyContext
-                || tree instanceof MySqlParser.AlterByAddCheckTableConstraintContext
+        return tree instanceof MySqlParser.AlterByAddCheckTableConstraintContext
                 || tree instanceof MySqlParser.AlterByDropConstraintCheckContext
                 || tree instanceof MySqlParser.AlterByAddIndexContext
                 || tree instanceof MySqlParser.AlterByAddUniqueKeyContext

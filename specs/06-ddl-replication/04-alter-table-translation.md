@@ -114,7 +114,7 @@ Pinned by `testAddColumnCurrentTimestampBackfillsLiteral`,
 and, for the MODIFY/CHANGE drop, `testModifyColumnDefaultCurrentTimestampIsDropped`.
 
 ### 3.3 Skipped clauses and the no-bare-ALTER rule
-Clauses in the skip class of Spec 06.03 §3.2 (indexes, keys, foreign keys, `DROP PRIMARY KEY`, `ALTER COLUMN SET/DROP DEFAULT`, CHECK constraints — `ADD [CONSTRAINT] CHECK` and `DROP CONSTRAINT|CHECK` —, charset/collation, table options, `ALGORITHM`/`LOCK`, partition operations) emit nothing and drop the separator that preceded them. A statement whose clauses are all skipped translates to `""`. Pinned by `testAlterAddIndexOnlyIsSkipped`, `testAlterDropPrimaryKeyOnlyIsSkipped`, `testAddConstraints`, `testAddCheckConstraintIsSkipped`, `testAlterDropPrimaryKeyModifyKeyAddColumnAddPrimaryKey`. Formal: `no_bare_alter`, `add_columns_preserved`.
+Clauses in the skip class of Spec 06.03 §3.2 (indexes, keys, foreign keys, `ADD`/`DROP PRIMARY KEY` when the target key is unknown or restated — loud otherwise, Spec 06.07 §3.1 —, `ALTER COLUMN SET/DROP DEFAULT`, CHECK constraints — `ADD [CONSTRAINT] CHECK` and `DROP CONSTRAINT|CHECK` —, charset/collation, table options, `ALGORITHM`/`LOCK`, partition operations) emit nothing and drop the separator that preceded them. A statement whose clauses are all skipped translates to `""`. Pinned by `testAlterAddIndexOnlyIsSkipped`, `testAlterDropPrimaryKeyOnlyIsSkipped`, `testAddConstraints`, `testAddCheckConstraintIsSkipped`, `testAlterDropPrimaryKeyModifyKeyAddColumnAddPrimaryKey`. Formal: `no_bare_alter`, `add_columns_preserved`.
 
 ### 3.4 Table-level statements
 

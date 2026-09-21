@@ -194,7 +194,7 @@ To provide mathematical proof of system correctness, the invariants and state tr
 - `Replication.Upgrade`: Invariant I11. `Replication.Snapshot`: Invariant I12. `Replication.GeneratedColumn`: Invariant I13.
 - `Replication.DdlBarrier`: The pre-DDL barrier of Invariant I5 — the DDL step is enabled only when the legacy queue, every routed queue and the unacknowledged-batch counter are all empty, and a machine-checked counterexample showing that an empty legacy queue alone does not imply that.
 - `Replication.OffsetFifo`: Handoff-sequence FIFO for offset acknowledgement (Invariant I8): commit never passes an outstanding batch, written-once, and the timestamp-overlap counterexample.
-- `Replication.DdlTranslation`: ALTER clause classification for Specs 06.03/06.04/06.05/06.07 — no bare `ALTER TABLE`, an all-no-op statement is skipped, a widening key-column change is loud, every ADD COLUMN is preserved.
+- `Replication.DdlTranslation`: ALTER clause classification for Specs 06.03/06.04/06.05/06.07 — no bare `ALTER TABLE`, an all-no-op statement is skipped, a widening key-column change and a change of the row identity (`ADD`/`DROP PRIMARY KEY`) are loud, every ADD COLUMN is preserved.
 - `Replication.CreateTable`: CREATE TABLE sorting-key selection for Specs 06.05 §3.6 / 08.05 §3.2 — a table with a storable column never gets `ORDER BY tuple()`, a declared key always wins, and only the value-derived fallback key can require `allow_nullable_key`.
 
 ### 5.1 Coverage of the thirteen invariants

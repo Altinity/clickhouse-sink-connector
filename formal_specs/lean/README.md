@@ -178,14 +178,15 @@ are all acknowledged.
 
 An `ALTER TABLE` is modelled as a list of classified clauses (`addColumn`,
 `dropColumn`, `modifyDataColumn`, `modifyKeyColumnSameOrNarrower`,
-`modifyKeyColumnWider`, `noOp`) and `translate` yields `skip`, `emit kept` or
-`fail`, mirroring `enterAlterTable`.
+`modifyKeyColumnWider`, `primaryKeyChange`, `noOp`) and `translate` yields
+`skip`, `emit kept` or `fail`, mirroring `enterAlterTable`.
 
 | Theorem Name | Statement | Significance |
 |---|---|---|
 | `no_bare_alter` | `translate cs ≠ emit []` | The translator never sends a bare `ALTER TABLE db.t` (`Code: 62`); an all-no-op statement yields `skip`. |
 | `all_noop_skips` | every clause unrepresentable and not loud → `translate cs = skip` | Index / key / constraint / charset / option-only statements are acknowledged, not sent. |
 | `wider_key_change_is_loud` | `modifyKeyColumnWider n ∈ cs → translate cs = fail` | A sorting-key widening is refused with `DDLReplicationException` (I9), never emitted to fail with `Code: 524` after retries. |
+| `primary_key_change_is_loud` | `primaryKeyChange cols ∈ cs → translate cs = fail` | An `ADD`/`DROP PRIMARY KEY` that changes the row identity the replica is keyed by is refused and names the rebuild (Spec 06.07 §3.1); a restatement is a `noOp`. |
 | `add_columns_preserved` | `translate cs = emit kept → addColumn n ∈ cs → addColumn n ∈ kept` | Skipping an unrepresentable neighbour never drops an `ADD COLUMN` (I6). |
 | `emitted_are_representable` | `translate cs = emit kept → kept = keep cs` (`keep` = the representable clauses, in source order) | Exactly the representable clauses are emitted, in source order. |
 

@@ -3088,26 +3088,80 @@ public class MySqlDDLParserListenerImplTest {
     @Test
     @DisplayName("DROP PRIMARY KEY, MODIFY key column, ADD COLUMN FIRST, ADD PRIMARY KEY keeps the ADD COLUMN")
     public void testAlterDropPrimaryKeyModifyKeyAddColumnAddPrimaryKey() {
-        // The production shape that used to produce NO usable ClickHouse DDL:
-        // every clause but the ADD COLUMN is unrepresentable, and the MODIFY
-        // of the sorting-key column would be rejected with Code: 524. With the
-        // target schema known (id is the sorting key, Int32), only the ADD
-        // COLUMN is emitted -- and UInt16 fits Int32, so nothing is lost.
+        // The production shape that used to produce NO usable ClickHouse DDL.
+        // With the target schema known (id is the sorting key, Int32) the
+        // statement moves the source's identity from id to ref_id, which the
+        // replica cannot follow: it must be loud and name the rebuild, never
+        // quietly emit the ADD COLUMN and leave the table keyed by id
+        // (Spec 06.07 §3.1 rule 3). This assertion previously pinned exactly
+        // that quiet outcome.
         String alter = "ALTER TABLE t DROP PRIMARY KEY, "
                 + "MODIFY COLUMN id SMALLINT UNSIGNED NOT NULL, "
                 + "ADD COLUMN ref_id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, "
                 + "ADD PRIMARY KEY (ref_id)";
         MySQLDDLParserService keyed = parserWithTarget(
                 columns("id", "Int32", "name", "Nullable(String)"), Collections.singletonList("id"));
-        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS ref_id UInt32 FIRST",
-                translate(keyed, alter));
+        DDLReplicationException loud = assertThrows(DDLReplicationException.class, () -> translate(keyed, alter));
+        Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("ref_id"));
+        Assert.assertTrue(loud.getMessage(), loud.getMessage().toLowerCase().contains("rebuild"));
 
-        // Without a target schema the key is unknown, so the MODIFY is still
-        // emitted (previous behaviour) -- but never a bare ALTER, and never
-        // without the ADD COLUMN.
+        // Without a target schema the key is unknown, so the key clauses are
+        // skipped and the MODIFY is still emitted (previous behaviour) -- but
+        // never a bare ALTER, and never without the ADD COLUMN.
         Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN id Nullable(UInt16), "
                         + "ADD COLUMN IF NOT EXISTS ref_id UInt32 FIRST",
                 translate(alter));
+    }
+
+    // ------------------------------------------------------------------
+    // Spec 06.07 §3.1: ADD / DROP PRIMARY KEY against a known sorting key
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("ADD PRIMARY KEY that changes the replica's identity is loud; a restatement is skipped")
+    public void testAddPrimaryKeyThatChangesIdentityIsLoud() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "tenant", "Int32", "name", "Nullable(String)"),
+                Collections.singletonList("id"));
+
+        // Restatement: same column set (case and quoting ignored) -> skipped.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t ADD PRIMARY KEY (id)").trim());
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t ADD CONSTRAINT pk PRIMARY KEY (`ID`)").trim());
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t ADD PRIMARY KEY (id), ADD COLUMN c INT"));
+
+        // A different or wider identity: loud, nothing emitted, rebuild named.
+        for (String ddl : new String[] {
+                "ALTER TABLE t ADD PRIMARY KEY (name)",
+                "ALTER TABLE t ADD PRIMARY KEY (id, tenant)",
+                "ALTER TABLE t ADD COLUMN c INT, ADD PRIMARY KEY (tenant)",
+                "ALTER TABLE t ADD COLUMN new_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT INVISIBLE PRIMARY KEY",
+                "ALTER TABLE t MODIFY COLUMN tenant INT NOT NULL PRIMARY KEY"}) {
+            DDLReplicationException loud = assertThrows(DDLReplicationException.class, () -> translate(keyed, ddl));
+            Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("(id)"));
+            Assert.assertTrue(loud.getMessage(), loud.getMessage().toLowerCase().contains("rebuild"));
+        }
+
+        // A composite key restated in another order is the same identity.
+        MySQLDDLParserService composite = parserWithTarget(
+                columns("id", "Int32", "tenant", "Int32"), Arrays.asList("id", "tenant"));
+        Assert.assertEquals("", translate(composite, "ALTER TABLE t DROP PRIMARY KEY, ADD PRIMARY KEY (tenant, id)").trim());
+    }
+
+    @Test
+    @DisplayName("DROP PRIMARY KEY without a replacement identity is loud")
+    public void testDropPrimaryKeyIsLoud() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "name", "Nullable(String)"), Collections.singletonList("id"));
+        DDLReplicationException loud = assertThrows(DDLReplicationException.class,
+                () -> translate(keyed, "ALTER TABLE t DROP PRIMARY KEY"));
+        Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("(id)"));
+        assertThrows(DDLReplicationException.class,
+                () -> translate(keyed, "ALTER TABLE t DROP PRIMARY KEY, ADD COLUMN c INT"));
+        // DROP then ADD of the same key is a restatement.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t DROP PRIMARY KEY, ADD PRIMARY KEY (id)").trim());
+        // Unknown key: skipped as before (Spec 06.07 §3.1 rule 1).
+        Assert.assertEquals("", translate("ALTER TABLE t DROP PRIMARY KEY").trim());
     }
 
     // ------------------------------------------------------------------
