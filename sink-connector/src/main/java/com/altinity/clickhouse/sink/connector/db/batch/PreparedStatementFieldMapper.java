@@ -252,7 +252,17 @@ public class PreparedStatementFieldMapper {
                 // matching row counts. This used to be gated behind
                 // non.default.value=true, whose default was false; the source
                 // value is the only value there is to bind (Spec 07.07).
-                Object value = struct.getWithoutDefault(colName);
+                //
+                // The field is resolved against the record's schema, exact
+                // name first and then case-insensitively, because membership
+                // was decided case-insensitively: reading the ClickHouse name
+                // verbatim (case-sensitive in Kafka Connect) threw for a table
+                // hand-created as `ID` for source column `id`, and the batch
+                // stalled forever on a "stale cache" that was never stale
+                // (Spec 04.03 section 3.4). A name that matches no field under
+                // either comparison still throws DataException below.
+                Field sourceField = resolveSourceField(struct, colName);
+                Object value = struct.getWithoutDefault(sourceField == null ? colName : sourceField.name());
                 if (value == null) {
                     ps.setNull(index, Types.OTHER);
                     continue;
@@ -305,7 +315,8 @@ public class PreparedStatementFieldMapper {
             }
 
             // Get the field information for the column and handle its data type.
-            Field f = getFieldByColumnName(fields, colName);
+            // Non-null here: a null resolution threw DataException above.
+            Field f = resolveSourceField(struct, colName);
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
             // Same rule as above: the stored value, not the schema default.
@@ -686,24 +697,27 @@ public class PreparedStatementFieldMapper {
     }
 
     /**
-     * Retrieves a field from a list of fields based on the column name. The search
-     * is case-insensitive.
+     * Resolves the record field a ClickHouse column is bound from: an exact
+     * name match against the record's schema first, then a case-insensitive
+     * one. The schema (not the modified-field list, which omits NULL-valued
+     * fields) is consulted so a NULL source value in a case-mismatched column
+     * is still bound as NULL (Spec 04.03 section 3.4).
      *
-     * @param fields The list of fields to search through.
-     * @param colName The column name to search for.
-     * @return The matching field, or null if no field matches the column name.
+     * @param struct  the record image being bound
+     * @param colName the ClickHouse column name
+     * @return the matching field, or null when no field matches under either comparison
      */
-    private Field getFieldByColumnName(List<Field> fields, String colName) {
-        // ToDo: Change it to a map so that multiple loops are avoided
-        Field matchingField = null;
-        for (Field f : fields) {
-            // Case-insensitive comparison of field name with column name
+    static Field resolveSourceField(Struct struct, String colName) {
+        Field exact = struct.schema().field(colName);
+        if (exact != null) {
+            return exact;
+        }
+        for (Field f : struct.schema().fields()) {
             if (f.name().equalsIgnoreCase(colName)) {
-                matchingField = f;
-                break;
+                return f;
             }
         }
-        return matchingField;
+        return null;
     }
 
     /**
