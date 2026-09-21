@@ -548,6 +548,12 @@ public class DebeziumChangeEventCapture {
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
 
+        // snowflake.id=false versions GTID rows with the raw transaction number,
+        // which ranks below every snapshot row; say so loudly before the engine
+        // starts (spec 02.06 section 3.2.1). Not refused: an existing config must
+        // keep starting after an upgrade (Invariant I11).
+        warnIfRawGtidVersioningWithDataSnapshot(props, config);
+
         // Initialize PostgreSQL-specific configuration from properties.
         this.pgConfig = new PostgresConnectorConfig(props);
 
@@ -2733,6 +2739,64 @@ public class DebeziumChangeEventCapture {
 
     private Connection systemConnection() {
         return this.writer != null ? this.writer.getConnection() : this.systemDbConnection;
+    }
+
+    /** Debezium's snapshot mode property; unset means the default {@code initial}. */
+    static final String SNAPSHOT_MODE = "snapshot.mode";
+
+    /**
+     * Snapshot modes that read NO data rows. Every other mode ({@code initial},
+     * {@code initial_only}, {@code always}, {@code when_needed}, and
+     * {@code configuration_based} / {@code custom} when they snapshot data) writes
+     * snapshot rows versioned on the sequence path.
+     */
+    static final Set<String> NO_DATA_SNAPSHOT_MODES = new HashSet<>(Arrays.asList(
+            "never", "no_data", "schema_only", "recovery", "schema_only_recovery"));
+
+    /**
+     * Whether {@code snowflake.id=false} is combined with a snapshot mode that reads
+     * data (spec 02.06 section 3.2.1). With the raw GTID transaction number as the
+     * version (order 1e6-1e10) and snapshot rows on the sequence path (order 1.7e18),
+     * every streamed change of a snapshotted key loses to the snapshot row,
+     * permanently.
+     *
+     * @param props  the Debezium properties ({@code snapshot.mode}).
+     * @param config the connector configuration ({@code snowflake.id}).
+     * @return true if the combination is present.
+     */
+    static boolean rawGtidVersioningWithDataSnapshot(Properties props, ClickHouseSinkConnectorConfig config) {
+        if (config == null || config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())) {
+            return false;
+        }
+        String mode = props == null ? null : props.getProperty(SNAPSHOT_MODE);
+        if (mode == null || mode.trim().isEmpty()) {
+            return true; // Debezium's default is `initial`: a data snapshot.
+        }
+        return !NO_DATA_SNAPSHOT_MODES.contains(mode.trim().toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /**
+     * Logs {@link #rawGtidVersioningWithDataSnapshot} at ERROR, naming both keys, the
+     * consequence and the remediation. Never throws: under Invariant I11 an existing
+     * configuration must keep starting after an upgrade.
+     *
+     * @param props  the Debezium properties.
+     * @param config the connector configuration.
+     */
+    static void warnIfRawGtidVersioningWithDataSnapshot(Properties props, ClickHouseSinkConnectorConfig config) {
+        if (!rawGtidVersioningWithDataSnapshot(props, config)) {
+            return;
+        }
+        String mode = props == null ? null : props.getProperty(SNAPSHOT_MODE);
+        log.error("{}=false with {}={} versions streamed GTID rows with the raw transaction number, "
+                + "which ranks BELOW every snapshot row's sequence version: after the snapshot, every "
+                + "UPDATE and DELETE of a snapshotted key is discarded by ReplacingMergeTree, with row "
+                + "counts still matching. Set {}=true (the default) or use a no-data snapshot mode ({}). "
+                + "Continuing because an existing configuration must keep starting (spec 02.06 "
+                + "section 3.2.1).",
+                ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID, SNAPSHOT_MODE,
+                mode == null ? "<unset, default initial>" : mode,
+                ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID, NO_DATA_SNAPSHOT_MODES);
     }
 
     /**

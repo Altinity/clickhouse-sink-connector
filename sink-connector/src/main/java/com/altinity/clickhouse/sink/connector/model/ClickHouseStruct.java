@@ -48,14 +48,11 @@ public class ClickHouseStruct {
     private static final long UNINITIALIZED_VALUE = -1L;
 
     /**
-     * Expected length of the GTID array.
+     * Minimum number of colon-separated segments of a MySQL GTID: {@code uuid:n}
+     * (classic) or {@code uuid:tag:n} (tagged, MySQL 8.3+). The transaction
+     * number is always the LAST segment (spec 02.01 section 3.1).
      */
-    private static final int EXPECTED_GTID_ARRAY_LENGTH = 2;
-
-    /**
-     * Index to parse the second segment from the GTID array.
-     */
-    private static final int GTID_SEGMENT_INDEX = 1;
+    private static final int MIN_GTID_SEGMENTS = 2;
 
     /**
      * Shared ObjectMapper for JSON serialization. Thread-safe for read/serialization operations.
@@ -491,9 +488,16 @@ public class ClickHouseStruct {
                     && source.get(GTID) != null
                     && source.get(GTID) instanceof String) {
                 String[] gtidArray = ((String) source.get(GTID)).split(":");
-                if (gtidArray.length == EXPECTED_GTID_ARRAY_LENGTH) {
-                    this.setGtid(Long.parseLong(
-                            gtidArray[GTID_SEGMENT_INDEX]));
+                // uuid:n (classic) or uuid:tag:n (MySQL 8.3+ tagged GTID): the
+                // transaction number is the LAST segment. Parsing only the
+                // two-segment form left every tagged transaction with gtid unset,
+                // which silently dropped it into the sequence-number version
+                // domain while its untagged neighbours stayed in the snowflake
+                // domain, so it lost every merge against them. A value without a
+                // colon (MariaDB domain-server-seq) is not a MySQL GTID and leaves
+                // gtid unset (spec 02.01 section 3.1).
+                if (gtidArray.length >= MIN_GTID_SEGMENTS) {
+                    this.setGtid(Long.parseLong(gtidArray[gtidArray.length - 1].trim()));
                 }
             }
             if (fieldNames.contains(LSN)

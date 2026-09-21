@@ -70,11 +70,17 @@ key that was also read by the snapshot therefore always **loses** to the snapsho
 row, permanently. This is a data-destroying configuration whenever
 `snapshot.mode` reads data (`initial`, `initial_only`, `always`, `when_needed`,
 and `configuration_based` / `custom` when they snapshot data). Under I11 an
-existing configuration may not be refused on upgrade. Today the combination is
-accepted silently (**gap, tracked**: no startup validation exists). A related
-gap: a tagged GTID (`uuid:tag:n`, MySQL 8.3+) is not parsed (spec 02.01 §3.1),
-so such a transaction falls through to the sequence path with `gtid = -1` and
-loses to its snowflake-versioned neighbours.
+existing configuration may not be refused on upgrade, so the lightweight engine
+does not fail: `DebeziumChangeEventCapture.setup` evaluates
+`rawGtidVersioningWithDataSnapshot(props, config)` and, when `snowflake.id=false`
+is combined with a `snapshot.mode` other than `never`, `no_data`, `schema_only`,
+`recovery` or `schema_only_recovery` (an unset `snapshot.mode` is Debezium's
+default `initial` and counts as a data snapshot), logs at **ERROR** naming both
+keys and the consequence — once per start, before the engine is created. The
+remediation named in the log is `snowflake.id=true` or a no-data snapshot mode.
+Tagged GTIDs (`uuid:tag:n`, MySQL 8.3+) are parsed from their last segment
+(spec 02.01 §3.1), so a tagged transaction no longer falls through to the
+sequence path with `gtid = -1` and loses to its snowflake-versioned neighbours.
 
 ### 3.3 Behaviour changes on restart (surfaced, not data-format breaks)
 The merged fixes change failure/ordering behaviour but not any persisted format:
@@ -103,7 +109,9 @@ upgrade-safe.
 - `DebeziumChangeEventCaptureTest.newerEventAfterSeededRestartRanksAboveOlderPreRestartEvent()` — the seeded restart on a lagging source (§6.1, §6.2); `DebeziumChangeEventCaptureTest.newerEventOneMillisecondAfterSeededRestartRanksAboveOlderPreRestartEvent()` — the seeded restart inside the 1 ms carry window (§6.1).
 - `VersionHighWaterMarkTest.scanSeedsFromTheHighestPlausibleTargetVersion()` — the first start after an upgrade, with no mark row, seeds from `max(_version)` of the targets in either version domain (§6.1).
 - `VersionFallbackWithoutGtidTest.bindMustNotWriteUint64Max()`, `VersionFallbackWithoutGtidTest.calculateVersionMustNotFallThroughToSentinel()` — 2.11.0 no longer writes the sentinel of §6.3.
-- Verification: the `snowflake.id=false` / data-snapshot combination (§3.2.1) is not yet covered by an automated test (gap). An end-to-end upgrade test (2.10.x writes, 2.11.0 restarts on a lagging source) is not yet covered by an automated test (gap).
+- `SnowflakeIdSnapshotWarningTest.rawGtidVersioningWithDataSnapshotIsLoud()`, `SnowflakeIdSnapshotWarningTest.noDataSnapshotModesAreSilent()` — §3.2.1: the combination is detected (including the unset default) and logged at ERROR; no-data modes and `snowflake.id=true` are silent.
+- `ClickHouseStructTest.taggedGtidIsParsed()` — §3.2.1, tagged GTIDs take the GTID path.
+- Verification: an end-to-end upgrade test (2.10.x writes, 2.11.0 restarts on a lagging source) is not yet covered by an automated test (gap).
 
 ---
 
