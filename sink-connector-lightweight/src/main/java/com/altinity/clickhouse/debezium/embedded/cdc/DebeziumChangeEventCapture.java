@@ -1195,6 +1195,20 @@ public class DebeziumChangeEventCapture {
         DDLParserService ddlParserService = DDLParserFactory.getParser(props, writer, config, databaseName);
         ddlParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
 
+        // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+        // disable.drop.truncate is decided AFTER the parse, on the statement
+        // kind the parser found (DROP TABLE / TRUNCATE TABLE / DROP DATABASE).
+        // It used to be tested BEFORE parseSql computed the flag, so it was
+        // dead: a false flag, every time (spec 06.08 section 3.3).
+        if (isDropOrTruncateDisabled(props) && isDropOrTruncate.get()) {
+            lastIgnoredDDL = DDL;
+            // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+            log.warn("Ignoring DROP/TRUNCATE statement because {}=true; ClickHouse keeps the rows the "
+                    + "source removed (a deliberate, operator-chosen divergence). DDL: {}",
+                    SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, DDL);
+            return;
+        }
+
 
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
         // Use the configured MAX_RETRIES value for DDL operations
@@ -2628,17 +2642,78 @@ public class DebeziumChangeEventCapture {
             return true;
         }
 
-        String disableDropAndTruncateProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
-        if (disableDropAndTruncateProperty != null && disableDropAndTruncateProperty.equalsIgnoreCase("true") && isDropOrTruncate.get() == true) {
-            log.debug("Ignoring Drop or Truncate");
+        // A DDL for a table the connector does not capture is not replicated:
+        // its rows never reach the sink, so neither may its schema (spec 06.08
+        // section 3.3). Debezium only pre-filters these when
+        // store.only.captured.tables.ddl=true.
+        String sourceDb = sourceDatabaseName(sr);
+        List<String> tables = getTableNamesFromDDL(sr, DDL);
+        boolean anyCaptured = tables.isEmpty()
+                ? DdlCaptureFilter.isCaptured(sourceDb, null, props)
+                : tables.stream().anyMatch(t -> DdlCaptureFilter.isCaptured(sourceDb, t, props));
+        if (!anyCaptured) {
+            lastIgnoredDDL = DDL;
+            log.info("Ignoring DDL for {}.{}: outside database/table include/exclude lists, so the "
+                    + "table is not replicated. DDL: {}", sourceDb, tables, DDL);
             return true;
         }
+
         if (isSnapshotDDL == true && enableSnapshotDDLPropertyFlag == false) {
             // User wants to ignore snapshot
             return true;
         } else {
             return false;
         }
+    }
+
+    /** Whether {@code disable.drop.truncate} is set. */
+    // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+    private static boolean isDropOrTruncateDisabled(Properties props) {
+        String value = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
+        return value != null && value.trim().equalsIgnoreCase("true");
+    }
+
+    /**
+     * The SOURCE database of a schema-change record: the key's
+     * {@code databaseName} (MySQL) or {@code db} (PostgreSQL), else the value's
+     * {@code source.db}. Unlike {@link #getDatabaseName} this applies no
+     * destination prefix/suffix/override: capture lists are written against
+     * source names.
+     *
+     * @return the source database, or {@code null} when the record carries none.
+     */
+    private static String sourceDatabaseName(SourceRecord sr) {
+        if (sr == null) {
+            return null;
+        }
+        try {
+            if (sr.key() instanceof Struct) {
+                Struct key = (Struct) sr.key();
+                for (String field : new String[] {"databaseName", "db"}) {
+                    if (key.schema().field(field) != null) {
+                        Object v = key.get(field);
+                        if (v instanceof String && !((String) v).isEmpty()) {
+                            return (String) v;
+                        }
+                    }
+                }
+            }
+            if (sr.value() instanceof Struct) {
+                Struct value = (Struct) sr.value();
+                if (value.schema().field("source") != null && value.get("source") instanceof Struct) {
+                    Struct source = (Struct) value.get("source");
+                    if (source.schema().field("db") != null) {
+                        Object v = source.get("db");
+                        if (v instanceof String && !((String) v).isEmpty()) {
+                            return (String) v;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not read the source database of a schema-change record", e);
+        }
+        return null;
     }
 
     /**
