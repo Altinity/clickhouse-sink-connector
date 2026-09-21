@@ -128,7 +128,48 @@ translator emits). A `String` column stores the formatted text verbatim
 round-trip unchanged), so the full MySQL range is representable; no ClickHouse
 `Time`-like type is involved.
 
----
+### 3.3 Out-of-range values are never silently saturated
+ClickHouse temporal types are narrower than MySQL's: `DateTime64` holds
+`1900-01-01 00:00:00 .. 2299-12-31 23:59:59`, `DateTime` holds
+`1970-01-01 00:00:00 .. 2106-02-07 06:28:15`, `Date32` holds
+`1900-01-01 .. 2299-12-31`, `Date` holds `1970-01-01 .. 2149-06-06`; MySQL
+`DATE`/`DATETIME` reach `9999-12-31`. `DebeziumConverter` saturated every such
+value to the ClickHouse bound with **no log line at all**
+(`checkIfDateTimeExceedsSupportedRange`, `checkIfDateExceedsSupportedRange`, the
+`ZonedTimestampConverter` bound check), and `BigDecimalConverter.truncate`
+saturated a PostgreSQL variable-scale decimal with a WARN that named neither
+table nor column. A MySQL `DATETIME '9999-12-31 23:59:59'` (the customary
+"open-ended" sentinel) therefore landed as `2299-12-31 23:59:59` with the batch
+reported successful — a value MySQL never held, and a WARN-less one.
+
+Rule — `DebeziumConverter.RangePolicy`, built per bound column by
+`PreparedStatementFieldMapper` (`RangePolicy.of(config, "db.table.column")`)
+and threaded through `ClickHouseDataTypeMapper.convert` into every converter
+that bounds a value (`TimestampConverter`, `MicroTimestampConverter`,
+`DateConverter`, `ZonedTimestampConverter`, `BigDecimalConverter`):
+1. `clamp.out.of.range=false` (**default**): the converter throws
+   `DebeziumConverter.ValueOutOfRangeException` naming the column, the source
+   value, the ClickHouse type and its bounds, and the setting that would
+   saturate instead. The batch fails and is retried; nothing is written.
+   Remediation is on the ClickHouse side (a wider type — `Date32` for `Date`,
+   `DateTime64` for `DateTime` — or a `String` column) or an explicit
+   operator decision to saturate.
+2. `clamp.out.of.range=true`: the value is saturated to the bound as before,
+   and every saturation logs a WARN naming the column, the source value and
+   the stored value. Never silent.
+3. The pre-existing four-argument converter overloads (no policy) keep the
+   saturating behaviour **with** the WARN, for callers that have no
+   configuration; every production bind path passes a policy built from the
+   configuration.
+4. PostgreSQL `timestamptz` `infinity` / `-infinity` (issue #1231) are not
+   out-of-range numbers but values with no finite representation; they keep
+   their documented saturation to the `DateTime64` bounds under either policy
+   (ordering is preserved, and there is no source value to lose).
+
+Upgrade note: a deployment whose source holds sentinel dates beyond the
+ClickHouse range will, after upgrading, fail the affected batch instead of
+storing the bound. Set `clamp.out.of.range=true` to restore the previous
+values (now with a WARN per saturated value) until the column type is fixed.
 
 ---
 
@@ -186,3 +227,26 @@ round-trip unchanged), so the full MySQL range is representable; no ClickHouse
   session zone, set → parsed, garbage → throws) and `columnTimeZone` (parses
   `Nullable(DateTime64(3, 'UTC'))`, `DateTime('Europe/London')`; null for
   `DateTime64(6)` and `String`).
+- `DebeziumConverterRangePolicyTest.defaultPolicyRejectsOutOfRangeDatetimeAtTheMapper()`,
+  `DebeziumConverterRangePolicyTest.defaultPolicyRejectsOutOfRangeDateAtTheMapper()`
+  — §3.3 rule 1 through `ClickHouseDataTypeMapper.convert` with an empty
+  configuration: `DATETIME 9999-12-31 23:59:59` into `DateTime64` and
+  `DATE 9999-12-31` into `Date` throw `ValueOutOfRangeException` (pre-fix
+  code binds `2299-12-31 23:59:59.000` / `2149-06-06`).
+- `DebeziumConverterRangePolicyTest.clampSettingSaturatesAndWarns()` — rule 2:
+  `clamp.out.of.range=true` binds the bound and logs a WARN naming the column
+  and both values.
+- `DebeziumConverterRangePolicyTest.strictPolicyNamesColumnValueAndBounds()` —
+  the exception text of rule 1 for `DateTime`, `DateTime64`, `Date`, `Date32`,
+  `ZonedTimestamp` and decimal.
+- `DebeziumConverterRangePolicyTest.legacyOverloadsStillSaturateWithAWarn()` —
+  rule 3.
+- `DebeziumConverterRangePolicyTest.infinityKeepsItsSaturation()` — rule 4.
+- `PreparedStatementFieldMapperOutOfRangeTest.outOfRangeValueNamesDatabaseTableAndColumn()`
+  — end to end through `insertPreparedStatement`: the exception names
+  `db.orders.expires_at`; with `clamp.out.of.range=true` the same row binds
+  the bound.
+- The pre-existing `testTimestampConverterMinRange` / `MaxRange`,
+  `testDateConverterMinRange` / `MaxRange`, `testMicroTimestampConverterMin` /
+  `Max`, `testZonedTimestampConverter` tests exercise the four-argument
+  overloads and therefore pin the saturating (rule 3) behaviour.

@@ -347,6 +347,25 @@ public class ClickHouseDataTypeMapper {
                                   ClickHouseDataType clickHouseDataType, ZoneId serverTimeZone,
                                   ZoneId columnTimeZone)
             throws SQLException {
+        return convert(type, schemaName, value, index, ps, config, clickHouseDataType, serverTimeZone,
+                columnTimeZone, DebeziumConverter.RangePolicy.of(config, null));
+    }
+
+    /**
+     * As {@link #convert(Schema.Type, String, Object, int, PreparedStatement,
+     * ClickHouseSinkConnectorConfig, ClickHouseDataType, ZoneId, ZoneId)}, with
+     * an explicit out-of-range policy carrying the bound column's name.
+     *
+     * @param rangePolicy what to do with a value outside the ClickHouse
+     *                    type's range (Spec 07.03 section 3.3); built per
+     *                    column with {@code RangePolicy.of(config, "db.table.column")}
+     */
+    public static boolean convert(Schema.Type type, String schemaName,
+                                  Object value, int index, PreparedStatement ps,
+                                  ClickHouseSinkConnectorConfig config,
+                                  ClickHouseDataType clickHouseDataType, ZoneId serverTimeZone,
+                                  ZoneId columnTimeZone, DebeziumConverter.RangePolicy rangePolicy)
+            throws SQLException {
 
         boolean result = true;
         // ClickHouse parses a DateTime literal in the COLUMN's zone, so an
@@ -399,7 +418,7 @@ public class ClickHouseDataTypeMapper {
                 ps.setString(
                         index,
                         DebeziumConverter.ZonedTimestampConverter
-                                .convert(value, instantFormatZone));
+                                .convert(value, instantFormatZone, rangePolicy));
             } else if (schemaName != null
                     && schemaName.equalsIgnoreCase(Json.LOGICAL_NAME)) {
                 // if the column is JSON,
@@ -415,7 +434,7 @@ public class ClickHouseDataTypeMapper {
                 // set to io.debezium.time.Date
                 ps.setDate(index,
                         DebeziumConverter.DateConverter.convert(
-                                value, clickHouseDataType));
+                                value, clickHouseDataType, rangePolicy));
             } else if (schemaName != null
                     && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
                 ps.setTimestamp(index, (java.sql.Timestamp) value);
@@ -471,12 +490,12 @@ public class ClickHouseDataTypeMapper {
                     // DATETIME(4), DATETIME(5), DATETIME(6)
 
                     ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value, sourceTimeZone,
-                            serverTimeZone, clickHouseDataType, columnTimeZone));
+                            serverTimeZone, clickHouseDataType, columnTimeZone, rangePolicy));
                 }
                 else if (value instanceof Long) {
                     // DATETIME(0), DATETIME(1), DATETIME(2), DATETIME(3)
                     ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType,
-                        sourceTimeZone, serverTimeZone, columnTimeZone));
+                        sourceTimeZone, serverTimeZone, columnTimeZone, rangePolicy));
                 }
             } else if (isFieldTime) {
                 ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
@@ -636,7 +655,7 @@ public class ClickHouseDataTypeMapper {
                         (Integer) scale);
                 BigDecimal truncated =
                         new DebeziumConverter.BigDecimalConverter()
-                                .truncate(bigDecimal);
+                                .truncate(bigDecimal, rangePolicy);
                 ps.setBigDecimal(index, truncated);
             } else {
                 ps.setBigDecimal(index, new BigDecimal(0));

@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.data.format.BinaryStreamUtils;
@@ -21,6 +23,159 @@ public class DebeziumConverter {
     private static final int MICROS_IN_MILLI = 1000;
 
     private static final Logger log = LogManager.getLogger(DebeziumConverter.class);
+
+    /**
+     * Raised when a source value does not fit the ClickHouse column type and
+     * {@code clamp.out.of.range} is false (Spec 07.03 section 3.3). The batch
+     * fails; nothing is written for it.
+     */
+    public static class ValueOutOfRangeException extends IllegalArgumentException {
+        public ValueOutOfRangeException(String message) {
+            super(message);
+        }
+    }
+
+    /**
+     * What to do with a value outside the ClickHouse type's range: fail the
+     * batch (default, {@code clamp.out.of.range=false}) or saturate to the
+     * bound with a WARN naming the column and both values. Never silent
+     * (Spec 07.03 section 3.3).
+     */
+    public static final class RangePolicy {
+
+        /**
+         * Saturate to the bound and WARN. Used by the policy-less converter
+         * overloads, which have no configuration to consult.
+         */
+        public static final RangePolicy CLAMP = new RangePolicy(true, null);
+
+        /** Fail the batch. The production default. */
+        public static final RangePolicy STRICT = new RangePolicy(false, null);
+
+        private static final DateTimeFormatter BOUND_FORMAT =
+                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC);
+
+        private final boolean clamp;
+        private final String column;
+
+        private RangePolicy(boolean clamp, String column) {
+            this.clamp = clamp;
+            this.column = column;
+        }
+
+        /**
+         * The policy for one bound column, from the connector configuration.
+         *
+         * @param config the connector configuration (null means strict)
+         * @param column the column being bound, e.g. {@code db.orders.expires_at};
+         *               may be null when unknown
+         * @return the policy
+         */
+        public static RangePolicy of(ClickHouseSinkConnectorConfig config, String column) {
+            boolean clamp = config != null && config.getBoolean(
+                    ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE.toString());
+            return new RangePolicy(clamp, column);
+        }
+
+        /** Whether out-of-range values are saturated rather than rejected. */
+        public boolean clamps() {
+            return clamp;
+        }
+
+        /** The column label carried into messages, or null. */
+        public String column() {
+            return column;
+        }
+
+        /**
+         * Bounds a DateTime/DateTime64 instant; {@code rangeExceeded[0]} is set
+         * when the value was outside the range (the callers then render the
+         * bound in UTC).
+         */
+        Instant boundDateTime(Instant provided, ClickHouseDataType type, boolean[] rangeExceeded) {
+            Instant bounded = checkIfDateTimeExceedsSupportedRange(provided, type, rangeExceeded);
+            if (rangeExceeded[0]) {
+                report(provided.toString(), BOUND_FORMAT.format(bounded), type.name(), dateTimeBounds(type));
+            }
+            return bounded;
+        }
+
+        /** Bounds a Date/Date32 value given as epoch days. */
+        int boundDate(int epochDays, ClickHouseDataType type) {
+            int bounded = DateConverter.checkIfDateExceedsSupportedRange(epochDays, type);
+            if (bounded != epochDays) {
+                report(LocalDate.ofEpochDay(epochDays).toString(), LocalDate.ofEpochDay(bounded).toString(),
+                        type.name(), dateBounds(type));
+            }
+            return bounded;
+        }
+
+        /** Bounds a TIMESTAMP (ZonedTimestamp) instant to the DateTime64 range. */
+        Instant boundZonedTimestamp(Instant provided) {
+            long millis = provided.toEpochMilli();
+            Instant bounded = provided;
+            if (millis > BinaryStreamUtils.DATETIME64_MAX * 1000) {
+                bounded = Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX);
+            } else if (millis < BinaryStreamUtils.DATETIME64_MIN * 1000) {
+                bounded = Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN);
+            }
+            if (bounded != provided) {
+                report(provided.toString(), BOUND_FORMAT.format(bounded), ClickHouseDataType.DateTime64.name(),
+                        dateTimeBounds(ClickHouseDataType.DateTime64));
+            }
+            return bounded;
+        }
+
+        /** Bounds a decimal to the Decimal128 range. */
+        BigDecimal boundDecimal(BigDecimal value) {
+            BigDecimal bounded = value;
+            if (value.compareTo(BinaryStreamUtils.DECIMAL128_MAX) > 0) {
+                bounded = BinaryStreamUtils.DECIMAL128_MAX;
+            } else if (value.compareTo(BinaryStreamUtils.DECIMAL128_MIN) < 0) {
+                bounded = BinaryStreamUtils.DECIMAL128_MIN;
+            }
+            if (bounded != value) {
+                report(value.toPlainString(), bounded.toPlainString(), "Decimal128",
+                        "[" + BinaryStreamUtils.DECIMAL128_MIN.toPlainString() + " .. "
+                                + BinaryStreamUtils.DECIMAL128_MAX.toPlainString() + "]");
+            }
+            return bounded;
+        }
+
+        private void report(String provided, String bounded, String type, String bounds) {
+            String where = column == null ? "" : " for column " + column;
+            if (clamp) {
+                log.warn("Value {}{} is outside the ClickHouse {} range {}; stored as {} ({}=true)",
+                        provided, where, type, bounds, bounded,
+                        ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE);
+                return;
+            }
+            throw new ValueOutOfRangeException(String.format(
+                    "Value %s%s is outside the ClickHouse %s range %s. Refusing to store %s in its "
+                            + "place: the source never held that value. Widen the ClickHouse column "
+                            + "type, or set %s=true to saturate out-of-range values (each one is then "
+                            + "logged at WARN).",
+                    provided, where, type, bounds, bounded,
+                    ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE));
+        }
+
+        private static String dateTimeBounds(ClickHouseDataType type) {
+            if (type == ClickHouseDataType.DateTime || type == ClickHouseDataType.DateTime32) {
+                return "[" + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MIN) + " .. "
+                        + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX) + "]";
+            }
+            return "[" + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME64_MIN) + " .. "
+                    + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME64_MAX) + "]";
+        }
+
+        private static String dateBounds(ClickHouseDataType type) {
+            if (type == ClickHouseDataType.Date32) {
+                return "[" + LocalDate.ofEpochDay(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATE32) + " .. "
+                        + LocalDate.ofEpochDay(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATE32) + "]";
+            }
+            return "[" + LocalDate.ofEpochDay(0) + " .. " + LocalDate.ofEpochDay(BinaryStreamUtils.U_INT16_MAX) + "]";
+        }
+    }
 
 
     public static class MicroTimeConverter {
@@ -83,6 +238,18 @@ public class DebeziumConverter {
         public static String convert(Object value, ZoneId sourceTimezone,
                                      ZoneId serverTimezone, ClickHouseDataType clickHouseDataType,
                                      ZoneId columnTimeZone) {
+            return convert(value, sourceTimezone, serverTimezone, clickHouseDataType, columnTimeZone,
+                    RangePolicy.CLAMP);
+        }
+
+        /**
+         * As {@link #convert(Object, ZoneId, ZoneId, ClickHouseDataType, ZoneId)},
+         * applying {@code policy} to a value outside the ClickHouse range
+         * (Spec 07.03 section 3.3). The policy-less overloads saturate and WARN.
+         */
+        public static String convert(Object value, ZoneId sourceTimezone,
+                                     ZoneId serverTimezone, ClickHouseDataType clickHouseDataType,
+                                     ZoneId columnTimeZone, RangePolicy policy) {
             ZoneId formatZone = columnTimeZone == null ? serverTimezone : columnTimeZone;
             Long epochMicroSeconds = (Long) value;
 
@@ -102,8 +269,8 @@ public class DebeziumConverter {
                 long nanos = (epochMicroSeconds % 1_000_000L) * 1_000L;
                 Instant i = Instant.ofEpochSecond(seconds, nanos);
                 boolean[] rangeExceeded = new boolean[1];
-                Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
-                return modifiedDT.atZone(ZoneOffset.UTC).format(destFormatter).toString();
+                Instant modifiedDT = policy.boundDateTime(i, clickHouseDataType, rangeExceeded);
+                return modifiedDT.atZone(ZoneOffset.UTC).format(destFormatter);
             }
 
             // sourceTimezone != serverTimezone: offset correction for "wrong epoch" encoding
@@ -126,7 +293,7 @@ public class DebeziumConverter {
             Instant i = Instant.ofEpochSecond(seconds, nanos);
 
             boolean[] rangeExceeded = new boolean[1];
-            Instant modifiedDT = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
+            Instant modifiedDT = policy.boundDateTime(i, clickHouseDataType, rangeExceeded);
             if(rangeExceeded[0]) {
                 return modifiedDT.atZone(ZoneOffset.UTC).format(destFormatter).toString();
             }
@@ -160,6 +327,17 @@ public class DebeziumConverter {
          */
         public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone,
                                      ZoneId serverTimezone, ZoneId columnTimeZone) {
+            return convert(value, clickHouseDataType, sourceTimeZone, serverTimezone, columnTimeZone,
+                    RangePolicy.CLAMP);
+        }
+
+        /**
+         * As {@link #convert(Object, ClickHouseDataType, ZoneId, ZoneId, ZoneId)},
+         * applying {@code policy} to a value outside the ClickHouse range
+         * (Spec 07.03 section 3.3). The policy-less overloads saturate and WARN.
+         */
+        public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone,
+                                     ZoneId serverTimezone, ZoneId columnTimeZone, RangePolicy policy) {
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
             if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
@@ -180,7 +358,7 @@ public class DebeziumConverter {
                 // America/Chicago became 01:30:00), silently. Same rule as
                 // MicroTimestampConverter (Spec 07.03 section 3.1.1).
                 Instant encoded = Instant.ofEpochMilli(epochMillis);
-                Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(encoded, clickHouseDataType, rangeExceeded);
+                Instant modifiedDTWithLimits = policy.boundDateTime(encoded, clickHouseDataType, rangeExceeded);
                 return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
             }
 
@@ -195,7 +373,7 @@ public class DebeziumConverter {
                     : sourceTimeZone.getRules().getOffset(wallTime);
             Instant i = wallTime.toInstant(sourceOffset);
 
-            Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
+            Instant modifiedDTWithLimits = policy.boundDateTime(i, clickHouseDataType, rangeExceeded);
             if (rangeExceeded[0]) {
                 // return the modifiedDTWithLimits as a string without timezone conversion
                 return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
@@ -321,7 +499,16 @@ public class DebeziumConverter {
          * @return
          */
         public static Date convert(Object value, ClickHouseDataType chDataType) {
-            Integer epochInDays = checkIfDateExceedsSupportedRange((Integer) value, chDataType);
+            return convert(value, chDataType, RangePolicy.CLAMP);
+        }
+
+        /**
+         * As {@link #convert(Object, ClickHouseDataType)}, applying {@code policy}
+         * to a value outside the ClickHouse Date/Date32 range (Spec 07.03
+         * section 3.3). The policy-less overload saturates and WARNs.
+         */
+        public static Date convert(Object value, ClickHouseDataType chDataType, RangePolicy policy) {
+            int epochInDays = policy.boundDate((Integer) value, chDataType);
             LocalDate d = LocalDate.ofEpochDay(epochInDays);
 
             return Date.valueOf(d);
@@ -373,6 +560,17 @@ public class DebeziumConverter {
          * @return
          */
         public static String convert(Object value, ZoneId serverTimezone) {
+            return convert(value, serverTimezone, RangePolicy.CLAMP);
+        }
+
+        /**
+         * As {@link #convert(Object, ZoneId)}, applying {@code policy} to an
+         * instant outside the DateTime64 range (Spec 07.03 section 3.3). The
+         * PostgreSQL {@code infinity} / {@code -infinity} literals keep their
+         * documented saturation under either policy: they are not out-of-range
+         * numbers but values with no finite representation.
+         */
+        public static String convert(Object value, ZoneId serverTimezone, RangePolicy policy) {
 
             String result = "";
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS")
@@ -424,35 +622,25 @@ public class DebeziumConverter {
                     "yyyy-MM-dd'T'HH:mm:ss"
             };
 
-            boolean parsingSuccesful = false;
+            ZonedDateTime parsed = null;
             for (String formatString : date_formats) {
                 try {
                     DateTimeFormatter formatter = DateTimeFormatter.ofPattern(formatString)
                             .withZone(serverTimezone);
-                    ZonedDateTime zd = ZonedDateTime.parse((String) value,
-                            formatter.withZone(serverTimezone));
-
-                    long dateTimeInMs = zd.toInstant().toEpochMilli();
-                    if (dateTimeInMs > BinaryStreamUtils.DATETIME64_MAX * 1000) {
-                        zd = ZonedDateTime.ofInstant(
-                                Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX),
-                                serverTimezone);
-                    } else if (dateTimeInMs < BinaryStreamUtils.DATETIME64_MIN * 1000) {
-                        zd = ZonedDateTime.ofInstant(
-                                Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN),
-                                serverTimezone);
-                    }
-                    result = zd.format(destFormatter);
-                    parsingSuccesful = true;
+                    parsed = ZonedDateTime.parse((String) value, formatter.withZone(serverTimezone));
                     break;
                 } catch (Exception e) {
                     // Continue to next format
                 }
             }
-            if (parsingSuccesful == false) {
+            if (parsed == null) {
                 log.error("Error parsing zonedtimestamp " + (String) value);
+                return result;
             }
-            return result;
+            // Bounded outside the parse loop: a rejected value must fail the
+            // batch, not be mistaken for a format mismatch.
+            Instant bounded = policy.boundZonedTimestamp(parsed.toInstant());
+            return ZonedDateTime.ofInstant(bounded, serverTimezone).format(destFormatter);
         }
     }
 
@@ -484,17 +672,20 @@ public class DebeziumConverter {
          * @return the truncated BigDecimal value.
          */
         public BigDecimal truncate(BigDecimal value) {
-            if (value.compareTo(BinaryStreamUtils.DECIMAL128_MAX) > 0) {
-                log.warn("Decimal value {} is greater than max value {}",
-                        value, BinaryStreamUtils.DECIMAL128_MAX);
-                return BinaryStreamUtils.DECIMAL128_MAX;
-            } else if (value.compareTo(BinaryStreamUtils.DECIMAL128_MIN) < 0) {
-                log.warn("Decimal value {} is less than min value {}",
-                        value, BinaryStreamUtils.DECIMAL128_MIN);
-                return BinaryStreamUtils.DECIMAL128_MIN;
-            } else {
-                return value;
-            }
+            return truncate(value, RangePolicy.CLAMP);
+        }
+
+        /**
+         * As {@link #truncate(BigDecimal)}, applying {@code policy} to a value
+         * outside the Decimal128 range (Spec 07.03 section 3.3). The
+         * policy-less overload saturates and WARNs.
+         *
+         * @param value the BigDecimal value to bound.
+         * @param policy the out-of-range policy.
+         * @return the bounded value.
+         */
+        public BigDecimal truncate(BigDecimal value, RangePolicy policy) {
+            return policy.boundDecimal(value);
         }
     }
 }

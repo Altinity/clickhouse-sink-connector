@@ -331,8 +331,13 @@ public class PreparedStatementFieldMapper {
             // ClickHouse parses a DateTime literal in the COLUMN's declared
             // zone, so instants must be rendered in it (Spec 07.03 section 3.1.3).
             ZoneId columnTimeZone = ClickHouseDataTypeMapper.columnTimeZoneOf(column);
+            // A value outside the ClickHouse type's range fails the batch unless
+            // clamp.out.of.range=true; either way the column is named (Spec
+            // 07.03 section 3.3).
+            DebeziumConverter.RangePolicy rangePolicy = DebeziumConverter.RangePolicy.of(config,
+                    databaseName + "." + tableName + "." + colName);
             if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType,
-                    serverTimeZone, columnTimeZone)) {
+                    serverTimeZone, columnTimeZone, rangePolicy)) {
                 log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
                         schemaName, colName));
             }
