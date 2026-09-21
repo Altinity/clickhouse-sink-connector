@@ -20,14 +20,14 @@ import java.util.Map;
  * <p>JDK proxies are used because this module has no mocking framework on its
  * test classpath (see {@code GroupInsertQueryWithBatchRecordsTest}).</p>
  */
-final class RecordingJdbc {
+public final class RecordingJdbc {
 
     /** One observable JDBC call. */
-    static final class Event {
-        final String kind;
-        final String sql;
+    public static final class Event {
+        public final String kind;
+        public final String sql;
         /** Parameters bound at the time of an {@code ADD_BATCH}; empty for other kinds. */
-        final Map<Integer, Object> params;
+        public final Map<Integer, Object> params;
 
         Event(String kind, String sql, Map<Integer, Object> params) {
             this.kind = kind;
@@ -41,25 +41,25 @@ final class RecordingJdbc {
         }
     }
 
-    static final String PREPARE = "PREPARE";
-    static final String ADD_BATCH = "ADD_BATCH";
-    static final String EXECUTE_BATCH = "EXECUTE_BATCH";
-    static final String EXECUTE = "EXECUTE";
+    public static final String PREPARE = "PREPARE";
+    public static final String ADD_BATCH = "ADD_BATCH";
+    public static final String EXECUTE_BATCH = "EXECUTE_BATCH";
+    public static final String EXECUTE = "EXECUTE";
 
     /** Every call, in the order it happened. */
-    final List<Event> events = new ArrayList<>();
+    public final List<Event> events = new ArrayList<>();
 
     /**
      * When non-null, {@code prepareStatement(sql)} throws {@link SQLException}
      * for every SQL text containing this marker (simulates ClickHouse
      * rejecting the statement).
      */
-    String failPrepareContaining = null;
+    public String failPrepareContaining = null;
 
     /** How many times {@code prepareStatement} was refused. */
-    int prepareFailures = 0;
+    public int prepareFailures = 0;
 
-    List<Event> ofKind(String kind) {
+    public List<Event> ofKind(String kind) {
         List<Event> out = new ArrayList<>();
         for (Event e : events) {
             if (e.kind.equals(kind)) {
@@ -70,7 +70,7 @@ final class RecordingJdbc {
     }
 
     /** Kinds in order, e.g. {@code [PREPARE, ADD_BATCH, EXECUTE_BATCH]}. */
-    List<String> kinds() {
+    public List<String> kinds() {
         List<String> out = new ArrayList<>();
         for (Event e : events) {
             out.add(e.kind);
@@ -127,7 +127,7 @@ final class RecordingJdbc {
                 new Class<?>[]{PreparedStatement.class}, h);
     }
 
-    Connection connection() {
+    public Connection connection() {
         InvocationHandler h = (proxy, method, args) -> {
             switch (method.getName()) {
                 case "prepareStatement": {

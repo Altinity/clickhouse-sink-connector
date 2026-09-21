@@ -21,7 +21,7 @@ Specifies the accumulation, chunking, and JDBC `executeBatch()` dispatching of p
 
 ### 3.2 JDBC Batch Execution
 For each partition:
-- a `PreparedStatement` is obtained from `DBMetadata.getPreparedStatement(conn, insertQuery)`;
+- a `PreparedStatement` is obtained from `DBMetadata.getPreparedStatement(conn, insertQuery)` (which throws `SQLException` after `MAX_RETRIES` refused attempts rather than returning `null`, spec 04.05 §3 step 2);
 - rows are bound by `PreparedStatementFieldMapper.insertPreparedStatement` (before/after image per operation), a sorting-key relocation additionally binds a tombstone (`insertTombstonePreparedStatement`, spec 05.02), each followed by `ps.addBatch()`;
 - a TRUNCATE record flushes the rows staged so far and truncates in place (spec 04.05);
 - `int[] batchResult = ps.executeBatch()` sends the partition.
