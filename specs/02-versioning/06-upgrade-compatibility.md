@@ -126,6 +126,20 @@ seed source, and §6.3 the rows no scheme can continue above.
 
 > **Compatibility constraint (governing rule).** The emitted `_version` domain — `ts_ms × 1_000_000 + counter` with the 2.8.0 seeds — is the contract shared with 2.8.0, 2.9.1 and 2.10.x. It MUST NOT change: a version written by any of those releases must rank consistently against one written by 2.11.0 in BOTH directions (upgrade and downgrade). The restart carry described here is therefore inherited 2.8.0 behaviour that is preserved deliberately; any improvement is confined to WHERE the restart floor starts (seeding the anchor from the target's `max(_version)` or a persisted last-emitted version) and must ship with an explicit upgrade/downgrade matrix against 2.8.0, 2.9.1 and 2.10.x.
 
+**What 2.11.0 does and does not change in the `_version` domain.** The formula
+(`effectiveTs * 1_000_000 + counter`), the 2.8.0 seeds (`SEQUENCE_START_INITIAL`
+= 500m, `SEQUENCE_START` = 1e9) and the snowflake bit layout
+(`SnowFlakeId.generate(ts, gtid)`: 41 timestamp bits above a 22-bit transaction
+number) are byte-identical to 2.8.0, 2.9.1 and 2.10.x — `SnowFlakeId` only gained
+public constants (`SNOWFLAKE_EPOCH`, `GTID_FIELD_BITS`) so the startup seed can
+decode stored values. Only what feeds the formula changed: the floor is seeded
+across a restart (spec 02.02 §3.5), control records no longer move it (spec 02.02
+§3.2), the high-water position resets on a log basename change (spec 01.02
+§3.1.1), and the GTID path feeds the clamped `effectiveTs` instead of the raw
+`source.ts_ms` (spec 02.01 §3.1). A version written by any of the four releases
+is therefore comparable with any other by plain integer order, in both
+directions.
+
 The carry is unchanged: the first record after any start is still versioned with
 the counter seeded at `SEQUENCE_START_INITIAL` (500m) in
 `effectiveTs * 1_000_000 + seq`, whose six low digits the ten-digit seeds
