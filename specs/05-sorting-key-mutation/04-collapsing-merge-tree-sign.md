@@ -21,6 +21,21 @@ The sign is bound only when `engine == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_
 
 `VersionedCollapsingMergeTree` is not a recognised engine on this path; only `COLLAPSING_MERGE_TREE` triggers the binding. ClickHouse collapses matching `+1`/`-1` pairs during background merges. Because sign rows are additive, a replayed `+1` does not cancel against a single `-1`; the connector therefore never auto-creates this engine (spec 02.04 §3.3, `ReplaySafetyTest`).
 
+### 3.1 An UPDATE stages the cancel row, then the live row
+In `PreparedStatementExecutor.executePreparedStatement`, the UPDATE branch on a
+`CollapsingMergeTree` target performs, in this order:
+1. `insertPreparedStatement(before image, beforeSection = true)` → `sign = -1`;
+2. `ps.addBatch()` — the cancel row is staged;
+3. `insertPreparedStatement(after image, beforeSection = false)` → `sign = +1`;
+4. `ps.addBatch()` — the live row is staged.
+
+The cancel row is what retires the pre-update row under collapsing merges.
+Step 2 was missing: the before image was bound and then overwritten in place
+by the after image before the only `addBatch()`, so no `-1` row ever reached
+ClickHouse, and because the grouping stage appended every UPDATE twice (spec
+04.04 §3.1) each UPDATE produced two `+1` rows — the table grew by two live
+rows per update and nothing ever collapsed.
+
 ---
 
 ## 4. Invariants Preserved
@@ -31,4 +46,6 @@ The sign is bound only when `engine == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_
 ## 5. Verification Criteria
 - `ReplaySafetyTest.testEngineIdentityDoesNotDependOnStringInterning()` — the engine test that gates the sign binding compares the enum constant.
 - `ReplaySafetyTest.testAutoCreatedEnginesAreReplaceNotAdditive()` — auto-create never emits `CollapsingMergeTree`.
+- `PreparedStatementExecutorCollapsingSignTest.testUpdateStagesCancelRowThenLiveRow()` — §3.1: a recording `PreparedStatement` observes the sign bound at each `addBatch()` for one UPDATE as `[-1, +1]`, the first row carrying the before-image values and the second the after-image values.
+- `PreparedStatementExecutorCollapsingSignTest.testInsertStagesOneLiveRow()`, `PreparedStatementExecutorCollapsingSignTest.testDeleteStagesOneCancelRow()` — an INSERT stages exactly `[+1]`, a DELETE exactly `[-1]`.
 - Verification: an integration test asserting that `-1` rows collapse against their `+1` counterparts on a `CollapsingMergeTree` target is not yet covered by an automated test (gap).

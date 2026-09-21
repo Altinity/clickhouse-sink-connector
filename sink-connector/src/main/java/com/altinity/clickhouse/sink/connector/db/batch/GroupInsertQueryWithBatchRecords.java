@@ -133,35 +133,31 @@ public class GroupInsertQueryWithBatchRecords {
                         record.getAfterModifiedFields(), queryToRecordsMap,
                         tableName, config, columnNameToDataTypeMap);
             }
-            // UPDATE: This creates 2 records, one with before and another one with after.
+            // UPDATE: the record carries a before and an after image. It is
+            // grouped ONCE, under the template built from the after image;
+            // PreparedStatementExecutor binds whichever images the engine
+            // needs (the before image shares the schema, so it resolves to the
+            // same template and the same parameter map). Grouping it once per
+            // image -- the previous behaviour -- appended the SAME record twice
+            // to the same list, so every UPDATE was bound and written twice:
+            // 2x write amplification on ReplacingMergeTree, and two +1 rows
+            // with no -1 row on CollapsingMergeTree (Spec 04.01 section 3.2,
+            // 04.04 section 3.1).
             else if (CdcRecordState.CDC_RECORD_STATE_BOTH ==
                     getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                // if replication history is enabled, then dont split to 2 records.
-                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-                        result = updateQueryToRecordsMap(record,
-                                record.getAfterModifiedFields(), queryToRecordsMap,
-                                tableName, config, columnNameToDataTypeMap);
-                        // `continue`, NOT `return`: this is inside the per-record
-                        // loop. Returning here abandoned every remaining record in
-                        // the batch the moment the first UPDATE was seen -- silently,
-                        // with no error and no metric, while the offset still
-                        // advanced past the discarded rows. A single MySQL statement
-                        // touching N rows emits N records in one batch, so all but
-                        // the first were lost. Only history mode took this branch,
-                        // which is why the standard flow was unaffected.
-                        continue;
-                }
-                                
-                if (record.getBeforeModifiedFields() != null) {
-                    result = updateQueryToRecordsMap(record,
-                            record.getBeforeModifiedFields(), queryToRecordsMap,
-                            tableName, config, columnNameToDataTypeMap);
-                }
-                if (record.getAfterModifiedFields() != null) {
-                    result = updateQueryToRecordsMap(record,
-                            record.getAfterModifiedFields(), queryToRecordsMap,
-                            tableName, config, columnNameToDataTypeMap);
-                }
+                // In history mode the handler builds its own SCD Type 2
+                // statement from the after image; the standard flow binds
+                // both images from the one entry. Either way: one entry.
+                //
+                // No early `return` here: returning from inside the per-record
+                // loop abandoned every remaining record in the batch the moment
+                // the first UPDATE was seen -- silently, with no error and no
+                // metric, while the offset still advanced past the discarded
+                // rows. A single MySQL statement touching N rows emits N
+                // records in one batch, so all but the first were lost.
+                result = updateQueryToRecordsMap(record,
+                        record.getAfterModifiedFields(), queryToRecordsMap,
+                        tableName, config, columnNameToDataTypeMap);
             } else {
                 log.error("************ RECORD DROPPED: INVALID CDC RECORD " +
                         "STATE *****************" + record.getSourceRecord());

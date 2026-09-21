@@ -24,6 +24,14 @@ Because schema evolution or sparse CDC records can produce differing column subs
 - The batch is grouped into `Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap` (there is no `QueryTemplate` class; the pair is the key).
 - All records in a bucket share a single `PreparedStatement`, minimizing SQL parsing overhead on ClickHouse.
 
+### 3.2 One record, one entry
+Every record contributes exactly one entry to exactly one bucket. In
+particular an UPDATE (which carries a `before` and an `after` image) is
+grouped once, under the template built from its `after` image; the executor
+binds both images through that template's parameter map (spec 04.04 §3.1).
+Appending the record once per image — the previous behaviour — put the same
+record twice in the same list, so it was bound and written twice.
+
 ---
 
 ## 4. Invariants Preserved
@@ -33,4 +41,4 @@ Because schema evolution or sparse CDC records can produce differing column subs
 
 ## 5. Verification Criteria
 - `DbWriterTest.testGroupRecords()` — records with differing column sets group into distinct templates.
-- `GroupInsertQueryHistoryMultiRowTest.standardModeStillSplitsUpdateIntoBeforeAndAfter()`, `GroupInsertQueryHistoryMultiRowTest.allRowsOfAMultiRowUpdateAreGroupedInHistoryMode()` — grouping across update images in both modes.
+- `GroupInsertQueryHistoryMultiRowTest.standardModeGroupsEachUpdateOnce()`, `GroupInsertQueryHistoryMultiRowTest.standardModeGroupsOneUpdateUnderOneTemplateOnce()`, `GroupInsertQueryHistoryMultiRowTest.allRowsOfAMultiRowUpdateAreGroupedInHistoryMode()` — §3.2: one entry per record in both modes.

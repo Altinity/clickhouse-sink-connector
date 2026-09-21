@@ -149,12 +149,18 @@ public class GroupInsertQueryHistoryMultiRowTest {
     }
 
     /**
-     * Regression guard for the standard flow: with history mode DISABLED an
-     * UPDATE is still split into before and after, so 20 updates yield 40 rows.
-     * This branch was never affected and must stay unchanged.
+     * Spec 04.01 section 3.2 / 04.04 section 3.1: in the standard flow an
+     * UPDATE is grouped ONCE, so 20 updates yield 20 grouped records.
+     *
+     * <p>This deliberately flips the earlier assertion of 40. The before and
+     * after images of one UPDATE resolve to the same template, so appending
+     * the record once per image put the SAME record twice in the same list,
+     * and the executor bound and wrote it twice: 2x write amplification on
+     * ReplacingMergeTree and, on CollapsingMergeTree, two +1 rows and no -1
+     * row. The executor binds both images itself from the one entry.</p>
      */
     @Test
-    public void standardModeStillSplitsUpdateIntoBeforeAndAfter() {
+    public void standardModeGroupsEachUpdateOnce() {
         List<ClickHouseStruct> records = new ArrayList<>();
         for (int id = 1; id <= 20; id++) {
             records.add(updateRecord(id, id));
@@ -167,7 +173,27 @@ public class GroupInsertQueryHistoryMultiRowTest {
                 new ClickHouseSinkConnectorConfig(new HashMap<>()),
                 TABLE, DB, null, columns());
 
-        Assert.assertEquals("standard mode must still emit before+after per UPDATE",
-                40, groupedRecordCount(grouped));
+        Assert.assertEquals("standard mode must group each UPDATE exactly once; appending it "
+                        + "per image writes every UPDATE twice",
+                20, groupedRecordCount(grouped));
+    }
+
+    /**
+     * The same rule stated on a single record: one UPDATE, one template, a
+     * record list of size 1.
+     */
+    @Test
+    public void standardModeGroupsOneUpdateUnderOneTemplateOnce() {
+        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> grouped =
+                new HashMap<>();
+
+        new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
+                new ArrayList<>(List.of(updateRecord(1, 1))), grouped, new HashMap<>(),
+                new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                TABLE, DB, null, columns());
+
+        Assert.assertEquals("one UPDATE resolves to one template", 1, grouped.size());
+        Assert.assertEquals("the template's record list must hold the UPDATE once",
+                1, grouped.values().iterator().next().size());
     }
 }

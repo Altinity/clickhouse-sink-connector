@@ -291,8 +291,15 @@ public class PreparedStatementExecutor {
                     // UPDATE HISTORY MODE.
                     else if (CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         if (engine != null && engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
+                            // CollapsingMergeTree: the before image is the -1
+                            // cancel row that retires the pre-update row. It
+                            // must be STAGED before the after image is bound,
+                            // or the after image simply overwrites the same
+                            // parameters and the only row that reaches
+                            // ClickHouse is a second +1 (Spec 05.04 section 3.1).
                             fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
+                            ps.addBatch();
                         }
                         // ReplacingMergeTree deduplicates by SORTING KEY. An UPDATE that
                         // changes any sorting-key column therefore writes the new row at a
