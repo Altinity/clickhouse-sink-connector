@@ -37,6 +37,53 @@ public class GroupInsertQueryWithBatchRecords {
             LogManager.getLogger(GroupInsertQueryWithBatchRecords.class);
 
     /**
+     * The target table's resolved ReplacingMergeTree version column
+     * ({@code DbWriter.getVersionColumn()}), or null when unknown.
+     */
+    private final String versionColumn;
+
+    /**
+     * The target table's resolved CollapsingMergeTree sign column
+     * ({@code DbWriter.getSignColumn()}), or null when unknown.
+     */
+    private final String signColumn;
+
+    /**
+     * The target table's resolved ReplacingMergeTree delete column
+     * ({@code DbWriter.getReplacingMergeTreeDeleteColumn()}), or null to fall
+     * back to the configured {@code replacingmergetree.delete.column}.
+     */
+    private final String deleteColumn;
+
+    /**
+     * A grouper that knows only the connector's default engine-column names.
+     * The INSERT it builds retains {@code _version} / {@code is_deleted} /
+     * {@code _sign} and the configured delete column, but not an engine
+     * column with any other name -- use the resolved-column constructor on
+     * every production path.
+     */
+    public GroupInsertQueryWithBatchRecords() {
+        this(null, null, null);
+    }
+
+    /**
+     * A grouper that builds INSERTs for a table whose engine columns have
+     * been resolved from its engine clause (Spec 08.01 §3.1). The resolved
+     * names are treated as connector-managed columns: always in the INSERT
+     * column list, always bind parameters, whatever they are called.
+     *
+     * @param versionColumn the resolved version column, may be null.
+     * @param signColumn    the resolved sign column, may be null.
+     * @param deleteColumn  the resolved delete column, may be null.
+     */
+    public GroupInsertQueryWithBatchRecords(String versionColumn, String signColumn,
+                                            String deleteColumn) {
+        this.versionColumn = versionColumn;
+        this.signColumn = signColumn;
+        this.deleteColumn = deleteColumn;
+    }
+
+    /**
      * Groups records by their insert query template and updates the
      * topic-partition offset map.
      * <p>
@@ -330,10 +377,15 @@ public class GroupInsertQueryWithBatchRecords {
                                 ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN
                                         .toString()),
                         record.getDatabase(),
-                        config.getString(
-                                ClickHouseSinkConnectorConfigVariables
-                                        .REPLACING_MERGE_TREE_DELETE_COLUMN.toString()),
-                        schemaFields);
+                        // The table's resolved delete column when the writer
+                        // knows it (new-style RMT: read from the engine
+                        // clause), else the configured name.
+                        deleteColumn != null && !deleteColumn.isEmpty()
+                                ? deleteColumn
+                                : config.getString(
+                                        ClickHouseSinkConnectorConfigVariables
+                                                .REPLACING_MERGE_TREE_DELETE_COLUMN.toString()),
+                        schemaFields, versionColumn, signColumn);
 
         if (response == null || response.getKey() == null || response.getValue() == null) {
             throw new IllegalStateException(String.format(

@@ -467,6 +467,8 @@ public class PreparedStatementFieldMapper {
                                    DBMetadata.TABLE_ENGINE engine,
                                    boolean beforeSection) throws Exception {
         if (engine == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE && signColumn != null) {
+            requireEngineColumnPlaceholder(columnNameToIndexMap, config, columnNameToDataTypeMap,
+                    signColumn, "sign", "CollapsingMergeTree", "0, so no +1/-1 pair ever collapses");
             if (columnNameToDataTypeMap.containsKey(signColumn) && columnNameToIndexMap.containsKey(signColumn)) {
                 int signColumnIndex = columnNameToIndexMap.get(signColumn);
                 if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
@@ -599,6 +601,9 @@ public class PreparedStatementFieldMapper {
                 (engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() ||
                         engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine())
                 && versionColumn != null) {
+            requireEngineColumnPlaceholder(columnNameToIndexMap, config, columnNameToDataTypeMap,
+                    versionColumn, "version", "ReplacingMergeTree",
+                    "0, so a redelivered older row wins every merge");
             if (columnNameToDataTypeMap.containsKey(versionColumn)) {
                 if (columnNameToIndexMap.containsKey(versionColumn)) {
                     // Calculate version if not already set
@@ -623,6 +628,11 @@ public class PreparedStatementFieldMapper {
                                                        Map<String, String> columnNameToDataTypeMap,
                                                        boolean beforeSection) throws Exception {
         if (this.replacingMergeTreeDeleteColumn != null && columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
+            if (!config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())) {
+                requireEngineColumnPlaceholder(columnNameToIndexMap, config, columnNameToDataTypeMap,
+                        replacingMergeTreeDeleteColumn, "delete", "ReplacingMergeTree",
+                        "its default, so a DELETE inserts a LIVE row and the row is resurrected");
+            }
             if (columnNameToIndexMap.containsKey(replacingMergeTreeDeleteColumn) &&
                     !config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())) {
                 if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
@@ -654,6 +664,46 @@ public class PreparedStatementFieldMapper {
                 }
             }
         }
+    }
+
+    /**
+     * Refuses to write a row whose engine column exists in the table but has
+     * no placeholder in the generated INSERT.
+     *
+     * <p>Every engine column the table declares (version, sign, delete) is
+     * populated by the connector, never by the source, so it can only reach
+     * ClickHouse through a bind parameter. When the column is in the table
+     * but not in the parameter map, nothing binds it and ClickHouse stores
+     * the type default -- a silent, per-row corruption of the very column
+     * that decides which row survives a merge. That used to be skipped at
+     * DEBUG. It is the same class of defect as a dropped data column
+     * ({@code StaleSchemaCacheException} above) and is refused the same way
+     * (Spec 04.02 §3.1, 05.04 §3).</p>
+     *
+     * <p>Not applied in replication-history mode: there
+     * {@code QueryFormatter.getInsertQueryForUpdate} deliberately emits the
+     * engine columns as SQL literals and records no index for them
+     * ({@link #isUnboundByDesign}).</p>
+     */
+    private void requireEngineColumnPlaceholder(Map<String, Integer> columnNameToIndexMap,
+                                                ClickHouseSinkConnectorConfig config,
+                                                Map<String, String> columnNameToDataTypeMap,
+                                                String column, String role, String engineName,
+                                                String consequence) {
+        if (column == null || !columnNameToDataTypeMap.containsKey(column)
+                || columnNameToIndexMap.containsKey(column)) {
+            return;
+        }
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            return;
+        }
+        throw new IllegalStateException(String.format(
+                "The %s %s column '%s' exists in the ClickHouse table but the generated INSERT has "
+                        + "no placeholder for it, so nothing would bind it and ClickHouse would store "
+                        + "%s. The engine column names resolved from the table must reach query "
+                        + "construction (Spec 04.02 section 3.1). Refusing to write the row. "
+                        + "Database(%s)",
+                engineName, role, column, consequence, databaseName));
     }
 
     /**

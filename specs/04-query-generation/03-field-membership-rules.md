@@ -34,6 +34,9 @@ Incoming Record Field Evaluation
 ### 3.2 Production Hazard Prevented
 In earlier versions, `null`-valued fields were omitted from the query column list. Consequently, ClickHouse applied column defaults (e.g. converting `NULL` to `0`, `""`, or `1970-01-01`), causing silent data divergence. The 2.11.0 rule strictly preserves explicit `NULL`s.
 
+### 3.2.1 Engine columns are members by name, not by record
+`_version`, the delete column and the sign column are never in the record's schema, so Case B would wrongly exclude them. They are retained by name — the defaults and the names resolved from the table's engine clause (spec 04.02 §3.1) — and a table engine column with no placeholder in the INSERT is refused at bind time rather than stored as its type default.
+
 ### 3.3 The Connect-schema default is the same hazard at bind time
 Membership (this spec) is decided from the record's unfiltered schema. The
 *value* bound for a member column is read with `Struct.getWithoutDefault`, never

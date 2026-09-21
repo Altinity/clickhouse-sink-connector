@@ -696,7 +696,12 @@ public class ClickHouseBatchWriter {
         List<Map<MutablePair<String, Map<String, Integer>>,
                 List<ClickHouseStruct>>> querySegments = new ArrayList<>();
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<>();
-        new GroupInsertQueryWithBatchRecords()
+        // The resolved engine columns (spec 08.01) must reach query
+        // construction: a version / sign / delete column with a
+        // non-default name is otherwise omitted from the INSERT and stored
+        // as the type default for every row (spec 04.02 section 3.1).
+        new GroupInsertQueryWithBatchRecords(writer.getVersionColumn(), writer.getSignColumn(),
+                writer.getReplacingMergeTreeDeleteColumn())
                 .groupQueryWithRecords(records, querySegments,
                         partitionToOffsetMap, this.config, tableName,
                         writer.getDatabaseName(), writer.getConnection(),

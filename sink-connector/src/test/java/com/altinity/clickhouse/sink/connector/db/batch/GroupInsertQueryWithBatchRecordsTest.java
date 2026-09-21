@@ -469,6 +469,30 @@ public class GroupInsertQueryWithBatchRecordsTest {
         assertTrue(e.getMessage().contains("table t"), e.getMessage());
     }
 
+    /**
+     * Spec 04.02 section 3.1: the resolved engine columns handed to the
+     * grouper become bind parameters of the INSERT, whatever they are called.
+     */
+    @Test
+    @DisplayName("Resolved version / delete column names become INSERT parameters")
+    public void resolvedEngineColumnsAreBoundParameters() {
+        Map<String, String> table = new LinkedHashMap<>();
+        table.put("id", "Int32");
+        table.put("note", "Nullable(String)");
+        table.put("ver", "UInt64");
+        table.put("removed", "UInt8");
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> segments =
+                new ArrayList<>();
+
+        new GroupInsertQueryWithBatchRecords("ver", null, "removed").groupQueryWithRecords(
+                new ArrayList<>(Collections.singletonList(insertCarryingNote())), segments,
+                new HashMap<>(), config(false), "t", "db", null, table);
+
+        MutablePair<String, Map<String, Integer>> key = segments.get(0).keySet().iterator().next();
+        assertTrue(key.getRight().containsKey("ver"), "ver must be a parameter: " + key.getLeft());
+        assertTrue(key.getRight().containsKey("removed"), "removed must be a parameter: " + key.getLeft());
+    }
+
     /** Regression guard: an ALIAS column keeps the pre-existing behaviour. */
     @Test
     @DisplayName("An ALIAS column is still ignored and proven absent")

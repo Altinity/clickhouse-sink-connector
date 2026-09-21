@@ -8,13 +8,13 @@ Specifies the binding of the sign column when replicating to ClickHouse tables u
 ## 2. Codebase Mapping on 2.11.0
 - **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/PreparedStatementFieldMapper.java`
 - **Method**: `private void handleSignColumn(Map<String, Integer> columnNameToIndexMap, PreparedStatement ps, ClickHouseStruct record, ClickHouseSinkConnectorConfig config, Map<String, String> columnNameToDataTypeMap, DBMetadata.TABLE_ENGINE engine, boolean beforeSection)`
-- **Sign column name**: the `signColumn` constructor argument (configured sign column; `null` disables the binding)
+- **Sign column name**: the `signColumn` constructor argument — the name resolved from the table's engine clause (`CollapsingMergeTree(sgn)` → `sgn`, `DbWriter.getSignColumn()`); `null` disables the binding
 
 ---
 
 ## 3. Operational Specification
 
-The sign is bound only when `engine == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE` (compared as the enum constant, never by engine string), `signColumn != null`, and the column exists both in the ClickHouse column map and in the statement's parameter map. Then:
+The sign is bound only when `engine == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE` (compared as the enum constant, never by engine string), `signColumn != null`, and the column exists both in the ClickHouse column map and in the statement's parameter map. A sign column that exists in the table but has no placeholder in the INSERT is refused with `IllegalStateException` (`requireEngineColumnPlaceholder`, spec 04.02 §3.1) rather than skipped: skipping it stored `sgn = 0` for every row and nothing ever collapsed. The resolved name is a connector-managed column of the INSERT whatever it is called (spec 04.02 §3.1). Then:
 - **DELETE**: `sign = -1`
 - **UPDATE**: `sign = -1` when binding the `before` image (`beforeSection == true`), `sign = 1` when binding the `after` image
 - **any other operation (INSERT, snapshot read)**: `sign = 1`
@@ -48,4 +48,5 @@ rows per update and nothing ever collapsed.
 - `ReplaySafetyTest.testAutoCreatedEnginesAreReplaceNotAdditive()` — auto-create never emits `CollapsingMergeTree`.
 - `PreparedStatementExecutorCollapsingSignTest.testUpdateStagesCancelRowThenLiveRow()` — §3.1: a recording `PreparedStatement` observes the sign bound at each `addBatch()` for one UPDATE as `[-1, +1]`, the first row carrying the before-image values and the second the after-image values.
 - `PreparedStatementExecutorCollapsingSignTest.testInsertStagesOneLiveRow()`, `PreparedStatementExecutorCollapsingSignTest.testDeleteStagesOneCancelRow()` — an INSERT stages exactly `[+1]`, a DELETE exactly `[-1]`.
+- `PreparedStatementFieldMapperEngineColumnTest.testNonStandardSignColumnIsBoundOrRefused()` — `CollapsingMergeTree(sgn)`: the sign is bound at `sgn`'s placeholder; a table sign column with no placeholder is refused.
 - Verification: an integration test asserting that `-1` rows collapse against their `+1` counterparts on a `CollapsingMergeTree` target is not yet covered by an automated test (gap).

@@ -7,7 +7,7 @@ Specifies how incoming records within a batch are partitioned into buckets shari
 
 ## 2. Codebase Mapping on 2.11.0
 - **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/GroupInsertQueryWithBatchRecords.java`
-- **Methods**: `public void groupQueryWithRecords(...)`, `public void updateQueryToRecordsMap(...)`, `private Map<String, String> refreshIfRecordHasUnknownColumn(...)` (spec 08.03)
+- **Methods**: `public void groupQueryWithRecords(...)`, `public void updateQueryToRecordsMap(...)`, `private Map<String, String> refreshIfRecordHasUnknownColumn(...)` (spec 08.03); constructed as `GroupInsertQueryWithBatchRecords(versionColumn, signColumn, deleteColumn)` with the writer's resolved engine columns (spec 04.02 §3.1)
 - **Executor entry point**: `PreparedStatementExecutor.addToPreparedStatementBatch(...)` in `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/PreparedStatementExecutor.java` (spec 03.06)
 - **Query construction**: `QueryFormatter.getInsertQueryUsingInputFunction(...)` in `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/QueryFormatter.java` (spec 04.02)
 
