@@ -567,6 +567,38 @@ public class QueryFormatter {
         return sb.toString();
     }
 
+    /** A one-column primary key in the map form the composite predicate takes. */
+    private static Map<String, Object> singlePrimaryKey(String columnName, Object value) {
+        Map<String, Object> primaryKey = new java.util.LinkedHashMap<>();
+        primaryKey.put(columnName, value);
+        return primaryKey;
+    }
+
+    /**
+     * The predicate that selects exactly one history row by its whole primary key:
+     * {@code `c1`=v1 AND `c2`=v2 ...}, each value formatted for its column type
+     * (spec 02.01 section 3.5 a). A record without a primary key cannot be closed
+     * and is refused loudly rather than closing every row of the table.
+     *
+     * @throws IllegalStateException if {@code primaryKey} is null or empty
+     */
+    String formatPrimaryKeyPredicate(String tableName, Map<String, String> columnNameToDataTypeMap,
+                                     Map<String, Object> primaryKey) {
+        if (primaryKey == null || primaryKey.isEmpty()) {
+            throw new IllegalStateException("History mode cannot close the previous row of " + tableName
+                    + ": the record carries no primary key column (spec 02.01 section 3.5 a)");
+        }
+        StringBuilder predicate = new StringBuilder();
+        for (Map.Entry<String, Object> column : primaryKey.entrySet()) {
+            if (predicate.length() > 0) {
+                predicate.append(" AND ");
+            }
+            predicate.append("`").append(column.getKey()).append("`=")
+                    .append(formatValueForSql(column.getValue(), columnNameToDataTypeMap.get(column.getKey())));
+        }
+        return predicate.toString();
+    }
+
     /**
      * Builds a 2-SELECT UNION ALL query for replication history DELETE (SCD2 delete pattern).
      * 1. First SELECT: Close the current active row (_valid_to = delete_timestamp, is_deleted = 0).
@@ -580,6 +612,25 @@ public class QueryFormatter {
                                           Map<String, String> columnNameToDataTypeMap,
                                           String primaryKeyColumnName,
                                           Object primaryKeyValue,
+                                          String validToMax,
+                                          String binlogRecordTimestamp,
+                                          long version,
+                                          String serverTimeZone) {
+        return getInsertQueryForDelete(tableName, columnNameToDataTypeMap,
+                singlePrimaryKey(primaryKeyColumnName, primaryKeyValue), validToMax, binlogRecordTimestamp,
+                version, serverTimeZone);
+    }
+
+    /**
+     * Composite-key form of {@link #getInsertQueryForDelete(String, Map, String, Object, String, String, long, String)}:
+     * the previous history row is selected by EVERY primary-key column
+     * ({@code primaryKey}: column name to value, in key order), so a table whose
+     * primary key has several columns closes exactly the row of that composite key
+     * (spec 02.01 section 3.5 a).
+     */
+    public MutablePair<String, Map<String, Integer>> getInsertQueryForDelete(String tableName,
+                                          Map<String, String> columnNameToDataTypeMap,
+                                          Map<String, Object> primaryKey,
                                           String validToMax,
                                           String binlogRecordTimestamp,
                                           long version,
@@ -634,14 +685,13 @@ public class QueryFormatter {
         removeTrailingComma(colNamesDelimitedForFirstSelect);
         removeTrailingComma(colNamesDelimitedForSecondSelect);
 
-        String primaryKeyDataType = columnNameToDataTypeMap.get(primaryKeyColumnName);
-        String formattedPrimaryKeyValue = formatValueForSql(primaryKeyValue, primaryKeyDataType);
+        String primaryKeyPredicate = formatPrimaryKeyPredicate(tableName, columnNameToDataTypeMap, primaryKey);
         String tableWithBackTicks = "`" + tableName + "`";
         String isDeletedCondition = columnNameToDataTypeMap.containsKey(
                 ClickHouseDbConstants.IS_DELETED_COLUMN) ? " AND `is_deleted` = 0" : "";
 
-        String whereClause = String.format("WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s",
-                primaryKeyColumnName, formattedPrimaryKeyValue, validToMax, serverTimeZone, isDeletedCondition);
+        String whereClause = String.format("WHERE %s AND `_valid_to` = toDateTime('%s', '%s')%s",
+                primaryKeyPredicate, validToMax, serverTimeZone, isDeletedCondition);
 
         String query = String.format(
             "INSERT INTO %s(%s) SELECT %s FROM %s FINAL %s UNION ALL SELECT %s FROM %s FINAL %s",
@@ -665,6 +715,26 @@ public class QueryFormatter {
                                                                              Map<String, String> columnNameToDataTypeMap,
                                           String primaryKeyColumnName,
                                           Object primaryKeyValue,
+                                          String validToMax,
+                                          String binlogRecordTimestamp,
+                                          long version,
+                                          ClickHouseConverter.CDC_OPERATION cdcOperation,
+                                          String serverTimeZone) {
+        return getInsertQueryForUpdate(tableName, columnNameToDataTypeMap,
+                singlePrimaryKey(primaryKeyColumnName, primaryKeyValue), validToMax, binlogRecordTimestamp,
+                version, cdcOperation, serverTimeZone);
+    }
+
+    /**
+     * Composite-key form of {@link #getInsertQueryForUpdate(String, Map, String, Object, String, String, long, ClickHouseConverter.CDC_OPERATION, String)}:
+     * both table-reading {@code SELECT}s (close the current row; re-insert the
+     * before image) select the previous history row by EVERY primary-key column
+     * ({@code primaryKey}: column name to value, in key order). Closing on the first
+     * column alone closed every row that shared it (spec 02.01 section 3.5 a).
+     */
+    public MutablePair<String, Map<String, Integer>> getInsertQueryForUpdate(String tableName,
+                                          Map<String, String> columnNameToDataTypeMap,
+                                          Map<String, Object> primaryKey,
                                           String validToMax,
                                           String binlogRecordTimestamp,
                                           long version,
@@ -779,9 +849,8 @@ public class QueryFormatter {
         removeTrailingComma(colNamesDelimitedForSecondSelect);
         removeTrailingComma(colNamesDelimitedForThirdSelect);
 
-        // Get the primary key data type and format the value appropriately
-        String primaryKeyDataType = columnNameToDataTypeMap.get(primaryKeyColumnName);
-        String formattedPrimaryKeyValue = formatValueForSql(primaryKeyValue, primaryKeyDataType);
+        // The predicate over the WHOLE primary key, each value formatted for its type.
+        String primaryKeyPredicate = formatPrimaryKeyPredicate(tableName, columnNameToDataTypeMap, primaryKey);
 
         String tableWithBackTicks = "`" + tableName + "`";
         
@@ -795,25 +864,23 @@ public class QueryFormatter {
         // 3. Insert "before" image (FROM TABLE - preserves original _valid_from)
         String query = String.format(
             "INSERT INTO %s(%s) " +
-            "SELECT %s FROM %s FINAL WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s " +
+            "SELECT %s FROM %s FINAL WHERE %s AND `_valid_to` = toDateTime('%s', '%s')%s " +
             "UNION ALL " +
             "SELECT %s " +  // NO FROM clause for second SELECT - uses parameters
             "UNION ALL " +
-            "SELECT %s FROM %s FINAL WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s",
+            "SELECT %s FROM %s FINAL WHERE %s AND `_valid_to` = toDateTime('%s', '%s')%s",
             tableWithBackTicks, 
             colNamesDelimited, 
             colNamesDelimitedForFirstSelect, 
             tableWithBackTicks, 
-            primaryKeyColumnName, 
-            formattedPrimaryKeyValue, 
+            primaryKeyPredicate,
             validToMax,
             serverTimeZone,
             isDeletedCondition,
             colNamesDelimitedForSecondSelect,
             colNamesDelimitedForThirdSelect,
             tableWithBackTicks,
-            primaryKeyColumnName,
-            formattedPrimaryKeyValue,
+            primaryKeyPredicate,
             validToMax,
             serverTimeZone,
             isDeletedCondition

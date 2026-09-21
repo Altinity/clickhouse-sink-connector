@@ -36,5 +36,5 @@ When `replication.history.enable = true`:
 
 ## 5. Verification Criteria
 - `GroupInsertQueryHistoryMultiRowTest.standardModeStillSplitsUpdateIntoBeforeAndAfter()`, `GroupInsertQueryHistoryMultiRowTest.historyModeStillEmitsOneRowPerUpdate()`, `GroupInsertQueryHistoryMultiRowTest.recordsAfterTheFirstUpdateSurviveInHistoryMode()`.
-- `ReplicationHistoryHandlerTest` — history-column population.
+- `ReplicationHistoryHandlerTest` — history-column population; `ReplicationHistoryHandlerTest.compositePrimaryKeyClosesOnlyTheMatchingRow()` — the previous history row is closed by every primary-key column, not only the first (spec 02.01 §3.5 a).
 - `BinLogHistoryIT` — end to end history mode.
