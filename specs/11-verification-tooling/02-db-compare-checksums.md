@@ -375,6 +375,24 @@ skipped columns (`Not compared in table <db>.<table>: floating point columns
 
 (`test_checksum_fidelity.py::TestFloatAndJsonCoverage`)
 
+### 3.10 Removed dead paths
+- The replica script executed `CREATE FUNCTION IF NOT EXISTS format_decimal
+  ...` on every run. Nothing called it (decimals render with the built-in
+  `toDecimalString`, §3.3) and it required the `CREATE FUNCTION` privilege
+  for a read-only job; it is gone.
+- The replica script ran `select count(*) from <table>` before the checksum
+  and, "when the count was 0", printed `d41d8cd98f00b204e9800998ecf8427e`
+  (`md5('')`) with count 0. The branch could never run — `execute_sql`
+  returns the number of result rows, and a `count(*)` always returns one —
+  and its value would not have matched the source's empty-table value
+  `md5('0#0#0#0#0#')` (§3.5). The query is gone; the
+  `{partition_expression}` substitution it carried remains.
+- `--exclude_columns` takes `nargs='+'` on both sides (the replica side had
+  `nargs='*'`, so a bare `--exclude_columns` silently replaced the default
+  list of connector metadata columns with nothing). Both sides split each
+  token on commas.
+  (`test_checksum_fidelity.py::TestRemovedDeadPaths`)
+
 ---
 
 ## 4. Invariants Preserved
@@ -467,3 +485,40 @@ connect to a database.
   failure, no lock when disabled).
 - `sink-connector/python/db_compare/tests/mysql_table_checksum_test.py` —
   `{partition_expression}` substitution is literal, never `eval`.
+- `test_checksum_fidelity.py::TestRemovedDeadPaths` — §3.10: no
+  `CREATE FUNCTION` statement in the replica script, no count pre-check
+  before the aggregate, `--exclude_columns` is `nargs='+'` on both sides.
+
+---
+
+## 6. Known structural gaps (not fixed; stated so they are not mistaken for guarantees)
+1. **No length prefix in the row string.** Values are joined with `#` and
+   not escaped, so a value containing `#` shifts the boundaries: the rows
+   `('a#b', 'c')` and `('a', 'b#c')` hash identically, on both sides. A
+   divergence that moves a `#` between two adjacent text columns is
+   therefore invisible. The fix is a per-value length prefix (or escaping)
+   applied identically on both sides; it changes every historical checksum.
+2. **Word sums can wrap.** `a..d` are sums of 32-bit words in signed 64-bit
+   accumulators; past about 2^31 rows a sum may exceed 2^63 and wrap
+   (two's complement in both engines, so the two sides still agree, but the
+   sum is no longer injective over the multiset of words).
+3. **MySQL session-variable accumulation.** The source side accumulates
+   with `@a := @a + ...` in a `SELECT` list, whose evaluation order MySQL
+   documents as undefined (and the syntax is deprecated in 8.0). It works
+   because each row's terms are independent and only the total is used, but
+   a future MySQL may refuse the syntax; the replacement is a plain
+   `sum(conv(substring(md5(...), ...)))` without variables.
+4. **Positional hashing.** Columns are hashed in ordinal position without
+   their names, so a table whose columns are reordered on one side hashes
+   differently for equal values (noise), and two same-typed columns whose
+   values are swapped in every row hash identically to the swapped table
+   (masked). A per-column name prefix would remove both.
+5. **Driver partition filter.** With `--partition_date` the driver
+   substitutes `{partition_expression}=YYYYMMDD` on the source and
+   `{partition_expression}=toDate('YYYY-MM-DD')` on the replica
+   (`get_mysql_checksum_command()` / `get_clickhouse_checksum_command()`).
+   Both are correct only when the MySQL partition expression yields a
+   `YYYYMMDD` integer and the ClickHouse partition key is a `Date`; any
+   other pair compares different subsets.
+6. **Floating point and JSON opt-ins** are best-effort text comparisons
+   (§3.9).

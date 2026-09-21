@@ -163,8 +163,6 @@ def clickhouse_stub(columns, row_strings, clamped=0, engine_full=REPLACING_ENGIN
             rows = [("",)]
         elif 'count(*) as "cnt"' in lowered:
             rows = [reference_aggregate(row_strings) + (clamped,)]
-        elif lowered.startswith("select count(*) cnt from"):
-            rows = [(len(row_strings),)]
         else:
             raise AssertionError("unexpected ClickHouse statement in test: " + sql)
         return (rows, len(rows))
@@ -595,6 +593,30 @@ class TestFloatAndJsonCoverage(unittest.TestCase):
         for cmd in (mysql_cmd, clickhouse_cmd):
             self.assertIn("--include_floating_point_columns", cmd)
             self.assertIn("--include_json_columns", cmd)
+
+
+class TestRemovedDeadPaths(unittest.TestCase):
+    """Spec 11.02 section 3.10."""
+
+    def test_no_create_function_statement(self):
+        import inspect
+        self.assertFalse(hasattr(ch, "create_function_format_decimal"))
+        self.assertNotIn("CREATE FUNCTION", inspect.getsource(ch))
+
+    def test_no_count_precheck_before_the_aggregate(self):
+        ch.args = clickhouse_args()
+        stub = clickhouse_stub(CLICKHOUSE_COLUMNS, FIXTURE_ROWS)
+        with patch.object(ch, "get_connection", return_value=MagicMock()), \
+                patch.object(ch, "execute_sql", side_effect=stub), \
+                self.assertLogs(level="INFO"):
+            ch.calculate_checksum("t1", "user", "pw", None, None)
+        self.assertFalse(any(sql.lower().startswith("select count(*) cnt from") for sql in stub.executed), stub.executed)
+
+    def test_exclude_columns_nargs_match_on_both_sides(self):
+        def nargs(parser):
+            return [action for action in parser._actions if action.dest == "exclude_columns"][0].nargs
+        self.assertEqual(nargs(ch.build_argument_parser()), "+")
+        self.assertEqual(nargs(my.build_argument_parser()), "+")
 
 
 class TestSignColumn(unittest.TestCase):

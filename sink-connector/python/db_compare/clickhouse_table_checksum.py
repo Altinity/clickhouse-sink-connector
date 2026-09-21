@@ -375,27 +375,18 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where, parti
     #
     # Create new threads to execute the sync
     conn = get_connection(clickhouse_user, clickhouse_password)
-    # we need to count the values in CH first
-    sql = "select count(*) cnt from "+args.clickhouse_database+"."+table
-    if where:
-        if "{partition_expression}" in where:
-           if partition_key is None:
-                partition_key = get_table_partition_key(conn, args.clickhouse_database, table)
-                logging.info(partition_key)
-                if len(partition_key) > 0 :
-                    partition_key = partition_key[0][0]
-           if partition_key is None or partition_key=='':
-               logging.warning(f"{args.clickhouse_database}.{table} has no partitioning key")
-           where = fstr(where, partition_key)
-        sql = sql + " where " + where
-
-
-    (rowset, rowcount) = execute_sql(conn, sql)
-    if rowcount == 0:
-        logging.info("No rows in ClickHouse. Nothing to sync.")
-        logging.info("Checksum for table {schema}.{table} = d41d8cd98f00b204e9800998ecf8427e count 0".format(
-            schema=args.clickhouse_database, table=table))
-        return
+    if where and "{partition_expression}" in where:
+        if partition_key is None:
+            partition_key = get_table_partition_key(conn, args.clickhouse_database, table)
+            logging.info(partition_key)
+            if len(partition_key) > 0 :
+                partition_key = partition_key[0][0]
+        if partition_key is None or partition_key=='':
+            logging.warning(f"{args.clickhouse_database}.{table} has no partitioning key")
+        where = fstr(where, partition_key)
+    # An empty table goes through the aggregate like any other and prints
+    # md5('0#0#0#0#0#') count 0, the same value as the source side (spec 11.02
+    # section 3.5); there is no separate count pre-check.
     # generate the file from ClickHouse
     sign_column = args.sign_column
     if not sign_column:
@@ -420,8 +411,6 @@ def record_factory(*args, **kwargs):
 
 
 logging.setLogRecordFactory(record_factory)
-
-create_function_format_decimal = '''CREATE FUNCTION if not exists format_decimal AS (x, scale) -> toDecimalString(x, scale)'''
 
 def build_argument_parser():
     parser = argparse.ArgumentParser(description='''
@@ -450,7 +439,7 @@ def build_argument_parser():
     parser.add_argument('--hex_columns', help='with --binary_encoding raw: the String columns holding raw bytes, rendered as lower(hex(col)); comma or space separated', nargs='+', default=[])
     parser.add_argument('--debug', dest='debug', action='store_true', default=False)
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
-    parser.add_argument('--exclude_columns', help='columns exclude', nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
+    parser.add_argument('--exclude_columns', help='columns to exclude (comma or space separated)', nargs='+', default=['_sign,_version,is_deleted,_is_deleted'])
     parser.add_argument('--threads', type=int, help='number of parallel threads', default=1)
     parser.add_argument('--source_timezone', help='IANA time zone the connector interprets MySQL DATETIME values in (its database.connectionTimeZone); DateTime columns not listed in --timestamp_columns are rendered in it', default='UTC', required=False)
     parser.add_argument('--timestamp_columns', help='comma separated names of the columns that replicate a MySQL TIMESTAMP; they are compared as UTC instants', default='', required=False)
@@ -500,8 +489,6 @@ def main():
     try:
         conn =  get_connection(clickhouse_user, clickhouse_password)
         tables = get_tables_from_regex(conn)
-        # CH does not print decimal with trailing zero, we need a custom function
-        execute_sql(conn, create_function_format_decimal)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
