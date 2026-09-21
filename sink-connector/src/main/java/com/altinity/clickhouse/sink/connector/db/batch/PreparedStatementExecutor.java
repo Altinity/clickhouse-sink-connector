@@ -416,7 +416,15 @@ public class PreparedStatementExecutor {
             if (before.schema().field(keyColumn) == null || after.schema().field(keyColumn) == null) {
                 continue;
             }
-            if (!Objects.equals(before.get(keyColumn), after.get(keyColumn))) {
+            // Compare the STORED values, never the Connect-schema default.
+            // Struct.get() answers schema.defaultValue() for a null field, and
+            // Debezium fills that default from the MySQL column DEFAULT, so an
+            // UPDATE of a key column from NULL to its DEFAULT compared equal,
+            // was judged in-place, and the old row at the NULL key was never
+            // tombstoned. The bind path reads stored values for the same
+            // reason (Spec 04.03 section 3.3); this decision must observe the
+            // same values the rows are written with (Spec 05.01 section 3.2).
+            if (!Objects.equals(before.getWithoutDefault(keyColumn), after.getWithoutDefault(keyColumn))) {
                 return true;
             }
         }
