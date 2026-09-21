@@ -45,7 +45,8 @@ formal_specs/lean/
     ├── GeneratedColumn.lean           # Generated-Column Type Integrity (Invariant I13): expression maps to DEFAULT, never the type
     ├── DdlBarrier.lean                # DDL Barrier Quiescence (Invariant I5): the barrier covers legacy + routed queues + unacknowledged batches
     ├── OffsetFifo.lean                # Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01): commit never passes an outstanding batch, written-once
-    └── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07): no bare ALTER, loud key widening, ADD COLUMN preserved
+    ├── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07): no bare ALTER, loud key widening, ADD COLUMN preserved
+    └── CreateTable.lean               # CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2): never ORDER BY tuple(), declared key wins, nullable fallback key needs allow_nullable_key
 ```
 
 ---
@@ -187,6 +188,23 @@ An `ALTER TABLE` is modelled as a list of classified clauses (`addColumn`,
 | `wider_key_change_is_loud` | `modifyKeyColumnWider n ∈ cs → translate cs = fail` | A sorting-key widening is refused with `DDLReplicationException` (I9), never emitted to fail with `Code: 524` after retries. |
 | `add_columns_preserved` | `translate cs = emit kept → addColumn n ∈ cs → addColumn n ∈ kept` | Skipping an unrepresentable neighbour never drops an `ADD COLUMN` (I6). |
 | `emitted_are_representable` | `translate cs = emit kept → kept = keep cs` (`keep` = the representable clauses, in source order) | Exactly the representable clauses are emitted, in source order. |
+
+### CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2, `CreateTable.lean`)
+
+A source table is modelled as its column list (name, nullable, generated), its
+`PRIMARY KEY` column list and its first `UNIQUE` key; `sortingKey` mirrors the
+precedence both creation paths use (declared `PRIMARY KEY`, then a fully
+`NOT NULL` `UNIQUE` key, then every non-generated column in declaration order)
+and `nullableSortingKey` says when `SETTINGS allow_nullable_key=1` is emitted.
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `sorting_key_nonempty` | a table with at least one non-generated column has `sortingKey t ≠ []` | `ORDER BY tuple()` is never produced for a table that can hold a row: no keyless table collapses to one row. |
+| `primary_key_wins` | `t.primaryKey ≠ [] → sortingKey t = t.primaryKey` | The declared identity is always used when there is one. |
+| `unique_key_wins_when_not_null` | no `PRIMARY KEY`, fully `NOT NULL` `UNIQUE` key → `sortingKey t = t.uniqueKey` | A real identity is preferred to the value-derived one. |
+| `fallback_key_is_every_stored_column` | no declared identity → `sortingKey t` = the names of every non-generated column, in order | The fallback reproduces MySQL's own semantics for a table without an identity: rows are distinguished by value. |
+| `declared_key_never_needs_nullable_setting` | `t.primaryKey ≠ [] → nullableSortingKey t = false` | `allow_nullable_key` is never emitted where ClickHouse is right to reject a nullable key. |
+| `nullable_fallback_gets_setting` | fallback key with a nullable stored column → `nullableSortingKey t = true` | The CREATE that names a nullable key column carries the setting, so it is not rejected with `Code: 44` and retried forever. |
 
 The `lean_lib` is now the package's `@[default_target]`, so a plain `lake build`
 type-checks every module (previously it built only the lakefile; use

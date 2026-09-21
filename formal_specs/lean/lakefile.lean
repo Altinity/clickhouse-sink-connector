@@ -22,4 +22,5 @@ lean_lib «Replication» where
              `Replication.GeneratedColumn,
              `Replication.DdlBarrier,
              `Replication.OffsetFifo,
-             `Replication.DdlTranslation]
+             `Replication.DdlTranslation,
+             `Replication.CreateTable]

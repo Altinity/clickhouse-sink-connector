@@ -113,31 +113,31 @@ public class CreateTableUniqueKeySortKeyTest {
     /**
      * A table with neither a PRIMARY KEY nor a UNIQUE key.
      *
-     * <p>This test previously asserted the OPPOSITE -- that such a table "must
-     * still fall back to ORDER BY tuple()", reasoning that inventing a key
-     * would trade collapse for permanent duplication on UPDATE. That reasoning
-     * was wrong twice over. ORDER BY tuple() is not a safe fallback but a total
-     * data loss: ReplacingMergeTree keeps ONE row for the entire table. And the
-     * duplication it feared comes from emitting only the after-image, which the
-     * writer-side tombstone now handles.</p>
+     * <p>This test has now flipped twice. It first asserted that such a table
+     * "must still fall back to ORDER BY tuple()", then that "no data column may
+     * be made the sorting key" (leaving tuple() in place by omission). Both
+     * pinned a total data loss: ReplacingMergeTree keeps ONE row for the entire
+     * table under an empty sorting key. The all-columns key reproduces MySQL's
+     * own semantics for a table without an identity -- rows are distinguished
+     * by value -- and is what the record-schema path already emits
+     * (Spec 08.05 §3.2, Spec 06.05 §3.6).</p>
      *
      * <p>Measured on ClickHouse 24.8.14 against MySQL 8.0.36: five distinct
      * rows in such a table arrived as one, and deleting one row of three
      * emptied the table completely. See {@link CreateTableNoKeySortKeyTest}.</p>
      */
     @Test
-    public void testNoKeyAtAllHasNoInventedSortKey() {
+    public void testNoKeyAtAllGetsAllColumnsSortKey() {
         String createQuery = "CREATE TABLE nokey (a INT, v VARCHAR(64)) ENGINE=InnoDB;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "nokey", clickHouseQuery);
 
         String query = clickHouseQuery.toString().toLowerCase();
-        // No identity is invented from the data. KeylessTablePreflight reports
-        // such a table loudly but lets it through, so this branch is live --
-        // and an invented key would cost the table its schema.
-        Assert.assertFalse("no data column may be made the sorting key, was: " + clickHouseQuery,
+        Assert.assertFalse("ORDER BY tuple() keeps ONE row for the whole table, was: " + clickHouseQuery,
+                query.contains("order by tuple()"));
+        Assert.assertTrue("every stored column is the sorting key, was: " + clickHouseQuery,
                 query.contains("order by (a,v)"));
-        Assert.assertFalse("a data column in the sorting key freezes the schema, was: "
+        Assert.assertTrue("the key names nullable columns, so the setting is required, was: "
                         + clickHouseQuery, query.contains("allow_nullable_key=1"));
     }
 
@@ -176,8 +176,10 @@ public class CreateTableUniqueKeySortKeyTest {
                         + "NULL-keyed rows -- so it must not become the sorting key, was: "
                         + clickHouseQuery,
                 query.contains("order by (a)"));
-        Assert.assertFalse("no identity is invented from the data columns either, was: "
+        Assert.assertTrue("it falls through to the all-columns key, was: "
                         + clickHouseQuery, query.contains("order by (a,v)"));
+        Assert.assertTrue("that key names a nullable column, so the setting is required, was: "
+                        + clickHouseQuery, query.contains("allow_nullable_key=1"));
     }
 
     /**
@@ -195,8 +197,10 @@ public class CreateTableUniqueKeySortKeyTest {
         Assert.assertFalse("one nullable member makes the whole UNIQUE key unusable as an "
                         + "identity, so it must not become the sorting key, was: " + clickHouseQuery,
                 query.contains("order by (a,b)"));
-        Assert.assertFalse("no identity is invented from the data columns either, was: "
+        Assert.assertTrue("it falls through to the all-columns key, was: "
                         + clickHouseQuery, query.contains("order by (a,b,v)"));
+        Assert.assertTrue("that key names a nullable column, so the setting is required, was: "
+                        + clickHouseQuery, query.contains("allow_nullable_key=1"));
     }
 
     /**

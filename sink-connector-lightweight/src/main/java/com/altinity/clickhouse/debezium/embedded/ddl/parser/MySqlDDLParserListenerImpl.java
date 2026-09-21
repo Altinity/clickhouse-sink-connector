@@ -437,49 +437,61 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             }
         }
 
-        // Neither a PRIMARY KEY nor a UNIQUE key: the table has no declared row
-        // identity at all (MySQL's `alembic_version` is the canonical example).
-        // ORDER BY tuple() makes every row compare equal, so ReplacingMergeTree
-        // keeps exactly ONE row for the entire table -- a silent, total data loss
-        // that is invisible while the table holds a single row and appears the
-        // moment it grows to two.
+        // Neither a PRIMARY KEY nor a NOT NULL UNIQUE key: the table has no
+        // declared row identity (MySQL's `alembic_version` is the canonical
+        // example). ORDER BY tuple() would make every row compare equal, so
+        // ReplacingMergeTree would keep exactly ONE row for the entire table --
+        // a silent, total data loss that is invisible while the table holds a
+        // single row and appears the moment it grows to two.
         //
-        // The identity for such a table must come from MySQL, the source of
-        // truth, and MySQL has exactly one to offer: the GENERATED INVISIBLE
-        // PRIMARY KEY (8.0.30+). With sql_generate_invisible_primary_key=ON a
-        // keyless InnoDB table is created with a real
-        //   my_row_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT INVISIBLE PRIMARY KEY
-        // which is part of the table definition, so it is carried by the
-        // binlogged DDL and by every row image. Such a table therefore never
-        // reaches this branch at all -- it arrives here as an ordinary keyed
-        // table and my_row_id becomes its sorting key. Verified on 8.0.36.
+        // The identity such a table ought to have comes from MySQL: the
+        // GENERATED INVISIBLE PRIMARY KEY (8.0.30+, my_row_id), which is part
+        // of the table definition and so arrives here as an ordinary keyed
+        // table. Until the source has one, the sorting key is every stored
+        // (non-generated) column in declaration order -- exactly what the
+        // record-schema creation path builds (ClickHouseAutoCreateTable
+        // .keylessSortingKey, Spec 08.05 §3.2), so both creation paths give
+        // the same source table the same identity (Spec 06.05 §3.6). Rows are
+        // then distinguished by value, which is MySQL's own semantics for a
+        // table without an identity.
         //
-        // KeylessTablePreflight reports any genuinely keyless table at startup
-        // -- by name, with the ALTER that fixes it -- but does not block, so
-        // this branch is reached whenever such a table is replicated anyway.
+        // The cost: ClickHouse forbids MODIFY/RENAME/DROP of a sorting-key
+        // column, so later DDL on such a table meets the sorting-key policy
+        // (Spec 06.05 §3.4) -- a suppressed clause or a loud, named rebuild.
+        // That is recoverable; the row loss of an empty key is not. A hash of
+        // the row's values is NOT an alternative: a column it names cannot be
+        // dropped (Code: 44) and a column added later is absent from it.
         //
-        // Deriving an identity downstream instead was tried and does not work.
-        // Both attempts are recorded here because both look reasonable:
+        // KeylessTablePreflight reports the table at startup; the banner here
+        // repeats the fix at CREATE time so it cannot be missed.
         //
-        //   ORDER BY (every column)
-        //     -> ClickHouse forbids altering any column in the sorting key, so
-        //        the table's schema FREEZES: MODIFY and RENAME fail with
-        //        Code: 524, DROP with Code: 47, the connector retries the DDL
-        //        ten times (~45s) and gives up. Measured on 24.8.14.10547.
-        //   ORDER BY (a hash of the row's values)
-        //     -> a column the hash names cannot be dropped (Code: 44), and a
-        //        column added later is absent from it, so two rows differing
-        //        only in the new column collapse: 2 rows in, 1 row out.
-        //
-        // Neither can be fixed, because both invent an identity out of the
-        // data. Dropping a column must stay possible, and only a key that is
-        // independent of the data columns allows it -- which is precisely what
-        // MySQL's my_row_id is.
-        //
-        // Left as ORDER BY tuple() here rather than inventing a key: the
-        // preflight refuses this table, and the warning below names it.
-        if (orderByColumns.length() == 0 && !orderedColumnNames.isEmpty()) {
+        // The schema-override primary_key is the operator's escape hatch and
+        // wins over every derived key on both creation paths; when it is set
+        // the fallback (and its allow_nullable_key) must not run.
+        SchemaOverrideConfig.Table tableConfig = SchemaOverrideConfig.getTableConfig(this.databaseName,
+                this.tableName, this.config.originalsStrings());
+        boolean overridePrimaryKey = tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty();
+        if (orderByColumns.length() == 0 && !overridePrimaryKey) {
+            if (orderedColumnNames.isEmpty()) {
+                throw new DDLReplicationException(String.format(
+                        "Cannot derive a sorting key for `%s`.%s: the CREATE TABLE declares no stored "
+                                + "(non-generated) column. Refusing to create a ReplacingMergeTree table "
+                                + "with ORDER BY tuple(), which would collapse every row into one. "
+                                + "Source DDL: [%s]",
+                        this.databaseName, this.tableName, this.originalSql), null);
+            }
             log.error(KeylessTableWarning.banner(this.databaseName, this.tableName));
+            for (String column : orderedColumnNames) {
+                if (!notNullColumnNames.contains(stripBackticks(column))) {
+                    nullableSortingKey = true;
+                }
+            }
+            log.warn("Table {}.{} has no PRIMARY KEY and no NOT NULL UNIQUE key; using every stored "
+                            + "column as the ReplacingMergeTree sorting key so distinct rows stay "
+                            + "distinct: {}. Rows identical in every column will still collapse, and a "
+                            + "column added later is not part of this key.",
+                    this.databaseName, this.tableName, orderedColumnNames);
+            orderByColumns.append("(").append(String.join(",", orderedColumnNames)).append(")");
         }
 
         String isDeletedColumn = IS_DELETED_COLUMN;
@@ -546,9 +558,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         this.query.append(")");
 
-        // Retrieve table from configuration setting
-        SchemaOverrideConfig.Table tableConfig = SchemaOverrideConfig.getTableConfig(this.databaseName, this.tableName, this.config.originalsStrings());
-
         // Add engine type based on table configuration.
         if (DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine) {
             if (isReplicatedReplacingMergeTree) {
@@ -577,12 +586,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
         }
 
-        if (tableConfig.getPrimaryKey() != null && !tableConfig.getPrimaryKey().isEmpty()) {
+        if (overridePrimaryKey) {
             // Use the primary_key from tableConfig if it exists
             this.query.append(Constants.ORDER_BY).append(tableConfig.getPrimaryKey());
-        }else if (orderByColumns.length() == 0) {
-            this.query.append(Constants.ORDER_BY_TUPLE);
-        } else{
+        } else {
+            // orderByColumns is never empty here: a declared PRIMARY KEY, an
+            // adopted UNIQUE key or the all-columns fallback filled it above,
+            // so ORDER BY tuple() is never emitted (Spec 06.05 §3.6).
             // Convert the orderByColumns object to a string
             String orderByStr = orderByColumns.toString();
 
@@ -1009,6 +1019,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                             orderByColumns.append(columnName);
                             break;
                         }
+                    } else if (isAutoIncrement(colDefinitionChildTree)) {
+                        // MySQL forbids a nullable AUTO_INCREMENT column, so the
+                        // constraint implies NOT NULL whether or not it is written
+                        // (Spec 06.05 §3.6 rule 3). Matters for the UNIQUE-key and
+                        // all-columns sorting keys below.
+                        isNullColumn = false;
                     } else if (colDefinitionChildTree instanceof MySqlParser.UniqueKeyColumnConstraintContext) {
                         // Column-level: `uk INT NOT NULL UNIQUE`. Retained only as a
                         // fallback sorting key for tables that declare no PRIMARY KEY.
@@ -1097,6 +1113,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
+    }
+
+    /**
+     * True for an {@code AUTO_INCREMENT} column constraint. The grammar puts
+     * {@code AUTO_INCREMENT} and {@code ON UPDATE CURRENT_TIMESTAMP} in the
+     * same alternative, so the token itself has to be checked.
+     */
+    private static boolean isAutoIncrement(ParseTree constraint) {
+        return constraint instanceof MySqlParser.AutoIncrementColumnConstraintContext
+                && ((MySqlParser.AutoIncrementColumnConstraintContext) constraint).AUTO_INCREMENT() != null;
     }
 
     /**
@@ -1511,6 +1537,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         isNullColumn = false;
                     }
                 }
+            } else if (isAutoIncrement(columnDefChild) && clause == ColumnClause.ADD) {
+                // AUTO_INCREMENT implies NOT NULL (Spec 06.05 §3.6 rule 3); a
+                // brand-new column has no existing rows to violate it.
+                nullExplicitlySet = true;
+                isNullColumn = false;
             } else if (columnDefChild instanceof MySqlParser.DefaultColumnConstraintContext) {
                 defaultModifier = translateDefault((MySqlParser.DefaultColumnConstraintContext) columnDefChild,
                         columnName);

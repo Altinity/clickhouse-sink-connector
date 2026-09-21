@@ -76,11 +76,6 @@ public class Constants {
     public static final String ORDER_BY = " ORDER BY ";
 
     /**
-     * ORDER BY clause used with empty tuple.
-     */
-    public static final String ORDER_BY_TUPLE = " ORDER BY tuple()";
-
-    /**
      * LIKE keyword used in certain DDL contexts.
      */
     public static final String LIKE = "LIKE";
