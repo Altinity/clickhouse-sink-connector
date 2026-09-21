@@ -127,9 +127,61 @@ single character `#`:
 | `decimal` | `Decimal(p,s)` | the column (MySQL prints the declared scale) | `toDecimalString(col, s)` (`numeric_scale` from `system.columns`; `toString` would drop trailing zeros) |
 | `date` | `Date`/`Date32` | `case when col >= max then max when col <= min then min else col end` with `--min_date_value` / `--max_date_value` | `toString(col)` |
 | `time(p)`, any `p` | `String` holding `[-]HH:MM:SS.ffffff` (spec 07.03 §3.2) | `cast(col as time(6))` — six fraction digits unconditionally; the old `substr(cast(col as time(6)),1,length(col))` truncated `time(0)` to `10:00:00` and reported DIFFERENT (`test_checksum_fidelity.py::TestMySQLTemporalRendering.test_time_is_rendered_with_six_fraction_digits_for_every_precision`) | `toString(col)` |
-| binary, datetime/timestamp, boolean/bit, floating point, JSON | — | see the following sections | see the following sections |
+| `datetime(p)`, `timestamp(p)` | `DateTime`, `DateTime64(s[, tz])` | §3.4 | §3.4 |
+| binary, boolean/bit, floating point, JSON | — | see the following sections | see the following sections |
 
-### 3.4 Aggregate (the actual algorithm)
+### 3.4 DATETIME / TIMESTAMP: one canonical rendering, one clamp
+Both sides render a DATETIME or TIMESTAMP value to the **fixed-width** text
+`YYYY-MM-DD HH:MM:SS.ffffff` — six fraction digits for every declared
+precision, never trimmed:
+
+- MySQL: `date_format(col, '%Y-%m-%d %H:%i:%s.%f')`
+  (`mysql_datetime_rendering()`); ClickHouse:
+  `toString(toDateTime64(col, 6))` (`clickhouse_datetime_rendering()`; the
+  scale is widened, the instant is unchanged).
+- Why fixed width: the connector widens precision (`datetime(0)` is stored
+  as `DateTime64(3)`), so the two sides legitimately print different numbers
+  of fraction digits; the old code equalised them by trimming trailing zeros
+  and a trailing dot, which is **not injective** when the printed lengths
+  differ: `10:00:10` became `10:00:1` on one side and `10:00:10.000` became
+  `10:00:10` on the other — DIFFERENT for equal values, and conversely two
+  values whose trimmed text collided would compare EQUAL. Padding to six
+  digits maps equal instants to equal text and distinct instants to distinct
+  text (`test_checksum_fidelity.py::TestDatetimeRendering`).
+- **Clamp.** ClickHouse `DateTime64` holds `1900-01-01 00:00:00` ..
+  `2299-12-31 23:59:59` (`DataTypeRange.DATETIME64_MIN/MAX`); the connector
+  clamps on write, so MySQL values outside that range can only compare equal
+  if the tool clamps its rendering the same way. The clamp is **one shared
+  definition** in `db/checksum_common.py` used by both sides:
+  `DATETIME_MIN = '1900-01-01 00:00:00.000000'`,
+  `DATETIME_MAX = '2299-12-31 23:59:59.000000'`;
+  `clamp_datetime_expression(rendered, min, max, dialect)` renders
+  `rendered >= max` as `max` and `rendered < min` as `min` in both dialects
+  (the old code used `<=` on one side and `<` on the other, defaulted the
+  minimum to `1970-01-01` on MySQL and `1900-01-01` on ClickHouse, trimmed the
+  substituted bound on one side only, and clamped only `DateTime64(0)` and
+  `DateTime64(6)` on ClickHouse). Comparison is on the canonical text, which
+  orders chronologically. `--min_datetime_value` / `--max_datetime_value`
+  default to these constants on both sides; a user value is normalised to
+  the canonical form (`canonical_datetime_bound()`, accepting
+  `YYYY-MM-DD[ HH:MM:SS[.ffffff]]`) and **confined to the ClickHouse range**
+  with a WARNING, because a bound the replica cannot exceed would clamp
+  MySQL alone. Narrower bounds turn every value beyond them, on both sides,
+  into the same constant: differences inside that window are invisible. The
+  driver therefore passes no bounds any more (it used to pass
+  `1969-12-31 18:00:00` / `2299-12-31 00:00:00`, hiding 1900–1969 and the
+  last day of 2299).
+- **Clamped-value counts are printed.** Each datetime column contributes
+  `clamped_datetime_flag()` = `(rendered > max or rendered < min)`; the
+  per-row sum (`clamped_count_expression()`, `coalesce(flag, 0)` so NULLs
+  count as 0) is aggregated as a sixth value `clamped` next to
+  `cnt,a,b,c,d`. It is **never hashed**; when it is non-zero the side script
+  logs `WARNING <n> out-of-range datetime values clamped to [min, max] in
+  table <db>.<table>` (a line that does not contain the word "checksum",
+  see §3.2 step 4) so an operator knows the EQUAL verdict rests on clamped
+  values (`test_checksum_fidelity.py::TestClampedRowCounts`).
+
+### 3.5 Aggregate (the actual algorithm)
 The checksum is **not** `MD5(groupArray(cityHash64(*)))` and there is no
 `ORDER BY`; it is an order-independent sum of per-row MD5 words, so both
 engines can compute it over any physical order and MySQL can compute it in
@@ -191,17 +243,35 @@ connect to a database.
     `toString("id")||'#'||toString("name")||'#'`.
   - `TestClickHouseRowExpression.test_nullable_flags_are_one_trailing_element`
     — §3.3 nullability element.
-  - `TestEndToEndChecksum.test_equal_fixtures_report_equal` — §3.4: both side
+  - `TestEndToEndChecksum.test_equal_fixtures_report_equal` — §3.5: both side
     scripts, driven through their real `compute_checksum` /
     `calculate_checksum` paths with stubbed engines, print the same checksum
     and count for identical fixtures (including the §3.3 fixture whose last
     column is a skipped float).
   - `TestEndToEndChecksum.test_flipped_clickhouse_value_reports_different` —
-    §3.4 negative test: flipping one character of one row on the ClickHouse
+    §3.5 negative test: flipping one character of one row on the ClickHouse
     side changes the printed checksum while the count stays equal, and
     `analyze_differences()` logs `Checksum difference`.
-  - `TestChecksumFromAggregate.test_is_md5_of_hash_separated_values` — §3.4
+  - `TestChecksumFromAggregate.test_is_md5_of_hash_separated_values` — §3.5
     step 3, including the empty-table value.
+  - `TestMySQLColumnClassification` — §3.3 classification on `DATA_TYPE`:
+    `enum('float','json','blob','bit','time')` and `set('double','binary')`
+    are compared as plain strings; real `double`/`blob`/`json`/`time`
+    columns are still skipped, hex-encoded, normalised and cast.
+  - `TestMySQLTemporalRendering.test_time_is_rendered_with_six_fraction_digits_for_every_precision`
+    — §3.3 `time(p)` row.
+  - `TestSharedDatetimeClamp` — §3.4: the bounds are the `DataTypeRange`
+    constants; user bounds are canonicalised and confined; both dialects use
+    `>= max` / `< min`; the flag counts strictly-outside values.
+  - `TestDatetimeRendering` — §3.4: `datetime`/`timestamp` at precisions 0,
+    3, 6 and `DateTime`, `DateTime64(0)`, `DateTime64(3)`,
+    `DateTime64(6,'UTC')`, `Nullable(DateTime64(3))` all render through the
+    six-digit form inside the shared clamp; no `TRIM`/`substr` remains; a
+    user bound lands identically on both sides.
+  - `TestClampedRowCounts` — §3.4: both aggregate queries carry
+    `coalesce(sum(clamped),0)`; a table without datetime columns contributes
+    `0`; a non-zero count is logged as a WARNING that does not change the
+    checksum and does not contain the word "checksum".
 - `sink-connector/python/db_compare/tests/test_table_locking.py` — §3.2 lock
   lifecycle (lock before, unlock after both sides, connection closed on
   failure, no lock when disabled).

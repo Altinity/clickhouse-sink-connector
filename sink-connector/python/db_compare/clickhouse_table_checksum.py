@@ -17,7 +17,8 @@ import re
 import os
 import concurrent.futures
 from db.clickhouse import *
-from db.checksum_common import checksum_from_aggregate
+from db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
+                                clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression)
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
@@ -58,7 +59,11 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
                 else:
                     logging.debug(str(x))
                     (cnt, a, b, c, d) = x[0:5]
+                    clamped = x[5] if len(x) > 5 else 0
                     checksum = checksum_from_aggregate(cnt, a, b, c, d)
+                    if clamped > 0:
+                        (min_datetime_value, max_datetime_value) = datetime_bounds(args)
+                        logging.warning(f"{clamped} out-of-range datetime values clamped to [{min_datetime_value}, {max_datetime_value}] in table {args.clickhouse_database}.{table}")
                     logging.info("Checksum for table "+args.clickhouse_database +
                                  "."+table+" = "+checksum + " count "+str(cnt))
 
@@ -93,23 +98,31 @@ SINK_METADATA_COLUMNS = frozenset(
 )
 
 
-def clickhouse_column_expression(column_name, data_type, numeric_scale, options):
+def is_datetime_type(data_type):
+    """DateTime, DateTime32, DateTime64 and their Nullable / time-zoned forms."""
+    return "DateTime" in data_type
+
+
+def clickhouse_datetime_rendering(column_name):
+    """Canonical text of a DateTime / DateTime64 column (spec 11.02 section 3.4):
+    'YYYY-MM-DD HH:MM:SS.ffffff', six digits whatever the column's scale."""
+    return f"toString(toDateTime64({column_name}, 6))"
+
+
+def clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds=(DATETIME_MIN, DATETIME_MAX)):
     """Text rendering of one ClickHouse column (spec 11.02 section 3.3).
 
     ``column_name`` is already double-quoted. ``options`` is the parsed argument
-    namespace (only its rendering options are read).
+    namespace (only its rendering options are read). ``bounds`` are the
+    canonical (min, max) datetime clamp bounds.
     """
     if 'Bool' == data_type:
         return "toString(toUInt8(" + column_name + "))"
     if "Decimal" in data_type:
         # toString() drops trailing zeros; MySQL prints the declared scale.
         return "toDecimalString(" + column_name + "," + str(numeric_scale) + ")"
-    if "DateTime64(0" in data_type or "DateTime64(6" in data_type:
-        return (f"if(toString({column_name}) >= '{options.max_datetime_value}', '{options.max_datetime_value}', "
-                f"if(toString({column_name}) < '{options.min_datetime_value}', '{options.min_datetime_value}', "
-                f"trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))))")
-    if "DateTime" in data_type:
-        return f"trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))"
+    if is_datetime_type(data_type):
+        return clamp_datetime_expression(clickhouse_datetime_rendering(column_name), bounds[0], bounds[1], 'clickhouse')
     if column_name.strip('"') in options.hex_columns:
         return "toString(unhex(" + column_name + "))"
     return "toString(" + column_name + ")"
@@ -120,8 +133,9 @@ def build_clickhouse_row_expression(columns_metadata, options):
 
     ``columns_metadata`` rows are ``(name, type, is_nullable, numeric_scale)`` in
     position order, already filtered of excluded columns. Returns
-    ``(select, nullables, columns, data_types)`` where ``select`` is the pieces
-    joined by ``||'#'||``.
+    ``(select, nullables, columns, data_types, clamped_expression)`` where
+    ``select`` is the pieces joined by ``||'#'||`` and ``clamped_expression``
+    the per-row count of datetime values the clamp changed.
 
     The pieces are collected in a list and joined, never built by appending a
     separator after each column: a column skipped by type (floating point,
@@ -133,6 +147,8 @@ def build_clickhouse_row_expression(columns_metadata, options):
     nullables = []
     columns = []
     data_types = {}
+    clamped_flags = []
+    bounds = datetime_bounds(options)
     for row in columns_metadata:
         column_name = '"' + row[0] + '"'
         data_type = row[1]
@@ -148,7 +164,9 @@ def build_clickhouse_row_expression(columns_metadata, options):
             if 'json' in data_type:
                 logging.info(f"Excluding json column {column_name} of type {data_type}")
                 continue
-        expression = clickhouse_column_expression(column_name, data_type, numeric_scale, options)
+        expression = clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds)
+        if is_datetime_type(data_type):
+            clamped_flags.append(clamped_datetime_flag(clickhouse_datetime_rendering(column_name), bounds[0], bounds[1]))
         if is_nullable == 1:
             nullables.append(column_name)
             expression = "case when " + column_name + " is null then '' else " + expression + " end"
@@ -158,7 +176,7 @@ def build_clickhouse_row_expression(columns_metadata, options):
         parts.append(" || ".join(
             "case when " + nullable + " is null then '1' else '0' end" for nullable in nullables))
     select = "||'#'||".join(parts)
-    return (select, nullables, columns, data_types)
+    return (select, nullables, columns, data_types, clamped_count_expression(clamped_flags))
 
 
 def get_table_checksum_query(conn, table):
@@ -185,7 +203,7 @@ def get_table_checksum_query(conn, table):
             continue
         filtered_columns_metadata.append(row)
 
-    (select, nullables, columns, data_types) = build_clickhouse_row_expression(filtered_columns_metadata, args)
+    (select, nullables, columns, data_types, clamped_expression) = build_clickhouse_row_expression(filtered_columns_metadata, args)
 
     primary_key_columns = get_primary_key_columns(conn,
         args.clickhouse_database, table)
@@ -207,7 +225,7 @@ def get_table_checksum_query(conn, table):
         external_column_types += ","+column+" "+data_types[column]
 
     logging.debug("order by columns "+order_by_columns)
-    return (query, select, order_by_columns, external_column_types)
+    return (query, select, order_by_columns, external_column_types, clamped_expression)
 
 def fstr(template, partition_expression):
         # Safe substitution: only replace {partition_expression} placeholder
@@ -216,7 +234,7 @@ def fstr(template, partition_expression):
             return template.replace('{partition_expression}', str(partition_expression))
         return template
 
-def select_table_statements(table, query, select_query, order_by, external_column_types, _where):
+def select_table_statements(table, query, select_query, order_by, external_column_types, _where, clamped_expression="0"):
     statements = []
     external_table_name = args.clickhouse_database+"."+table
     limit = ""
@@ -240,13 +258,15 @@ def select_table_statements(table, query, select_query, order_by, external_colum
       coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 1, 8))))),0) as "a",
       coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 9, 8))))),0) as "b",
       coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 17, 8))))),0) as "c",
-      coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 25, 8))))),0) as "d"
+      coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 25, 8))))),0) as "d",
+      coalesce(sum(clamped),0) as "clamped"
     from (
      select hex(MD5(
 
        {select_query}
 
-      )) as "hash"
+      )) as "hash",
+      {clamped_expression} as clamped
 
       from {schema}.{table} final where {where} /*order by {order_by}*/ {limit}
 
@@ -307,9 +327,9 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where, parti
         return
     # generate the file from ClickHouse
     (query, select_query, distributed_by,
-     external_table_types) = get_table_checksum_query(conn, table)
+     external_table_types, clamped_expression) = get_table_checksum_query(conn, table)
     statements = select_table_statements(
-        table, query, select_query, distributed_by, external_table_types, where)
+        table, query, select_query, distributed_by, external_table_types, where, clamped_expression)
     compute_checksum(table, clickhouse_user, clickhouse_password, statements)
 
 
@@ -355,8 +375,8 @@ def main():
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
     parser.add_argument('--exclude_columns', help='columns exclude', nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
     parser.add_argument('--threads', type=int, help='number of parallel threads', default=1)
-    parser.add_argument('--min_datetime_value', help='Min Datetime64 datetime', default='1900-01-01 00:00:00', required=False)
-    parser.add_argument('--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59.000000', required=False)
+    parser.add_argument('--min_datetime_value', help='Lower clamp bound for datetime values (same value on both sides; default is the ClickHouse DateTime64 minimum)', default=DATETIME_MIN, required=False)
+    parser.add_argument('--max_datetime_value', help='Upper clamp bound for datetime values (same value on both sides; default is the ClickHouse DateTime64 maximum)', default=DATETIME_MAX, required=False)
     parser.add_argument('--max_memory_usage', help='increase  max_memory_usage', required=False)
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
                         help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
@@ -364,6 +384,7 @@ def main():
                         help='JSON data types are included by default. This flag is a no-op (always True). Use --exclude_columns to skip JSON columns.', required=False)
     global args
     args = parser.parse_args()
+    (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)

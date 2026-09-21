@@ -30,10 +30,6 @@ from conftest import (
 REPO_ROOT = Path(__file__).resolve().parents[3]
 PYTHON_DIR = REPO_ROOT / "sink-connector" / "python"
 
-# Matching datetime clamps for both sides (mirrors top_level_table_checksum.py).
-MIN_DATETIME = "1969-12-31 18:00:00"
-MAX_DATETIME = "2299-12-31 00:00:00"
-
 # `Checksum for table <db>.<table> = <md5> count <n>` (ignores the log-line prefix).
 CHECKSUM_RE = re.compile(
     r"Checksum for table\s+(?P<db>\S+?)\.(?P<table>\S+?)\s+=\s+"
@@ -81,8 +77,6 @@ def _mysql_checksums():
         "--mysql_database", DATABASE,
         "--tables_regex", TABLES_REGEX,
         "--min_date_value", "1900-01-01",
-        "--min_datetime_value", MIN_DATETIME,
-        "--max_datetime_value", MAX_DATETIME,
         "--binary_encoding", "base64",
     ]
     return _run_checksum(cmd)
@@ -97,8 +91,6 @@ def _clickhouse_checksums():
         "--clickhouse_password", CLICKHOUSE_PASSWORD,
         "--clickhouse_database", DATABASE,
         "--tables_regex", TABLES_REGEX,
-        "--min_datetime_value", MIN_DATETIME,
-        "--max_datetime_value", MAX_DATETIME,
         "--sign_column", "",
         "--exclude_columns", "_version,is_deleted,_is_deleted,__is_deleted,_sign",
     ]

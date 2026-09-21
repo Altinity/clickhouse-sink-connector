@@ -20,7 +20,10 @@ sys.path.insert(
 import db_compare.clickhouse_table_checksum as ch  # noqa: E402
 import db_compare.mysql_table_checksum as my  # noqa: E402
 import db_compare.top_level_table_checksum as tl  # noqa: E402
-from db.checksum_common import checksum_from_aggregate  # noqa: E402
+from db.checksum_common import (  # noqa: E402
+    DATETIME_MAX, DATETIME_MIN, canonical_datetime_bound, checksum_from_aggregate,
+    clamp_datetime_expression, clamped_datetime_flag,
+)
 
 CHECKSUM_LINE_RE = re.compile(
     r"Checksum for table (?P<db>\S+?)\.(?P<table>\S+?) = (?P<md5>[0-9a-f]{32}) count (?P<count>\d+)"
@@ -30,7 +33,7 @@ CHECKSUM_LINE_RE = re.compile(
 def reference_aggregate(row_strings):
     """What both aggregate queries compute for a set of canonical row strings.
 
-    Spec 11.02 section 3.4: per row md5 as 32 hex chars, split into four 32-bit
+    Spec 11.02 section 3.5: per row md5 as 32 hex chars, split into four 32-bit
     words read as unsigned integers, summed over the rows; plus the row count.
     """
     a = b = c = d = 0
@@ -51,8 +54,8 @@ def clickhouse_args(**overrides):
         where=None, order_by=None, partition_key=None, ignore_tables_regex=None,
         no_wc=False, debug_output=False, debug_limit=None, hex_columns=[],
         debug=False, exclude_columns=["_sign,_version,is_deleted,_is_deleted"],
-        threads=1, min_datetime_value="1900-01-01 00:00:00",
-        max_datetime_value="2299-12-31 23:59:59.000000", max_memory_usage=None,
+        threads=1, min_datetime_value=DATETIME_MIN,
+        max_datetime_value=DATETIME_MAX, max_memory_usage=None,
         include_floating_point_columns=False, include_json_columns=True,
     )
     values.update(overrides)
@@ -67,8 +70,8 @@ def mysql_args(**overrides):
         tables_regex=".", where=None, order_by=None, ignore_tables_regex=None,
         no_wc=False, debug_output=False, debug_limit=None, binary_encoding="hex",
         min_date_value="1900-01-01", max_date_value="2299-12-31",
-        min_datetime_value="1970-01-01 00:00:00",
-        max_datetime_value="2299-12-31 23:59:59", debug=False,
+        min_datetime_value=DATETIME_MIN,
+        max_datetime_value=DATETIME_MAX, debug=False,
         exclude_columns=[], threads_per_table=1, chunk_size=10000, threads=1,
         include_floating_point_columns=False, include_json_columns=True,
     )
@@ -136,19 +139,19 @@ MYSQL_COLUMNS = [
 FIXTURE_ROWS = ["1#bob", "2#alice", "3#carol"]
 
 
-def clickhouse_stub(columns, row_strings):
+def clickhouse_stub(columns, row_strings, clamped=0):
     """execute_sql replacement returning catalog rows and the fixture aggregate."""
 
     def execute_sql(conn, sql):
         lowered = sql.lower()
         if "is_in_primary_key" in lowered:
-            rows = [("id",)]
+            rows = [(name,) for (name, *_) in columns if name == "id"]
         elif "from system.columns" in lowered:
             rows = list(columns)
         elif "partition_key" in lowered:
             rows = [("",)]
         elif 'count(*) as "cnt"' in lowered:
-            rows = [reference_aggregate(row_strings)]
+            rows = [reference_aggregate(row_strings) + (clamped,)]
         elif lowered.startswith("select count(*) cnt from"):
             rows = [(len(row_strings),)]
         else:
@@ -158,7 +161,7 @@ def clickhouse_stub(columns, row_strings):
     return execute_sql
 
 
-def mysql_stub(columns, row_strings):
+def mysql_stub(columns, row_strings, clamped=0):
     """execute_mysql replacement returning catalog rows and the fixture aggregate."""
 
     def execute_mysql(conn, sql):
@@ -168,28 +171,28 @@ def mysql_stub(columns, row_strings):
         if lowered.startswith("set "):
             return (FakeMySQLRowset(returns_rows=False), -1)
         if 'count(*) as "cnt"' in lowered:
-            return (FakeMySQLRowset(rows=[reference_aggregate(row_strings)]), -1)
+            return (FakeMySQLRowset(rows=[reference_aggregate(row_strings) + (clamped,)]), -1)
         raise AssertionError("unexpected MySQL statement in test: " + sql)
 
     return execute_mysql
 
 
-def run_clickhouse_side(columns, row_strings, **arg_overrides):
+def run_clickhouse_side(columns, row_strings, clamped=0, **arg_overrides):
     """Drive clickhouse_table_checksum.calculate_checksum with stubbed engine."""
     ch.args = clickhouse_args(**arg_overrides)
     with patch.object(ch, "get_connection", return_value=MagicMock()), \
-            patch.object(ch, "execute_sql", side_effect=clickhouse_stub(columns, row_strings)), \
+            patch.object(ch, "execute_sql", side_effect=clickhouse_stub(columns, row_strings, clamped)), \
             unittest.TestCase().assertLogs(level="INFO") as logs:
         ch.calculate_checksum("t1", "user", "pw", None, None)
     return logs.output
 
 
-def run_mysql_side(columns, row_strings, **arg_overrides):
+def run_mysql_side(columns, row_strings, clamped=0, **arg_overrides):
     """Drive mysql_table_checksum.calculate_checksum with stubbed engine."""
     my.args = mysql_args(**arg_overrides)
     with patch.object(my, "get_mysql_connection", return_value=MagicMock()), \
             patch.object(my, "mysql_pk_columns", return_value=[]), \
-            patch.object(my, "execute_mysql", side_effect=mysql_stub(columns, row_strings)), \
+            patch.object(my, "execute_mysql", side_effect=mysql_stub(columns, row_strings, clamped)), \
             unittest.TestCase().assertLogs(level="INFO") as logs:
         my.calculate_checksum("t1", "user", "pw", my.args.exclude_columns,
                               my.args.include_floating_point_columns,
@@ -225,7 +228,7 @@ class TestClickHouseRowExpression(unittest.TestCase):
     def build(self, columns, **arg_overrides):
         ch.args = clickhouse_args(**arg_overrides)
         with patch.object(ch, "execute_sql", side_effect=clickhouse_stub(columns, [])):
-            (query, select, order_by, external_types) = ch.get_table_checksum_query(MagicMock(), "t1")
+            (query, select, order_by, external_types, clamped) = ch.get_table_checksum_query(MagicMock(), "t1")
         return select
 
     def test_trailing_float_column_leaves_no_dangling_separator(self):
@@ -257,7 +260,7 @@ def build_mysql_select(columns, excluded_columns=(), **arg_overrides):
     execute_mysql stubbed."""
     my.args = mysql_args(**arg_overrides)
     with patch.object(my, "execute_mysql", side_effect=mysql_stub(columns, [])):
-        (query, select, order_by, external_types) = my.get_table_checksum_query(
+        (query, select, order_by, external_types, clamped) = my.get_table_checksum_query(
             "t1", MagicMock(), my.args.binary_encoding, "1=1", list(excluded_columns),
             my.args.include_floating_point_columns, my.args.include_json_columns)
     return select
@@ -296,7 +299,7 @@ class TestMySQLColumnClassification(unittest.TestCase):
 
 
 class TestMySQLTemporalRendering(unittest.TestCase):
-    """Fixed-precision temporal text on the MySQL side (spec 11.02 section 3.5)."""
+    """Fixed-precision temporal text on the MySQL side (spec 11.02 section 3.3)."""
 
     def test_time_is_rendered_with_six_fraction_digits_for_every_precision(self):
         # The connector stores TIME as [-]HH:MM:SS.ffffff whatever the declared
@@ -306,6 +309,129 @@ class TestMySQLTemporalRendering(unittest.TestCase):
             column_type = "time" if not precision else f"time({precision})"
             select = build_mysql_select([mysql_column("t", "time", column_type, precision=precision)])
             self.assertEqual(select, "cast(`t` as time(6))", column_type)
+
+
+MYSQL_DATETIME_RENDERING = "date_format(`d`, '%Y-%m-%d %H:%i:%s.%f')"
+CLICKHOUSE_DATETIME_RENDERING = 'toString(toDateTime64("d", 6))'
+
+
+class TestSharedDatetimeClamp(unittest.TestCase):
+    """One clamp definition for both sides (spec 11.02 section 3.4)."""
+
+    def test_bounds_are_the_connector_datetime64_range(self):
+        # DataTypeRange.DATETIME64_MIN / DATETIME64_MAX in the canonical rendering.
+        self.assertEqual(DATETIME_MIN, "1900-01-01 00:00:00.000000")
+        self.assertEqual(DATETIME_MAX, "2299-12-31 23:59:59.000000")
+
+    def test_user_bounds_are_canonicalised_and_confined(self):
+        self.assertEqual(canonical_datetime_bound("1969-12-31 18:00:00", "--min_datetime_value"),
+                         "1969-12-31 18:00:00.000000")
+        self.assertEqual(canonical_datetime_bound("2299-12-31", "--max_datetime_value"),
+                         "2299-12-31 00:00:00.000000")
+        self.assertEqual(canonical_datetime_bound("2299-12-31 23:59:59.000000", "--max_datetime_value"),
+                         DATETIME_MAX)
+        # Bounds outside the ClickHouse range are pulled back to it.
+        self.assertEqual(canonical_datetime_bound("1800-01-01 00:00:00", "--min_datetime_value"), DATETIME_MIN)
+        self.assertEqual(canonical_datetime_bound("9999-12-31 23:59:59", "--max_datetime_value"), DATETIME_MAX)
+        with self.assertRaises(ValueError):
+            canonical_datetime_bound("yesterday", "--min_datetime_value")
+
+    def test_both_dialects_clamp_with_the_same_comparisons(self):
+        mysql = clamp_datetime_expression("r", "MIN", "MAX", "mysql")
+        clickhouse = clamp_datetime_expression("r", "MIN", "MAX", "clickhouse")
+        self.assertEqual(mysql, "case when r >= 'MAX' then 'MAX' when r < 'MIN' then 'MIN' else r end")
+        self.assertEqual(clickhouse, "if(r >= 'MAX', 'MAX', if(r < 'MIN', 'MIN', r))")
+        for expression in (mysql, clickhouse):
+            self.assertIn("r >= 'MAX'", expression)
+            self.assertIn("r < 'MIN'", expression)
+            self.assertNotIn("<=", expression)
+        # The flag counts values the clamp actually changed: strictly outside.
+        self.assertEqual(clamped_datetime_flag("r", "MIN", "MAX"), "(r > 'MAX' or r < 'MIN')")
+
+
+class TestDatetimeRendering(unittest.TestCase):
+    """Fixed-precision rendering, no trailing-zero trimming (spec 11.02 section 3.4)."""
+
+    def test_mysql_datetime_and_timestamp_render_six_digits_for_every_precision(self):
+        for data_type in ("datetime", "timestamp"):
+            for precision in (0, 3, 6):
+                column_type = data_type if precision == 0 else f"{data_type}({precision})"
+                select = build_mysql_select([mysql_column("d", data_type, column_type, precision=precision)])
+                self.assertEqual(
+                    select,
+                    clamp_datetime_expression(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "mysql"),
+                    column_type,
+                )
+
+    def test_clickhouse_datetime_types_render_six_digits(self):
+        for data_type in ("DateTime", "DateTime64(3)", "DateTime64(6, 'UTC')", "DateTime64(0)"):
+            select = TestClickHouseRowExpression().build([("d", data_type, 0, None)])
+            self.assertEqual(
+                select,
+                clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse"),
+                data_type,
+            )
+
+    def test_nullable_clickhouse_datetime_keeps_the_null_wrapper(self):
+        select = TestClickHouseRowExpression().build([("d", "Nullable(DateTime64(3))", 1, None)])
+        self.assertTrue(select.startswith('case when "d" is null then \'\' else '), select)
+        self.assertIn(CLICKHOUSE_DATETIME_RENDERING, select)
+
+    def test_no_trimming_anywhere(self):
+        mysql = build_mysql_select([mysql_column("d", "datetime", precision=0),
+                                    mysql_column("t", "timestamp", "timestamp(3)", precision=3)])
+        clickhouse = TestClickHouseRowExpression().build([("d", "DateTime64(3)", 0, None)])
+        for expression in (mysql, clickhouse):
+            self.assertNotIn("TRIM", expression.upper())
+            self.assertNotIn("substr", expression)
+
+    def test_user_bounds_apply_identically_on_both_sides(self):
+        bound = "1969-12-31 18:00:00"
+        mysql = build_mysql_select([mysql_column("d", "datetime", precision=0)], min_datetime_value=bound)
+        clickhouse = TestClickHouseRowExpression().build([("d", "DateTime64(3)", 0, None)], min_datetime_value=bound)
+        self.assertIn("< '1969-12-31 18:00:00.000000'", mysql)
+        self.assertIn("< '1969-12-31 18:00:00.000000'", clickhouse)
+
+
+class TestClampedRowCounts(unittest.TestCase):
+    """The aggregate carries how many values the clamp changed; it is printed
+    but never hashed (spec 11.02 section 3.4)."""
+
+    def test_aggregate_queries_sum_the_clamped_flags(self):
+        ch.args = clickhouse_args()
+        with patch.object(ch, "execute_sql", side_effect=clickhouse_stub([("d", "DateTime64(3)", 0, None)], [])):
+            (query, select, order_by, external_types, clamped) = ch.get_table_checksum_query(MagicMock(), "t1")
+        self.assertEqual(clamped, "coalesce(" + clamped_datetime_flag(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX) + ", 0)")
+        statement = ch.select_table_statements("t1", query, select, order_by, external_types, None, clamped)[0]
+        self.assertIn('coalesce(sum(clamped),0) as "clamped"', statement)
+        self.assertIn(clamped + " as clamped", statement)
+
+        my.args = mysql_args()
+        with patch.object(my, "execute_mysql", side_effect=mysql_stub([mysql_column("d", "datetime", precision=0)], [])):
+            (query, select, order_by, external_types, clamped) = my.get_table_checksum_query(
+                "t1", MagicMock(), "hex", "1=1", [], False, True)
+        self.assertEqual(clamped, "coalesce(" + clamped_datetime_flag(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX) + ", 0)")
+        statement = my.select_table_statements("t1", query, select, order_by, external_types, "1=1", clamped)[-1]
+        self.assertIn("coalesce(sum(clamped),0) as clamped", statement)
+        self.assertIn(clamped + " as clamped", statement)
+
+    def test_columns_without_datetime_contribute_zero(self):
+        ch.args = clickhouse_args()
+        with patch.object(ch, "execute_sql", side_effect=clickhouse_stub(CLICKHOUSE_COLUMNS, [])):
+            clamped = ch.get_table_checksum_query(MagicMock(), "t1")[4]
+        self.assertEqual(clamped, "0")
+
+    def test_clamped_count_is_printed_and_not_hashed(self):
+        plain_mysql = parse_checksum_line(run_mysql_side(MYSQL_COLUMNS, FIXTURE_ROWS))
+        mysql_lines = run_mysql_side(MYSQL_COLUMNS, FIXTURE_ROWS, clamped=2)
+        clickhouse_lines = run_clickhouse_side(CLICKHOUSE_COLUMNS, FIXTURE_ROWS, clamped=2)
+        for lines in (mysql_lines, clickhouse_lines):
+            self.assertEqual(parse_checksum_line(lines), plain_mysql)
+            warnings = [line for line in lines if line.startswith("WARNING")]
+            self.assertTrue(any("2 out-of-range datetime values" in line for line in warnings), lines)
+            # The driver greps the child output for "checksum" and expects one line.
+            self.assertEqual(sum(1 for line in lines if "checksum" in line.lower()), 1, lines)
+        self.assertFalse(any(line.startswith("WARNING") for line in run_mysql_side(MYSQL_COLUMNS, FIXTURE_ROWS)))
 
 
 class TestEndToEndChecksum(unittest.TestCase):

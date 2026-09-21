@@ -25,8 +25,6 @@ from conftest import (
 
 # Reuse the checksum invocation/parsing helpers from the primary checksum test.
 from test_checksum_replication import (
-    MAX_DATETIME,
-    MIN_DATETIME,
     _run_checksum,
 )
 
@@ -45,8 +43,6 @@ def _mysql_checksums():
         "--mysql_database", DATABASE,
         "--tables_regex", TABLES_REGEX,
         "--min_date_value", "1900-01-01",
-        "--min_datetime_value", MIN_DATETIME,
-        "--max_datetime_value", MAX_DATETIME,
         "--binary_encoding", "base64",
     ]
     return _run_checksum(cmd)
@@ -61,8 +57,6 @@ def _clickhouse_checksums():
         "--clickhouse_password", CLICKHOUSE_PASSWORD,
         "--clickhouse_database", DATABASE,
         "--tables_regex", TABLES_REGEX,
-        "--min_datetime_value", MIN_DATETIME,
-        "--max_datetime_value", MAX_DATETIME,
         "--sign_column", "",
         "--exclude_columns", "_version,is_deleted,_is_deleted,__is_deleted,_sign",
     ]
