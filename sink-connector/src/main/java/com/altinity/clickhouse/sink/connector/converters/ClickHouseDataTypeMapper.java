@@ -912,7 +912,7 @@ public class ClickHouseDataTypeMapper {
      *   <tr><td>io.debezium.time.NanoTimestamp</td><td>Nullable(DateTime64(9, 'UTC'))</td></tr>
      *   <tr><td>io.debezium.time.ZonedTimestamp</td><td>Nullable(DateTime64(6, 'UTC'))</td></tr>
      *   <tr><td>io.debezium.time.Date</td><td>Nullable(Date32)</td></tr>
-     *   <tr><td>io.debezium.time.MicroTime</td><td>Nullable(Int64)</td></tr>
+     *   <tr><td>io.debezium.time.MicroTime</td><td>Nullable(String)</td></tr>
      *   <tr><td>org.apache.kafka.connect.data.Decimal</td><td>Nullable(Decimal(p, s))</td></tr>
      *   <tr><td>io.debezium.data.Uuid</td><td>Nullable(UUID)</td></tr>
      *   <tr><td>(unknown / default)</td><td>Nullable(String)</td></tr>
@@ -941,8 +941,11 @@ public class ClickHouseDataTypeMapper {
                 case Date.SCHEMA_NAME:                 // "io.debezium.time.Date"
                     return "Nullable(Date32)";
                 case MicroTime.SCHEMA_NAME:            // "io.debezium.time.MicroTime"
-                    // Stored as microseconds since midnight
-                    return "Nullable(Int64)";
+                    // Bound as the formatted text [-]HH:mm:ss.ffffff by
+                    // MicroTimeConverter (Spec 07.03 section 3.2), so the
+                    // declared type must be String. Declaring Int64 here made
+                    // every insert into a reconciled TIME column fail to parse.
+                    return "Nullable(String)";
                 case Uuid.LOGICAL_NAME:                // "io.debezium.data.Uuid"
                     return "Nullable(UUID)";
                 case Json.LOGICAL_NAME:                // "io.debezium.data.Json"

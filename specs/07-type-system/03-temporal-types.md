@@ -128,6 +128,14 @@ translator emits). A `String` column stores the formatted text verbatim
 round-trip unchanged), so the full MySQL range is representable; no ClickHouse
 `Time`-like type is involved.
 
+The same rule binds the DDL-string mapping
+`ClickHouseDataTypeMapper.mapDebeziumSchemaToDDL` (used by the PostgreSQL
+schema reconciler for `ADD COLUMN`): `MicroTime` is declared
+`Nullable(String)`. It previously declared `Nullable(Int64)` ("microseconds
+since midnight") while the value path bound the formatted text, so every
+insert into such a reconciled column failed with a parse error — the declared
+type and the bound representation must agree.
+
 ### 3.3 Out-of-range values are never silently saturated
 ClickHouse temporal types are narrower than MySQL's: `DateTime64` holds
 `1900-01-01 00:00:00 .. 2299-12-31 23:59:59`, `DateTime` holds
@@ -198,6 +206,11 @@ values (now with a WARN per saturated value) until the column type is fixed.
   `"23:00:00.000000"` and `"01:30:00.000000"`).
 - `DebeziumConverterTest.testMicroTimeConverter()` — an ordinary time of day
   (`09:01:01`) is unchanged by the fix.
+- `ClickHouseDataTypeMapperDDLTest.testDebeziumLogicalTypes()` (the
+  `io.debezium.time.MicroTime` row) and
+  `PostgresSchemaReconcilerTest.testDebeziumLogicalTypes()` — §3.2: the
+  DDL-string mapping declares `MicroTime` as `Nullable(String)` (both rows
+  previously asserted `Nullable(Int64)`, pinning the mismatch).
 - `DebeziumConverterTest.testTimestampConverterGapTimePreserved()` — §3.1.1:
   `DATETIME` digits `2026-03-08 02:30:00` (inside the `America/Chicago`
   spring-forward gap) and `2026-11-01 01:30:00` (the repeated fall-back hour)
