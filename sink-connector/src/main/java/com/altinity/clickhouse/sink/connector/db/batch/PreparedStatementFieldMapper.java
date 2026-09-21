@@ -326,8 +326,13 @@ public class PreparedStatementFieldMapper {
                 schemaName = f.schema().valueSchema().type().name();
             }
             // This will throw an exception, unknown data type.
-            ClickHouseDataType chDataType = getClickHouseDataType(colName, columnNameToDataTypeMap);
-            if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType, serverTimeZone)) {
+            ClickHouseColumn column = parseColumn(colName, columnNameToDataTypeMap);
+            ClickHouseDataType chDataType = column == null ? null : column.getDataType();
+            // ClickHouse parses a DateTime literal in the COLUMN's declared
+            // zone, so instants must be rendered in it (Spec 07.03 section 3.1.3).
+            ZoneId columnTimeZone = ClickHouseDataTypeMapper.columnTimeZoneOf(column);
+            if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType,
+                    serverTimeZone, columnTimeZone)) {
                 log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
                         schemaName, colName));
             }
@@ -707,24 +712,31 @@ public class PreparedStatementFieldMapper {
      */
     public ClickHouseDataType getClickHouseDataType(String columnName,
                                                     Map<String, String> columnNameToDataTypeMap) {
+        ClickHouseColumn column = parseColumn(columnName, columnNameToDataTypeMap);
+        return column == null ? null : column.getDataType();
+    }
 
-        ClickHouseDataType chDataType = null;
+    /**
+     * Parses the column's declared ClickHouse type from the map into a
+     * {@link ClickHouseColumn}, which carries both the data type and the
+     * declared time zone.
+     *
+     * @param columnName The name of the column.
+     * @param columnNameToDataTypeMap A map of column names to declared types.
+     * @return The parsed column, or null if the type is unknown or unparseable.
+     */
+    private ClickHouseColumn parseColumn(String columnName,
+                                         Map<String, String> columnNameToDataTypeMap) {
         try {
             // Retrieve the column data type from the map
             String columnDataType = columnNameToDataTypeMap.get(columnName);
             // Create a ClickHouse column object based on the column name and type
-            ClickHouseColumn column = ClickHouseColumn.of(columnName, columnDataType);
-
-            // Retrieve the data type from the ClickHouse column if available
-            if (column != null) {
-                chDataType = column.getDataType();
-            }
+            return ClickHouseColumn.of(columnName, columnDataType);
         } catch (Exception e) {
             // Log any error related to unknown data types
             log.debug("Unknown data type for column: " + columnName, e);
+            return null;
         }
-
-        return chDataType;
     }
 }
 

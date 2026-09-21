@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.clickhouse.data.ClickHouseColumn;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.data.value.ClickHouseDoubleValue;
 import com.clickhouse.data.value.ClickHouseGeoPointValue;
@@ -33,6 +34,7 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * ClickHouseDataTypeMapper provides functions to map Debezium or
@@ -55,6 +57,72 @@ public class ClickHouseDataTypeMapper {
      */
     public static final String DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM =
             "__debezium.source.column.type";
+
+    /** Whether the empty-source-zone resolution has been logged (once per JVM). */
+    private static final AtomicBoolean SOURCE_ZONE_DEFAULT_LOGGED = new AtomicBoolean(false);
+
+    /**
+     * Resolves the source (MySQL) zone used to interpret DATETIME digits.
+     *
+     * <p>An empty {@code database.connectionTimeZone} means "the ClickHouse
+     * session zone": the digits MySQL holds are the digits stored (the same-zone
+     * decode of Spec 07.03 section 3.1.1). It previously meant UTC while an
+     * empty {@code clickhouse.datetime.timezone} meant the server zone, so the
+     * default configuration on a non-UTC server shifted every DATETIME by the
+     * server offset (Spec 07.03 section 3.1.2).</p>
+     *
+     * @param config         the connector configuration
+     * @param sessionTimeZone the resolved ClickHouse session zone
+     * @return the source zone; never null
+     * @throws java.time.DateTimeException when the configured zone is not a valid zone id
+     */
+    public static ZoneId resolveSourceTimeZone(ClickHouseSinkConnectorConfig config, ZoneId sessionTimeZone) {
+        String configured = config.getString(
+                ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+        if (configured != null && !configured.isEmpty()) {
+            return ZoneId.of(configured);
+        }
+        if (SOURCE_ZONE_DEFAULT_LOGGED.compareAndSet(false, true)) {
+            log.info("{} is not set; DATETIME values keep the digits MySQL holds (no wall-clock "
+                            + "shift). Effective source zone: {} (the ClickHouse session zone).",
+                    ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE, sessionTimeZone);
+        }
+        return sessionTimeZone;
+    }
+
+    /**
+     * The zone a ClickHouse column type declares, e.g. {@code UTC} for
+     * {@code Nullable(DateTime64(3, 'UTC'))}, or null when the type declares
+     * none (ClickHouse then parses literals in the session zone).
+     *
+     * @param columnType the ClickHouse column type string, may be null
+     * @return the declared zone, or null
+     */
+    public static ZoneId columnTimeZone(String columnType) {
+        if (columnType == null || columnType.isEmpty()) {
+            return null;
+        }
+        try {
+            return columnTimeZoneOf(ClickHouseColumn.of("c", columnType));
+        } catch (Exception e) {
+            log.debug("Cannot parse column type '{}' for its time zone", columnType, e);
+            return null;
+        }
+    }
+
+    /**
+     * The zone a parsed ClickHouse column declares, or null.
+     *
+     * @param column the parsed column, may be null
+     * @return the declared zone, or null
+     */
+    public static ZoneId columnTimeZoneOf(ClickHouseColumn column) {
+        if (column == null) {
+            return null;
+        }
+        TimeZone tz = column.getTimeZone();
+        return tz == null ? null : tz.toZoneId();
+    }
 
     /**
      * Mapping of MySQL unsigned integer types (lower-cased) to the
@@ -259,8 +327,32 @@ public class ClickHouseDataTypeMapper {
                                   ClickHouseSinkConnectorConfig config,
                                   ClickHouseDataType clickHouseDataType, ZoneId serverTimeZone)
             throws SQLException {
+        return convert(type, schemaName, value, index, ps, config, clickHouseDataType, serverTimeZone, null);
+    }
+
+    /**
+     * As {@link #convert(Schema.Type, String, Object, int, PreparedStatement,
+     * ClickHouseSinkConnectorConfig, ClickHouseDataType, ZoneId)}, rendering
+     * temporal instants in the zone the target column declares.
+     *
+     * @param columnTimeZone the zone declared by the target column type
+     *                       ({@link #columnTimeZone(String)}); null when the
+     *                       column declares none, in which case the session
+     *                       zone ({@code serverTimeZone}) is used (Spec 07.03
+     *                       section 3.1.3)
+     */
+    public static boolean convert(Schema.Type type, String schemaName,
+                                  Object value, int index, PreparedStatement ps,
+                                  ClickHouseSinkConnectorConfig config,
+                                  ClickHouseDataType clickHouseDataType, ZoneId serverTimeZone,
+                                  ZoneId columnTimeZone)
+            throws SQLException {
 
         boolean result = true;
+        // ClickHouse parses a DateTime literal in the COLUMN's zone, so an
+        // instant must be rendered in that zone; the session zone applies only
+        // when the column declares none.
+        ZoneId instantFormatZone = columnTimeZone == null ? serverTimeZone : columnTimeZone;
         //TinyINT -> INT16 -> TinyInt
         boolean isFieldTinyInt = (type == Schema.INT16_SCHEMA.type());
         boolean isFieldTypeInt = (type == Schema.INT8_SCHEMA.type())
@@ -307,7 +399,7 @@ public class ClickHouseDataTypeMapper {
                 ps.setString(
                         index,
                         DebeziumConverter.ZonedTimestampConverter
-                                .convert(value, serverTimeZone));
+                                .convert(value, instantFormatZone));
             } else if (schemaName != null
                     && schemaName.equalsIgnoreCase(Json.LOGICAL_NAME)) {
                 // if the column is JSON,
@@ -371,28 +463,20 @@ public class ClickHouseDataTypeMapper {
             }
         } else if (isFieldDateTime || isFieldTime) {
             if (isFieldDateTime) {
-                String sourceTimeZone = "UTC";
-
-                if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
-                    String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-                    if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
-                        sourceTimeZone = configSourceTimeZone;
-                    }
-                }
+                // Empty database.connectionTimeZone means the session zone --
+                // the digits MySQL holds are stored -- never UTC (Spec 07.03
+                // section 3.1.2).
+                ZoneId sourceTimeZone = resolveSourceTimeZone(config, serverTimeZone);
                 if  (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) {
                     // DATETIME(4), DATETIME(5), DATETIME(6)
 
-                    ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value, ZoneId.of(sourceTimeZone),
-                            serverTimeZone, clickHouseDataType));
+                    ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value, sourceTimeZone,
+                            serverTimeZone, clickHouseDataType, columnTimeZone));
                 }
                 else if (value instanceof Long) {
                     // DATETIME(0), DATETIME(1), DATETIME(2), DATETIME(3)
-                    boolean isColumnDateTime64 = false;
-                    if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME) && type == Schema.INT64_SCHEMA.type()){
-                        isColumnDateTime64 = true;
-                    }
                     ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType,
-                        ZoneId.of(sourceTimeZone), serverTimeZone));
+                        sourceTimeZone, serverTimeZone, columnTimeZone));
                 }
             } else if (isFieldTime) {
                 ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));

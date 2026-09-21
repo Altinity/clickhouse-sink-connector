@@ -66,6 +66,24 @@ public class DebeziumConverter {
         //ToDO: IF values exceed the ones supported by clickhouse
         public static String convert(Object value, ZoneId sourceTimezone,
                                      ZoneId serverTimezone, ClickHouseDataType clickHouseDataType) {
+            return convert(value, sourceTimezone, serverTimezone, clickHouseDataType, null);
+        }
+
+        /**
+         * As {@link #convert(Object, ZoneId, ZoneId, ClickHouseDataType)}, rendering
+         * a converted instant in the zone the target column declares.
+         *
+         * @param columnTimeZone the zone declared by the ClickHouse column type
+         *                       (e.g. {@code DateTime64(6, 'UTC')}); null when the
+         *                       column declares none, in which case ClickHouse
+         *                       parses the literal in the session zone and the
+         *                       value is rendered in {@code serverTimezone}
+         *                       (Spec 07.03 section 3.1.3)
+         */
+        public static String convert(Object value, ZoneId sourceTimezone,
+                                     ZoneId serverTimezone, ClickHouseDataType clickHouseDataType,
+                                     ZoneId columnTimeZone) {
+            ZoneId formatZone = columnTimeZone == null ? serverTimezone : columnTimeZone;
             Long epochMicroSeconds = (Long) value;
 
             //DateTime64 has a 8 digit precision.
@@ -112,7 +130,7 @@ public class DebeziumConverter {
             if(rangeExceeded[0]) {
                 return modifiedDT.atZone(ZoneOffset.UTC).format(destFormatter).toString();
             }
-            return modifiedDT.atZone(serverTimezone).format(destFormatter).toString();
+            return modifiedDT.atZone(formatZone).format(destFormatter);
         }
     }
 
@@ -128,12 +146,27 @@ public class DebeziumConverter {
          * @return
          */
         public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
+            return convert(value, clickHouseDataType, sourceTimeZone, serverTimezone, null);
+        }
+
+        /**
+         * As {@link #convert(Object, ClickHouseDataType, ZoneId, ZoneId)}, rendering
+         * a converted instant in the zone the target column declares.
+         *
+         * @param columnTimeZone the zone declared by the ClickHouse column type;
+         *                       null when the column declares none, in which case
+         *                       the value is rendered in {@code serverTimezone}
+         *                       (Spec 07.03 section 3.1.3)
+         */
+        public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone,
+                                     ZoneId serverTimezone, ZoneId columnTimeZone) {
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
             if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
                 destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
             }
 
+            ZoneId formatZone = columnTimeZone == null ? serverTimezone : columnTimeZone;
             Long epochMillis = (Long) value;
             boolean[] rangeExceeded = new boolean[1];
 
@@ -167,7 +200,7 @@ public class DebeziumConverter {
                 // return the modifiedDTWithLimits as a string without timezone conversion
                 return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
             }
-            return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter);
+            return modifiedDTWithLimits.atZone(formatZone).format(destFormatter);
         }
 
 

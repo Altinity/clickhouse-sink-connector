@@ -15,8 +15,8 @@ Specifies the translation and timezone adjustment of MySQL date and time types t
 | MySQL Type | ClickHouse Target | Resolution & Conversion |
 |---|---|---|
 | `DATE` | `Date` / `Date32` | Converted from epoch days to `java.time.LocalDate` |
-| `DATETIME` | `DateTime64(3)` / `DateTime64(6)` | Microsecond/millisecond resolution; interpreted in source session timezone |
-| `TIMESTAMP` | `DateTime` / `DateTime64(3)` | Stored in UTC; converted to ClickHouse target timezone |
+| `DATETIME` | `DateTime64(p, 'UTC')` (auto-create, §3.1.3) | Zone-less digits; decoded as Debezium encoded them (§3.1.1); shifted only when an explicit source zone differs from the session zone (§3.1.2) |
+| `TIMESTAMP` | `DateTime64(6, 'UTC')` (auto-create) | An instant (Debezium `ZonedTimestamp`, ISO-8601 in UTC); formatted in the **column's declared zone**, else the session zone (§3.1.3) |
 | `TIME` | `String` | Signed duration, `-838:59:59.000000` .. `838:59:59.000000` (see §3.2) |
 | `YEAR` | `UInt16` / `Int32` | 4-digit calendar year |
 
@@ -51,6 +51,58 @@ a wall time inside a spring-forward gap uses the offset **before** the
 transition (`ZoneRules.getTransition(...).getOffsetBefore()`), the same rule
 `MicroTimestampConverter` applies, so the two converters never disagree on the
 same digits.
+
+#### 3.1.2 An empty `database.connectionTimeZone` means "the session zone", never "UTC"
+The two zone settings resolved asymmetrically: an empty
+`clickhouse.datetime.timezone` fell back to the ClickHouse server zone
+(`SELECT timezone()`), but an empty `database.connectionTimeZone` was taken as
+`UTC` (`ClickHouseDataTypeMapper.convert`). On a server whose zone is
+`America/Chicago`, the default configuration therefore ran the
+"different zones" branch of §3.1.1 with a source zone nobody configured:
+`DATETIME '2022-01-01 10:00:00'` was interpreted as a UTC wall time and
+written as `04:00:00` — every DATETIME off by the server offset, silently.
+
+Rule (`ClickHouseDataTypeMapper.resolveSourceTimeZone(config, sessionZone)`):
+- `database.connectionTimeZone` set → that zone (an unparseable value throws,
+  which fails the batch loudly rather than guessing).
+- empty → **the ClickHouse session zone**, i.e. the same-zone decode of
+  §3.1.1: the digits MySQL holds are the digits stored. This is the only
+  default that needs no knowledge of the MySQL server: a DATETIME carries no
+  zone, so with no declared source zone there is no basis for a shift. The
+  resolution is logged once at INFO naming both zones.
+- A wall-clock shift of DATETIME values happens **only** when the operator
+  declares a source zone that differs from the session zone; that intent is
+  then visible in the configuration.
+
+#### 3.1.3 Values are formatted in the COLUMN's declared zone
+ClickHouse parses a `DateTime`/`DateTime64` literal in the **column's** zone
+(`DateTime64(3, 'UTC')` parses `'10:00:00'` as 10:00 UTC; measured with
+`clickhouse local` 24.8.14: `toString(d, 'America/Chicago')` then reads
+`04:00:00`). The auto-create path (Spec 08.05) declares `DateTime64(p, 'UTC')`
+columns and the DDL path declares `DateTime64(p, '<clickhouse.datetime.timezone>')`,
+while the converters formatted every instant in the session zone. Whenever the
+column zone differed from the session zone the stored instant was off by the
+difference: a `TIMESTAMP` of 16:00 UTC written to a `DateTime64(6, 'UTC')`
+column through an `America/Chicago` session was stored as 10:00 UTC.
+
+Rule: `PreparedStatementFieldMapper` resolves the zone declared in the target
+column type (`ClickHouseColumn.of(name, type).getTimeZone()`, null when the type
+declares none — `ClickHouseDataTypeMapper.columnTimeZone`) and passes it to
+`ClickHouseDataTypeMapper.convert`; the converters format an **instant**
+(`ZonedTimestampConverter`, and the different-zones branch of
+`TimestampConverter` / `MicroTimestampConverter`) in that zone, falling back to
+the session zone when the column declares none. The same-zone digits decode
+of §3.1.1 is unaffected — digits are digits in any column zone — which is
+also why DATETIME columns are auto-created in `'UTC'`: a DST zone cannot hold
+a spring-forward gap wall time (`clickhouse local`: `'2026-03-08 02:30:00'`
+into `DateTime64(3, 'America/Chicago')` reads back `01:30:00`; into
+`DateTime64(3, 'UTC')` it reads back `02:30:00`).
+
+Residual: the DDL translator (Spec 06.04, not changed here) declares DATETIME
+columns in the configured session zone, so under a DST session zone a
+DATETIME gap time replicated through a DDL-created column is still stored
+shifted by ClickHouse itself; declaring `'UTC'` there as well is the
+outstanding fix.
 
 ### 3.2 `TIME` is a signed duration, not a time of day
 MySQL `TIME` ranges from `-838:59:59` to `838:59:59` (it stores elapsed time and
@@ -112,3 +164,25 @@ round-trip unchanged), so the full MySQL range is representable; no ClickHouse
   `America/Chicago`; pre-fix `TimestampConverter` returned `01:30:00` for the
   gap time. With source `America/Chicago` and session `UTC` the gap digits use
   the pre-transition offset (`08:30:00` UTC), matching `MicroTimestampConverter`.
+- `PreparedStatementFieldMapperColumnZoneTest.testTimestampIntoUtcColumnWhenSessionZoneIsChicago()`
+  — §3.1.3 end to end through `insertPreparedStatement`: `ZonedTimestamp`
+  `2022-01-01T16:00:00Z` into a `Nullable(DateTime64(6, 'UTC'))` column with
+  session zone `America/Chicago` binds `2022-01-01 16:00:00.000000` (pre-fix:
+  `10:00:00.000000`).
+- `PreparedStatementFieldMapperColumnZoneTest.testEmptySourceZoneKeepsDatetimeDigits()`
+  — §3.1.2: with `database.connectionTimeZone` empty and session zone
+  `America/Chicago`, DATETIME(3) and DATETIME(6) digits `10:00:00` are bound
+  unchanged (pre-fix: `04:00:00`).
+- `PreparedStatementFieldMapperColumnZoneTest.testExplicitSourceZoneShiftsIntoTheColumnZone()`
+  — §3.1.2/§3.1.3: `database.connectionTimeZone=UTC`, session
+  `America/Chicago`: digits `10:00:00` into a `'UTC'` column bind `10:00:00`
+  (the instant 10:00Z rendered in the column zone; pre-fix `04:00:00`), and
+  into a column without a declared zone bind `04:00:00` (the session zone —
+  the operator asked for the shift).
+- `DebeziumConverterTest.testTimestampIntoUtcColumnWhenServerZoneIsChicago()`
+  — the converter-level contract of §3.1.3 for `TimestampConverter`,
+  `MicroTimestampConverter` and `ZonedTimestampConverter`.
+- `ClickHouseDataTypeMapperTimeZoneTest` — `resolveSourceTimeZone` (empty →
+  session zone, set → parsed, garbage → throws) and `columnTimeZone` (parses
+  `Nullable(DateTime64(3, 'UTC'))`, `DateTime('Europe/London')`; null for
+  `DateTime64(6)` and `String`).
