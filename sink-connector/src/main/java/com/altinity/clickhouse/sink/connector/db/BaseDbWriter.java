@@ -165,6 +165,55 @@ public class BaseDbWriter {
     }
 
     /**
+     * ClickHouse setting that, at its server default of {@code 1}, silently
+     * replaces a NULL inserted into a non-Nullable column with the column's
+     * DEFAULT expression. The connector binds source NULLs explicitly (Spec
+     * 07.07 section 3.2), which protects nothing if the server then swaps in
+     * the DEFAULT and reports success; measured with clickhouse local 24.8.14
+     * on {@code v Int32 DEFAULT 7}: the row stored {@code 7}. With the setting
+     * at {@code 0} the same insert is rejected (Code 53 TYPE_MISMATCH), so the
+     * batch fails loudly and the ClickHouse column can be corrected.
+     */
+    static final String NULL_AS_DEFAULT_SETTING = "input_format_null_as_default";
+
+    /**
+     * The ClickHouse session settings every connection is opened with when
+     * {@code clickhouse.jdbc.settings} is not configured (Spec 07.07 section 3.2.1).
+     */
+    static final String DEFAULT_CUSTOM_SETTINGS = NULL_AS_DEFAULT_SETTING + "=0,"
+            + "allow_experimental_object_type=1,insert_allow_materialized_columns=1";
+
+    /**
+     * Resolves the {@code custom_settings} JDBC property from the user's
+     * {@code clickhouse.jdbc.settings} value.
+     *
+     * <p>A user list is used verbatim, with {@code input_format_null_as_default=0}
+     * appended when the list does not mention that key: configuring other
+     * session settings must not silently re-enable DEFAULT substitution. A
+     * user who sets the key explicitly, to either value, is honoured -- the
+     * choice is then visible in the configuration rather than silent.</p>
+     *
+     * @param userJdbcSettings the configured {@code clickhouse.jdbc.settings},
+     *                         may be null or empty
+     * @return the comma-separated settings list to open connections with
+     */
+    static String customSettings(String userJdbcSettings) {
+        if (userJdbcSettings == null || userJdbcSettings.isEmpty()) {
+            return DEFAULT_CUSTOM_SETTINGS;
+        }
+        boolean mentionsNullAsDefault = Arrays.stream(userJdbcSettings.split(","))
+                .anyMatch(s -> s.trim().startsWith(NULL_AS_DEFAULT_SETTING));
+        if (mentionsNullAsDefault) {
+            return userJdbcSettings;
+        }
+        log.info("{} does not set {}; appending {}=0 so a source NULL bound for a "
+                        + "non-Nullable column is rejected rather than replaced by the column DEFAULT",
+                ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS, NULL_AS_DEFAULT_SETTING,
+                NULL_AS_DEFAULT_SETTING);
+        return userJdbcSettings + "," + NULL_AS_DEFAULT_SETTING + "=0";
+    }
+
+    /**
      * Splits a JDBC properties string into a Properties object.
      * The input string should be in the format:
      * "key1=value1,key2=value2,..."
@@ -360,11 +409,7 @@ public class BaseDbWriter {
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);
-            if(jdbcSettings != null && !jdbcSettings.isEmpty()) {
-                properties.setProperty("custom_settings", jdbcSettings);
-            } else {
-                properties.setProperty("custom_settings", "allow_experimental_object_type=1,insert_allow_materialized_columns=1");
-            }
+            properties.setProperty("custom_settings", customSettings(jdbcSettings));
             boolean connectionPoolDisable = config.getBoolean(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString());
             // Set the http connection provider to HTTP_URL_CONNECTION if connection pool is enabled.
             if(!connectionPoolDisable) {
