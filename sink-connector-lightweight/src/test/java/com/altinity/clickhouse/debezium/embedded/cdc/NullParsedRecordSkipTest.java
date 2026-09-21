@@ -135,10 +135,12 @@ public class NullParsedRecordSkipTest {
                 ClickHouseSinkConnectorConfig.class,
                 DebeziumEngine.RecordCommitter.class,
                 boolean.class,
-                long.class);
+                DebeziumChangeEventCapture.VersionAssignment.class);
         m.setAccessible(true);
+        // Mirrors handleBatch: the version 1000000001 = effectiveTs 1000 * 1e6 + 1.
         return (ClickHouseStruct) m.invoke(capture, new Properties(), record, parser,
-                null, null, true, 1000000001L);
+                null, null, true,
+                new DebeziumChangeEventCapture.VersionAssignment(1000000001L, 1000L));
     }
 
     @Test
