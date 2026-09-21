@@ -42,7 +42,20 @@ Type-width order used for "wider":
 - `Decimal(p, s)`: comparable only with equal scale; then by precision.
 - Everything else: comparable only when the normalised type strings are identical.
 
-Formalised as `wider_key_change_is_loud` in `DdlTranslation.lean`. Pinned by `testModifyKeyColumnSameOrNarrowerIsSuppressed`, `testModifyKeyColumnWiderIsLoud`, `testChangeKeyColumnRenameIsLoud`.
+Normalisation (`KeyColumnTypeChange.normalise`) strips whitespace, the
+`Nullable`/`LowCardinality` wrappers, and the **timezone argument** of
+`DateTime`/`DateTime64` together with the translator's `, 0` placeholder:
+`DateTime64(6, 'UTC')` (how an auto-created or `clickhouse.datetime.timezone`
+column renders in `system.columns`), `DateTime64(6, 0)` (what the translator
+emits without a configured zone) and `DateTime64(6)` are one type. The zone
+is display metadata — the stored instant, the width and the scale are the
+same — so a `MODIFY` of a `DateTime64(6, 'UTC')` key column to `DATETIME(6)`
+is a restatement and must be suppressed, not refused as "not comparable"
+(which stalled every such no-op `MODIFY` of an auto-created table). A
+different scale (`DateTime64(3)` vs `DateTime64(6)`) is still not comparable
+and stays loud.
+
+Formalised as `wider_key_change_is_loud` in `DdlTranslation.lean`. Pinned by `testModifyKeyColumnSameOrNarrowerIsSuppressed`, `testModifyKeyColumnWiderIsLoud`, `testChangeKeyColumnRenameIsLoud`, `testModifyDateTimeKeyWithTimezoneIsSuppressed`.
 
 ### 3.5 DEFAULT clauses
 Literal defaults are carried to ClickHouse in ClickHouse literal syntax; on `ADD COLUMN` a `CURRENT_TIMESTAMP` default becomes the DDL event's instant and an `ENUM ... NOT NULL` without a default gets its first member, while any other non-literal default is refused loudly; on `MODIFY`/`CHANGE` a non-literal default is dropped (Spec 06.04 §3.2). A `DEFAULT` never changes a replicated value: the row image carries the source value, and ClickHouse binds it explicitly (Spec 04.03); it only decides the back-fill of rows that pre-date an added column.
@@ -111,6 +124,6 @@ fix is the one the banner names. Formalised as `sorting_key_nonempty`,
 
 ## 5. Verification Criteria
 - `AlterTableModifyColumnIT.testAlterAddPrimaryKeyAndModifyNotNull()`
-- `MySqlDDLParserListenerImplTest.testAlterModifyColumnNotNullStaysNullable()`, `testCreateTableTableLevelPrimaryKeyForcesNotNull()`, `testModifyKeyColumnSameOrNarrowerIsSuppressed()`, `testModifyKeyColumnWiderIsLoud()`, `testChangeKeyColumnRenameIsLoud()`, `testModifyColumnNameIsCaseResolvedAgainstTarget()`
+- `MySqlDDLParserListenerImplTest.testAlterModifyColumnNotNullStaysNullable()`, `testCreateTableTableLevelPrimaryKeyForcesNotNull()`, `testModifyKeyColumnSameOrNarrowerIsSuppressed()`, `testModifyKeyColumnWiderIsLoud()`, `testChangeKeyColumnRenameIsLoud()`, `testModifyColumnNameIsCaseResolvedAgainstTarget()`, `testModifyDateTimeKeyWithTimezoneIsSuppressed()` (§3.4 normalisation: `DateTime64(6, 'UTC')` key vs requested `DATETIME(6)` with and without a configured zone → suppressed; a different scale stays loud; pre-fix code raised "not comparable")
 - §3.6: `MySqlDDLParserListenerImplTest.testCreateTableKeylessOrdersByAllColumns()` (no `PRIMARY KEY`, no `UNIQUE`: `ORDER BY (every column)` plus `SETTINGS allow_nullable_key=1`, never `ORDER BY tuple()`; pre-fix code emits `ORDER BY tuple()`), `MySqlDDLParserListenerImplTest.testAutoIncrementColumnIsNotNull()` (`id INT AUTO_INCREMENT UNIQUE` is `NOT NULL` and becomes the sorting key), `CreateTableNoKeySortKeyTest` (the keyless shapes: single-column, multi-column, GIPK table; the PK/UNIQUE cases untouched), `CreateTableUniqueKeySortKeyTest` (a nullable `UNIQUE` key falls through to the all-columns key with the setting; a `NOT NULL` one is adopted without it).
 - Formal: `wider_key_change_is_loud` in `formal_specs/lean/Replication/DdlTranslation.lean`; `Replication.CreateTable.sorting_key_nonempty`, `Replication.CreateTable.primary_key_wins`, `Replication.CreateTable.fallback_key_is_every_stored_column`, `Replication.CreateTable.declared_key_never_needs_nullable_setting` in `formal_specs/lean/Replication/CreateTable.lean`.

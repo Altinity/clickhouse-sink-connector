@@ -3178,6 +3178,41 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    @DisplayName("A no-op MODIFY of a DateTime64 key column is suppressed whatever timezone the existing column renders with")
+    public void testModifyDateTimeKeyWithTimezoneIsSuppressed() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("ts", "DateTime64(6, 'UTC')", "d", "DateTime('UTC')", "v", "Nullable(Int32)"),
+                Arrays.asList("ts", "d"));
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN ts DATETIME(6) NOT NULL").trim());
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN ts DATETIME(6) NOT NULL, ADD COLUMN c INT"));
+
+        // With clickhouse.datetime.timezone configured the requested type
+        // renders with that zone; still the same column.
+        HashMap<String, String> zoned = new HashMap<>();
+        zoned.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "America/Chicago");
+        MySQLDDLParserService zonedKeyed = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(zoned), "employees");
+        zonedKeyed.setTargetSchemaLookup(TargetSchemaLookup.fromColumns(
+                columns("ts", "DateTime64(6, 'UTC')", "d", "DateTime('UTC')", "v", "Nullable(Int32)"),
+                Arrays.asList("ts", "d")));
+        Assert.assertEquals("", translate(zonedKeyed, "ALTER TABLE t MODIFY COLUMN ts DATETIME(6) NOT NULL").trim());
+
+        // A different scale is a real change and stays loud.
+        assertThrows(DDLReplicationException.class,
+                () -> translate(keyed, "ALTER TABLE t MODIFY COLUMN ts DATETIME(3) NOT NULL"));
+
+        // The comparison itself, on the rendered strings.
+        Assert.assertEquals(KeyColumnTypeChange.Verdict.SAME_OR_NARROWER,
+                KeyColumnTypeChange.compare("DateTime64(6, 'UTC')", "DateTime64(6, 0)"));
+        Assert.assertEquals(KeyColumnTypeChange.Verdict.SAME_OR_NARROWER,
+                KeyColumnTypeChange.compare("Nullable(DateTime64(6, 'Europe/Berlin'))", "DateTime64(6,'UTC')"));
+        Assert.assertEquals(KeyColumnTypeChange.Verdict.SAME_OR_NARROWER,
+                KeyColumnTypeChange.compare("DateTime('UTC')", "DateTime"));
+        Assert.assertEquals(KeyColumnTypeChange.Verdict.NOT_COMPARABLE,
+                KeyColumnTypeChange.compare("DateTime64(3, 'UTC')", "DateTime64(6, 0)"));
+    }
+
+    @Test
     @DisplayName("Data columns are not affected by the sorting-key policy")
     public void testModifyDataColumnUnaffectedByKeyPolicy() {
         MySQLDDLParserService keyed = parserWithTarget(
