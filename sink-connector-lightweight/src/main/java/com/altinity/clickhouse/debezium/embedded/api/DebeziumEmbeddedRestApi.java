@@ -197,13 +197,17 @@ public class DebeziumEmbeddedRestApi {
         app.post("/binlog", ctx -> {
             if (ReplicationStatusSingleton.getInstance().isReplicationRunning()) {
                 ctx.status(HttpStatus.BAD_REQUEST);
+                ctx.result("{\"error\":\"replication is running; stop it before editing the offset\"}");
                 return;
             }
             String body = ctx.body();
             JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);
-            String binlogFile = (String) jsonObject.get(BINLOG_FILE);
-            String binlogPosition = (String) jsonObject.get(BINLOG_POS);
-            String gtid = (String) jsonObject.get(GTID);
+            // Accept numbers as well as strings for the position: the edit is
+            // validated and stored as a number by DebeziumOffsetStorage
+            // (spec 09.03 section 3.4).
+            String binlogFile = stringOrNull(jsonObject.get(BINLOG_FILE));
+            String binlogPosition = stringOrNull(jsonObject.get(BINLOG_POS));
+            String gtid = stringOrNull(jsonObject.get(GTID));
 
             String sourceHost = (String) jsonObject.get(SOURCE_HOST);
             String sourcePort = (String) jsonObject.get(SOURCE_PORT);
@@ -232,10 +236,18 @@ public class DebeziumEmbeddedRestApi {
 
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-            Connection connection = getDatabaseConnection(finalProps1);
-            debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
-                    finalProps1, binlogFile, binlogPosition, gtid);
-            connection.close();
+            try (Connection connection = getDatabaseConnection(finalProps1)) {
+                debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
+                        finalProps1, binlogFile, binlogPosition, gtid);
+            } catch (IllegalArgumentException invalid) {
+                // A malformed edit is the caller's error, not a server fault:
+                // say what is wrong instead of writing it into the offset store
+                // for Debezium to choke on at the next start.
+                log.warn("Rejected update-binlog request: {} ({})", body, invalid.getMessage());
+                ctx.status(HttpStatus.BAD_REQUEST);
+                ctx.result("{\"error\":\"" + invalid.getMessage().replace("\"", "'") + "\"}");
+                return;
+            }
             log.info("Received update-binlog request: " + body);
         });
 
@@ -282,9 +294,14 @@ public class DebeziumEmbeddedRestApi {
         });
                     
         app.post("/lsn", ctx -> {
+            if (ReplicationStatusSingleton.getInstance().isReplicationRunning()) {
+                ctx.status(HttpStatus.BAD_REQUEST);
+                ctx.result("{\"error\":\"replication is running; stop it before editing the offset\"}");
+                return;
+            }
             String body = ctx.body();
             JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);
-            String lsn = (String) jsonObject.get(LSN);
+            String lsn = stringOrNull(jsonObject.get(LSN));
 
             ClickHouseSinkConnectorConfig config =
                     new ClickHouseSinkConnectorConfig(
@@ -292,11 +309,16 @@ public class DebeziumEmbeddedRestApi {
 
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-            Connection connection = getDatabaseConnection(finalProps1);
-            debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
-                    finalProps1, lsn);
-            connection.close();
-            log.info("Received update-binlog request: " + body);
+            try (Connection connection = getDatabaseConnection(finalProps1)) {
+                debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
+                        finalProps1, lsn);
+            } catch (IllegalArgumentException invalid) {
+                log.warn("Rejected update-lsn request: {} ({})", body, invalid.getMessage());
+                ctx.status(HttpStatus.BAD_REQUEST);
+                ctx.result("{\"error\":\"" + invalid.getMessage().replace("\"", "'") + "\"}");
+                return;
+            }
+            log.info("Received update-lsn request: " + body);
         });
 
         Properties finalProps = props;
@@ -359,6 +381,11 @@ public class DebeziumEmbeddedRestApi {
     /**
      * Stops the Javalin REST API server.
      */
+    /** A JSON field as a string: numbers are accepted for positions, null stays null. */
+    private static String stringOrNull(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
     public static void stop() {
         if (app != null) {
             app.stop();
