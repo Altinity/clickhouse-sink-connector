@@ -90,7 +90,14 @@ The replication engine maps each binlog event into ClickHouse insertions:
     and has the same version — by the `FINAL` tie rule below.
 - `FINAL` tie rule: `maxStep` uses `>=`, so of two records with one key and
   equal version the one appended **later** wins (ClickHouse keeps the last
-  inserted row). Proved as `tombstone_wins_version_tie`.
+  inserted row). Proved as `tombstone_wins_version_tie`. The connector relies
+  on this rule beyond relocation tombstones: under GTID versioning every row
+  event of one transaction in one millisecond carries the same `_version`
+  (spec 02.01 §3.1.1), so two writes to one key inside one transaction are
+  ordered only by insertion order — which holds because the connector writes
+  a table's rows in binlog order on one worker and never splits tied rows
+  across workers. The model assumes that order (the list order of the
+  table); it does not model the per-table routing that establishes it.
 - $\text{translate}(\text{Delete}(k), p) = [ \{ k, \emptyset, \text{encode}(p), \text{true} \} ]$
 
 ---
