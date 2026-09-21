@@ -505,6 +505,24 @@ class TestClampedRowCounts(unittest.TestCase):
         self.assertFalse(any(line.startswith("WARNING") for line in run_mysql_side(MYSQL_COLUMNS, FIXTURE_ROWS)))
 
 
+class TestBooleanAndBit(unittest.TestCase):
+    """Bool / Nullable(Bool) and MySQL bit(1) both render '1' / '0' (spec 11.02 section 3.3)."""
+
+    def test_nullable_bool_renders_through_touint8(self):
+        build = TestClickHouseRowExpression().build
+        self.assertEqual(build([("b", "Bool", 0, None)]), 'toString(toUInt8("b"))')
+        self.assertEqual(
+            build([("b", "Nullable(Bool)", 1, None)]),
+            'case when "b" is null then \'\' else toString(toUInt8("b")) end'
+            "||'#'||"
+            'case when "b" is null then \'1\' else \'0\' end',
+        )
+
+    def test_mysql_bit1_renders_as_integer_and_wider_bits_stay_hex(self):
+        self.assertEqual(build_mysql_select([mysql_column("b", "bit", "bit(1)")]), "`b`+0")
+        self.assertEqual(build_mysql_select([mysql_column("b", "bit", "bit(8)")]), "lower(hex(cast(`b` as binary)))")
+
+
 class TestEndToEndChecksum(unittest.TestCase):
     """Both scripts, driven through their real code paths over stubbed engines."""
 

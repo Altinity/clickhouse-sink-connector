@@ -119,7 +119,9 @@ def clickhouse_column_expression(column_name, data_type, numeric_scale, options,
     namespace (only its rendering options are read). ``bounds`` are the
     canonical (min, max) datetime clamp bounds in ``zone``.
     """
-    if 'Bool' == data_type:
+    if 'Bool' in data_type:
+        # Bool and Nullable(Bool); MySQL renders bit(1) / tinyint as 1 / 0,
+        # toString(Bool) would give true / false.
         return "toString(toUInt8(" + column_name + "))"
     if "Decimal" in data_type:
         # toString() drops trailing zeros; MySQL prints the declared scale.

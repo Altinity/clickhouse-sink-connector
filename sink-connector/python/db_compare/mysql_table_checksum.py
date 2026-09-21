@@ -96,6 +96,10 @@ def mysql_column_expression(column, options, binary_encoding, same_charset, boun
     if data_type == 'date':  # Date are converted to Date32 in CH
         # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
         return f"case when {column_name} >='{max_date_value}' then CAST('{max_date_value}' AS date) else case when {column_name} <= '{min_date_value}' then CAST('{min_date_value}' AS date) else {column_name} end end"
+    if data_type == 'bit' and column['column_type'].lower() == 'bit(1)':
+        # Debezium emits BIT(1) as BOOLEAN and the connector stores Bool;
+        # ClickHouse renders it as 1 / 0 (toUInt8), so render the bit as an integer.
+        return f"{column_name}+0"
     if is_binary_datatype(data_type):
         if binary_encoding == 'base64':
             return "replace(to_base64(cast(" + column_name + " as binary)),'\\n','')"

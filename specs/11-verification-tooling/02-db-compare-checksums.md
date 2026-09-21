@@ -137,7 +137,8 @@ single character `#`:
 | `date` | `Date`/`Date32` | `case when col >= max then max when col <= min then min else col end` with `--min_date_value` / `--max_date_value` | `toString(col)` |
 | `time(p)`, any `p` | `String` holding `[-]HH:MM:SS.ffffff` (spec 07.03 §3.2) | `cast(col as time(6))` — six fraction digits unconditionally; the old `substr(cast(col as time(6)),1,length(col))` truncated `time(0)` to `10:00:00` and reported DIFFERENT (`test_checksum_fidelity.py::TestMySQLTemporalRendering.test_time_is_rendered_with_six_fraction_digits_for_every_precision`) | `toString(col)` |
 | `datetime(p)`, `timestamp(p)` | `DateTime`, `DateTime64(s[, tz])` | §3.4 | §3.4 |
-| binary, boolean/bit, floating point, JSON | — | see the following sections | see the following sections |
+| `bit(1)` (`COLUMN_TYPE` exactly `bit(1)`; Debezium emits it as BOOLEAN) | `Bool`, `Nullable(Bool)` (or `UInt8`) | `col+0` — renders `1`/`0`; the generic binary rendering gave the hex text `01` | `toString(toUInt8(col))` — matched with `'Bool' in type`, so `Nullable(Bool)` no longer falls through to `toString(col)` = `true`/`false` (`test_checksum_fidelity.py::TestBooleanAndBit`) |
+| binary, floating point, JSON | — | see the following sections | see the following sections |
 
 ### 3.4 DATETIME / TIMESTAMP: one canonical rendering, one clamp
 Both sides render a DATETIME or TIMESTAMP value to the **fixed-width** text
@@ -326,6 +327,8 @@ connect to a database.
     `--source_timezone` to both scripts and `--timestamp_columns` to the
     replica script, and resolves the zone from `@@session.time_zone` /
     `@@system_time_zone` when not given, refusing an abbreviation.
+  - `TestBooleanAndBit` — §3.3: `Bool` and `Nullable(Bool)` render through
+    `toUInt8`; MySQL `bit(1)` renders as `col+0` while `bit(8)` stays hex.
   - `TestClampedRowCounts` — §3.4: both aggregate queries carry
     `coalesce(sum(clamped),0)`; a table without datetime columns contributes
     `0`; a non-zero count is logged as a WARNING that does not change the
