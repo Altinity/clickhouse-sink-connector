@@ -960,17 +960,35 @@ public class MySqlDDLParserListenerImplTest {
         String dropConstraintsSql = "alter table employees drop CONSTRAINT employees_ibfk_2";
         mySQLDDLParserService.parseSql(dropConstraintsSql, "employees", clickhouseQuery);
 
-        Assert.assertTrue(clickhouseQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.employees DROP CONSTRAINT IF EXISTS employees_ibfk_2"));
+        // Skip class (Spec 06.04 §3.1): no CHECK constraint is ever created on
+        // the replica, so there is nothing to drop and nothing is emitted.
+        // Previously pinned "DROP CONSTRAINT IF EXISTS employees_ibfk_2".
+        Assert.assertEquals("", clickhouseQuery.toString().trim());
     }
 
     @Test
     public void testAddConstraintsWithAnd() {
         StringBuffer clickHouseQuery = new StringBuffer();
         String checkConstraintSql = "ALTER TABLE orders ADD CONSTRAINT check_revenue_positive CHECK ( (revenue>=0 and revenue<1000) or (revenue>=2000) );";
-        String clickhouseExpectedQuery = "ALTER TABLE `employees`.orders ADD CONSTRAINT check_revenue_positive CHECK ( ( revenue >=0 and revenue <1000 ) or ( revenue >=2000 ) ) ";
         mySQLDDLParserService.parseSql(checkConstraintSql, " ", clickHouseQuery);
         log.info("CLICKHOUSE QUERY " + clickHouseQuery.toString());
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
+        // Skip class (Spec 06.04 §3.1): a CHECK is validated by MySQL already
+        // and, echoed, is either rejected by ClickHouse or re-enforced on
+        // INSERT against the source rows. Previously pinned the verbatim echo.
+        Assert.assertEquals("", clickHouseQuery.toString().trim());
+    }
+
+    @Test
+    @DisplayName("CHECK constraints (ADD/DROP, named, unnamed, NOT ENFORCED) are skipped and never drop a neighbour")
+    public void testAddCheckConstraintIsSkipped() {
+        Assert.assertEquals("", translate("ALTER TABLE t ADD CHECK (a > 0)").trim());
+        Assert.assertEquals("", translate("ALTER TABLE t ADD CONSTRAINT c1 CHECK (a > 0) NOT ENFORCED").trim());
+        Assert.assertEquals("", translate("ALTER TABLE t DROP CHECK c1").trim());
+        Assert.assertEquals("", translate("ALTER TABLE t DROP CONSTRAINT c1").trim());
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS b Nullable(Int32)",
+                translate("ALTER TABLE t ADD CHECK (a > 0), ADD COLUMN b INT, DROP CONSTRAINT c1"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS b Nullable(Int32)",
+                translate("ALTER TABLE t ADD COLUMN b INT, ADD CONSTRAINT c2 CHECK (JSON_VALID(doc))"));
     }
 
     @Test
@@ -2818,7 +2836,8 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "alter table employees drop CONSTRAINT employees_ibfk_2";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.employees DROP CONSTRAINT IF EXISTS employees_ibfk_2"));
+        // Skip class (Spec 06.04 §3.1); previously pinned "DROP CONSTRAINT IF EXISTS".
+        Assert.assertEquals("", clickHouseQuery.toString().trim());
     }
 
     @Test

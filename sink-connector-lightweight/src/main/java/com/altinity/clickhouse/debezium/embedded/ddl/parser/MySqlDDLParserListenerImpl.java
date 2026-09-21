@@ -24,7 +24,6 @@ import io.debezium.ddl.parser.mysql.generated.MySqlParser.TableNameContext;
 import io.debezium.relational.ddl.DataType;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.TerminalNodeImpl;
-import org.antlr.v4.runtime.ParserRuleContext;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -1790,16 +1789,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 parseAddColumns((MySqlParser.AlterByAddColumnsContext) tree, headerEnd);
             } else if (tree instanceof MySqlParser.AlterByAddDefinitionsContext) {
                 parseAddDefinitions((MySqlParser.AlterByAddDefinitionsContext) tree, headerEnd);
-            } else if (tree instanceof MySqlParser.AlterByDropConstraintCheckContext) {
-                // Drop Constraint.
-                // DESTRUCTIVE: none -- a CHECK constraint holds no data; this
-                // mirrors the constraint drop the SOURCE already performed.
-                this.query.append(" ");
-                for (ParseTree dropConstraintTree : ((MySqlParser.AlterByDropConstraintCheckContext) (tree)).children) {
-                    if (dropConstraintTree instanceof MySqlParser.UidContext) {
-                        this.query.append(String.format(Constants.DROP_CONSTRAINT, dropConstraintTree.getText()));
-                    }
-                }
             } else if (tree instanceof MySqlParser.AlterByDropColumnContext) {
                 // Drop Column.
                 // DESTRUCTIVE: renders the column drop the SOURCE database
@@ -1835,15 +1824,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             } else if (tree instanceof MySqlParser.AlterByRenameColumnContext) {
                 parseRenameColumn(tree);
-            } else if (tree instanceof MySqlParser.AlterByAddCheckTableConstraintContext) {
-                // ADD CONSTRAINT ... CHECK (...) is echoed in clause order so
-                // its separator survives (a listener that fired after this
-                // method appended it after the trailing-comma cleanup, gluing
-                // it onto the previous clause without a comma).
-                this.query.append(" ");
-                for (ParseTree checkTree : ((MySqlParser.AlterByAddCheckTableConstraintContext) tree).children) {
-                    this.parseTreeHelper(checkTree);
-                }
             } else if (tree instanceof MySqlParser.AlterByRenameContext) {
                 renameTarget = renameTargetTable((MySqlParser.AlterByRenameContext) tree);
             } else if (isNoOpSpecification(tree)) {
@@ -1902,13 +1882,23 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * drops because ClickHouse has no equivalent and nothing is lost by
      * skipping it (Spec 06.03 §3.2): indexes and keys of every kind,
      * {@code DROP PRIMARY KEY}, foreign keys, column DEFAULT changes,
-     * charset and collation, table options, {@code ALGORITHM}/{@code LOCK}
-     * hints, key enable/disable, physical ORDER BY, tablespace and every
-     * partition operation.
+     * CHECK constraints, charset and collation, table options,
+     * {@code ALGORITHM}/{@code LOCK} hints, key enable/disable, physical
+     * ORDER BY, tablespace and every partition operation.
+     *
+     * <p>CHECK constraints (Spec 06.04 §3.1): a CHECK holds no data and MySQL
+     * has already validated every replicated row against it. Echoed, an
+     * unnamed CHECK, a {@code NOT ENFORCED} clause or a MySQL-only function is
+     * rejected by ClickHouse and the whole statement is retried forever; and
+     * when ClickHouse accepts it, it re-enforces on INSERT what the source
+     * admitted. {@code DROP CONSTRAINT|CHECK} has nothing to drop because no
+     * CHECK is ever created on the replica.</p>
      */
     private static boolean isNoOpSpecification(ParseTree tree) {
         return tree instanceof MySqlParser.AlterByAddPrimaryKeyContext
                 || tree instanceof MySqlParser.AlterByDropPrimaryKeyContext
+                || tree instanceof MySqlParser.AlterByAddCheckTableConstraintContext
+                || tree instanceof MySqlParser.AlterByDropConstraintCheckContext
                 || tree instanceof MySqlParser.AlterByAddIndexContext
                 || tree instanceof MySqlParser.AlterByAddUniqueKeyContext
                 || tree instanceof MySqlParser.AlterByAddSpecialIndexContext
@@ -2003,26 +1993,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             newTableName = newTableName.split("\\.")[1];
         }
         return newTableName;
-    }
-
-    /**
-     * A helper function to recursively process each tree node in the ALTER TABLE statement.
-     *
-     * @param child The parse tree node to be processed.
-     */
-    private void parseTreeHelper(ParseTree child) {
-        if (child instanceof MySqlParser.UidContext) {
-            this.query.append(child.getText()).append(" ");
-        } else if (child instanceof MySqlParser.ComparisonOperatorContext) {
-            this.query.append(child.getText());
-        } else if (child instanceof TerminalNodeImpl) {
-            this.query.append(child.getText()).append(" ");
-        } else if (child instanceof ParserRuleContext) {
-            // Recursively process child nodes
-            for (ParseTree child2 : ((ParserRuleContext) child).children) {
-                this.parseTreeHelper(child2);
-            }
-        }
     }
 
     // ------------------------------------------------------------------
