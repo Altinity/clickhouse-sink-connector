@@ -30,6 +30,7 @@ import java.util.Properties;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -49,10 +50,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *
  * <p><b>The rule.</b> A null parse result is classified first: a heartbeat
  * topic, or a value Struct with no {@code op} field, is a control record and is
- * logged at DEBUG with a distinct message. WARN is kept only for a record that
- * HAS an {@code op} field — a real row — and still could not be parsed. The
- * offset handling is untouched: the control record is still acknowledged via
- * {@code commitControlRecordOffset} when the pipeline is quiescent (#1379).</p>
+ * logged at DEBUG with a distinct message. A record that HAS an {@code op}
+ * field — a real row — and still could not be parsed is neither logged nor
+ * skipped: it is terminal ({@link RecordReplicationException}, spec 01.06
+ * §3.1), because skipping it let its offset be committed as a control
+ * record's. The control-record offset handling is untouched: it is still
+ * acknowledged via {@code commitControlRecordOffset} when the pipeline is
+ * quiescent (#1379).</p>
  *
  * <p>These tests drive the real {@code handleChangeEventBatch} with the real
  * {@link SourceRecordParserService}, so they exercise the production path
@@ -302,22 +306,25 @@ public class ControlRecordLogLevelTest {
     }
 
     /**
-     * The guard: the WARN is kept for the case it was written for. A record
-     * that carries an {@code op} field is a real row; if it still cannot be
-     * parsed, dropping it must stay visible (#1379).
+     * The guard, INVERTED from its first version. A record that carries an
+     * {@code op} field is a real row; if it cannot be parsed it is not "logged
+     * at WARN and skipped" -- that skip let the batch loop commit the row's
+     * offset as a control record's and lose the row (spec 01.06 §3.1). It is
+     * terminal: {@link RecordReplicationException} leaves the batch handler
+     * and nothing is acknowledged.
      */
     @Test
-    @DisplayName("A row record (op present) that cannot be parsed is still logged at WARN")
-    public void unparseableRowRecordStillWarns() throws Exception {
+    @DisplayName("A row record (op present) that cannot be parsed is terminal, not a WARN skip")
+    public void unparseableRowRecordIsTerminal() {
         RecordingCommitter committer = new RecordingCommitter();
 
-        List<LogEvent> events = runBatchAndCaptureLog(
-                Collections.singletonList(rowEventWithOp()), committer, new NullReturningParser());
-
-        boolean skipWarned = events.stream()
-                .anyMatch(e -> e.getLevel().isMoreSpecificThan(Level.WARN)
-                        && e.getMessage().getFormattedMessage().toLowerCase().contains("skipping"));
-        assertTrue(skipWarned,
-                "dropping a record that carries an op field is a real row loss and must stay at WARN");
+        assertThrows(RecordReplicationException.class,
+                () -> runBatchAndCaptureLog(
+                        Collections.singletonList(rowEventWithOp()), committer, new NullReturningParser()),
+                "a row record that parses to null must halt the pipeline; the earlier WARN-and-skip "
+                        + "committed the row's offset and lost the row");
+        assertTrue(committer.processed.isEmpty(),
+                "no offset may be staged for a row that was never written");
+        assertEquals(0, committer.batchesFinished);
     }
 }

@@ -134,6 +134,8 @@ on Lean's standard axioms `[propext, Quot.sound]` (verified via `#print axioms`)
 | `control_commit_safe` | a control record advances the committed offset only when `outstanding = 0` | Safety: never commit past unwritten rows (no #1285 data loss). |
 | `quiescent_control_commits` | a control record on a quiescent pipeline commits its offset | Liveness: the end-of-snapshot heartbeat's offset IS committed. |
 | `snapshot_completes` | after the snapshot's rows are handed off and written, the end-of-snapshot control record commits its offset (`committed = snapPos`) | **Issue #1379**: `snapshot_completed` persists; a restart does not re-run the snapshot. |
+| `unparsed_row_halts` / `unparsed_row_never_committed` | `dispatch s (row false p) = none`; any record list containing an unparsed row has no final state | A ROW record the parser cannot convert is terminal: its offset is never acknowledged (spec 01.06 §3.1, I9). |
+| `old_rule_commits_unparsed_row` | the replaced rule (unparsed row treated as a control record) yields `committed = p` on a quiescent pipeline | Concrete witness of the silent loss the fix removes. |
 
 ### DDL barrier covers every handoff path (Invariant I5, `DdlBarrier.lean`)
 
@@ -209,7 +211,7 @@ The same table is kept in the Constitution §5.1; this copy is the one next to t
 | I6 Column Authority | none (`ColumnKind` modelled, no theorem) | — |
 | I7 Value-Level Type Equivalence | none | — |
 | I8 Durable Offset Quiescence | in progress (concurrent change); control-record half under I12 | — |
-| I9 Loud Failure | none | — |
+| I9 Loud Failure | row half proved: an unconvertible row record halts the pipeline, never an acknowledged heartbeat (spec 01.06 §3.1) | `unparsed_row_halts`, `unparsed_row_never_committed`, `old_rule_commits_unparsed_row` |
 | I10 Separation of Concerns | none (architectural rule) | — |
 | I11 Drop-in Upgrade Safety | proved, conditional on `GapMono` | `upgrade_safe`, `replicate_convergesV`, `liveVersion_gapMono` |
 | I12 Snapshot Completion & Control-Record Offset Progress | proved | `control_commit_safe`, `quiescent_control_commits`, `snapshot_completes` |

@@ -1674,6 +1674,11 @@ public class DebeziumChangeEventCapture {
             if (i == list.size() - 1) {
                 lastRecordInBatch = true;
             }
+            // A value that is neither a Struct nor null is not a row and not a
+            // control record: nothing downstream can represent it, so it is
+            // terminal here, before the version sequence is touched (spec
+            // 01.06 section 3.1).
+            rejectUnrepresentableValue(record);
             // Anchor the version to the SOURCE commit timestamp (source.ts_ms),
             // not the envelope/processing timestamp. The source timestamp is
             // identical on every Debezium re-delivery, so a re-delivered DELETE
@@ -1723,6 +1728,19 @@ public class DebeziumChangeEventCapture {
             if (chStruct != null) {
                 batch.add(chStruct);
             } else if (!ddlRecord) {
+                // Only a record that carries no row BY CONTRACT (heartbeat,
+                // transaction marker, tombstone) may have its offset committed
+                // as a control record. A row record that produced no struct is
+                // a dropped row; committing its offset would move the durable
+                // position past data that is not in ClickHouse (spec 01.06
+                // section 3.1). processEveryChangeRecord already raises this
+                // case; the guard here is the second line, so no future path
+                // through that method can turn a lost row into a heartbeat.
+                if (!isControlRecord(record.value())) {
+                    throw new RecordReplicationException(String.format(
+                            "Row record produced no ClickHouse row and is not a control record; "
+                                    + "refusing to acknowledge its offset. Record(%s)", record));
+                }
                 lastControlRecord = record;
             }
         }
@@ -1957,10 +1975,15 @@ public class DebeziumChangeEventCapture {
 
         try {
             SourceRecord sr = record.value();
-            Struct struct = (Struct) sr.value();
+            rejectUnrepresentableValue(record);
+            Struct struct = sr == null ? null : (Struct) sr.value();
 
             if (struct == null) {
-                log.debug(String.format("STRUCT EMPTY - not a valid CDC record + Record(%s)", record.toString()));
+                // A Debezium tombstone (key, null value; follows a DELETE when
+                // tombstones.on.delete=true): no row by contract, a control
+                // record for offset purposes. See isControlRecord.
+                log.debug(String.format("Tombstone (null value) - no row to write; its offset is "
+                        + "committed once the pipeline is quiescent. Record(%s)", record));
                 return null;
             }
             if (struct.schema() == null) {
@@ -2071,25 +2094,30 @@ public class DebeziumChangeEventCapture {
                                 schemaEx.getMessage(), schemaEx);
                     }
                 }
-                chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
-                // NOTE: do NOT early-return on a null chStruct here. A null is
-                // contract (heartbeat / transaction-boundary record), and the
-                // caller -- handleChangeEventBatch -- must still see this record
-                // so commitControlRecordOffset can acknowledge its offset. That
-                // acknowledgement is the whole of the #1379 fix (#1428): on an
-                // idle source the post-snapshot state rides exclusively on
-                // heartbeats, so returning early here strands
-                // snapshot_completed=false forever and re-snapshots on restart.
+                // A parser that THROWS on a row record is terminal. The generic
+                // catch-all below used to absorb it, return null, and the
+                // caller then acknowledged the record's offset as if it were a
+                // heartbeat: a lost row with the durable position moved past
+                // it (spec 01.06 section 3.1, spec 10.04 section 3.3).
                 try {
-                    if (chStruct != null) {
-                        chStruct.setSequenceNumber(sequenceNumber);
-                        ReplicationStatusSingleton rss = ReplicationStatusSingleton.getInstance();
-                        rss.setReplicationLag(chStruct.getReplicationLag());
-                        rss.setLastRecordTimestamp(chStruct.getTs_ms());
-                        rss.setBinLogFile(chStruct.getFile());
-                        rss.setBinLogPosition(String.valueOf(chStruct.getPos()));
-                        rss.setGtid(String.valueOf(chStruct.getGtid()));
-                    } else if (isControlRecord(sr)) {
+                    chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
+                } catch (Exception parseEx) {
+                    throw new RecordReplicationException(String.format(
+                            "Record could not be converted to a ClickHouse row (parser threw); "
+                                    + "stopping the pipeline rather than acknowledging its offset and "
+                                    + "silently dropping it. Record(%s)", record), parseEx);
+                }
+                // NOTE: do NOT early-return on a null chStruct here. A null is
+                // contract for a CONTROL record (heartbeat / transaction
+                // boundary), and the caller -- handleChangeEventBatch -- must
+                // still see this record so commitControlRecordOffset can
+                // acknowledge its offset. That acknowledgement is the whole of
+                // the #1379 fix (#1428): on an idle source the post-snapshot
+                // state rides exclusively on heartbeats, so returning early
+                // here strands snapshot_completed=false forever and
+                // re-snapshots on restart.
+                if (chStruct == null) {
+                    if (isControlRecord(sr)) {
                         // A heartbeat or transaction-metadata record: it has no
                         // `op` field, so parse() returns null BY CONTRACT --
                         // there is no row to write. Its offset is still
@@ -2102,22 +2130,41 @@ public class DebeziumChangeEventCapture {
                                 + "write; its offset is committed once the pipeline is quiescent. "
                                 + "Record({})", record);
                     } else {
-                        // parse() returns null for a record it cannot convert, such as
-                        // a null or non-Struct source value. Setting the sequence number
-                        // before this check raised an NPE that the catch-all below then
-                        // swallowed, so the record was dropped silently while the
-                        // snapshot loop logged the same stack trace per record (#1379).
-                        // This branch is reached only for a record that DOES carry an
-                        // `op` field (or no Struct at all): a real row was dropped, so
-                        // it must stay visible.
-                        log.warn(String.format(
-                                "Record could not be parsed to a ClickHouseStruct - skipping. Record(%s)",
-                                record));
+                        // A record that DOES carry an `op` field is a row. A null
+                        // here means the row was not converted -- a missing
+                        // before/after section, an unknown op, a converter gap.
+                        // It must NOT be skipped: skipping it and letting the
+                        // batch loop acknowledge its offset as a control record
+                        // loses the row permanently (a restart never redelivers
+                        // past a committed offset). Halt instead; the offset
+                        // stays behind the record and a restart redelivers it.
+                        throw new RecordReplicationException(String.format(
+                                "Row record (op present) could not be converted to a ClickHouse "
+                                        + "row; stopping the pipeline rather than acknowledging its "
+                                        + "offset and silently dropping it. Topic(%s) Record(%s)",
+                                sr.topic(), record));
                     }
-                } catch (Exception e) {
-                    log.error("Error retrieving status metrics: Exception" + e.toString());
+                } else {
+                    try {
+                        chStruct.setSequenceNumber(sequenceNumber);
+                        ReplicationStatusSingleton rss = ReplicationStatusSingleton.getInstance();
+                        rss.setReplicationLag(chStruct.getReplicationLag());
+                        rss.setLastRecordTimestamp(chStruct.getTs_ms());
+                        rss.setBinLogFile(chStruct.getFile());
+                        rss.setBinLogPosition(String.valueOf(chStruct.getPos()));
+                        rss.setGtid(String.valueOf(chStruct.getGtid()));
+                    } catch (Exception e) {
+                        log.error("Error retrieving status metrics: Exception" + e.toString());
+                    }
                 }
             }
+        } catch (RecordReplicationException rre) {
+            // A row that could not be converted must NOT be swallowed and then
+            // acknowledged as a heartbeat by the caller. Re-throw so it leaves
+            // handleBatch and halts the engine with the offset still behind the
+            // record. Kept ahead of the catch-all below, which would otherwise
+            // absorb it (spec 10.04 section 3.3).
+            throw rre;
         } catch (DDLReplicationException dre) {
             // A DDL that could not be applied must NOT be swallowed like a bad
             // DML record. Re-throw so it leaves handleBatch and halts the
@@ -2143,12 +2190,23 @@ public class DebeziumChangeEventCapture {
      * {@code ts_ms}; transaction metadata carries {@code status}/{@code id}/
      * {@code event_count}).
      * <p>
-     * A null or non-Struct value is NOT a control record: a null parse result
-     * for such a record is a dropped record and must stay visible at WARN.
+     * A record with a NULL value is a Debezium tombstone (emitted after a
+     * DELETE when {@code tombstones.on.delete=true}, the MySQL connector
+     * default): it carries no row by contract and is a control record. A
+     * non-null value that is not a Struct is NOT a control record: nothing can
+     * represent it, so a null parse result for such a record is a dropped
+     * record and is terminal ({@link RecordReplicationException}).
      * </p>
      *
+     * <p>This classification decides whether a record that produced no
+     * {@code ClickHouseStruct} may have its offset committed
+     * ({@code commitControlRecordOffset}) or must halt the engine: a
+     * {@code true} here is the ONLY way a no-row record becomes the batch's
+     * {@code lastControlRecord} (spec 01.06 section 3.1).</p>
+     *
      * @param sr the source record; may be null.
-     * @return true if the record is a heartbeat or transaction-metadata record.
+     * @return true if the record is a heartbeat, transaction-metadata record or
+     *         tombstone.
      */
     @VisibleForTesting
     static boolean isControlRecord(SourceRecord sr) {
@@ -2160,12 +2218,40 @@ public class DebeziumChangeEventCapture {
             return true;
         }
         Object value = sr.value();
+        if (value == null) {
+            return true;
+        }
         if (!(value instanceof Struct)) {
             return false;
         }
         Struct struct = (Struct) value;
         return struct.schema() != null
                 && struct.schema().field(SinkRecordColumns.OPERATION) == null;
+    }
+
+    /**
+     * Refuses a record whose value is neither a Struct nor null.
+     * <p>
+     * Every record Debezium emits is either a Struct-valued envelope / control
+     * record or a null-valued tombstone. Anything else cannot be turned into a
+     * row, is not a control record, and previously died in a
+     * {@code ClassCastException} whose message named nothing. It is terminal
+     * (spec 01.06 section 3.1); the offset stays behind it.
+     * </p>
+     *
+     * @param record the change event to check.
+     * @throws RecordReplicationException if the value is non-null and not a Struct.
+     */
+    private static void rejectUnrepresentableValue(ChangeEvent<SourceRecord, SourceRecord> record) {
+        SourceRecord sr = record == null ? null : record.value();
+        Object value = sr == null ? null : sr.value();
+        if (value != null && !(value instanceof Struct)) {
+            throw new RecordReplicationException(String.format(
+                    "Record value is a %s, not a Struct: it is neither a row nor a control record and "
+                            + "cannot be replicated; stopping the pipeline rather than acknowledging "
+                            + "its offset. Topic(%s) Record(%s)",
+                    value.getClass().getName(), sr.topic(), record));
+        }
     }
 
     /**

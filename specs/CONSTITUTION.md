@@ -209,7 +209,7 @@ Honest status per invariant. "Lean" means a proposition and a machine-checked th
 | I6 Column Authority & Shadowing Prohibition | none (`ColumnKind` is modelled in `Basic.lean`; no theorem) | — |
 | I7 Value-Level Type Equivalence | none | — |
 | I8 Durable Offset Quiescence | Lean (handoff FIFO); the control-record half is covered under I12 | `OffsetFifo.lean`: `commit_never_passes_outstanding`, `write_at_most_once`, `old_overlap_rule_unsafe` |
-| I9 Loud Failure | none (empirical only: spec 10.04) | — |
+| I9 Loud Failure | Lean (row half only: an unconvertible row record halts, its offset is never committed); the rest is empirical (spec 10.04) | `Snapshot.lean`: `unparsed_row_halts`, `unparsed_row_never_committed`, `old_rule_commits_unparsed_row` |
 | I10 Structural Separation of Concerns | none (architectural rule, not a state-machine property) | — |
 | I11 Drop-in Upgrade Safety | Lean, conditional on `GapMono` (spec 02.06 §6 lists where the code does not establish it) | `upgrade_safe`, `replicate_convergesV`, `liveVersion_gapMono` |
 | I12 Snapshot Completion & Control-Record Offset Progress | Lean | `control_commit_safe`, `quiescent_control_commits`, `snapshot_completes` |
