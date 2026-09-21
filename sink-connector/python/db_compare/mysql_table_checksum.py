@@ -14,9 +14,9 @@ import sys
 import datetime
 import re
 import os
-import hashlib
 import concurrent.futures
 from db.mysql import *
+from db.checksum_common import checksum_from_aggregate
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
@@ -276,8 +276,6 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns
             partition_key = get_table_partition_key(conn, args.mysql_database, mysql_table)
             if partition_key is not None:
                 where = fstr(where, partition_key)
-    md5_sum = ""
-    cnt = -1
     result = []
 
     # initialize debug output
@@ -304,17 +302,9 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns
     to_add = (0,0,0,0,0)
     for r in result:
        to_add  = (to_add[0]+r[0], to_add[1]+r[1], to_add[2]+r[2], to_add[3]+r[3], to_add[4]+r[4])
-    x = list(to_add)
-    # print the checksum
-    for line in x:
-            logging.debug(str(line))
-            md5_sum += str(line) + '#'
-            if cnt == - 1:
-                  cnt = str(line)
-    logging.debug(md5_sum)
-    m = hashlib.md5()
-    m.update(md5_sum.encode('utf-8'))
-    logging.info("Checksum for table "+args.mysql_database + "."+mysql_table+" = "+m.hexdigest() + " count "+str(cnt))
+    (cnt, a, b, c, d) = to_add
+    checksum = checksum_from_aggregate(cnt, a, b, c, d)
+    logging.info("Checksum for table "+args.mysql_database + "."+mysql_table+" = "+checksum + " count "+str(cnt))
 
 # hack to add the user to the logger, which needs it apparently
 old_factory = logging.getLogRecordFactory()

@@ -1,0 +1,253 @@
+"""Offline fidelity tests for the db_compare checksum tools (spec 11.02).
+
+Every test stubs the database layer (``execute_sql`` / ``execute_mysql`` and the
+connection helpers). The stubs return the catalog rows a real engine would
+return for a fixture table and the aggregate a real engine would compute over a
+fixture of canonical row strings. No test opens a connection.
+"""
+import argparse
+import hashlib
+import os
+import re
+import sys
+import unittest
+from unittest.mock import MagicMock, patch
+
+sys.path.insert(
+    0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+)
+
+import db_compare.clickhouse_table_checksum as ch  # noqa: E402
+import db_compare.mysql_table_checksum as my  # noqa: E402
+import db_compare.top_level_table_checksum as tl  # noqa: E402
+from db.checksum_common import checksum_from_aggregate  # noqa: E402
+
+CHECKSUM_LINE_RE = re.compile(
+    r"Checksum for table (?P<db>\S+?)\.(?P<table>\S+?) = (?P<md5>[0-9a-f]{32}) count (?P<count>\d+)"
+)
+
+
+def reference_aggregate(row_strings):
+    """What both aggregate queries compute for a set of canonical row strings.
+
+    Spec 11.02 section 3.4: per row md5 as 32 hex chars, split into four 32-bit
+    words read as unsigned integers, summed over the rows; plus the row count.
+    """
+    a = b = c = d = 0
+    for row in row_strings:
+        digest = hashlib.md5(row.encode("utf-8")).hexdigest()
+        a += int(digest[0:8], 16)
+        b += int(digest[8:16], 16)
+        c += int(digest[16:24], 16)
+        d += int(digest[24:32], 16)
+    return (len(row_strings), a, b, c, d)
+
+
+def clickhouse_args(**overrides):
+    """An ``args`` namespace with the parser defaults of clickhouse_table_checksum."""
+    values = dict(
+        clickhouse_host="clickhouse-host", clickhouse_database="db1",
+        clickhouse_port=9000, secure=False, sign_column="", tables_regex=".",
+        where=None, order_by=None, partition_key=None, ignore_tables_regex=None,
+        no_wc=False, debug_output=False, debug_limit=None, hex_columns=[],
+        debug=False, exclude_columns=["_sign,_version,is_deleted,_is_deleted"],
+        threads=1, min_datetime_value="1900-01-01 00:00:00",
+        max_datetime_value="2299-12-31 23:59:59.000000", max_memory_usage=None,
+        include_floating_point_columns=False, include_json_columns=True,
+    )
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+def mysql_args(**overrides):
+    """An ``args`` namespace with the parser defaults of mysql_table_checksum."""
+    values = dict(
+        mysql_host="mysql-host", mysql_user="u", mysql_password="p",
+        defaults_file=None, mysql_database="db1", mysql_port=3306,
+        tables_regex=".", where=None, order_by=None, ignore_tables_regex=None,
+        no_wc=False, debug_output=False, debug_limit=None, binary_encoding="hex",
+        min_date_value="1900-01-01", max_date_value="2299-12-31",
+        min_datetime_value="1970-01-01 00:00:00",
+        max_datetime_value="2299-12-31 23:59:59", debug=False,
+        exclude_columns=[], threads_per_table=1, chunk_size=10000, threads=1,
+        include_floating_point_columns=False, include_json_columns=True,
+    )
+    values.update(overrides)
+    return argparse.Namespace(**values)
+
+
+class FakeMySQLRowset:
+    """The subset of a SQLAlchemy CursorResult the MySQL script touches."""
+
+    def __init__(self, rows=None, dict_rows=None, returns_rows=True):
+        self.rows = rows or []
+        self.dict_rows = dict_rows or []
+        self.returns_rows = returns_rows
+
+    def __iter__(self):
+        return iter(self.rows)
+
+    def mappings(self):
+        return list(self.dict_rows)
+
+
+# Fixture table: id INT NOT NULL, name VARCHAR NOT NULL, f DOUBLE NOT NULL.
+# The last column is floating point and therefore skipped by default on both
+# sides, which is exactly the shape that produced the dangling '#' (spec 11.02
+# section 3.3).
+CLICKHOUSE_COLUMNS = [("id", "Int32", 0, None), ("name", "String", 0, None), ("f", "Float64", 0, None)]
+MYSQL_COLUMNS = [
+    {"column_name": "id", "data_type": "int", "column_type": "int", "is_nullable": "NO", "collation": None},
+    {"column_name": "name", "data_type": "varchar", "column_type": "varchar(32)", "is_nullable": "NO", "collation": "utf8mb4_0900_ai_ci"},
+    {"column_name": "f", "data_type": "double", "column_type": "double", "is_nullable": "NO", "collation": None},
+]
+FIXTURE_ROWS = ["1#bob", "2#alice", "3#carol"]
+
+
+def clickhouse_stub(columns, row_strings):
+    """execute_sql replacement returning catalog rows and the fixture aggregate."""
+
+    def execute_sql(conn, sql):
+        lowered = sql.lower()
+        if "is_in_primary_key" in lowered:
+            rows = [("id",)]
+        elif "from system.columns" in lowered:
+            rows = list(columns)
+        elif "partition_key" in lowered:
+            rows = [("",)]
+        elif 'count(*) as "cnt"' in lowered:
+            rows = [reference_aggregate(row_strings)]
+        elif lowered.startswith("select count(*) cnt from"):
+            rows = [(len(row_strings),)]
+        else:
+            raise AssertionError("unexpected ClickHouse statement in test: " + sql)
+        return (rows, len(rows))
+
+    return execute_sql
+
+
+def mysql_stub(columns, row_strings):
+    """execute_mysql replacement returning catalog rows and the fixture aggregate."""
+
+    def execute_mysql(conn, sql):
+        lowered = sql.strip().lower()
+        if "information_schema.columns" in lowered:
+            return (FakeMySQLRowset(dict_rows=columns), -1)
+        if lowered.startswith("set "):
+            return (FakeMySQLRowset(returns_rows=False), -1)
+        if 'count(*) as "cnt"' in lowered:
+            return (FakeMySQLRowset(rows=[reference_aggregate(row_strings)]), -1)
+        raise AssertionError("unexpected MySQL statement in test: " + sql)
+
+    return execute_mysql
+
+
+def run_clickhouse_side(columns, row_strings, **arg_overrides):
+    """Drive clickhouse_table_checksum.calculate_checksum with stubbed engine."""
+    ch.args = clickhouse_args(**arg_overrides)
+    with patch.object(ch, "get_connection", return_value=MagicMock()), \
+            patch.object(ch, "execute_sql", side_effect=clickhouse_stub(columns, row_strings)), \
+            unittest.TestCase().assertLogs(level="INFO") as logs:
+        ch.calculate_checksum("t1", "user", "pw", None, None)
+    return logs.output
+
+
+def run_mysql_side(columns, row_strings, **arg_overrides):
+    """Drive mysql_table_checksum.calculate_checksum with stubbed engine."""
+    my.args = mysql_args(**arg_overrides)
+    with patch.object(my, "get_mysql_connection", return_value=MagicMock()), \
+            patch.object(my, "mysql_pk_columns", return_value=[]), \
+            patch.object(my, "execute_mysql", side_effect=mysql_stub(columns, row_strings)), \
+            unittest.TestCase().assertLogs(level="INFO") as logs:
+        my.calculate_checksum("t1", "user", "pw", my.args.exclude_columns,
+                              my.args.include_floating_point_columns,
+                              my.args.include_json_columns)
+    return logs.output
+
+
+def parse_checksum_line(log_lines):
+    matches = [CHECKSUM_LINE_RE.search(line) for line in log_lines]
+    matches = [m for m in matches if m]
+    if len(matches) != 1:
+        raise AssertionError("expected exactly one checksum line, got: %r" % (log_lines,))
+    return (matches[0].group("md5"), int(matches[0].group("count")))
+
+
+class TestChecksumFromAggregate(unittest.TestCase):
+    def test_is_md5_of_hash_separated_values(self):
+        self.assertEqual(
+            checksum_from_aggregate(2, 10, 20, 30, 40),
+            hashlib.md5(b"2#10#20#30#40#").hexdigest(),
+        )
+        # An empty table is the same value on both sides.
+        self.assertEqual(
+            checksum_from_aggregate(0, 0, 0, 0, 0),
+            hashlib.md5(b"0#0#0#0#0#").hexdigest(),
+        )
+
+
+class TestClickHouseRowExpression(unittest.TestCase):
+    """The built ClickHouse expression, asserted through get_table_checksum_query
+    with execute_sql stubbed (spec 11.02 section 3.3)."""
+
+    def build(self, columns, **arg_overrides):
+        ch.args = clickhouse_args(**arg_overrides)
+        with patch.object(ch, "execute_sql", side_effect=clickhouse_stub(columns, [])):
+            (query, select, order_by, external_types) = ch.get_table_checksum_query(MagicMock(), "t1")
+        return select
+
+    def test_trailing_float_column_leaves_no_dangling_separator(self):
+        select = self.build(CLICKHOUSE_COLUMNS)
+        self.assertEqual(select, """toString("id")||'#'||toString("name")""")
+
+    def test_leading_and_middle_float_columns_leave_no_double_separator(self):
+        columns = [("f0", "Float32", 0, None), ("id", "Int32", 0, None),
+                   ("f1", "Float64", 0, None), ("name", "String", 0, None)]
+        select = self.build(columns)
+        self.assertEqual(select, """toString("id")||'#'||toString("name")""")
+
+    def test_nullable_flags_are_one_trailing_element(self):
+        columns = [("id", "Int32", 0, None), ("name", "Nullable(String)", 1, None),
+                   ("f", "Float64", 0, None)]
+        select = self.build(columns)
+        self.assertEqual(
+            select,
+            'toString("id")'
+            "||'#'||"
+            """case when "name" is null then '' else toString("name") end"""
+            "||'#'||"
+            """case when "name" is null then '1' else '0' end""",
+        )
+
+
+class TestEndToEndChecksum(unittest.TestCase):
+    """Both scripts, driven through their real code paths over stubbed engines."""
+
+    def test_equal_fixtures_report_equal(self):
+        mysql_result = parse_checksum_line(run_mysql_side(MYSQL_COLUMNS, FIXTURE_ROWS))
+        clickhouse_result = parse_checksum_line(run_clickhouse_side(CLICKHOUSE_COLUMNS, FIXTURE_ROWS))
+        self.assertEqual(mysql_result, clickhouse_result)
+        self.assertEqual(mysql_result[1], len(FIXTURE_ROWS))
+        self.assertEqual(mysql_result[0], checksum_from_aggregate(*reference_aggregate(FIXTURE_ROWS)))
+
+    def test_flipped_clickhouse_value_reports_different(self):
+        flipped = list(FIXTURE_ROWS)
+        flipped[1] = "2#alicf"  # one character of one value on the replica side
+        mysql_result = parse_checksum_line(run_mysql_side(MYSQL_COLUMNS, FIXTURE_ROWS))
+        clickhouse_result = parse_checksum_line(run_clickhouse_side(CLICKHOUSE_COLUMNS, flipped))
+        self.assertEqual(mysql_result[1], clickhouse_result[1], "row counts stay equal")
+        self.assertNotEqual(mysql_result[0], clickhouse_result[0])
+
+        results = [("mysql-host", "t1") + mysql_result, ("clickhouse-host", "t1") + clickhouse_result]
+        with self.assertLogs(level="WARNING") as logs:
+            tl.analyze_differences(results, "mysql-host", ["clickhouse-host"])
+        self.assertTrue(any("Checksum difference" in line for line in logs.output), logs.output)
+
+    def test_missing_row_on_clickhouse_reports_different(self):
+        mysql_result = parse_checksum_line(run_mysql_side(MYSQL_COLUMNS, FIXTURE_ROWS))
+        clickhouse_result = parse_checksum_line(run_clickhouse_side(CLICKHOUSE_COLUMNS, FIXTURE_ROWS[:-1]))
+        self.assertNotEqual(mysql_result, clickhouse_result)
+
+
+if __name__ == "__main__":
+    unittest.main()

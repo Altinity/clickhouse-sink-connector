@@ -15,9 +15,9 @@ import datetime
 import warnings
 import re
 import os
-import hashlib
 import concurrent.futures
 from db.clickhouse import *
+from db.checksum_common import checksum_from_aggregate
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
@@ -48,8 +48,6 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
             if result != None and rowcount > 0:
                 x = [element for tupl in result for element in tupl]
 
-                md5_sum = ""
-                cnt = -1
                 if args.debug_output:
                     for line in x:
                         if isinstance(line, bytes):
@@ -58,17 +56,11 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
                             debug_out.write(line)
                         debug_out.write('\n')
                 else:
-                    for line in x:
-                        logging.debug(str(line))
-                        md5_sum += str(line) + '#'
-                        if cnt == - 1:
-                            cnt = str(line)
-
-                    logging.debug(md5_sum)
-                    m = hashlib.md5()
-                    m.update(md5_sum.encode('utf-8'))
+                    logging.debug(str(x))
+                    (cnt, a, b, c, d) = x[0:5]
+                    checksum = checksum_from_aggregate(cnt, a, b, c, d)
                     logging.info("Checksum for table "+args.clickhouse_database +
-                                 "."+table+" = "+m.hexdigest() + " count "+str(cnt))
+                                 "."+table+" = "+checksum + " count "+str(cnt))
 
         if args.debug_output:
             debug_out.close()
@@ -101,26 +93,88 @@ SINK_METADATA_COLUMNS = frozenset(
 )
 
 
+def clickhouse_column_expression(column_name, data_type, numeric_scale, options):
+    """Text rendering of one ClickHouse column (spec 11.02 section 3.3).
+
+    ``column_name`` is already double-quoted. ``options`` is the parsed argument
+    namespace (only its rendering options are read).
+    """
+    if 'Bool' == data_type:
+        return "toString(toUInt8(" + column_name + "))"
+    if "Decimal" in data_type:
+        # toString() drops trailing zeros; MySQL prints the declared scale.
+        return "toDecimalString(" + column_name + "," + str(numeric_scale) + ")"
+    if "DateTime64(0" in data_type or "DateTime64(6" in data_type:
+        return (f"if(toString({column_name}) >= '{options.max_datetime_value}', '{options.max_datetime_value}', "
+                f"if(toString({column_name}) < '{options.min_datetime_value}', '{options.min_datetime_value}', "
+                f"trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))))")
+    if "DateTime" in data_type:
+        return f"trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))"
+    if column_name.strip('"') in options.hex_columns:
+        return "toString(unhex(" + column_name + "))"
+    return "toString(" + column_name + ")"
+
+
+def build_clickhouse_row_expression(columns_metadata, options):
+    """Build the canonical row expression from ``system.columns`` rows.
+
+    ``columns_metadata`` rows are ``(name, type, is_nullable, numeric_scale)`` in
+    position order, already filtered of excluded columns. Returns
+    ``(select, nullables, columns, data_types)`` where ``select`` is the pieces
+    joined by ``||'#'||``.
+
+    The pieces are collected in a list and joined, never built by appending a
+    separator after each column: a column skipped by type (floating point,
+    JSON) must contribute neither a value nor a separator, otherwise a table
+    whose last column is a skipped Float64 hashes ``1#bob#`` here against
+    ``1#bob`` from MySQL's concat_ws (spec 11.02 section 3.3).
+    """
+    parts = []
+    nullables = []
+    columns = []
+    data_types = {}
+    for row in columns_metadata:
+        column_name = '"' + row[0] + '"'
+        data_type = row[1]
+        is_nullable = row[2]
+        numeric_scale = row[3]
+        columns.append(row[0])
+        data_types[row[0]] = data_type
+        if not options.include_floating_point_columns:
+            if 'Float' in data_type:
+                logging.info(f"Excluding floating point column {column_name} of type {data_type}")
+                continue
+        if not options.include_json_columns:
+            if 'json' in data_type:
+                logging.info(f"Excluding json column {column_name} of type {data_type}")
+                continue
+        expression = clickhouse_column_expression(column_name, data_type, numeric_scale, options)
+        if is_nullable == 1:
+            nullables.append(column_name)
+            expression = "case when " + column_name + " is null then '' else " + expression + " end"
+        parts.append(expression)
+    logging.debug(str(nullables))
+    if len(nullables) > 0:
+        parts.append(" || ".join(
+            "case when " + nullable + " is null then '1' else '0' end" for nullable in nullables))
+    select = "||'#'||".join(parts)
+    return (select, nullables, columns, data_types)
+
+
 def get_table_checksum_query(conn, table):
     excluded_columns = "','".join(args.exclude_columns)
     excluded_columns = [f'{column}' for column in excluded_columns.split(',')]
     logging.info(f"Excluded columns, {excluded_columns}")
-    excluded_columns_str = ','.join((f"'{col}'" for col in excluded_columns))
     checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' order by position"
     (rowset, rowcount) = execute_sql(conn, checksum_query)
 
-    select = ""
-    nullables = []
-    columns = []
-    data_types = {}
-    first_column = True
     columns_metadata  = []
-    for row in rowset:    
+    for row in rowset:
         columns_metadata.append(row)
     columns_metadata_map = { r[0]: r for r in columns_metadata }
     # sometimes we have excluded columns like is_deleted and _is_deleted, we would exclude the one prefixed with _
     filtered_columns_metadata = []
-    for row in columns_metadata:   
+    for row in columns_metadata:
         prefixed_column = "_"+row[0]
         if (row[0] in excluded_columns
                 and prefixed_column in columns_metadata_map
@@ -130,74 +184,8 @@ def get_table_checksum_query(conn, table):
             logging.info(f"Excluding column {row[0]}")
             continue
         filtered_columns_metadata.append(row)
-       
-    for row in filtered_columns_metadata:
-        column_name = '"'+row[0]+'"'
-        data_type = row[1]
-        is_nullable = row[2]
-        numeric_scale = row[3]
-        columns.append(row[0])
-        unhex = row[0] in args.hex_columns
-        if not args.include_floating_point_columns:
-            if 'Float' in data_type:
-                logging.info(f"Excluding floating point column {column_name} of type {data_type}")
-                continue
-        if not args.include_json_columns:
-            if 'json' in data_type:
-                logging.info(f"Excluding json column {column_name} of type {data_type}")
-                continue
-        if not first_column:
-            select += "||"
 
-        if is_nullable == 1:
-            nullables.append(column_name)
-            select += " case when "+column_name+" is null then '' else "
-            if first_column:
-                select += " "
-
-        if 'timestamp' in data_type:
-            select += "replace(to_char("+column_name + \
-                ",'YYYY-MM-DD HH24:MI:SS.US'),'1900-01-01 ','')"
-        else:
-            if 'Bool' == data_type:
-                select += "toString(toUInt8("+column_name+"))"
-            elif 'date' == data_type:
-                select += "to_char("+column_name + ",'YYYY-MM-DD')"
-            elif "Decimal" in data_type:
-                # custom function due to https://github.com/ClickHouse/ClickHouse/issues/30934
-                # requires this function : CREATE OR REPLACE FUNCTION format_decimal AS (x, scale) -> if(locate(toString(x),'.')>0,concat(toString(x),repeat('0',toUInt8(scale-(length(toString(x))-locate(toString(x),'.'))))),concat(toString(x),'.',repeat('0',toUInt8(scale))))
-                select += "toDecimalString("+column_name + \
-                    ","+str(numeric_scale)+")"
-            elif "DateTime64(0" in data_type:
-                select += f"if(toString({column_name}) >= '{args.max_datetime_value}', '{args.max_datetime_value}', if(toString({column_name}) < '{args.min_datetime_value}', '{args.min_datetime_value}', trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))))"
-            elif "DateTime64(6" in data_type:
-                select += f"if(toString({column_name}) >= '{args.max_datetime_value}', '{args.max_datetime_value}', if(toString({column_name}) < '{args.min_datetime_value}', '{args.min_datetime_value}', trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))))"
-            elif "DateTime" in data_type:
-                select += f"trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))"
-            else:
-                if 'time without time zone' == data_type:
-                    select += "replace(to_char("+column_name + \
-                        ",'HH24:MI:SS.US'),'1900-01-01 ','')"
-                else:
-                    if unhex:
-                        select += "toString(unhex("+column_name + "))"
-                    else:
-                        select += "toString("+column_name + ")"
-
-        if is_nullable == 1:
-            select += " end"
-
-        if not filtered_columns_metadata.index(row) == len(filtered_columns_metadata)-1:
-            select += "||'#'"
-        first_column = False
-        data_types[row[0]] = data_type
-    logging.debug(str(nullables))
-    if len(nullables) > 0:
-        select += "||'#'"
-        for nullable in nullables:
-            select += "|| case when "+nullable+" is null then '1' else '0' end "
-    query = "select "+select+"||','  as query from " + \
-        args.clickhouse_database+"."+table
+    (select, nullables, columns, data_types) = build_clickhouse_row_expression(filtered_columns_metadata, args)
 
     primary_key_columns = get_primary_key_columns(conn,
         args.clickhouse_database, table)
