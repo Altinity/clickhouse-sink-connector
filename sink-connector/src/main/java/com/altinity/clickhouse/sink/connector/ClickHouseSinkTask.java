@@ -7,9 +7,12 @@ import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicator;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.google.common.annotations.VisibleForTesting;
 import com.google.common.util.concurrent.ThreadFactoryBuilder;
 import org.apache.kafka.clients.consumer.OffsetAndMetadata;
 import org.apache.kafka.common.TopicPartition;
+import org.apache.kafka.connect.errors.ConnectException;
+import org.apache.kafka.connect.errors.DataException;
 import org.apache.kafka.connect.errors.RetriableException;
 import org.apache.kafka.connect.sink.SinkRecord;
 import org.apache.kafka.connect.sink.SinkTask;
@@ -21,8 +24,11 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
@@ -85,6 +91,18 @@ public class ClickHouseSinkTask extends SinkTask {
     private long totalRecords;
 
     /**
+     * The scheduled future of the batch runnable that drains {@link #records}.
+     *
+     * <p>{@code ScheduledThreadPoolExecutor} cancels a periodic task whose run
+     * throws and calls nobody. The runnable rethrows on a FATAL ClickHouse
+     * classification (spec 10.01), so without inspecting this future the task
+     * kept accepting records in {@link #put} and answering {@link #preCommit}
+     * with a frozen watermark — consuming Kafka forever while replicating
+     * nothing. Checked at the top of both (spec 03.01 §3.4).</p>
+     */
+    private ScheduledFuture<?> runnableFuture;
+
+    /**
      * Default constructor.
      */
     public ClickHouseSinkTask() {
@@ -139,7 +157,7 @@ public class ClickHouseSinkTask extends SinkTask {
                                 .toString()),
                 namedThreadFactory);
 
-        this.executor.scheduleAtFixedRate(
+        this.runnableFuture = this.executor.scheduleAtFixedRate(
                 runnable,
                 INITIAL_DELAY_MS,
                 this.config.getLong(
@@ -148,6 +166,68 @@ public class ClickHouseSinkTask extends SinkTask {
                 TimeUnit.MILLISECONDS);
 
         this.deduplicator = new DeDuplicator(this.config);
+    }
+
+    /**
+     * Wires the task's collaborators without opening a ClickHouse connection
+     * or starting an executor, so {@link #put} and {@link #preCommit} can be
+     * exercised in a unit test. {@link #start} builds the same state and
+     * additionally schedules the runnable.
+     */
+    @VisibleForTesting
+    void attachForTest(ClickHouseSinkConnectorConfig config,
+                       LinkedBlockingQueue<List<ClickHouseStruct>> records,
+                       ConcurrentHashMap<TopicPartition, Long> durablyInsertedOffsets,
+                       DeDuplicator deduplicator,
+                       ScheduledFuture<?> runnableFuture) {
+        this.config = config;
+        this.records = records;
+        this.durablyInsertedOffsets = durablyInsertedOffsets;
+        this.deduplicator = deduplicator;
+        this.runnableFuture = runnableFuture;
+    }
+
+    /**
+     * Fails the task loudly if the batch runnable's scheduled task has
+     * terminated.
+     *
+     * <p>Mirrors {@code DebeziumChangeEventCapture.failIfWorkerDied} for the
+     * embedded runtime (spec 03.01 §3.3). A done future — completed
+     * exceptionally after a FATAL rethrow, cancelled, or completed normally,
+     * which a periodic task never legitimately does — means nothing will ever
+     * drain the queue again: records accepted by {@link #put} can never be
+     * written and {@link #preCommit} can never advance. Throwing
+     * {@link ConnectException} makes Kafka Connect fail the task with the
+     * runnable's cause in the log; a restart resumes from the last committed
+     * offset, which only ever reflects durably inserted rows.</p>
+     *
+     * @throws ConnectException carrying the runnable's cause.
+     */
+    @VisibleForTesting
+    void failIfRunnableDied() {
+        ScheduledFuture<?> future = this.runnableFuture;
+        if (future == null || !future.isDone()) {
+            return;
+        }
+        Throwable cause = null;
+        try {
+            future.get();
+        } catch (ExecutionException e) {
+            cause = e.getCause() != null ? e.getCause() : e;
+        } catch (CancellationException e) {
+            cause = e;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            cause = e;
+        }
+        String message = String.format("Sink task %s: the ClickHouse batch runnable is dead -- its "
+                + "scheduled task has terminated%s. Records accepted by put() can never be written "
+                + "and preCommit() can never advance, so the task would consume Kafka forever while "
+                + "replicating nothing. Failing the task so the failure is visible; a restart resumes "
+                + "from the last committed (durably inserted) offset.", this.id,
+                cause == null ? " normally (a runnable must run for the life of the task)" : "");
+        log.error(message, cause);
+        throw new ConnectException(message, cause);
     }
 
     /**
@@ -195,6 +275,9 @@ public class ClickHouseSinkTask extends SinkTask {
      */
     @Override
     public void put(Collection<SinkRecord> records) {
+        // Before accepting anything: is there still a runnable to write it?
+        failIfRunnableDied();
+
         totalRecords += records.size();
 
         long taskId = this.config.getLong(
@@ -220,12 +303,35 @@ public class ClickHouseSinkTask extends SinkTask {
                     record.topic(), record.kafkaPartition());
             this.durablyInsertedOffsets.putIfAbsent(tp, record.kafkaOffset() - 1L);
 
+            // A Kafka tombstone (null value) is the ONLY record that may be
+            // skipped: Debezium emits one after each DELETE for log
+            // compaction, and it carries no change event -- the DELETE itself
+            // arrived in the preceding record. Everything else is either a
+            // change event or a defect (spec 10.04 section 3.5).
+            if (record.value() == null) {
+                log.debug("Skipping Kafka tombstone at topic {} partition {} offset {}",
+                        record.topic(), record.kafkaPartition(), record.kafkaOffset());
+                continue;
+            }
+
             if (this.deduplicator.isNew(record.topic(), record)) {
                 ClickHouseStruct c = converter.convert(record);
-                if (c != null) {
-                    batch.add(c);
+                if (c == null) {
+                    // A non-null value that does not convert is not a
+                    // tombstone; it is a record this connector cannot
+                    // replicate (no Debezium envelope 'op' / row image, or a
+                    // non-STRUCT value). Dropping it at DEBUG -- the previous
+                    // behaviour -- lost the change while the offset advanced
+                    // past it.
+                    throw new DataException(String.format(
+                            "Record at topic %s partition %d offset %d has a non-null value that "
+                                    + "does not convert to a change event (no Debezium envelope "
+                                    + "'op' / row image, or a non-STRUCT value schema). Dropping it "
+                                    + "would lose a replicated change while the offset advances; "
+                                    + "failing the task instead (spec 10.04 section 3.5).",
+                            record.topic(), record.kafkaPartition(), record.kafkaOffset()));
                 }
-                //Update the hashmap with the topic name and the list of records.
+                batch.add(c);
             }
         }
 
@@ -279,6 +385,11 @@ public class ClickHouseSinkTask extends SinkTask {
             throws RetriableException {
 
         log.info("preCommit({}) {}", this.id, currentOffsets.size());
+
+        // A dead runnable can never advance the durable watermark; answering
+        // from a frozen map would let the task sit forever. Deliberately
+        // outside the try below, which turns exceptions into "commit nothing".
+        failIfRunnableDied();
 
         Map<TopicPartition, OffsetAndMetadata> committedOffsets =
                 new HashMap<>();

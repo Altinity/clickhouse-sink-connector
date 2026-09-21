@@ -1049,7 +1049,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             // Log the error with the first record from current batch if available
             if (currentBatch != null && !currentBatch.isEmpty()) {
                 ClickHouseStruct firstRecord = currentBatch.get(0);
-                SourceRecord sourceRecord = firstRecord.getSourceRecord().value();
+                SourceRecord sourceRecord = sourceRecordOrNull(firstRecord);
                 String topicName = firstRecord.getTopic();
                 String databaseName = firstRecord.getDatabase();
                 String serverName = getServerNameFromTopic(topicName);
@@ -1079,9 +1079,32 @@ public class ClickHouseBatchRunnable implements Runnable {
             log.error("******* ERROR **** Thread interrupted *********",
                     ex);
             throw new RuntimeException(ex);
-        } catch (SQLException ex) {
+        } catch (SQLException | RuntimeException ex) {
+            // Best-effort diagnostics only. The exception being logged is
+            // classified and handled by the caller right after this; a
+            // failure INSIDE the error logger must not replace it, or a FATAL
+            // ClickHouse error would surface as an unrelated logger failure
+            // and its classification would never run (spec 03.01 section 3.4).
             log.error("******* ERROR **** Failed to log error to ClickHouse *********",
                     ex);
         }
+    }
+
+    /**
+     * The Debezium {@code SourceRecord} behind a batch record, or null.
+     *
+     * <p>Only the embedded (lightweight) runtime attaches a source record; a
+     * record built from a Kafka {@code SinkRecord} carries none, so reading
+     * {@code getSourceRecord().value()} unguarded threw
+     * {@code NullPointerException} from inside the error logger in Kafka
+     * mode whenever {@code error.logging.enable} was on -- replacing the
+     * ClickHouse error that was being reported.</p>
+     */
+    @VisibleForTesting
+    static SourceRecord sourceRecordOrNull(ClickHouseStruct record) {
+        if (record == null || record.getSourceRecord() == null) {
+            return null;
+        }
+        return record.getSourceRecord().value();
     }
 }
