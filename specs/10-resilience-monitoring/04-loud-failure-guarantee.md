@@ -130,6 +130,43 @@ value and the fix) when the source reports a readable value other than `FULL`;
 an unreadable value is a WARN, and `binlog.row.image.check.skip=true` is a WARN
 banner on every start (spec 01.01 §3.2).
 
+### 3.7 Loss-by-design options are announced, never defaulted on
+Two options make the replica diverge from the source on purpose. They are
+honoured — an operator may want them — but neither may be a default, and the
+connector says so when they are set:
+
+- **`ignore_delete=true`** (`ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE`,
+  read by `PreparedStatementFieldMapper`): the delete marker is never bound, so
+  rows deleted at the source stay visible in ClickHouse forever. The config
+  constructor (`ClickHouseSinkConnectorConfig#warnIfIgnoreDelete`, predicate
+  `isIgnoreDeleteEnabled`) logs one WARN per JVM naming the key and the
+  divergence. `doc/configuration.md` documents it as loss by design. The
+  systemd deployment role emits the key under its real name (`ignore_delete`;
+  it used to emit `ignore.delete`, which nothing reads).
+- **`schema.history.internal.skip.unparseable.ddl=true`**: Debezium drops any
+  DDL it cannot parse from the schema history, so later rows of that table are
+  decoded against a stale schema. Debezium's default is `false`; the systemd
+  deployment role (`deploy/ansible-systemd/defaults/main.yml`,
+  `sink_connector_skip_unparseable_ddl_default`) used to default it to `true`
+  fleet-wide. It now defaults to `false`; enabling it is a per-connector,
+  deliberate override.
+
+The same deployment template also emitted keys the connector never reads
+(`clickhouse.table.engine`, `clickhouse.table.sign.column`,
+`clickhouse.table.version.column`, the deprecated `clickhouse.server.database`)
+and Debezium's `max.queue.size` where it meant the sink's
+`sink.connector.max.queue.size`; a configuration that looks set but is not
+read is a silent divergence of its own, so those keys were removed or renamed.
+
+### 3.8 A configuration contradiction found while building a writer halts
+`ColumnTypeOverrideMismatchException` is raised by `ClickHouseAutoCreateTable`
+when a configured column type override contradicts the existing table, and is
+documented there as "must halt the connector". `DbWriter`'s constructor and
+`DbWriter#autoCreateTable` used to catch `Exception` around it and log, so the
+writer came up anyway and wrote rows against a type the operator had declared
+wrong. Both sites now re-throw `ColumnTypeOverrideMismatchException` ahead of
+their generic catch (spec 08.05 §3.3).
+
 ---
 
 ## 4. Invariants Preserved
@@ -151,3 +188,5 @@ banner on every start (spec 01.01 §3.2).
 - `TerminalFailureExitTest.successIsANoOp()`.
 - `DdlDrainDeadlockTest.testUndrainableQueueWithLiveWorkersKeepsWaiting()`, `DdlDrainDeadlockTest.testStuckQueueWithDeadWorkerAborts()` — §3.5 point 3: live workers are waited for; only a dead worker aborts.
 - `BinlogRowImagePreflightTest.minimalIsRefused()`, `BinlogRowImagePreflightTest.noblobIsRefused()`, `BinlogRowImagePreflightTest.skipIsLoud()` — §3.6.
+- `IgnoreDeleteWarningTest.trueIsDetectedCaseAndSpaceInsensitively()`, `IgnoreDeleteWarningTest.unsetFalseOrNullIsNot()` — §3.7: the predicate behind the startup WARN.
+- §3.8 has no unit test: constructing a `DbWriter` needs a live ClickHouse (`DbWriterTest` is Testcontainers-based); the change is two `catch (ColumnTypeOverrideMismatchException e) { throw e; }` clauses ahead of the generic catches.
