@@ -56,8 +56,8 @@ def clickhouse_args(**overrides):
         debug=False, exclude_columns=["_sign,_version,is_deleted,_is_deleted"],
         threads=1, min_datetime_value=DATETIME_MIN,
         max_datetime_value=DATETIME_MAX, max_memory_usage=None,
-        include_floating_point_columns=False, include_json_columns=True,
-        source_timezone="UTC", timestamp_columns="", binary_encoding="hex",
+        include_floating_point_columns=False, include_json_columns=False,
+        source_timezone="UTC", timestamp_columns="", binary_encoding="hex", json_columns="",
     )
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -74,7 +74,7 @@ def mysql_args(**overrides):
         min_datetime_value=DATETIME_MIN,
         max_datetime_value=DATETIME_MAX, debug=False,
         exclude_columns=[], threads_per_table=1, chunk_size=10000, threads=1,
-        include_floating_point_columns=False, include_json_columns=True,
+        include_floating_point_columns=False, include_json_columns=False,
         source_timezone="UTC",
     )
     values.update(overrides)
@@ -303,7 +303,7 @@ class TestMySQLColumnClassification(unittest.TestCase):
             mysql_column("j", "json"),
             mysql_column("t", "time", "time(3)", precision=3),
         ]
-        select = build_mysql_select(columns)
+        select = build_mysql_select(columns, include_json_columns=True)
         self.assertNotIn("`f`", select, "floating point stays skipped")
         self.assertIn("lower(hex(cast(`b` as binary)))", select)
         self.assertIn("json_pretty(`j`)", select)
@@ -370,7 +370,8 @@ class TestInstantComparison(unittest.TestCase):
 
     def test_driver_passes_zone_and_timestamp_columns(self):
         tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="Asia/Tokyo",
-                                     binary_encoding="hex")
+                                     binary_encoding="hex", include_floating_point_columns=False,
+                                     include_json_columns=False)
         mysql_cmd = tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None)
         self.assertIn("--source_timezone Asia/Tokyo", mysql_cmd)
         clickhouse_cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10,
@@ -513,7 +514,87 @@ class TestClampedRowCounts(unittest.TestCase):
             self.assertTrue(any("2 out-of-range datetime values" in line for line in warnings), lines)
             # The driver greps the child output for "checksum" and expects one line.
             self.assertEqual(sum(1 for line in lines if "checksum" in line.lower()), 1, lines)
-        self.assertFalse(any(line.startswith("WARNING") for line in run_mysql_side(MYSQL_COLUMNS, FIXTURE_ROWS)))
+        self.assertFalse(any("out-of-range" in line for line in run_mysql_side(MYSQL_COLUMNS, FIXTURE_ROWS)))
+
+
+class TestFloatAndJsonCoverage(unittest.TestCase):
+    """Floats and JSON are excluded unless asked, and each table says so once
+    (spec 11.02 section 3.9)."""
+
+    MYSQL = [mysql_column("id", "int"), mysql_column("f", "float"), mysql_column("j", "json"),
+             mysql_column("g", "double")]
+    CLICKHOUSE = [("id", "Int32", 0, None), ("f", "Float32", 0, None), ("j", "String", 0, None),
+                  ("g", "Float64", 0, None), ("o", "JSON", 0, None)]
+
+    def mysql_select_and_warnings(self, **arg_overrides):
+        my.warned_tables.clear()
+        # DEBUG: the MySQL builder emits no INFO line of its own any more, and
+        # assertLogs needs at least one record to capture anything.
+        with self.assertLogs(level="DEBUG") as logs:
+            select = build_mysql_select(self.MYSQL, **arg_overrides)
+        return select, [line for line in logs.output if line.startswith("WARNING")]
+
+    def clickhouse_select_and_warnings(self, **arg_overrides):
+        ch.warned_tables.clear()
+        with self.assertLogs(level="INFO") as logs:
+            select = TestClickHouseRowExpression().build(self.CLICKHOUSE, **arg_overrides)
+        return select, [line for line in logs.output if line.startswith("WARNING")]
+
+    def test_mysql_skips_floats_and_json_by_default_and_warns_once_per_table(self):
+        select, warnings = self.mysql_select_and_warnings()
+        self.assertEqual(select, "`id`")
+        self.assertEqual(len(warnings), 2, warnings)
+        self.assertTrue(any("Not compared in table db1.t1: floating point columns ['f', 'g']" in w for w in warnings), warnings)
+        self.assertTrue(any("Not compared in table db1.t1: JSON columns ['j']" in w for w in warnings), warnings)
+        self.assertFalse(any("checksum" in w.lower() for w in warnings), warnings)
+        # A second chunk of the same table does not repeat the warning.
+        with self.assertLogs(level="DEBUG") as logs:
+            build_mysql_select(self.MYSQL)
+        self.assertFalse(any(line.startswith("WARNING") for line in logs.output), logs.output)
+
+    def test_parser_defaults_exclude_json_on_both_sides(self):
+        self.assertFalse(my.build_argument_parser().get_default("include_json_columns"))
+        self.assertFalse(ch.build_argument_parser().get_default("include_json_columns"))
+        self.assertFalse(my.build_argument_parser().get_default("include_floating_point_columns"))
+        self.assertFalse(ch.build_argument_parser().get_default("include_floating_point_columns"))
+
+    def test_mysql_opt_in_includes_them(self):
+        select, warnings = self.mysql_select_and_warnings(include_floating_point_columns=True, include_json_columns=True)
+        self.assertEqual(warnings, [])
+        self.assertIn("`f`", select)
+        self.assertIn("`g`", select)
+        self.assertIn("json_pretty(`j`)", select)
+
+    def test_clickhouse_skips_floats_native_json_and_listed_json_strings_and_warns(self):
+        select, warnings = self.clickhouse_select_and_warnings(json_columns="j")
+        self.assertEqual(select, 'toString("id")')
+        self.assertEqual(len(warnings), 2, warnings)
+        self.assertTrue(any("Not compared in table db1.t1: floating point columns ['f', 'g']" in w for w in warnings), warnings)
+        self.assertTrue(any("Not compared in table db1.t1: JSON columns ['j', 'o']" in w for w in warnings), warnings)
+        self.assertFalse(any("checksum" in w.lower() for w in warnings), warnings)
+
+    def test_clickhouse_opt_in_includes_them(self):
+        select, warnings = self.clickhouse_select_and_warnings(
+            json_columns="j", include_floating_point_columns=True, include_json_columns=True)
+        self.assertEqual(warnings, [])
+        self.assertEqual(select, 'toString("id")||\'#\'||toString("f")||\'#\'||toString("j")||\'#\'||toString("g")||\'#\'||toString("o")')
+
+    def test_driver_passes_json_columns_and_the_include_flags(self):
+        tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="UTC",
+                                     binary_encoding="hex", include_floating_point_columns=False,
+                                     include_json_columns=False)
+        mysql_cmd = tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None)
+        clickhouse_cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10, json_columns=["j"])
+        self.assertNotIn("--include_", mysql_cmd)
+        self.assertNotIn("--include_", clickhouse_cmd)
+        self.assertIn("--json_columns j", clickhouse_cmd)
+        tl.args.include_floating_point_columns = True
+        tl.args.include_json_columns = True
+        mysql_cmd = tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None)
+        clickhouse_cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10, json_columns=["j"])
+        for cmd in (mysql_cmd, clickhouse_cmd):
+            self.assertIn("--include_floating_point_columns", cmd)
+            self.assertIn("--include_json_columns", cmd)
 
 
 class TestSignColumn(unittest.TestCase):
@@ -628,7 +709,8 @@ class TestBinaryEncoding(unittest.TestCase):
 
     def test_driver_passes_the_encoding_to_both_sides_and_raw_columns_only_in_raw_mode(self):
         tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="UTC",
-                                     binary_encoding="hex")
+                                     binary_encoding="hex", include_floating_point_columns=False,
+                                     include_json_columns=False)
         mysql_cmd = tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None)
         self.assertIn("--binary_encoding hex", mysql_cmd)
         self.assertNotIn("base64", mysql_cmd)

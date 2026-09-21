@@ -19,7 +19,7 @@ import concurrent.futures
 from db.clickhouse import *
 from db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
                                 clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
-                                validate_timezone, shift_datetime_bounds, parse_column_list)
+                                validate_timezone, shift_datetime_bounds, parse_column_list, warn_not_compared)
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
@@ -98,6 +98,9 @@ SINK_METADATA_COLUMNS = frozenset(
     {"_sign", "_version", "is_deleted", "_is_deleted", "__is_deleted"}
 )
 
+# (database, table, kind) already reported as not compared (spec 11.02 section 3.9).
+warned_tables = set()
+
 
 def is_datetime_type(data_type):
     """DateTime, DateTime32, DateTime64 and their Nullable / time-zoned forms."""
@@ -167,6 +170,10 @@ def build_clickhouse_row_expression(columns_metadata, options):
     if hex_columns and options.binary_encoding != 'raw':
         raise ValueError("--hex_columns names columns that hold raw bytes and requires --binary_encoding raw; "
                          f"with --binary_encoding {options.binary_encoding} the replica already holds encoded text")
+    # String columns that replicate a MySQL JSON column; the catalog cannot
+    # tell them from any other String (spec 11.02 section 3.9).
+    json_columns = parse_column_list(options.json_columns)
+    skipped = {"floating point": [], "JSON": []}
     for row in columns_metadata:
         column_name = '"' + row[0] + '"'
         data_type = row[1]
@@ -178,14 +185,12 @@ def build_clickhouse_row_expression(columns_metadata, options):
             (zone, bounds) = ('UTC', utc_bounds)
         else:
             (zone, bounds) = (source_zone, wall_clock_bounds)
-        if not options.include_floating_point_columns:
-            if 'Float' in data_type:
-                logging.info(f"Excluding floating point column {column_name} of type {data_type}")
-                continue
-        if not options.include_json_columns:
-            if 'json' in data_type:
-                logging.info(f"Excluding json column {column_name} of type {data_type}")
-                continue
+        if not options.include_floating_point_columns and 'Float' in data_type:
+            skipped["floating point"].append(row[0])
+            continue
+        if not options.include_json_columns and ('json' in data_type.lower() or row[0] in json_columns):
+            skipped["JSON"].append(row[0])
+            continue
         expression = clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds, zone,
                                                   raw_bytes=(row[0] in hex_columns))
         if is_datetime_type(data_type):
@@ -199,7 +204,7 @@ def build_clickhouse_row_expression(columns_metadata, options):
         parts.append(" || ".join(
             "case when " + nullable + " is null then '1' else '0' end" for nullable in nullables))
     select = "||'#'||".join(parts)
-    return (select, nullables, columns, data_types, clamped_count_expression(clamped_flags))
+    return (select, nullables, columns, data_types, clamped_count_expression(clamped_flags), skipped)
 
 
 def get_engine_full(conn, database, table):
@@ -256,7 +261,8 @@ def get_table_checksum_query(conn, table):
             continue
         filtered_columns_metadata.append(row)
 
-    (select, nullables, columns, data_types, clamped_expression) = build_clickhouse_row_expression(filtered_columns_metadata, args)
+    (select, nullables, columns, data_types, clamped_expression, skipped) = build_clickhouse_row_expression(filtered_columns_metadata, args)
+    warn_not_compared(args.clickhouse_database, table, skipped, warned_tables)
     final_per_partition = partition_key_within_sorting_key(columns_metadata)
     partition_columns = [row[0] for row in columns_metadata if row[4] == 1]
     logging.info(f"FINAL per partition: {final_per_partition} (partition key columns {partition_columns}; "
@@ -453,8 +459,9 @@ def build_argument_parser():
     parser.add_argument('--max_memory_usage', help='increase  max_memory_usage', required=False)
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
                         help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
-    parser.add_argument('--include_json_columns', action='store_true', default=True,
-                        help='JSON data types are included by default. This flag is a no-op (always True). Use --exclude_columns to skip JSON columns.', required=False)
+    parser.add_argument('--include_json_columns', action='store_true', default=False,
+                        help='JSON columns (native JSON and the String columns named in --json_columns) are not compared by default (each table logs a WARNING naming them); this compares the stored text against the MySQL side\'s best-effort rendering. Pass it to both sides.', required=False)
+    parser.add_argument('--json_columns', help='comma separated names of the String columns that replicate a MySQL JSON column', default='', required=False)
     return parser
 
 

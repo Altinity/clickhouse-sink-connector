@@ -18,7 +18,7 @@ import concurrent.futures
 from db.mysql import *
 from db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
                                 clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
-                                validate_timezone, shift_datetime_bounds)
+                                validate_timezone, shift_datetime_bounds, warn_not_compared)
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
@@ -55,6 +55,10 @@ def compute_checksum(table, statements, conn):
 # information_schema DATA_TYPE keywords of the IEEE 754 types (REAL is an alias
 # of DOUBLE and never appears as a DATA_TYPE).
 FLOATING_POINT_DATA_TYPES = frozenset({"float", "double"})
+
+# (database, table, kind) already reported as not compared; a chunked table
+# builds its expression once per chunk and must warn once (spec 11.02 section 3.9).
+warned_tables = set()
 
 
 def mysql_datetime_rendering(column_name):
@@ -114,16 +118,17 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
     """Build the pieces of the canonical row string from ``information_schema``
     rows in ordinal order (spec 11.02 section 3.3).
 
-    Returns ``(select, nullables, data_types, clamped_expression)``; ``select``
-    is the comma separated argument list of ``concat_ws('#', ...)`` and
+    Returns ``(select, nullables, data_types, clamped_expression, skipped)``;
+    ``select`` is the comma separated argument list of ``concat_ws('#', ...)``,
     ``clamped_expression`` the per-row count of datetime values the clamp
-    changed. Skipped columns contribute nothing; the nullability flags are one
-    trailing element.
+    changed and ``skipped`` the columns not compared by kind. Skipped columns
+    contribute nothing; the nullability flags are one trailing element.
     """
     pieces = []
     nullables = []
     data_types = {}
     clamped_flags = []
+    skipped = {"floating point": [], "JSON": []}
     # TIMESTAMP is an instant, rendered in UTC by the session (spec 11.02
     # section 3.4) and clamped with the UTC bounds; DATETIME is a wall clock of
     # the source zone and is clamped with the bounds rendered in that zone.
@@ -139,10 +144,10 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
             logging.info("Excluding column " + name)
             continue
         if not include_floating_point_columns and data_type in FLOATING_POINT_DATA_TYPES:
-            logging.info(f"Excluding floating point column {column_name} of type {column['column_type']}")
+            skipped["floating point"].append(name)
             continue
         if not include_json_columns and data_type == 'json':
-            logging.info(f"Excluding json column {column_name} of type {column['column_type']}")
+            skipped["JSON"].append(name)
             continue
         bounds = utc_bounds if data_type == 'timestamp' else wall_clock_bounds
         expression = mysql_column_expression(column, options, binary_encoding, same_charset, bounds)
@@ -156,7 +161,7 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
     logging.debug(str(nullables))
     if len(nullables) > 0:
         pieces.append("concat(" + ",".join("ISNULL(" + nullable + ")" for nullable in nullables) + ")")
-    return (",".join(pieces), nullables, data_types, clamped_count_expression(clamped_flags))
+    return (",".join(pieces), nullables, data_types, clamped_count_expression(clamped_flags), skipped)
 
 
 def get_table_checksum_query(table, conn, binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns):
@@ -166,8 +171,9 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
 
     logging.debug("Excluded columns: "+str(excluded_columns))
     row_list = [row for row in rowset.mappings()]
-    (select, nullables, data_types, clamped_expression) = build_mysql_row_expression(
+    (select, nullables, data_types, clamped_expression, skipped) = build_mysql_row_expression(
         row_list, args, binary_encoding, excluded_columns, include_floating_point_columns, include_json_columns)
+    warn_not_compared(args.mysql_database, table, skipped, warned_tables)
     # order is not important
     primary_key_columns = []
     logging.debug(str(primary_key_columns))
@@ -357,8 +363,7 @@ def record_factory(*args, **kwargs):
 logging.setLogRecordFactory(record_factory)
 
 
-def main():
-
+def build_argument_parser():
     parser = argparse.ArgumentParser(description='''Compute a ClickHouse compatible checksum.
           ''')
     # Required
@@ -407,8 +412,13 @@ def main():
                         help='number of tables in parallel to compute', default=1)
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
                         help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
-    parser.add_argument('--include_json_columns', action='store_true', default=True,
-                        help='JSON data types are included by default. This flag is a no-op (always True). Use --exclude_columns to skip JSON columns.', required=False)
+    parser.add_argument('--include_json_columns', action='store_true', default=False,
+                        help='JSON columns are not compared by default (each table logs a WARNING naming them); this compares a best-effort compact text rendering against the text the connector stored. Pass it to both sides.', required=False)
+    return parser
+
+
+def main():
+    parser = build_argument_parser()
     global args
     args = parser.parse_args()
     (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)

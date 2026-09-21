@@ -124,6 +124,24 @@ def shift_datetime_bounds(bounds, zone):
     return tuple(shifted)
 
 
+NOT_COMPARED_HINTS = {
+    "floating point": "--include_floating_point_columns to compare their text renderings",
+    "JSON": "--include_json_columns for a best-effort text comparison",
+}
+
+
+def warn_not_compared(database, table, skipped, warned):
+    """One WARNING per table and kind naming the columns the tool does not
+    compare (spec 11.02 section 3.9). ``skipped`` maps a kind of
+    NOT_COMPARED_HINTS to column names; ``warned`` is the caller's set of
+    (database, table, kind) already reported, so chunked tables warn once. The
+    line must not contain the word "checksum" (the driver greps for it)."""
+    for kind, names in skipped.items():
+        if names and (database, table, kind) not in warned:
+            warned.add((database, table, kind))
+            logging.warning(f"Not compared in table {database}.{table}: {kind} columns {names} (pass {NOT_COMPARED_HINTS[kind]})")
+
+
 def parse_column_list(text):
     """``'a, b,'`` -> ``{'a', 'b'}``; ``None``/``''`` -> empty set."""
     return set(name.strip() for name in (text or "").split(",") if name.strip())

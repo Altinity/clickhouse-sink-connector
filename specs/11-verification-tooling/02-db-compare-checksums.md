@@ -340,6 +340,41 @@ Two stale wrapper scripts that invoked the tool with flags it never had
 `sink-connector-lightweight/src/test/diff_data_types.sh` — were removed;
 nothing referenced them.
 
+### 3.9 Coverage: what is compared, what is not, and how loudly
+A column the tool does not compare is a hole in the only value-level proof,
+so it is never silent. Per table, each side logs **one `WARNING`** naming the
+skipped columns (`Not compared in table <db>.<table>: floating point columns
+[...]` / `... JSON columns [...]`; the line does not contain the word
+"checksum", §3.2 step 4). Compared by default: every type in the §3.3 table,
+§3.4 temporal, §3.6 binary, `Bool`/`bit(1)`. Not compared by default:
+
+- **Floating point** (`float`, `double` / `Float32`, `Float64`), unless
+  `--include_floating_point_columns` is passed to both sides. The opt-in
+  compares each engine's text rendering (`col` / `toString(col)`), which
+  agree for values both engines print in positional notation because both
+  print the shortest round-trip digits; they are **not guaranteed to agree in
+  exponent notation** (MySQL prints `1e15`, ClickHouse `1000000000000000`),
+  so an opt-in DIFFERENT on a float column needs a value-level look before
+  it is called a divergence. A rendering that is provably identical across
+  the two engines (fixed 17-significant-digit text) is not available in
+  MySQL SQL; this remains a **known gap**.
+- **JSON** (`json` / native `JSON`, `Object('json')`, and the `String`
+  columns named in `--json_columns`, which the driver derives from
+  `information_schema` — the replica catalog cannot tell a JSON text column
+  from any other `String`), unless `--include_json_columns` is passed to both
+  sides. `--include_json_columns` used to be a `store_true` flag with
+  `default=True`, i.e. a no-op that always included JSON while the two sides
+  normalised differently: MySQL applied eleven regular expressions to
+  `json_pretty(col)` to approximate the compact text Debezium writes, the
+  replica compared the stored text as is. That one-sided normalisation strips
+  `.0` from numbers and collapses whitespace, so `{"a": 1.0}` against
+  `{"a":1}` compared EQUAL — a masked difference — while any layout the
+  regexes did not anticipate compared DIFFERENT. The opt-in keeps that
+  best-effort normalisation (spec 07.04 notes JSON as an open gap) and is
+  documented as such; the default is exclusion with the WARNING.
+
+(`test_checksum_fidelity.py::TestFloatAndJsonCoverage`)
+
 ---
 
 ## 4. Invariants Preserved
@@ -418,6 +453,11 @@ connect to a database.
     the default run adds no filter on a `ReplacingMergeTree(_version,
     is_deleted)` table, adds `sign > 0` on a Collapsing table, and an
     explicit `--sign_column` is used without consulting the engine.
+  - `TestFloatAndJsonCoverage` — §3.9: by default both sides skip float and
+    JSON columns (MySQL by `DATA_TYPE`; ClickHouse by `Float*`, `JSON`,
+    `Object('json')` and `--json_columns`) and log one WARNING per table
+    naming them; the opt-in flags include them; the driver passes
+    `--json_columns` and the two include flags through.
   - `TestClampedRowCounts` — §3.4: both aggregate queries carry
     `coalesce(sum(clamped),0)`; a table without datetime columns contributes
     `0`; a non-zero count is logged as a WARNING that does not change the
