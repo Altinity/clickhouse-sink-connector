@@ -12,7 +12,6 @@ import java.sql.Date;import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.zone.ZoneOffsetTransition;
 import java.time.temporal.ChronoUnit;
-import java.util.TimeZone;
 
 import static java.time.Instant.ofEpochMilli;
 
@@ -136,29 +135,39 @@ public class DebeziumConverter {
             }
 
             Long epochMillis = (Long) value;
-            // Step 1: Convert from incorrect timezone to LocalDateTime
-            //LocalDateTime wrongTime = LocalDateTime.ofInstant(ofEpochMilli(epochMillis), sourceTimeZone);
+            boolean[] rangeExceeded = new boolean[1];
 
-            // Get the milliseconds value of the timezone.
-            TimeZone sourceTZ = TimeZone.getTimeZone(sourceTimeZone);
-            int sourceOffset = sourceTZ.getRawOffset();
-            Long epochMillisWithOffset = epochMillis - sourceOffset;
-
-            if (sourceTZ.inDaylightTime(Date.from(Instant.ofEpochMilli(epochMillisWithOffset)))) {
-                Long dstOffset = (long) (sourceTZ.getRawOffset() + sourceTZ.getDSTSavings());
-                epochMillisWithOffset = epochMillis - dstOffset;
+            if (sourceTimeZone.equals(serverTimezone)) {
+                // Debezium encoded the zone-less DATETIME digits as a UTC epoch
+                // (LocalDateTime.toInstant(UTC)); the only decode that returns
+                // the same digits is the inverse: format as UTC. Pushing the
+                // digits through a real DST zone -- the previous
+                // TimeZone.getRawOffset / inDaylightTime code -- moved every
+                // spring-forward gap time back an hour (2026-03-08 02:30:00
+                // America/Chicago became 01:30:00), silently. Same rule as
+                // MicroTimestampConverter (Spec 07.03 section 3.1.1).
+                Instant encoded = Instant.ofEpochMilli(epochMillis);
+                Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(encoded, clickHouseDataType, rangeExceeded);
+                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
             }
 
-            // Add this offset to wrongly calculated epoch.
-            Instant i = Instant.ofEpochMilli(epochMillisWithOffset);
+            // Explicitly different zones: the digits are a wall time in the
+            // source zone. A wall time inside a spring-forward gap does not
+            // exist in that zone; take the offset before the transition, as
+            // MicroTimestampConverter does, so both converters agree.
+            LocalDateTime wallTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), ZoneOffset.UTC);
+            ZoneOffsetTransition transition = sourceTimeZone.getRules().getTransition(wallTime);
+            ZoneOffset sourceOffset = (transition != null && transition.isGap())
+                    ? transition.getOffsetBefore()
+                    : sourceTimeZone.getRules().getOffset(wallTime);
+            Instant i = wallTime.toInstant(sourceOffset);
 
-            boolean[] rangeExceeded = new boolean[1];
             Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
             if (rangeExceeded[0]) {
                 // return the modifiedDTWithLimits as a string without timezone conversion
-                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter).toString();
+                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
             }
-            return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter).toString();
+            return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter);
         }
 
 

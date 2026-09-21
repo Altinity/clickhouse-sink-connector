@@ -21,8 +21,36 @@ Specifies the translation and timezone adjustment of MySQL date and time types t
 | `YEAR` | `UInt16` / `Int32` | 4-digit calendar year |
 
 ### 3.1 Timezone Normalization
-- Configured via `source.timezone` and `clickhouse.timezone`.
+- Configured via `database.connectionTimeZone` (source zone) and
+  `clickhouse.datetime.timezone` (ClickHouse session zone; when empty, the
+  server's `SELECT timezone()`).
 - Prevents 1-hour shifts during daylight saving transitions when converting timestamps across UTC and local timezones.
+
+#### 3.1.1 `DATETIME` digits are decoded exactly the way Debezium encoded them
+MySQL `DATETIME` is zone-less wall-clock digits. Debezium delivers
+`DATETIME(0..3)` as `io.debezium.time.Timestamp` and `DATETIME(4..6)` as
+`io.debezium.time.MicroTimestamp`: the digits interpreted **as if UTC** and
+encoded as an epoch (`LocalDateTime.toInstant(ZoneOffset.UTC)`). The digits are
+the value MySQL holds, so the faithful decode is the inverse operation —
+format the epoch in UTC — and nothing else.
+
+When the source zone equals the ClickHouse session zone (the "same zone"
+configuration, and the default — §3.1.2), both `TimestampConverter.convert` and
+`MicroTimestampConverter.convert` therefore take that shortcut. It is not an
+optimisation: it is the only decode that survives DST. Routing the digits
+through a real DST zone (`TimeZone.getRawOffset` / `inDaylightTime`, the
+previous `TimestampConverter` code) shifted every wall time that falls in the
+spring-forward gap: `2026-03-08 02:30:00` in `America/Chicago` came out as
+`2026-03-08 01:30:00`, silently, with row counts intact.
+`MicroTimestampConverter` already had the shortcut; `TimestampConverter` did not.
+
+When the source zone differs from the session zone (an explicit
+`database.connectionTimeZone` that is not the session zone), the digits are
+interpreted as a wall time in the source zone and converted to an instant;
+a wall time inside a spring-forward gap uses the offset **before** the
+transition (`ZoneRules.getTransition(...).getOffsetBefore()`), the same rule
+`MicroTimestampConverter` applies, so the two converters never disagree on the
+same digits.
 
 ### 3.2 `TIME` is a signed duration, not a time of day
 MySQL `TIME` ranges from `-838:59:59` to `838:59:59` (it stores elapsed time and
@@ -77,3 +105,10 @@ round-trip unchanged), so the full MySQL range is representable; no ClickHouse
   `"23:00:00.000000"` and `"01:30:00.000000"`).
 - `DebeziumConverterTest.testMicroTimeConverter()` — an ordinary time of day
   (`09:01:01`) is unchanged by the fix.
+- `DebeziumConverterTest.testTimestampConverterGapTimePreserved()` — §3.1.1:
+  `DATETIME` digits `2026-03-08 02:30:00` (inside the `America/Chicago`
+  spring-forward gap) and `2026-11-01 01:30:00` (the repeated fall-back hour)
+  come back unchanged when source and session zones are both
+  `America/Chicago`; pre-fix `TimestampConverter` returned `01:30:00` for the
+  gap time. With source `America/Chicago` and session `UTC` the gap digits use
+  the pre-transition offset (`08:30:00` UTC), matching `MicroTimestampConverter`.
