@@ -118,6 +118,18 @@ Contract:
 Redelivery: a terminal failure commits nothing; the next start (by the
 supervisor or an operator) resumes from the last committed offset (spec 09.03).
 
+### 3.6 A source configuration that guarantees divergence is refused at start
+Some divergences cannot be made loud per record because every record is
+affected and nothing in the record says so. `binlog_row_image` other than
+`FULL` is the case the connector checks: with `MINIMAL` or `NOBLOB` every
+UPDATE arrives with its untouched (or BLOB/TEXT) columns absent, and the
+full-row replace writes them as NULL — silent, count-clean, on every update.
+`BinlogRowImagePreflight.check(props)` therefore refuses to start
+(`IllegalStateException` out of `setup()`, with an ERROR banner naming the
+value and the fix) when the source reports a readable value other than `FULL`;
+an unreadable value is a WARN, and `binlog.row.image.check.skip=true` is a WARN
+banner on every start (spec 01.01 §3.2).
+
 ---
 
 ## 4. Invariants Preserved
@@ -138,3 +150,4 @@ supervisor or an operator) resumes from the last committed offset (spec 09.03).
 - `TerminalFailureExitTest.exitDisabledIsALoudLivenessFailure()` — §3.5: `exit.on.terminal.failure=false` keeps the process up, logs FATAL naming replication as STOPPED, reports `Replica_Running=false`.
 - `TerminalFailureExitTest.successIsANoOp()`.
 - `DdlDrainDeadlockTest.testUndrainableQueueWithLiveWorkersKeepsWaiting()`, `DdlDrainDeadlockTest.testStuckQueueWithDeadWorkerAborts()` — §3.5 point 3: live workers are waited for; only a dead worker aborts.
+- `BinlogRowImagePreflightTest.minimalIsRefused()`, `BinlogRowImagePreflightTest.noblobIsRefused()`, `BinlogRowImagePreflightTest.skipIsLoud()` — §3.6.

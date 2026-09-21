@@ -608,6 +608,11 @@ public class DebeziumChangeEventCapture {
         // would take every correctly-keyed table on the same source down with
         // it. This call never throws.
         KeylessTablePreflight.check(props);
+        // binlog_row_image, by contrast, is all-or-nothing: anything but FULL
+        // makes EVERY update of EVERY table diverge (untouched columns arrive
+        // as NULL), and nothing downstream can recover what the source never
+        // logged. This call refuses to start (spec 01.01 section 3.2).
+        BinlogRowImagePreflight.check(props);
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
 
