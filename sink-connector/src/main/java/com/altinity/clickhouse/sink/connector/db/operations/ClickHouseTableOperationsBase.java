@@ -14,10 +14,13 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.VERSION_COLUMN;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.SIGN_COLUMN;
@@ -84,6 +87,12 @@ public class ClickHouseTableOperationsBase {
             ClickHouseTableOperationsBase.class.getName());
 
     /**
+     * Tables already reported for an INT64 field without a propagated source
+     * type (Spec 07.01 section 3.2): one ERROR per table per JVM.
+     */
+    static final Set<String> REPORTED_UNTYPED_INT64_TABLES = ConcurrentHashMap.newKeySet();
+
+    /**
      * Default constructor.
      */
     public ClickHouseTableOperationsBase() {
@@ -135,12 +144,22 @@ public class ClickHouseTableOperationsBase {
                                                                 String tableName) {
         ClickHouseDataTypeMapper mapper = new ClickHouseDataTypeMapper();
         Map<String, String> columnToDataTypesMap = new HashMap<>();
+        // INT64 fields with no logical name and no propagated source type: a
+        // signed BIGINT and a BIGINT UNSIGNED are indistinguishable here, and
+        // the latter's values >= 2^63 would be stored negative in the Int64
+        // this path has to declare (Spec 07.01 section 3.2).
+        List<String> untypedInt64Columns = new ArrayList<>();
 
         for (Field f : fields) {
             String colName = f.name();
             Schema.Type type = f.schema().type();
             String fieldSchemaName = f.schema().name();
             boolean isOptional = f.schema().isOptional();
+            if (type == Schema.Type.INT64 && fieldSchemaName == null
+                    && (f.schema().parameters() == null || !f.schema().parameters()
+                    .containsKey(ClickHouseDataTypeMapper.DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM))) {
+                untypedInt64Columns.add(colName);
+            }
 
             if (type == Schema.Type.ARRAY) {
                 fieldSchemaName = f.schema().valueSchema().type().name();
@@ -253,11 +272,19 @@ public class ClickHouseTableOperationsBase {
             }
         }
 
-        // Print the columnToDataTypesMap entries to verify the changes
-        /*log.info("No changes for columnToDataTypesMap:");
-        for (Map.Entry<String, String> entry : columnToDataTypesMap.entrySet()) {
-            log.info("Key: {}, Value: {}",entry.getKey(),entry.getValue());
-        }*/
+        if (!untypedInt64Columns.isEmpty()) {
+            String tableLabel = (schemaName == null ? "" : schemaName + ".")
+                    + (tableName == null ? "<unknown table>" : tableName);
+            if (REPORTED_UNTYPED_INT64_TABLES.add(tableLabel)) {
+                log.error("Table {}: column(s) {} arrive as INT64 without the source column type and are "
+                                + "declared Int64. If any of them is a MySQL BIGINT UNSIGNED, values at or "
+                                + "above 2^63 will be stored as NEGATIVE numbers. Set "
+                                + "column.propagate.source.type=.* on the source connector so the column "
+                                + "can be declared UInt64, or create the ClickHouse table by hand "
+                                + "(Spec 07.01 section 3.2). Reported once per table.",
+                        tableLabel, untypedInt64Columns);
+            }
+        }
 
         // Call the method to load the default column data type mapping.
         Map<String, String> defaultColumnDataTypeMap = loadDefaultColumnDataTypeMapping(config.originalsStrings());
