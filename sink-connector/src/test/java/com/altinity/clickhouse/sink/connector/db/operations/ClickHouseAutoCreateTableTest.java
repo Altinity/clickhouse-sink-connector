@@ -162,6 +162,34 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
     }
 
 
+    /**
+     * Spec 08.05 section 3.1.1: a source table with its own {@code is_deleted}
+     * column keeps it as a source column, and the engine column is renamed
+     * {@code _is_deleted} (as the DDL translator does) instead of emitting the
+     * name twice, which ClickHouse rejects.
+     */
+    @Test
+    public void testSourceIsDeletedColumnRenamesEngineColumn() {
+        Field[] fields = new Field[]{
+                new Field("id", 0, Schema.INT32_SCHEMA),
+                new Field("is_deleted", 1, Schema.OPTIONAL_INT16_SCHEMA),
+        };
+        Map<String, String> types = new ClickHouseTableOperationsBase()
+                .getColumnNameToCHDataTypeMapping(fields, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        ArrayList<String> primaryKey = new ArrayList<>();
+        primaryKey.add("id");
+
+        String query = new ClickHouseAutoCreateTable().createTableSyntax(primaryKey, "flags", "db",
+                fields, types, true, false, null, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
+        Assert.assertTrue("the source column keeps its name and nullability: " + query,
+                query.contains("`is_deleted` Nullable(Int16)"));
+        Assert.assertTrue("the engine column is renamed: " + query, query.contains("`_is_deleted` UInt8"));
+        Assert.assertTrue(query, query.contains("Engine=ReplacingMergeTree(_version,_is_deleted)"));
+        Assert.assertEquals("is_deleted must be declared exactly once as a column: " + query,
+                1, query.split("`is_deleted`", -1).length - 1);
+    }
+
     @Test
     public void testIsPrimaryKeyColumnPresent()    {
         ArrayList<String> primaryKeys = new ArrayList<>();

@@ -175,11 +175,13 @@ public class ClickHouseAutoCreateTable
             // System/engine columns (_version, _sign, is_deleted) must stay
             // non-nullable because ClickHouse requires them as bare integer
             // types for ReplacingMergeTree / CollapsingMergeTree engines.
+            // A SOURCE column named is_deleted is an ordinary column here (the
+            // engine column is renamed _is_deleted below), so it is wrapped
+            // like any other.
             if (f.schema().isOptional()
                     && ClickHouseDataTypeMapper.canBeNullable(dataType)
                     && !colName.equals(VERSION_COLUMN)
-                    && !colName.equals(SIGN_COLUMN)
-                    && !colName.equals(IS_DELETED_COLUMN)) {
+                    && !colName.equals(SIGN_COLUMN)) {
                 dataType = "Nullable(" + dataType + ")";
             }
 
@@ -212,7 +214,22 @@ public class ClickHouseAutoCreateTable
         if (rmtDeleteColumn != null && !rmtDeleteColumn.isEmpty()) {
             isDeletedColumn = rmtDeleteColumn;
         }
-        
+        // A source table with its own column of that name keeps it as a
+        // source column; the engine column is renamed, exactly as the DDL
+        // translator does, instead of declaring the name twice -- which
+        // ClickHouse rejects, after which every batch for the table failed
+        // with "TABLE METADATA not retrieved" (Spec 08.05 section 3.1.1).
+        for (Field f : fields) {
+            if (f.name() != null && f.name().equalsIgnoreCase(isDeletedColumn)) {
+                String renamed = "_" + isDeletedColumn;
+                log.warn("Table {}.{}: the source has a column named `{}`; the ReplacingMergeTree "
+                                + "delete-marker column is declared as `{}` instead",
+                        databaseName, tableName, isDeletedColumn, renamed);
+                isDeletedColumn = renamed;
+                break;
+            }
+        }
+
 
         // If Replication history is enabled, add the temporal columns
         // _valid_from, _valid_to, _operation, and is_deleted

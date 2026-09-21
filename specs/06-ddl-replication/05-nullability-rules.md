@@ -44,6 +44,16 @@ Type-width order used for "wider":
 
 Formalised as `wider_key_change_is_loud` in `DdlTranslation.lean`. Pinned by `testModifyKeyColumnSameOrNarrowerIsSuppressed`, `testModifyKeyColumnWiderIsLoud`, `testChangeKeyColumnRenameIsLoud`.
 
+### 3.4.1 Parity with the record-schema path
+The record-schema path (Kafka-mode auto-create and `schema.evolution`
+`ADD COLUMN`, Spec 08.05 §3.1.1) declares the same ClickHouse type as this
+translator for the same MySQL column type whenever Debezium's propagated
+source metadata is present — including nullability: an optional unsigned
+integer is `Nullable(UIntN)` there exactly as `ADD COLUMN ... UNSIGNED NULL`
+is here. `RecordSchemaVsDdlTypeAgreementTest` pins the two paths against each
+other; the residual differences it excludes (`BOOL` → `Bool` here vs `Int8`
+there; the DateTime zone argument) are listed in Spec 08.05 §3.1.1.
+
 ### 3.5 DEFAULT clauses
 Only literal defaults are carried to ClickHouse; function, expression and `ON UPDATE` forms are dropped (Spec 06.04 §3.2). A dropped `DEFAULT` never changes a replicated value: the row image carries the source value, and ClickHouse binds it explicitly (Spec 04.03).
 
@@ -60,3 +70,4 @@ Only literal defaults are carried to ClickHouse; function, expression and `ON UP
 - `AlterTableModifyColumnIT.testAlterAddPrimaryKeyAndModifyNotNull()`
 - `MySqlDDLParserListenerImplTest.testAlterModifyColumnNotNullStaysNullable()`, `testCreateTableTableLevelPrimaryKeyForcesNotNull()`, `testModifyKeyColumnSameOrNarrowerIsSuppressed()`, `testModifyKeyColumnWiderIsLoud()`, `testChangeKeyColumnRenameIsLoud()`, `testModifyColumnNameIsCaseResolvedAgainstTarget()`
 - Formal: `wider_key_change_is_loud` in `formal_specs/lean/Replication/DdlTranslation.lean`.
+- `RecordSchemaVsDdlTypeAgreementTest.bothPathsDeclareTheSameType()` — §3.4.1.

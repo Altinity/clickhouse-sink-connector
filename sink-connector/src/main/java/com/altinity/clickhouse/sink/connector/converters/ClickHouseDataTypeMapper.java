@@ -35,6 +35,8 @@ import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * ClickHouseDataTypeMapper provides functions to map Debezium or
@@ -57,6 +59,111 @@ public class ClickHouseDataTypeMapper {
      */
     public static final String DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM =
             "__debezium.source.column.type";
+
+    /**
+     * Schema parameter populated by Debezium (with source-type propagation)
+     * with the declared length of the source column -- for
+     * {@code DATETIME(p)} / {@code TIMESTAMP(p)} the fractional-second
+     * precision {@code p}; absent when the column declares none.
+     */
+    public static final String DEBEZIUM_SOURCE_COLUMN_LENGTH_PARAM =
+            "__debezium.source.column.length";
+
+    /** Kafka Connect {@code Decimal} schema parameter carrying the scale. */
+    public static final String CONNECT_DECIMAL_SCALE_PARAM = "scale";
+
+    /** Debezium's {@code Decimal} schema parameter carrying the precision. */
+    public static final String CONNECT_DECIMAL_PRECISION_PARAM = "connect.decimal.precision";
+
+    /** MySQL's own default precision for a dimensionless {@code DECIMAL}. */
+    public static final int DEFAULT_DECIMAL_PRECISION = 10;
+
+    /** Matches a parenthesised dimension such as the {@code (3)} in {@code datetime(3)}. */
+    private static final Pattern DIMENSION = Pattern.compile("\\((\\d+)\\)");
+
+    /**
+     * The ClickHouse type for a propagated MySQL <em>signed</em> {@code TINYINT}
+     * source type: {@code Int8}, as the DDL path declares. Debezium delivers
+     * {@code TINYINT} as {@code INT16}, so without the source type the record
+     * path can only declare {@code Int16} (Spec 08.05 section 3.1.1).
+     *
+     * @param mysqlSourceColumnType the value of {@link #DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM}, may be null
+     * @return {@code "Int8"} for a signed TINYINT, else null
+     */
+    public static String getSignedTinyIntType(String mysqlSourceColumnType) {
+        if (mysqlSourceColumnType == null) {
+            return null;
+        }
+        String normalized = mysqlSourceColumnType.trim().toLowerCase();
+        if (normalized.contains("unsigned")) {
+            return null;
+        }
+        return normalized.startsWith("tinyint") ? ClickHouseDataType.Int8.name() : null;
+    }
+
+    /**
+     * The ClickHouse {@code Decimal(p, s)} for a Kafka Connect {@code Decimal}
+     * field: {@code p} from {@code connect.decimal.precision}, {@code s} from
+     * {@code scale}; a missing precision is {@code max(10, s)} and a missing
+     * scale is {@code 0}, so a dimensionless MySQL {@code DECIMAL} is
+     * {@code Decimal(10,0)} -- what MySQL defines and what the DDL path
+     * declares (Spec 08.05 section 3.1.1).
+     *
+     * @param params the field schema parameters, may be null
+     * @return the ClickHouse type string
+     */
+    public static String decimalType(Map<String, String> params) {
+        int scale = 0;
+        if (params != null && params.containsKey(CONNECT_DECIMAL_SCALE_PARAM)) {
+            scale = parseIntSafe(params.get(CONNECT_DECIMAL_SCALE_PARAM), 0);
+        }
+        int precision = Math.max(DEFAULT_DECIMAL_PRECISION, scale);
+        if (params != null && params.containsKey(CONNECT_DECIMAL_PRECISION_PARAM)) {
+            precision = parseIntSafe(params.get(CONNECT_DECIMAL_PRECISION_PARAM), precision);
+        }
+        if (precision < scale) {
+            precision = scale;
+        }
+        return "Decimal(" + precision + "," + scale + ")";
+    }
+
+    /**
+     * The fractional-second precision to declare for a {@code DateTime64}
+     * column from the record schema. With a propagated {@code DATETIME} /
+     * {@code TIMESTAMP} source type the precision is the propagated column
+     * length (0..6), or the {@code (p)} in the type text, or {@code 0} when
+     * neither is present (a plain {@code DATETIME}); without a propagated
+     * source type it is {@code defaultPrecision}, the widest the logical type
+     * carries (Spec 08.05 section 3.1.1).
+     *
+     * @param params           the field schema parameters, may be null
+     * @param defaultPrecision the precision to use without a propagated source type
+     * @return the precision, 0..9
+     */
+    public static int temporalPrecision(Map<String, String> params, int defaultPrecision) {
+        if (params == null) {
+            return defaultPrecision;
+        }
+        String sourceType = params.get(DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM);
+        if (sourceType == null) {
+            return defaultPrecision;
+        }
+        String normalized = sourceType.trim().toLowerCase();
+        if (!(normalized.startsWith("datetime") || normalized.startsWith("timestamp"))) {
+            return defaultPrecision;
+        }
+        String length = params.get(DEBEZIUM_SOURCE_COLUMN_LENGTH_PARAM);
+        if (length != null) {
+            int p = parseIntSafe(length, -1);
+            return (p >= 0 && p <= 6) ? p : defaultPrecision;
+        }
+        Matcher dimension = DIMENSION.matcher(normalized);
+        if (dimension.find()) {
+            int p = Integer.parseInt(dimension.group(1));
+            return p <= 6 ? p : defaultPrecision;
+        }
+        return 0;
+    }
 
     /** Whether the empty-source-zone resolution has been logged (once per JVM). */
     private static final AtomicBoolean SOURCE_ZONE_DEFAULT_LOGGED = new AtomicBoolean(false);
