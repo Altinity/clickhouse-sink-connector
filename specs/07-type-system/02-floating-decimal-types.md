@@ -13,8 +13,21 @@ Specifies the preservation of exact scales, precisions, and IEEE 754 representat
 ## 3. Operational Specification
 
 ### 3.1 IEEE 754 Floating Point
-- `FLOAT` $\to$ `Float32` (`java.lang.Float`)
-- `DOUBLE` $\to$ `Float64` (`java.lang.Double`)
+- `DOUBLE` / `DOUBLE PRECISION` / `FLOAT8` $\to$ `Float64` (`java.lang.Double`).
+- `FLOAT` / `FLOAT4` $\to$ `Float64` as well. Debezium's MySQL connector
+  delivers MySQL `FLOAT` as a `FLOAT64` Kafka schema (`java.lang.Double`;
+  `io.debezium.jdbc.JdbcValueConverters` maps `Types.FLOAT` to `float64`), so
+  both the record-schema auto-create path (`FLOAT64` → `Float64`) and the DDL
+  path (`DataTypeConverter`) declare `Float64`. This is a **widening**: the
+  4-byte value is stored exactly (a `float` is exactly representable as a
+  `double`), but ClickHouse renders it with double precision — MySQL shows
+  `1.1` for a `FLOAT`, ClickHouse shows `1.100000023841858` for the same
+  bits. A value-level comparison must therefore compare `toFloat32(col)` on
+  ClickHouse, or render both sides with the same shortest-repr algorithm,
+  rather than comparing default string renderings.
+- `REAL` $\to$ `Float32` on the DDL path only: Debezium resolves `REAL` to
+  `Types.REAL` → `float32`, so the value is already narrowed when it arrives
+  (see `DataTypeConverter` and `DataTypeConverterTest`).
 
 ### 3.2 Fixed-Point Decimals (`DECIMAL(P, S)`)
 - Debezium encodes `DECIMAL` values as scaled binary byte arrays or `BigDecimal` objects.
