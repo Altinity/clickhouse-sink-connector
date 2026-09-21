@@ -148,6 +148,15 @@ public class DataTypeConverter {
             }
         }
 
+        // Every MySQL spatial type is a String holding the source WKB as hex
+        // (Spec 07.06 §3.2). The ClickHouse Geo types cannot be Nullable, map
+        // every non-point kind to Polygon and drop the SRID, so an ADD COLUMN
+        // of a nullable geometry was rejected and retried forever. JSON shares
+        // the grammar alternative and keeps its own (String) mapping below.
+        if (isSpatialType(columnDefChild)) {
+            return ClickHouseDataType.String.toString();
+        }
+
         // MySQL BIT(n) is a bit-string, not a boolean. Debezium emits it as
         // BYTES/io.debezium.data.Bits (BIT(1) is the only width that is
         // emitted as BOOLEAN), and the runtime value path already maps
@@ -237,6 +246,17 @@ public class DataTypeConverter {
         return convertedDataType;
     }
 
+
+    /**
+     * True for the spatial family ({@code GEOMETRY}, {@code POINT},
+     * {@code LINESTRING}, {@code POLYGON}, {@code MULTI*},
+     * {@code GEOMETRYCOLLECTION}); {@code JSON} is parsed by the same grammar
+     * alternative and is excluded.
+     */
+    static boolean isSpatialType(MySqlParser.DataTypeContext dataType) {
+        return dataType instanceof MySqlParser.SpatialDataTypeContext
+                && ((MySqlParser.SpatialDataTypeContext) dataType).JSON() == null;
+    }
 
     /**
      * Normalises a resolved MySQL integer type name to one spelling per type

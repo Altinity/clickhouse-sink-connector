@@ -1099,8 +1099,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
 
                 // For non-generated columns, apply nullable constraints if applicable.
-                String lowerCaseDataType = colDataType.toLowerCase();
-                if (!Constants.NULLABLE_NOT_SUPPORTED_DATA_TYPES.contains(lowerCaseDataType) && isNullColumn) {
+                // (Spatial types are String now -- Spec 07.06 §3.2 -- so no type
+                // is exempt from Nullable any more.)
+                if (isNullColumn) {
                     this.query.append(Constants.NULLABLE).append("(").append(colDataType)
                             .append(")").append(",");
                 } else {

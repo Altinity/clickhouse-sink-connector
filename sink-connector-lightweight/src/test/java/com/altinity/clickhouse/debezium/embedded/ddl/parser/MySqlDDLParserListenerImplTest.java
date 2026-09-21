@@ -154,6 +154,29 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    @DisplayName("Spatial types are String (WKB hex) on CREATE and ALTER, nullable when the source is")
+    public void testAlterAddNullableGeometryIsRepresentable() {
+        String expected = "ALTER TABLE `employees`.t "
+                + "ADD COLUMN IF NOT EXISTS g Nullable(String), "
+                + "ADD COLUMN IF NOT EXISTS p String, "
+                + "ADD COLUMN IF NOT EXISTS l Nullable(String), "
+                + "ADD COLUMN IF NOT EXISTS mp Nullable(String), "
+                + "ADD COLUMN IF NOT EXISTS gc Nullable(String), "
+                + "ADD COLUMN IF NOT EXISTS j Nullable(String)";
+        Assert.assertEquals(expected, squash(translate("ALTER TABLE t "
+                + "ADD COLUMN g GEOMETRY, ADD COLUMN p POINT NOT NULL, ADD COLUMN l LINESTRING, "
+                + "ADD COLUMN mp MULTIPOLYGON, ADD COLUMN gc GEOMETRYCOLLECTION, ADD COLUMN j JSON")));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN g Nullable(String)",
+                translate("ALTER TABLE t MODIFY COLUMN g POLYGON"));
+
+        String create = translate("CREATE TABLE geo (id INT PRIMARY KEY, p POINT, poly POLYGON NOT NULL, "
+                + "s POINT SRID 4326 NOT NULL)");
+        Assert.assertTrue(create, create.equalsIgnoreCase("CREATE TABLE if not exists `employees`.geo("
+                + "id Int32 NOT NULL ,p Nullable(String),poly String NOT NULL ,s String NOT NULL ,"
+                + "`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+    }
+
+    @Test
     @DisplayName("AUTO_INCREMENT implies NOT NULL, so an AUTO_INCREMENT UNIQUE column is the identity")
     public void testAutoIncrementColumnIsNotNull() {
         String q = translate("CREATE TABLE seq (id INT AUTO_INCREMENT UNIQUE, v INT)");

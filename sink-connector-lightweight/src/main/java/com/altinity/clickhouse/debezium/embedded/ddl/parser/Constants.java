@@ -1,9 +1,5 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
-
 /**
  * This class holds commonly used constants for DDL (Data Definition Language)
  * operations in ClickHouse, such as commands for creating, altering, or
@@ -304,11 +300,4 @@ public class Constants {
      * introduced in ClickHouse 23.2.
      */
     public static final String NEW_REPLACING_MERGE_TREE_VERSION = "23.2";
-
-    /**
-     * A set of data types that do not support being marked as Nullable
-     * in ClickHouse. This is used as a workaround during DDL processing.
-     */
-    public static final Set<String> NULLABLE_NOT_SUPPORTED_DATA_TYPES =
-            new HashSet<>(Arrays.asList("point", "polygon"));
 }
