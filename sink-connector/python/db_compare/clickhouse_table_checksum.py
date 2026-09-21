@@ -202,11 +202,21 @@ def build_clickhouse_row_expression(columns_metadata, options):
     return (select, nullables, columns, data_types, clamped_count_expression(clamped_flags))
 
 
+def partition_key_within_sorting_key(columns_metadata):
+    """True when the table has a partition key and every partition-key column
+    is a sorting-key column, so a row cannot change partition without changing
+    its sorting key and per-partition FINAL is exact (spec 11.02 section 3.7).
+    Rows are (name, type, is_nullable, numeric_scale, is_in_partition_key,
+    is_in_sorting_key)."""
+    partition_columns = [row for row in columns_metadata if row[4] == 1]
+    return len(partition_columns) > 0 and all(row[5] == 1 for row in partition_columns)
+
+
 def get_table_checksum_query(conn, table):
     excluded_columns = "','".join(args.exclude_columns)
     excluded_columns = [f'{column}' for column in excluded_columns.split(',')]
     logging.info(f"Excluded columns, {excluded_columns}")
-    checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' order by position"
+    checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale, is_in_partition_key, is_in_sorting_key from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' order by position"
     (rowset, rowcount) = execute_sql(conn, checksum_query)
 
     columns_metadata  = []
@@ -227,6 +237,10 @@ def get_table_checksum_query(conn, table):
         filtered_columns_metadata.append(row)
 
     (select, nullables, columns, data_types, clamped_expression) = build_clickhouse_row_expression(filtered_columns_metadata, args)
+    final_per_partition = partition_key_within_sorting_key(columns_metadata)
+    partition_columns = [row[0] for row in columns_metadata if row[4] == 1]
+    logging.info(f"FINAL per partition: {final_per_partition} (partition key columns {partition_columns}; "
+                 "per-partition FINAL is used only when all of them are in the sorting key)")
 
     primary_key_columns = get_primary_key_columns(conn,
         args.clickhouse_database, table)
@@ -248,7 +262,7 @@ def get_table_checksum_query(conn, table):
         external_column_types += ","+column+" "+data_types[column]
 
     logging.debug("order by columns "+order_by_columns)
-    return (query, select, order_by_columns, external_column_types, clamped_expression)
+    return (query, select, order_by_columns, external_column_types, clamped_expression, final_per_partition)
 
 def fstr(template, partition_expression):
         # Safe substitution: only replace {partition_expression} placeholder
@@ -257,7 +271,7 @@ def fstr(template, partition_expression):
             return template.replace('{partition_expression}', str(partition_expression))
         return template
 
-def select_table_statements(table, query, select_query, order_by, external_column_types, _where, clamped_expression="0"):
+def select_table_statements(table, query, select_query, order_by, external_column_types, _where, clamped_expression="0", final_per_partition=False):
     statements = []
     external_table_name = args.clickhouse_database+"."+table
     limit = ""
@@ -271,10 +285,17 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     if args.sign_column != '':
       where+= f" and {args.sign_column} > 0 "
 
-    memory_setting = ""
+    # do_not_merge_across_partitions_select_final only when the partition key
+    # is a function of the sorting key (spec 11.02 section 3.7); otherwise an
+    # UPDATE that moved a row to another partition would leave its old
+    # version visible and the table would look DIFFERENT while equal.
+    settings = []
+    if final_per_partition:
+        settings.append("do_not_merge_across_partitions_select_final=1")
     max_memory_usage = args.max_memory_usage
     if max_memory_usage:
-        memory_setting = f", max_memory_usage = {max_memory_usage}"
+        settings.append(f"max_memory_usage = {max_memory_usage}")
+    settings_clause = (" settings " + ", ".join(settings)) if settings else ""
 
     sql = f"""select
       count(*) as "cnt",
@@ -293,9 +314,9 @@ def select_table_statements(table, query, select_query, order_by, external_colum
 
       from {schema}.{table} final where {where} /*order by {order_by}*/ {limit}
 
-	  ) as t settings do_not_merge_across_partitions_select_final=1 {memory_setting}"""
+	  ) as t{settings_clause}"""
     if args.debug_output:
-        sql = f"""select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit} settings do_not_merge_across_partitions_select_final=1"""
+        sql = f"""select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit}{settings_clause}"""
     statements.append(sql)
     return statements
 
@@ -350,9 +371,9 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where, parti
         return
     # generate the file from ClickHouse
     (query, select_query, distributed_by,
-     external_table_types, clamped_expression) = get_table_checksum_query(conn, table)
+     external_table_types, clamped_expression, final_per_partition) = get_table_checksum_query(conn, table)
     statements = select_table_statements(
-        table, query, select_query, distributed_by, external_table_types, where, clamped_expression)
+        table, query, select_query, distributed_by, external_table_types, where, clamped_expression, final_per_partition)
     compute_checksum(table, clickhouse_user, clickhouse_password, statements)
 
 

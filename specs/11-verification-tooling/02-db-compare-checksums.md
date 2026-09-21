@@ -293,6 +293,28 @@ both sides** (argparse rejects anything but `hex`, `base64`, `raw`):
 
 (`test_checksum_fidelity.py::TestBinaryEncoding`)
 
+### 3.7 `FINAL` across partitions
+The replica query reads `FROM <table> FINAL` so that the versions of a row
+collapse before hashing. The old query always added
+`settings do_not_merge_across_partitions_select_final=1`, which makes `FINAL`
+collapse **within each partition only**. MySQL allows an `UPDATE` to change a
+row's partition-key column; the connector then writes the new version into
+the new partition and the old version stays in the old one (spec 05.02
+covers only sorting-key changes). With the setting, `FINAL` keeps both
+versions — one per partition — and the tool reported DIFFERENT for a table
+that was equal (finding C16).
+
+The setting is therefore applied only when it cannot change the result:
+when the partition key is a **function of the sorting key**, i.e. every
+column referenced by the partition expression is a sorting-key column
+(`system.columns.is_in_partition_key = 1` ⇒ `is_in_sorting_key = 1`, and the
+table has a partition key at all). Then a row cannot change partition
+without changing its sorting key, which the connector handles as a
+tombstone in the old partition plus a live row in the new one (spec 05.02),
+and per-partition `FINAL` is exact. Otherwise the setting is dropped and
+`FINAL` merges across partitions; `get_table_checksum_query()` logs the
+decision. (`test_checksum_fidelity.py::TestFinalAcrossPartitions`)
+
 ---
 
 ## 4. Invariants Preserved
@@ -362,6 +384,10 @@ connect to a database.
     columns only in `raw` mode, leaves `Bool` alone and refuses
     `--hex_columns` with `hex`/`base64`; the driver passes the encoding to
     both scripts and the raw column list only in `raw` mode.
+  - `TestFinalAcrossPartitions` — §3.7: the setting is present only when
+    every partition-key column is a sorting-key column; absent when the
+    partition key is not in the sorting key or the table is unpartitioned;
+    `max_memory_usage` still forms a well-formed `settings` clause.
   - `TestClampedRowCounts` — §3.4: both aggregate queries carry
     `coalesce(sum(clamped),0)`; a table without datetime columns contributes
     `0`; a non-zero count is logged as a WARNING that does not change the

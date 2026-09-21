@@ -149,7 +149,9 @@ def clickhouse_stub(columns, row_strings, clamped=0):
         if "is_in_primary_key" in lowered:
             rows = [(name,) for (name, *_) in columns if name == "id"]
         elif "from system.columns" in lowered:
-            rows = list(columns)
+            # (name, type, is_nullable, numeric_scale[, is_in_partition_key, is_in_sorting_key])
+            rows = [tuple(column) + (0, 0) * ("is_in_partition_key" in lowered and len(column) == 4)
+                    for column in columns]
         elif "partition_key" in lowered:
             rows = [("",)]
         elif 'count(*) as "cnt"' in lowered:
@@ -230,7 +232,7 @@ class TestClickHouseRowExpression(unittest.TestCase):
     def build(self, columns, **arg_overrides):
         ch.args = clickhouse_args(**arg_overrides)
         with patch.object(ch, "execute_sql", side_effect=clickhouse_stub(columns, [])):
-            (query, select, order_by, external_types, clamped) = ch.get_table_checksum_query(MagicMock(), "t1")
+            (query, select, order_by, external_types, clamped, final_per_partition) = ch.get_table_checksum_query(MagicMock(), "t1")
         return select
 
     def test_trailing_float_column_leaves_no_dangling_separator(self):
@@ -472,7 +474,7 @@ class TestClampedRowCounts(unittest.TestCase):
     def test_aggregate_queries_sum_the_clamped_flags(self):
         ch.args = clickhouse_args()
         with patch.object(ch, "execute_sql", side_effect=clickhouse_stub([("d", "DateTime64(3)", 0, None)], [])):
-            (query, select, order_by, external_types, clamped) = ch.get_table_checksum_query(MagicMock(), "t1")
+            (query, select, order_by, external_types, clamped, final_per_partition) = ch.get_table_checksum_query(MagicMock(), "t1")
         self.assertEqual(clamped, "coalesce(" + clamped_datetime_flag(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX) + ", 0)")
         statement = ch.select_table_statements("t1", query, select, order_by, external_types, None, clamped)[0]
         self.assertIn('coalesce(sum(clamped),0) as "clamped"', statement)
@@ -504,6 +506,46 @@ class TestClampedRowCounts(unittest.TestCase):
             # The driver greps the child output for "checksum" and expects one line.
             self.assertEqual(sum(1 for line in lines if "checksum" in line.lower()), 1, lines)
         self.assertFalse(any(line.startswith("WARNING") for line in run_mysql_side(MYSQL_COLUMNS, FIXTURE_ROWS)))
+
+
+class TestFinalAcrossPartitions(unittest.TestCase):
+    """do_not_merge_across_partitions_select_final only when the partition key
+    is a function of the sorting key (spec 11.02 section 3.7)."""
+
+    SETTING = "do_not_merge_across_partitions_select_final=1"
+
+    def statement(self, columns, **arg_overrides):
+        ch.args = clickhouse_args(**arg_overrides)
+        with patch.object(ch, "execute_sql", side_effect=clickhouse_stub(columns, [])):
+            (query, select, order_by, external_types, clamped, final_per_partition) = ch.get_table_checksum_query(MagicMock(), "t1")
+        return ch.select_table_statements("t1", query, select, order_by, external_types, None, clamped, final_per_partition)[0]
+
+    def test_partition_key_inside_the_sorting_key_keeps_per_partition_final(self):
+        # (name, type, is_nullable, numeric_scale, is_in_partition_key, is_in_sorting_key)
+        columns = [("id", "Int32", 0, None, 0, 1), ("d", "Date32", 0, None, 1, 1), ("v", "String", 0, None, 0, 0)]
+        statement = self.statement(columns)
+        self.assertIn(self.SETTING, statement)
+        self.assertIn(" final ", statement)
+
+    def test_partition_key_outside_the_sorting_key_merges_across_partitions(self):
+        columns = [("id", "Int32", 0, None, 0, 1), ("d", "Date32", 0, None, 1, 0), ("v", "String", 0, None, 0, 0)]
+        statement = self.statement(columns)
+        self.assertNotIn(self.SETTING, statement)
+        self.assertIn(" final ", statement)
+
+    def test_mixed_partition_columns_need_every_one_in_the_sorting_key(self):
+        columns = [("id", "Int32", 0, None, 1, 1), ("d", "Date32", 0, None, 1, 0)]
+        self.assertNotIn(self.SETTING, self.statement(columns))
+
+    def test_unpartitioned_table_has_no_setting(self):
+        self.assertNotIn(self.SETTING, self.statement(CLICKHOUSE_COLUMNS))
+
+    def test_memory_setting_forms_a_well_formed_settings_clause(self):
+        statement = self.statement(CLICKHOUSE_COLUMNS, max_memory_usage="123")
+        self.assertIn(" settings max_memory_usage = 123", statement)
+        self.assertNotIn("settings ,", statement)
+        both = self.statement([("d", "Date32", 0, None, 1, 1)], max_memory_usage="123")
+        self.assertIn(" settings " + self.SETTING + ", max_memory_usage = 123", both)
 
 
 class TestBinaryEncoding(unittest.TestCase):
