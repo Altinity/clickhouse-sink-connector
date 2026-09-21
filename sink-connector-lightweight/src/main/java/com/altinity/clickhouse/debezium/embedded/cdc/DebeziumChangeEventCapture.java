@@ -495,6 +495,18 @@ public class DebeziumChangeEventCapture {
                       boolean forceStart)
             throws IOException, ClassNotFoundException {
 
+        // A new engine on a FIFO that still holds unacknowledged units would park
+        // every one of its own units behind them forever (spec 09.01 §3.8).
+        // stop() abandons them; refuse to start until it has.
+        if (DebeziumOffsetManagement.hasUnwrittenBatches()) {
+            throw new IllegalStateException(String.format(
+                    "Refusing to start the engine: %d handed-off batch(es) from a previous engine "
+                            + "in this process are still unacknowledged (queued, in flight or "
+                            + "parked). Call stop() first; it abandons them so the next engine "
+                            + "redelivers them from the last committed offset.",
+                    DebeziumOffsetManagement.outstandingCount()));
+        }
+
         // Check if max queue size was defined by the user.
         if (props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()) != null) {
             int maxQueueSize = Integer.parseInt(props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()));
@@ -547,20 +559,56 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
-     * Stops the Debezium engine and shuts down all executor services.
+     * Longest time {@link #stop()} lets the still-running worker pool drain
+     * handed-off work before shutting it down. Package-private and mutable so
+     * tests do not wait a minute; production keeps the default.
+     */
+    static volatile long stopDrainTimeoutMs = 60_000;
+
+    /**
+     * Stops the engine and shuts the worker pool down, in the only order that
+     * neither drops queued work needlessly nor poisons the offset FIFO for the
+     * next engine in this process (spec 01.01 §3.3, spec 09.01 §3.8).
      *
+     * <p>The bookkeeping in {@code DebeziumOffsetManagement} is static, but the
+     * engine is restarted INSIDE the process (REST {@code /restart},
+     * {@code /start} after {@code /stop}, the restart monitor): a new instance
+     * of this class on the same FIFO. The previous order -- shut the pool down
+     * first, close the engine last, never touch the FIFO -- abandoned every
+     * queued batch and left its sequence outstanding forever: the next engine's
+     * units all parked behind that ghost, no offset was ever acknowledged
+     * again, {@code hasUnwrittenBatches()} stayed true (no control-record
+     * commit, every DDL drain timed out into a restart loop), rows kept being
+     * inserted while the durable offset froze, and the parked units leaked.</p>
+     *
+     * <ol>
+     *   <li>close the engine -- the producer -- so nothing more is handed off;</li>
+     *   <li>stop the Debezium event thread;</li>
+     *   <li>let the pool, still running, drain what is queued or in flight,
+     *       bounded by {@link #stopDrainTimeoutMs};</li>
+     *   <li>shut the pool down and await termination;</li>
+     *   <li>reset the FIFO: whatever is still outstanding is abandoned. It was
+     *       never acknowledged, so the next engine redelivers it from the last
+     *       committed offset -- redelivery, never loss or a rolled-back offset
+     *       ({@code Replication.OffsetFifo.acked_never_rolled_back}).</li>
+     * </ol>
+     *
+     * @return the number of handed-off units abandoned (0 when the drain
+     *         completed).
      * @throws IOException If an I/O error occurs during shutdown.
      */
-    public void stop() throws IOException {
+    public int stop() throws IOException {
+        // 1. Producer first. While the pool is still alive, anything the
+        //    closing engine has already handed off can still be written.
         try {
-            if (this.executor != null) {
-                this.executor.shutdown();
-                this.executor.awaitTermination(60, TimeUnit.SECONDS);
+            if (this.engine != null) {
+                this.engine.close();
             }
         } catch (Exception e) {
-            log.error("Error stopping executor", e);
+            log.error("Error stopping debezium engine", e);
         }
 
+        // 2. The event thread returns from engine.run() once the engine is closed.
         try {
             if (this.singleThreadDebeziumEventExecutor != null) {
                 this.singleThreadDebeziumEventExecutor.shutdown();
@@ -570,15 +618,61 @@ public class DebeziumChangeEventCapture {
             log.error("Error stopping debezium event executor", e);
         }
 
+        // 3. Drain through the still-running pool; nothing new can arrive now.
+        drainBeforeStop();
+
+        // 4. Only now stop the workers.
         try {
-            if (this.engine != null) {
-                this.engine.close();
+            if (this.executor != null) {
+                this.executor.shutdown();
+                this.executor.awaitTermination(60, TimeUnit.SECONDS);
             }
         } catch (Exception e) {
-            log.error("Error stopping debezium engine", e);
+            log.error("Error stopping executor", e);
+        }
+
+        // 5. Nobody can write or acknowledge anything registered so far: abandon
+        //    it so the next engine in this process starts from a quiescent FIFO.
+        int abandoned = DebeziumOffsetManagement.reset();
+        if (abandoned > 0) {
+            log.warn("stop(): {} handed-off batch(es) were still unacknowledged when the worker "
+                    + "pool terminated and have been abandoned. Their offsets were never "
+                    + "committed, so the next start redelivers them from the last committed "
+                    + "position.", abandoned);
         }
 
         Metrics.stop();
+        return abandoned;
+    }
+
+    /**
+     * Waits, bounded by {@link #stopDrainTimeoutMs}, for the still-running pool
+     * to write and acknowledge everything handed off before the engine was
+     * closed. A timeout is logged and tolerated: whatever remains is abandoned
+     * by {@link #stop()} and redelivered on the next start. Skipped when there
+     * is no pool (single-threaded mode) or it is already shut down.
+     */
+    private void drainBeforeStop() {
+        if (this.executor == null || this.executor.isShutdown()) {
+            return;
+        }
+        long deadline = System.currentTimeMillis() + stopDrainTimeoutMs;
+        while (!isPipelineQuiescent()) {
+            if (System.currentTimeMillis() >= deadline) {
+                log.warn("stop(): {} still pending after {} ms; shutting the pool down anyway. "
+                        + "The pending batches are abandoned and redelivered on the next start.",
+                        describePendingHandoff(), stopDrainTimeoutMs);
+                return;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                log.warn("stop(): interrupted while draining; {} still pending and abandoned.",
+                        describePendingHandoff());
+                return;
+            }
+        }
     }
 
     /**

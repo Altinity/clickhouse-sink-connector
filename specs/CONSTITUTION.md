@@ -105,9 +105,13 @@ when every lower-sequence batch (queued, in flight, or parked) has been
 acknowledged, and a batch written out of turn is parked, not re-executed. A
 handed-off batch is outstanding from the instant of handoff until its
 acknowledgement, and the pipeline is quiescent iff no sequence is outstanding.
+An in-process engine restart (`stop()`) abandons what is still outstanding once
+the pool has terminated — never anything acknowledged — so the next engine
+starts quiescent and redelivers the abandoned rows (spec 09.01 §3.8).
 Formalised in `formal_specs/lean/Replication/OffsetFifo.lean`
 (`commit_never_passes_outstanding`, `acked_downward_closed`,
-`outstanding_ge_commitPoint`, `write_at_most_once`, `old_overlap_rule_unsafe`).
+`outstanding_ge_commitPoint`, `write_at_most_once`, `old_overlap_rule_unsafe`,
+`restart_quiescent`, `acked_never_rolled_back`, `old_restart_poisons_fifo`).
 
 ### Invariant I9: Loud Failure (Zero Silence)
 Replication errors, checksum mismatches, and schema translation failures must fail loudly. No replication exception shall be caught and suppressed to allow a batch to proceed. Row count parity shall never substitute for value-level checksum verification.
@@ -208,7 +212,7 @@ Honest status per invariant. "Lean" means a proposition and a machine-checked th
 | I5 DDL Barrier Quiescence | Lean | `DdlBarrier.lean`: `ddl_applies_only_when_no_pending_rows`, `old_predicate_insufficient`, `queues_empty_insufficient` |
 | I6 Column Authority & Shadowing Prohibition | none (`ColumnKind` is modelled in `Basic.lean`; no theorem) | — |
 | I7 Value-Level Type Equivalence | none | — |
-| I8 Durable Offset Quiescence | Lean (handoff FIFO); the control-record half is covered under I12 | `OffsetFifo.lean`: `commit_never_passes_outstanding`, `write_at_most_once`, `old_overlap_rule_unsafe` |
+| I8 Durable Offset Quiescence | Lean (handoff FIFO, including the in-process restart reset); the control-record half is covered under I12 | `OffsetFifo.lean`: `commit_never_passes_outstanding`, `write_at_most_once`, `old_overlap_rule_unsafe`, `restart_quiescent`, `acked_never_rolled_back`, `old_restart_poisons_fifo` |
 | I9 Loud Failure | Lean (row half only: an unconvertible row record halts, its offset is never committed); the rest is empirical (spec 10.04) | `Snapshot.lean`: `unparsed_row_halts`, `unparsed_row_never_committed`, `old_rule_commits_unparsed_row` |
 | I10 Structural Separation of Concerns | none (architectural rule, not a state-machine property) | — |
 | I11 Drop-in Upgrade Safety | Lean, conditional on `GapMono` (spec 02.06 §6 lists where the code does not establish it) | `upgrade_safe`, `replicate_convergesV`, `liveVersion_gapMono` |
