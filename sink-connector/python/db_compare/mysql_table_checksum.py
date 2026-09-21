@@ -50,95 +50,100 @@ def compute_checksum(table, statements, conn):
     return result
 
 
+# information_schema DATA_TYPE keywords of the IEEE 754 types (REAL is an alias
+# of DOUBLE and never appears as a DATA_TYPE).
+FLOATING_POINT_DATA_TYPES = frozenset({"float", "double"})
+
+
+def mysql_column_expression(column, options, binary_encoding, same_charset):
+    """Text rendering of one MySQL column (spec 11.02 section 3.3).
+
+    ``column`` is an ``information_schema.columns`` row. Classification uses
+    ``data_type`` (DATA_TYPE, the bare type keyword) and ``datetime_precision``;
+    ``column_type`` (COLUMN_TYPE) carries user text such as enum/set labels and
+    is never substring-matched -- an enum('float','json') is a string column.
+    """
+    column_name = '`' + column['column_name'] + '`'
+    data_type = column['data_type'].lower()
+    precision = column['datetime_precision']
+    collation = column['collation']
+    min_date_value = options.min_date_value
+    max_date_value = options.max_date_value
+    max_datetime_value = options.max_datetime_value
+    if data_type == 'json':
+        # convert to a compact representation, best effort, it is not perfect and it is advised to ignore those columns
+        # https://bugs.mysql.com/bug.php?id=118990
+        # https://github.com/Altinity/clickhouse-sink-connector/issues/1137
+        return f"""REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(convert(json_pretty({column_name}) using utf8mb4),'": "','":"'),'":\\s(-*\\d|\\[|\\{{|true|false)','":$1'),'\\.0\\b',''),'\\s+(".*?)\\s*','$1'),'\\s*\\n\\\s*',''), '\\\\u([0-9A-F]{{3}})a', '\\\\u$1A'), '\\\\u([0-9A-F]{{3}})b', '\\\\u$1B'), '\\\\u([0-9A-F]{{3}})c', '\\\\u$1C'), '\\\\u([0-9A-F]{{3}})d', '\\\\u$1D'), '\\\\u([0-9A-F]{{3}})e', '\\\\u$1E'), '\\\\u([0-9A-F]{{3}})f', '\\\\u$1F')"""
+    if data_type == 'datetime':
+        # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/
+        if precision is None or int(precision) <= 3:
+            return f"case when {column_name} >=  substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(3))),1,length({column_name})) else case when {column_name} <= '{options.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{options.min_datetime_value}' AS datetime(3)))) else substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name})) end end"
+        return f"case when {column_name} >= substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(6)))),1,length({column_name})) else case when {column_name} <= '{options.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{options.min_datetime_value}' AS datetime(6)))) else  substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name})) end end"
+    if data_type == 'time':
+        return f"substr(cast({column_name} as time(6)),1,length({column_name}))"
+    if data_type == 'timestamp':
+        return f"substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name}))"
+    if data_type == 'date':  # Date are converted to Date32 in CH
+        # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
+        return f"case when {column_name} >='{max_date_value}' then CAST('{max_date_value}' AS date) else case when {column_name} <= '{min_date_value}' then CAST('{min_date_value}' AS date) else {column_name} end end"
+    if is_binary_datatype(data_type):
+        if binary_encoding == 'base64':
+            return "replace(to_base64(cast(" + column_name + " as binary)),'\\n','')"
+        return "lower(hex(cast(" + column_name + " as binary)))"
+    if same_charset or collation is None:
+        return column_name
+    return f"convert({column_name} using utf8mb4)"
+
+
+def build_mysql_row_expression(columns, options, binary_encoding, excluded_columns,
+                               include_floating_point_columns, include_json_columns):
+    """Build the pieces of the canonical row string from ``information_schema``
+    rows in ordinal order (spec 11.02 section 3.3).
+
+    Returns ``(select, nullables, data_types)``; ``select`` is the comma
+    separated argument list of ``concat_ws('#', ...)``. Skipped columns
+    contribute nothing; the nullability flags are one trailing element.
+    """
+    pieces = []
+    nullables = []
+    data_types = {}
+    collations = [column['collation'] for column in columns if column['collation'] is not None]
+    same_charset = len(collations) <= 1
+    for column in columns:
+        name = column['column_name']
+        column_name = '`' + name + '`'
+        data_type = column['data_type'].lower()
+        if name in excluded_columns:
+            logging.info("Excluding column " + name)
+            continue
+        if not include_floating_point_columns and data_type in FLOATING_POINT_DATA_TYPES:
+            logging.info(f"Excluding floating point column {column_name} of type {column['column_type']}")
+            continue
+        if not include_json_columns and data_type == 'json':
+            logging.info(f"Excluding json column {column_name} of type {column['column_type']}")
+            continue
+        expression = mysql_column_expression(column, options, binary_encoding, same_charset)
+        if column['is_nullable'] == 'YES':
+            nullables.append(column_name)
+            expression = f"ifnull({expression},'')"
+        pieces.append(expression)
+        data_types[name] = column['column_type']
+    logging.debug(str(nullables))
+    if len(nullables) > 0:
+        pieces.append("concat(" + ",".join("ISNULL(" + nullable + ")" for nullable in nullables) + ")")
+    return (",".join(pieces), nullables, data_types)
+
+
 def get_table_checksum_query(table, conn, binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns):
 
-    (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, column_type as data_type, IS_NULLABLE as is_nullable, COLLATION_NAME as collation from information_schema.columns where table_schema='" +
+    (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, DATA_TYPE as data_type, COLUMN_TYPE as column_type, IS_NULLABLE as is_nullable, COLLATION_NAME as collation, DATETIME_PRECISION as datetime_precision from information_schema.columns where table_schema='" +
                                        args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
 
     logging.debug("Excluded columns: "+str(excluded_columns))
-    select = ""
-    nullables = []
-    data_types = {}
-    first_column = True
-    min_date_value = args.min_date_value
-    max_date_value = args.max_date_value
-    max_datetime_value = args.max_datetime_value
     row_list = [row for row in rowset.mappings()]
-    same_charset = True
-    collations = [row['collation'] for row in row_list if row['collation'] is not None]
-    same_charset = len(collations) <= 1
-    for row in row_list:
-        column_name = '`'+row['column_name']+'`'
-        data_type = row['data_type']
-        is_nullable = row['is_nullable']
-        collation =  row['collation']
-        if row['column_name'] in excluded_columns:
-            logging.info("Excluding column "+row['column_name'])
-            continue
-        if not include_floating_point_columns:
-            if 'float' in data_type or 'double' in data_type or 'real' in data_type:
-                logging.info(f"Excluding floating point column {column_name} of type {data_type}")
-                continue
-        if not include_json_columns:
-            if 'json' in data_type:
-                logging.info(f"Excluding json column {column_name} of type {data_type}")
-                continue
-        if not first_column:
-            select += ","
-            
-        if is_nullable == 'YES':
-            nullables.append(column_name)
-        
-        select_column = ""
-        if 'json' in data_type :
-            # convert to a compact representation, best effort, it is not perfect and it is advised to ignore those columns
-            # https://bugs.mysql.com/bug.php?id=118990
-            # https://github.com/Altinity/clickhouse-sink-connector/issues/1137
-            select_column += f"""REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(convert(json_pretty({column_name}) using utf8mb4),'": "','":"'),'":\\\\s(-*\\\\d|\\\\[|\\\\{{|true|false)','":$1'),'\\\\.0\\\\b',''),'\\\\s+(".*?)\\\\s*','$1'),'\\\\s*\\\\n\\\\\\s*',''), '\\\\\\\\u([0-9A-F]{{3}})a', '\\\\\\\\u$1A'), '\\\\\\\\u([0-9A-F]{{3}})b', '\\\\\\\\u$1B'), '\\\\\\\\u([0-9A-F]{{3}})c', '\\\\\\\\u$1C'), '\\\\\\\\u([0-9A-F]{{3}})d', '\\\\\\\\u$1D'), '\\\\\\\\u([0-9A-F]{{3}})e', '\\\\\\\\u$1E'), '\\\\\\\\u([0-9A-F]{{3}})f', '\\\\\\\\u$1F')"""
-        elif 'datetime' == data_type or 'datetime(1)' == data_type or 'datetime(2)' == data_type or 'datetime(3)' == data_type:
-            # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/
-            select_column += f"case when {column_name} >=  substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(3))),1,length({column_name})) else case when {column_name} <= '{args.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{args.min_datetime_value}' AS datetime(3)))) else substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name})) end end"
-        elif 'datetime(4)' == data_type or 'datetime(5)' == data_type or 'datetime(6)' == data_type:
-            # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/ii
-            select_column += f"case when {column_name} >= substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(6)))),1,length({column_name})) else case when {column_name} <= '{args.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{args.min_datetime_value}' AS datetime(6)))) else  substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name})) end end"
-        elif 'time' == data_type or 'time(1)' == data_type or 'time(2)' == data_type or 'time(3)' == data_type or 'time(4)' == data_type or 'time(5)' == data_type or 'time(6)' == data_type:
-            select_column += f"substr(cast({column_name} as time(6)),1,length({column_name}))"
-        elif 'timestamp' == data_type or 'timestamp(1)' == data_type or 'timestamp(2)' == data_type or 'timestamp(3)' == data_type or 'timestamp(4)' == data_type or 'timestamp(5)' == data_type or 'timestamp(6)' == data_type:
-            select_column += f"substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name}))"
-        else:
-            if 'date' == data_type:  # Date are converted to Date32 in CH
-              # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
-                select_column += f"case when {column_name} >='{max_date_value}' then CAST('{max_date_value}' AS {data_type}) else case when {column_name} <= '{min_date_value}' then CAST('{min_date_value}' AS {data_type}) else {column_name} end end"
-            else:
-                if is_binary_datatype(data_type):
-                    binary_encode = "lower(hex(cast(" + \
-                        column_name+"as binary)))"
-                    if binary_encoding == 'base64':
-                        binary_encode = "replace(to_base64(cast(" + \
-                            column_name+" as binary)),'\\n','')"
-                    select_column += binary_encode
-                else:
-                    if same_charset or collation is None:
-                        select_column += f"{column_name}"
-                    else:
-                        select_column += f"convert({column_name} using utf8mb4)"
-        if is_nullable == 'YES':
-            select_column = f"ifnull({select_column},'')"
-        select+=select_column
-        first_column = False
-        data_types[row['column_name']] = data_type
-
-    logging.debug(str(nullables))
-    if len(nullables) > 0:
-        select += ", concat("
-        first = True
-        for nullable in nullables:
-            if not first:
-                select += ','
-            else:
-                first = False
-            select += "ISNULL("+nullable+")"
-        select += ")"
+    (select, nullables, data_types) = build_mysql_row_expression(
+        row_list, args, binary_encoding, excluded_columns, include_floating_point_columns, include_json_columns)
     # order is not important
     primary_key_columns = []
     logging.debug(str(primary_key_columns))

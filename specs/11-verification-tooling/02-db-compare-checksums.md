@@ -88,6 +88,18 @@ single character `#`:
 
 - Columns are taken in ordinal position (`information_schema.columns
   .ordinal_position` / `system.columns.position`).
+- A MySQL column is **classified on `information_schema.columns.DATA_TYPE`**
+  (the bare type keyword: `enum`, `datetime`, `blob`, ...) plus
+  `DATETIME_PRECISION`; `COLUMN_TYPE` is read only for the declared width of
+  `bit`. `COLUMN_TYPE` carries user text — the labels of
+  `enum('float','json','blob')` — and the old substring tests on it
+  (`'float' in data_type`, `'json' in`, `is_binary_datatype()` matching
+  `bit`/`blob`/`binary` anywhere in the string) skipped such an enum column
+  from the comparison entirely, JSON-normalised it or hex-encoded it
+  (`test_checksum_fidelity.py::TestMySQLColumnClassification`).
+  `db.mysql.is_binary_datatype()` strips a `(length)` suffix and matches the
+  bare keyword exactly, so it accepts both `DATA_TYPE` and a declared type as
+  the dump loader passes it.
 - A column that is excluded (`--exclude_columns`, the connector's own
   `_sign`, `_version`, `is_deleted`, `_is_deleted`, `__is_deleted`) or
   skipped by type (floating point unless `--include_floating_point_columns`)

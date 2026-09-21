@@ -8,14 +8,21 @@ import pymysql
 import pymysql as mysql
 import pandas as pd
 
-binary_datatypes = ('blob', 'varbinary', 'point', 'geometry', 'bit', 'binary', 'linestring',
-                    'geomcollection', 'multilinestring', 'multipolygon', 'multipoint', 'polygon')
+binary_datatypes = ('blob', 'tinyblob', 'mediumblob', 'longblob', 'varbinary', 'binary', 'bit',
+                    'point', 'geometry', 'linestring', 'geomcollection', 'geometrycollection',
+                    'multilinestring', 'multipolygon', 'multipoint', 'polygon')
+
 
 def is_binary_datatype(datatype):
-    if "blob" in datatype or "binary" in datatype or "varbinary" in datatype or "bit" in datatype:
-        return True
-    else:
-        return datatype.lower() in binary_datatypes
+    """True when the MySQL type keyword denotes bytes (spec 11.02 section 3.3).
+
+    Accepts either information_schema DATA_TYPE ('varbinary') or a declared
+    type ('varbinary(16)', 'bit(1)'): the length and attributes are stripped and
+    the bare keyword is matched exactly. It must never substring-match: the
+    labels of an enum('bit','blob') are user text, not a type.
+    """
+    base = datatype.lower().split('(', 1)[0].strip()
+    return base in binary_datatypes
 
 
 def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql_database):

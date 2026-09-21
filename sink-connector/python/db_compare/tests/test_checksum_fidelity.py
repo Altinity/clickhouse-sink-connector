@@ -96,10 +96,42 @@ class FakeMySQLRowset:
 # sides, which is exactly the shape that produced the dangling '#' (spec 11.02
 # section 3.3).
 CLICKHOUSE_COLUMNS = [("id", "Int32", 0, None), ("name", "String", 0, None), ("f", "Float64", 0, None)]
+
+
+def mysql_column(name, data_type, column_type=None, nullable="NO", collation=None, precision=None):
+    """One information_schema.columns row, keyed by the real catalog column
+    names. The stub projects it through the select list of the query the script
+    actually issues (``COLUMN_TYPE as data_type`` and the like), so a test sees
+    exactly what the engine would have returned for that query."""
+    return {
+        "COLUMN_NAME": name, "DATA_TYPE": data_type,
+        "COLUMN_TYPE": column_type if column_type is not None else data_type,
+        "IS_NULLABLE": nullable, "COLLATION_NAME": collation, "DATETIME_PRECISION": precision,
+    }
+
+
+def project_information_schema(sql, truth_rows):
+    """Apply the ``<CATALOG_COLUMN> as <alias>`` select list of ``sql`` to rows
+    keyed by catalog column name, as MySQL would."""
+    select_list = re.search(r"select\s+(.*?)\s+from\s+information_schema\.columns", sql, re.I | re.S).group(1)
+    projection = []
+    for item in select_list.split(","):
+        m = re.match(r"\s*(\w+)\s+as\s+(\w+)\s*$", item, re.I)
+        if not m:
+            raise AssertionError("select item without alias in test stub: " + item)
+        projection.append((m.group(1).upper(), m.group(2)))
+    projected = []
+    for truth in truth_rows:
+        if any(source not in truth for source, alias in projection):
+            raise AssertionError("query selects a catalog column the fixture does not carry: " + select_list)
+        projected.append({alias: truth[source] for source, alias in projection})
+    return projected
+
+
 MYSQL_COLUMNS = [
-    {"column_name": "id", "data_type": "int", "column_type": "int", "is_nullable": "NO", "collation": None},
-    {"column_name": "name", "data_type": "varchar", "column_type": "varchar(32)", "is_nullable": "NO", "collation": "utf8mb4_0900_ai_ci"},
-    {"column_name": "f", "data_type": "double", "column_type": "double", "is_nullable": "NO", "collation": None},
+    mysql_column("id", "int"),
+    mysql_column("name", "varchar", "varchar(32)", collation="utf8mb4_0900_ai_ci"),
+    mysql_column("f", "double"),
 ]
 FIXTURE_ROWS = ["1#bob", "2#alice", "3#carol"]
 
@@ -132,7 +164,7 @@ def mysql_stub(columns, row_strings):
     def execute_mysql(conn, sql):
         lowered = sql.strip().lower()
         if "information_schema.columns" in lowered:
-            return (FakeMySQLRowset(dict_rows=columns), -1)
+            return (FakeMySQLRowset(dict_rows=project_information_schema(sql, columns)), -1)
         if lowered.startswith("set "):
             return (FakeMySQLRowset(returns_rows=False), -1)
         if 'count(*) as "cnt"' in lowered:
@@ -218,6 +250,49 @@ class TestClickHouseRowExpression(unittest.TestCase):
             "||'#'||"
             """case when "name" is null then '1' else '0' end""",
         )
+
+
+def build_mysql_select(columns, excluded_columns=(), **arg_overrides):
+    """The MySQL concat_ws argument list, through get_table_checksum_query with
+    execute_mysql stubbed."""
+    my.args = mysql_args(**arg_overrides)
+    with patch.object(my, "execute_mysql", side_effect=mysql_stub(columns, [])):
+        (query, select, order_by, external_types) = my.get_table_checksum_query(
+            "t1", MagicMock(), my.args.binary_encoding, "1=1", list(excluded_columns),
+            my.args.include_floating_point_columns, my.args.include_json_columns)
+    return select
+
+
+class TestMySQLColumnClassification(unittest.TestCase):
+    """Columns are classified on information_schema DATA_TYPE, never by
+    substring on COLUMN_TYPE (spec 11.02 section 3.3)."""
+
+    def test_enum_labels_do_not_classify_the_column(self):
+        columns = [
+            mysql_column("id", "int"),
+            mysql_column("kind", "enum", "enum('float','json','blob','bit','time')",
+                         collation="utf8mb4_0900_ai_ci"),
+        ]
+        # An enum is a string column: not skipped as float, not JSON-normalised,
+        # not hex-encoded, not cast as time.
+        self.assertEqual(build_mysql_select(columns), "`id`,`kind`")
+
+    def test_set_labels_do_not_classify_the_column(self):
+        columns = [mysql_column("flags", "set", "set('double','binary')", collation="utf8mb4_0900_ai_ci")]
+        self.assertEqual(build_mysql_select(columns), "`flags`")
+
+    def test_real_types_are_still_classified(self):
+        columns = [
+            mysql_column("f", "double"),
+            mysql_column("b", "blob"),
+            mysql_column("j", "json"),
+            mysql_column("t", "time", "time(3)", precision=3),
+        ]
+        select = build_mysql_select(columns)
+        self.assertNotIn("`f`", select, "floating point stays skipped")
+        self.assertIn("lower(hex(cast(`b` as binary)))", select)
+        self.assertIn("json_pretty(`j`)", select)
+        self.assertIn("cast(`t` as time(6))", select)
 
 
 class TestEndToEndChecksum(unittest.TestCase):
