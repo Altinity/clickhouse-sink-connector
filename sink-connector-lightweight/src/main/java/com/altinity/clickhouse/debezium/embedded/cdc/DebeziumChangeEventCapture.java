@@ -383,6 +383,9 @@ public class DebeziumChangeEventCapture {
             if (props.getProperty("column.propagate.source.type") == null) {
                 props.setProperty("column.propagate.source.type", ".*");
             }
+            // Debezium's default remaps years below 100 (0001-01-01 arrives as
+            // 2001-01-01). Off unless the user set it (spec 07.03 section 3.3).
+            ensureTimeAdjusterDisabled(props);
 
             changeEventBuilder.using(props);
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
@@ -819,6 +822,43 @@ public class DebeziumChangeEventCapture {
      *
      * @param props the Debezium properties, mutated in place.
      */
+    /** Debezium's two-digit-year adjuster property. Defaults to true in Debezium. */
+    static final String ENABLE_TIME_ADJUSTER = "enable.time.adjuster";
+
+    /**
+     * Forces {@code enable.time.adjuster=false} unless the user set it
+     * (spec 07.03 §3.3).
+     *
+     * <p>Debezium's default is {@code true}: a two-digit year — and, on the
+     * MySQL connector, any year below 100 — is remapped into 1970–2069, so a
+     * source value of {@code 0001-01-01} arrives as {@code 2001-01-01}. That is
+     * a value-level divergence with row counts intact, and it is not something
+     * the connector may decide on the source's behalf. Only the Ansible
+     * deployment template disabled it; the JAR, the Docker configurations and
+     * every hand-written configuration ran with the adjuster on. A blank value
+     * counts as unset; an explicit value, even {@code true}, is the operator's
+     * call and is left alone.</p>
+     *
+     * @param props the Debezium properties, mutated in place.
+     */
+    static void ensureTimeAdjusterDisabled(Properties props) {
+        if (props == null) {
+            return;
+        }
+        String configured = props.getProperty(ENABLE_TIME_ADJUSTER);
+        if (configured != null && !configured.trim().isEmpty()) {
+            if (Boolean.parseBoolean(configured.trim())) {
+                log.warn("{}={} is set by configuration: Debezium will remap years below 100 into "
+                        + "1970-2069 (e.g. 0001-01-01 -> 2001-01-01), so such source values will not "
+                        + "match in ClickHouse.", ENABLE_TIME_ADJUSTER, configured);
+            }
+            return;
+        }
+        props.setProperty(ENABLE_TIME_ADJUSTER, "false");
+        log.info("{} not set; defaulting it to false so years below 100 are replicated as the source "
+                + "holds them.", ENABLE_TIME_ADJUSTER);
+    }
+
     static void ensureHeartbeatInterval(Properties props) {
         if (props == null) {
             return;
