@@ -1432,7 +1432,10 @@ public class MySqlDDLParserListenerImplTest {
     }
     @Test
     public void testAlterDatabaseAddColumnEnum() {
-        String clickhouseExpectedQuery = "ALTER TABLE `employees`.employees ADD COLUMN IF NOT EXISTS gender String";
+        // ENUM NOT NULL without a DEFAULT: MySQL back-fills the first member
+        // (Spec 06.04 §3.2.2); previously pinned without the DEFAULT, which
+        // left pre-existing rows at '' where MySQL held 'M'.
+        String clickhouseExpectedQuery = "ALTER TABLE `employees`.employees ADD COLUMN IF NOT EXISTS gender String DEFAULT 'M'";
         StringBuffer clickHouseQuery = new StringBuffer();
         String alterDBAddColumn = "ALTER TABLE employees add column gender ENUM ('M','F') NOT NULL";
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
@@ -3191,22 +3194,115 @@ public class MySqlDDLParserListenerImplTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("DEFAULT CURRENT_TIMESTAMP / ON UPDATE / expressions are dropped from ADD and MODIFY")
-    public void testAddColumnDefaultCurrentTimestampIsDropped() {
-        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS ts DateTime64(6, 0)",
-                translate("ALTER TABLE t ADD COLUMN ts DATETIME(6) NOT NULL "
-                        + "DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)"));
+    @DisplayName("MODIFY/CHANGE back-fill nothing, so a non-literal DEFAULT is dropped there")
+    public void testModifyColumnDefaultCurrentTimestampIsDropped() {
         Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN ts Nullable(DateTime64(6, 0))",
                 translate("ALTER TABLE t MODIFY COLUMN ts DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)"));
-        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS d Nullable(Date32)",
-                translate("ALTER TABLE t ADD COLUMN d DATE DEFAULT (CURRENT_DATE)"));
-        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS n Nullable(Int32)",
-                translate("ALTER TABLE t ADD COLUMN n INT DEFAULT (1 + 2)"));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN n Nullable(Int32)",
+                translate("ALTER TABLE t MODIFY COLUMN n INT DEFAULT (1 + 2)"));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN IF EXISTS a Nullable(Date32) \n"
+                        + "ALTER TABLE `employees`.t RENAME COLUMN IF EXISTS a to b",
+                translate("ALTER TABLE t CHANGE COLUMN a b DATE DEFAULT (CURRENT_DATE)"));
+    }
 
-        String plain = translate("ALTER TABLE t ADD COLUMN created DATETIME NULL DEFAULT CURRENT_TIMESTAMP");
-        Assert.assertTrue(plain, plain.startsWith("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS created Nullable("));
-        Assert.assertFalse(plain, plain.toUpperCase().contains("CURRENT_TIMESTAMP"));
-        Assert.assertFalse(plain, plain.toUpperCase().contains("DEFAULT"));
+    @Test
+    @DisplayName("ADD COLUMN ... DEFAULT CURRENT_TIMESTAMP back-fills the statement instant taken from the DDL event's source.ts_ms")
+    public void testAddColumnCurrentTimestampBackfillsLiteral() {
+        // This test previously pinned the DEFAULT being DROPPED, which left
+        // every pre-existing row at 1970-01-01 while MySQL back-filled the
+        // ALTER's own timestamp (Spec 06.04 §3.2.2).
+        MySQLDDLParserService stamped = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees");
+        stamped.setDdlEventTimestampMs(1700000000123L); // 2023-11-14 22:13:20.123 UTC
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS ts DateTime64(6, 0) "
+                        + "DEFAULT toDateTime64('2023-11-14 22:13:20.123', 6, 'UTC')",
+                squash(translate(stamped, "ALTER TABLE t ADD COLUMN ts DATETIME(6) NOT NULL "
+                        + "DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)")));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS created Nullable(DateTime64) "
+                        + "DEFAULT toDateTime64('2023-11-14 22:13:20.123', 3, 'UTC')",
+                squash(translate(stamped, "ALTER TABLE t ADD COLUMN created DATETIME NULL DEFAULT CURRENT_TIMESTAMP")));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS t1 DateTime64(1, 0) "
+                        + "DEFAULT toDateTime64('2023-11-14 22:13:20.1', 1, 'UTC')",
+                squash(translate(stamped, "ALTER TABLE t ADD COLUMN t1 TIMESTAMP(1) NOT NULL DEFAULT NOW(1)")));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS t2 DateTime64(2, 0) "
+                        + "DEFAULT toDateTime64('2023-11-14 22:13:20.12', 2, 'UTC'), "
+                        + "ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                squash(translate(stamped, "ALTER TABLE t ADD COLUMN t2 DATETIME(2) NOT NULL DEFAULT LOCALTIMESTAMP(2), "
+                        + "ADD COLUMN c INT")));
+
+        // Without the event timestamp the back-fill cannot be computed: loud, never a guess.
+        DDLReplicationException noStamp = assertThrows(DDLReplicationException.class,
+                () -> translate("ALTER TABLE t ADD COLUMN ts DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)"));
+        Assert.assertTrue(noStamp.getMessage(), noStamp.getMessage().contains("ts"));
+    }
+
+    @Test
+    @DisplayName("ADD COLUMN with an expression DEFAULT the replica cannot reproduce is loud, not silently zero-filled")
+    public void testAddColumnExpressionDefaultIsLoud() {
+        // Previously pinned as "dropped": the pre-existing rows then held the
+        // type's zero value where MySQL held today's date / 3 / a UUID.
+        for (String ddl : new String[] {
+                "ALTER TABLE t ADD COLUMN d DATE DEFAULT (CURRENT_DATE)",
+                "ALTER TABLE t ADD COLUMN n INT DEFAULT (1 + 2)",
+                "ALTER TABLE t ADD COLUMN u CHAR(36) NOT NULL DEFAULT (UUID())",
+                "ALTER TABLE t ADD COLUMN c INT, ADD COLUMN u CHAR(36) DEFAULT (UUID())"}) {
+            DDLReplicationException loud = assertThrows(DDLReplicationException.class, () -> translate(ddl));
+            Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("ignore.ddl.regex"));
+        }
+    }
+
+    @Test
+    @DisplayName("ADD COLUMN ENUM(...) NOT NULL without a DEFAULT back-fills MySQL's implicit default, the first member")
+    public void testAddEnumNotNullDefaultsToFirstMember() {
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS status String DEFAULT 'new'",
+                translate("ALTER TABLE t ADD COLUMN status ENUM('new','done') NOT NULL"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS s2 String DEFAULT 'done'",
+                translate("ALTER TABLE t ADD COLUMN s2 ENUM('new','done') NOT NULL DEFAULT 'done'"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS s3 Nullable(String)",
+                translate("ALTER TABLE t ADD COLUMN s3 ENUM('new','done')"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS s4 String DEFAULT 'a'",
+                translate("ALTER TABLE t ADD COLUMN s4 ENUM(\"a\",\"b\") NOT NULL"));
+        // MODIFY back-fills nothing: no synthesised default.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN status Nullable(String)",
+                translate("ALTER TABLE t MODIFY COLUMN status ENUM('x','y') NOT NULL"));
+    }
+
+    @Test
+    @DisplayName("Bit-string, hexadecimal and double-quoted DEFAULTs are rewritten to ClickHouse literals")
+    public void testBitStringAndHexDefaultsAreTranslated() {
+        String expected = "ALTER TABLE `employees`.t "
+                + "ADD COLUMN IF NOT EXISTS f Nullable(Int32) DEFAULT 5, "
+                + "ADD COLUMN IF NOT EXISTS h Nullable(String) DEFAULT '0a0b', "
+                + "ADD COLUMN IF NOT EXISTS n Nullable(Int32) DEFAULT 10, "
+                + "ADD COLUMN IF NOT EXISTS s Nullable(String) DEFAULT 'dq', "
+                + "ADD COLUMN IF NOT EXISTS s2 Nullable(String) DEFAULT 'it\\'s', "
+                + "ADD COLUMN IF NOT EXISTS bs Nullable(String) DEFAULT '41', "
+                + "ADD COLUMN IF NOT EXISTS b8 Nullable(String) DEFAULT '01', "
+                + "ADD COLUMN IF NOT EXISTS b1 Nullable(Bool) DEFAULT 0, "
+                + "ADD COLUMN IF NOT EXISTS neg Nullable(Int32) DEFAULT -5, "
+                + "ADD COLUMN IF NOT EXISTS nat Nullable(String) DEFAULT 'n'";
+        String ddl = "ALTER TABLE t ADD COLUMN f INT DEFAULT b'101', "
+                + "ADD COLUMN h VARBINARY(4) DEFAULT X'0A0B', "
+                + "ADD COLUMN n INT DEFAULT 0x0A, "
+                + "ADD COLUMN s VARCHAR(10) DEFAULT \"dq\", "
+                + "ADD COLUMN s2 VARCHAR(10) DEFAULT \"it's\", "
+                + "ADD COLUMN bs VARCHAR(2) DEFAULT b'1000001', "
+                + "ADD COLUMN b8 BIT(8) DEFAULT b'1', "
+                + "ADD COLUMN b1 BIT(1) DEFAULT b'0', "
+                + "ADD COLUMN neg INT DEFAULT -b'101', "
+                + "ADD COLUMN nat VARCHAR(10) DEFAULT N'n'";
+        Assert.assertEquals(expected, squash(translate(ddl)));
+
+        // Under persist.raw.bytes=true the writer stores the raw bytes, so the
+        // back-fill must be the raw bytes too.
+        HashMap<String, String> raw = new HashMap<>();
+        raw.put(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString(), "true");
+        MySQLDDLParserService rawBytes = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(raw), "employees");
+        Assert.assertEquals("ALTER TABLE `employees`.t "
+                        + "ADD COLUMN IF NOT EXISTS h Nullable(String) DEFAULT unhex('0A0B'), "
+                        + "ADD COLUMN IF NOT EXISTS bs Nullable(String) DEFAULT unhex('41')",
+                squash(translate(rawBytes, "ALTER TABLE t ADD COLUMN h VARBINARY(4) DEFAULT X'0A0B', "
+                        + "ADD COLUMN bs VARCHAR(2) DEFAULT b'1000001'")));
     }
 
     @Test

@@ -27,8 +27,12 @@ import org.antlr.v4.runtime.tree.TerminalNodeImpl;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.math.BigInteger;
 import java.sql.SQLException;
+import java.time.Instant;
 import java.time.ZoneId;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -202,6 +206,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private final Set<String> tableLevelPrimaryKeyColumns = new HashSet<>();
 
     /**
+     * Statement time of the DDL event being translated ({@code source.ts_ms},
+     * epoch milliseconds); 0 when unknown. An {@code ADD COLUMN ... DEFAULT
+     * CURRENT_TIMESTAMP} is back-filled on the source with this instant
+     * (Spec 06.04 §3.2.2).
+     */
+    private long ddlEventTimestampMs;
+
+    /**
      * Overrides how the target table's existing schema is read. Null selects
      * the DBMetadata-backed default.
      *
@@ -209,6 +221,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     public void setTargetSchemaLookup(TargetSchemaLookup targetSchemaLookup) {
         this.targetSchemaLookup = targetSchemaLookup;
+    }
+
+    /**
+     * @param ddlEventTimestampMs statement time of the DDL event, epoch
+     *                            milliseconds; 0 when unknown.
+     */
+    public void setDdlEventTimestampMs(long ddlEventTimestampMs) {
+        this.ddlEventTimestampMs = ddlEventTimestampMs;
     }
 
     /**
@@ -1508,6 +1528,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         String columnType = null;
         String defaultModifier = null;
+        MySqlParser.DefaultColumnConstraintContext defaultConstraint = null;
         boolean nullExplicitlySet = false;
 
         for (ParseTree columnDefChild : columnDefinition.children) {
@@ -1564,8 +1585,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 nullExplicitlySet = true;
                 isNullColumn = false;
             } else if (columnDefChild instanceof MySqlParser.DefaultColumnConstraintContext) {
-                defaultModifier = translateDefault((MySqlParser.DefaultColumnConstraintContext) columnDefChild,
-                        columnName);
+                // Resolved below, once the type and nullability are known
+                // (Spec 06.04 §3.2).
+                defaultConstraint = (MySqlParser.DefaultColumnConstraintContext) columnDefChild;
             } else if (columnDefChild instanceof MySqlParser.CommentColumnConstraintContext) {
                 // Ignore comment for now.
             } else if (columnDefChild instanceof MySqlParser.GeneratedColumnConstraintContext) {
@@ -1598,6 +1620,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (!nullExplicitlySet) {
             Boolean existingNullable = targetColumnNullability().get(stripBackticks(columnName));
             isNullColumn = existingNullable == null || existingNullable;
+        }
+
+        // DEFAULT (Spec 06.04 §3.2): a generated column's expression has
+        // already set the modifier; otherwise resolve the declared default --
+        // or, on ADD COLUMN, the implicit one MySQL back-filled with.
+        if (defaultModifier == null) {
+            defaultModifier = resolveDefault(clause, defaultConstraint, columnName, columnType,
+                    columnDefinition, isNullColumn);
         }
 
         // Sorting-key policy (Spec 06.05 §3.4): ClickHouse rejects EVERY type
@@ -1677,47 +1707,269 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.query.delete(0, this.query.toString().length()).append(trimmedQuery);
     }
 
+    /** ClickHouse column types whose literal defaults are numbers. */
+    private static final Pattern NUMERIC_CH_TYPE = Pattern.compile("^(U?Int\\d+|Float\\d+|Decimal.*|Bool)$");
+
+    /** The scale of a {@code DateTime64(p[, tz])} column type. */
+    private static final Pattern DATETIME64_SCALE = Pattern.compile("^DateTime64\\((\\d+)");
+
+    /** UTC wall clock to the second, for the CURRENT_TIMESTAMP back-fill literal. */
+    private static final DateTimeFormatter UTC_SECONDS =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC);
+
     /**
-     * Translates a source {@code DEFAULT} clause (Spec 06.04 §3.2).
+     * Resolves the {@code DEFAULT} of one column clause (Spec 06.04 §3.2).
      *
-     * <p>Only a literal default is carried to ClickHouse: {@code NULL} or
-     * {@code unaryOperator? constant} (string, integer, decimal, hexadecimal,
-     * bit-string, boolean). {@code CURRENT_TIMESTAMP[(n)]}, {@code NOW()},
-     * {@code ... ON UPDATE CURRENT_TIMESTAMP}, {@code CAST(...)}, parenthesised
-     * expressions and vendor forms are dropped: copied verbatim they are
-     * invalid ClickHouse (Code: 47 / 62), the failure is not retryable, and
-     * the column would never be added. Dropping them loses nothing -- every
-     * replicated row carries the source value, so a ClickHouse DEFAULT only
-     * ever affects rows that pre-date the column, which MySQL back-filled
-     * one-shot on the source.</p>
+     * <p>A ClickHouse DEFAULT never changes a replicated value -- every row
+     * image carries the source value -- but it IS the value ClickHouse
+     * back-fills into the rows that pre-date an {@code ADD COLUMN}, while
+     * MySQL back-filled those same rows with the column's declared or
+     * implicit default at the moment of the ALTER. The two must agree, or
+     * every pre-existing row of the column diverges, count-clean and for
+     * good.</p>
      *
-     * @param ctx        the DEFAULT constraint.
-     * @param columnName the column, for the log line.
-     * @return {@code "DEFAULT <literal>"}, or null when the default is dropped.
+     * <ul>
+     *   <li>A literal default is carried on every clause, rewritten to
+     *       ClickHouse literal syntax ({@link #literalDefault}).</li>
+     *   <li>On {@code ADD COLUMN}: {@code CURRENT_TIMESTAMP}/{@code NOW()}
+     *       becomes the DDL event's own instant; an {@code ENUM ... NOT NULL}
+     *       without a default gets MySQL's implicit default, the first
+     *       member; any other non-literal default is a per-row (or one-shot)
+     *       source computation the replica cannot reproduce and is refused
+     *       loudly rather than silently zero-filled.</li>
+     *   <li>On {@code MODIFY}/{@code CHANGE} nothing is back-filled, so a
+     *       non-literal default is dropped at INFO.</li>
+     * </ul>
+     *
+     * @param clause           which clause this is.
+     * @param ctx              the DEFAULT constraint, or null when none is declared.
+     * @param columnName       the column, for messages.
+     * @param columnType       the ClickHouse type (unwrapped) the column gets.
+     * @param columnDefinition the column definition (for the ENUM members).
+     * @param isNullColumn     whether the ClickHouse column is Nullable.
+     * @return {@code "DEFAULT <expr>"}, or null when no DEFAULT is emitted.
      */
-    private static String translateDefault(MySqlParser.DefaultColumnConstraintContext ctx, String columnName) {
+    private String resolveDefault(ColumnClause clause, MySqlParser.DefaultColumnConstraintContext ctx,
+                                  String columnName, String columnType,
+                                  MySqlParser.ColumnDefinitionContext columnDefinition, boolean isNullColumn) {
+        if (ctx == null) {
+            // Implicit default (Spec 06.04 §3.2.2 rule 2). MySQL's implicit
+            // defaults coincide with ClickHouse's zero values (0, '') except
+            // for ENUM NOT NULL, whose implicit default is the first member
+            // while the String column's zero value is '' -- not a member.
+            if (clause == ColumnClause.ADD && !isNullColumn) {
+                String firstMember = firstEnumMember(columnDefinition.dataType());
+                if (firstMember != null) {
+                    return "DEFAULT " + firstMember;
+                }
+            }
+            return null;
+        }
         if (ctx.getChildCount() < 2 || !(ctx.getChild(1) instanceof MySqlParser.DefaultValueContext)) {
             return null;
         }
         MySqlParser.DefaultValueContext defaultValue = (MySqlParser.DefaultValueContext) ctx.getChild(1);
-        boolean literal = defaultValue.getChildCount() > 0;
-        for (ParseTree part : defaultValue.children) {
-            boolean nullLiteral = part instanceof TerminalNodeImpl
-                    && ((TerminalNodeImpl) part).symbol.getType() == MySqlParser.NULL_LITERAL;
-            boolean constant = part instanceof MySqlParser.ConstantContext
-                    || part instanceof MySqlParser.UnaryOperatorContext;
-            if (!nullLiteral && !constant) {
-                literal = false;
-                break;
-            }
+        boolean persistRawBytes = this.config != null
+                && this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString());
+        String literal = literalDefault(defaultValue, columnType, persistRawBytes);
+        if (literal != null) {
+            return "DEFAULT " + literal;
         }
-        if (!literal) {
-            log.info("Column {}: DEFAULT {} is a function, expression or ON UPDATE form with no ClickHouse "
-                            + "equivalent; dropping the DEFAULT (replicated rows carry the source value)",
+        if (clause != ColumnClause.ADD) {
+            log.info("Column {}: DEFAULT {} is a function or expression; a MODIFY/CHANGE back-fills nothing, "
+                            + "so the DEFAULT is dropped (replicated rows carry the source value)",
                     columnName, defaultValue.getText());
             return null;
         }
-        return "DEFAULT " + stripCharsetIntroducers(defaultValue.getText());
+        if (isCurrentTimestampDefault(defaultValue)) {
+            return "DEFAULT " + eventInstantLiteral(columnName, columnType, defaultValue.getText());
+        }
+        throw backfillNotReproducible(columnName, defaultValue.getText(),
+                "it is a value MySQL computed on the source (per row, or once at the ALTER) that the replica "
+                        + "cannot reproduce for the rows that already exist");
+    }
+
+    /**
+     * Rewrites a literal {@code DEFAULT} to ClickHouse syntax
+     * (Spec 06.04 §3.2.1), or returns null when the default is not a literal.
+     *
+     * @param defaultValue    the parsed default.
+     * @param columnType      the ClickHouse column type, which decides whether a
+     *                        bit-string or hexadecimal literal is a number or bytes.
+     * @param persistRawBytes the writer's {@code persist.raw.bytes}: bytes in a
+     *                        String column are stored raw when true, as lowercase
+     *                        hex text otherwise, and the back-fill must match.
+     * @return the ClickHouse literal, or null.
+     */
+    static String literalDefault(MySqlParser.DefaultValueContext defaultValue, String columnType,
+                                 boolean persistRawBytes) {
+        if (defaultValue.getChildCount() == 1 && defaultValue.NULL_LITERAL() != null) {
+            return "NULL";
+        }
+        MySqlParser.ConstantContext constant = defaultValue.constant();
+        if (constant == null) {
+            return null;
+        }
+        MySqlParser.UnaryOperatorContext unary = defaultValue.unaryOperator();
+        if (defaultValue.getChildCount() != (unary == null ? 1 : 2)) {
+            return null;
+        }
+        String sign = "";
+        if (unary != null) {
+            if (unary.MINUS() != null) {
+                sign = "-";
+            } else if (unary.PLUS() == null) {
+                return null; // !x, ~x, NOT x: expressions, not literals
+            }
+        }
+        if (constant.nullLiteral != null) {
+            return constant.NOT() == null && sign.isEmpty() ? "NULL" : null;
+        }
+        boolean numericTarget = columnType != null && NUMERIC_CH_TYPE.matcher(columnType).matches();
+        if (constant.stringLiteral() != null) {
+            return sign.isEmpty() ? clickHouseString(constant.stringLiteral()) : null;
+        }
+        if (constant.BIT_STRING() != null) {
+            String bits = constant.BIT_STRING().getText().replaceAll("(?i)^b'|'$", "");
+            BigInteger value = bits.isEmpty() ? BigInteger.ZERO : new BigInteger(bits, 2);
+            if (numericTarget) {
+                return sign + value;
+            }
+            int bytes = (bits.length() + 7) / 8;
+            String hex = bytes == 0 ? "" : String.format("%0" + (2 * bytes) + "X", value);
+            return bytesLiteral(hex, persistRawBytes);
+        }
+        if (constant.hexadecimalLiteral() != null) {
+            String text = constant.hexadecimalLiteral().HEXADECIMAL_LITERAL().getText();
+            String hex = text.regionMatches(true, 0, "0x", 0, 2)
+                    ? text.substring(2) : text.replaceAll("(?i)^x'|'$", "");
+            if (numericTarget) {
+                return sign + (hex.isEmpty() ? BigInteger.ZERO : new BigInteger(hex, 16));
+            }
+            return bytesLiteral(hex.toUpperCase(), persistRawBytes);
+        }
+        // decimal, real and boolean literals are ClickHouse literals already.
+        return sign + constant.getText();
+    }
+
+    /**
+     * The bytes a bit-string or hexadecimal literal denotes, in the
+     * representation the writer stores for a BYTES value in a String column
+     * (Spec 07.05): lowercase hex text, or the raw bytes under
+     * {@code persist.raw.bytes=true}.
+     */
+    private static String bytesLiteral(String hexUpper, boolean persistRawBytes) {
+        if (hexUpper.isEmpty()) {
+            return "''";
+        }
+        return persistRawBytes ? "unhex('" + hexUpper + "')" : "'" + hexUpper.toLowerCase() + "'";
+    }
+
+    /**
+     * A MySQL string literal as a ClickHouse single-quoted literal: a
+     * double-quoted MySQL string (an identifier in ClickHouse) is re-quoted
+     * with its {@code ""}/{@code \"} escapes unescaped and any {@code '}
+     * escaped; the national prefix and a charset introducer are dropped;
+     * adjacent literals are concatenated as MySQL does.
+     */
+    private static String clickHouseString(MySqlParser.StringLiteralContext literal) {
+        StringBuilder body = new StringBuilder();
+        if (literal.START_NATIONAL_STRING_LITERAL() != null) {
+            String text = literal.START_NATIONAL_STRING_LITERAL().getText();
+            body.append(stringBody(text.substring(text.indexOf('\'')))); // N'...'
+        }
+        for (org.antlr.v4.runtime.tree.TerminalNode part : literal.STRING_LITERAL()) {
+            body.append(stringBody(part.getText()));
+        }
+        return "'" + body + "'";
+    }
+
+    /** The content of one quoted MySQL string token, escaped for a ClickHouse single-quoted literal. */
+    private static String stringBody(String token) {
+        if (token.length() < 2) {
+            return token;
+        }
+        String inner = token.substring(1, token.length() - 1);
+        if (token.charAt(0) == '"') {
+            inner = inner.replace("\\\"", "\"").replace("\"\"", "\"");
+            inner = inner.replace("\\'", "'").replace("'", "\\'");
+        }
+        return inner;
+    }
+
+    /** True for {@code CURRENT_TIMESTAMP[(n)]} / {@code NOW([n])} / {@code LOCALTIME[STAMP][(n)]} (with or without ON UPDATE). */
+    private static boolean isCurrentTimestampDefault(MySqlParser.DefaultValueContext defaultValue) {
+        if (defaultValue.getChildCount() == 0 || !(defaultValue.getChild(0) instanceof MySqlParser.CurrentTimestampContext)) {
+            return false;
+        }
+        MySqlParser.CurrentTimestampContext ts = (MySqlParser.CurrentTimestampContext) defaultValue.getChild(0);
+        return ts.CURRENT_TIMESTAMP() != null || ts.NOW() != null || ts.LOCALTIME() != null
+                || ts.LOCALTIMESTAMP() != null;
+    }
+
+    /**
+     * The instant MySQL back-filled an {@code ADD COLUMN ... DEFAULT
+     * CURRENT_TIMESTAMP} with -- the statement time, {@code source.ts_ms} of
+     * the DDL event -- as a ClickHouse literal that names its zone, so the
+     * stored instant does not depend on the server zone (Spec 06.04 §3.2.2
+     * rule 1). Millisecond precision is what the event carries; the
+     * fraction is cut to the column's scale.
+     */
+    private String eventInstantLiteral(String columnName, String columnType, String defaultText) {
+        if (this.ddlEventTimestampMs <= 0) {
+            throw backfillNotReproducible(columnName, defaultText,
+                    "the DDL event carries no source.ts_ms, so the statement instant MySQL back-filled is unknown");
+        }
+        Instant instant = Instant.ofEpochMilli(this.ddlEventTimestampMs);
+        String seconds = UTC_SECONDS.format(instant);
+        String type = columnType == null ? "" : columnType;
+        if (type.startsWith("DateTime64")) {
+            Matcher scaleMatcher = DATETIME64_SCALE.matcher(type);
+            int scale = scaleMatcher.find() ? Integer.parseInt(scaleMatcher.group(1)) : 3;
+            String wallClock = seconds;
+            if (scale > 0) {
+                String millis = String.format("%03d", this.ddlEventTimestampMs % 1000);
+                wallClock = seconds + "." + millis.substring(0, Math.min(scale, 3));
+            }
+            return "toDateTime64('" + wallClock + "', " + scale + ", 'UTC')";
+        }
+        if (type.startsWith("DateTime")) {
+            return "toDateTime('" + seconds + "', 'UTC')";
+        }
+        throw backfillNotReproducible(columnName, defaultText,
+                "a CURRENT_TIMESTAMP default on a column of ClickHouse type " + type + " has no back-fill literal");
+    }
+
+    /** The first member of an {@code ENUM(...)} type as a ClickHouse literal, or null for any other type. */
+    private static String firstEnumMember(MySqlParser.DataTypeContext dataType) {
+        if (!(dataType instanceof MySqlParser.CollectionDataTypeContext)) {
+            return null;
+        }
+        MySqlParser.CollectionDataTypeContext collection = (MySqlParser.CollectionDataTypeContext) dataType;
+        if (collection.ENUM() == null || collection.collectionOptions() == null
+                || collection.collectionOptions().collectionOption().isEmpty()) {
+            return null;
+        }
+        return "'" + stringBody(collection.collectionOptions().collectionOption(0).STRING_LITERAL().getText()) + "'";
+    }
+
+    /**
+     * The loud outcome for an {@code ADD COLUMN} whose back-fill the replica
+     * cannot reproduce (Spec 06.04 §3.2.2 rule 3, Invariant I9). Applying the
+     * ALTER without it would leave every pre-existing row of the column
+     * diverged, count-clean; nothing is emitted for the statement.
+     */
+    private DDLReplicationException backfillNotReproducible(String columnName, String defaultText, String why) {
+        String message = String.format(
+                "ADD COLUMN %s.%s.%s DEFAULT %s cannot be replicated: %s. MySQL back-filled the rows that "
+                        + "pre-date the column with that value; creating the column without it would leave every "
+                        + "such row diverged from the source (count-clean). Not retried. Remedy: add the column on "
+                        + "ClickHouse by hand with the values the source holds (or re-snapshot the table), then "
+                        + "skip this statement with ignore.ddl.regex. Source DDL: [%s]",
+                this.databaseName, this.cleanTableName, stripBackticks(columnName), defaultText, why,
+                this.originalSql);
+        log.error(message);
+        return new DDLReplicationException(message, null);
     }
 
     /**

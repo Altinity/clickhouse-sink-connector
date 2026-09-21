@@ -35,4 +35,16 @@ public interface DDLParserService {
      */
     String parseSql(String sql, String tableName, StringBuffer parsedQuery,
                     AtomicBoolean isDropOrTruncate);
+
+    /**
+     * Supplies the statement time of the DDL event about to be parsed
+     * ({@code source.ts_ms} of the Debezium schema-change record), which the
+     * MySQL translator needs to back-fill an {@code ADD COLUMN ... DEFAULT
+     * CURRENT_TIMESTAMP} with the instant the source used (Spec 06.04 §3.2.2).
+     * Parsers that do not need it ignore it.
+     *
+     * @param ddlEventTimestampMs epoch milliseconds; {@code 0} when unknown.
+     */
+    default void setDdlEventTimestampMs(long ddlEventTimestampMs) {
+    }
 }

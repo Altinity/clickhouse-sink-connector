@@ -45,7 +45,7 @@ Type-width order used for "wider":
 Formalised as `wider_key_change_is_loud` in `DdlTranslation.lean`. Pinned by `testModifyKeyColumnSameOrNarrowerIsSuppressed`, `testModifyKeyColumnWiderIsLoud`, `testChangeKeyColumnRenameIsLoud`.
 
 ### 3.5 DEFAULT clauses
-Only literal defaults are carried to ClickHouse; function, expression and `ON UPDATE` forms are dropped (Spec 06.04 §3.2). A dropped `DEFAULT` never changes a replicated value: the row image carries the source value, and ClickHouse binds it explicitly (Spec 04.03).
+Literal defaults are carried to ClickHouse in ClickHouse literal syntax; on `ADD COLUMN` a `CURRENT_TIMESTAMP` default becomes the DDL event's instant and an `ENUM ... NOT NULL` without a default gets its first member, while any other non-literal default is refused loudly; on `MODIFY`/`CHANGE` a non-literal default is dropped (Spec 06.04 §3.2). A `DEFAULT` never changes a replicated value: the row image carries the source value, and ClickHouse binds it explicitly (Spec 04.03); it only decides the back-fill of rows that pre-date an added column.
 
 ### 3.6 CREATE TABLE without a declared identity: the all-columns sorting key
 A source table may declare neither a `PRIMARY KEY` nor a `UNIQUE` key whose
