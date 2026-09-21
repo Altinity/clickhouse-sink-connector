@@ -5,6 +5,7 @@ import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.data.VariableScaleDecimal;
+import io.debezium.data.geometry.Geometry;
 import io.debezium.time.MicroTimestamp;
 import io.debezium.time.Timestamp;
 import io.debezium.time.ZonedTimestamp;
@@ -168,6 +169,17 @@ public class ClickHouseTableOperationsBase {
                     columnToDataTypesMap.put(colName, unsignedType);
                     continue;
                 }
+                // The Debezium Geometry logical type covers every spatial type
+                // except POINT, but ClickHouse Polygon holds only a polygon. A
+                // LINESTRING / MULTI* / GEOMETRY column is typed String and
+                // stored as WKB hex (Spec 07.06 section 3.1).
+                if (Geometry.LOGICAL_NAME.equalsIgnoreCase(fieldSchemaName)
+                        && ClickHouseDataTypeMapper.isNonPolygonSpatialType(sourceColumnType)) {
+                    columnToDataTypesMap.put(colName, isOptional
+                            ? "Nullable(" + ClickHouseDataType.String.name() + ")"
+                            : ClickHouseDataType.String.name());
+                    continue;
+                }
             }
             // Input:
             ClickHouseDataType dataType =
@@ -223,14 +235,12 @@ public class ClickHouseTableOperationsBase {
                 // auto-created tables and ALTER TABLE statements use the correct
                 // Nullable type and can accept NULL values from CDC events.
                 // ClickHouse does NOT support Nullable() around composite types
-                // such as Array, Map, or Tuple, so those must be left as-is.
+                // such as Array, Map, Tuple or the geo types (Point, Polygon,
+                // ...), so those must be left as-is (canBeNullable).
                 // System/engine columns (_version, _sign, is_deleted) must stay
                 // non-nullable because ClickHouse requires them as bare integer
                 // types for ReplacingMergeTree / CollapsingMergeTree engines.
-                if (isOptional && !chType.startsWith("Nullable(")
-                        && !chType.startsWith("Array(")
-                        && !chType.startsWith("Map(")
-                        && !chType.startsWith("Tuple(")
+                if (isOptional && ClickHouseDataTypeMapper.canBeNullable(chType)
                         && !colName.equals(VERSION_COLUMN)
                         && !colName.equals(SIGN_COLUMN)
                         && !colName.equals(IS_DELETED_COLUMN)) {

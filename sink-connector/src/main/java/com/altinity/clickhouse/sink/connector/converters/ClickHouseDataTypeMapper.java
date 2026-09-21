@@ -91,6 +91,58 @@ public class ClickHouseDataTypeMapper {
     }
 
     /**
+     * MySQL spatial column types that the Debezium {@code Geometry} logical
+     * type delivers but that ClickHouse's {@code Polygon} cannot hold; they are
+     * typed as {@code String} and stored as WKB hex (Spec 07.06 section 3.1).
+     * {@code POINT} has its own logical type and {@code POLYGON} is the one
+     * shape {@code Polygon} represents, so neither is listed.
+     */
+    private static final Set<String> NON_POLYGON_SPATIAL_TYPES = Collections.unmodifiableSet(
+            new HashSet<>(Arrays.asList("geometry", "linestring", "multipoint", "multilinestring",
+                    "multipolygon", "geometrycollection", "geomcollection")));
+
+    /**
+     * Whether a propagated MySQL source column type names a spatial type that
+     * is not {@code POLYGON} (and not {@code POINT}).
+     *
+     * @param mysqlSourceColumnType the value of {@link #DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM}, may be null
+     * @return true for LINESTRING, MULTI*, GEOMETRYCOLLECTION / GEOMCOLLECTION and GEOMETRY
+     */
+    public static boolean isNonPolygonSpatialType(String mysqlSourceColumnType) {
+        if (mysqlSourceColumnType == null) {
+            return false;
+        }
+        String normalized = mysqlSourceColumnType.trim().toLowerCase().replaceAll("\\(.*\\)", "").trim();
+        return NON_POLYGON_SPATIAL_TYPES.contains(normalized);
+    }
+
+    /**
+     * Whether a ClickHouse type string may be wrapped in {@code Nullable(...)}.
+     * Composite types -- {@code Array}, {@code Map}, {@code Tuple},
+     * {@code Nested} and the geo types ({@code Point}, {@code Ring},
+     * {@code Polygon}, {@code MultiPolygon}, {@code LineString},
+     * {@code MultiLineString}), which are tuples and arrays underneath -- are
+     * rejected by ClickHouse inside {@code Nullable}; an already-wrapped type
+     * must not be wrapped twice.
+     *
+     * @param chType the ClickHouse type string
+     * @return true when {@code Nullable(chType)} is a valid ClickHouse type
+     */
+    public static boolean canBeNullable(String chType) {
+        if (chType == null) {
+            return false;
+        }
+        String t = chType.trim();
+        if (t.startsWith("Nullable(") || t.startsWith("Array(") || t.startsWith("Map(")
+                || t.startsWith("Tuple(") || t.startsWith("Nested(")) {
+            return false;
+        }
+        return !(t.equals(ClickHouseDataType.Point.name()) || t.equals(ClickHouseDataType.Ring.name())
+                || t.equals(ClickHouseDataType.Polygon.name()) || t.equals(ClickHouseDataType.MultiPolygon.name())
+                || t.equals("LineString") || t.equals("MultiLineString"));
+    }
+
+    /**
      * The zone a ClickHouse column type declares, e.g. {@code UTC} for
      * {@code Nullable(DateTime64(3, 'UTC'))}, or null when the type declares
      * none (ClickHouse then parses literals in the session zone).
@@ -549,34 +601,65 @@ public class ClickHouseDataTypeMapper {
             }
 
         }  else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(Geometry.LOGICAL_NAME)) {
-            // Handle Geometry type (e.g., Polygon)
-            if (value instanceof Struct) {
-                Struct geometryValue = (Struct) value;
-                Object wkbValue = geometryValue.get("wkb");
+            // A spatial value is stored faithfully or the batch fails. Every
+            // branch below that used to bind an EMPTY polygon in place of a
+            // value it could not represent (non-Struct carrier, missing WKB,
+            // unparseable WKB, non-Polygon geometry) fabricated a value the
+            // source never held, with the batch reported successful
+            // (Spec 07.06 section 3.2).
+            String where = rangePolicy.column() == null ? "" : " for column " + rangePolicy.column();
+            if (!(value instanceof Struct)) {
+                throw new IllegalArgumentException(String.format(
+                        "Geometry value%s is a %s, not a Struct; refusing to store an empty polygon in its place",
+                        where, value.getClass().getName()));
+            }
+            Struct geometryValue = (Struct) value;
+            Object wkbValue = geometryValue.get("wkb");
 
-                byte[] wkbBytes;
-                if (wkbValue instanceof byte[]) {
-                    wkbBytes = (byte[]) wkbValue;
-                } else if (wkbValue instanceof ByteBuffer) {
-                    ByteBuffer byteBuffer = (ByteBuffer) wkbValue;
-                    wkbBytes = new byte[byteBuffer.remaining()];
-                    byteBuffer.get(wkbBytes);
-                    byteBuffer.rewind();
+            byte[] wkbBytes;
+            if (wkbValue instanceof byte[]) {
+                wkbBytes = (byte[]) wkbValue;
+            } else if (wkbValue instanceof ByteBuffer) {
+                ByteBuffer byteBuffer = (ByteBuffer) wkbValue;
+                wkbBytes = new byte[byteBuffer.remaining()];
+                byteBuffer.get(wkbBytes);
+                byteBuffer.rewind();
+            } else {
+                throw new IllegalArgumentException(String.format(
+                        "Geometry value%s carries no WKB payload (wkb is %s); refusing to store an empty polygon in its place",
+                        where, wkbValue == null ? "null" : wkbValue.getClass().getName()));
+            }
+            if (clickHouseDataType == ClickHouseDataType.String) {
+                // A String column holds any spatial type as its exact WKB bytes
+                // (LOWER(HEX(ST_AsWKB(col))) on MySQL), the representation the
+                // record-schema mapping chooses for every non-POLYGON spatial
+                // type (Spec 07.06 section 3.1). Same encoding as BYTES.
+                if (config.getBoolean(
+                        ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())) {
+                    ps.setBytes(index, wkbBytes);
                 } else {
-                    // Set an empty polygon if WKB value is not available
-                    setGeoValue(ps, index, ClickHouseGeoPolygonValue.ofEmpty());
-                    return true;
+                    ps.setString(index, BaseEncoding.base16().lowerCase().encode(wkbBytes));
                 }
-                WKBReader wkbReader = new WKBReader();
-                org.locationtech.jts.geom.Geometry geometry;
-                try {
-                    geometry = wkbReader.read(wkbBytes);
-                } catch (ParseException e) {
-                    setGeoValue(ps, index, ClickHouseGeoPolygonValue.ofEmpty());
-                    return true;
-                }
-                if (geometry instanceof Polygon) {
-                    Polygon polygon = (Polygon) geometry;
+                return true;
+            }
+            WKBReader wkbReader = new WKBReader();
+            org.locationtech.jts.geom.Geometry geometry;
+            try {
+                geometry = wkbReader.read(wkbBytes);
+            } catch (ParseException e) {
+                throw new IllegalArgumentException(String.format(
+                        "WKB payload%s (%d bytes) cannot be parsed; refusing to store an empty polygon in its place",
+                        where, wkbBytes.length), e);
+            }
+            if (!(geometry instanceof Polygon)) {
+                throw new IllegalArgumentException(String.format(
+                        "Geometry%s is a %s, not a Polygon, and the ClickHouse column is %s; refusing to store "
+                                + "an empty polygon in its place. Declare the column as String to store the "
+                                + "WKB (hex) of any spatial type.",
+                        where, geometry.getGeometryType(), clickHouseDataType));
+            }
+            {
+                Polygon polygon = (Polygon) geometry;
                     List<double[][]> rings = new ArrayList<>();
                     org.locationtech.jts.geom.Coordinate[] exteriorCoords =
                             polygon.getExteriorRing().getCoordinates();
@@ -608,25 +691,22 @@ public class ClickHouseDataTypeMapper {
                     ClickHouseGeoPolygonValue geoPolygonValue =
                             ClickHouseGeoPolygonValue.of(polygonCoordinates);
                     setGeoValue(ps, index, geoPolygonValue);
-                } else {
-                    setGeoValue(ps, index, ClickHouseGeoPolygonValue.ofEmpty());
-                }
-            } else {
-                ps.setString(index,
-                        ClickHouseGeoPolygonValue.ofEmpty().asString());
             }
         } else if (type == Schema.Type.STRUCT
                 && schemaName.equalsIgnoreCase(Point.LOGICAL_NAME)) {
             // Handle Point type (ClickHouse expects (longitude, latitude))
-            if (value instanceof Struct) {
-                Struct pointValue = (Struct) value;
-                Object xValue = pointValue.get("x");
-                Object yValue = pointValue.get("y");
-                double[] point = {(Double) xValue, (Double) yValue};
-                setGeoValue(ps, index, ClickHouseGeoPointValue.of(point));
-            } else {
-                setGeoValue(ps, index, ClickHouseGeoPointValue.ofOrigin());
+            if (!(value instanceof Struct)) {
+                // Previously bound as the origin (0,0): a fabricated coordinate.
+                throw new IllegalArgumentException(String.format(
+                        "Point value%s is a %s, not a Struct; refusing to store the origin in its place",
+                        rangePolicy.column() == null ? "" : " for column " + rangePolicy.column(),
+                        value.getClass().getName()));
             }
+            Struct pointValue = (Struct) value;
+            Object xValue = pointValue.get("x");
+            Object yValue = pointValue.get("y");
+            double[] point = {(Double) xValue, (Double) yValue};
+            setGeoValue(ps, index, ClickHouseGeoPointValue.of(point));
         } else if (type == Schema.Type.STRUCT
                 && schemaName.equalsIgnoreCase(
                 VariableScaleDecimal.LOGICAL_NAME)) {
@@ -658,7 +738,11 @@ public class ClickHouseDataTypeMapper {
                                 .truncate(bigDecimal, rangePolicy);
                 ps.setBigDecimal(index, truncated);
             } else {
-                ps.setBigDecimal(index, new BigDecimal(0));
+                // Previously bound as 0: a fabricated value.
+                throw new IllegalArgumentException(String.format(
+                        "Variable-scale decimal value%s is a %s, not a Struct; refusing to store 0 in its place",
+                        rangePolicy.column() == null ? "" : " for column " + rangePolicy.column(),
+                        value.getClass().getName()));
             }
         } else if (type == Schema.Type.ARRAY) {
             ClickHouseDataType dt = getClickHouseDataType(

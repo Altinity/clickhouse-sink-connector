@@ -572,7 +572,6 @@ public class DebeziumConverter {
          */
         public static String convert(Object value, ZoneId serverTimezone, RangePolicy policy) {
 
-            String result = "";
             DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS")
                     .withZone(serverTimezone);
 
@@ -634,8 +633,12 @@ public class DebeziumConverter {
                 }
             }
             if (parsed == null) {
-                log.error("Error parsing zonedtimestamp " + (String) value);
-                return result;
+                // Previously logged and returned "" -- an empty string bound
+                // for a TIMESTAMP the source holds (Spec 07.06 section 3.3).
+                throw new IllegalArgumentException(String.format(
+                        "ZonedTimestamp value '%s'%s matches none of the accepted ISO-8601 forms; "
+                                + "refusing to store an empty string in its place",
+                        value, policy.column() == null ? "" : " for column " + policy.column()));
             }
             // Bounded outside the parse loop: a rejected value must fail the
             // batch, not be mistaken for a format mismatch.

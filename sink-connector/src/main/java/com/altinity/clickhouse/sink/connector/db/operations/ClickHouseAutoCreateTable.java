@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.KeylessTableWarning;
 import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
@@ -168,17 +169,14 @@ public class ClickHouseAutoCreateTable
             // Wrap the data type in Nullable() if the source schema marks the
             // field as optional (i.e. nullable in PostgreSQL) and the type is
             // not already wrapped.  ClickHouse does NOT support Nullable()
-            // around composite types such as Array, Map, or Tuple, so those
-            // must be left as-is.
+            // around composite types such as Array, Map, Tuple or the geo
+            // types (Point, Polygon, ...), so those must be left as-is
+            // (ClickHouseDataTypeMapper.canBeNullable, Spec 07.06 section 3.1).
             // System/engine columns (_version, _sign, is_deleted) must stay
             // non-nullable because ClickHouse requires them as bare integer
             // types for ReplacingMergeTree / CollapsingMergeTree engines.
             if (f.schema().isOptional()
-                    && dataType != null
-                    && !dataType.startsWith("Nullable(")
-                    && !dataType.startsWith("Array(")
-                    && !dataType.startsWith("Map(")
-                    && !dataType.startsWith("Tuple(")
+                    && ClickHouseDataTypeMapper.canBeNullable(dataType)
                     && !colName.equals(VERSION_COLUMN)
                     && !colName.equals(SIGN_COLUMN)
                     && !colName.equals(IS_DELETED_COLUMN)) {
@@ -450,10 +448,7 @@ public class ClickHouseAutoCreateTable
         for (Field f : fields) {
             if (colName.equals(f.name())) {
                 return f.schema().isOptional()
-                        && dataType != null
-                        && !dataType.startsWith("Array(")
-                        && !dataType.startsWith("Map(")
-                        && !dataType.startsWith("Tuple(");
+                        && ClickHouseDataTypeMapper.canBeNullable(dataType);
             }
         }
         return false;
