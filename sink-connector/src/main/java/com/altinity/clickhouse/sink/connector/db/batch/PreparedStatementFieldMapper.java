@@ -349,8 +349,15 @@ public class PreparedStatementFieldMapper {
                     databaseName + "." + tableName + "." + colName);
             if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType,
                     serverTimeZone, columnTimeZone, rangePolicy)) {
-                log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
-                        schemaName, colName));
+                // An unhandled type leaves the parameter unbound. Logging and
+                // continuing (the previous behaviour) let the V2 JDBC driver
+                // -- whose addBatch() does not clear its bound values -- write
+                // the PREVIOUS row's value at this index for every row after
+                // the first, silently (Spec 07.07 section 3.2.2).
+                throw new DataException(String.format(
+                        "No ClickHouse binding for type(%s), name(%s) of column %s in Database(%s), Table(%s); "
+                                + "the parameter would be left unbound. Failing the batch instead.",
+                        type, schemaName, colName, databaseName, tableName));
             }
         }
 

@@ -319,6 +319,10 @@ public class PreparedStatementExecutor {
                                     record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     config, columnToDataTypeMap, engine, tableName);
                             ps.addBatch();
+                            // The V2 driver's addBatch() keeps the bound values; a
+                            // parameter the next row fails to bind would silently
+                            // carry this row's value (Spec 07.07 section 3.2.2).
+                            ps.clearParameters();
                         }
                         if (replicationHistoryHandler != null) {
                             // Use ReplicationHistoryHandler for SCD Type 2 updates
@@ -341,8 +345,11 @@ public class PreparedStatementExecutor {
                     } else {
                         log.error("INVALID CDC RECORD STATE");
                     }
-                    if(!updateRecord)
+                    if(!updateRecord) {
                         ps.addBatch();
+                        // See above: no bind state may survive into the next row.
+                        ps.clearParameters();
+                    }
                 }
 
                 int[] batchResult = ps.executeBatch();

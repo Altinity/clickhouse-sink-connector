@@ -69,6 +69,32 @@ Rule (`BaseDbWriter.createConnection`, helper `customSettings`):
    failure is the loud fallback of Invariant I9, never a substituted value.
    Redelivery is safe: nothing was written for the failed batch.
 
+### 3.2.2 No parameter may be left unbound; no parameter may carry the previous row's value
+Two hazards on the V2 JDBC driver (`clickhouse-jdbc` 0.9.x
+`PreparedStatementImpl`), verified from its bytecode: `addBatch()` substitutes
+the current `values[]` into the SQL template and appends it to the batch
+**without clearing `values[]`**; only `clearParameters()` (`Arrays.fill(values,
+null)`) does. Therefore a parameter that a row fails to bind silently reuses
+the value the previous row bound at that index.
+
+Rules:
+1. `ClickHouseDataTypeMapper.convert` returning `false` (no handler for the
+   field's Kafka type / logical name — e.g. a `MAP` field) is a **failure**:
+   `PreparedStatementFieldMapper.insertPreparedStatement` throws
+   `org.apache.kafka.connect.errors.DataException` naming the type, the
+   logical name, the column and the table. It previously logged
+   `DATA TYPE NOT HANDLED` and continued, leaving the parameter unbound — on
+   the first row the driver then failed the batch, but on every later row the
+   previous row's value was written in its place, silently.
+2. `PreparedStatementExecutor` calls `ps.clearParameters()` immediately after
+   every `ps.addBatch()` (both the tombstone and the ordinary row), so no bind
+   state survives from one row to the next on either driver.
+3. `TableMetaDataWriter.convertRecordToJSON` (the `store.raw.data` JSON copy of
+   the row) reads every field with `Struct.getWithoutDefault`, never
+   `Struct.get`, for the reason in §3.1: a NULL-with-default column must not
+   appear in the raw copy as the Connect-schema default. NULL fields are
+   omitted from the JSON object as before.
+
 ### 3.3 `non.default.value` is deprecated and has no effect
 Before this specification the default-bypassing read was gated behind
 `non.default.value=true`, whose hardcoded default was `false` — i.e. the
@@ -104,3 +130,12 @@ deprecated and ignored.
 - Probe (recorded above, `clickhouse local` 24.8.14): NULL into
   `Int32 DEFAULT 7` stores `7` under the server default and is rejected under
   `input_format_null_as_default=0`.
+- `PreparedStatementFieldMapperUnhandledTypeTest.unhandledTypeFailsTheBatch()`
+  — §3.2.2 rule 1: a `MAP` field bound for a `String` column throws
+  `DataException` naming the column; nothing is bound for it (pre-fix code
+  logs and continues with the parameter unbound).
+- `PreparedStatementExecutorClearParametersTest.parametersAreClearedAfterEveryAddBatch()`
+  — §3.2.2 rule 2 (also cited by Spec 03.06).
+- `TableMetaDataWriterTest.testConvertRecordToJSONDoesNotSubstituteSchemaDefault()`
+  — §3.2.2 rule 3: a NULL-with-default field is absent from the raw JSON
+  rather than rendered as the default (pre-fix code renders `"new"`).
