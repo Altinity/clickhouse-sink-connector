@@ -10,6 +10,7 @@ Specifies the non-negotiable policy that unrecoverable replication errors must t
 - **Error Classifier**: `ClickHouseErrorClassifier`
 - **DDL failure type**: `DDLReplicationException` (`...embedded/cdc/DDLReplicationException.java`), re-thrown ahead of the catch-all in `DebeziumChangeEventCapture#processEveryChangeRecord`
 - **Row failure type**: `RecordReplicationException` (`...embedded/cdc/RecordReplicationException.java`), re-thrown ahead of the same catch-all
+- **Engine retry budget and terminal failure**: `DebeziumChangeEventCapture#handleEngineCompletion`, `#markEngineStarted`, `#terminalFailureHook`, `#TERMINAL_FAILURE_EXIT_CODE`; property `exit.on.terminal.failure` (`SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE`)
 
 ---
 
@@ -76,7 +77,46 @@ with no error after the first one. `DebeziumChangeEventCapture` retains the
 workers' `ScheduledFuture`s and checks them at the top of every
 `handleChangeEventBatch` (`failIfWorkerDied`); a done future is re-raised as
 a `RuntimeException` carrying the worker's cause, which stops the engine
-through its completion callback (spec 03.01 §3.3).
+through its completion callback (spec 03.01 §3.3). The DDL drain runs the same
+check on every poll (spec 06.01 §3.2): a dead worker is the ONE condition that
+makes a pending backlog undrainable, and the only one that aborts the drain.
+
+### 3.5 Terminal failures terminate (retry budget, then exit)
+The engine's `CompletionCallback` (`handleEngineCompletion`) recreates a failed
+engine up to `errors.max.retries` (`MAX_RETRIES`, default 10) times in a row,
+`SLEEP_TIME` apart. Two things used to be wrong once that budget was spent, and
+one before it:
+1. **Nothing happened.** After the last retry the callback returned; the JVM
+   stayed up with replication stopped, the REST API answering and the metrics
+   port open, and no process-level signal for a supervisor (systemd,
+   Kubernetes) or a liveness probe to act on. Replication was dead and quiet.
+2. **The budget never refilled.** `numRetries` was never reset, so a connector
+   that had recovered from ten transient failures over its lifetime died on the
+   eleventh, however long ago the first ten were.
+3. **A transient backlog was terminal.** The DDL drain aborted after a fixed
+   60 s; a worker retrying `TOO_MANY_PARTS` for longer than that produced
+   `DDLReplicationException` → engine restart → the same drain → … → the
+   budget spent → stop, for a condition that would have cleared (spec 06.01).
+
+Contract:
+- `markEngineStarted()` (the `connectorStarted` callback) resets `numRetries`
+  to 0: a successful start restores the full budget.
+- A failure while `numRetries < MAX_RETRIES` increments the counter, sleeps
+  `SLEEP_TIME`, and recreates the engine (exactly `MAX_RETRIES` retries; the
+  previous `<=` test allowed one more than configured).
+- When the budget is spent the failure is TERMINAL: replication is marked not
+  running (`/status` reports `Replica_Running=false`), a **FATAL** line names
+  the count, the last failure and the fact that offsets were not committed past
+  the failing point, and — unless `exit.on.terminal.failure=false` — the
+  process exits through `terminalFailureHook` (`System::exit` in production,
+  replaced in tests) with `TERMINAL_FAILURE_EXIT_CODE` (3), so a supervisor
+  restarts or alerts on it. With the exit disabled the process stays up as a
+  visible liveness failure; it never idles silently.
+- The DDL drain waits while the workers are alive (spec 06.01 §3.2); only a
+  dead worker or an interrupt aborts it.
+
+Redelivery: a terminal failure commits nothing; the next start (by the
+supervisor or an operator) resumes from the last committed offset (spec 09.03).
 
 ---
 
@@ -93,3 +133,8 @@ through its completion callback (spec 03.01 §3.3).
 - `ClickHouseErrorClassifierTest.testIsFatal()`, `ClickHouseErrorClassifierTest.testClassifyFatal()` — the FATAL set that triggers the rethrow.
 - `ClickHouseBatchWriterMissingTableTest` — a missing target table fails the batch loudly instead of being skipped.
 - `WorkerDeathIsLoudTest.deadWorkerFailsTheNextBatchLoudly()`
+- `TerminalFailureExitTest.exitHookFiresAfterMaxRetries()` — §3.5: `MAX_RETRIES` restarts, then the exit hook fires exactly once with `TERMINAL_FAILURE_EXIT_CODE` and replication is reported stopped (pre-fix: nothing fired, one extra restart).
+- `TerminalFailureExitTest.successfulStartResetsTheBudget()` — §3.5: `markEngineStarted()` restores the full budget (pre-fix: `numRetries` never reset).
+- `TerminalFailureExitTest.exitDisabledIsALoudLivenessFailure()` — §3.5: `exit.on.terminal.failure=false` keeps the process up, logs FATAL naming replication as STOPPED, reports `Replica_Running=false`.
+- `TerminalFailureExitTest.successIsANoOp()`.
+- `DdlDrainDeadlockTest.testUndrainableQueueWithLiveWorkersKeepsWaiting()`, `DdlDrainDeadlockTest.testStuckQueueWithDeadWorkerAborts()` — §3.5 point 3: live workers are waited for; only a dead worker aborts.

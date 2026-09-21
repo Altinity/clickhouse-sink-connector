@@ -399,35 +399,20 @@ public class DebeziumChangeEventCapture {
                     .using(new DebeziumEngine.CompletionCallback() {
                         @Override
                         public void handle(boolean success, String message, Throwable throwable) {
-                            if (success == false) {
-                                log.error("Error starting connector" + throwable + " Message:" + message);
-                                if (throwable != null && throwable.getCause() != null &&
-                                        throwable.getCause().getLocalizedMessage() != null)
-                                    log.error("Error stating connector: Cause" +
-                                            throwable.getCause().getLocalizedMessage());
-                                log.error("Retrying - try number:" + numRetries);
-                                if (numRetries++ <= MAX_RETRIES) {
-                                    try {
-                                        Thread.sleep(SLEEP_TIME);
-                                    } catch (InterruptedException e) {
-                                        log.error("Error sleeping", e);
-                                        throw new RuntimeException(e);
-                                    }
-                                    try {
-                                        setupDebeziumEventCapture(props, debeziumRecordParserService, config);
-                                    } catch (IOException | ClassNotFoundException e) {
-                                        log.error("Error setting up debezium event capture", e);
-                                        throw new RuntimeException(e);
-                                    }
+                            handleEngineCompletion(success, message, throwable, props, () -> {
+                                try {
+                                    setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+                                } catch (IOException | ClassNotFoundException e) {
+                                    log.error("Error setting up debezium event capture", e);
+                                    throw new RuntimeException(e);
                                 }
-                            }
-                            log.debug("Completion callback");
+                            });
                         }
                     })
                     .using(new DebeziumEngine.ConnectorCallback() {
                         @Override
                         public void connectorStarted() {
-                            ReplicationStatusSingleton.getInstance().setIsReplicationRunning(true);
+                            markEngineStarted();
                             log.debug("Connector started");
                             // Create view.
                             try {
@@ -478,6 +463,97 @@ public class DebeziumChangeEventCapture {
             if (this.engine != null) {
                 this.engine.close();
             }
+        }
+    }
+
+    /** Exit code used when the engine has exhausted its retry budget. */
+    static final int TERMINAL_FAILURE_EXIT_CODE = 3;
+
+    /**
+     * What a terminal failure does to the process: {@code System.exit} in
+     * production, replaced by tests.
+     */
+    static volatile java.util.function.IntConsumer terminalFailureHook = System::exit;
+
+    /**
+     * Called from the engine's {@code connectorStarted} callback: the engine is
+     * up, so the retry budget is whole again. Without the reset a connector
+     * that had recovered from {@code MAX_RETRIES} transient failures over its
+     * lifetime died for good on the next one (spec 10.04 §3.5).
+     */
+    void markEngineStarted() {
+        numRetries = 0;
+        ReplicationStatusSingleton.getInstance().setIsReplicationRunning(true);
+    }
+
+    /**
+     * The engine's completion callback body (spec 10.04 §3.5).
+     *
+     * <p>A failed engine is recreated up to {@code MAX_RETRIES}
+     * ({@code errors.max.retries}) times in a row, {@code SLEEP_TIME} apart.
+     * When that budget is spent the failure is TERMINAL: previously nothing
+     * happened at that point -- the JVM stayed up with replication stopped,
+     * the REST API answering and the metrics port open, and no process-level
+     * signal for a supervisor or a liveness probe to act on. Now replication
+     * is marked not running, the failure is logged at FATAL, and unless
+     * {@code exit.on.terminal.failure=false} the process exits through
+     * {@link #terminalFailureHook} with {@link #TERMINAL_FAILURE_EXIT_CODE}.</p>
+     *
+     * @param success       whether the engine completed normally.
+     * @param message       the engine's completion message.
+     * @param throwable     the failure, if any.
+     * @param props         the connector properties.
+     * @param restartEngine recreates the engine (a retry).
+     */
+    @VisibleForTesting
+    void handleEngineCompletion(boolean success, String message, Throwable throwable,
+                                Properties props, Runnable restartEngine) {
+        if (success) {
+            log.debug("Completion callback");
+            return;
+        }
+        log.error("Engine stopped with an error: " + throwable + " Message: " + message);
+        if (throwable != null && throwable.getCause() != null
+                && throwable.getCause().getLocalizedMessage() != null) {
+            log.error("Engine stopped with an error: cause: "
+                    + throwable.getCause().getLocalizedMessage());
+        }
+        if (numRetries < MAX_RETRIES) {
+            numRetries++;
+            log.error("Restarting the engine - retry {} of {}", numRetries, MAX_RETRIES);
+            try {
+                Thread.sleep(SLEEP_TIME);
+            } catch (InterruptedException e) {
+                log.error("Error sleeping", e);
+                throw new RuntimeException(e);
+            }
+            restartEngine.run();
+            return;
+        }
+        onTerminalFailure(throwable, props);
+    }
+
+    /**
+     * The retry budget is spent: replication is STOPPED for good in this
+     * process. Say so at FATAL, mark it for {@code /status}, and exit unless
+     * the operator chose to keep the process up.
+     */
+    private void onTerminalFailure(Throwable throwable, Properties props) {
+        ReplicationStatusSingleton.getInstance().setIsReplicationRunning(false);
+        boolean exit = props == null
+                || !"false".equalsIgnoreCase(props.getProperty(
+                        SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE, "true").trim());
+        log.fatal("Replication is STOPPED: the engine failed {} time(s) in a row "
+                + "(errors.max.retries={}) and will not be restarted. Last failure: {}. "
+                + "Offsets were not committed past the failing point; fix the cause and restart. {}",
+                MAX_RETRIES, MAX_RETRIES, String.valueOf(throwable),
+                exit ? "Exiting with code " + TERMINAL_FAILURE_EXIT_CODE + " ("
+                        + SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE + "=true)."
+                        : "The process stays up with replication stopped ("
+                        + SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE + "=false); "
+                        + "/status reports Replica_Running=false.", throwable);
+        if (exit) {
+            terminalFailureHook.accept(TERMINAL_FAILURE_EXIT_CODE);
         }
     }
 
@@ -901,9 +977,11 @@ public class DebeziumChangeEventCapture {
      * @param lastRecordInBatch True if this is the last record in the batch.
      */
     /**
-     * Maximum time to wait for the writer to become quiescent before a DDL.
+     * How often the DDL drain logs the backlog it is still waiting on. NOT a
+     * timeout: the drain waits as long as the workers are alive (spec 06.01
+     * §3.2). Package-private and mutable for tests.
      */
-    private static final long DDL_DRAIN_TIMEOUT_MS = 60_000;
+    static volatile long ddlDrainWarnIntervalMs = 60_000;
 
     /**
      * Brings the writer to a standstill before a DDL is applied.
@@ -916,11 +994,20 @@ public class DebeziumChangeEventCapture {
      * Only then is every record that was read under the pre-ALTER schema
      * actually in ClickHouse.</p>
      *
-     * <p>On timeout the DDL attempt is ABORTED with an {@link IllegalStateException}
-     * naming the backlog; the caller raises it as a {@link DDLReplicationException}
-     * and the engine halts. Applying the DDL over pending rows would write them
-     * against the altered table with matching row counts -- silent corruption --
-     * so the loud abort is the only safe outcome.</p>
+     * <p>The wait is bounded by LIVENESS, not by time. A backlog that is slow to
+     * drain -- a worker retrying a transient ClickHouse error such as
+     * {@code TOO_MANY_PARTS}, or a reconnect -- is waited for, with a WARN
+     * naming the backlog every {@link #ddlDrainWarnIntervalMs}; a fixed timeout
+     * used to turn that into a {@link DDLReplicationException}, an engine
+     * restart, the same drain again, and after {@code errors.max.retries} a
+     * permanent stop -- for a condition that would have cleared. The only
+     * backlog that can NEVER drain is one whose worker is dead
+     * ({@link #failIfWorkerDied}); that, and an interrupt (the engine being
+     * closed), abort the attempt with an {@link IllegalStateException} naming
+     * the backlog; the caller raises it as a {@link DDLReplicationException}.
+     * Applying the DDL over pending rows would write them against the altered
+     * table with matching row counts -- silent corruption -- so the DDL is never
+     * applied until the backlog is gone.</p>
      */
     private void drainBeforeDDL() {
         // Single-threaded mode has no worker pool and no async handoff queue:
@@ -934,7 +1021,8 @@ public class DebeziumChangeEventCapture {
             return;
         }
 
-        long deadline = System.currentTimeMillis() + DDL_DRAIN_TIMEOUT_MS;
+        long started = System.currentTimeMillis();
+        long warnAt = started + ddlDrainWarnIntervalMs;
 
         // Step 1: let the pool consume what is already queued -- on EVERY
         // handoff path, not just the legacy queue.
@@ -966,19 +1054,17 @@ public class DebeziumChangeEventCapture {
         // the pool is free to consume it to empty. Step 2 then closes the
         // pause window properly.
         while (!isPipelineQuiescent()) {
-            if (System.currentTimeMillis() >= deadline) {
-                // NOT survivable. Applying the ALTER now writes records that
-                // were read under the PREVIOUS schema against the NEW table --
-                // the rows insert successfully with wrong contents and matching
-                // row counts, which is the exact production failure. Aborting
-                // instead routes into the DDL retry path, which drains again
-                // from a consistent point.
-                throw new IllegalStateException(String.format(
-                        "DDL drain: %s still pending after %d ms. Applying the DDL now would "
-                                + "write records captured under the previous schema against the "
-                                + "altered table, silently corrupting them. Aborting this DDL "
-                                + "attempt so it can be retried.",
-                        describePendingHandoff(), DDL_DRAIN_TIMEOUT_MS));
+            // A backlog whose worker is dead can never drain: abort now, with
+            // the worker's cause. Anything else is waited for -- a slow or
+            // retrying batch is not terminal (spec 06.01 section 3.2 step 1).
+            failIfWorkerDiedDuringDrain();
+            long now = System.currentTimeMillis();
+            if (now >= warnAt) {
+                log.warn("DDL drain: {} still pending after {} ms; waiting. The writers are alive, "
+                        + "so the backlog is a slow or retrying batch, not a dead one; the DDL is "
+                        + "applied only once every pre-DDL row is in ClickHouse.",
+                        describePendingHandoff(), now - started);
+                warnAt = now + ddlDrainWarnIntervalMs;
             }
             try {
                 Thread.sleep(50);
@@ -1001,13 +1087,35 @@ public class DebeziumChangeEventCapture {
         // the in-flight increment share one monitor). A batch that slipped
         // onto a thread just before the pause is therefore counted, and waited
         // out here, rather than racing the ALTER.
-        long remaining = Math.max(0, deadline - System.currentTimeMillis());
-        if (!this.executor.awaitQuiescent(remaining)) {
+        //
+        // A batch retrying a transient error stays inside its task body for
+        // the whole retry sequence, so this wait is bounded by liveness too.
+        while (!this.executor.awaitQuiescent(ddlDrainWarnIntervalMs)) {
+            failIfWorkerDiedDuringDrain();
+            if (Thread.currentThread().isInterrupted()) {
+                throw new IllegalStateException(
+                        "DDL drain interrupted while a batch was in flight; aborting this DDL "
+                                + "attempt rather than applying it over in-flight writes.");
+            }
+            log.warn("DDL drain: a batch is still inside a worker after {} ms; waiting for it to "
+                    + "finish before the DDL is applied.", System.currentTimeMillis() - started);
+        }
+    }
+
+    /**
+     * The drain's liveness check: a dead worker makes the pending backlog
+     * undrainable, so the DDL attempt is aborted -- naming the backlog and
+     * carrying the worker's cause -- instead of waiting forever.
+     */
+    private void failIfWorkerDiedDuringDrain() {
+        try {
+            failIfWorkerDied();
+        } catch (RuntimeException dead) {
             throw new IllegalStateException(String.format(
-                    "DDL drain: writer did not become quiescent within %d ms. Applying the "
-                            + "DDL now would interleave it with in-flight writes captured under "
-                            + "the previous schema. Aborting this DDL attempt so it can be "
-                            + "retried.", DDL_DRAIN_TIMEOUT_MS));
+                    "DDL drain: a worker died while %s; that backlog can never drain and applying "
+                            + "the DDL over it would write records captured under the previous "
+                            + "schema against the altered table. Aborting this DDL attempt.",
+                    describePendingHandoff()), dead);
         }
     }
 
