@@ -13,6 +13,7 @@ Specifies the extraction, normalization, and comparison of binary log coordinate
   - `SourcePosition.ofLsn(Long lsn)` — PostgreSQL WAL position.
   - `SourcePosition.binlogFileSequence(String file)` (package-private) — numeric suffix extraction.
   - `SourcePosition.compareTo(SourcePosition other)` / `equals` / `hashCode`.
+  - `SourcePosition.sameLog(SourcePosition other)` — whether two positions belong to the same binary log (equal file prefix); false across a log basename change (§3.1.1).
   - `ClickHouseStruct.getSourcePositionFromChangeEvent(ChangeEvent<SourceRecord, SourceRecord>)` — reads `source.file` / `source.pos` / `source.row` (or `source.lsn`) from the Debezium envelope; `ClickHouseStruct.getSourcePosition()` does the same from an already-parsed struct.
 
 ---
@@ -32,6 +33,11 @@ Given two coordinates $C_1 = (F_1, P_1, R_1)$ and $C_2 = (F_2, P_2, R_2)$:
 $$C_1 < C_2 \iff (F_1 < F_2) \lor (F_1 = F_2 \land P_1 < P_2) \lor (F_1 = F_2 \land P_1 = P_2 \land R_1 < R_2)$$
 PostgreSQL positions compare numerically on the LSN.
 
+### 3.1.1 Log identity change (basename change, `RESET MASTER`)
+The order compares $F_{\text{prefix}}$ first, as a string, so it is total across differently named logs — but that order is meaningless across a **log identity change**: when the binary log basename changes (`log_bin` reconfigured, a failover to a server with a different basename, or a `RESET MASTER` followed by the engine being re-created in the same JVM through its completion-callback retry) every position of the new log ranks entirely above or entirely below every position of the old one purely by the spelling of the prefix (`binlog` < `mysql-bin`). A consumer that used that comparison to tell a first delivery from a redelivery would classify the whole new log as a redelivery (and never clamp it, spec 02.02 §3.1) or as new. `sameLog` exposes the prefix equality so the version sequence resets its high-water mark instead of comparing across the change: a positioned record whose prefix differs from the mark's is a **first delivery** and becomes the new mark (spec 02.02 §3.1). PostgreSQL positions have an empty prefix and are always in the same log.
+
+**Gap (tracked)**: a `RESET MASTER` that keeps the basename restarts the numbering at `000001`; within one JVM those positions rank below the mark and are treated as in-run redeliveries (not clamped) until the numbering passes the old mark. Positions alone cannot distinguish that from a legitimate in-run rewind; a process restart clears the mark and is the remedy.
+
 ### 3.2 GTID Coordination
 When Global Transaction Identifiers (GTID) are enabled:
 - The connector reads the GTID from the Debezium `source` struct into `ClickHouseStruct.gtid`.
@@ -47,4 +53,6 @@ When Global Transaction Identifiers (GTID) are enabled:
 
 ## 5. Verification Criteria
 - `SourcePositionTest`: ordering by pos then row, rotation ordering by file number, non-numeric file names, transitive mixed suffixes, missing coordinates yielding no position, LSN ordering, `equals`/`compareTo` agreement, and extraction from MySQL / PostgreSQL source structs.
+- `SourcePositionTest.sameLogIsByFilePrefix()` — §3.1.1: same prefix across a rotation, different prefix across a basename change, LSNs always the same log.
+- `CommitOrderVersionClampTest.binlogBasenameChangeResetsTheHighWaterMark()` — §3.1.1 through the version sequence: the first record of a differently named log is a first delivery, is clamped to the floor and becomes the new mark (pre-fix: treated as a redelivery, never clamped).
 - Corresponds to `Replication.Binlog.BinlogPos` and `BinlogPos.lt` in `formal_specs/lean/`.

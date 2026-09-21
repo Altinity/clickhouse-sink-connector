@@ -289,6 +289,12 @@ public class DebeziumChangeEventCapture {
      *   the redelivery-stable, source-timestamp anchored assignment of issue #1346 is
      *   kept unchanged.</li>
      * </ul>
+     *
+     * <p>The mark is comparable only within one binary log: a positioned record from a
+     * differently named log ({@link SourcePosition#sameLog} false -- the basename
+     * changed) is a first delivery and replaces the mark (spec 01.02 section 3.1.1).
+     * It is reset by a process restart; a new run starts with an empty mark and a
+     * floor seeded from the durable high-water mark (spec 02.02 section 3.5).</p>
      */
     public static SourcePosition sequenceHighWaterPosition = null;
 
@@ -2615,9 +2621,22 @@ public class DebeziumChangeEventCapture {
             sequenceNumber = SEQUENCE_START_INITIAL;
         }
         long effectiveTs = recordTs;
+        // A position is comparable with the mark only inside one binary log. After
+        // a log basename change (log_bin reconfigured, failover to a differently
+        // named log, RESET MASTER with the engine re-created in this JVM) the
+        // prefix order is string order and would have classified the whole new
+        // log as a redelivery ("binlog" < "mysql-bin"), never clamping it. The
+        // first position of a differently named log is a first delivery and
+        // becomes the mark (spec 01.02 section 3.1.1, 02.02 section 3.1).
         if (position != null
                 && (sequenceHighWaterPosition == null
+                        || !position.sameLog(sequenceHighWaterPosition)
                         || position.compareTo(sequenceHighWaterPosition) > 0)) {
+            if (sequenceHighWaterPosition != null && !position.sameLog(sequenceHighWaterPosition)) {
+                log.warn("Binary log identity changed: high-water position {} is replaced by {} from a "
+                        + "differently named log; its first record is versioned as a first delivery",
+                        sequenceHighWaterPosition, position);
+            }
             sequenceHighWaterPosition = position;
             if (effectiveTs < sequenceMaxSourceTs) {
                 effectiveTs = sequenceMaxSourceTs;

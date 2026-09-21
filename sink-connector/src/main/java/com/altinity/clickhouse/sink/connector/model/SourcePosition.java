@@ -128,6 +128,28 @@ public final class SourcePosition implements Comparable<SourcePosition> {
         return Long.compare(row, other.row);
     }
 
+    /**
+     * Whether this position and {@code other} belong to the same binary log, i.e.
+     * share the file prefix ({@code mysql-bin} for {@code mysql-bin.000123}).
+     *
+     * <p>{@link #compareTo} orders by prefix first so that it is a total order, but
+     * across a log basename change -- {@code log_bin} reconfigured, a failover to a
+     * differently named log, or a {@code RESET MASTER} with the engine re-created in
+     * the same JVM -- that part of the order is just string order and says nothing
+     * about commit order: every position of the new log ranks entirely above or
+     * entirely below every position of the old one. The version sequence therefore
+     * compares positions only within one log and treats the first position of a
+     * differently named log as a first delivery, resetting its high-water mark
+     * (spec 01.02 section 3.1.1). PostgreSQL positions carry no file name and are
+     * always in the same log.</p>
+     *
+     * @param other another position, not null
+     * @return true if both positions come from the same binary log
+     */
+    public boolean sameLog(SourcePosition other) {
+        return filePrefix.equals(other.filePrefix);
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {

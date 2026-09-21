@@ -294,4 +294,40 @@ public class CommitOrderVersionClampTest {
         assertEquals(0, fromFields.compareTo(record.getSourcePosition()));
         assertEquals(fromFields, record.getSourcePosition());
     }
+
+    /**
+     * A binary log basename change (spec 01.02 section 3.1.1): the new log's
+     * positions compare by string order of the prefix, and "binlog" sorts below
+     * "mysql-bin", so before the fix every record of the new log ranked below the
+     * high-water mark, was treated as a redelivery and was never clamped -- a late
+     * commit in the new log was versioned in its own older second and lost to the
+     * earlier write of the same key. The sequence must instead reset the mark to
+     * the new log and treat its first record as a first delivery.
+     */
+    @Test
+    @DisplayName("a positioned record of a differently named binary log is a first delivery and resets the high-water mark")
+    public void binlogBasenameChangeResetsTheHighWaterMark() {
+        versionOf(at(TS - 10_000, "mysql-bin.000009", 500, 0));
+        long early = versionOf(at(TS, "mysql-bin.000009", 600, 0));
+        long newest = versionOf(at(TS + 5_000, "mysql-bin.000009", 700, 0)); // floor = TS + 5000
+
+        // The log was renamed; the first row of the new log is a late commit
+        // (statement time TS) at the very start of the new file.
+        long afterRename = versionOf(at(TS, "binlog.000001", 4, 0));
+        assertTrue(afterRename > newest,
+                "the first record of the renamed log is a first delivery: clamped to the floor and above "
+                        + "every earlier write; before the fix it compared below the mark, was not clamped and "
+                        + "ranked " + (TS * MULTIPLIER) + "-ish below early=" + early);
+        assertEquals(SourcePosition.ofBinlog("binlog.000001", 4L, 0),
+                DebeziumChangeEventCapture.sequenceHighWaterPosition,
+                "the mark moved to the new log");
+
+        // From here on the new log is the log: in-order records are first deliveries
+        // and a rewound one is a redelivery again.
+        long next = versionOf(at(TS, "binlog.000001", 5, 0));
+        assertTrue(next > afterRename, "log order within the new log is honoured");
+        long rewound = versionOf(at(TS, "binlog.000001", 4, 0));
+        assertEquals(TS * MULTIPLIER + DebeziumChangeEventCapture.sequenceNumber, rewound,
+                "a rewind inside the new log is a redelivery: not clamped, source-timestamp anchored");
+    }
 }

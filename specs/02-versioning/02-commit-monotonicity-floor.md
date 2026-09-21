@@ -29,6 +29,7 @@ nextSequenceNumber(recordTs, position):
       sequenceNumber   = SEQUENCE_START_INITIAL   # 500m seed (spec 02.04)
   effectiveTs = recordTs
   if position != null and (sequenceHighWaterPosition == null
+                           or not position.sameLog(sequenceHighWaterPosition)   # log basename changed (spec 01.02 §3.1.1)
                            or position > sequenceHighWaterPosition):
       sequenceHighWaterPosition = position        # first delivery
       if effectiveTs < sequenceMaxSourceTs:
@@ -47,7 +48,7 @@ nextSequenceNumber(recordTs, position):
 The formula, the seeds and the multiplier are the 2.8.0 contract and are unchanged (§5). What this specification governs is what feeds the formula: which records enter it (§3.2) and where the floor starts after a restart (§3.5).
 
 ### 3.1 Who is clamped
-Only a **first delivery** — a record with a position strictly above `sequenceHighWaterPosition` — has its timestamp clamped up to the floor. A record at or below the mark (redelivery) or a row without a position (a source without log coordinates) keeps `effectiveTs = recordTs`. After a restart the mark is empty, so the first positioned record of the run — and, in log order, every record after it — is a first delivery and is clamped (spec 02.04 §3.2).
+Only a **first delivery** — a record with a position strictly above `sequenceHighWaterPosition`, or whose position belongs to a differently named binary log than the mark (`!position.sameLog(mark)`: the log basename changed, spec 01.02 §3.1.1, so the two positions are not comparable and the mark is reset to the new log) — has its timestamp clamped up to the floor. A record at or below the mark (redelivery) or a row without a position (a source without log coordinates) keeps `effectiveTs = recordTs`. After a restart the mark is empty, so the first positioned record of the run — and, in log order, every record after it — is a first delivery and is clamped (spec 02.04 §3.2).
 
 ### 3.2 Who enters the sequence, and who raises the floor
 `handleChangeEventBatch` calls `nextSequenceNumber` for **row records and DDL records only**. A **control record** — a heartbeat or a transaction-metadata record, recognised by `isControlRecord` (spec 01.06 §3.1) — produces no ClickHouse row, needs no `_version`, and is **not** run through the sequence: it leaves `sequenceMaxSourceTs`, `sequenceHighWaterPosition`, `sequenceAnchorTs` and `sequenceNumber` exactly as they were.
@@ -101,6 +102,7 @@ The carry itself is unchanged: the ten-digit seeds still add ~1000 ms (`SEQUENCE
 - `DebeziumChangeEventCaptureTest.heartbeatAndTransactionMetadataDoNotTouchTheSequenceState()` — a heartbeat-only and a transaction-metadata-only batch through the real `handleChangeEventBatch` leave all four statics unchanged (§3.2); fails on the pre-fix loop, which raised the floor to the heartbeat's envelope timestamp.
 - `CommitOrderVersionClampTest.redeliveryKeepsRedeliveryStableVersion()`, `CommitOrderVersionClampTest.redeliveryDoesNotDisturbTheFloor()` — redeliveries are not clamped and cannot lower the floor.
 - `CommitOrderVersionClampTest.floorAppliesWithinOneBatch()`, `CommitOrderVersionClampTest.rotationIsAFirstDelivery()`, `CommitOrderVersionClampTest.rowsWithinOneEventAreFirstDeliveries()`, `CommitOrderVersionClampTest.postgresLsnIsAPosition()`.
+- `CommitOrderVersionClampTest.binlogBasenameChangeResetsTheHighWaterMark()` — a positioned record of a differently named binary log is a first delivery: clamped to the floor, and the mark moves to the new log (§3.1; pre-fix it compared below the mark and was never clamped).
 - `LateCommitVersionOrderIT` — end to end with `gtid_mode=OFF`.
 - `DebeziumChangeEventCaptureTest.newerEventAfterSeededRestartRanksAboveOlderPreRestartEvent()` — §3.5 through the real statics: `nextSequenceNumber(W-40000, p400)`, a heartbeat at the connector clock `W` through `handleChangeEventBatch`, `v1 = nextSequenceNumber(W-30000, p500)`, reset of the statics, `seedVersionFloor(v1)`, `v2 = nextSequenceNumber(W-25000, p600)`, `v2 > v1`. Fails on the pre-fix code (`v2 < v1`).
 - `DebeziumChangeEventCaptureTest.newerEventOneMillisecondAfterSeededRestartRanksAboveOlderPreRestartEvent()` — the seed carry window (spec 02.01 §4): an older event in the 1000m counter domain, a restart, and a newer event 1 ms later; with the seeded floor the newer event is clamped to `T + 1001` and wins. This is the former known-defect pin flipped into the guarantee; the control-record exclusion alone does not make it pass.
