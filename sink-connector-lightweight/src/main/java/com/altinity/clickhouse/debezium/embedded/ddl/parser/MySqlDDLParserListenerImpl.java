@@ -1550,33 +1550,31 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if (columnDefChild.getText().equalsIgnoreCase(Constants.NULL))
                     isNullColumn = true;
                 else if(columnDefChild.getText().equalsIgnoreCase(Constants.NOT_NULL)) {
-                    // Honor NOT NULL only for ADD COLUMN. A brand-new
-                    // column has no existing rows to violate the
-                    // constraint, so ClickHouse accepts a non-Nullable
-                    // ADD.
+                    // ADD COLUMN: honoured. A brand-new column has no
+                    // existing rows to violate the constraint, so
+                    // ClickHouse accepts a non-Nullable ADD.
                     //
-                    // For MODIFY/CHANGE COLUMN it is unsafe: when the
-                    // column already exists as Nullable in ClickHouse --
-                    // which is exactly what this translator emits for a
-                    // preceding ADD COLUMN in the same migration --
-                    // converting Nullable -> non-Nullable requires a
-                    // DEFAULT expression or ClickHouse rejects it with
+                    // MODIFY/CHANGE COLUMN: the column KEEPS its existing
+                    // ClickHouse nullability (Spec 06.05 §3.2 rule 2).
+                    // Converting an existing Nullable column to
+                    // non-Nullable requires a DEFAULT expression or
+                    // ClickHouse rejects it with
                     //   Code: 36 BAD_ARGUMENTS "Cannot convert column
                     //   '<c>' from nullable type ... to non-nullable
                     //   type ... Please specify DEFAULT expression in
                     //   ALTER MODIFY COLUMN statement" (measured on
-                    //   24.8.14). DDL is retried indefinitely, so that
-                    //   single failure stalls the ENTIRE stream.
-                    //
-                    // Keeping the column Nullable loses no source value
-                    // (Nullable(T) is a superset of T), needs no
-                    // fabricated DEFAULT that would overwrite existing
-                    // rows, and is checksum-safe because the comparison
-                    // is value-level, not nullability-level. A MODIFY of
-                    // an already non-Nullable column to Nullable is a
-                    // widening ClickHouse accepts without a DEFAULT.
+                    //   24.8.14), and a retried DDL stalls the stream;
+                    // Nullable(T) loses no source value. An existing
+                    // NON-Nullable column, however, must stay non-Nullable:
+                    // widening it to Nullable (the previous rule) is not
+                    // what the source says and turns a restatement into a
+                    // real type change ClickHouse has to apply. Unknown
+                    // schema -> Nullable, which holds every value.
                     if (clause == ColumnClause.ADD) {
                         isNullColumn = false;
+                    } else {
+                        Boolean existingNullable = targetColumnNullability().get(stripBackticks(columnName));
+                        isNullColumn = existingNullable == null || existingNullable;
                     }
                 }
             } else if (isAutoIncrement(columnDefChild) && clause == ColumnClause.ADD) {

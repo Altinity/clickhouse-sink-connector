@@ -3213,6 +3213,28 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    @DisplayName("MODIFY/CHANGE ... NOT NULL keeps the existing nullability: non-Nullable stays non-Nullable")
+    public void testModifyNotNullKeepsNonNullableColumn() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "c", "Int32", "n", "Nullable(Int32)"), Collections.singletonList("id"));
+        // Existing non-Nullable: a NOT NULL MODIFY must not widen it to Nullable.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN c Int64",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN c BIGINT NOT NULL"));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN IF EXISTS c Int64\n"
+                        + "ALTER TABLE `employees`.t RENAME COLUMN IF EXISTS c to c2",
+                translate(keyed, "ALTER TABLE t CHANGE COLUMN c c2 BIGINT NOT NULL"));
+        // Existing Nullable: stays Nullable (Code: 36 otherwise).
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN n Nullable(Int64)",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN n BIGINT NOT NULL"));
+        // Explicit NULL widens, which ClickHouse accepts.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN c Nullable(Int64)",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN c BIGINT NULL"));
+        // Unknown schema: Nullable holds every value.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN c Nullable(Int64)",
+                translate("ALTER TABLE t MODIFY COLUMN c BIGINT NOT NULL"));
+    }
+
+    @Test
     @DisplayName("Data columns are not affected by the sorting-key policy")
     public void testModifyDataColumnUnaffectedByKeyPolicy() {
         MySQLDDLParserService keyed = parserWithTarget(
