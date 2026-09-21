@@ -315,6 +315,31 @@ and per-partition `FINAL` is exact. Otherwise the setting is dropped and
 `FINAL` merges across partitions; `get_table_checksum_query()` logs the
 decision. (`test_checksum_fidelity.py::TestFinalAcrossPartitions`)
 
+### 3.8 Deleted rows: the sign column follows the engine
+The connector creates `ReplacingMergeTree(_version, is_deleted)` tables
+(spec 08.05). ClickHouse `FINAL` drops a key whose latest version is a
+delete row (`is_deleted = 1`), so the replica query needs **no row filter**
+for such tables; `is_deleted` is only excluded from the row string (§3.3).
+Older `CollapsingMergeTree` layouts need `WHERE <sign> > 0` instead.
+
+`--sign_column` therefore defaults to the empty string, and when it is
+empty the replica script derives the filter from
+`system.tables.engine_full` (`sign_column_from_engine()`): for
+`CollapsingMergeTree`, `VersionedCollapsingMergeTree` and their
+`Replicated*` variants the sign is the first unquoted engine argument
+(after the ZooKeeper path and replica name); for every other engine there
+is no filter. An explicit `--sign_column` is used verbatim, for layouts
+that keep a sign column outside the engine definition. The old default
+`_sign` made every standalone run against a 2.x table fail with an unknown
+identifier, which is why the driver had to pass `--sign_column ""`
+explicitly. (`test_checksum_fidelity.py::TestSignColumn`)
+
+Two stale wrapper scripts that invoked the tool with flags it never had
+(`--sign_column=is_deleted --new_rmt=True --exclude-columns=[...]`) —
+`sink-connector/tests/diff_datatypes_lightweight_data.sh` and
+`sink-connector-lightweight/src/test/diff_data_types.sh` — were removed;
+nothing referenced them.
+
 ---
 
 ## 4. Invariants Preserved
@@ -388,6 +413,11 @@ connect to a database.
     every partition-key column is a sorting-key column; absent when the
     partition key is not in the sorting key or the table is unpartitioned;
     `max_memory_usage` still forms a well-formed `settings` clause.
+  - `TestSignColumn` — §3.8: `sign_column_from_engine()` for Replacing,
+    Collapsing, VersionedCollapsing, ReplicatedCollapsing and plain MergeTree;
+    the default run adds no filter on a `ReplacingMergeTree(_version,
+    is_deleted)` table, adds `sign > 0` on a Collapsing table, and an
+    explicit `--sign_column` is used without consulting the engine.
   - `TestClampedRowCounts` — §3.4: both aggregate queries carry
     `coalesce(sum(clamped),0)`; a table without datetime columns contributes
     `0`; a non-zero count is logged as a WARNING that does not change the

@@ -141,12 +141,19 @@ MYSQL_COLUMNS = [
 FIXTURE_ROWS = ["1#bob", "2#alice", "3#carol"]
 
 
-def clickhouse_stub(columns, row_strings, clamped=0):
-    """execute_sql replacement returning catalog rows and the fixture aggregate."""
+REPLACING_ENGINE = "ReplacingMergeTree(_version, is_deleted) ORDER BY id SETTINGS index_granularity = 8192"
+
+
+def clickhouse_stub(columns, row_strings, clamped=0, engine_full=REPLACING_ENGINE):
+    """execute_sql replacement returning catalog rows and the fixture aggregate.
+    Every statement it receives is recorded in ``execute_sql.executed``."""
 
     def execute_sql(conn, sql):
+        execute_sql.executed.append(sql)
         lowered = sql.lower()
-        if "is_in_primary_key" in lowered:
+        if "engine_full" in lowered:
+            rows = [(engine_full,)]
+        elif "is_in_primary_key" in lowered:
             rows = [(name,) for (name, *_) in columns if name == "id"]
         elif "from system.columns" in lowered:
             # (name, type, is_nullable, numeric_scale[, is_in_partition_key, is_in_sorting_key])
@@ -162,6 +169,7 @@ def clickhouse_stub(columns, row_strings, clamped=0):
             raise AssertionError("unexpected ClickHouse statement in test: " + sql)
         return (rows, len(rows))
 
+    execute_sql.executed = []
     return execute_sql
 
 
@@ -506,6 +514,54 @@ class TestClampedRowCounts(unittest.TestCase):
             # The driver greps the child output for "checksum" and expects one line.
             self.assertEqual(sum(1 for line in lines if "checksum" in line.lower()), 1, lines)
         self.assertFalse(any(line.startswith("WARNING") for line in run_mysql_side(MYSQL_COLUMNS, FIXTURE_ROWS)))
+
+
+class TestSignColumn(unittest.TestCase):
+    """--sign_column defaults to '' and the engine decides the row filter
+    (spec 11.02 section 3.8)."""
+
+    def test_parser_default_is_empty(self):
+        self.assertEqual(ch.build_argument_parser().get_default("sign_column"), "")
+
+    def test_sign_column_from_engine(self):
+        cases = {
+            REPLACING_ENGINE: "",
+            "ReplacingMergeTree(_version) PARTITION BY toYYYYMM(d) ORDER BY id": "",
+            "CollapsingMergeTree(sign) ORDER BY id": "sign",
+            "VersionedCollapsingMergeTree(sign, version) ORDER BY id": "sign",
+            "ReplicatedCollapsingMergeTree('/clickhouse/tables/{shard}/db1/t1', '{replica}', _sign) ORDER BY id": "_sign",
+            "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/db1/t1', '{replica}', _version, is_deleted) ORDER BY id": "",
+            "MergeTree ORDER BY id": "",
+        }
+        for engine_full, expected in cases.items():
+            self.assertEqual(ch.sign_column_from_engine(engine_full), expected, engine_full)
+
+    def executed_statements(self, engine_full, **arg_overrides):
+        ch.args = clickhouse_args(**arg_overrides)
+        stub = clickhouse_stub(CLICKHOUSE_COLUMNS, FIXTURE_ROWS, engine_full=engine_full)
+        with patch.object(ch, "get_connection", return_value=MagicMock()), \
+                patch.object(ch, "execute_sql", side_effect=stub), \
+                self.assertLogs(level="INFO"):
+            ch.calculate_checksum("t1", "user", "pw", None, None)
+        return stub.executed
+
+    def aggregate_statement(self, statements):
+        return [sql for sql in statements if 'count(*) as "cnt"' in sql.lower()][0]
+
+    def test_default_adds_no_filter_on_a_replacing_table(self):
+        aggregate = self.aggregate_statement(self.executed_statements(REPLACING_ENGINE))
+        self.assertIn("final where 1=1 ", aggregate)
+        self.assertNotIn("_sign", aggregate)
+        self.assertNotIn("> 0", aggregate)
+
+    def test_default_filters_on_the_sign_of_a_collapsing_table(self):
+        aggregate = self.aggregate_statement(self.executed_statements("CollapsingMergeTree(sign) ORDER BY id"))
+        self.assertIn("final where 1=1 and sign > 0 ", aggregate)
+
+    def test_explicit_sign_column_is_used_without_reading_the_engine(self):
+        statements = self.executed_statements(REPLACING_ENGINE, sign_column="is_live")
+        self.assertIn("final where 1=1 and is_live > 0 ", self.aggregate_statement(statements))
+        self.assertFalse(any("engine_full" in sql.lower() for sql in statements))
 
 
 class TestFinalAcrossPartitions(unittest.TestCase):

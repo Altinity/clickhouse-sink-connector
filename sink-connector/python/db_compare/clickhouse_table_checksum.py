@@ -202,6 +202,26 @@ def build_clickhouse_row_expression(columns_metadata, options):
     return (select, nullables, columns, data_types, clamped_count_expression(clamped_flags))
 
 
+def get_engine_full(conn, database, table):
+    sql = f"select engine_full from system.tables where database = '{database}' and name = '{table}'"
+    (rowset, count) = execute_sql(conn, sql)
+    return rowset[0][0] if rowset else ''
+
+
+def sign_column_from_engine(engine_full):
+    """The row filter column implied by the engine (spec 11.02 section 3.8):
+    the sign of CollapsingMergeTree / VersionedCollapsingMergeTree (and their
+    Replicated variants, whose first two arguments are the quoted ZooKeeper
+    path and replica name); '' for every other engine -- ReplacingMergeTree
+    (_version, is_deleted) drops deleted rows under FINAL by itself."""
+    match = re.match(r"\s*(?:Replicated)?(?:Versioned)?CollapsingMergeTree\s*\((.*?)\)", engine_full or "")
+    if not match:
+        return ''
+    arguments = [argument.strip() for argument in match.group(1).split(',')]
+    unquoted = [argument for argument in arguments if argument and not argument.startswith(("'", '"'))]
+    return unquoted[0] if unquoted else ''
+
+
 def partition_key_within_sorting_key(columns_metadata):
     """True when the table has a partition key and every partition-key column
     is a sorting-key column, so a row cannot change partition without changing
@@ -271,7 +291,7 @@ def fstr(template, partition_expression):
             return template.replace('{partition_expression}', str(partition_expression))
         return template
 
-def select_table_statements(table, query, select_query, order_by, external_column_types, _where, clamped_expression="0", final_per_partition=False):
+def select_table_statements(table, query, select_query, order_by, external_column_types, _where, clamped_expression="0", final_per_partition=False, sign_column=""):
     statements = []
     external_table_name = args.clickhouse_database+"."+table
     limit = ""
@@ -281,9 +301,10 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     if _where:
        where = _where
     schema=args.clickhouse_database
-    # skip deleted rows
-    if args.sign_column != '':
-      where+= f" and {args.sign_column} > 0 "
+    # skip deleted rows of a Collapsing engine; a ReplacingMergeTree with
+    # is_deleted needs no filter, FINAL drops them (spec 11.02 section 3.8)
+    if sign_column:
+        where += f" and {sign_column} > 0 "
 
     # do_not_merge_across_partitions_select_final only when the partition key
     # is a function of the sorting key (spec 11.02 section 3.7); otherwise an
@@ -370,10 +391,15 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where, parti
             schema=args.clickhouse_database, table=table))
         return
     # generate the file from ClickHouse
+    sign_column = args.sign_column
+    if not sign_column:
+        engine_full = get_engine_full(conn, args.clickhouse_database, table)
+        sign_column = sign_column_from_engine(engine_full)
+        logging.info(f"Row filter for {args.clickhouse_database}.{table}: sign column '{sign_column}' derived from engine {engine_full}")
     (query, select_query, distributed_by,
      external_table_types, clamped_expression, final_per_partition) = get_table_checksum_query(conn, table)
     statements = select_table_statements(
-        table, query, select_query, distributed_by, external_table_types, where, clamped_expression, final_per_partition)
+        table, query, select_query, distributed_by, external_table_types, where, clamped_expression, final_per_partition, sign_column)
     compute_checksum(table, clickhouse_user, clickhouse_password, statements)
 
 
@@ -391,8 +417,7 @@ logging.setLogRecordFactory(record_factory)
 
 create_function_format_decimal = '''CREATE FUNCTION if not exists format_decimal AS (x, scale) -> toDecimalString(x, scale)'''
 
-def main():
-
+def build_argument_parser():
     parser = argparse.ArgumentParser(description='''
   Compute the table checksum using the same technique as pt-checksum, md5 algorithm.
 
@@ -405,7 +430,7 @@ def main():
     parser.add_argument('--clickhouse_database', help='ClickHouse database', required=True)
     parser.add_argument('--clickhouse_port',  help='ClickHouse port', default=9000, required=False)
     parser.add_argument('--secure', help='True or False', default=False, required=False)
-    parser.add_argument('--sign_column', help='Override sign column, by default its _sign', default='_sign', required=False)
+    parser.add_argument('--sign_column', help='Column whose value > 0 marks a live row. Default: derived from the engine -- the sign of a (Replicated)(Versioned)CollapsingMergeTree, no filter otherwise (ReplacingMergeTree(ver, is_deleted) drops deleted rows under FINAL)', default='', required=False)
     parser.add_argument('--tables_regex', help='table regexp', required=True)
     parser.add_argument('--where', help='where clause', required=False)
     parser.add_argument('--order_by', help='order by` clause', required=False)
@@ -430,6 +455,11 @@ def main():
                         help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
     parser.add_argument('--include_json_columns', action='store_true', default=True,
                         help='JSON data types are included by default. This flag is a no-op (always True). Use --exclude_columns to skip JSON columns.', required=False)
+    return parser
+
+
+def main():
+    parser = build_argument_parser()
     global args
     args = parser.parse_args()
     (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
