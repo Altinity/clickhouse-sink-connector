@@ -138,6 +138,16 @@ public class PreparedStatementExecutor {
                                                Map<String, String> columnToDataTypeMap,
                                                DBMetadata.TABLE_ENGINE engine) throws Exception {
 
+        if (queryToRecordsMap == null || queryToRecordsMap.isEmpty()) {
+            // Returning false here made the caller keep the batch and retry
+            // it on every tick, forever, although it could never produce a
+            // statement. A batch that grouped into nothing is a defect to
+            // surface, not a transient to wait out (Spec 04.01 section 3.3).
+            throw new IllegalStateException(String.format(
+                    "No statement group to execute for Database(%s), table(%s): the batch was "
+                            + "grouped into nothing. Failing loudly instead of retrying it forever.",
+                    databaseName, tableName));
+        }
         boolean result = false;
         Iterator<Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> iter = queryToRecordsMap.entrySet().iterator();
         while(iter.hasNext()) {
@@ -346,7 +356,14 @@ public class PreparedStatementExecutor {
                                     false, config, columnToDataTypeMap, engine, tableName);
                         }
                     } else {
-                        log.error("INVALID CDC RECORD STATE");
+                        // Not reachable today, but staging the statement with
+                        // whatever parameters the previous row left behind
+                        // would write a duplicate of that row (Spec 04.01
+                        // section 3.3).
+                        throw new IllegalStateException(String.format(
+                                "Record with operation %s for %s.%s has no recognised CDC record "
+                                        + "state; nothing was bound for it and it is not staged.",
+                                record.getCdcOperation(), databaseName, tableName));
                     }
                     if(!updateRecord)
                         ps.addBatch();

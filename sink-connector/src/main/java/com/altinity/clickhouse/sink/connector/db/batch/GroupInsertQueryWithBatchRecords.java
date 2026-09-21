@@ -54,9 +54,14 @@ public class GroupInsertQueryWithBatchRecords {
      * @param databaseName         target database name.
      * @param connection           JDBC connection.
      * @param columnNameToDataTypeMap map of column names to their data types.
-     * @return true if grouping is successful; false otherwise.
+     * @throws IllegalStateException when a record cannot be grouped (no image
+     *         for its operation, no column metadata, no template). Every
+     *         record is grouped or the batch fails: a skipped record is
+     *         written nowhere while the offset advances past it, so there is
+     *         deliberately no boolean status to report one (Spec 04.01
+     *         section 3.3).
      */
-    public boolean groupQueryWithRecords(
+    public void groupQueryWithRecords(
             List<ClickHouseStruct> records,
             Map<MutablePair<String, Map<String, Integer>>,
                     List<ClickHouseStruct>> queryToRecordsMap,
@@ -64,7 +69,6 @@ public class GroupInsertQueryWithBatchRecords {
             ClickHouseSinkConnectorConfig config,
             String tableName, String databaseName, Connection connection,
             Map<String, String> columnNameToDataTypeMap) {
-        boolean result = false;
 
         // Co4 = {ClickHouseStruct@9220} de block to create a Map of Query ->
         // list of records so that all records belonging to the same query
@@ -110,7 +114,7 @@ public class GroupInsertQueryWithBatchRecords {
 
             if (CdcRecordState.CDC_RECORD_STATE_BEFORE ==
                     getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                result = updateQueryToRecordsMap(record,
+                updateQueryToRecordsMap(record,
                         record.getBeforeModifiedFields(), queryToRecordsMap,
                         tableName, config, columnNameToDataTypeMap);
             } else if (CdcRecordState.CDC_RECORD_STATE_AFTER ==
@@ -129,7 +133,7 @@ public class GroupInsertQueryWithBatchRecords {
                 }
                 // columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(
                 // tableName, connection, databaseName, config );
-                result = updateQueryToRecordsMap(record,
+                updateQueryToRecordsMap(record,
                         record.getAfterModifiedFields(), queryToRecordsMap,
                         tableName, config, columnNameToDataTypeMap);
             }
@@ -155,15 +159,31 @@ public class GroupInsertQueryWithBatchRecords {
                 // metric, while the offset still advanced past the discarded
                 // rows. A single MySQL statement touching N rows emits N
                 // records in one batch, so all but the first were lost.
-                result = updateQueryToRecordsMap(record,
+                updateQueryToRecordsMap(record,
                         record.getAfterModifiedFields(), queryToRecordsMap,
                         tableName, config, columnNameToDataTypeMap);
             } else {
-                log.error("************ RECORD DROPPED: INVALID CDC RECORD " +
-                        "STATE *****************" + record.getSourceRecord());
+                // Not reachable today (getCdcSectionBasedOnOperation defaults
+                // to AFTER), but a record that is neither BEFORE, AFTER nor
+                // BOTH must never be logged and forgotten: it would be written
+                // nowhere while the batch's offset advanced past it.
+                throw new IllegalStateException(String.format(
+                        "%s on table %s has no recognised CDC record state and cannot be "
+                                + "grouped into a statement. Refusing to drop it (Spec 04.01 "
+                                + "section 3.3).",
+                        describe(record), tableName));
             }
         }
-        return result;
+    }
+
+    /**
+     * Identifies a record in an error message: operation, topic, partition
+     * and offset. Never throws for a sparsely populated record.
+     */
+    private static String describe(ClickHouseStruct record) {
+        return String.format("Record(operation=%s, topic=%s, partition=%s, offset=%s)",
+                record.getCdcOperation() == null ? null : record.getCdcOperation().getOperation(),
+                record.getTopic(), record.getKafkaPartition(), record.getKafkaOffset());
     }
 
     /**
@@ -181,9 +201,12 @@ public class GroupInsertQueryWithBatchRecords {
      * @param tableName          target table name.
      * @param config             connector configuration.
      * @param columnNameToDataTypeMap map of column names to data types.
-     * @return true if the mapping is updated; false otherwise.
+     * @throws IllegalStateException when the record carries no image for the
+     *         section its operation binds, when no column metadata is
+     *         available, or when no template can be built. The record is
+     *         never skipped (Spec 04.01 section 3.3).
      */
-    public boolean updateQueryToRecordsMap(
+    public void updateQueryToRecordsMap(
             ClickHouseStruct record, List<Field> modifiedFields,
             Map<MutablePair<String, Map<String, Integer>>,
                     List<ClickHouseStruct>> queryToRecordsMap,
@@ -200,7 +223,32 @@ public class GroupInsertQueryWithBatchRecords {
             ArrayList<ClickHouseStruct> records = new ArrayList<>();
             records.add(record);
             queryToRecordsMap.put(mp, records);
-            return true;
+            return;
+        }
+
+        if (columnNameToDataTypeMap == null || columnNameToDataTypeMap.isEmpty()) {
+            throw new IllegalStateException(String.format(
+                    "No ClickHouse column metadata is available for table %s while grouping %s, "
+                            + "so no INSERT can be built for it. Skipping the record would drop it "
+                            + "while the batch's offset advances past it; failing the batch instead "
+                            + "(Spec 04.01 section 3.3).",
+                    tableName, describe(record)));
+        }
+
+        // A record whose operation binds an image it does not carry cannot
+        // be grouped. Returning false here (the previous behaviour) dropped
+        // the record silently -- and an UPDATE without its after image was
+        // grouped by its BEFORE image alone, i.e. written as a live row
+        // holding the pre-update values.
+        if (modifiedFields == null && schemaFieldsFor(record, modifiedFields) == null) {
+            boolean bindsBefore = CdcRecordState.CDC_RECORD_STATE_BEFORE
+                    == getCdcSectionBasedOnOperation(record.getCdcOperation());
+            throw new IllegalStateException(String.format(
+                    "%s on table %s carries no %s image, so its row cannot be built. A %s event "
+                            + "must carry the %s image (MySQL binlog_row_image=FULL). Refusing to "
+                            + "drop the record (Spec 04.01 section 3.3).",
+                    describe(record), tableName, bindsBefore ? "before" : "after",
+                    bindsBefore ? "DELETE" : "row", bindsBefore ? "before" : "after"));
         }
 
         // Step 2: Create the Prepared Statement Query.
@@ -236,12 +284,13 @@ public class GroupInsertQueryWithBatchRecords {
                                         .REPLACING_MERGE_TREE_DELETE_COLUMN.toString()),
                         schemaFields);
 
-        String insertQueryTemplate = response.getKey();
-        if (response.getKey() == null || response.getValue() == null) {
-            log.error("********* QUERY or COLUMN TO INDEX MAP EMPTY");
-            return false;
-            // this.columnNametoIndexMap = response.right;
+        if (response == null || response.getKey() == null || response.getValue() == null) {
+            throw new IllegalStateException(String.format(
+                    "No INSERT template could be built for %s on table %s (query or parameter "
+                            + "map empty). Refusing to drop the record (Spec 04.01 section 3.3).",
+                    describe(record), tableName));
         }
+        String insertQueryTemplate = response.getKey();
 
         MutablePair<String, Map<String, Integer>> mp =
                 new MutablePair<>();
@@ -257,7 +306,6 @@ public class GroupInsertQueryWithBatchRecords {
             recordsList.add(record);
             queryToRecordsMap.put(mp, recordsList);
         }
-        return true;
     }
 
     /**

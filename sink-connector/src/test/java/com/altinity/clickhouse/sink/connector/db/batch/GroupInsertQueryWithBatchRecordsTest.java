@@ -406,6 +406,65 @@ public class GroupInsertQueryWithBatchRecordsTest {
                 ch.executed.get(0));
     }
 
+    private static Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> groupOne(
+            ClickHouseStruct record, Map<String, String> columns) {
+        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queries = new HashMap<>();
+        new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
+                new ArrayList<>(Collections.singletonList(record)), queries, new HashMap<>(),
+                config(false), "t", "db", null, columns);
+        return queries;
+    }
+
+    /**
+     * Spec 04.01 section 3.3: a record that cannot be grouped fails the batch.
+     * Returning {@code false} for it dropped the row with no error while the
+     * batch's offset advanced past it.
+     */
+    @Test
+    @DisplayName("A DELETE without a before image fails the batch instead of being dropped")
+    public void deleteWithoutBeforeImageFailsLoudly() {
+        ClickHouseStruct delete = new ClickHouseStruct(
+                9L, "topic", null, 0, System.currentTimeMillis(),
+                null, null, null, ClickHouseConverter.CDC_OPERATION.DELETE);
+        delete.setDatabase("db");
+
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> groupOne(delete, cachedWithoutNote()),
+                "a DELETE with no before image has no row to write; dropping it silently "
+                        + "leaves the row alive in ClickHouse while MySQL deleted it");
+        assertTrue(e.getMessage().contains("before"), e.getMessage());
+        assertTrue(e.getMessage().contains("offset=9"), e.getMessage());
+    }
+
+    /**
+     * Worse than a drop: an UPDATE lacking its after image used to be grouped
+     * by its before image alone, i.e. written as a LIVE row of the pre-update
+     * values.
+     */
+    @Test
+    @DisplayName("An UPDATE without an after image fails the batch instead of writing its before image live")
+    public void updateWithoutAfterImageFailsLoudly() {
+        ClickHouseStruct update = new ClickHouseStruct(
+                10L, "topic", null, 0, System.currentTimeMillis(),
+                new Struct(ROW_SCHEMA).put("id", 1).put("note", "old"), null, null,
+                ClickHouseConverter.CDC_OPERATION.UPDATE);
+        update.setDatabase("db");
+
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> groupOne(update, cachedWithoutNote()));
+        assertTrue(e.getMessage().contains("after"), e.getMessage());
+    }
+
+    /** No column metadata: an explicit failure naming the table, not a NullPointerException. */
+    @Test
+    @DisplayName("Grouping without ClickHouse column metadata fails the batch instead of dropping the record")
+    public void missingColumnMapFailsLoudly() {
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> groupOne(insertCarryingNote(), null));
+        assertTrue(e.getMessage().contains("column metadata"), e.getMessage());
+        assertTrue(e.getMessage().contains("table t"), e.getMessage());
+    }
+
     /** Regression guard: an ALIAS column keeps the pre-existing behaviour. */
     @Test
     @DisplayName("An ALIAS column is still ignored and proven absent")

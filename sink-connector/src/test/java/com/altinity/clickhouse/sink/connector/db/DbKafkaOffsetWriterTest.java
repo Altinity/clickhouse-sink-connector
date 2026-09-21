@@ -64,7 +64,7 @@ public class DbKafkaOffsetWriterTest {
         GroupInsertQueryWithBatchRecords groupInsertQueryWithBatchRecords = new GroupInsertQueryWithBatchRecords();
 
         DBMetadata metadata = new DBMetadata(config);
-        boolean resultStatus = groupInsertQueryWithBatchRecords.groupQueryWithRecords(
+        groupInsertQueryWithBatchRecords.groupQueryWithRecords(
                 DbWriterTest.getSampleRecords(),
                 queryToRecordsMap, result, config, tableName, database, writer.getConnection(),
                 metadata.getColumnsDataTypesForTable(conn, tableName, database));

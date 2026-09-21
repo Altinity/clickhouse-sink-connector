@@ -695,7 +695,7 @@ public class ClickHouseBatchWriter {
         Map<MutablePair<String, Map<String, Integer>>,
                 List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<>();
-        result = new GroupInsertQueryWithBatchRecords()
+        new GroupInsertQueryWithBatchRecords()
                 .groupQueryWithRecords(records, queryToRecordsMap,
                         partitionToOffsetMap, this.config, tableName,
                         writer.getDatabaseName(), writer.getConnection(),

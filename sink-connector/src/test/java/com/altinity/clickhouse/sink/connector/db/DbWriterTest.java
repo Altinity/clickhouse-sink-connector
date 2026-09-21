@@ -286,7 +286,7 @@ public class DbWriterTest {
         GroupInsertQueryWithBatchRecords groupInsertQueryWithBatchRecords = new GroupInsertQueryWithBatchRecords();
 
         DBMetadata metadata = new DBMetadata(sinkConnectorConfig);
-        boolean resultStatus =groupInsertQueryWithBatchRecords.groupQueryWithRecords(getSampleRecords()
+        groupInsertQueryWithBatchRecords.groupQueryWithRecords(getSampleRecords()
                 , queryToRecordsMap, result, sinkConnectorConfig, tableName, database, dbWriter.getConnection(),
                 metadata.getColumnsDataTypesForTable(conn, tableName, "employees"));
 
