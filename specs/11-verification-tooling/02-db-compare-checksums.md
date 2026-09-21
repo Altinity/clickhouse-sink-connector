@@ -265,6 +265,34 @@ probability, at least one of `a..d`, and the printed checksum
 (`test_checksum_fidelity.py::TestEndToEndChecksum.test_flipped_clickhouse_value_reports_different`).
 Row count is carried separately in `cnt` and in the printed `count`.
 
+### 3.6 Binary columns: one encoding on both sides
+The connector writes `BLOB`/`BINARY`/`VARBINARY`/`BIT(n>1)` values into a
+`String` column in one of three shapes, chosen by its configuration. The
+replica catalog cannot tell such a column from a text `String`, so the tool
+must be told which shape to expect, with the **same `--binary_encoding` on
+both sides** (argparse rejects anything but `hex`, `base64`, `raw`):
+
+| connector configuration | ClickHouse holds | `--binary_encoding` | MySQL expression | ClickHouse expression |
+|---|---|---|---|---|
+| default (`persist.raw.bytes=false`, `binary.handling.mode=bytes`) | lowercase hex **text** (`BaseEncoding.base16().lowerCase()` in `ClickHouseDataTypeMapper`) | `hex` (default) | `lower(hex(cast(col as binary)))` | `toString(col)` |
+| `binary.handling.mode=base64` | the base64 text Debezium delivers | `base64` | `replace(to_base64(cast(col as binary)),'\n','')` | `toString(col)` |
+| `persist.raw.bytes=true` | the raw bytes | `raw` | `lower(hex(cast(col as binary)))` | `lower(hex(col))` for the `String` columns named in `--hex_columns`, `toString(col)` otherwise |
+
+- The driver's `--binary_encoding` (default `hex`) is passed to both scripts.
+  It used to hard-code `base64` — as did the two integration test drivers —
+  while a default connector stores hex text, so every table with a binary
+  column reported DIFFERENT under the default configuration.
+- In `raw` mode the driver derives `--hex_columns` per table from
+  `information_schema` (`db.mysql.binary_datatypes`); a standalone replica
+  run must pass the list itself. `--hex_columns` applies to `String` columns
+  only, so a `bit(1)` → `Bool` column in that list is left to the boolean
+  rendering; it is accepted only together with `--binary_encoding raw` (with
+  `hex`/`base64` the replica already holds encoded text and the option is
+  refused). The old meaning, `toString(unhex(col))`, was the inverse of what
+  the MySQL side produces in every mode and could never compare equal.
+
+(`test_checksum_fidelity.py::TestBinaryEncoding`)
+
 ---
 
 ## 4. Invariants Preserved
@@ -329,6 +357,11 @@ connect to a database.
     `@@system_time_zone` when not given, refusing an abbreviation.
   - `TestBooleanAndBit` — §3.3: `Bool` and `Nullable(Bool)` render through
     `toUInt8`; MySQL `bit(1)` renders as `col+0` while `bit(8)` stays hex.
+  - `TestBinaryEncoding` — §3.6: MySQL renders hex by default, base64 on
+    request and hex in `raw` mode; ClickHouse hexes the listed `String`
+    columns only in `raw` mode, leaves `Bool` alone and refuses
+    `--hex_columns` with `hex`/`base64`; the driver passes the encoding to
+    both scripts and the raw column list only in `raw` mode.
   - `TestClampedRowCounts` — §3.4: both aggregate queries carry
     `coalesce(sum(clamped),0)`; a table without datetime columns contributes
     `0`; a non-zero count is logged as a WARNING that does not change the

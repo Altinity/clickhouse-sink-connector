@@ -77,7 +77,6 @@ def _mysql_checksums():
         "--mysql_database", DATABASE,
         "--tables_regex", TABLES_REGEX,
         "--min_date_value", "1900-01-01",
-        "--binary_encoding", "base64",
     ]
     return _run_checksum(cmd)
 

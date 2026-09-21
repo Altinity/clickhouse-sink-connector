@@ -57,7 +57,7 @@ def clickhouse_args(**overrides):
         threads=1, min_datetime_value=DATETIME_MIN,
         max_datetime_value=DATETIME_MAX, max_memory_usage=None,
         include_floating_point_columns=False, include_json_columns=True,
-        source_timezone="UTC", timestamp_columns="",
+        source_timezone="UTC", timestamp_columns="", binary_encoding="hex",
     )
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -359,7 +359,8 @@ class TestInstantComparison(unittest.TestCase):
         self.assertEqual(select, clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse"))
 
     def test_driver_passes_zone_and_timestamp_columns(self):
-        tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="Asia/Tokyo")
+        tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="Asia/Tokyo",
+                                     binary_encoding="hex")
         mysql_cmd = tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None)
         self.assertIn("--source_timezone Asia/Tokyo", mysql_cmd)
         clickhouse_cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10,
@@ -503,6 +504,43 @@ class TestClampedRowCounts(unittest.TestCase):
             # The driver greps the child output for "checksum" and expects one line.
             self.assertEqual(sum(1 for line in lines if "checksum" in line.lower()), 1, lines)
         self.assertFalse(any(line.startswith("WARNING") for line in run_mysql_side(MYSQL_COLUMNS, FIXTURE_ROWS)))
+
+
+class TestBinaryEncoding(unittest.TestCase):
+    """One --binary_encoding on both sides (spec 11.02 section 3.6)."""
+
+    def test_mysql_renders_hex_by_default_base64_on_request_and_hex_in_raw_mode(self):
+        column = [mysql_column("b", "varbinary", "varbinary(16)")]
+        self.assertEqual(build_mysql_select(column), "lower(hex(cast(`b` as binary)))")
+        self.assertEqual(build_mysql_select(column, binary_encoding="raw"), "lower(hex(cast(`b` as binary)))")
+        self.assertEqual(build_mysql_select(column, binary_encoding="base64"),
+                         "replace(to_base64(cast(`b` as binary)),'\\n','')")
+
+    def test_clickhouse_hexes_listed_string_columns_only_in_raw_mode(self):
+        build = TestClickHouseRowExpression().build
+        columns = [("b", "String", 0, None), ("flag", "Bool", 0, None), ("name", "String", 0, None)]
+        self.assertEqual(build(columns, binary_encoding="raw", hex_columns=["b,flag"]),
+                         'lower(hex("b"))' "||'#'||" 'toString(toUInt8("flag"))' "||'#'||" 'toString("name")')
+        self.assertEqual(build(columns),
+                         'toString("b")' "||'#'||" 'toString(toUInt8("flag"))' "||'#'||" 'toString("name")')
+        self.assertEqual(build(columns, binary_encoding="base64"),
+                         'toString("b")' "||'#'||" 'toString(toUInt8("flag"))' "||'#'||" 'toString("name")')
+        with self.assertRaises(ValueError):
+            build(columns, binary_encoding="hex", hex_columns=["b"])
+
+    def test_driver_passes_the_encoding_to_both_sides_and_raw_columns_only_in_raw_mode(self):
+        tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="UTC",
+                                     binary_encoding="hex")
+        mysql_cmd = tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None)
+        self.assertIn("--binary_encoding hex", mysql_cmd)
+        self.assertNotIn("base64", mysql_cmd)
+        clickhouse_cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10, binary_columns=["b1", "b2"])
+        self.assertIn("--binary_encoding hex", clickhouse_cmd)
+        self.assertNotIn("--hex_columns", clickhouse_cmd)
+        tl.args.binary_encoding = "raw"
+        clickhouse_cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10, binary_columns=["b1", "b2"])
+        self.assertIn("--binary_encoding raw --hex_columns b1,b2", clickhouse_cmd)
+        self.assertIn("--binary_encoding raw", tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None))
 
 
 class TestBooleanAndBit(unittest.TestCase):

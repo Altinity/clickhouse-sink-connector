@@ -384,7 +384,8 @@ def main():
     parser.add_argument(
         '--debug_limit', help='Limit the debug output in lines', required=False)
     parser.add_argument(
-        '--binary_encoding', help='either hex or base64 to encode MySQL binary content', default='hex', required=False)
+        '--binary_encoding', choices=['hex', 'base64', 'raw'], default='hex', required=False,
+        help='how the connector wrote binary values: hex text (default), base64 text (binary.handling.mode=base64) or raw bytes (persist.raw.bytes=true, compared as hex); pass the same value to the ClickHouse side')
     parser.add_argument(
         '--min_date_value', help='Minimum Date32/DateTime64 date', default='1900-01-01', required=False)
     parser.add_argument(

@@ -87,7 +87,7 @@ def run_quick_safe_checksum(cmd, host, table):
 
 
 
-def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306, timestamp_columns=()):
+def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306, timestamp_columns=(), binary_columns=()):
     table_name = f"{mysql_database}.{table}"
     logging.info(f"Checksumming {table_name}")
     if table_name in table_overrides_map and 'where' in table_overrides_map[table_name]:
@@ -114,7 +114,7 @@ def compute_checksum (mysql_database, database_override_map, table_overrides_map
                     replica_database = target_db
                     break
             logging.info(f"Overriding database for host {replica_host} from {mysql_database} to {replica_database}")
-        cmd = get_clickhouse_checksum_command(replica_host, replica_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key, timestamp_columns=timestamp_columns)
+        cmd = get_clickhouse_checksum_command(replica_host, replica_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key, timestamp_columns=timestamp_columns, binary_columns=binary_columns)
         ch_commands.append((replica_host, cmd))
 
     # Lock held during all checksums (MySQL source + ClickHouse replicas)
@@ -190,13 +190,13 @@ def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, i
     # pipe is masked by a successful awk and the pipeline exits 0 -- a run
     # that never produced a checksum is reported as a PASS. Verified in bash:
     # `set -e pipefail; false | grep x | awk '{print}'` exits 0.
-    cmd = f"""set -eo pipefail;python db_compare/mysql_table_checksum.py --threads_per_table {args.threads_per_table} --threads={args.threads} --min_date_value "1900-01-01" --mysql_host {mysql_host} --mysql_database {database} --tables_regex "^{table}$" {where_argument} --source_timezone {args.source_timezone} --binary_encoding base64 {ignored_columns_clause} {debug_output_clause} {defaults_file_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
+    cmd = f"""set -eo pipefail;python db_compare/mysql_table_checksum.py --threads_per_table {args.threads_per_table} --threads={args.threads} --min_date_value "1900-01-01" --mysql_host {mysql_host} --mysql_database {database} --tables_regex "^{table}$" {where_argument} --source_timezone {args.source_timezone} --binary_encoding {args.binary_encoding} {ignored_columns_clause} {debug_output_clause} {defaults_file_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
     logging.debug(f"MySQL command: {cmd}")
     return cmd
 
 
 
-def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, where=None, ignored_columns=[], debug_output=False, partition_key = None, timestamp_columns=()):
+def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, where=None, ignored_columns=[], debug_output=False, partition_key = None, timestamp_columns=(), binary_columns=()):
     partition_date = args.partition_date
     where_argument = '--where " 1=1 '
     if where:
@@ -225,13 +225,19 @@ def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, w
     timestamp_columns_clause = ""
     if timestamp_columns:
         timestamp_columns_clause = "--timestamp_columns " + ",".join(timestamp_columns)
+
+    # Only raw bytes need hexing on the replica; hex and base64 are compared
+    # as the text the connector stored (spec 11.02 section 3.6).
+    binary_encoding_clause = f"--binary_encoding {args.binary_encoding}"
+    if args.binary_encoding == 'raw' and binary_columns:
+        binary_encoding_clause += " --hex_columns " + ",".join(binary_columns)
     # `set -eo pipefail` (NOT `set -e pipefail`): bash parses the latter as
     # `set -e` plus a positional argument named "pipefail", so pipefail is
     # never enabled. Without it a failing checksum script on the left of the
     # pipe is masked by a successful awk and the pipeline exits 0 -- a run
     # that never produced a checksum is reported as a PASS. Verified in bash:
     # `set -e pipefail; false | grep x | awk '{print}'` exits 0.
-    cmd = f"""set -eo pipefail;python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads={args.threads} --clickhouse_host {replica_host} --clickhouse_database  {database}  --tables_regex "^{table}$" {where_argument} --source_timezone {args.source_timezone} {timestamp_columns_clause} {ignored_columns_clause} --sign_column "" {debug_output_clause} {partition_key_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
+    cmd = f"""set -eo pipefail;python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads={args.threads} --clickhouse_host {replica_host} --clickhouse_database  {database}  --tables_regex "^{table}$" {where_argument} --source_timezone {args.source_timezone} {timestamp_columns_clause} {binary_encoding_clause} {ignored_columns_clause} --sign_column "" {debug_output_clause} {partition_key_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
     return cmd 
 
 
@@ -407,6 +413,9 @@ def run_config(config):
                     (min_pk, max_pk) = get_min_max_pk_value(conn, table, pk_column, '1=1')
                     partition_key = get_table_partition_key(conn, database, table)
                     timestamp_columns = mysql_columns_by_data_type(conn, database, table, ('timestamp',))
+                    binary_columns = []
+                    if args.binary_encoding == 'raw':
+                        binary_columns = mysql_columns_by_data_type(conn, database, table, binary_datatypes)
                     ignored_columns = []
                     if database in ignored_columns_map and table in ignored_columns_map[database]:
                         ignored_columns = list(ignored_columns_map[database][table].keys())
@@ -416,7 +425,7 @@ def run_config(config):
                     # Each future acquires its own lock, runs both MySQL and
                     # ClickHouse checksums under the lock, then releases it.
                     future = executor.submit(
-                        compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port, timestamp_columns=timestamp_columns)
+                        compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port, timestamp_columns=timestamp_columns, binary_columns=binary_columns)
                     futures.append(future)
                     future_to_table[future] = table_name
                 for future in concurrent.futures.as_completed(futures):
@@ -520,6 +529,8 @@ def main():
                         help='Lock the table on the source so that source and target are in sync ...', required=False)
     parser.add_argument('--sleep_after_lock', type=int, help='When locking, sleeping n seconds', default=3)
     parser.add_argument('--source_timezone', help='IANA time zone the connector interprets MySQL DATETIME values in (its database.connectionTimeZone); default: resolved from the MySQL server', required=False, default=None)
+    parser.add_argument('--binary_encoding', choices=['hex', 'base64', 'raw'], default='hex', required=False,
+                        help='how the connector wrote binary values: hex text (default), base64 text (binary.handling.mode=base64) or raw bytes (persist.raw.bytes=true); passed to both sides')
 
     global args
     args = parser.parse_args()

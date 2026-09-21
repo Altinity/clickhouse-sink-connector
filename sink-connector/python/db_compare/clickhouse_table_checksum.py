@@ -112,12 +112,14 @@ def clickhouse_datetime_rendering(column_name, zone):
     return f"toString(toDateTime64({column_name}, 6), '{zone}')"
 
 
-def clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds=(DATETIME_MIN, DATETIME_MAX), zone='UTC'):
+def clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds=(DATETIME_MIN, DATETIME_MAX), zone='UTC', raw_bytes=False):
     """Text rendering of one ClickHouse column (spec 11.02 section 3.3).
 
     ``column_name`` is already double-quoted. ``options`` is the parsed argument
     namespace (only its rendering options are read). ``bounds`` are the
-    canonical (min, max) datetime clamp bounds in ``zone``.
+    canonical (min, max) datetime clamp bounds in ``zone``. ``raw_bytes`` marks
+    a String column that holds raw bytes (persist.raw.bytes=true, spec 11.02
+    section 3.6): it is rendered as lowercase hex like the MySQL side.
     """
     if 'Bool' in data_type:
         # Bool and Nullable(Bool); MySQL renders bit(1) / tinyint as 1 / 0,
@@ -128,8 +130,8 @@ def clickhouse_column_expression(column_name, data_type, numeric_scale, options,
         return "toDecimalString(" + column_name + "," + str(numeric_scale) + ")"
     if is_datetime_type(data_type):
         return clamp_datetime_expression(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1], 'clickhouse')
-    if column_name.strip('"') in options.hex_columns:
-        return "toString(unhex(" + column_name + "))"
+    if raw_bytes and 'String' in data_type:
+        return "lower(hex(" + column_name + "))"
     return "toString(" + column_name + ")"
 
 
@@ -159,6 +161,12 @@ def build_clickhouse_row_expression(columns_metadata, options):
     source_zone = options.source_timezone
     wall_clock_bounds = shift_datetime_bounds(utc_bounds, source_zone)
     timestamp_columns = parse_column_list(options.timestamp_columns)
+    # --hex_columns names the String columns that hold raw bytes; with hex or
+    # base64 the replica already holds encoded text (spec 11.02 section 3.6).
+    hex_columns = parse_column_list(",".join(options.hex_columns))
+    if hex_columns and options.binary_encoding != 'raw':
+        raise ValueError("--hex_columns names columns that hold raw bytes and requires --binary_encoding raw; "
+                         f"with --binary_encoding {options.binary_encoding} the replica already holds encoded text")
     for row in columns_metadata:
         column_name = '"' + row[0] + '"'
         data_type = row[1]
@@ -178,7 +186,8 @@ def build_clickhouse_row_expression(columns_metadata, options):
             if 'json' in data_type:
                 logging.info(f"Excluding json column {column_name} of type {data_type}")
                 continue
-        expression = clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds, zone)
+        expression = clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds, zone,
+                                                  raw_bytes=(row[0] in hex_columns))
         if is_datetime_type(data_type):
             clamped_flags.append(clamped_datetime_flag(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1]))
         if is_nullable == 1:
@@ -384,7 +393,9 @@ def main():
     parser.add_argument('--no_wc', action='store_true', default=False, help='Runs wc first to determine the table names from the regex', required=False)
     parser.add_argument('--debug_output', action='store_true', default=False, help='Output the raw format to a file called out.txt', required=False)
     parser.add_argument('--debug_limit', help='Limit the debug output in lines', required=False)
-    parser.add_argument('--hex_columns', help='columns to convert to hex', nargs='+', default=[])
+    parser.add_argument('--binary_encoding', choices=['hex', 'base64', 'raw'], default='hex', required=False,
+                        help='how the connector wrote binary values: hex text (default), base64 text (binary.handling.mode=base64) or raw bytes (persist.raw.bytes=true); pass the same value to the MySQL side')
+    parser.add_argument('--hex_columns', help='with --binary_encoding raw: the String columns holding raw bytes, rendered as lower(hex(col)); comma or space separated', nargs='+', default=[])
     parser.add_argument('--debug', dest='debug', action='store_true', default=False)
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
     parser.add_argument('--exclude_columns', help='columns exclude', nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
