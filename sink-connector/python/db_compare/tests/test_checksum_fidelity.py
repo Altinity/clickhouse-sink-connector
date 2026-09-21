@@ -295,6 +295,19 @@ class TestMySQLColumnClassification(unittest.TestCase):
         self.assertIn("cast(`t` as time(6))", select)
 
 
+class TestMySQLTemporalRendering(unittest.TestCase):
+    """Fixed-precision temporal text on the MySQL side (spec 11.02 section 3.5)."""
+
+    def test_time_is_rendered_with_six_fraction_digits_for_every_precision(self):
+        # The connector stores TIME as [-]HH:MM:SS.ffffff whatever the declared
+        # precision (spec 07.03 section 3.2); the old substr(..., length(col))
+        # truncated time(0) to '10:00:00' and reported DIFFERENT.
+        for precision in (None, 0, 3, 6):
+            column_type = "time" if not precision else f"time({precision})"
+            select = build_mysql_select([mysql_column("t", "time", column_type, precision=precision)])
+            self.assertEqual(select, "cast(`t` as time(6))", column_type)
+
+
 class TestEndToEndChecksum(unittest.TestCase):
     """Both scripts, driven through their real code paths over stubbed engines."""
 

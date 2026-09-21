@@ -81,7 +81,9 @@ def mysql_column_expression(column, options, binary_encoding, same_charset):
             return f"case when {column_name} >=  substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(3))),1,length({column_name})) else case when {column_name} <= '{options.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{options.min_datetime_value}' AS datetime(3)))) else substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name})) end end"
         return f"case when {column_name} >= substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(6)))),1,length({column_name})) else case when {column_name} <= '{options.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{options.min_datetime_value}' AS datetime(6)))) else  substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name})) end end"
     if data_type == 'time':
-        return f"substr(cast({column_name} as time(6)),1,length({column_name}))"
+        # The connector stores TIME as [-]HH:MM:SS.ffffff for every declared
+        # precision (spec 07.03 section 3.2), so render six digits unconditionally.
+        return f"cast({column_name} as time(6))"
     if data_type == 'timestamp':
         return f"substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name}))"
     if data_type == 'date':  # Date are converted to Date32 in CH

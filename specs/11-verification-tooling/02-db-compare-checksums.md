@@ -126,7 +126,8 @@ single character `#`:
 | integers, `year`, `char`/`varchar`/`text`, `enum`, `set` | `Int*`/`UInt*`, `String`, `LowCardinality(String)` | the column (`convert(col using utf8mb4)` when the table mixes collations) | `toString(col)` |
 | `decimal` | `Decimal(p,s)` | the column (MySQL prints the declared scale) | `toDecimalString(col, s)` (`numeric_scale` from `system.columns`; `toString` would drop trailing zeros) |
 | `date` | `Date`/`Date32` | `case when col >= max then max when col <= min then min else col end` with `--min_date_value` / `--max_date_value` | `toString(col)` |
-| binary, temporal, boolean/bit, floating point, JSON | — | see the following sections | see the following sections |
+| `time(p)`, any `p` | `String` holding `[-]HH:MM:SS.ffffff` (spec 07.03 §3.2) | `cast(col as time(6))` — six fraction digits unconditionally; the old `substr(cast(col as time(6)),1,length(col))` truncated `time(0)` to `10:00:00` and reported DIFFERENT (`test_checksum_fidelity.py::TestMySQLTemporalRendering.test_time_is_rendered_with_six_fraction_digits_for_every_precision`) | `toString(col)` |
+| binary, datetime/timestamp, boolean/bit, floating point, JSON | — | see the following sections | see the following sections |
 
 ### 3.4 Aggregate (the actual algorithm)
 The checksum is **not** `MD5(groupArray(cityHash64(*)))` and there is no
