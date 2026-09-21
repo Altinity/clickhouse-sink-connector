@@ -316,7 +316,7 @@ In `GroupInsertQueryWithBatchRecords.groupQueryWithRecords()`:
      - Replication History Mode: Preserves single after-image record with temporal metadata.
    - **DELETE (`d`)**: Dispatches `before` image with delete flag.
    - A record whose required image is missing, or for which no column metadata is available, fails the batch with `IllegalStateException`; nothing is dropped (Spec 04.01 §3.3).
-   - **TRUNCATE (`t`)**: Directly generates `TRUNCATE TABLE \`table\``.
+   - **TRUNCATE (`t`)**: Closes the current segment and occupies a segment of its own; the executor issues `TRUNCATE TABLE \`<target db>\`.\`table\`` at that position, between the segments around it (Spec 04.05).
 
 #### Step 3.5: Statement Parameter Binding & Execution
 In `PreparedStatementExecutor.insertBatch()` and `PreparedStatementFieldMapper.insertPreparedStatement()`:
@@ -457,9 +457,9 @@ The following catalog specifies the behavioral contract, synchronization boundar
 
 ### 4.3 `GroupInsertQueryWithBatchRecords`
 
-#### `public void groupQueryWithRecords(List[ClickHouseStruct] records, Map[QueryTemplate, List[ClickHouseStruct]] queryToRecordsMap, Map[TopicPartition, Long] partitionToOffsetMap, ClickHouseSinkConnectorConfig config, String tableName, String databaseName, Connection connection, Map[String, String] columnNameToDataTypeMap)`
-- **Purpose**: Deconstructs record batches into parameterized SQL query templates and associated record buckets.
-- **Inputs**: Input records, target query-to-record map, offset tracker, config, table/db names, JDBC connection, cached column types.
+#### `public void groupQueryWithRecords(List[ClickHouseStruct] records, List[Map[QueryTemplate, List[ClickHouseStruct]]] querySegments, Map[TopicPartition, Long] partitionToOffsetMap, ClickHouseSinkConnectorConfig config, String tableName, String databaseName, Connection connection, Map[String, String] columnNameToDataTypeMap)`
+- **Purpose**: Deconstructs record batches into an ordered list of segments, each mapping parameterized SQL query templates to their record buckets; a replicated TRUNCATE is a segment of its own (Spec 04.05).
+- **Inputs**: Input records, target segment list, offset tracker, config, table/db names, JDBC connection, cached column types.
 - **Outputs**: None. Every record is grouped or the method throws; there is no per-record skip and no boolean status (Spec 04.01 §3.3).
 - **Locks**: None (thread-confined to worker).
 - **Mutations**: Updates `queryToRecordsMap` and `partitionToOffsetMap`; may alter table schema or update cache via `refreshIfRecordHasUnknownColumn`.

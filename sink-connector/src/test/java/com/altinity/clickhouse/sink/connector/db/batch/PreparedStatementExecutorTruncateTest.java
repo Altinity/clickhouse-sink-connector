@@ -21,6 +21,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -31,6 +33,16 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p>The TRUNCATE here is never the connector's own decision: it is MySQL's
  * statement, already executed at the source, arriving as a binlog change
  * event that the replica must follow.</p>
+ *
+ * <p><b>The ordering defect.</b> The grouping stage put the truncation under
+ * its own key in the SAME {@code HashMap} as the INSERT template, and the
+ * executor iterated that map. Whether the truncation ran before or after the
+ * inserts of the same batch therefore depended on the hash of the table name:
+ * for one order {@code [INSERT r1, TRUNCATE, INSERT r2]} resurrected r1, for
+ * the other it lost r2. Two TRUNCATEs in one batch collapsed onto one key. And
+ * the statement was issued against the SOURCE database name carried by the
+ * record, which under {@code clickhouse.database.override.map} is not the
+ * table's database at all.</p>
  */
 public class PreparedStatementExecutorTruncateTest {
 
@@ -78,13 +90,129 @@ public class PreparedStatementExecutorTruncateTest {
     private static boolean run(String table, List<ClickHouseStruct> records, RecordingJdbc jdbc)
             throws Exception {
         ClickHouseSinkConnectorConfig config = config();
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> grouped = new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> segments =
+                new ArrayList<>();
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
-                records, grouped, new HashMap<>(), config, table, TARGET_DB, null, columns());
+                records, segments, new HashMap<>(), config, table, TARGET_DB, null, columns());
         PreparedStatementExecutor executor = new PreparedStatementExecutor(
                 null, false, null, null, TARGET_DB, ZoneId.of("UTC"));
-        return executor.addToPreparedStatementBatch("topic", grouped, new BlockMetaData(), config,
+        return executor.addToPreparedStatementBatch("topic", segments, new BlockMetaData(), config,
                 jdbc.connection(), table, columns(), DBMetadata.TABLE_ENGINE.MERGE_TREE);
+    }
+
+    /** A compact trace: {@code INSERT(id)} per staged row, {@code FLUSH}, {@code EXECUTE <sql>}. */
+    private static List<String> trace(RecordingJdbc jdbc) {
+        List<String> out = new ArrayList<>();
+        for (RecordingJdbc.Event e : jdbc.events) {
+            switch (e.kind) {
+                case RecordingJdbc.ADD_BATCH:
+                    out.add("INSERT(" + e.params.get(1) + ")");
+                    break;
+                case RecordingJdbc.EXECUTE_BATCH:
+                    out.add("FLUSH");
+                    break;
+                case RecordingJdbc.EXECUTE:
+                    out.add("EXECUTE " + e.sql);
+                    break;
+                default:
+                    break;
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Reproduces the pre-fix keying -- INSERT template pair and truncation marker
+     * pair in one {@code HashMap} -- and reports whether the truncation entry
+     * iterated FIRST for this table name. Used to pick two table names that
+     * cover both hash orders, so the ordering assertion cannot pass by luck.
+     */
+    private static boolean truncateIteratedFirstUnderOldKeying(String table) {
+        Map<String, Integer> insertIndexes = new HashMap<>();
+        insertIndexes.put("id", 1);
+        MutablePair<String, Map<String, Integer>> insertKey = new MutablePair<>(
+                "INSERT INTO `" + table + "`(`id`) VALUES (?)", insertIndexes);
+        // DESTRUCTIVE: marker text only, mirroring the old grouping key; it is
+        // used to compute a HashMap iteration order and is never executed.
+        MutablePair<String, Map<String, Integer>> truncateKey = new MutablePair<>(
+                "TRUNCATE TABLE `" + table + "`", new HashMap<>());
+        Map<MutablePair<String, Map<String, Integer>>, String> asTheOldCodeKeyedIt = new HashMap<>();
+        asTheOldCodeKeyedIt.put(insertKey, "insert");
+        asTheOldCodeKeyedIt.put(truncateKey, "truncate");
+        return "truncate".equals(asTheOldCodeKeyedIt.values().iterator().next());
+    }
+
+    /** Two table names whose old-keying hash orders differ: [truncate-first, truncate-last]. */
+    private static String[] tablesCoveringBothHashOrders() {
+        String truncateFirst = null;
+        String truncateLast = null;
+        for (int i = 0; i < 10_000 && (truncateFirst == null || truncateLast == null); i++) {
+            String table = "orders_" + i;
+            if (truncateIteratedFirstUnderOldKeying(table)) {
+                truncateFirst = truncateFirst == null ? table : truncateFirst;
+            } else {
+                truncateLast = truncateLast == null ? table : truncateLast;
+            }
+        }
+        assertNotNull(truncateFirst, "precondition: a table name whose TRUNCATE hashed first");
+        assertNotNull(truncateLast, "precondition: a table name whose TRUNCATE hashed last");
+        return new String[]{truncateFirst, truncateLast};
+    }
+
+    // DESTRUCTIVE: the tests below drive replicated TRUNCATE events into a
+    // recording JDBC proxy; nothing is executed against any database.
+    @Test
+    @DisplayName("INSERT(r1) -> TRUNCATE -> INSERT(r2) is applied in binlog order for both hash orders")
+    public void truncateIsAppliedAtItsBinlogPositionForBothHashOrders() throws Exception {
+        for (String table : tablesCoveringBothHashOrders()) {
+            RecordingJdbc jdbc = new RecordingJdbc();
+
+            boolean result = run(table, new ArrayList<>(Arrays.asList(
+                    insert(1, 1), truncateEvent(2), insert(2, 3))), jdbc);
+
+            assertTrue(result, "the batch is written");
+            // DESTRUCTIVE: expected-trace text; asserts the recorded ORDER of a
+            // replicated TRUNCATE relative to the rows around it.
+            assertEquals(Arrays.asList(
+                            "INSERT(1)", "FLUSH",
+                            "EXECUTE TRUNCATE TABLE `" + TARGET_DB + "`.`" + table + "`",
+                            "INSERT(2)", "FLUSH"),
+                    trace(jdbc),
+                    "table " + table + ": r1 must reach ClickHouse before the truncation and r2 after it; "
+                            + "events: " + jdbc.events);
+        }
+    }
+
+    @Test
+    @DisplayName("The truncation targets the executor's (resolved target) database, not the source database")
+    public void truncateTargetsTheExecutorDatabaseNotTheSourceDatabase() throws Exception {
+        RecordingJdbc jdbc = new RecordingJdbc();
+
+        run("orders", new ArrayList<>(Arrays.asList(insert(1, 1), truncateEvent(2))), jdbc);
+
+        List<RecordingJdbc.Event> executed = jdbc.ofKind(RecordingJdbc.EXECUTE);
+        assertEquals(1, executed.size(), "exactly one truncate: " + jdbc.events);
+        // DESTRUCTIVE: expected statement text; under a database override map
+        // the record's source database is not the table's database at all.
+        assertEquals("TRUNCATE TABLE `" + TARGET_DB + "`.`orders`", executed.get(0).sql,
+                "the record carries the SOURCE database (" + SOURCE_DB + "); the statement must "
+                        + "name the executor's target database");
+    }
+
+    @Test
+    @DisplayName("Two TRUNCATEs in one batch are two segments; both run, in order")
+    public void twoTruncatesInOneBatchAreBothApplied() throws Exception {
+        RecordingJdbc jdbc = new RecordingJdbc();
+
+        run("orders", new ArrayList<>(Arrays.asList(
+                insert(1, 1), truncateEvent(2), insert(2, 3), truncateEvent(4), insert(3, 5))), jdbc);
+
+        String truncate = "EXECUTE TRUNCATE TABLE `" + TARGET_DB + "`.`orders`";
+        // DESTRUCTIVE: expected-trace text only (recording proxy).
+        assertEquals(Arrays.asList(
+                        "INSERT(1)", "FLUSH", truncate, "INSERT(2)", "FLUSH", truncate, "INSERT(3)", "FLUSH"),
+                trace(jdbc),
+                "two equal TRUNCATE keys must not collapse onto one; events: " + jdbc.events);
     }
 
     /**
@@ -97,7 +225,7 @@ public class PreparedStatementExecutorTruncateTest {
     // DESTRUCTIVE: the test below drives a replicated TRUNCATE event into a
     // recording JDBC proxy that REFUSES it; nothing is executed anywhere.
     @Test
-    @DisplayName("A TRUNCATE that ClickHouse refuses fails the batch; the result is never true")
+    @DisplayName("A truncation that ClickHouse refuses fails the batch; the result is never true")
     public void truncateRefusedByClickHouseFailsTheBatch() {
         RecordingJdbc jdbc = new RecordingJdbc();
         // Refuse only the qualified TRUNCATE statement itself (marker: the
@@ -121,5 +249,8 @@ public class PreparedStatementExecutorTruncateTest {
         }
         assertTrue(String.valueOf(root.getMessage()).contains("refused to prepare"),
                 "the ClickHouse refusal must be the root cause; was: " + root);
+        assertTrue(jdbc.ofKind(RecordingJdbc.ADD_BATCH).size() == 1,
+                "r1 was staged and flushed before the truncate; r2 must NOT have been written: "
+                        + jdbc.events);
     }
 }

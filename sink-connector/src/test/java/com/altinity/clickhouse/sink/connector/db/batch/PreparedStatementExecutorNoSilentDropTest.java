@@ -33,9 +33,10 @@ public class PreparedStatementExecutorNoSilentDropTest {
     }
 
     @Test
-    @DisplayName("An empty query map is refused loudly, never reported as 'not written'")
+    @DisplayName("An empty segment list is refused loudly, never reported as 'not written'")
     public void emptyQueryMapIsRefusedNotRetried() {
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> empty = new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> empty =
+                new java.util.ArrayList<>();
         Map<String, String> columns = new LinkedHashMap<>();
         columns.put("id", "Int32");
         RecordingJdbc jdbc = new RecordingJdbc();

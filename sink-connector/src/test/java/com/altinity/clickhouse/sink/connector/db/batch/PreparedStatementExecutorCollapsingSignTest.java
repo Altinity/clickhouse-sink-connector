@@ -76,11 +76,14 @@ public class PreparedStatementExecutorCollapsingSignTest {
     private static MutablePair<RecordingJdbc, Map<String, Integer>> run(List<ClickHouseStruct> records)
             throws Exception {
         ClickHouseSinkConnectorConfig config = config();
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> grouped = new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> grouped =
+                new ArrayList<>();
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
                 records, grouped, new HashMap<>(), config, TABLE, "db", null, columns());
-        assertEquals(1, grouped.size(), "all records share one INSERT template: " + grouped.keySet());
-        Map<String, Integer> indexMap = grouped.keySet().iterator().next().getRight();
+        assertEquals(1, grouped.size(), "no TRUNCATE: one segment");
+        assertEquals(1, grouped.get(0).size(),
+                "all records share one INSERT template: " + grouped.get(0).keySet());
+        Map<String, Integer> indexMap = grouped.get(0).keySet().iterator().next().getRight();
 
         RecordingJdbc jdbc = new RecordingJdbc();
         PreparedStatementExecutor executor = new PreparedStatementExecutor(

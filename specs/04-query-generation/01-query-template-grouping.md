@@ -22,7 +22,7 @@ Because schema evolution or sparse CDC records can produce differing column subs
   ```sql
   INSERT INTO db.table(col1, col2, ..., _version, is_deleted) VALUES (?, ?, ..., ?, ?)
   ```
-- The batch is grouped into `Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap` (there is no `QueryTemplate` class; the pair is the key).
+- The batch is grouped into an **ordered list of segments**, `List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> querySegments` (there is no `QueryTemplate` class; the pair is the key). Within a segment the templates may execute in any order; a replicated TRUNCATE event closes the current segment, forms a segment of its own, and a new segment starts behind it, so the executor applies it at its binlog position (spec 04.05 §3.1). A batch without a TRUNCATE is exactly one segment.
 - All records in a bucket share a single `PreparedStatement`, minimizing SQL parsing overhead on ClickHouse.
 
 ### 3.2 One record, one entry

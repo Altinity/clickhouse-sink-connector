@@ -46,8 +46,18 @@ public class GroupInsertQueryWithBatchRecords {
      * map with the highest offset per topic partition.
      * </p>
      *
-     * @param records              list of ClickHouseStruct records.
-     * @param queryToRecordsMap    map of query template to list of records.
+     * <p>The output is an ORDERED list of segments (Spec 04.05 §3). Within a
+     * segment, records are keyed by their INSERT template and the executor
+     * may run the templates in any order; a replicated truncation event ends
+     * the current segment, occupies a segment of its own, and a new segment
+     * begins after it. A single map cannot express this: its iteration order
+     * is hash order, so a truncation landed before or after the INSERTs of the
+     * same batch depending on the table name, and two TRUNCATEs in one batch
+     * collapsed onto one key.</p>
+     *
+     * @param records              list of ClickHouseStruct records, in binlog order.
+     * @param querySegments        receives the ordered segments; each is a map
+     *                             of query template to list of records.
      * @param partitionToOffsetMap map of TopicPartition to latest offset.
      * @param config               connector configuration.
      * @param tableName            target table name.
@@ -63,12 +73,18 @@ public class GroupInsertQueryWithBatchRecords {
      */
     public void groupQueryWithRecords(
             List<ClickHouseStruct> records,
-            Map<MutablePair<String, Map<String, Integer>>,
-                    List<ClickHouseStruct>> queryToRecordsMap,
+            List<Map<MutablePair<String, Map<String, Integer>>,
+                    List<ClickHouseStruct>>> querySegments,
             Map<TopicPartition, Long> partitionToOffsetMap,
             ClickHouseSinkConnectorConfig config,
             String tableName, String databaseName, Connection connection,
             Map<String, String> columnNameToDataTypeMap) {
+
+        // The segment currently being filled. It is appended to querySegments
+        // the first time a record lands in it, and replaced by a fresh map
+        // after every TRUNCATE.
+        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap =
+                new HashMap<>();
 
         // Co4 = {ClickHouseStruct@9220} de block to create a Map of Query ->
         // list of records so that all records belonging to the same query
@@ -110,6 +126,22 @@ public class GroupInsertQueryWithBatchRecords {
                     connection, config);
             if (verified != null) {
                 columnNameToDataTypeMap = verified;
+            }
+
+            // A replicated truncation (MySQL's own TRUNCATE, delivered as a
+            // change event) must run at its binlog position: rows before it
+            // belong to the pre-truncation state and must reach ClickHouse
+            // first, rows after it are the new state and must survive. It
+            // closes the current segment, takes a segment of its own, and a
+            // new segment starts behind it (Spec 04.05 section 3).
+            if (isTruncate(record)) {
+                Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> truncateSegment =
+                        new HashMap<>();
+                updateQueryToRecordsMap(record, null, truncateSegment, tableName, config,
+                        columnNameToDataTypeMap);
+                querySegments.add(truncateSegment);
+                queryToRecordsMap = new HashMap<>();
+                continue;
             }
 
             if (CdcRecordState.CDC_RECORD_STATE_BEFORE ==
@@ -173,7 +205,22 @@ public class GroupInsertQueryWithBatchRecords {
                                 + "section 3.3).",
                         describe(record), tableName));
             }
+            // The record landed in the current segment; publish the segment
+            // the first time that happens (identity check: the same map is
+            // never appended twice).
+            if (querySegments.isEmpty()
+                    || querySegments.get(querySegments.size() - 1) != queryToRecordsMap) {
+                querySegments.add(queryToRecordsMap);
+            }
         }
+    }
+
+    /** Whether the record is a replicated truncation event ({@code op = t}, MySQL TRUNCATE). */
+    static boolean isTruncate(ClickHouseStruct record) {
+        return record.getCdcOperation() != null
+                && record.getCdcOperation().getOperation() != null
+                && record.getCdcOperation().getOperation().equalsIgnoreCase(
+                        ClickHouseConverter.CDC_OPERATION.TRUNCATE.getOperation());
     }
 
     /**
@@ -197,7 +244,8 @@ public class GroupInsertQueryWithBatchRecords {
      *
      * @param record             a ClickHouseStruct record.
      * @param modifiedFields     list of modified fields.
-     * @param queryToRecordsMap  map from query template to list of records.
+     * @param queryToRecordsMap  the segment being filled: map from query
+     *                           template to list of records.
      * @param tableName          target table name.
      * @param config             connector configuration.
      * @param columnNameToDataTypeMap map of column names to data types.
@@ -214,10 +262,13 @@ public class GroupInsertQueryWithBatchRecords {
             Map<String, String> columnNameToDataTypeMap) {
 
         // Step 1: If its a TRUNCATE OPERATION, add a TRUNCATE TABLE command.
-        if (record.getCdcOperation().getOperation()
-                .equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.TRUNCATE
-                        .getOperation())) {
+        // The key is a marker only: the executor recognises the group by the
+        // record's operation and issues the qualified statement itself,
+        // against ITS database (the resolved target), never this text.
+        if (isTruncate(record)) {
             MutablePair<String, Map<String, Integer>> mp = new MutablePair<>();
+            // DESTRUCTIVE: marker text for a replicated MySQL TRUNCATE event;
+            // it is never executed as SQL (see PreparedStatementExecutor).
             mp.setLeft(String.format("TRUNCATE TABLE `%s`", tableName));
             mp.setRight(new HashMap<String, Integer>());
             ArrayList<ClickHouseStruct> records = new ArrayList<>();

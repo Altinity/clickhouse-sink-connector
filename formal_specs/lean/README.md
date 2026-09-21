@@ -45,7 +45,8 @@ formal_specs/lean/
     ├── GeneratedColumn.lean           # Generated-Column Type Integrity (Invariant I13): expression maps to DEFAULT, never the type
     ├── DdlBarrier.lean                # DDL Barrier Quiescence (Invariant I5): the barrier covers legacy + routed queues + unacknowledged batches
     ├── OffsetFifo.lean                # Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01): commit never passes an outstanding batch, written-once
-    └── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07): no bare ALTER, loud key widening, ADD COLUMN preserved
+    ├── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07): no bare ALTER, loud key widening, ADD COLUMN preserved
+    └── BatchOrder.lean                # Batch execution order around a replicated TRUNCATE (Spec 04.05): ordered segments reproduce binlog order; hash-map order does not
 ```
 
 ---
@@ -187,6 +188,22 @@ An `ALTER TABLE` is modelled as a list of classified clauses (`addColumn`,
 | `wider_key_change_is_loud` | `modifyKeyColumnWider n ∈ cs → translate cs = fail` | A sorting-key widening is refused with `DDLReplicationException` (I9), never emitted to fail with `Code: 524` after retries. |
 | `add_columns_preserved` | `translate cs = emit kept → addColumn n ∈ cs → addColumn n ∈ kept` | Skipping an unrepresentable neighbour never drops an `ADD COLUMN` (I6). |
 | `emitted_are_representable` | `translate cs = emit kept → kept = keep cs` (`keep` = the representable clauses, in source order) | Exactly the representable clauses are emitted, in source order. |
+
+### Batch execution order around a replicated TRUNCATE (Spec 04.05, `BatchOrder.lean`)
+
+A worker's batch is executed as statement groups. The pre-fix executor kept
+the TRUNCATE group and the INSERT groups in one hash map, so the truncate ran
+before or after the batch's inserts depending on the table name's hash; the
+fixed executor splits the batch at every TRUNCATE into ordered segments
+(`splitAtTruncate`) and runs them in order (`execSegments`).
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `segments_match_source` | `execSegments s (splitAtTruncate evs) = evs.foldl applyBinlogEvent s` for every batch and start state | Executing the segments in order IS applying the events in binlog order: rows before the truncate reach the table first, rows after it survive. |
+| `segmented_batch_converges` | `execSegments emptyMySQL (splitAtTruncate evs) = evalMySQL evs` | The same, against the source evaluator. |
+| `every_truncate_is_its_own_segment` | `numTruncateSegments (splitAtTruncate evs) = numTruncates evs` | Two TRUNCATEs in one batch stay two segments (they collapsed onto one hash-map key before). |
+| `truncate_last_loses_rows` | for `[INSERT k v, TRUNCATE, INSERT k v']`, truncate-after-inserts ≠ source at `k` | The pre-fix order that loses the rows following the truncate. |
+| `truncate_first_resurrects_rows` | for `[INSERT k v, TRUNCATE]`, truncate-before-inserts ≠ source at `k` | The pre-fix order that resurrects the rows preceding the truncate. |
 
 The `lean_lib` is now the package's `@[default_target]`, so a plain `lake build`
 type-checks every module (previously it built only the lakefile; use

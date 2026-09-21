@@ -259,14 +259,17 @@ public class GroupInsertQueryWithBatchRecordsTest {
         return record;
     }
 
+    /** Groups one INSERT and returns its (single) segment. */
     private static Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> group(
             FakeClickHouse ch, ClickHouseSinkConnectorConfig config) {
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queries = new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> segments =
+                new ArrayList<>();
         Map<TopicPartition, Long> offsets = new HashMap<>();
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
-                Collections.singletonList(insertCarryingNote()), queries, offsets, config,
+                Collections.singletonList(insertCarryingNote()), segments, offsets, config,
                 "t", "db", ch.connection(), cachedWithoutNote());
-        return queries;
+        assertEquals(1, segments.size(), "one INSERT is one segment");
+        return segments.get(0);
     }
 
     @BeforeEach
@@ -406,13 +409,14 @@ public class GroupInsertQueryWithBatchRecordsTest {
                 ch.executed.get(0));
     }
 
-    private static Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> groupOne(
+    private static List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> groupOne(
             ClickHouseStruct record, Map<String, String> columns) {
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queries = new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> segments =
+                new ArrayList<>();
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
-                new ArrayList<>(Collections.singletonList(record)), queries, new HashMap<>(),
+                new ArrayList<>(Collections.singletonList(record)), segments, new HashMap<>(),
                 config(false), "t", "db", null, columns);
-        return queries;
+        return segments;
     }
 
     /**

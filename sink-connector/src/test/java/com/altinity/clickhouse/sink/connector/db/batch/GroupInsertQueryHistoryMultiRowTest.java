@@ -75,10 +75,12 @@ public class GroupInsertQueryHistoryMultiRowTest {
     }
 
     private static int groupedRecordCount(
-            Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> map) {
+            List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> segments) {
         int n = 0;
-        for (List<ClickHouseStruct> l : map.values()) {
-            n += l.size();
+        for (Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> map : segments) {
+            for (List<ClickHouseStruct> l : map.values()) {
+                n += l.size();
+            }
         }
         return n;
     }
@@ -93,8 +95,8 @@ public class GroupInsertQueryHistoryMultiRowTest {
         for (int id = 1; id <= 20; id++) {
             records.add(updateRecord(id, id));
         }
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> grouped =
-                new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> grouped =
+                new ArrayList<>();
 
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
                 records, grouped, new HashMap<>(), historyConfig(),
@@ -117,8 +119,8 @@ public class GroupInsertQueryHistoryMultiRowTest {
         for (int id = 2; id <= 5; id++) {
             records.add(updateRecord(id, id));
         }
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> grouped =
-                new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> grouped =
+                new ArrayList<>();
 
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
                 records, grouped, new HashMap<>(), historyConfig(),
@@ -137,8 +139,8 @@ public class GroupInsertQueryHistoryMultiRowTest {
     public void historyModeStillEmitsOneRowPerUpdate() {
         List<ClickHouseStruct> records = new ArrayList<>();
         records.add(updateRecord(1, 1));
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> grouped =
-                new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> grouped =
+                new ArrayList<>();
 
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
                 records, grouped, new HashMap<>(), historyConfig(),
@@ -165,8 +167,8 @@ public class GroupInsertQueryHistoryMultiRowTest {
         for (int id = 1; id <= 20; id++) {
             records.add(updateRecord(id, id));
         }
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> grouped =
-                new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> grouped =
+                new ArrayList<>();
 
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
                 records, grouped, new HashMap<>(),
@@ -184,16 +186,17 @@ public class GroupInsertQueryHistoryMultiRowTest {
      */
     @Test
     public void standardModeGroupsOneUpdateUnderOneTemplateOnce() {
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> grouped =
-                new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> grouped =
+                new ArrayList<>();
 
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
                 new ArrayList<>(List.of(updateRecord(1, 1))), grouped, new HashMap<>(),
                 new ClickHouseSinkConnectorConfig(new HashMap<>()),
                 TABLE, DB, null, columns());
 
-        Assert.assertEquals("one UPDATE resolves to one template", 1, grouped.size());
+        Assert.assertEquals("one UPDATE is one segment", 1, grouped.size());
+        Assert.assertEquals("one UPDATE resolves to one template", 1, grouped.get(0).size());
         Assert.assertEquals("the template's record list must hold the UPDATE once",
-                1, grouped.values().iterator().next().size());
+                1, grouped.get(0).values().iterator().next().size());
     }
 }

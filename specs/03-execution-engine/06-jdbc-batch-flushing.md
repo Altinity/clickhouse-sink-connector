@@ -23,7 +23,7 @@ Specifies the accumulation, chunking, and JDBC `executeBatch()` dispatching of p
 For each partition:
 - a `PreparedStatement` is obtained from `DBMetadata.getPreparedStatement(conn, insertQuery)` (which throws `SQLException` after `MAX_RETRIES` refused attempts rather than returning `null`, spec 04.05 §3 step 2);
 - rows are bound by `PreparedStatementFieldMapper.insertPreparedStatement` (before/after image per operation), a sorting-key relocation additionally binds a tombstone (`insertTombstonePreparedStatement`, spec 05.02), each followed by `ps.addBatch()`;
-- a TRUNCATE record flushes the rows staged so far and truncates in place (spec 04.05);
+- a replicated TRUNCATE never appears inside a template's record list: it is a segment of its own, executed between the segments around it (spec 04.05 §3), so every partition of an earlier segment has been sent before it runs;
 - `int[] batchResult = ps.executeBatch()` sends the partition.
 A failure inside the partition is rethrown as `RuntimeException` from `executePreparedStatement`; the caller (`ClickHouseBatchRunnable`) classifies it via `ClickHouseErrorClassifier` (spec 10.01) — the executor itself does not classify or retry.
 
@@ -36,5 +36,5 @@ A failure inside the partition is rethrown as `RuntimeException` from `executePr
 
 ## 5. Verification Criteria
 - `PreparedStatementExecutorSortingKeyTombstoneTest` — the per-record tombstone decision inside the batch loop.
-- `TruncateTableIT.testRowsInsertedAfterTruncateSurvive()` — in-place TRUNCATE flush ordering within one batch.
+- `PreparedStatementExecutorTruncateTest.truncateIsAppliedAtItsBinlogPositionForBothHashOrders()`, `TruncateTableIT.testRowsInsertedAfterTruncateSurvive()` — TRUNCATE ordering within one batch.
 - Verification: chunking at `buffer.max.records` (e.g. 50,000 rows split into partitions) and the `buffer.flush.time.ms` cadence are not yet covered by an automated test (gap).

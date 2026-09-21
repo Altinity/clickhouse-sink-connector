@@ -280,14 +280,14 @@ public class DbWriterTest {
                 BaseDbWriter.SYSTEM_DB, sinkConnectorConfig);
         DbWriter dbWriter = new DbWriter(dbHostName, port, database, tableName, userName, password, sinkConnectorConfig, null, conn);
 
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> querySegments = new ArrayList<>();
 
         Map<TopicPartition, Long> result = new HashMap<>();
         GroupInsertQueryWithBatchRecords groupInsertQueryWithBatchRecords = new GroupInsertQueryWithBatchRecords();
 
         DBMetadata metadata = new DBMetadata(sinkConnectorConfig);
         groupInsertQueryWithBatchRecords.groupQueryWithRecords(getSampleRecords()
-                , queryToRecordsMap, result, sinkConnectorConfig, tableName, database, dbWriter.getConnection(),
+                , querySegments, result, sinkConnectorConfig, tableName, database, dbWriter.getConnection(),
                 metadata.getColumnsDataTypesForTable(conn, tableName, "employees"));
 
         Assert.assertTrue(result.isEmpty() == false);
