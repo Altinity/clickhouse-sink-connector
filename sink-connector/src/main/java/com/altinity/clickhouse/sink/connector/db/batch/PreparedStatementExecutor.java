@@ -355,6 +355,17 @@ public class PreparedStatementExecutor {
                             fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
                             ps.addBatch();
+                            // The V2 driver's addBatch() keeps the bound values.
+                            // The after image below binds sign=+1 and its own
+                            // columns, but any parameter it does not rebind (a
+                            // column absent from the after image) would silently
+                            // inherit this cancel row's value -- including
+                            // sign=-1, which turns the live row into a second
+                            // cancel row and the UPDATE never lands. Clear the
+                            // bind state, exactly as the ReplacingMergeTree
+                            // relocation tombstone below does (Spec 07.07 section
+                            // 3.2.2, Spec 05.04 section 3.1).
+                            ps.clearParameters();
                         }
                         // ReplacingMergeTree deduplicates by SORTING KEY. An UPDATE that
                         // changes any sorting-key column therefore writes the new row at a
