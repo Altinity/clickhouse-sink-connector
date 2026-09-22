@@ -29,7 +29,7 @@ Specifies the JDBC connection lifecycle and HikariCP connection pool management 
 ## 3. Operational Specification
 
 ### 3.1 Pool Initialization
-1. `BaseDbWriter.createConnection` builds the JDBC properties (`client_name`, `custom_settings`, user `clickhouse.jdbc.params`, and `http_connection_provider=HTTP_URL_CONNECTION` when pooling is enabled) and a `SinkConnectorDataSource` carrying the real `jdbc:clickhouse://host:port/db` URL.
+1. `BaseDbWriter.createConnection` builds the JDBC properties (`client_name`, `custom_settings`, user `clickhouse.jdbc.params`, and `http_connection_provider=HTTP_URL_CONNECTION` when pooling is enabled) and a `SinkConnectorDataSource` carrying the real `jdbc:clickhouse://host:port/db` URL. `custom_settings` is computed by `BaseDbWriter.customSettings(userSettings)`: the default list `input_format_null_as_default=0,allow_experimental_object_type=1,insert_allow_materialized_columns=1`, or the user's `clickhouse.jdbc.settings` with `input_format_null_as_default=0` appended when the user list does not mention that key (Spec 07.07 §3.2.1 — the server must never substitute a DEFAULT for a bound NULL).
 2. When `connection.pool.disable = true`, a plain connection is taken from that data source; no pool exists.
 3. Otherwise `HikariDbSource.getInstance` looks up (or creates via `createConnectionPool`) the pool for the key `host:port|database`. `createConnectionPool` sets `poolName = "clickhouse-" + databaseName`, `connectionTimeout`, `maximumPoolSize`, `maxLifetime`, `setDataSource(chDataSource)` (no `setJdbcUrl`/driver class), credentials, and registers the Prometheus meter registry when metrics are enabled.
 

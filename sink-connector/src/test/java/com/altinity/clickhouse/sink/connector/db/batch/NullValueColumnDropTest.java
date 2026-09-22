@@ -88,11 +88,12 @@ public class NullValueColumnDropTest {
         Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecords =
                 new HashMap<>();
 
-        boolean ok = new GroupInsertQueryWithBatchRecords().updateQueryToRecordsMap(
+        // Grouping either succeeds or throws (Spec 04.01 section 3.3); there
+        // is no boolean status any more.
+        new GroupInsertQueryWithBatchRecords().updateQueryToRecordsMap(
                 record, record.getAfterModifiedFields(), queryToRecords,
                 "event", config(), tableColumns());
 
-        Assert.assertTrue("query generation should succeed", ok);
         Assert.assertEquals(1, queryToRecords.size());
 
         MutablePair<String, Map<String, Integer>> key =

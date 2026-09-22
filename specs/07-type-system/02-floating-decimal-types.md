@@ -35,6 +35,15 @@ before any connector code runs. The column types follow what is delivered:
   retry and stalled the stream. A `(precision[, scale])` suffix is emitted only
   for `Decimal` and for `DateTime64`, the two ClickHouse types that take one.
 
+Value-comparison caveat: mapping `FLOAT` to `Float64` is a **widening**. The
+4-byte value is stored exactly (a `float` is exactly representable as a
+`double`), but ClickHouse renders it with double precision — MySQL shows `1.1`
+for a `FLOAT`, ClickHouse shows `1.100000023841858` for the same bits. A
+value-level comparison must therefore compare `toFloat32(col)` on ClickHouse,
+or render both sides with the same shortest-repr algorithm, rather than
+comparing default string renderings (see `DataTypeConverter` and
+`DataTypeConverterTest`).
+
 ### 3.2 Fixed-Point Decimals (`DECIMAL(P, S)`)
 - Debezium encodes `DECIMAL` values as scaled binary byte arrays or `BigDecimal` objects.
 - `ClickHouseDataTypeMapper` binds values directly via `ps.setBigDecimal(index, (BigDecimal) value)`:

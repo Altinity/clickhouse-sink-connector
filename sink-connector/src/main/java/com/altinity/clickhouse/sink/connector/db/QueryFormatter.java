@@ -157,6 +157,36 @@ public class QueryFormatter {
             boolean includeRawData,
             String rawDataColumn, String dbName, String deleteColumn,
             List<Field> schemaFields) {
+        return getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypeMap,
+                includeKafkaMetaData, includeRawData, rawDataColumn, dbName, deleteColumn,
+                schemaFields, null, null);
+    }
+
+    /**
+     * Overload taking the target table's RESOLVED engine columns.
+     *
+     * <p>The version column of a ReplacingMergeTree and the sign column of a
+     * CollapsingMergeTree are read from the table's engine clause
+     * ({@code ReplacingMergeTree(ver)}, {@code CollapsingMergeTree(sgn)}), so
+     * they can carry any name. Recognising them only by the connector's
+     * default constants ({@code _version}, {@code _sign}) left a
+     * differently named column out of the INSERT: it is never in the source
+     * record, so it was "omitted as a pre-ALTER column" and ClickHouse stored
+     * the type default -- {@code ver = 0} for every row (a redelivered older
+     * row then wins every merge) and {@code sgn = 0} (no row ever collapses).
+     * The resolved names are treated exactly like the constants: always
+     * retained, always bind parameters (Spec 04.02 §3.1).</p>
+     *
+     * @param versionColumn the resolved ReplacingMergeTree version column, may be null.
+     * @param signColumn    the resolved CollapsingMergeTree sign column, may be null.
+     */
+    public MutablePair<String, Map<String, Integer>> getInsertQueryUsingInputFunction(
+            String tableName, List<Field> fields,
+            Map<String, String> columnNameToDataTypeMap,
+            boolean includeKafkaMetaData,
+            boolean includeRawData,
+            String rawDataColumn, String dbName, String deleteColumn,
+            List<Field> schemaFields, String versionColumn, String signColumn) {
 
         // Membership is decided by the record's SCHEMA, never by the
         // value-filtered modified-fields list -- see the javadoc above.
@@ -164,7 +194,8 @@ public class QueryFormatter {
 
         // Create column data structures
         ColumnData columnData = createColumns(tableName, membershipFields, columnNameToDataTypeMap,
-                includeKafkaMetaData, includeRawData, rawDataColumn, dbName, deleteColumn);
+                includeKafkaMetaData, includeRawData, rawDataColumn, dbName, deleteColumn,
+                versionColumn, signColumn);
 
         if (columnData == null) {
             return null;
@@ -380,22 +411,26 @@ public class QueryFormatter {
     private ColumnData createColumns(String tableName, List<Field> fields, Map<String, String> columnNameToDataTypeMap,
                                      boolean includeKafkaMetaData, boolean includeRawData, String rawDataColumn, String dbName) {
         return createColumns(tableName, fields, columnNameToDataTypeMap, includeKafkaMetaData,
-                includeRawData, rawDataColumn, dbName, null);
+                includeRawData, rawDataColumn, dbName, null, null, null);
     }
 
     /**
      * Returns true for columns the connector populates itself rather than
      * copying from the source record: {@code _version}, {@code is_deleted},
-     * {@code _sign}, the replication-history validity columns, and the
-     * configured ReplacingMergeTree delete column. These are never present in
-     * the incoming record's schema and must always remain in the INSERT
-     * column list.
+     * {@code _sign}, the replication-history validity columns, the
+     * configured ReplacingMergeTree delete column, and the table's RESOLVED
+     * version and sign columns (read from its engine clause, so they may
+     * carry any name). These are never present in the incoming record's
+     * schema and must always remain in the INSERT column list.
      *
-     * @param colName      the ClickHouse column name to test.
-     * @param deleteColumn the configured delete column name, may be null.
+     * @param colName       the ClickHouse column name to test.
+     * @param deleteColumn  the configured delete column name, may be null.
+     * @param versionColumn the resolved version column name, may be null.
+     * @param signColumn    the resolved sign column name, may be null.
      * @return true if the connector populates this column itself.
      */
-    private boolean isConnectorManagedColumn(String colName, String deleteColumn) {
+    private boolean isConnectorManagedColumn(String colName, String deleteColumn,
+                                             String versionColumn, String signColumn) {
         return colName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.SIGN_COLUMN)
@@ -408,13 +443,22 @@ public class QueryFormatter {
                 // could not be distinguished from an insert -- deleted rows stayed
                 // visible in ClickHouse forever while row counts looked plausible.
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)
-                || (deleteColumn != null && !deleteColumn.isEmpty()
-                        && colName.equalsIgnoreCase(deleteColumn));
+                || matchesResolvedColumn(colName, deleteColumn)
+                // The engine clause decides the real names. A version column
+                // called `ver` or a sign column called `sgn` that is recognised
+                // only by the constants above was dropped from the INSERT and
+                // stored as the type default for every row (Spec 04.02 §3.1).
+                || matchesResolvedColumn(colName, versionColumn)
+                || matchesResolvedColumn(colName, signColumn);
+    }
+
+    private static boolean matchesResolvedColumn(String colName, String resolved) {
+        return resolved != null && !resolved.isEmpty() && colName.equalsIgnoreCase(resolved);
     }
 
     private ColumnData createColumns(String tableName, List<Field> fields, Map<String, String> columnNameToDataTypeMap,
                                      boolean includeKafkaMetaData, boolean includeRawData, String rawDataColumn,
-                                     String dbName, String deleteColumn) {
+                                     String dbName, String deleteColumn, String versionColumn, String signColumn) {
 
         if (fields == null) {
             log.error("getInsertQueryUsingInputFunction, fields empty");
@@ -455,7 +499,7 @@ public class QueryFormatter {
             if (!recordFieldNames.contains(sourceColumnName.toLowerCase())
                     && !isKafkaMetaDataColumn(sourceColumnName)
                     && !sourceColumnName.equalsIgnoreCase(rawDataColumn)
-                    && !isConnectorManagedColumn(sourceColumnName, deleteColumn)) {
+                    && !isConnectorManagedColumn(sourceColumnName, deleteColumn, versionColumn, signColumn)) {
                 log.debug(String.format(
                         "Table Name: %s, Database: %s, Column(%s) omitted from INSERT: "
                                 + "not present in this record's schema (pre-ALTER record); "
@@ -567,6 +611,38 @@ public class QueryFormatter {
         return sb.toString();
     }
 
+    /** A one-column primary key in the map form the composite predicate takes. */
+    private static Map<String, Object> singlePrimaryKey(String columnName, Object value) {
+        Map<String, Object> primaryKey = new java.util.LinkedHashMap<>();
+        primaryKey.put(columnName, value);
+        return primaryKey;
+    }
+
+    /**
+     * The predicate that selects exactly one history row by its whole primary key:
+     * {@code `c1`=v1 AND `c2`=v2 ...}, each value formatted for its column type
+     * (spec 02.01 section 3.5 a). A record without a primary key cannot be closed
+     * and is refused loudly rather than closing every row of the table.
+     *
+     * @throws IllegalStateException if {@code primaryKey} is null or empty
+     */
+    String formatPrimaryKeyPredicate(String tableName, Map<String, String> columnNameToDataTypeMap,
+                                     Map<String, Object> primaryKey) {
+        if (primaryKey == null || primaryKey.isEmpty()) {
+            throw new IllegalStateException("History mode cannot close the previous row of " + tableName
+                    + ": the record carries no primary key column (spec 02.01 section 3.5 a)");
+        }
+        StringBuilder predicate = new StringBuilder();
+        for (Map.Entry<String, Object> column : primaryKey.entrySet()) {
+            if (predicate.length() > 0) {
+                predicate.append(" AND ");
+            }
+            predicate.append("`").append(column.getKey()).append("`=")
+                    .append(formatValueForSql(column.getValue(), columnNameToDataTypeMap.get(column.getKey())));
+        }
+        return predicate.toString();
+    }
+
     /**
      * Builds a 2-SELECT UNION ALL query for replication history DELETE (SCD2 delete pattern).
      * 1. First SELECT: Close the current active row (_valid_to = delete_timestamp, is_deleted = 0).
@@ -580,6 +656,25 @@ public class QueryFormatter {
                                           Map<String, String> columnNameToDataTypeMap,
                                           String primaryKeyColumnName,
                                           Object primaryKeyValue,
+                                          String validToMax,
+                                          String binlogRecordTimestamp,
+                                          long version,
+                                          String serverTimeZone) {
+        return getInsertQueryForDelete(tableName, columnNameToDataTypeMap,
+                singlePrimaryKey(primaryKeyColumnName, primaryKeyValue), validToMax, binlogRecordTimestamp,
+                version, serverTimeZone);
+    }
+
+    /**
+     * Composite-key form of {@link #getInsertQueryForDelete(String, Map, String, Object, String, String, long, String)}:
+     * the previous history row is selected by EVERY primary-key column
+     * ({@code primaryKey}: column name to value, in key order), so a table whose
+     * primary key has several columns closes exactly the row of that composite key
+     * (spec 02.01 section 3.5 a).
+     */
+    public MutablePair<String, Map<String, Integer>> getInsertQueryForDelete(String tableName,
+                                          Map<String, String> columnNameToDataTypeMap,
+                                          Map<String, Object> primaryKey,
                                           String validToMax,
                                           String binlogRecordTimestamp,
                                           long version,
@@ -634,14 +729,13 @@ public class QueryFormatter {
         removeTrailingComma(colNamesDelimitedForFirstSelect);
         removeTrailingComma(colNamesDelimitedForSecondSelect);
 
-        String primaryKeyDataType = columnNameToDataTypeMap.get(primaryKeyColumnName);
-        String formattedPrimaryKeyValue = formatValueForSql(primaryKeyValue, primaryKeyDataType);
+        String primaryKeyPredicate = formatPrimaryKeyPredicate(tableName, columnNameToDataTypeMap, primaryKey);
         String tableWithBackTicks = "`" + tableName + "`";
         String isDeletedCondition = columnNameToDataTypeMap.containsKey(
                 ClickHouseDbConstants.IS_DELETED_COLUMN) ? " AND `is_deleted` = 0" : "";
 
-        String whereClause = String.format("WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s",
-                primaryKeyColumnName, formattedPrimaryKeyValue, validToMax, serverTimeZone, isDeletedCondition);
+        String whereClause = String.format("WHERE %s AND `_valid_to` = toDateTime('%s', '%s')%s",
+                primaryKeyPredicate, validToMax, serverTimeZone, isDeletedCondition);
 
         String query = String.format(
             "INSERT INTO %s(%s) SELECT %s FROM %s FINAL %s UNION ALL SELECT %s FROM %s FINAL %s",
@@ -665,6 +759,26 @@ public class QueryFormatter {
                                                                              Map<String, String> columnNameToDataTypeMap,
                                           String primaryKeyColumnName,
                                           Object primaryKeyValue,
+                                          String validToMax,
+                                          String binlogRecordTimestamp,
+                                          long version,
+                                          ClickHouseConverter.CDC_OPERATION cdcOperation,
+                                          String serverTimeZone) {
+        return getInsertQueryForUpdate(tableName, columnNameToDataTypeMap,
+                singlePrimaryKey(primaryKeyColumnName, primaryKeyValue), validToMax, binlogRecordTimestamp,
+                version, cdcOperation, serverTimeZone);
+    }
+
+    /**
+     * Composite-key form of {@link #getInsertQueryForUpdate(String, Map, String, Object, String, String, long, ClickHouseConverter.CDC_OPERATION, String)}:
+     * both table-reading {@code SELECT}s (close the current row; re-insert the
+     * before image) select the previous history row by EVERY primary-key column
+     * ({@code primaryKey}: column name to value, in key order). Closing on the first
+     * column alone closed every row that shared it (spec 02.01 section 3.5 a).
+     */
+    public MutablePair<String, Map<String, Integer>> getInsertQueryForUpdate(String tableName,
+                                          Map<String, String> columnNameToDataTypeMap,
+                                          Map<String, Object> primaryKey,
                                           String validToMax,
                                           String binlogRecordTimestamp,
                                           long version,
@@ -779,9 +893,8 @@ public class QueryFormatter {
         removeTrailingComma(colNamesDelimitedForSecondSelect);
         removeTrailingComma(colNamesDelimitedForThirdSelect);
 
-        // Get the primary key data type and format the value appropriately
-        String primaryKeyDataType = columnNameToDataTypeMap.get(primaryKeyColumnName);
-        String formattedPrimaryKeyValue = formatValueForSql(primaryKeyValue, primaryKeyDataType);
+        // The predicate over the WHOLE primary key, each value formatted for its type.
+        String primaryKeyPredicate = formatPrimaryKeyPredicate(tableName, columnNameToDataTypeMap, primaryKey);
 
         String tableWithBackTicks = "`" + tableName + "`";
         
@@ -795,25 +908,23 @@ public class QueryFormatter {
         // 3. Insert "before" image (FROM TABLE - preserves original _valid_from)
         String query = String.format(
             "INSERT INTO %s(%s) " +
-            "SELECT %s FROM %s FINAL WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s " +
+            "SELECT %s FROM %s FINAL WHERE %s AND `_valid_to` = toDateTime('%s', '%s')%s " +
             "UNION ALL " +
             "SELECT %s " +  // NO FROM clause for second SELECT - uses parameters
             "UNION ALL " +
-            "SELECT %s FROM %s FINAL WHERE `%s`=%s AND `_valid_to` = toDateTime('%s', '%s')%s",
+            "SELECT %s FROM %s FINAL WHERE %s AND `_valid_to` = toDateTime('%s', '%s')%s",
             tableWithBackTicks, 
             colNamesDelimited, 
             colNamesDelimitedForFirstSelect, 
             tableWithBackTicks, 
-            primaryKeyColumnName, 
-            formattedPrimaryKeyValue, 
+            primaryKeyPredicate,
             validToMax,
             serverTimeZone,
             isDeletedCondition,
             colNamesDelimitedForSecondSelect,
             colNamesDelimitedForThirdSelect,
             tableWithBackTicks,
-            primaryKeyColumnName,
-            formattedPrimaryKeyValue,
+            primaryKeyPredicate,
             validToMax,
             serverTimeZone,
             isDeletedCondition

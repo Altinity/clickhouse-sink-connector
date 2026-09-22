@@ -207,18 +207,40 @@ public class PostgreSQLDDLParserService implements DDLParserService {
     }
 
     /**
-     * Returns {@code true} when the token stream contains a {@code DROP} or
-     * {@code TRUNCATE} keyword, indicating that the statement will remove data
-     * from ClickHouse.
+     * Returns {@code true} when the statement is, at STATEMENT level, a
+     * {@code DROP TABLE}, {@code TRUNCATE} or {@code DROP SCHEMA}: the first
+     // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+     * significant token is {@code TRUNCATE}, or {@code DROP} followed by
+     * {@code TABLE}/{@code SCHEMA}. A {@code DROP} token elsewhere
+     * ({@code ALTER TABLE ... DROP COLUMN}, {@code DROP INDEX}) does not count
+     * (spec 06.08 §3.3).
      *
      * @param tokens a filled {@link CommonTokenStream}.
-     * @return {@code true} if the statement is DROP or TRUNCATE.
+     * @return {@code true} if the statement drops or truncates a table or schema.
      */
     public boolean isDropOrTruncateStatement(CommonTokenStream tokens) {
-        List<Token> list = tokens.getTokens();
-        return list.stream().anyMatch(t ->
-            t.getType() == PostgreSQLLexer.DROP ||
-            t.getType() == PostgreSQLLexer.TRUNCATE);
+        List<Token> significant = new java.util.ArrayList<>();
+        for (Token t : tokens.getTokens()) {
+            if (t.getChannel() == Token.DEFAULT_CHANNEL && t.getType() != Token.EOF) {
+                significant.add(t);
+            }
+            if (significant.size() >= 2) {
+                break;
+            }
+        }
+        if (significant.isEmpty()) {
+            return false;
+        }
+        int first = significant.get(0).getType();
+        // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+        if (first == PostgreSQLLexer.TRUNCATE) {
+            return true;
+        }
+        if (first == PostgreSQLLexer.DROP && significant.size() > 1) {
+            int second = significant.get(1).getType();
+            return second == PostgreSQLLexer.TABLE || second == PostgreSQLLexer.SCHEMA;
+        }
+        return false;
     }
 
     /**

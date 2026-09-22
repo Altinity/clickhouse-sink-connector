@@ -312,10 +312,11 @@ In `GroupInsertQueryWithBatchRecords.groupQueryWithRecords()`:
 3. **CDC Operation Handling**:
    - **INSERT (`c`, `r`)**: Dispatches `after` image to `updateQueryToRecordsMap`.
    - **UPDATE (`u`)**:
-     - Standard Mode: Generates two records — a before-image record and an after-image record.
+     - Standard Mode: Grouped once, under the after-image template; the executor binds the before and/or after image as the engine requires (Spec 04.04 §3.1).
      - Replication History Mode: Preserves single after-image record with temporal metadata.
    - **DELETE (`d`)**: Dispatches `before` image with delete flag.
-   - **TRUNCATE (`t`)**: Directly generates `TRUNCATE TABLE \`table\``.
+   - A record whose required image is missing, or for which no column metadata is available, fails the batch with `IllegalStateException`; nothing is dropped (Spec 04.01 §3.3).
+   - **TRUNCATE (`t`)**: Closes the current segment and occupies a segment of its own; the executor issues `TRUNCATE TABLE \`<target db>\`.\`table\`` at that position, between the segments around it (Spec 04.05).
 
 #### Step 3.5: Statement Parameter Binding & Execution
 In `PreparedStatementExecutor.insertBatch()` and `PreparedStatementFieldMapper.insertPreparedStatement()`:
@@ -456,13 +457,13 @@ The following catalog specifies the behavioral contract, synchronization boundar
 
 ### 4.3 `GroupInsertQueryWithBatchRecords`
 
-#### `public boolean groupQueryWithRecords(List[ClickHouseStruct] records, Map[QueryTemplate, List[ClickHouseStruct]] queryToRecordsMap, Map[TopicPartition, Long] partitionToOffsetMap, ClickHouseSinkConnectorConfig config, String tableName, String databaseName, Connection connection, Map[String, String] columnNameToDataTypeMap)`
-- **Purpose**: Deconstructs record batches into parameterized SQL query templates and associated record buckets.
-- **Inputs**: Input records, target query-to-record map, offset tracker, config, table/db names, JDBC connection, cached column types.
-- **Outputs**: `boolean` (success status).
+#### `public void groupQueryWithRecords(List[ClickHouseStruct] records, List[Map[QueryTemplate, List[ClickHouseStruct]]] querySegments, Map[TopicPartition, Long] partitionToOffsetMap, ClickHouseSinkConnectorConfig config, String tableName, String databaseName, Connection connection, Map[String, String] columnNameToDataTypeMap)`
+- **Purpose**: Deconstructs record batches into an ordered list of segments, each mapping parameterized SQL query templates to their record buckets; a replicated TRUNCATE is a segment of its own (Spec 04.05).
+- **Inputs**: Input records, target segment list, offset tracker, config, table/db names, JDBC connection, cached column types.
+- **Outputs**: None. Every record is grouped or the method throws; there is no per-record skip and no boolean status (Spec 04.01 §3.3).
 - **Locks**: None (thread-confined to worker).
 - **Mutations**: Updates `queryToRecordsMap` and `partitionToOffsetMap`; may alter table schema or update cache via `refreshIfRecordHasUnknownColumn`.
-- **Failure Modes**: Throws `StaleSchemaCacheException` if record and ClickHouse schema conflict irreconcilably.
+- **Failure Modes**: Throws `StaleSchemaCacheException` if record and ClickHouse schema conflict irreconcilably; `MissingTargetColumnException` when a source column cannot be stored; `IllegalStateException` when a record carries no image for its operation, no column metadata is available, or no template can be built.
 
 #### `private Map[String, String] refreshIfRecordHasUnknownColumn(ClickHouseStruct record, Map[String, String] cached, String tableName, String databaseName, Connection connection, ClickHouseSinkConnectorConfig config)`
 - **Purpose**: Detects when incoming records carry columns missing from the local metadata cache; resolves staleness or enforces column writability.

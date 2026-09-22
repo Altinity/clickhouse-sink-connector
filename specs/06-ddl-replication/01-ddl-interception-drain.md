@@ -36,7 +36,10 @@ therefore not a barrier at all; see §3.1 and the formal counterexample in §3.4
     a worker has `poll()`ed but not yet written and acknowledged.
 - **Pool primitives**: `ClickHouseBatchExecutor.pause()`, `awaitQuiescent(long)`
   (spec 06.02).
-- **Timeout**: `DDL_DRAIN_TIMEOUT_MS = 60_000` (60 seconds).
+- **Liveness check**: `failIfWorkerDied()` (spec 03.01 §3.3), run on every
+  poll of the drain through `failIfWorkerDiedDuringDrain()`.
+- **Progress log interval**: `ddlDrainWarnIntervalMs = 60_000` (60 seconds).
+  NOT a timeout — see §3.2.
 - **Formal model**: `formal_specs/lean/Replication/DdlBarrier.lean`.
 
 ---
@@ -77,15 +80,31 @@ closes the window for a batch that started just before the pause.
    `appendToRecordsWithHashRouting()`) run on the very Debezium thread that is
    executing the drain.
 
-   - On reaching `DDL_DRAIN_TIMEOUT_MS`: throw `IllegalStateException` whose
-     message names the pending backlog via `describePendingHandoff()`. Applying
-     the DDL over that backlog is the silent-corruption case; aborting is the
-     only safe outcome.
-   - On interruption: throw `IllegalStateException` (never apply the DDL over
-     in-flight writes).
+   The wait is bounded by **liveness, not by time**:
+   - On every poll, `failIfWorkerDiedDuringDrain()`: a worker whose scheduled
+     task has terminated makes the pending backlog undrainable, so the attempt
+     is aborted at once with an `IllegalStateException` that names the backlog
+     via `describePendingHandoff()` and carries the worker's cause. Applying the
+     DDL over that backlog is the silent-corruption case; aborting is the only
+     safe outcome.
+   - Every `ddlDrainWarnIntervalMs` (60 s) a WARN names the backlog still
+     pending and the elapsed time; the drain keeps waiting. A backlog held by a
+     LIVE worker — one retrying a transient ClickHouse error such as
+     `TOO_MANY_PARTS`, or reconnecting — is slow, not dead, and will drain. The
+     previous fixed 60 s abort turned exactly that into `DDLReplicationException`
+     → engine restart → the same drain → after `errors.max.retries` a terminal
+     stop (spec 10.04 §3.5), for a condition that would have cleared. There is
+     no wall-clock limit because no wall-clock limit is correct: the DDL may
+     only ever be applied once every pre-DDL row is in ClickHouse, however long
+     that takes.
+   - On interruption (the engine being closed): throw `IllegalStateException`
+     (never apply the DDL over in-flight writes).
 2. **Pause**: `executor.pause()` — no new batch may start.
-3. **Await in-flight quiescence**: `executor.awaitQuiescent(remaining)`; on
-   `false` throw `IllegalStateException`.
+3. **Await in-flight quiescence**: loop on
+   `executor.awaitQuiescent(ddlDrainWarnIntervalMs)`; a batch retrying a
+   transient error stays inside its task body for the whole retry sequence, so
+   this wait is bounded by liveness too: each round re-checks
+   `failIfWorkerDiedDuringDrain()` and the interrupt flag, and logs a WARN.
 
 Any exception from steps 1–3 is wrapped into `DDLReplicationException` by the
 DDL branch of `processEveryChangeRecord()` and halts the pipeline (spec 06.08
@@ -128,8 +147,10 @@ Theorems (machine-checked, no `sorry`):
 - **Invariant I5 (DDL Barrier Quiescence)**: every pre-DDL data record — on the
   legacy queue, on any routed queue, or dequeued but unacknowledged — is written
   under the pre-DDL schema before the DDL executes.
-- **Invariant I9 (Loud Failure)**: a barrier that cannot be reached within the
-  timeout aborts the DDL attempt loudly instead of applying it over pending rows.
+- **Invariant I9 (Loud Failure)**: a barrier that can never be reached (a dead
+  worker) aborts the DDL attempt loudly instead of applying it over pending
+  rows; a barrier that is merely slow is waited for, visibly (WARN per
+  interval), never silently abandoned and never turned into a terminal stop.
 
 ---
 
@@ -142,16 +163,24 @@ Theorems (machine-checked, no `sorry`):
   legacy queue is drained before the pause (regression for #1445).
 - `DdlDrainDeadlockTest.testWriterIsPausedAndQuiescentAfterDrain` — the pool is
   paused and `awaitQuiescent(0)` holds when the drain returns.
-- `DdlDrainDeadlockTest.testGenuinelyStuckQueueStillAborts` — an undrainable
-  legacy queue aborts with `IllegalStateException` after the timeout.
+- `DdlDrainDeadlockTest.testStuckQueueWithDeadWorkerAborts` — INVERTED from
+  `testGenuinelyStuckQueueStillAborts` (a 60 s timeout abort): an undrainable
+  legacy queue aborts promptly, with the dead worker's cause, and only because
+  a worker is dead.
+- `DdlDrainDeadlockTest.testUndrainableQueueWithLiveWorkersKeepsWaiting` — with
+  a live worker the drain is still waiting well past several warn intervals,
+  has logged a WARN naming the pending backlog, has discarded nothing, and ends
+  only on interrupt (with `IllegalStateException`). Fails on the pre-fix code,
+  which aborted on the timeout.
 - `DdlDrainDeadlockTest.testDrainWaitsForRoutedQueues` — `thread.pool.size > 1`,
   legacy queue empty, one routed queue non-empty and drained by a worker after a
   delay: the drain blocks until that queue is empty and returns with the pool
   paused. Fails on the pre-fix code, which returned immediately.
-- `DdlDrainDeadlockTest.testUndrainableRoutedQueueAborts` — the routed queue is
-  never drained: the drain aborts after `DDL_DRAIN_TIMEOUT_MS` with a message
-  naming the routed backlog, and the batch is not discarded. Fails on the
-  pre-fix code, which returned immediately.
+- `DdlDrainDeadlockTest.testUndrainableRoutedQueueWithDeadWorkerAborts` —
+  INVERTED from `testUndrainableRoutedQueueAborts` (timeout abort): the routed
+  queue is never drained and its worker is dead: the drain aborts with a
+  message naming the routed backlog, and the batch is not discarded. Still
+  fails on code that never looks at the routed queues (returned immediately).
 - `DdlDrainDeadlockTest.testDrainWaitsForUnacknowledgedBatches` — both queue
   sets empty but one batch registered via `batchHandedOff()` and not yet
   acknowledged: the drain blocks until it is released. Fails on the pre-fix

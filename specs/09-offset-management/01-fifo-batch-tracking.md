@@ -24,7 +24,8 @@ hash routing (spec 03.03) and is deleted, not amended (see §3.5).
 - **Consumer side** (reports a written batch): `sink-connector/.../executor/ClickHouseBatchRunnable.java`
   — `processBatch` (spec 03.03).
 - **Carrier**: `sink-connector/.../model/RoutedBatch.java` — `getHandoffSequence()`.
-- **State** (all static, all guarded by the class monitor of `DebeziumOffsetManagement`
+- **State** (all static — process-wide, shared by every engine started in the
+  JVM, see §3.8 — all guarded by the class monitor of `DebeziumOffsetManagement`
   for mutation; reads of the outstanding set are lock-free):
   - `AtomicLong handoffCounter` — monotone; the next sequence to assign.
   - `ConcurrentSkipListSet<Long> outstandingSequences` — sequences handed off
@@ -44,6 +45,9 @@ hash routing (spec 03.03) and is deleted, not amended (see §3.5).
     called once per group after its rows are durably written. Returns `true`
     iff the group's unit was acknowledged during this call.
   - `boolean hasUnwrittenBatches()` — `!outstandingSequences.isEmpty()`.
+  - `int outstandingCount()` — size of the outstanding set.
+  - `int reset()` — abandons every outstanding unit (§3.8); called only from
+    `DebeziumChangeEventCapture.stop()` after the pool has terminated.
   - `acknowledgeRecords(List<ClickHouseStruct>)` — `markProcessed` for every
     record in list order, `markBatchFinished()` at the terminal record, all
     inside `OFFSET_COMMIT_LOCK` (spec 09.02).
@@ -173,6 +177,49 @@ direction: it can withhold a control-record commit, never permit an unsafe one
 (spec 09.04). There is no separate handoff counter and no separate pick-up
 registry.
 
+### 3.8 In-process engine restart: abandon, never poison
+The state above is static, but the embedded engine is restarted INSIDE the
+process — REST `/restart`, `/start` after `/stop`, and the restart monitor each
+construct a new `DebeziumChangeEventCapture` on the SAME FIFO. When the old
+engine's worker pool terminates, any unit still outstanding can never be written
+or acknowledged by anyone; left in place it is the FIFO head forever: every unit
+of the new engine parks behind it (§3.2 step 4 stops at the first outstanding
+sequence), no offset is ever acknowledged again, `hasUnwrittenBatches()` stays
+true (no control-record commit, spec 09.04; every DDL drain times out, spec
+06.01), rows keep being inserted while the durable offset freezes, and the
+parked units' record lists leak.
+
+Contract:
+1. `DebeziumChangeEventCapture.stop()` closes the engine (no more handoffs),
+   drains through the still-running pool (bounded), shuts the pool down, and
+   THEN calls `reset()` (spec 01.01 §3.3). `reset()` clears
+   `outstandingSequences`, `unwrittenGroups` and `completedUnits`, logs the
+   number of abandoned units at WARN, and returns it. `handoffCounter` is NOT
+   reset: sequences stay unique for the life of the JVM.
+2. Everything abandoned was never acknowledged (a unit leaves the outstanding
+   set only through acknowledgement), so no committed offset is rolled back and
+   the next engine redelivers the abandoned rows from the last committed
+   offset — at-least-once, never loss (`Replication.OffsetFifo.acked_never_rolled_back`).
+   A unit that was written but parked is abandoned too: its rows are in
+   ClickHouse and will be redelivered; the redelivery-stable versioning (spec
+   02.04) makes the second write idempotent.
+3. `setup()` refuses to start a new engine while `hasUnwrittenBatches()`
+   (`IllegalStateException` naming the count): a restart path that skipped
+   `stop()` must fail loudly rather than start a connector that can never
+   acknowledge an offset.
+4. The engine's own completion-callback retry (`setupDebeziumEventCapture` on
+   the same instance, spec 10.04 §3.5) does NOT reset: its pool is still alive
+   and will finish the outstanding units.
+
+Machine-checked as the `restart` event of `OffsetFifo.lean`:
+`restart_quiescent`, `acked_never_rolled_back`, `abandoned_not_acked`, the
+counterexample `old_restart_poisons_fifo` (old `stop()`: `handoff, restart,
+handoff, write 1` leaves `acked = []` with `0` outstanding) and
+`restart_unblocks_next_engine` (with the reset the same run acknowledges `1`).
+`acked_downward_closed` is stated modulo abandoned sequences: below an
+acknowledged sequence everything is acknowledged or abandoned, never
+outstanding.
+
 ### 3.7 Handoff failure is loud
 If enqueueing a group fails (`InterruptedException` from `put`), the exception
 propagates out of `handleChangeEventBatch`: the unit stays outstanding, nothing
@@ -218,7 +265,14 @@ would let a later batch commit an offset past rows that never reached a queue.
   not block itself; acknowledging one leaves the sibling tracked.
 - `HandedOffBatchVisibilityTest` — visible from handoff; per-group counting;
   quiescent only after the whole unit is acknowledged.
+- `EngineRestartFifoResetTest` — §3.8: `stop()` abandons a never-written unit and
+  the next engine's heartbeat commits / first unit is acknowledged with nothing
+  parked; nothing outstanding after `stop()`; engine closed before the pool;
+  in-flight work drained before the pool stops; `setup()` refuses while a unit
+  is outstanding.
 - `Replication.OffsetFifo` — `commit_never_passes_outstanding`,
   `acked_downward_closed`, `commitPoint_acked`, `outstanding_ge_commitPoint`,
   `write_at_most_once`, `written_batch_not_reexecuted`,
-  `old_overlap_rule_unsafe`, `fifo_acknowledges_in_handoff_order`.
+  `old_overlap_rule_unsafe`, `fifo_acknowledges_in_handoff_order`,
+  `restart_quiescent`, `acked_never_rolled_back`, `abandoned_not_acked`,
+  `old_restart_poisons_fifo`, `restart_unblocks_next_engine`.

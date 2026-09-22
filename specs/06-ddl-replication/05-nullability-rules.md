@@ -61,6 +61,16 @@ and stays loud.
 
 Formalised as `wider_key_change_is_loud` in `DdlTranslation.lean`. Pinned by `testModifyKeyColumnSameOrNarrowerIsSuppressed`, `testModifyKeyColumnWiderIsLoud`, `testChangeKeyColumnRenameIsLoud`, `testModifyDateTimeKeyWithTimezoneIsSuppressed`.
 
+### 3.4.1 Parity with the record-schema path
+The record-schema path (Kafka-mode auto-create and `schema.evolution`
+`ADD COLUMN`, Spec 08.05 §3.1.1) declares the same ClickHouse type as this
+translator for the same MySQL column type whenever Debezium's propagated
+source metadata is present — including nullability: an optional unsigned
+integer is `Nullable(UIntN)` there exactly as `ADD COLUMN ... UNSIGNED NULL`
+is here. `RecordSchemaVsDdlTypeAgreementTest` pins the two paths against each
+other; the residual differences it excludes (`BOOL` → `Bool` here vs `Int8`
+there; the DateTime zone argument) are listed in Spec 08.05 §3.1.1.
+
 ### 3.5 DEFAULT clauses
 Literal defaults are carried to ClickHouse in ClickHouse literal syntax; on `ADD COLUMN` a `CURRENT_TIMESTAMP` default becomes the DDL event's instant and an `ENUM ... NOT NULL` without a default gets its first member, while any other non-literal default is refused loudly; on `MODIFY`/`CHANGE` a non-literal default is dropped (Spec 06.04 §3.2). A `DEFAULT` never changes a replicated value: the row image carries the source value, and ClickHouse binds it explicitly (Spec 04.03); it only decides the back-fill of rows that pre-date an added column.
 
@@ -131,3 +141,4 @@ fix is the one the banner names. Formalised as `sorting_key_nonempty`,
 - `MySqlDDLParserListenerImplTest.testAlterModifyColumnNotNullStaysNullable()`, `testModifyNotNullKeepsNonNullableColumn()` (§3.2 rule 2; pre-fix code emits `Nullable(Int64)` for a non-Nullable column), `testCreateTableTableLevelPrimaryKeyForcesNotNull()`, `testModifyKeyColumnSameOrNarrowerIsSuppressed()`, `testModifyKeyColumnWiderIsLoud()`, `testChangeKeyColumnRenameIsLoud()`, `testModifyColumnNameIsCaseResolvedAgainstTarget()`, `testModifyDateTimeKeyWithTimezoneIsSuppressed()` (§3.4 normalisation: `DateTime64(6, 'UTC')` key vs requested `DATETIME(6)` with and without a configured zone → suppressed; a different scale stays loud; pre-fix code raised "not comparable")
 - §3.6: `MySqlDDLParserListenerImplTest.testCreateTableKeylessOrdersByAllColumns()` (no `PRIMARY KEY`, no `UNIQUE`: `ORDER BY (every column)` plus `SETTINGS allow_nullable_key=1`, never `ORDER BY tuple()`; pre-fix code emits `ORDER BY tuple()`), `MySqlDDLParserListenerImplTest.testAutoIncrementColumnIsNotNull()` (`id INT AUTO_INCREMENT UNIQUE` is `NOT NULL` and becomes the sorting key), `CreateTableNoKeySortKeyTest` (the keyless shapes: single-column, multi-column, GIPK table; the PK/UNIQUE cases untouched), `CreateTableUniqueKeySortKeyTest` (a nullable `UNIQUE` key falls through to the all-columns key with the setting; a `NOT NULL` one is adopted without it).
 - Formal: `wider_key_change_is_loud` in `formal_specs/lean/Replication/DdlTranslation.lean`; `Replication.CreateTable.sorting_key_nonempty`, `Replication.CreateTable.primary_key_wins`, `Replication.CreateTable.fallback_key_is_every_stored_column`, `Replication.CreateTable.declared_key_never_needs_nullable_setting` in `formal_specs/lean/Replication/CreateTable.lean`.
+- `RecordSchemaVsDdlTypeAgreementTest.bothPathsDeclareTheSameType()` — §3.4.1.

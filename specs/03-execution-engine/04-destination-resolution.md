@@ -44,6 +44,9 @@ Source Database: D_src
 The canonical key used for cache indexing and metadata tracking is:
 $$\text{tableKey} = D_{\text{final}} + "." + T_{\text{final}}$$
 
+### 3.2 Every statement names $D_{\text{final}}$
+The `PreparedStatementExecutor` is constructed with the writer's resolved database (`DbWriter.getDatabaseName()` $= D_{\text{final}}$) and every statement it issues names that database. In particular the ``TRUNCATE TABLE `db`.`table` `` issued for a replicated TRUNCATE event (spec 04.05 §3.2) uses the executor's database, never the source database the record carries (`ClickHouseStruct.getDatabase()` $= D_{\text{src}}$): under `clickhouse.database.override.map` the two differ and the source name is not the table's database at all.
+
 ---
 
 ## 4. Invariants Preserved
@@ -53,3 +56,4 @@ $$\text{tableKey} = D_{\text{final}} + "." + T_{\text{final}}$$
 
 ## 5. Verification Criteria
 - `ClickHouseBatchWriterDatabaseResolutionTest`: Validates that overrides, prefixes, and suffixes produce identical outputs in both writers.
+- `PreparedStatementExecutorTruncateTest.truncateTargetsTheExecutorDatabaseNotTheSourceDatabase()` — §3.2: the replicated TRUNCATE names the executor's target database.

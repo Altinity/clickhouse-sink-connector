@@ -70,9 +70,13 @@ public class ClickHouseDataTypeMapperDDLTest {
                 Arguments.of("io.debezium.time.Date",
                         SchemaBuilder.int32().name("io.debezium.time.Date").optional().build(),
                         "Nullable(Date32)"),
+                // MicroTime is BOUND as the formatted text [-]HH:mm:ss.ffffff
+                // (Spec 07.03 section 3.2), so the declared column must be a
+                // String. This row asserted Nullable(Int64), which made every
+                // insert into a reconciled TIME column fail to parse.
                 Arguments.of("io.debezium.time.MicroTime",
                         SchemaBuilder.int64().name("io.debezium.time.MicroTime").optional().build(),
-                        "Nullable(Int64)"),
+                        "Nullable(String)"),
                 Arguments.of("io.debezium.data.Uuid",
                         SchemaBuilder.string().name("io.debezium.data.Uuid").optional().build(),
                         "Nullable(UUID)"),

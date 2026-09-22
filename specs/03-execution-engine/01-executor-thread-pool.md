@@ -13,6 +13,10 @@ Specifies the thread scheduling, worker concurrency pool, and thread-safe pause/
   with `scheduleAtFixedRate(…, 0, buffer.flush.time.ms)` and keeps every
   `ScheduledFuture` in `workerFutures`), `failIfWorkerDied()` (called first
   thing in `handleChangeEventBatch`).
+- **Kafka Connect mode**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/ClickHouseSinkTask.java`
+  — `start` keeps the runnable's `ScheduledFuture` in `runnableFuture`;
+  `failIfRunnableDied()` is called first thing in `put` and `preCommit`.
+  Error-logger guard: `ClickHouseBatchRunnable.sourceRecordOrNull`.
 - **Fields**:
   - `private final Object gate = new Object()`
   - `volatile boolean isPaused = false` (package-private and `volatile` — written by the Debezium event thread in `pause()`/`resume()`, read by every pool thread in `beforeExecute`; the `volatile` supplies the happens-before edge)
@@ -64,6 +68,31 @@ Contract:
 4. The worker does NOT clear `currentBatch` before rethrowing: the batch must
    remain registered so quiescence stays false until the process stops.
 
+### 3.4 Kafka Connect mode: the sink task checks its runnable too
+In Kafka Connect mode the same runnable is scheduled by `ClickHouseSinkTask`
+on its own `ClickHouseBatchExecutor`, and the same silent death applied:
+after a FATAL rethrow nothing drained the queue, but `put()` kept enqueueing
+until `sink.connector.max.queue.size` blocked the Connect worker thread, and
+`preCommit()` kept answering from the frozen `durablyInsertedOffsets`
+watermark. The task never failed and Kafka Connect never restarted it.
+
+Contract:
+1. `start` retains the `ScheduledFuture` returned by `scheduleAtFixedRate`.
+2. `put` and `preCommit` call `failIfRunnableDied()` BEFORE anything else
+   (in `preCommit`, before the `try` that maps exceptions to "commit
+   nothing"). A done future — exceptionally, cancelled, or normally — throws
+   `org.apache.kafka.connect.errors.ConnectException` naming the task and
+   carrying the runnable's cause. Kafka Connect fails the task with that
+   cause; a restart resumes from the last committed offset, which only ever
+   reflects durably inserted rows.
+3. The error logger (`error.logging.enable`) is best-effort diagnostics for
+   the exception being classified. It must never replace that exception:
+   `ClickHouseBatchRunnable.logErrorToClickHouse` reads the Debezium source
+   record through `sourceRecordOrNull` (a Kafka-mode record has none — the
+   unguarded `getSourceRecord().value()` threw `NullPointerException`), and a
+   runtime failure inside the logger is logged and swallowed so the FATAL
+   classification of the original exception still runs.
+
 ---
 
 ## 4. Invariants Preserved
@@ -77,3 +106,6 @@ Contract:
 - `PauseDrainRaceTest`, `PauseDrainAtomicityTest` — the pause/drain window against concurrent task starts.
 - `WorkerDeathIsLoudTest.deadWorkerFailsTheNextBatchLoudly` — a scheduled task that throws on its first tick makes the next `handleChangeEventBatch` throw with that cause.
 - `WorkerDeathIsLoudTest.liveWorkersDoNotInterfere` — a running periodic task does not.
+- `ClickHouseSinkTaskTest.deadRunnableFailsPut()`, `ClickHouseSinkTaskTest.deadRunnableFailsPreCommit()` — §3.4: a terminated runnable future makes `put` / `preCommit` throw `ConnectException` carrying the runnable's cause, and nothing is enqueued.
+- `ClickHouseSinkTaskTest.liveRunnableAcceptsRecords()` — a live runnable: records are enqueued and `preCommit` holds at the durable watermark.
+- `ClickHouseBatchRunnableErrorLoggerTest.sourceRecordIsNullForKafkaModeRecord()`, `ClickHouseBatchRunnableErrorLoggerTest.sourceRecordIsUnwrappedWhenPresent()` — §3.4 item 3.

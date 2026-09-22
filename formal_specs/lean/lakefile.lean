@@ -23,4 +23,6 @@ lean_lib «Replication» where
              `Replication.DdlBarrier,
              `Replication.OffsetFifo,
              `Replication.DdlTranslation,
+             `Replication.BatchOrder,
+             `Replication.VersionFloor,
              `Replication.CreateTable]

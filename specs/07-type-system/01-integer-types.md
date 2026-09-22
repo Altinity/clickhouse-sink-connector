@@ -73,6 +73,28 @@ Rule (`DataTypeConverter.normalizeIntegerTypeName`, applied before any lookup):
    candidate `UNIQUE` key so a table with only a `SERIAL` column is keyed by
    it (Spec 06.05 §3.6).
 
+### 3.3 Auto-created column type for `BIGINT UNSIGNED` needs the propagated source type
+The record-schema auto-create path (`ClickHouseTableOperationsBase.getColumnNameToCHDataTypeMapping`,
+Spec 08.05) can only declare `UInt64` when the field carries Debezium's
+`__debezium.source.column.type` parameter (`column.propagate.source.type`).
+The lightweight runtime always sets `column.propagate.source.type=.*`
+(`DebeziumChangeEventCapture.setupDebeziumEventCapture`). In Kafka Connect
+mode nothing forces it: an `INT64` field with no logical name and no
+parameters is indistinguishable from a signed `BIGINT`, is declared `Int64`,
+and a `BIGINT UNSIGNED` value in $[2^{63}, 2^{64})$ is then stored as the
+wrapped **negative** number — §3.1 cannot help because the target column is
+not `UInt64`.
+
+Rule: whenever the mapping declares `Int64` for an `INT64` field that carries
+no `__debezium.source.column.type` parameter, it logs **one ERROR per table**
+(static, per JVM, keyed by the table label) naming the column(s) and the
+remedy: set `column.propagate.source.type=.*` on the source connector, or
+declare the ClickHouse table by hand. The connector cannot resolve the
+ambiguity itself (there is no source metadata to read in Kafka mode), so the
+loud report is the fallback of Invariant I9, not a substitute for the fix.
+The `ADD COLUMN` path (`ClickHouseAlterTable.alterTable`) passes the table
+name through so the report is attributable there too.
+
 ---
 
 ## 4. Invariants Preserved
@@ -83,6 +105,12 @@ Rule (`DataTypeConverter.normalizeIntegerTypeName`, applied before any lookup):
 ## 5. Verification Criteria
 - `ClickHouseDataTypeMapperTest.getClickHouseDataType()` — signed MySQL
   integer types map to `Int8`/`Int16`/`Int32`/`Int64`.
+- `ClickHouseTableOperationsBaseUntypedInt64Test.untypedInt64LogsOneErrorPerTable()`
+  — §3.3: two mappings of the same table with an `INT64` field lacking the
+  source type produce exactly one ERROR naming the column and
+  `column.propagate.source.type`; a field carrying the parameter, and a
+  different table, are reported separately / not at all (pre-fix code logs
+  nothing).
 - `ClickHouseDataTypeMapperTest.getUnsignedClickHouseType()` — `TINYINT` /
   `SMALLINT` / `MEDIUMINT` / `INT` / `BIGINT UNSIGNED` map to `UInt8` /
   `UInt16` / `UInt32` / `UInt32` / `UInt64`; display width and `ZEROFILL`

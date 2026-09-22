@@ -129,8 +129,11 @@ public class ClickHouseAlterTable
             Field[] missingFieldsArray =
                     new Field[missingFieldsInCH.size()];
             missingFieldsInCH.toArray(missingFieldsArray);
+            // The table name is passed so the once-per-table report of Spec
+            // 07.01 section 3.2 is attributable; overrides need both names and
+            // stay skipped here, as before.
             Map<String, String> colNameToDataTypeMap2 =
-                    cat.getColumnNameToCHDataTypeMapping(missingFieldsArray,config);
+                    cat.getColumnNameToCHDataTypeMapping(missingFieldsArray, config, null, tableName);
 
             if (!colNameToDataTypeMap2.isEmpty()) {
                 String alterTableQuery = cat.createAlterTableSyntax(

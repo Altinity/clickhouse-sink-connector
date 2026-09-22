@@ -15,6 +15,7 @@ never committed the snapshot re-runs on every restart.
 - **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java`
 - **Key Methods**: `handleChangeEventBatch`, `processEveryChangeRecord`, `commitControlRecordOffset`, `isPipelineQuiescent`, `markTerminalRecord`, `ensureHeartbeatInterval`
 - **Offset bookkeeping**: `sink-connector/.../executor/DebeziumOffsetManagement.java` (`hasUnwrittenBatches`, `acknowledgeRecords`)
+- **Terminal type for an unconvertible row**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/RecordReplicationException.java`
 - **Formal model**: `formal_specs/lean/Replication/Snapshot.lean`
 
 ---
@@ -33,31 +34,74 @@ snapshot forever:
 2. Even without the NPE, a null-producing record was dropped without ever being
    acknowledged, so its offset never advanced.
 
-### 3.1 Null control records are contract, not failure
-`processEveryChangeRecord` must NOT dereference a null parsed struct and must NOT
-early-return on it: it null-guards `setSequenceNumber`/status updates, returns
-`null`, and `handleChangeEventBatch` records the (non-DDL) no-row record as the
-batch's `lastControlRecord`.
+### 3.1 A null struct is contract for a CONTROL record and terminal for a ROW record
+Every record that produces no `ClickHouseStruct` is classified by
+`DebeziumChangeEventCapture.isControlRecord(SourceRecord)` BEFORE anything else
+is decided about it. The classification is:
 
-**Why `parse` returns null for them.** `SourceRecordParserService.parse` builds a
-row only when the value Struct carries an `op` field (`c`/`r`/`u`/`d`/`t`). A
-heartbeat (topic `__debezium-heartbeat.<server>`, value `{ts_ms}`) and a
-transaction-metadata record (topic `<server>.transaction`, value
-`{status,id,event_count,data_collections}`) have no `op`, so `parse` returns
-null by contract — there is no row to write.
+| Record | `isControlRecord` | Handling of a null struct |
+|---|---|---|
+| topic starts with `__debezium-heartbeat` | control | DEBUG log; offset committed under §3.2/§3.3 |
+| value Struct whose schema has **no** `op` field (transaction metadata) | control | same |
+| value **null** (Debezium tombstone after a DELETE, `tombstones.on.delete=true`) | control | same |
+| value Struct **with** an `op` field (a row: `c`/`r`/`u`/`d`/`t`) | **row** | **terminal** — `RecordReplicationException` |
+| value non-null and not a Struct | **row** | **terminal** — `RecordReplicationException` |
 
-**Log level.** A null parse result is classified BEFORE it is logged
-(`DebeziumChangeEventCapture.isControlRecord(SourceRecord)`):
-- **Control record** — the topic starts with `__debezium-heartbeat`, OR the value
-  Struct's schema has no `op` field: logged at **DEBUG** as
-  `Control record (heartbeat/transaction metadata) - no row to write; ...`.
-  Its offset is still committed under §3.2/§3.3. WARN is forbidden here:
-  heartbeats arrive every `heartbeat.interval.ms` (seconds apart) for the life
-  of the process, and a WARN per heartbeat buries the warnings that matter.
-- **Row record** — the value Struct HAS an `op` field and `parse` still returned
-  null: a real row was dropped, logged at **WARN** as
-  `Record could not be parsed to a ClickHouseStruct - skipping ...` (issue #1379
-  visibility requirement).
+**Control records.** `SourceRecordParserService.parse` builds a row only when the
+value Struct carries an `op` field. A heartbeat (topic
+`__debezium-heartbeat.<server>`, value `{ts_ms}`) and a transaction-metadata
+record (topic `<server>.transaction`, value `{status,id,event_count,...}`) have no
+`op`, so `parse` returns null by contract — there is no row to write.
+`processEveryChangeRecord` must NOT dereference the null struct and must NOT
+early-return on it: it returns `null`, and `handleChangeEventBatch` records the
+(non-DDL) no-row record as the batch's `lastControlRecord`. The log level is
+**DEBUG** (`Control record (heartbeat/transaction metadata) - no row to write; ...`);
+WARN is forbidden here because heartbeats arrive every `heartbeat.interval.ms`
+for the life of the process and a WARN per heartbeat buries the warnings that
+matter.
+
+**Row records — the rule this section used to get wrong.** A record whose value
+carries an `op` field IS a row. If `parse` returns null for it, or throws, the row
+was not converted. Until this revision the code logged
+`Record could not be parsed to a ClickHouseStruct - skipping` at WARN and
+returned null — and `handleChangeEventBatch` then treated that null exactly like a
+heartbeat's: the record became `lastControlRecord` and, once the pipeline was
+quiescent, `commitControlRecordOffset` committed its offset. The durable source
+position moved past a row that never reached ClickHouse; a restart did not
+redeliver it; row counts disagreed by one with nothing louder than a WARN in the
+log. That is the silent loss Invariant I9 forbids, and this spec CODIFIED it.
+
+The rule is now:
+1. `processEveryChangeRecord` wraps the parser call: an exception from `parse`
+   is raised as `RecordReplicationException` (cause attached); a null result
+   for a record that is not a control record is raised as
+   `RecordReplicationException` naming the topic.
+2. `RecordReplicationException` is re-thrown **ahead of** the method's
+   catch-all, exactly like `DDLReplicationException` (spec 10.04 §3.3), so it
+   leaves the Debezium `handleBatch` consumer and halts the engine.
+3. `handleChangeEventBatch` is the second line: a null struct from a non-DDL
+   record may become `lastControlRecord` **only if** `isControlRecord(sr)`;
+   otherwise it throws `RecordReplicationException` itself. No future path
+   through `processEveryChangeRecord` can turn a lost row into a heartbeat.
+4. A value that is neither a Struct nor null is rejected before the version
+   sequence is touched (`rejectUnrepresentableValue`), with a message naming
+   the value's class and topic instead of a bare `ClassCastException`.
+
+**Redelivery and late commit.** The offset is not committed past the refused
+record (nothing in this batch is acknowledged, including an earlier heartbeat
+whose offset lies at or after the row), so on restart Debezium redelivers it from
+the last committed position. If the record is genuinely unconvertible the
+connector stops on it again, every time, until the cause is fixed — a converter
+gap, `binlog_row_image != FULL`, a corrupt event. That is intended: a replication
+engine that cannot represent a source row must say so, not skip it. The engine's
+completion callback retries the start up to `MAX_RETRIES` and then terminates
+(spec 10.04).
+
+**Version sequence.** A control record is never run through the version
+sequence: `handleChangeEventBatch` calls `nextSequenceNumber` only for DDL and
+row records, so a heartbeat's envelope `ts_ms` — the connector's wall clock —
+cannot raise the floor, move the anchor, reset the counter or advance the
+high-water position (spec 02.02 §3.2; `Replication.VersionFloor.dispatch_control_preserves_state`).
 
 ### 3.2 Safety — quiescence gate on the control-record commit
 `commitControlRecordOffset` commits the control offset ONLY when both:
@@ -105,8 +149,15 @@ committing a control offset past rows not yet in ClickHouse (issue #1285).
 - `Replication.Snapshot.snapshot_completes` — after the snapshot's rows are written, the end-of-snapshot control record commits its offset (`committed = snapPos`).
 - `SnapshotOffsetProgressTest.marksExactlyTheLastRow` — every handed-off unit gets exactly one terminal marker.
 - `OffsetHandoffOrderTest.routedGroupsAcknowledgedAsOneUnitInBinlogOrder` — one `markBatchFinished` per unit, after all its groups are written.
-- `NullParsedRecordSkipTest` (row record carrying `op`), `ControlRecordOffsetCommitTest` — null-skip at WARN and the quiescence gate.
+- `UnparseableRowRecordIsTerminalTest.insertWhoseParserThrowsIsTerminal` — `op='c'`, parser throws: `RecordReplicationException` propagates out of `handleChangeEventBatch` with the parser's exception as cause; `committer.processed` empty; `batchesFinished == 0`.
+- `UnparseableRowRecordIsTerminalTest.updateWhoseParserReturnsNullIsTerminal` — `op='u'`, parser returns null: same outcome, message names the topic.
+- `UnparseableRowRecordIsTerminalTest.nonStructValueIsTerminal`, `UnparseableRowRecordIsTerminalTest.heartbeatBeforeBadRowIsNotCommittedEither` — a non-Struct value is terminal; a heartbeat preceding the refused row is not committed.
+- `UnparseableRowRecordIsTerminalTest.tombstoneIsAControlRecord`, `UnparseableRowRecordIsTerminalTest.classifier` — the classifier table above (null value = tombstone = control; `op` present = row).
+- `NullParsedRowRecordIsTerminalTest.unconvertibleRowRecordIsTerminal` — INVERTED from the former NullParsedRecordSkipTest, which asserted the WARN-and-skip this section used to codify: a row record parsing to null now raises `RecordReplicationException` from `processEveryChangeRecord`, still without a NullPointerException and with no "skipping" line.
+- `ControlRecordOffsetCommitTest` — the quiescence gate.
+- `Replication.Snapshot.unparsed_row_halts`, `Replication.Snapshot.unparsed_row_never_committed` — an unparsed row record has no successor state, so no record list containing one reaches a commit; `Replication.Snapshot.old_rule_commits_unparsed_row` — the replaced rule committed its offset on a quiescent pipeline.
 - `ControlRecordLogLevelTest.heartbeatIsLoggedAtDebugAndStillCommitsItsOffset` — a heartbeat-only batch through `handleChangeEventBatch` produces no WARN from `DebeziumChangeEventCapture`, one DEBUG control-record line, and its offset is acknowledged (`markProcessed` + `markBatchFinished`). Fails on the pre-fix code (WARN per heartbeat).
 - `ControlRecordLogLevelTest.transactionMetadataIsLoggedAtDebug` — a transaction-boundary record (no `op`, non-heartbeat topic) is DEBUG, not WARN.
-- `ControlRecordLogLevelTest.unparseableRowRecordStillWarns` — a record WITH `op` for which `parse` returns null is still WARN.
-- The `isControlRecord` classifier (heartbeat topic -> control; no `op` -> control; `op` present -> row; null or non-Struct value -> row) is exercised through the three tests above; a dedicated classifier unit test is not yet covered by an automated test (gap).
+- `ControlRecordLogLevelTest.unparseableRowRecordIsTerminal` — INVERTED from `unparseableRowRecordStillWarns`: a record WITH `op` for which `parse` returns null is terminal, not a WARN skip.
+- `UnparseableRecordProgressIT` — end to end: the control records a real pipeline produces (transaction markers, heartbeats) are skipped at DEBUG and rows keep landing; its former "WARN row-record skip" leg is removed because that outcome is now a defect.
+- `DebeziumChangeEventCaptureTest.heartbeatAndTransactionMetadataDoNotTouchTheSequenceState` — a heartbeat-only and a transaction-metadata-only batch leave the version-sequence statics unchanged (§3.1, "Version sequence").

@@ -120,8 +120,8 @@ public class CommitOrderVersionClampTest {
     }
 
     @Test
-    @DisplayName("a record without a position that resets the counter (a heartbeat with a newer "
-            + "envelope timestamp) also raises the floor for the next late first delivery")
+    @DisplayName("a row without a position that resets the counter (a source without log coordinates, "
+            + "versioned on its envelope timestamp) also raises the floor for the next late first delivery")
     public void unpositionedCounterResetRaisesTheFloor() {
         versionOf(at(TS - 10_000, 100));
         long earlyWrite = 0;
@@ -129,19 +129,22 @@ public class CommitOrderVersionClampTest {
             earlyWrite = versionOf(at(TS, 200 + i));
         }
 
-        // A heartbeat / transaction marker: no source struct, envelope timestamp only,
-        // newer than the source clock. It shares the sequence state, moves the anchor
-        // and resets the counter exactly like a newer commit would.
-        ClickHouseStruct heartbeat = new ClickHouseStruct();
-        heartbeat.setDebezium_ts_ms(TS + 5_000);
-        DebeziumChangeEventCapture.addVersion(Arrays.asList(heartbeat));
+        // A ROW without a log position (no source coordinates; envelope timestamp
+        // only), newer than the source clock. It enters the sequence like any row,
+        // moves the anchor and resets the counter exactly like a newer commit would.
+        // Heartbeats and transaction metadata do NOT take this path any more: the
+        // dispatch loop keeps control records out of the sequence entirely (spec
+        // 02.02 section 3.2; DebeziumChangeEventCaptureTest pins that).
+        ClickHouseStruct positionlessRow = new ClickHouseStruct();
+        positionlessRow.setDebezium_ts_ms(TS + 5_000);
+        DebeziumChangeEventCapture.addVersion(Arrays.asList(positionlessRow));
         assertEquals((TS + 5_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START,
-                heartbeat.getSequenceNumber(), "sanity: the heartbeat reset the counter");
+                positionlessRow.getSequenceNumber(), "sanity: the positionless row reset the counter");
 
         long lateCommit = versionOf(at(TS, 400));
 
         assertTrue(lateCommit > earlyWrite,
-                "the counter reset caused by the heartbeat must be accompanied by the floor: "
+                "the counter reset caused by the positionless row must be accompanied by the floor: "
                         + "early=" + earlyWrite + " late=" + lateCommit);
         assertEquals((TS + 5_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START + 1, lateCommit);
     }
@@ -290,5 +293,41 @@ public class CommitOrderVersionClampTest {
         SourcePosition fromFields = SourcePosition.ofBinlog("mysql-bin.000123", 4_567L, 3);
         assertEquals(0, fromFields.compareTo(record.getSourcePosition()));
         assertEquals(fromFields, record.getSourcePosition());
+    }
+
+    /**
+     * A binary log basename change (spec 01.02 section 3.1.1): the new log's
+     * positions compare by string order of the prefix, and "binlog" sorts below
+     * "mysql-bin", so before the fix every record of the new log ranked below the
+     * high-water mark, was treated as a redelivery and was never clamped -- a late
+     * commit in the new log was versioned in its own older second and lost to the
+     * earlier write of the same key. The sequence must instead reset the mark to
+     * the new log and treat its first record as a first delivery.
+     */
+    @Test
+    @DisplayName("a positioned record of a differently named binary log is a first delivery and resets the high-water mark")
+    public void binlogBasenameChangeResetsTheHighWaterMark() {
+        versionOf(at(TS - 10_000, "mysql-bin.000009", 500, 0));
+        long early = versionOf(at(TS, "mysql-bin.000009", 600, 0));
+        long newest = versionOf(at(TS + 5_000, "mysql-bin.000009", 700, 0)); // floor = TS + 5000
+
+        // The log was renamed; the first row of the new log is a late commit
+        // (statement time TS) at the very start of the new file.
+        long afterRename = versionOf(at(TS, "binlog.000001", 4, 0));
+        assertTrue(afterRename > newest,
+                "the first record of the renamed log is a first delivery: clamped to the floor and above "
+                        + "every earlier write; before the fix it compared below the mark, was not clamped and "
+                        + "ranked " + (TS * MULTIPLIER) + "-ish below early=" + early);
+        assertEquals(SourcePosition.ofBinlog("binlog.000001", 4L, 0),
+                DebeziumChangeEventCapture.sequenceHighWaterPosition,
+                "the mark moved to the new log");
+
+        // From here on the new log is the log: in-order records are first deliveries
+        // and a rewound one is a redelivery again.
+        long next = versionOf(at(TS, "binlog.000001", 5, 0));
+        assertTrue(next > afterRename, "log order within the new log is honoured");
+        long rewound = versionOf(at(TS, "binlog.000001", 4, 0));
+        assertEquals(TS * MULTIPLIER + DebeziumChangeEventCapture.sequenceNumber, rewound,
+                "a rewind inside the new log is a redelivery: not clamped, source-timestamp anchored");
     }
 }
