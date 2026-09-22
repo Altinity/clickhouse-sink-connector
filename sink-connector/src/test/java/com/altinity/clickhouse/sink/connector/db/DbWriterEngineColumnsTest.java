@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -46,15 +47,21 @@ public class DbWriterEngineColumnsTest {
                         "is_deleted", columns("id", "is_deleted"), false));
     }
 
-    /** V6: a DELETE on such a table would insert its before image as a LIVE row. */
+    /**
+     * V6: a DELETE on such a table would insert its before image as a LIVE
+     * row. INSERTs and UPDATEs replicate correctly, and old-style
+     * {@code ReplacingMergeTree(ver)} tables without a delete column are
+     * common (the connector's own test fixtures and every Postgres target
+     * created before the {@code is_deleted} engine), so the table is NOT
+     * refused when the writer is built; the first DELETE record for it is
+     * ({@code PreparedStatementFieldMapperEngineColumnTest.testDeleteForTableWithoutDeleteColumnIsRefused}).
+     */
     @Test
-    @DisplayName("A ReplacingMergeTree lacking the delete column is refused (ignore_delete=false)")
-    public void rmtTargetWithoutDeleteColumnIsRefused() {
-        IllegalStateException e = assertThrows(IllegalStateException.class, () ->
+    @DisplayName("A ReplacingMergeTree lacking the delete column is accepted at open (only its DELETEs are refused)")
+    public void rmtTargetWithoutDeleteColumnIsAcceptedAtOpen() {
+        assertDoesNotThrow(() ->
                 DbWriter.requireReplacingMergeTreeColumns("db1", "orders", "_version",
                         "is_deleted", columns("id", "_version"), false));
-        assertTrue(e.getMessage().contains("'is_deleted'"), e.getMessage());
-        assertTrue(e.getMessage().contains("resurrect"), e.getMessage());
     }
 
     @Test

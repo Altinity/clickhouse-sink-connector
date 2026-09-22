@@ -12,6 +12,7 @@ import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.data.ClickHouseColumn;
 import com.clickhouse.data.ClickHouseDataType;
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
@@ -374,7 +375,7 @@ public class PreparedStatementFieldMapper {
         handleVersionColumn(columnNameToIndexMap, ps, record, config, columnNameToDataTypeMap, engine);
 
         // Handle Sign column to mark deletes in ReplacingMergeTree.
-        handleReplacingMergeTreeDeleteColumn(columnNameToIndexMap, ps, record, config, columnNameToDataTypeMap, beforeSection);
+        handleReplacingMergeTreeDeleteColumn(columnNameToIndexMap, ps, record, config, columnNameToDataTypeMap, engine, tableName, beforeSection);
 
         // Store raw data in JSON form if configured.
         handleRawDataStorage(columnNameToIndexMap, ps, struct, config, columnNameToDataTypeMap);
@@ -422,6 +423,12 @@ public class PreparedStatementFieldMapper {
 
         insertPreparedStatement(columnNameToIndexMap, ps, fields, record, struct, true, config,
                 columnNameToDataTypeMap, engine, tableName);
+
+        // A tombstone IS a delete marker: a table that cannot carry one would
+        // get the before image back as a LIVE row at the old key (Spec 08.01
+        // section 3.2).
+        requireDeleteColumn(config, columnNameToDataTypeMap, engine, tableName,
+                "The tombstone of an UPDATE that moves the row to another sorting key");
 
         // Force the delete marker on. insertPreparedStatement() derived it from
         // the CDC operation (UPDATE => not deleted); this row is a tombstone.
@@ -646,6 +653,62 @@ public class PreparedStatementFieldMapper {
         }
     }
 
+
+    /**
+     * A delete marker for a ReplacingMergeTree target that has no delete
+     * column cannot be replicated: the only way a DELETE (or the tombstone of
+     * an UPDATE that moves a row to another sorting key) reaches a
+     * ReplacingMergeTree is a row with the delete marker set, and without the
+     * column that row would be inserted as a LIVE row with a higher version
+     * and resurrect the key (Spec 08.01 §3.2). INSERTs and UPDATEs to such a
+     * table replicate correctly, so the table is not refused up front; the row
+     * that needs the marker is, here, loudly. Replication-history mode retires
+     * rows through its own SCD Type 2 statement and is exempt, like
+     * {@link #requireEngineColumnPlaceholder}.
+     *
+     * @param what the row being refused, for the message ("A DELETE", ...).
+     */
+    @VisibleForTesting
+    void requireDeleteColumn(ClickHouseSinkConnectorConfig config,
+                             Map<String, String> columnNameToDataTypeMap,
+                             DBMetadata.TABLE_ENGINE engine,
+                             String tableName,
+                             String what) {
+        if (engine != DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE
+                && engine != DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE) {
+            return;
+        }
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())
+                || config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            return;
+        }
+        if (this.replacingMergeTreeDeleteColumn != null
+                && columnNameToDataTypeMap.containsKey(this.replacingMergeTreeDeleteColumn)) {
+            return;
+        }
+        throw new IllegalStateException(String.format(
+                "%s for ReplacingMergeTree table %s.%s cannot be replicated: the table has no "
+                        + "delete column '%s' (table columns: %s). Written as is, the before image "
+                        + "would become a LIVE row with a higher version and resurrect the key. "
+                        + "Declare the table as ReplacingMergeTree(<version>, <delete column>) or "
+                        + "point replacingmergetree.delete.column at an existing column, or set "
+                        + "ignore_delete=true if deletes must not be replicated. Refusing the row.",
+                what, databaseName, tableName, this.replacingMergeTreeDeleteColumn,
+                columnNameToDataTypeMap.keySet()));
+    }
+
+    private void requireDeleteColumnForDelete(ClickHouseStruct record,
+                                              ClickHouseSinkConnectorConfig config,
+                                              Map<String, String> columnNameToDataTypeMap,
+                                              DBMetadata.TABLE_ENGINE engine,
+                                              String tableName) {
+        if (record.getCdcOperation() == null || !record.getCdcOperation().getOperation()
+                .equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
+            return;
+        }
+        requireDeleteColumn(config, columnNameToDataTypeMap, engine, tableName, "A DELETE");
+    }
+
     /**
      * Handles delete column for ReplacingMergeTree.
      */
@@ -654,7 +717,10 @@ public class PreparedStatementFieldMapper {
                                                        ClickHouseStruct record,
                                                        ClickHouseSinkConnectorConfig config,
                                                        Map<String, String> columnNameToDataTypeMap,
+                                                       DBMetadata.TABLE_ENGINE engine,
+                                                       String tableName,
                                                        boolean beforeSection) throws Exception {
+        requireDeleteColumnForDelete(record, config, columnNameToDataTypeMap, engine, tableName);
         if (this.replacingMergeTreeDeleteColumn != null && columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
             if (!config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())) {
                 requireEngineColumnPlaceholder(columnNameToIndexMap, config, columnNameToDataTypeMap,

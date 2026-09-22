@@ -115,7 +115,7 @@ public class PreparedStatementExecutorClearParametersTest {
         PreparedStatement ps = recordingStatement(calls);
 
         new PreparedStatementExecutor("is_deleted", true, null, "_version", "db", ZoneId.of("UTC"))
-                .addToPreparedStatementBatch("topic", queryToRecords, new BlockMetaData(),
+                .addToPreparedStatementBatch("topic", Collections.singletonList(queryToRecords), new BlockMetaData(),
                         new ClickHouseSinkConnectorConfig(new HashMap<>()), connectionReturning(ps),
                         "orders", columns, DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
 

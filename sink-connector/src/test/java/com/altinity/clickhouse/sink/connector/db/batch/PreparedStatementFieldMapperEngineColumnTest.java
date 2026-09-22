@@ -188,4 +188,96 @@ public class PreparedStatementFieldMapperEngineColumnTest {
                         ROW_SCHEMA.fields(), record, record.getAfterStruct(), false, config(true),
                         historyColumns, DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, "orders");
     }
+
+    // ---- Spec 08.01 section 3.2: a table WITHOUT a delete column refuses only its delete markers ----
+
+    /** An old-style {@code ReplacingMergeTree(ver)} target: version column, no delete column at all. */
+    private static Map<String, String> oldStyleRmtColumns() {
+        Map<String, String> m = new LinkedHashMap<>();
+        m.put("id", "Int32");
+        m.put("ver", "UInt64");
+        return m;
+    }
+
+    private static ClickHouseStruct delete() {
+        ClickHouseStruct record = new ClickHouseStruct(4L, "topic", null, 0, System.currentTimeMillis(),
+                new Struct(ROW_SCHEMA).put("id", 1), null, null, ClickHouseConverter.CDC_OPERATION.DELETE);
+        record.setDatabase("db1");
+        record.setGtid(78L);
+        record.setTs_ms(1767225600000L);
+        return record;
+    }
+
+    private static ClickHouseStruct update() {
+        ClickHouseStruct record = new ClickHouseStruct(5L, "topic", null, 0, System.currentTimeMillis(),
+                new Struct(ROW_SCHEMA).put("id", 1), new Struct(ROW_SCHEMA).put("id", 2), null,
+                ClickHouseConverter.CDC_OPERATION.UPDATE);
+        record.setDatabase("db1");
+        record.setGtid(79L);
+        record.setTs_ms(1767225600000L);
+        return record;
+    }
+
+    private static ClickHouseSinkConnectorConfig configIgnoringDeletes() {
+        Map<String, String> props = new HashMap<>();
+        props.put(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString(), "true");
+        return new ClickHouseSinkConnectorConfig(props);
+    }
+
+    @Test
+    @DisplayName("A DELETE for a ReplacingMergeTree table with no delete column is refused")
+    public void testDeleteForTableWithoutDeleteColumnIsRefused() {
+        ClickHouseStruct record = delete();
+
+        IllegalStateException e = assertThrows(IllegalStateException.class, () ->
+                new PreparedStatementFieldMapper("removed", false, null, "ver", "db1", ZoneId.of("UTC"))
+                        .insertPreparedStatement(indexes("id", "ver"), recordingStatement(new HashMap<>()),
+                                ROW_SCHEMA.fields(), record, record.getBeforeStruct(), true, config(false),
+                                oldStyleRmtColumns(), DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, "orders"),
+                "written as is, the before image becomes a LIVE row with a higher version and resurrects the key");
+        assertTrue(e.getMessage().startsWith("A DELETE"), e.getMessage());
+        assertTrue(e.getMessage().contains("db1.orders"), e.getMessage());
+        assertTrue(e.getMessage().contains("'removed'"), e.getMessage());
+    }
+
+    @Test
+    @DisplayName("An INSERT to the same table is written: only the delete marker is unrepresentable")
+    public void testInsertForTableWithoutDeleteColumnIsAccepted() throws Exception {
+        ClickHouseStruct record = insert();
+        Map<Integer, Object> bound = new HashMap<>();
+
+        new PreparedStatementFieldMapper("removed", false, null, "ver", "db1", ZoneId.of("UTC"))
+                .insertPreparedStatement(indexes("id", "ver"), recordingStatement(bound), ROW_SCHEMA.fields(),
+                        record, record.getAfterStruct(), false, config(false), oldStyleRmtColumns(),
+                        DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, "orders");
+
+        assertEquals(1, bound.get(1), "id bound at its placeholder: " + bound);
+        assertTrue(bound.containsKey(2), "ver bound at its placeholder: " + bound);
+    }
+
+    @Test
+    @DisplayName("With ignore_delete=true the DELETE is not refused (deletes are not replicated by choice)")
+    public void testDeleteForTableWithoutDeleteColumnIsAcceptedWhenDeletesAreIgnored() throws Exception {
+        ClickHouseStruct record = delete();
+
+        new PreparedStatementFieldMapper("removed", false, null, "ver", "db1", ZoneId.of("UTC"))
+                .insertPreparedStatement(indexes("id", "ver"), recordingStatement(new HashMap<>()),
+                        ROW_SCHEMA.fields(), record, record.getBeforeStruct(), true, configIgnoringDeletes(),
+                        oldStyleRmtColumns(), DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, "orders");
+    }
+
+    @Test
+    @DisplayName("The sorting-key relocation tombstone is a delete marker too: refused without a delete column")
+    public void testRelocationTombstoneForTableWithoutDeleteColumnIsRefused() {
+        ClickHouseStruct record = update();
+
+        IllegalStateException e = assertThrows(IllegalStateException.class, () ->
+                new PreparedStatementFieldMapper("removed", false, null, "ver", "db1", ZoneId.of("UTC"))
+                        .insertTombstonePreparedStatement(indexes("id", "ver"), recordingStatement(new HashMap<>()),
+                                ROW_SCHEMA.fields(), record, record.getBeforeStruct(), config(false),
+                                oldStyleRmtColumns(), DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, "orders"),
+                "the tombstone would reach ClickHouse as a LIVE row at the old key");
+        assertTrue(e.getMessage().contains("tombstone"), e.getMessage());
+        assertTrue(e.getMessage().contains("'removed'"), e.getMessage());
+    }
 }
