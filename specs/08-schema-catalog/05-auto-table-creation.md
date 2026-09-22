@@ -149,6 +149,15 @@ schema-override `primary_key` is the operator's escape hatch in the meantime.
 `SETTINGS` is always the last clause: user `settings` from the schema override,
 with `allow_nullable_key=1` appended when §3.2.1 requires it.
 
+### 3.3 A column type override that contradicts the table halts the connector
+`createNewTable()` reconciles `column_type_override.*` against an existing
+table and raises `ColumnTypeOverrideMismatchException` (unchecked) when the
+override contradicts the actual column type; the operator must resolve it
+before rows may flow. The caller must let it propagate: `DbWriter`'s
+constructor and `DbWriter#autoCreateTable` re-throw it ahead of their generic
+`catch (Exception)` (which only logs) so the writer is never built against a
+type the operator has declared wrong (spec 10.04 §3.8).
+
 ---
 
 ## 4. Invariants Preserved

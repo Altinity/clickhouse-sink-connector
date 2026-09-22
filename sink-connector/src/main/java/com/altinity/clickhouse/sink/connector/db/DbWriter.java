@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.ConnectorType;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
+import com.altinity.clickhouse.sink.connector.db.operations.ColumnTypeOverrideMismatchException;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.google.common.annotations.VisibleForTesting;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
@@ -157,6 +158,11 @@ public class DbWriter extends BaseDbWriter {
             ensureDatabasesExist();
             initializeTableEngine(hostName, record);
             configureEngineSpecificColumns();
+        } catch (ColumnTypeOverrideMismatchException e) {
+            // A configured column type override that contradicts the existing
+            // table must halt the connector (spec 08.05 section 3.3); logging
+            // it here would let rows be written against the wrong type.
+            throw e;
         } catch (IllegalStateException e) {
             // An engine whose version / delete column the connector cannot
             // bind (Spec 08.01 section 3.2) is not a transient metadata
@@ -210,6 +216,10 @@ public class DbWriter extends BaseDbWriter {
             );
 
 
+        } catch (ColumnTypeOverrideMismatchException e) {
+            // Propagate: ClickHouseAutoCreateTable raised it precisely so the
+            // connector halts (spec 08.05 section 3.3).
+            throw e;
         } catch (Exception e) {
             log.error(String.format(
                             "**** Error creating table(%s), database(%s) ***",

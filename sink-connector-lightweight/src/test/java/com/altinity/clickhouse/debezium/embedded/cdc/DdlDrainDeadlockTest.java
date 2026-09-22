@@ -4,6 +4,14 @@ import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.RoutedBatch;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.Logger;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -11,14 +19,17 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -28,8 +39,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p><b>The defect.</b> {@code pause()} parks every pool thread inside
  * {@code beforeExecute()}, so while it is in effect no thread can dequeue.
  * Draining after pausing therefore waits on a queue that is guaranteed never
- * to shrink: the loop burns the whole {@code DDL_DRAIN_TIMEOUT_MS} and then
- * throws. The throw is not a safe fallback -- the queued batches are dropped
+ * to shrink: the loop burned the whole drain timeout of the day and then
+ * threw. The throw is not a safe fallback -- the queued batches are dropped
  * with the aborted DDL attempt, so rows that MySQL holds never reach
  * ClickHouse. The loss is tail-shaped: a single day short by an arbitrary
  * number of rows while every other day matches exactly, which does not look
@@ -60,6 +71,49 @@ public class DdlDrainDeadlockTest {
 
     /** Shortened so a regression fails fast instead of hanging the suite. */
     private static final long DRAIN_BUDGET_MS = 60_000;
+
+    /** Collects everything the class under test logs during one call. */
+    private static final class CapturingAppender extends AbstractAppender {
+        private final List<LogEvent> events = Collections.synchronizedList(new ArrayList<>());
+
+        CapturingAppender() {
+            super("capture-ddl-drain", null, null, true, Property.EMPTY_ARRAY);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            events.add(event.toImmutable());
+        }
+    }
+
+    private long savedWarnInterval;
+
+    @BeforeEach
+    public void shortenWarnInterval() {
+        savedWarnInterval = DebeziumChangeEventCapture.ddlDrainWarnIntervalMs;
+        DebeziumChangeEventCapture.ddlDrainWarnIntervalMs = 150;
+    }
+
+    @AfterEach
+    public void restoreWarnInterval() {
+        DebeziumChangeEventCapture.ddlDrainWarnIntervalMs = savedWarnInterval;
+    }
+
+    /**
+     * A worker whose scheduled task has already died, exactly as
+     * {@code failIfWorkerDied} sees one: its future is done exceptionally.
+     */
+    private static ScheduledFuture<?> deadWorker(ClickHouseBatchExecutor executor) throws Exception {
+        ScheduledFuture<?> future = executor.schedule(() -> {
+            throw new IllegalStateException("FATAL classification: worker died");
+        }, 0, TimeUnit.MILLISECONDS);
+        long deadline = System.currentTimeMillis() + 5_000;
+        while (!future.isDone() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10);
+        }
+        assertTrue(future.isDone(), "sanity: the dead worker's future must be done");
+        return future;
+    }
 
     /** How long the routed-queue worker / acknowledging writer holds back. */
     private static final long RELEASE_DELAY_MS = 500;
@@ -188,14 +242,19 @@ public class DdlDrainDeadlockTest {
     }
 
     /**
-     * The abort must still fire when the queue genuinely cannot be drained --
-     * a stuck consumer, not a self-inflicted pause. Applying the DDL over
-     * those rows is the silent-corruption path the abort exists to prevent, so
-     * this behaviour is preserved deliberately.
+     * INVERTED from {@code testGenuinelyStuckQueueStillAborts}, which pinned a
+     * 60 s timeout abort. A queue that is not draining is not, by itself, a
+     * reason to abort: a worker retrying a transient ClickHouse error
+     * ({@code TOO_MANY_PARTS}, a reconnect) can hold a queue for longer than any
+     * fixed timeout, and aborting turned that into {@code DDLReplicationException}
+     * -> engine restart -> the same drain -> terminal stop (spec 10.04 §3.5).
+     * The only backlog that can never drain is one whose worker is DEAD, and
+     * that is what aborts -- immediately, naming the drain and carrying the
+     * worker's cause (spec 06.01 §3.2 step 1).
      */
     @Test
-    @DisplayName("A genuinely undrainable queue still aborts the DDL rather than applying it")
-    public void testGenuinelyStuckQueueStillAborts() throws Exception {
+    @DisplayName("An undrainable queue aborts the DDL only because its worker is dead -- promptly, with the cause")
+    public void testStuckQueueWithDeadWorkerAborts() throws Exception {
         DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
         ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(2, FACTORY);
         LinkedBlockingQueue<List<ClickHouseStruct>> records = new LinkedBlockingQueue<>();
@@ -204,24 +263,95 @@ public class DdlDrainDeadlockTest {
             records.put(new ArrayList<>());
             setField(capture, "executor", executor);
             setField(capture, "records", records);
+            capture.workerFutures.add(deadWorker(executor));
 
-            // No consumer at all: the queue cannot drain for a real reason.
-            boolean aborted = false;
+            long started = System.currentTimeMillis();
+            IllegalStateException aborted = null;
             try {
                 invokeDrain(capture);
             } catch (IllegalStateException expected) {
-                aborted = true;
-                assertTrue(expected.getMessage().contains("DDL drain"),
-                        "the abort must name the drain as the cause: " + expected.getMessage());
+                aborted = expected;
             }
+            long elapsed = System.currentTimeMillis() - started;
 
-            assertTrue(aborted,
-                    "an undrainable queue must abort the DDL attempt; applying the ALTER over "
-                            + "records captured under the previous schema is the silent "
-                            + "corruption this guard exists to prevent");
+            assertNotNull(aborted,
+                    "a backlog whose worker is dead can never drain; the DDL attempt must abort "
+                            + "rather than wait forever or apply the ALTER over the pending rows");
+            assertTrue(aborted.getMessage().contains("DDL drain"),
+                    "the abort must name the drain as the cause: " + aborted.getMessage());
+            assertNotNull(aborted.getCause(), "the abort must carry the dead worker's cause");
+            assertTrue(elapsed < 5_000,
+                    "a dead worker is detected on the next poll, not after a timeout (took "
+                            + elapsed + " ms)");
             assertEquals(1, records.size(), "the undrained batch must not have been discarded");
-            assertFalse(records.isEmpty(), "sanity: the queue really was non-empty");
         } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    /**
+     * With LIVE workers a backlog that is slow to drain is waited for, not
+     * aborted: the drain logs a WARN naming the backlog every
+     * {@code ddlDrainWarnIntervalMs} and keeps waiting. Only an interrupt (the
+     * engine being closed) ends it.
+     *
+     * <p>Against the pre-fix code this fails: the drain threw after its fixed
+     * timeout with the queue still full.</p>
+     */
+    @Test
+    @DisplayName("A slow backlog with live workers is waited for past the old timeout, with periodic WARNs, and never aborted")
+    public void testUndrainableQueueWithLiveWorkersKeepsWaiting() throws Exception {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(2, FACTORY);
+        LinkedBlockingQueue<List<ClickHouseStruct>> records = new LinkedBlockingQueue<>();
+        Logger coreLogger = (Logger) LogManager.getLogger(DebeziumChangeEventCapture.class);
+        CapturingAppender appender = new CapturingAppender();
+        appender.start();
+        coreLogger.addAppender(appender);
+
+        try {
+            records.put(new ArrayList<>());
+            setField(capture, "executor", executor);
+            setField(capture, "records", records);
+            // A live worker that is (for the duration of the test) making no
+            // progress on this queue -- e.g. retrying a transient error.
+            capture.workerFutures.add(executor.scheduleAtFixedRate(() -> { }, 0, 10,
+                    TimeUnit.MILLISECONDS));
+
+            Throwable[] outcome = new Throwable[1];
+            Thread drainer = new Thread(() -> {
+                try {
+                    invokeDrain(capture);
+                } catch (Throwable t) {
+                    outcome[0] = t;
+                }
+            }, "ddl-drain-live-worker-test");
+            drainer.setDaemon(true);
+            drainer.start();
+
+            // Several warn intervals (150 ms each) later: still waiting, still warning.
+            drainer.join(900);
+            assertTrue(drainer.isAlive(),
+                    "with live workers the drain must keep waiting, not abort on a timeout; it ended "
+                            + "with: " + outcome[0]);
+            long warns = appender.events.stream()
+                    .filter(e -> e.getLevel() == Level.WARN)
+                    .filter(e -> e.getMessage().getFormattedMessage().contains("still pending"))
+                    .count();
+            assertTrue(warns >= 1, "the wait must be visible: a WARN naming the pending backlog");
+            assertEquals(1, records.size(), "the batch is still pending, not discarded");
+
+            // The engine closing interrupts the Debezium thread: that, and only
+            // that, ends the wait -- loudly.
+            drainer.interrupt();
+            drainer.join(5_000);
+            assertFalse(drainer.isAlive(), "an interrupt must end the drain");
+            assertTrue(outcome[0] instanceof IllegalStateException,
+                    "an interrupted drain aborts the DDL attempt: " + outcome[0]);
+        } finally {
+            coreLogger.removeAppender(appender);
+            appender.stop();
+            executor.resume();
             executor.shutdownNow();
         }
     }
@@ -327,40 +457,39 @@ public class DdlDrainDeadlockTest {
     }
 
     /**
-     * A routed queue that never drains must abort the DDL attempt, exactly as
-     * an undrainable legacy queue does, and the message must say what was
-     * pending.
-     *
-     * <p>Against the pre-fix code this fails: the drain never looked at the
-     * routed queue and returned normally.</p>
+     * INVERTED from {@code testUndrainableRoutedQueueAborts} (a 60 s timeout
+     * abort): a routed backlog whose worker is DEAD aborts the DDL attempt
+     * promptly, exactly as an undrainable legacy queue does, and the message
+     * names the routed backlog. The routed-queue coverage of the drain is
+     * unchanged: it still fails against code that never looks at the routed
+     * queues (which returned normally).
      */
     @Test
-    @DisplayName("A routed queue that cannot be drained aborts the DDL rather than applying it")
-    public void testUndrainableRoutedQueueAborts() throws Exception {
+    @DisplayName("A routed backlog whose worker is dead aborts the DDL, naming the routed backlog")
+    public void testUndrainableRoutedQueueWithDeadWorkerAborts() throws Exception {
         DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
         ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(2, FACTORY);
 
         try {
             List<LinkedBlockingQueue<RoutedBatch>> routed = wireHashRouting(capture, executor, 2);
             routed.get(0).put(routedBatch(0));
+            capture.workerFutures.add(deadWorker(executor));
 
-            // No worker at all: the routed queue cannot drain for a real reason.
-            boolean aborted = false;
+            IllegalStateException aborted = null;
             try {
                 invokeDrain(capture);
             } catch (IllegalStateException expected) {
-                aborted = true;
-                assertTrue(expected.getMessage().contains("DDL drain"),
-                        "the abort must name the drain as the cause: " + expected.getMessage());
-                assertTrue(expected.getMessage().toLowerCase().contains("routed"),
-                        "the abort must name the routed backlog it timed out on: "
-                                + expected.getMessage());
+                aborted = expected;
             }
 
-            assertTrue(aborted,
-                    "an undrainable routed queue must abort the DDL attempt; applying the ALTER "
-                            + "over records captured under the previous schema is the silent "
-                            + "corruption this guard exists to prevent");
+            assertNotNull(aborted,
+                    "a routed backlog whose worker is dead must abort the DDL attempt; applying "
+                            + "the ALTER over records captured under the previous schema is the "
+                            + "silent corruption this guard exists to prevent");
+            assertTrue(aborted.getMessage().contains("DDL drain"),
+                    "the abort must name the drain as the cause: " + aborted.getMessage());
+            assertTrue(aborted.getMessage().toLowerCase().contains("routed"),
+                    "the abort must name the routed backlog: " + aborted.getMessage());
             assertEquals(1, routed.get(0).size(), "the undrained batch must not have been discarded");
         } finally {
             executor.resume();
