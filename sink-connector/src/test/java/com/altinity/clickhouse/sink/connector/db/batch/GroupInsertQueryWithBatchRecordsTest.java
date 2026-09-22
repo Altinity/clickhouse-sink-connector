@@ -259,14 +259,17 @@ public class GroupInsertQueryWithBatchRecordsTest {
         return record;
     }
 
+    /** Groups one INSERT and returns its (single) segment. */
     private static Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> group(
             FakeClickHouse ch, ClickHouseSinkConnectorConfig config) {
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queries = new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> segments =
+                new ArrayList<>();
         Map<TopicPartition, Long> offsets = new HashMap<>();
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
-                Collections.singletonList(insertCarryingNote()), queries, offsets, config,
+                Collections.singletonList(insertCarryingNote()), segments, offsets, config,
                 "t", "db", ch.connection(), cachedWithoutNote());
-        return queries;
+        assertEquals(1, segments.size(), "one INSERT is one segment");
+        return segments.get(0);
     }
 
     @BeforeEach
@@ -404,6 +407,90 @@ public class GroupInsertQueryWithBatchRecordsTest {
         assertFalse(CacheInvalidationManager.getInstance().isColumnProvenAbsent("db.t", "note"));
         assertEquals("ALTER TABLE `db`.`t` MODIFY COLUMN `note` String DEFAULT lower(name)",
                 ch.executed.get(0));
+    }
+
+    private static List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> groupOne(
+            ClickHouseStruct record, Map<String, String> columns) {
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> segments =
+                new ArrayList<>();
+        new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
+                new ArrayList<>(Collections.singletonList(record)), segments, new HashMap<>(),
+                config(false), "t", "db", null, columns);
+        return segments;
+    }
+
+    /**
+     * Spec 04.01 section 3.3: a record that cannot be grouped fails the batch.
+     * Returning {@code false} for it dropped the row with no error while the
+     * batch's offset advanced past it.
+     */
+    @Test
+    @DisplayName("A DELETE without a before image fails the batch instead of being dropped")
+    public void deleteWithoutBeforeImageFailsLoudly() {
+        ClickHouseStruct delete = new ClickHouseStruct(
+                9L, "topic", null, 0, System.currentTimeMillis(),
+                null, null, null, ClickHouseConverter.CDC_OPERATION.DELETE);
+        delete.setDatabase("db");
+
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> groupOne(delete, cachedWithoutNote()),
+                "a DELETE with no before image has no row to write; dropping it silently "
+                        + "leaves the row alive in ClickHouse while MySQL deleted it");
+        assertTrue(e.getMessage().contains("before"), e.getMessage());
+        assertTrue(e.getMessage().contains("offset=9"), e.getMessage());
+    }
+
+    /**
+     * Worse than a drop: an UPDATE lacking its after image used to be grouped
+     * by its before image alone, i.e. written as a LIVE row of the pre-update
+     * values.
+     */
+    @Test
+    @DisplayName("An UPDATE without an after image fails the batch instead of writing its before image live")
+    public void updateWithoutAfterImageFailsLoudly() {
+        ClickHouseStruct update = new ClickHouseStruct(
+                10L, "topic", null, 0, System.currentTimeMillis(),
+                new Struct(ROW_SCHEMA).put("id", 1).put("note", "old"), null, null,
+                ClickHouseConverter.CDC_OPERATION.UPDATE);
+        update.setDatabase("db");
+
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> groupOne(update, cachedWithoutNote()));
+        assertTrue(e.getMessage().contains("after"), e.getMessage());
+    }
+
+    /** No column metadata: an explicit failure naming the table, not a NullPointerException. */
+    @Test
+    @DisplayName("Grouping without ClickHouse column metadata fails the batch instead of dropping the record")
+    public void missingColumnMapFailsLoudly() {
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> groupOne(insertCarryingNote(), null));
+        assertTrue(e.getMessage().contains("column metadata"), e.getMessage());
+        assertTrue(e.getMessage().contains("table t"), e.getMessage());
+    }
+
+    /**
+     * Spec 04.02 section 3.1: the resolved engine columns handed to the
+     * grouper become bind parameters of the INSERT, whatever they are called.
+     */
+    @Test
+    @DisplayName("Resolved version / delete column names become INSERT parameters")
+    public void resolvedEngineColumnsAreBoundParameters() {
+        Map<String, String> table = new LinkedHashMap<>();
+        table.put("id", "Int32");
+        table.put("note", "Nullable(String)");
+        table.put("ver", "UInt64");
+        table.put("removed", "UInt8");
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> segments =
+                new ArrayList<>();
+
+        new GroupInsertQueryWithBatchRecords("ver", null, "removed").groupQueryWithRecords(
+                new ArrayList<>(Collections.singletonList(insertCarryingNote())), segments,
+                new HashMap<>(), config(false), "t", "db", null, table);
+
+        MutablePair<String, Map<String, Integer>> key = segments.get(0).keySet().iterator().next();
+        assertTrue(key.getRight().containsKey("ver"), "ver must be a parameter: " + key.getLeft());
+        assertTrue(key.getRight().containsKey("removed"), "removed must be a parameter: " + key.getLeft());
     }
 
     /** Regression guard: an ALIAS column keeps the pre-existing behaviour. */

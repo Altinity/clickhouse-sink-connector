@@ -115,12 +115,20 @@ public class PreparedStatementExecutor {
     }
 
     /**
-     * Iterates through records and adds them to a JDBC prepared statement batch
-     * for execution. It processes each query, logging the insert query and
-     * managing any errors that occur during execution.
+     * Executes the grouped batch: every segment in order, and within a
+     * segment every query template as one JDBC prepared-statement batch.
+     *
+     * <p>A segment holding a replicated truncation event is executed as a
+     * table truncation against THIS executor's database -- the resolved
+     * target database (spec 03.04), which under
+     * {@code clickhouse.database.override.map} differs from the source
+     * database the record carries. Because segments are executed strictly in
+     * order, every row grouped before the truncation has been written when it
+     * runs and every row grouped after it is written afterwards; two
+     * TRUNCATEs in one batch are two segments and both run (Spec 04.05 §3).</p>
      *
      * @param topicName The Kafka topic name.
-     * @param queryToRecordsMap The map of queries to records.
+     * @param querySegments The ordered segments, each a map of query template to records.
      * @param bmd Block metadata.
      * @param config Connector configuration.
      * @param conn The database connection.
@@ -130,39 +138,98 @@ public class PreparedStatementExecutor {
      * @return true if all queries are successfully executed; false otherwise.
      * @throws Exception if an error occurs during execution.
      */
-    public boolean addToPreparedStatementBatch(String topicName, Map<MutablePair<String, Map<String, Integer>>,
-            List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd,
+    public boolean addToPreparedStatementBatch(String topicName,
+                                               List<Map<MutablePair<String, Map<String, Integer>>,
+                                                       List<ClickHouseStruct>>> querySegments,
+                                               BlockMetaData bmd,
                                                ClickHouseSinkConnectorConfig config,
                                                Connection conn,
                                                String tableName,
                                                Map<String, String> columnToDataTypeMap,
                                                DBMetadata.TABLE_ENGINE engine) throws Exception {
 
+        if (querySegments == null || querySegments.isEmpty()) {
+            // Returning false here made the caller keep the batch and retry
+            // it on every tick, forever, although it could never produce a
+            // statement. A batch that grouped into nothing is a defect to
+            // surface, not a transient to wait out (Spec 04.01 section 3.3).
+            throw new IllegalStateException(String.format(
+                    "No statement group to execute for Database(%s), table(%s): the batch was "
+                            + "grouped into nothing. Failing loudly instead of retrying it forever.",
+                    databaseName, tableName));
+        }
         boolean result = false;
-        Iterator<Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> iter = queryToRecordsMap.entrySet().iterator();
-        while(iter.hasNext()) {
-            Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry = iter.next();
-            String insertQuery = entry.getKey().getKey();
-            log.info(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
-            // Create Hashmap of PreparedStatement(Query) -> Set of records
-            // because the data will contain a mix of SQL statements(multiple columns)
-            if (!executePreparedStatement(insertQuery, topicName, entry, bmd, config,
-                    conn, tableName, columnToDataTypeMap, engine)) {
-                log.error(String.format("**** ERROR: executing prepared statement for Database(%s), " +
-                        "table(%s), Query(%s) ****", databaseName, tableName, insertQuery));
-                result = false;
-                break;
-            } else {
+        DBMetadata metadata = new DBMetadata(config);
+        for (Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap
+                : querySegments) {
+            if (queryToRecordsMap.isEmpty()) {
+                throw new IllegalStateException(String.format(
+                        "Empty statement segment for Database(%s), table(%s): the grouping produced "
+                                + "a segment with no query. Failing loudly instead of retrying it forever.",
+                        databaseName, tableName));
+            }
+            Iterator<Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> iter =
+                    queryToRecordsMap.entrySet().iterator();
+            while (iter.hasNext()) {
+                Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry = iter.next();
+                if (isTruncateGroup(entry)) {
+                    ClickHouseStruct truncateEvent = entry.getValue().get(0);
+                    try {
+                        bmd.update(truncateEvent);
+                    } catch (Exception e) {
+                        log.error("**** ERROR: updating Prometheus", e);
+                    }
+                    log.info(String.format("*** Applying replicated TRUNCATE to Database(%s), table(%s) "
+                            + "at its binlog position ***", databaseName, tableName));
+                    try {
+                        // DESTRUCTIVE: applies a TRUNCATE that MySQL already
+                        // executed (replicated change event op = t) to the
+                        // resolved TARGET database/table of this executor;
+                        // never issued on the connector's own initiative.
+                        metadata.truncateTable(conn, databaseName, tableName);
+                    } catch (SQLException e) {
+                        // DESTRUCTIVE: error text only -- the truncation was NOT
+                        // applied (every retry refused); the batch fails here.
+                        throw new RuntimeException(String.format(
+                                "TRUNCATE failed for %s.%s", databaseName, tableName), e);
+                    }
+                    result = true;
+                    Metrics.updateCounters(topicName, entry.getValue().size());
+                    continue;
+                }
+                String insertQuery = entry.getKey().getKey();
+                log.info(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
+                // Create Hashmap of PreparedStatement(Query) -> Set of records
+                // because the data will contain a mix of SQL statements(multiple columns)
+                if (!executePreparedStatement(insertQuery, topicName, entry, bmd, config,
+                        conn, tableName, columnToDataTypeMap, engine)) {
+                    log.error(String.format("**** ERROR: executing prepared statement for Database(%s), " +
+                            "table(%s), Query(%s) ****", databaseName, tableName, insertQuery));
+                    return false;
+                }
                 result = true;
+                if (entry.getValue().isEmpty()) {
+                    // All records were processed.
+                    iter.remove();
+                }
+                Metrics.updateCounters(topicName, entry.getValue().size());
             }
-            if (entry.getValue().isEmpty()) {
-                // All records were processed.
-                iter.remove();
-            }
-            Metrics.updateCounters(topicName, entry.getValue().size());
         }
 
         return result;
+    }
+
+    /**
+     * Whether a query group is the marker group of a replicated TRUNCATE
+     * event: exactly one record whose operation is TRUNCATE. The group's key
+     * text is never executed; the statement is issued by
+     * {@code DBMetadata.truncateTable} against the executor's database.
+     */
+    private static boolean isTruncateGroup(
+            Map.Entry<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> entry) {
+        List<ClickHouseStruct> records = entry.getValue();
+        return records != null && records.size() == 1
+                && GroupInsertQueryWithBatchRecords.isTruncate(records.get(0));
     }
 
     /**
@@ -213,30 +280,18 @@ public class PreparedStatementExecutor {
                         log.error("**** ERROR: updating Prometheus", e);
                     }
 
-                    if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.TRUNCATE.getOperation())) {
-                        // A TRUNCATE must be applied at its binlog position, not at the
-                        // end of the batch. Rows staged before it belong to the
-                        // pre-truncate state and have to reach ClickHouse first; rows
-                        // after it are the new state and must survive. Flush what is
-                        // staged, truncate, then keep accumulating the remainder.
-                        //
-                        // Executing the truncate after executeBatch() (the previous
-                        // behaviour) discarded every row the same batch had just
-                        // inserted whenever a TRUNCATE was followed by more DML.
-                        try {
-                            ps.executeBatch();
-                        } catch (SQLException e) {
-                            throw new RuntimeException(String.format(
-                                    "Failed to flush records staged before TRUNCATE for %s.%s",
-                                    databaseName, tableName), e);
-                        }
-                        try {
-                            metadata.truncateTable(conn, databaseName, tableName);
-                        } catch (SQLException e) {
-                            throw new RuntimeException(String.format(
-                                    "TRUNCATE failed for %s.%s", databaseName, tableName), e);
-                        }
-                        continue;
+                    if (GroupInsertQueryWithBatchRecords.isTruncate(record)) {
+                        // A replicated truncation is applied at its binlog
+                        // position by addToPreparedStatementBatch, as a
+                        // segment of its own between the INSERT segments
+                        // (Spec 04.05 section 3). It can never share an
+                        // INSERT template's record list; if one does, the
+                        // grouping is broken and binding it as a row would
+                        // write garbage.
+                        throw new IllegalStateException(String.format(
+                                "Replicated truncation event (op = t) for %s.%s found inside an INSERT "
+                                        + "group; the grouping must place it in a segment of its own.",
+                                databaseName, tableName));
                     }
 
                     // DELETE --> History Mode.
@@ -291,8 +346,15 @@ public class PreparedStatementExecutor {
                     // UPDATE HISTORY MODE.
                     else if (CdcRecordState.CDC_RECORD_STATE_BOTH == getCdcSectionBasedOnOperation(record.getCdcOperation())) {
                         if (engine != null && engine.getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE.getEngine())) {
+                            // CollapsingMergeTree: the before image is the -1
+                            // cancel row that retires the pre-update row. It
+                            // must be STAGED before the after image is bound,
+                            // or the after image simply overwrites the same
+                            // parameters and the only row that reaches
+                            // ClickHouse is a second +1 (Spec 05.04 section 3.1).
                             fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getBeforeModifiedFields(), record, record.getBeforeStruct(),
                                     true, config, columnToDataTypeMap, engine, tableName);
+                            ps.addBatch();
                         }
                         // ReplacingMergeTree deduplicates by SORTING KEY. An UPDATE that
                         // changes any sorting-key column therefore writes the new row at a
@@ -343,7 +405,14 @@ public class PreparedStatementExecutor {
                                     false, config, columnToDataTypeMap, engine, tableName);
                         }
                     } else {
-                        log.error("INVALID CDC RECORD STATE");
+                        // Not reachable today, but staging the statement with
+                        // whatever parameters the previous row left behind
+                        // would write a duplicate of that row (Spec 04.01
+                        // section 3.3).
+                        throw new IllegalStateException(String.format(
+                                "Record with operation %s for %s.%s has no recognised CDC record "
+                                        + "state; nothing was bound for it and it is not staged.",
+                                record.getCdcOperation(), databaseName, tableName));
                     }
                     if(!updateRecord) {
                         ps.addBatch();
@@ -423,7 +492,15 @@ public class PreparedStatementExecutor {
             if (before.schema().field(keyColumn) == null || after.schema().field(keyColumn) == null) {
                 continue;
             }
-            if (!Objects.equals(before.get(keyColumn), after.get(keyColumn))) {
+            // Compare the STORED values, never the Connect-schema default.
+            // Struct.get() answers schema.defaultValue() for a null field, and
+            // Debezium fills that default from the MySQL column DEFAULT, so an
+            // UPDATE of a key column from NULL to its DEFAULT compared equal,
+            // was judged in-place, and the old row at the NULL key was never
+            // tombstoned. The bind path reads stored values for the same
+            // reason (Spec 04.03 section 3.3); this decision must observe the
+            // same values the rows are written with (Spec 05.01 section 3.2).
+            if (!Objects.equals(before.getWithoutDefault(keyColumn), after.getWithoutDefault(keyColumn))) {
                 return true;
             }
         }

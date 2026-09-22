@@ -157,6 +157,14 @@ public class DbWriter extends BaseDbWriter {
             ensureDatabasesExist();
             initializeTableEngine(hostName, record);
             configureEngineSpecificColumns();
+        } catch (IllegalStateException e) {
+            // An engine whose version / delete column the connector cannot
+            // bind (Spec 08.01 section 3.2) is not a transient metadata
+            // failure to retry silently: every row written to such a table
+            // would be versioned 0 or never deleted. Let the batch fail with
+            // the reason.
+            log.error("***** DBWriter refused table {}.{} ****", database, tableName, e);
+            throw e;
         } catch (Exception e) {
             log.error("***** DBWriter error initializing ****", e);
         }
@@ -327,9 +335,81 @@ public class DbWriter extends BaseDbWriter {
 
         if (isReplacingMergeTreeEngine(engineName)) {
             configureReplacingMergeTreeColumns(tableEngineResponse.getRight());
+            requireReplacingMergeTreeColumns(database, tableName, this.versionColumn,
+                    this.replacingMergeTreeDeleteColumn, this.columnNameToDataTypeMap,
+                    this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString()));
         } else if (isCollapsingMergeTreeEngine(engineName)) {
             this.signColumn = tableEngineResponse.getRight();
         }
+    }
+
+    /**
+     * Refuses a ReplacingMergeTree target the connector cannot version, and
+     * warns about one that cannot carry a delete marker (Spec 08.01 §3.2).
+     *
+     * <p>The version column decides which row survives a merge and the delete
+     * column is the only way a DELETE reaches a ReplacingMergeTree. A table
+     * whose engine clause names no version column (a bare
+     * {@code ReplacingMergeTree()}), or names one the table does not have, or
+     * has no recognisable delete column (the resolved one for the new-style
+     * engine, else {@code replacingmergetree.delete.column}) cannot be
+     * replicated correctly: rows would be versioned by insertion order and
+     * every DELETE would insert its before image as a LIVE row with a higher
+     * version, resurrecting it. Both used to be silently skipped at bind time.
+     * Package-private and static so it can be tested without a connection.</p>
+     *
+     * @param database      the target database, for the message.
+     * @param tableName     the target table, for the message.
+     * @param versionColumn the resolved version column (null / empty when the engine clause has none).
+     * @param deleteColumn  the resolved or configured delete column.
+     * @param columns       the table's writable column map.
+     * @param ignoreDelete  {@code ignore_delete}: when true the delete column is not required.
+     * @throws IllegalStateException when the table cannot be versioned. A missing delete
+     *         column is logged here; the field mapper refuses, row by row, the delete-marker
+     *         rows the table cannot carry.
+     */
+    static void requireReplacingMergeTreeColumns(String database, String tableName,
+                                                 String versionColumn, String deleteColumn,
+                                                 Map<String, String> columns, boolean ignoreDelete) {
+        if (versionColumn == null || versionColumn.isEmpty() || !hasColumn(columns, versionColumn)) {
+            throw new IllegalStateException(String.format(
+                    "ReplacingMergeTree table %s.%s has no usable version column (engine clause "
+                            + "resolves to '%s'; table columns: %s). Without a version column the "
+                            + "connector cannot order rows: a redelivered or out-of-order row would "
+                            + "silently replace the current one. Declare the table as "
+                            + "ReplacingMergeTree(<version column>, <delete column>) with both "
+                            + "columns present. Refusing to write to it.",
+                    database, tableName, versionColumn, columns == null ? null : columns.keySet()));
+        }
+        if (!ignoreDelete && (deleteColumn == null || deleteColumn.isEmpty()
+                || !hasColumn(columns, deleteColumn))) {
+            // Not a refusal: INSERTs and UPDATEs to such a table replicate
+            // correctly, and old-style ReplacingMergeTree(ver) tables without
+            // a delete column are common in the field. Only a delete-marker row
+            // cannot be applied, and that is where the connector stops -- loudly,
+            // at the row that would otherwise resurrect the key
+            // (PreparedStatementFieldMapper.requireDeleteColumn, Spec 08.01
+            // section 3.2).
+            log.warn("ReplacingMergeTree table {}.{} has no delete column '{}' (table columns: {}). "
+                            + "INSERT and UPDATE replicate; the first delete-marker row (a DELETE record or a "
+                            + "sorting-key relocation tombstone) fails its batch instead of being inserted as "
+                            + "a LIVE row. Add the column "
+                            + "(or point replacingmergetree.delete.column at the existing one), or set "
+                            + "ignore_delete=true if deletes must not be replicated.",
+                    database, tableName, deleteColumn, columns == null ? null : columns.keySet());
+        }
+    }
+
+    private static boolean hasColumn(Map<String, String> columns, String column) {
+        if (columns == null) {
+            return false;
+        }
+        for (String name : columns.keySet()) {
+            if (name != null && name.equalsIgnoreCase(column)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
