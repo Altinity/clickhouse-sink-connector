@@ -157,6 +157,36 @@ public class QueryFormatter {
             boolean includeRawData,
             String rawDataColumn, String dbName, String deleteColumn,
             List<Field> schemaFields) {
+        return getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypeMap,
+                includeKafkaMetaData, includeRawData, rawDataColumn, dbName, deleteColumn,
+                schemaFields, null, null);
+    }
+
+    /**
+     * Overload taking the target table's RESOLVED engine columns.
+     *
+     * <p>The version column of a ReplacingMergeTree and the sign column of a
+     * CollapsingMergeTree are read from the table's engine clause
+     * ({@code ReplacingMergeTree(ver)}, {@code CollapsingMergeTree(sgn)}), so
+     * they can carry any name. Recognising them only by the connector's
+     * default constants ({@code _version}, {@code _sign}) left a
+     * differently named column out of the INSERT: it is never in the source
+     * record, so it was "omitted as a pre-ALTER column" and ClickHouse stored
+     * the type default -- {@code ver = 0} for every row (a redelivered older
+     * row then wins every merge) and {@code sgn = 0} (no row ever collapses).
+     * The resolved names are treated exactly like the constants: always
+     * retained, always bind parameters (Spec 04.02 §3.1).</p>
+     *
+     * @param versionColumn the resolved ReplacingMergeTree version column, may be null.
+     * @param signColumn    the resolved CollapsingMergeTree sign column, may be null.
+     */
+    public MutablePair<String, Map<String, Integer>> getInsertQueryUsingInputFunction(
+            String tableName, List<Field> fields,
+            Map<String, String> columnNameToDataTypeMap,
+            boolean includeKafkaMetaData,
+            boolean includeRawData,
+            String rawDataColumn, String dbName, String deleteColumn,
+            List<Field> schemaFields, String versionColumn, String signColumn) {
 
         // Membership is decided by the record's SCHEMA, never by the
         // value-filtered modified-fields list -- see the javadoc above.
@@ -164,7 +194,8 @@ public class QueryFormatter {
 
         // Create column data structures
         ColumnData columnData = createColumns(tableName, membershipFields, columnNameToDataTypeMap,
-                includeKafkaMetaData, includeRawData, rawDataColumn, dbName, deleteColumn);
+                includeKafkaMetaData, includeRawData, rawDataColumn, dbName, deleteColumn,
+                versionColumn, signColumn);
 
         if (columnData == null) {
             return null;
@@ -380,22 +411,26 @@ public class QueryFormatter {
     private ColumnData createColumns(String tableName, List<Field> fields, Map<String, String> columnNameToDataTypeMap,
                                      boolean includeKafkaMetaData, boolean includeRawData, String rawDataColumn, String dbName) {
         return createColumns(tableName, fields, columnNameToDataTypeMap, includeKafkaMetaData,
-                includeRawData, rawDataColumn, dbName, null);
+                includeRawData, rawDataColumn, dbName, null, null, null);
     }
 
     /**
      * Returns true for columns the connector populates itself rather than
      * copying from the source record: {@code _version}, {@code is_deleted},
-     * {@code _sign}, the replication-history validity columns, and the
-     * configured ReplacingMergeTree delete column. These are never present in
-     * the incoming record's schema and must always remain in the INSERT
-     * column list.
+     * {@code _sign}, the replication-history validity columns, the
+     * configured ReplacingMergeTree delete column, and the table's RESOLVED
+     * version and sign columns (read from its engine clause, so they may
+     * carry any name). These are never present in the incoming record's
+     * schema and must always remain in the INSERT column list.
      *
-     * @param colName      the ClickHouse column name to test.
-     * @param deleteColumn the configured delete column name, may be null.
+     * @param colName       the ClickHouse column name to test.
+     * @param deleteColumn  the configured delete column name, may be null.
+     * @param versionColumn the resolved version column name, may be null.
+     * @param signColumn    the resolved sign column name, may be null.
      * @return true if the connector populates this column itself.
      */
-    private boolean isConnectorManagedColumn(String colName, String deleteColumn) {
+    private boolean isConnectorManagedColumn(String colName, String deleteColumn,
+                                             String versionColumn, String signColumn) {
         return colName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.SIGN_COLUMN)
@@ -408,13 +443,22 @@ public class QueryFormatter {
                 // could not be distinguished from an insert -- deleted rows stayed
                 // visible in ClickHouse forever while row counts looked plausible.
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)
-                || (deleteColumn != null && !deleteColumn.isEmpty()
-                        && colName.equalsIgnoreCase(deleteColumn));
+                || matchesResolvedColumn(colName, deleteColumn)
+                // The engine clause decides the real names. A version column
+                // called `ver` or a sign column called `sgn` that is recognised
+                // only by the constants above was dropped from the INSERT and
+                // stored as the type default for every row (Spec 04.02 §3.1).
+                || matchesResolvedColumn(colName, versionColumn)
+                || matchesResolvedColumn(colName, signColumn);
+    }
+
+    private static boolean matchesResolvedColumn(String colName, String resolved) {
+        return resolved != null && !resolved.isEmpty() && colName.equalsIgnoreCase(resolved);
     }
 
     private ColumnData createColumns(String tableName, List<Field> fields, Map<String, String> columnNameToDataTypeMap,
                                      boolean includeKafkaMetaData, boolean includeRawData, String rawDataColumn,
-                                     String dbName, String deleteColumn) {
+                                     String dbName, String deleteColumn, String versionColumn, String signColumn) {
 
         if (fields == null) {
             log.error("getInsertQueryUsingInputFunction, fields empty");
@@ -455,7 +499,7 @@ public class QueryFormatter {
             if (!recordFieldNames.contains(sourceColumnName.toLowerCase())
                     && !isKafkaMetaDataColumn(sourceColumnName)
                     && !sourceColumnName.equalsIgnoreCase(rawDataColumn)
-                    && !isConnectorManagedColumn(sourceColumnName, deleteColumn)) {
+                    && !isConnectorManagedColumn(sourceColumnName, deleteColumn, versionColumn, signColumn)) {
                 log.debug(String.format(
                         "Table Name: %s, Database: %s, Column(%s) omitted from INSERT: "
                                 + "not present in this record's schema (pre-ALTER record); "

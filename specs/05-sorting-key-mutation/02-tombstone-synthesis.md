@@ -28,6 +28,16 @@ When `updateRelocatesSortingKey()` is true:
 5. The after-image (Spec 05.03) is added to the same batch **after** the
    tombstone, with `_version = V` and the new sorting key.
 
+A tombstone is a delete marker. For a ReplacingMergeTree /
+ReplicatedReplacingMergeTree target whose delete column is not a column of
+the table (and `ignore_delete=false`, outside replication-history mode) step 3
+has nothing to set, and the row would reach ClickHouse as a LIVE row at the
+old key — the ghost row the tombstone exists to prevent.
+`insertTombstonePreparedStatement` therefore refuses it with
+`IllegalStateException` through `PreparedStatementFieldMapper.requireDeleteColumn`
+(spec 08.01 §3.2) instead of writing it; the batch fails with the table, the
+missing column and the remediation.
+
 ### 3.2 Why the tombstone carries $V$ and not $V - 1$
 The tombstone (old key) and the after-image (new key) never share a sorting key,
 so they never compete under `ReplacingMergeTree`; decrementing the tombstone
@@ -62,4 +72,5 @@ versioning and is withdrawn.
 ## 5. Verification Criteria
 - `PreparedStatementFieldMapperTombstoneVersionTest.testTombstoneCarriesRecordVersionUnchanged()` — the value bound to `_version` for the tombstone equals `record.getVersion()` (pre-fix code binds `V - 1`).
 - `PreparedStatementFieldMapperTombstoneVersionTest.testTombstoneStillSetsDeleteMarker()`.
+- `PreparedStatementFieldMapperEngineColumnTest.testRelocationTombstoneForTableWithoutDeleteColumnIsRefused()` — a target with no delete column refuses the tombstone instead of writing a live row at the old key.
 - Lean: `update_pk_relocation_soundness` re-proved with `tombstoneVersion i = liveVersion i`, and `tombstone_wins_version_tie` (equal-version tombstone written after the live row yields `none`) in `formal_specs/lean/Replication/Proofs.lean`.

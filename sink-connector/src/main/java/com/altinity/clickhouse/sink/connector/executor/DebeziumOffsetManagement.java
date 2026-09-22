@@ -197,6 +197,55 @@ public class DebeziumOffsetManagement {
     }
 
     /**
+     * Number of handed-off units not yet acknowledged (queued, in flight, or
+     * parked). For the stop-sequence log line and the start-time refusal.
+     *
+     * @return the size of the outstanding set.
+     */
+    public static int outstandingCount() {
+        return outstandingSequences.size();
+    }
+
+    /**
+     * Abandons every outstanding unit: an in-process engine restart
+     * (spec 09.01 §3.8, spec 01.01 §3.3).
+     * <p>
+     * This bookkeeping is process-wide, but the embedded engine is restarted
+     * INSIDE the process (REST {@code /restart}, {@code /start} after
+     * {@code /stop}, the restart monitor). The old engine's worker pool is
+     * terminated by {@code stop()}, so a unit still outstanding at that point
+     * can never be written by anyone -- yet without this call it stayed the
+     * FIFO head for the life of the JVM: every unit of the NEW engine parked
+     * behind it forever (no offset acknowledged, {@link #hasUnwrittenBatches}
+     * true, no control-record commit, every DDL drain timing out), and the
+     * parked units' record lists leaked.
+     * </p>
+     * <p>
+     * Call ONLY after the producer is closed (no more handoffs) and the pool
+     * has terminated (no worker can still report a write). Nothing abandoned
+     * here was acknowledged, so the next engine redelivers it from the last
+     * committed offset: the cost of a restart is redelivery (at-least-once),
+     * never a lost or rolled-back offset. {@code handoffCounter} is NOT reset:
+     * sequences stay unique for the life of the JVM.
+     * </p>
+     *
+     * @return the number of units abandoned.
+     */
+    public static synchronized int reset() {
+        int abandoned = outstandingSequences.size();
+        if (abandoned > 0) {
+            log.warn("Offset FIFO reset: abandoning {} handed-off unit(s) that were never "
+                    + "acknowledged ({} group(s) unwritten, {} unit(s) written but parked). Their "
+                    + "rows were not acknowledged, so the next engine redelivers them from the "
+                    + "last committed offset.", abandoned, groupToUnit.size(), completedUnits.size());
+        }
+        outstandingSequences.clear();
+        groupToUnit.clear();
+        completedUnits.clear();
+        return abandoned;
+    }
+
+    /**
      * Reports that a group's rows are durably in ClickHouse and lets the FIFO
      * decide whether its unit's offset can be acknowledged now.
      * <p>

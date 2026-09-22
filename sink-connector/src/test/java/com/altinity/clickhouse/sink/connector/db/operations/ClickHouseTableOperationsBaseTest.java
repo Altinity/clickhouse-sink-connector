@@ -5,6 +5,7 @@ import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMappe
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseTableOperationsBase;
 import io.debezium.time.MicroTimestamp;
 import io.debezium.time.Timestamp;
+import io.debezium.time.ZonedTimestamp;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
@@ -39,11 +40,59 @@ public class ClickHouseTableOperationsBaseTest {
         Map<String, String> result = base.getColumnNameToCHDataTypeMapping(fields,new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
         Assert.assertTrue(result.get("totalAmount").equalsIgnoreCase("Decimal(4,2)"));
-        Assert.assertTrue(result.get("amount").equalsIgnoreCase("Decimal(10,2)"));
+        // A DECIMAL without dimensions is DECIMAL(10,0) in MySQL and Decimal(10, 0)
+        // on the DDL path; this assertion previously pinned Decimal(10,2), a
+        // scale the source never had (Spec 08.05 section 3.1.1).
+        Assert.assertEquals("Decimal(10,0)", result.get("amount"));
 
+        // Without a propagated source type the widest precision the logical
+        // type carries is declared.
         Assert.assertTrue(result.get("date_milli").equalsIgnoreCase("DateTime64(3, 'UTC')"));
         Assert.assertTrue(result.get("date_micro").equalsIgnoreCase("DateTime64(6, 'UTC')"));
 
+    }
+
+    private static Field sourceTyped(String name, int index, SchemaBuilder builder,
+                                     String sourceType, Integer length) {
+        builder.parameter(ClickHouseDataTypeMapper.DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM, sourceType);
+        if (length != null) {
+            builder.parameter("__debezium.source.column.length", String.valueOf(length));
+        }
+        return new Field(name, index, builder.build());
+    }
+
+    /**
+     * Spec 08.05 section 3.1.1: with Debezium's propagated source metadata the
+     * record-schema path declares the type the DDL path declares.
+     */
+    @Test
+    public void getColumnNameToCHDataTypeMappingSourceTypeParityTest() {
+        Field[] fields = new Field[]{
+                sourceTyped("tiny", 0, SchemaBuilder.int16(), "TINYINT", null),
+                sourceTyped("tiny_null", 1, SchemaBuilder.int16().optional(), "TINYINT", null),
+                sourceTyped("uint_null", 2, SchemaBuilder.int64().optional(), "INT UNSIGNED", null),
+                sourceTyped("dt0", 3, SchemaBuilder.int64().name(Timestamp.SCHEMA_NAME), "DATETIME", null),
+                sourceTyped("dt2", 4, SchemaBuilder.int64().name(Timestamp.SCHEMA_NAME), "DATETIME", 2),
+                sourceTyped("dt6", 5, SchemaBuilder.int64().name(MicroTimestamp.SCHEMA_NAME), "DATETIME", 6),
+                sourceTyped("ts0", 6, SchemaBuilder.string().name(ZonedTimestamp.SCHEMA_NAME), "TIMESTAMP", null),
+                sourceTyped("ts6", 7, SchemaBuilder.string().name(ZonedTimestamp.SCHEMA_NAME).optional(), "TIMESTAMP", 6),
+                sourceTyped("dec_scale_only", 8, Decimal.builder(3), "DECIMAL", null),
+        };
+
+        Map<String, String> result = new ClickHouseTableOperationsBase()
+                .getColumnNameToCHDataTypeMapping(fields, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+
+        Assert.assertEquals("a signed TINYINT is Int8 on the DDL path; Int16 loses that agreement",
+                "Int8", result.get("tiny"));
+        Assert.assertEquals("Nullable(Int8)", result.get("tiny_null"));
+        Assert.assertEquals("an optional unsigned column must be Nullable, or ADD COLUMN rejects the first NULL",
+                "Nullable(UInt32)", result.get("uint_null"));
+        Assert.assertEquals("DATETIME without a fraction is precision 0", "DateTime64(0, 'UTC')", result.get("dt0"));
+        Assert.assertEquals("DateTime64(2, 'UTC')", result.get("dt2"));
+        Assert.assertEquals("DateTime64(6, 'UTC')", result.get("dt6"));
+        Assert.assertEquals("DateTime64(0, 'UTC')", result.get("ts0"));
+        Assert.assertEquals("Nullable(DateTime64(6, 'UTC'))", result.get("ts6"));
+        Assert.assertEquals("a missing precision defaults to max(10, scale)", "Decimal(10,3)", result.get("dec_scale_only"));
     }
 
     @Test

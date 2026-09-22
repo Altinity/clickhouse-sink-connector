@@ -105,9 +105,13 @@ when every lower-sequence batch (queued, in flight, or parked) has been
 acknowledged, and a batch written out of turn is parked, not re-executed. A
 handed-off batch is outstanding from the instant of handoff until its
 acknowledgement, and the pipeline is quiescent iff no sequence is outstanding.
+An in-process engine restart (`stop()`) abandons what is still outstanding once
+the pool has terminated — never anything acknowledged — so the next engine
+starts quiescent and redelivers the abandoned rows (spec 09.01 §3.8).
 Formalised in `formal_specs/lean/Replication/OffsetFifo.lean`
 (`commit_never_passes_outstanding`, `acked_downward_closed`,
-`outstanding_ge_commitPoint`, `write_at_most_once`, `old_overlap_rule_unsafe`).
+`outstanding_ge_commitPoint`, `write_at_most_once`, `old_overlap_rule_unsafe`,
+`restart_quiescent`, `acked_never_rolled_back`, `old_restart_poisons_fifo`).
 
 ### Invariant I9: Loud Failure (Zero Silence)
 Replication errors, checksum mismatches, and schema translation failures must fail loudly. No replication exception shall be caught and suppressed to allow a batch to proceed. Row count parity shall never substitute for value-level checksum verification.
@@ -200,6 +204,7 @@ To provide mathematical proof of system correctness, the invariants and state tr
 - `Replication.DdlBarrier`: The pre-DDL barrier of Invariant I5 — the DDL step is enabled only when the legacy queue, every routed queue and the unacknowledged-batch counter are all empty, and a machine-checked counterexample showing that an empty legacy queue alone does not imply that.
 - `Replication.OffsetFifo`: Handoff-sequence FIFO for offset acknowledgement (Invariant I8): commit never passes an outstanding batch, written-once, and the timestamp-overlap counterexample.
 - `Replication.DdlTranslation`: ALTER clause classification for Specs 06.03/06.04/06.05/06.07 — no bare `ALTER TABLE`, an all-no-op statement is skipped, a widening key-column change is loud, every ADD COLUMN is preserved.
+- `Replication.BatchOrder`: Batch execution order around a replicated TRUNCATE (Spec 04.05) — executing the batch as ordered segments split at each TRUNCATE reproduces binlog order (`segments_match_source`), every TRUNCATE stays its own segment, and the pre-fix hash-map order is shown to lose or resurrect rows.
 - `Replication.VersionFloor`: the shipped version-sequence statics (`effectiveTs * 1e6 + counter`, floor, anchor, seeds, high-water position) at the restart boundary (Invariant I2 across a restart, specs 02.02 §3.5 / 02.04 §3.2) — seeding the floor from a high-water mark orders every first delivery of a new run above the previous run, and control records leave the state unchanged, with the pre-fix heartbeat counterexample.
 
 ### 5.1 Coverage of the thirteen invariants
@@ -214,8 +219,8 @@ Honest status per invariant. "Lean" means a proposition and a machine-checked th
 | I5 DDL Barrier Quiescence | Lean | `DdlBarrier.lean`: `ddl_applies_only_when_no_pending_rows`, `old_predicate_insufficient`, `queues_empty_insufficient` |
 | I6 Column Authority & Shadowing Prohibition | none (`ColumnKind` is modelled in `Basic.lean`; no theorem) | — |
 | I7 Value-Level Type Equivalence | none | — |
-| I8 Durable Offset Quiescence | Lean (handoff FIFO); the control-record half is covered under I12 | `OffsetFifo.lean`: `commit_never_passes_outstanding`, `write_at_most_once`, `old_overlap_rule_unsafe` |
-| I9 Loud Failure | none (empirical only: spec 10.04) | — |
+| I8 Durable Offset Quiescence | Lean (handoff FIFO, including the in-process restart reset); the control-record half is covered under I12 | `OffsetFifo.lean`: `commit_never_passes_outstanding`, `write_at_most_once`, `old_overlap_rule_unsafe`, `restart_quiescent`, `acked_never_rolled_back`, `old_restart_poisons_fifo` |
+| I9 Loud Failure | Lean (row half only: an unconvertible row record halts, its offset is never committed); the rest is empirical (spec 10.04) | `Snapshot.lean`: `unparsed_row_halts`, `unparsed_row_never_committed`, `old_rule_commits_unparsed_row` |
 | I10 Structural Separation of Concerns | none (architectural rule, not a state-machine property) | — |
 | I11 Drop-in Upgrade Safety | Lean, conditional on `GapMono`; the boundary clause ("continues above the old version's last write") is proved for the seeded floor (spec 02.06 §6 lists the remaining first-start-without-seed case) | `upgrade_safe`, `replicate_convergesV`, `liveVersion_gapMono`; `VersionFloor.lean`: `restart_boundary` |
 | I12 Snapshot Completion & Control-Record Offset Progress | Lean | `control_commit_safe`, `quiescent_control_commits`, `snapshot_completes` |

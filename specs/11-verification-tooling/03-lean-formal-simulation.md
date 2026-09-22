@@ -20,6 +20,7 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
   - `Replication.DdlBarrier`: DDL barrier covers every handoff path (Invariant I5, spec 06.01)
   - `Replication.OffsetFifo`: Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01)
   - `Replication.DdlTranslation`: ALTER clause classification (specs 06.03/06.04/06.05/06.07)
+  - `Replication.BatchOrder`: batch execution order around a replicated TRUNCATE (spec 04.05)
   - `Replication.VersionFloor`: the shipped version-sequence statics, the restart-boundary floor seed and control-record exclusion (Invariant I2 across a restart, specs 02.02 §3.5 / 02.04 §3.2)
 - **CI**: `.github/workflows/spec-governance.yml`
 - **Empirical gap registries**: `sink-connector-lightweight/tests/integration/regression_manual.py` (TestFlows `xfails`), `@Disabled` annotations under `sink-connector/src/test` and `sink-connector-lightweight/src/test`
@@ -87,15 +88,20 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
 12. `OffsetFifo.old_overlap_rule_unsafe`: concrete counterexample — two batches
    with equal timestamps where the strict timestamp-overlap rule acknowledges
    the later-finished one while the other is outstanding, and the FIFO does not.
-13. `VersionFloor.restart_boundary`, `version_ge_floor`, `floor_mono`,
+13. `BatchOrder.segments_match_source`, `segmented_batch_converges`: executing a
+   batch split at every TRUNCATE as ordered segments equals applying the
+   events in binlog order; `every_truncate_is_its_own_segment`: two TRUNCATEs
+   never collapse; `truncate_last_loses_rows`, `truncate_first_resurrects_rows`:
+   the pre-fix hash-map order disagrees with the source either way (spec 04.05).
+14. `VersionFloor.restart_boundary`, `version_ge_floor`, `floor_mono`,
    `seed_floor_gt`: with the floor seeded as `v / 1_000_000 + 1` from a
    high-water mark `v` at or above every previous version, every first delivery
    of the new run is versioned strictly above `v`.
-14. `VersionFloor.dispatch_control_preserves_state`,
+15. `VersionFloor.dispatch_control_preserves_state`,
    `old_dispatch_control_moves_floor`, `dispatch_control_keeps_source_floor`:
    a heartbeat leaves the sequence statics unchanged; the pre-fix loop pinned
    the floor to the connector clock.
-15. `VersionFloor.seeded_restart_example`, `unseeded_restart_inverts`: the
+16. `VersionFloor.seeded_restart_example`, `unseeded_restart_inverts`: the
    regression scenario of spec 02.02 §6, executed (`decide`) with and without
    the seed.
 

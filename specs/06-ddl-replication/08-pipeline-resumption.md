@@ -7,7 +7,9 @@ Specifies the final phase of DDL replication: executing the translated DDL on Cl
 
 ## 2. Codebase Mapping on 2.11.0
 - **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java`
-- **Methods**: `performDDLOperation()`, `processEveryChangeRecord()` (DDL branch), `drainBeforeDDL()`
+- **Methods**: `performDDLOperation()`, `processEveryChangeRecord()` (DDL branch), `drainBeforeDDL()`, `checkIfDDLNeedsToBeIgnored()`, `sourceDatabaseName()`, `isDropOrTruncateDisabled()`
+- **Capture filter**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DdlCaptureFilter.java` (`isCaptured(database, table, props)`)
+- **Statement kind**: `MySqlDDLParserListenerImpl.isDropOrTruncateStatement()` (set by `enterDropTable`, `enterTruncateTable`, `enterDropDatabase`), `MySQLDDLParserService.isDropOrTruncateStatement(CommonTokenStream)`, `PostgreSQLDDLParserService.isDropOrTruncateStatement(CommonTokenStream)`
 - **Failure type**: `DDLReplicationException` (same package)
 
 ---
@@ -85,13 +87,89 @@ loop to be left normally after a failure.
 
 ---
 
+### 3.3 Which DDL is ignored before execution (`checkIfDDLNeedsToBeIgnored`)
+Before translation, `performDDLOperation` drops a DDL — logging it and setting
+`lastIgnoredDDL`, executing nothing and committing nothing for it (the next
+acknowledged record covers its offset) — when any of the following holds, in
+this order:
+
+1. `disable.ddl=true` — no DDL is replicated at all.
+2. The statement matches an entry of `ignore.ddl.regex` (a `||`-separated list
+   of regular expressions, `find` semantics) or one of the bundled patterns
+   (`IgnoreDDLRegexLoader`).
+3. **The DDL belongs to a table the connector does not capture.** The source
+   database is read from the schema-change record (`sourceDatabaseName`: the
+   key's `databaseName`/`db`, else the value's `source.db`; never the
+   destination name, which may be prefixed/overridden) and the tables from
+   `tableChanges[].id` / `source.table` plus both sides of a rename. Each
+   `db.table` is judged by `DdlCaptureFilter.isCaptured` with Debezium's
+   semantics: `database.include.list` / `database.exclude.list` and
+   `table.include.list` / `table.exclude.list` are comma-separated regular
+   expressions matched **in full and case-insensitively**; an include list,
+   when set, is the whole rule and the exclude list is ignored. A multi-table
+   DDL is kept when ANY of its tables is captured; a table-less DDL
+   (`CREATE DATABASE`) is judged by the database lists only; an unknown
+   database is never filtered; an uncompilable exclude pattern is ignored
+   rather than treated as a match (conservative: never drop a DDL by guessing).
+   **Why:** Debezium emits a schema-change event for every table of the
+   captured databases unless
+   `schema.history.internal.store.only.captured.tables.ddl=true`, and the sink
+   applied every one of them — a `CREATE TABLE` outside `table.include.list`
+   created a spurious ClickHouse table, and an `ALTER` on such a table failed
+   on the missing target (`Code: 60`) and, being terminal (§3.1), halted the
+   whole pipeline for a table nobody asked to replicate. Rows of such a table
+   never reach the sink, so neither may its schema. Operators should still set
+   `schema.history.internal.store.only.captured.tables.ddl=true` (and
+   `...captured.databases.ddl=true`): it keeps Debezium's schema history and
+   startup small; this filter is the sink-side guarantee for configurations
+   that do not.
+4. The DDL was emitted during the snapshot and `enable.snapshot.ddl` is not
+   `true`.
+
+Then, **after** `parseSql` (which is what computes the statement kind):
+
+5. `disable.drop.truncate=true` and the statement is, at statement level, a
+   `DROP TABLE`, `TRUNCATE [TABLE]` or `DROP DATABASE` (MySQL: decided by the
+   parse tree via `MySqlDDLParserListenerImpl.enterDropTable` /
+   `enterTruncateTable` / `enterDropDatabase`; the token helpers in both parser
+   services test the first significant tokens). `ALTER TABLE ... DROP COLUMN`,
+   `DROP INDEX` and `ALTER COLUMN ... DROP DEFAULT` are schema evolution and
+   are never caught. The statement is logged at WARN and skipped.
+
+   **Snapshot-phase DDL is exempt.** The suppression applies only to streaming
+   DDL (`isSnapshotDDL(sr)` is false). With `enable.snapshot.ddl=true` Debezium
+   bootstraps the target schema by emitting `DROP TABLE IF EXISTS` +
+   `CREATE TABLE` for each captured table; that `DROP` is schema initialisation,
+   not a source-initiated data drop during replication. Suppressing it would
+   leave a stale target table (e.g. a pre-created one with a narrower column
+   type) that the following `CREATE ... IF NOT EXISTS` cannot replace, so the
+   replica would no longer match MySQL — the opposite of the option's purpose.
+   `disable.drop.truncate` freezes drops seen WHILE STREAMING, never the
+   snapshot schema.
+
+   **Deliberate, operator-chosen divergence.** With `disable.drop.truncate=true`
+   ClickHouse keeps rows and tables the source removed, so the replica is no
+   longer equal to MySQL; the option exists for targets that must retain
+   history and is off by default. Before this revision the option was dead: it
+   was tested BEFORE `parseSql` set the flag it reads (always false), and the
+   flag was raised by ANY `DROP` token, so had it worked it would also have
+   swallowed column drops and index drops.
+
+---
+
 ## 4. Invariants Preserved
 - **Invariant I5 (DDL Barrier Quiescence)**: Cache invalidation takes effect before any post-DDL rows begin query formulation.
+- **Capture parity (Prime Directive)**: the sink applies DDL for exactly the tables whose rows it replicates (§3.3 rule 3).
 - **Invariant I9 (Loud Failure)**: A DDL that cannot be applied halts the pipeline instead of being swallowed while offsets advance past it.
 
 ---
 
 ## 5. Verification Criteria
+- `DdlCaptureFilterTest` — §3.3 rule 3: include/exclude table lists, database lists, include-over-exclude, full case-insensitive match, unknown database kept, uncompilable patterns.
+- `DdlIgnoreRulesTest.ddlOutsideIncludeListIsIgnored`, `DdlIgnoreRulesTest.excludeAndDatabaseListsApply`, `DdlIgnoreRulesTest.multiTableAndNoLists` — §3.3 rule 3 through `checkIfDDLNeedsToBeIgnored` with schema-change records carrying `databaseName` and `tableChanges`.
+- `DdlIgnoreRulesTest.mysqlFlagIsStatementKind`, `DdlIgnoreRulesTest.postgresFlagIsStatementKind` — §3.3 rule 5: `DROP TABLE`/`TRUNCATE`/`DROP DATABASE|SCHEMA` set the flag; `DROP COLUMN`, `DROP INDEX`, `DROP DEFAULT` do not (pre-fix: any `DROP` token).
+- `DdlIgnoreRulesTest.disableDropTruncateIsScopedAndLive` — §3.5 through `processEveryChangeRecord`: with `disable.drop.truncate=true` a STREAMING `DROP TABLE`/`TRUNCATE` returns without executing and is recorded as `lastIgnoredDDL`; a `DROP COLUMN` still reaches execution; without the property the `DROP TABLE` reaches execution (pre-fix: the property was dead).
+- `DdlIgnoreRulesTest.disableDropTruncateExemptsSnapshotDdl` — §3.5 snapshot exemption: a snapshot `DROP TABLE` (source offset `snapshot=INITIAL`, `enable.snapshot.ddl=true`) reaches execution despite `disable.drop.truncate=true`, so the snapshot schema bootstrap is not frozen.
 - `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()` — a DDL whose drain aborts throws `DDLReplicationException` out of `processEveryChangeRecord` rather than returning null.
 - `DdlFailureLoudTest.drainIsNoOpWhenExecutorIsNull()` — single-threaded mode drains as a no-op instead of an NPE.
 - `DdlFailureLoudTest.ddlExecutionFailureWithoutRetryIsLoud()` — `ddl.retry`

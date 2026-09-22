@@ -155,11 +155,26 @@ public class DebeziumChangeEventCaptureTest {
     @Test
     @DisplayName("Unit test to check if the LSN record is created properly")
     public void testUpdateBingLogInformation() throws ParseException {
+        // INVERTED expectations (spec 09.03 section 3.4): this test used to
+        // pin `"pos":"1222"` (a string, which Debezium fails on when it is not
+        // numeric) and the OLD `"row":1,"event":2` skip counters (which skip
+        // rows of the first event at the NEW position). A file/position edit
+        // now stores the position as a number and resets both counters; the
+        // GTID set given alongside is kept.
         String record = "{\"transaction_id\":null,\"ts_sec\":1687278006,\"file\":\"mysql-bin.000003\",\"pos\":1156385,\"gtids\":\"30fd82c7-0f86-11ee-9e3b-0242c0a86002:1-2442\",\"row\":1,\"server_id\":266,\"event\":2}";
 
         String updatedRecord = new DebeziumOffsetStorage().updateBinLogInformation(record , "mysql-bin.001", "1222", "232232323");
 
-        assertTrue(updatedRecord.equalsIgnoreCase("{\"transaction_id\":null,\"ts_sec\":1687278006,\"file\":\"mysql-bin.001\",\"pos\":\"1222\",\"gtids\":\"232232323\",\"row\":1,\"server_id\":266,\"event\":2}"));
+        org.json.simple.JSONObject json = (org.json.simple.JSONObject)
+                new org.json.simple.parser.JSONParser().parse(updatedRecord);
+        assertEquals("mysql-bin.001", json.get("file"));
+        assertEquals(1222L, json.get("pos"));
+        assertEquals("232232323", json.get("gtids"));
+        assertEquals(0L, json.get("row"));
+        assertEquals(0L, json.get("event"));
+        assertEquals(266L, json.get("server_id"));
+        assertEquals(1687278006L, json.get("ts_sec"));
+        assertTrue(json.containsKey("transaction_id"));
     }
 
     @Test

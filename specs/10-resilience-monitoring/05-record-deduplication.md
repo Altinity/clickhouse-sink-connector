@@ -15,7 +15,9 @@ event that happens to touch the same source row.
   - `prepareDeDuplicationKey(SinkRecord record)` — event identity
   - `updateDedupePool(String topicName, Object key)` — bounded pool
 - **Consumer**: `ClickHouseSinkTask.put()` — a record for which `isNew()` is
-  false is not converted and never reaches the writers.
+  false is not converted and never reaches the writers. (A Kafka tombstone —
+  `value() == null` — is skipped before de-duplication; any other record that
+  does not convert fails the task, spec 10.04 §3.5.)
 - **Config**: `deduplication.policy` (`DeDuplicationPolicy`), `buffer.count`
   (pool bound).
 
