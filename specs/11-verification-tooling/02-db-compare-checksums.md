@@ -372,6 +372,15 @@ skipped columns (`Not compared in table <db>.<table>: floating point columns
   regexes did not anticipate compared DIFFERENT. The opt-in keeps that
   best-effort normalisation (spec 07.04 notes JSON as an open gap) and is
   documented as such; the default is exclusion with the WARNING.
+  The eleven regular expressions must reach the regex engine intact: MySQL
+  unescapes a string literal BEFORE the pattern is compiled, so every `\`
+  in a pattern or replacement is written doubled in the SQL text (`\\s`,
+  `\\d`, `\\.0\\b`, `\\\\u` for a literal backslash-u). Sent single, MySQL 8
+  rejects the expression outright — error 3696 "unclosed bracket expression"
+  for `\[` and error 3689 "unrecognized escape sequence" for `\u` — so the
+  opt-in could never run. Verified against MySQL 8.0: the doubled form renders
+  `{"a": 1.0, "e": -2.50}` as `{"a":1,"e":-2.5}`.
+  (`TestFloatAndJsonCoverage::test_mysql_json_normalisation_keeps_its_regex_escaping`)
 
 (`test_checksum_fidelity.py::TestFloatAndJsonCoverage`)
 

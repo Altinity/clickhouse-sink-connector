@@ -563,6 +563,18 @@ class TestFloatAndJsonCoverage(unittest.TestCase):
         self.assertIn("`g`", select)
         self.assertIn("json_pretty(`j`)", select)
 
+    def test_mysql_json_normalisation_keeps_its_regex_escaping(self):
+        # The SQL text must carry doubled backslashes: MySQL unescapes the string
+        # literal before the regex engine sees it, so '\\.0\\b' in the SQL is the
+        # regex \.0\b. Raw strings below show the SQL text as MySQL receives it.
+        select = build_mysql_select([mysql_column("j", "json")], include_json_columns=True)
+        self.assertIn(r"'\\.0\\b'", select)
+        self.assertIn(r"'\":\\s(-*\\d|\\[|\\{|true|false)'".replace('\\"', '"'), select)
+        self.assertIn(r"'\\s+(\".*?)\\s*'".replace('\\"', '"'), select)
+        self.assertIn(r"'\\s*\\n\\s*'", select)
+        self.assertIn(r"'\\\\u([0-9A-F]{3})a', '\\\\u$1A'", select)
+        self.assertNotIn(r"'\.0\b'", select)
+
     def test_clickhouse_skips_floats_native_json_and_listed_json_strings_and_warns(self):
         select, warnings = self.clickhouse_select_and_warnings(json_columns="j")
         self.assertEqual(select, 'toString("id")')

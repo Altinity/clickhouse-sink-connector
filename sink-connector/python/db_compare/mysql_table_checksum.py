@@ -87,7 +87,7 @@ def mysql_column_expression(column, options, binary_encoding, same_charset, boun
         # convert to a compact representation, best effort, it is not perfect and it is advised to ignore those columns
         # https://bugs.mysql.com/bug.php?id=118990
         # https://github.com/Altinity/clickhouse-sink-connector/issues/1137
-        return f"""REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(convert(json_pretty({column_name}) using utf8mb4),'": "','":"'),'":\\s(-*\\d|\\[|\\{{|true|false)','":$1'),'\\.0\\b',''),'\\s+(".*?)\\s*','$1'),'\\s*\\n\\\s*',''), '\\\\u([0-9A-F]{{3}})a', '\\\\u$1A'), '\\\\u([0-9A-F]{{3}})b', '\\\\u$1B'), '\\\\u([0-9A-F]{{3}})c', '\\\\u$1C'), '\\\\u([0-9A-F]{{3}})d', '\\\\u$1D'), '\\\\u([0-9A-F]{{3}})e', '\\\\u$1E'), '\\\\u([0-9A-F]{{3}})f', '\\\\u$1F')"""
+        return f"""REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(convert(json_pretty({column_name}) using utf8mb4),'": "','":"'),'":\\\\s(-*\\\\d|\\\\[|\\\\{{|true|false)','":$1'),'\\\\.0\\\\b',''),'\\\\s+(".*?)\\\\s*','$1'),'\\\\s*\\\\n\\\\s*',''), '\\\\\\\\u([0-9A-F]{{3}})a', '\\\\\\\\u$1A'), '\\\\\\\\u([0-9A-F]{{3}})b', '\\\\\\\\u$1B'), '\\\\\\\\u([0-9A-F]{{3}})c', '\\\\\\\\u$1C'), '\\\\\\\\u([0-9A-F]{{3}})d', '\\\\\\\\u$1D'), '\\\\\\\\u([0-9A-F]{{3}})e', '\\\\\\\\u$1E'), '\\\\\\\\u([0-9A-F]{{3}})f', '\\\\\\\\u$1F')"""
     if data_type in ('datetime', 'timestamp'):
         # ClickHouse DateTime64 cannot hold the whole MySQL range; the connector
         # clamps on write, so the rendered text is clamped to the same bounds here.
