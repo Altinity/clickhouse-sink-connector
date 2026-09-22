@@ -1230,6 +1230,10 @@ public class DebeziumChangeEventCapture {
         }
 
         DDLParserService ddlParserService = DDLParserFactory.getParser(props, writer, config, databaseName);
+        // The statement time of this DDL event: an ADD COLUMN ... DEFAULT
+        // CURRENT_TIMESTAMP is back-filled on the source with this instant,
+        // so the translator needs it to emit the same value (Spec 06.04 §3.2.2).
+        ddlParserService.setDdlEventTimestampMs(chStruct.getTs_ms());
         ddlParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
 
         // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.

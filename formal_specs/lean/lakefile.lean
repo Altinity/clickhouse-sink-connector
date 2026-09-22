@@ -24,4 +24,5 @@ lean_lib «Replication» where
              `Replication.OffsetFifo,
              `Replication.DdlTranslation,
              `Replication.BatchOrder,
-             `Replication.VersionFloor]
+             `Replication.VersionFloor,
+             `Replication.CreateTable]

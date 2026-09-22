@@ -22,6 +22,7 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
   - `Replication.DdlTranslation`: ALTER clause classification (specs 06.03/06.04/06.05/06.07)
   - `Replication.BatchOrder`: batch execution order around a replicated TRUNCATE (spec 04.05)
   - `Replication.VersionFloor`: the shipped version-sequence statics, the restart-boundary floor seed and control-record exclusion (Invariant I2 across a restart, specs 02.02 §3.5 / 02.04 §3.2)
+  - `Replication.CreateTable`: CREATE TABLE sorting-key selection (specs 06.05 §3.6 / 08.05 §3.2)
 - **CI**: `.github/workflows/spec-governance.yml`
 - **Empirical gap registries**: `sink-connector-lightweight/tests/integration/regression_manual.py` (TestFlows `xfails`), `@Disabled` annotations under `sink-connector/src/test` and `sink-connector-lightweight/src/test`
 

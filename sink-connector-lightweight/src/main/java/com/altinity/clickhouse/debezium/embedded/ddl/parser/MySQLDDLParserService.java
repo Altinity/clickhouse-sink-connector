@@ -51,6 +51,13 @@ public class MySQLDDLParserService implements DDLParserService {
     private TargetSchemaLookup targetSchemaLookup;
 
     /**
+     * Statement time ({@code source.ts_ms}) of the DDL event being parsed, in
+     * epoch milliseconds; 0 when the caller did not supply one (Spec 06.04
+     * §3.2.2).
+     */
+    private long ddlEventTimestampMs;
+
+    /**
      * Default constructor for MySQLDDLParserService.
      */
     @Inject
@@ -67,6 +74,11 @@ public class MySQLDDLParserService implements DDLParserService {
      */
     public void setTargetSchemaLookup(TargetSchemaLookup targetSchemaLookup) {
         this.targetSchemaLookup = targetSchemaLookup;
+    }
+
+    @Override
+    public void setDdlEventTimestampMs(long ddlEventTimestampMs) {
+        this.ddlEventTimestampMs = ddlEventTimestampMs;
     }
 
     /**
@@ -118,6 +130,7 @@ public class MySQLDDLParserService implements DDLParserService {
         // Initialize the listener to handle the parsing logic
         MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, config, sql);
         listener.setTargetSchemaLookup(targetSchemaLookup);
+        listener.setDdlEventTimestampMs(ddlEventTimestampMs);
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 
@@ -149,6 +162,7 @@ public class MySQLDDLParserService implements DDLParserService {
         // Initialize the listener to handle the parsing logic
         MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, this.config, sql);
         listener.setTargetSchemaLookup(targetSchemaLookup);
+        listener.setDdlEventTimestampMs(ddlEventTimestampMs);
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
 

@@ -1,4 +1,4 @@
-# Spec 07.06: Spatial & Geometric Types (WKB to Geo Types)
+# Spec 07.06: Spatial & Geometric Types (WKB)
 
 ## 1. Executive Summary & Purpose
 Specifies how spatial source columns are typed on the ClickHouse side and how
@@ -6,13 +6,24 @@ their Well-Known Binary (WKB) payloads are bound: a spatial value is either
 stored faithfully (as a ClickHouse geo literal or as the exact WKB bytes) or the
 batch fails. No spatial value is ever fabricated.
 
+The **DDL translation path** (CREATE / ALTER replication, §3.4) types every
+spatial column as `String` (the WKB, hex-encoded), because it cannot rely on
+the propagated source column type and because the ClickHouse geo types cannot
+be `Nullable` — see §3.4. The **record-schema path** (§3.1) preserves `POINT`
+and `POLYGON` as native geo types when the propagated source type is present.
+The two creation paths therefore agree on the String form of every non-polygon
+spatial type, and differ only for `POINT`/`POLYGON` (native geo on the record
+path, `String` on the DDL path); both are loss-free and both are exercised by
+the tests in §5.
+
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/converters/ClickHouseDataTypeMapper.java`
+- **Value path**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/converters/ClickHouseDataTypeMapper.java`
   — the `Geometry.LOGICAL_NAME` / `Point.LOGICAL_NAME` branches of `convert`, `setGeoValue`
 - **Record-schema type mapping**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/operations/ClickHouseTableOperationsBase.java`
   — `getColumnNameToCHDataTypeMapping` (auto-create and `schema.evolution` ADD COLUMN)
+- **DDL path (CREATE / ALTER translation)**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/parser/DataTypeConverter.java` (`convertToString`, the `isSpatialType` branch)
 - **Library**: Java Topology Suite (JTS) `org.locationtech.jts.io.WKBReader`
 
 ---
@@ -78,19 +89,52 @@ Redelivery: nothing is written for a failed batch; the retry re-binds the
 same source value and fails the same way until the ClickHouse column type is
 corrected (Invariant I9).
 
+### 3.4 DDL translation path: every spatial type is `String` (WKB hex)
+The CREATE / ALTER translator (`DataTypeConverter.convertToString`) has no
+propagated source-type metadata to distinguish a `POLYGON` from a `LINESTRING`
+reliably, and the ClickHouse geo types cannot be `Nullable` (`Nullable(Point)`
+/ `Nullable(Polygon)` are rejected with `Code: 43`) while a MySQL spatial
+column is nullable unless declared `NOT NULL`. The earlier translator forced
+`NOT NULL` on CREATE and emitted `Nullable(Polygon)` on
+`ALTER TABLE ... ADD COLUMN`, which ClickHouse rejected and, because DDL is
+retried, stalled the stream; and it mapped every non-point kind to `Polygon`,
+so a `LINESTRING` or a `GEOMETRYCOLLECTION` had no column that could hold it.
+
+Rule (`isSpatialType` branch of `convertToString`): every spatial type maps to
+`String` — `Nullable(String)` when the source column is nullable, `String NOT
+NULL` otherwise, exactly like any other column (Spec 06.05), on `CREATE TABLE`,
+`ADD COLUMN`, `MODIFY COLUMN` and `CHANGE COLUMN`. `JSON`, which the grammar
+parses in the same alternative, keeps its own (`String`) mapping. The value
+path stores the WKB payload as its hex string in that column exactly as §3.2
+(1) does for a `String` target, so the column holds the source bytes exactly,
+is nullable when the source is, and is comparable byte-for-byte; consumers that
+want geo types derive them at query time (`readWKBPolygon(unhex(col))` and
+friends). This is the DDL-path counterpart of the record-schema mapping in
+§3.1: the two agree on every non-polygon type and differ only for
+`POINT`/`POLYGON`, where the record path keeps the native geo type when it can
+and the DDL path always uses `String`.
+
 ---
 
 ## 4. Invariants Preserved
 - **Invariant I7 (Value-Level Type Equivalence)**: a spatial value is stored
-  either as an exact geo literal or as its exact WKB bytes; it is never
-  narrowed to an empty shape or the origin.
+  either as an exact geo literal or as its exact WKB bytes (including NULL,
+  without re-encoding); it is never narrowed to an empty shape or the origin.
 - **Invariant I9 (Loud Failure)**: an unrepresentable or unparseable spatial
   value fails the batch with a message naming the geometry type and the column.
+- **Invariant I5 (DDL barrier / stream health)**: no `ADD COLUMN` of a spatial
+  type is emitted in a form ClickHouse rejects (the DDL path uses `String`, §3.4).
 - **Geometric Topology Preservation**: Coordinates $(X, Y)$ and polygon rings preserve exact floating-point coordinate geometry.
 
 ---
 
 ## 5. Verification Criteria
+- `MySqlDDLParserListenerImplTest.testAlterAddNullableGeometryIsRepresentable()`
+  — §3.4: `ADD COLUMN g GEOMETRY` / `l LINESTRING` / `mp MULTIPOLYGON` emit
+  `Nullable(String)`, `ADD COLUMN p POINT NOT NULL` emits `String`, and a
+  `CREATE TABLE` with nullable and `NOT NULL` spatial columns emits
+  `Nullable(String)` / `String NOT NULL` (pre-fix code emits
+  `Nullable(Polygon)` / `Point NOT NULL`).
 - `ClickHouseDataTypeMapperGeometryTest.polygonIsBoundAsPolygon()` — §3.2 (2),
   the unchanged happy path: a POLYGON WKB binds `[[(1.0,2.0),(3.0,4.0),(5.0,6.0),(1.0,2.0)]]`.
 - `ClickHouseDataTypeMapperGeometryTest.nonPolygonIntoPolygonColumnThrows()`,

@@ -37,7 +37,15 @@ final class KeyColumnTypeChange {
 
     private static final Pattern INTEGER = Pattern.compile("^(U?)Int(8|16|32|64|128|256)$");
     private static final Pattern DECIMAL = Pattern.compile("^Decimal\\((\\d+),(\\d+)\\)$");
-    private static final Pattern DATETIME64_ZERO_TZ = Pattern.compile("^DateTime64\\((\\d+),0\\)$");
+    /**
+     * {@code DateTime64(p)}, {@code DateTime64(p,0)} (the translator's
+     * placeholder when no zone is configured) and {@code DateTime64(p,'Zone')}
+     * (how {@code system.columns} renders a zoned column): one type of scale p.
+     */
+    private static final Pattern DATETIME64 = Pattern.compile("^DateTime64\\((\\d+)(?:,(?:0|'[^']*'))?\\)$");
+
+    /** {@code DateTime}, {@code DateTime32} and their zoned renderings. */
+    private static final Pattern DATETIME = Pattern.compile("^(DateTime(?:32)?)(?:\\('[^']*'\\))?$");
 
     private KeyColumnTypeChange() {
     }
@@ -90,10 +98,18 @@ final class KeyColumnTypeChange {
     }
 
     /**
-     * Strips whitespace and the {@code Nullable}/{@code LowCardinality}
-     * wrappers, and renders the translator's {@code DateTime64(p, 0)} the way
-     * {@code system.columns} renders it ({@code DateTime64(p)}), so that a
-     * re-declaration of an unchanged type compares equal.
+     * Strips whitespace, the {@code Nullable}/{@code LowCardinality} wrappers
+     * and the timezone argument of {@code DateTime}/{@code DateTime64}
+     * (together with the translator's {@code , 0} placeholder), so that a
+     * re-declaration of an unchanged type compares equal (Spec 06.05 §3.4).
+     *
+     * <p>The zone is display metadata: {@code DateTime64(6, 'UTC')} (an
+     * auto-created or {@code clickhouse.datetime.timezone} column as
+     * {@code system.columns} renders it), {@code DateTime64(6, 0)} (what the
+     * translator emits without a configured zone) and {@code DateTime64(6)}
+     * store the same instants at the same scale. Treating them as different
+     * types made a no-op {@code MODIFY} of such a key column "not comparable"
+     * and stopped the pipeline.</p>
      */
     static String normalise(String type) {
         String t = type.replaceAll("\\s+", "");
@@ -107,9 +123,13 @@ final class KeyColumnTypeChange {
                 }
             }
         }
-        Matcher dt = DATETIME64_ZERO_TZ.matcher(t);
+        Matcher dt64 = DATETIME64.matcher(t);
+        if (dt64.matches()) {
+            return "DateTime64(" + dt64.group(1) + ")";
+        }
+        Matcher dt = DATETIME.matcher(t);
         if (dt.matches()) {
-            t = "DateTime64(" + dt.group(1) + ")";
+            return dt.group(1);
         }
         return t;
     }
