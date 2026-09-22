@@ -4,6 +4,7 @@ import sys
 import argparse
 import logging
 from db.mysql import *
+from db.checksum_common import validate_timezone
 import concurrent.futures
 from datetime import datetime
 from subprocess import Popen, PIPE
@@ -86,7 +87,7 @@ def run_quick_safe_checksum(cmd, host, table):
 
 
 
-def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306):
+def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306, timestamp_columns=(), binary_columns=(), json_columns=()):
     table_name = f"{mysql_database}.{table}"
     logging.info(f"Checksumming {table_name}")
     if table_name in table_overrides_map and 'where' in table_overrides_map[table_name]:
@@ -102,19 +103,19 @@ def compute_checksum (mysql_database, database_override_map, table_overrides_map
 
     # Build ClickHouse checksum commands
     ch_commands = []
-    for ch_host in replica_hosts:
-        ch_database = mysql_database
-        if ch_host in database_override_map and mysql_database in database_override_map[ch_host]:
-            override_map = database_override_map[ch_host]
+    for replica_host in replica_hosts:
+        replica_database = mysql_database
+        if replica_host in database_override_map and mysql_database in database_override_map[replica_host]:
+            override_map = database_override_map[replica_host]
             database_maps = override_map.split(',')
             for database_map in database_maps:
                 (source_db, target_db) = database_map.split(':')
                 if source_db == mysql_database:
-                    ch_database = target_db
+                    replica_database = target_db
                     break
-            logging.info(f"Overriding database for host {ch_host} from {mysql_database} to {ch_database}")
-        cmd = get_clickhouse_checksum_command(ch_host, ch_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key)
-        ch_commands.append((ch_host, cmd))
+            logging.info(f"Overriding database for host {replica_host} from {mysql_database} to {replica_database}")
+        cmd = get_clickhouse_checksum_command(replica_host, replica_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns)
+        ch_commands.append((replica_host, cmd))
 
     # Lock held during all checksums (MySQL source + ClickHouse replicas)
     # to ensure a consistent comparison. The sleep_after_lock allows
@@ -162,6 +163,16 @@ def get_tables_from_regexp(conn, database, tables_regexp):
     return get_tables_from_regex(conn, args.no_wc, database, tables_regexp, include_partitions_regex=args.include_partitions_regex, exclude_tables_regex=args.exclude_tables_regex, non_partitioned_tables_only=args.non_partitioned_tables_only)
 
 
+def include_flags_clause():
+    """The coverage opt-ins, passed identically to both sides (spec 11.02 section 3.9)."""
+    flags = []
+    if args.include_floating_point_columns:
+        flags.append("--include_floating_point_columns")
+    if args.include_json_columns:
+        flags.append("--include_json_columns")
+    return " ".join(flags)
+
+
 def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None):
     partition_date = args.partition_date
     where_argument = '--where " 1=1 '
@@ -189,13 +200,13 @@ def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, i
     # pipe is masked by a successful awk and the pipeline exits 0 -- a run
     # that never produced a checksum is reported as a PASS. Verified in bash:
     # `set -e pipefail; false | grep x | awk '{print}'` exits 0.
-    cmd = f"""set -eo pipefail;python db_compare/mysql_table_checksum.py --threads_per_table {args.threads_per_table} --threads={args.threads} --min_date_value "1900-01-01" --mysql_host {mysql_host} --mysql_database {database} --tables_regex "^{table}$" {where_argument} --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00"  --binary_encoding base64 {ignored_columns_clause} {debug_output_clause} {defaults_file_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
+    cmd = f"""set -eo pipefail;python db_compare/mysql_table_checksum.py --threads_per_table {args.threads_per_table} --threads={args.threads} --min_date_value "1900-01-01" --mysql_host {mysql_host} --mysql_database {database} --tables_regex "^{table}$" {where_argument} --source_timezone {args.source_timezone} --binary_encoding {args.binary_encoding} {include_flags_clause()} {ignored_columns_clause} {debug_output_clause} {defaults_file_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
     logging.debug(f"MySQL command: {cmd}")
     return cmd
 
 
 
-def get_clickhouse_checksum_command(ch_host, database, table, pk, max_pk, where=None, ignored_columns=[], debug_output=False, partition_key = None):
+def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, where=None, ignored_columns=[], debug_output=False, partition_key = None, timestamp_columns=(), binary_columns=(), json_columns=()):
     partition_date = args.partition_date
     where_argument = '--where " 1=1 '
     if where:
@@ -218,14 +229,49 @@ def get_clickhouse_checksum_command(ch_host, database, table, pk, max_pk, where=
     partition_key_clause = ""
     if partition_key:
         partition_key_clause = f" --partition_key {partition_key.replace('`','')}"
+
+    # MySQL TIMESTAMP columns are compared as UTC instants, the other datetime
+    # columns as wall clocks of the source zone (spec 11.02 section 3.4).
+    timestamp_columns_clause = ""
+    if timestamp_columns:
+        timestamp_columns_clause = "--timestamp_columns " + ",".join(timestamp_columns)
+
+    # Only raw bytes need hexing on the replica; hex and base64 are compared
+    # as the text the connector stored (spec 11.02 section 3.6).
+    binary_encoding_clause = f"--binary_encoding {args.binary_encoding}"
+    if args.binary_encoding == 'raw' and binary_columns:
+        binary_encoding_clause += " --hex_columns " + ",".join(binary_columns)
+
+    # String columns that replicate MySQL JSON (spec 11.02 section 3.9).
+    json_columns_clause = ""
+    if json_columns:
+        json_columns_clause = "--json_columns " + ",".join(json_columns)
     # `set -eo pipefail` (NOT `set -e pipefail`): bash parses the latter as
     # `set -e` plus a positional argument named "pipefail", so pipefail is
     # never enabled. Without it a failing checksum script on the left of the
     # pipe is masked by a successful awk and the pipeline exits 0 -- a run
     # that never produced a checksum is reported as a PASS. Verified in bash:
     # `set -e pipefail; false | grep x | awk '{print}'` exits 0.
-    cmd = f"""set -eo pipefail;python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads={args.threads} --clickhouse_host {ch_host} --clickhouse_database  {database}  --tables_regex "^{table}$" {where_argument}  --min_datetime_value "1969-12-31 18:00:00"  --max_datetime_value "2299-12-31 00:00:00" {ignored_columns_clause} --sign_column "" {debug_output_clause} {partition_key_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
+    cmd = f"""set -eo pipefail;python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads={args.threads} --clickhouse_host {replica_host} --clickhouse_database  {database}  --tables_regex "^{table}$" {where_argument} --source_timezone {args.source_timezone} {timestamp_columns_clause} {json_columns_clause} {binary_encoding_clause} {include_flags_clause()} {ignored_columns_clause} --sign_column "" {debug_output_clause} {partition_key_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
     return cmd 
+
+
+def resolve_source_timezone(conn, explicit):
+    """The IANA zone MySQL DATETIME values are interpreted in (spec 11.02
+    section 3.2 step 1): ``--source_timezone`` when given, else the server's
+    session zone, falling back to the system zone when that is SYSTEM. It must
+    be the zone the connector's database.connectionTimeZone names."""
+    if explicit:
+        validate_timezone(explicit, "--source_timezone")
+        return explicit
+    (rowset, rowcount) = execute_mysql(conn, "select @@session.time_zone as session_time_zone, @@system_time_zone as system_time_zone")
+    row = list(rowset.mappings())[0]
+    zone = row['session_time_zone']
+    if str(zone).upper() == 'SYSTEM':
+        zone = row['system_time_zone']
+    validate_timezone(zone, "the MySQL server time zone (pass --source_timezone with the IANA name the connector's database.connectionTimeZone uses)")
+    logging.info(f"Source time zone resolved from MySQL: {zone} (override with --source_timezone; it must match the connector's database.connectionTimeZone)")
+    return zone
 
 
 def analyze_differences(results, mysql_host, replica_hosts):
@@ -363,6 +409,7 @@ def run_config(config):
         try:
             conn = get_mysql_connection(mysql_host, mysql_user,
                                     mysql_password, args.mysql_port, database)
+            args.source_timezone = resolve_source_timezone(conn, args.source_timezone)
             tables = get_tables_from_regexp(conn, database, args.tables_regex)
             with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
                 futures = []
@@ -380,6 +427,11 @@ def run_config(config):
                     pk_column = pk[0] if len(pk) > 0 else 'NULL'
                     (min_pk, max_pk) = get_min_max_pk_value(conn, table, pk_column, '1=1')
                     partition_key = get_table_partition_key(conn, database, table)
+                    timestamp_columns = mysql_columns_by_data_type(conn, database, table, ('timestamp',))
+                    binary_columns = []
+                    if args.binary_encoding == 'raw':
+                        binary_columns = mysql_columns_by_data_type(conn, database, table, binary_datatypes)
+                    json_columns = mysql_columns_by_data_type(conn, database, table, ('json',))
                     ignored_columns = []
                     if database in ignored_columns_map and table in ignored_columns_map[database]:
                         ignored_columns = list(ignored_columns_map[database][table].keys())
@@ -389,7 +441,7 @@ def run_config(config):
                     # Each future acquires its own lock, runs both MySQL and
                     # ClickHouse checksums under the lock, then releases it.
                     future = executor.submit(
-                        compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port)
+                        compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns)
                     futures.append(future)
                     future_to_table[future] = table_name
                 for future in concurrent.futures.as_completed(futures):
@@ -492,6 +544,13 @@ def main():
     parser.add_argument('--lock_tables_on_source', action='store_true', default=False,
                         help='Lock the table on the source so that source and target are in sync ...', required=False)
     parser.add_argument('--sleep_after_lock', type=int, help='When locking, sleeping n seconds', default=3)
+    parser.add_argument('--source_timezone', help='IANA time zone the connector interprets MySQL DATETIME values in (its database.connectionTimeZone); default: resolved from the MySQL server', required=False, default=None)
+    parser.add_argument('--binary_encoding', choices=['hex', 'base64', 'raw'], default='hex', required=False,
+                        help='how the connector wrote binary values: hex text (default), base64 text (binary.handling.mode=base64) or raw bytes (persist.raw.bytes=true); passed to both sides')
+    parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
+                        help='compare floating point columns (text renderings, not guaranteed identical in exponent notation); passed to both sides')
+    parser.add_argument('--include_json_columns', action='store_true', default=False,
+                        help='compare JSON columns (best-effort text rendering on the MySQL side); passed to both sides')
 
     global args
     args = parser.parse_args()

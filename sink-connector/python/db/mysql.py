@@ -8,14 +8,21 @@ import pymysql
 import pymysql as mysql
 import pandas as pd
 
-binary_datatypes = ('blob', 'varbinary', 'point', 'geometry', 'bit', 'binary', 'linestring',
-                    'geomcollection', 'multilinestring', 'multipolygon', 'multipoint', 'polygon')
+binary_datatypes = ('blob', 'tinyblob', 'mediumblob', 'longblob', 'varbinary', 'binary', 'bit',
+                    'point', 'geometry', 'linestring', 'geomcollection', 'geometrycollection',
+                    'multilinestring', 'multipolygon', 'multipoint', 'polygon')
+
 
 def is_binary_datatype(datatype):
-    if "blob" in datatype or "binary" in datatype or "varbinary" in datatype or "bit" in datatype:
-        return True
-    else:
-        return datatype.lower() in binary_datatypes
+    """True when the MySQL type keyword denotes bytes (spec 11.02 section 3.3).
+
+    Accepts either information_schema DATA_TYPE ('varbinary') or a declared
+    type ('varbinary(16)', 'bit(1)'): the length and attributes are stripped and
+    the bare keyword is matched exactly. It must never substring-match: the
+    labels of an enum('bit','blob') are user text, not a type.
+    """
+    base = datatype.lower().split('(', 1)[0].strip()
+    return base in binary_datatypes
 
 
 def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql_database):
@@ -172,6 +179,15 @@ def mysql_pk_columns(conn, mysql_database, mysql_table, is_integer=True):
     logging.debug('PK columns \n' + df.to_string(index=False))
     list = df['COLUMN_NAME'].to_list()
     return list
+
+
+def mysql_columns_by_data_type(conn, mysql_database, mysql_table, data_types):
+    """Names of the table's columns whose information_schema DATA_TYPE is one of
+    ``data_types`` (bare keywords such as 'timestamp'), in ordinal order."""
+    quoted = ",".join("'" + data_type + "'" for data_type in data_types)
+    sql = f"select column_name as COLUMN_NAME from information_schema.columns where table_schema='{mysql_database}' and table_name = '{mysql_table}' and data_type in ({quoted}) order by ORDINAL_POSITION"
+    df = mysql_execute_df(conn, sql)
+    return df['COLUMN_NAME'].to_list()
 
 
 def divide_table_into_even_chunks(conn, mysql_table, chunk_size, pk, where):

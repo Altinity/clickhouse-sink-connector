@@ -143,14 +143,19 @@ enable.snapshot.ddl: "true"
 #                      MySQL x'0102030405' becomes the 10-character string
 #                      "0102030405", so hex(col) in ClickHouse returns
 #                      30313032303330343035 (the hex OF THAT TEXT), not
-#                      0102030405. A byte-for-byte comparison against the
-#                      source therefore does not match, and the column takes
-#                      twice the space. The value is recoverable with
-#                      unhex(col).
+#                      0102030405; the column takes twice the space and the
+#                      value is recoverable with unhex(col). The db_compare
+#                      checksum tools compare this shape with their default
+#                      --binary_encoding hex (the MySQL side renders
+#                      lower(hex(col)), the ClickHouse side the stored text).
 #   true            -- the raw bytes are stored unchanged, so the column is
 #                      byte-identical to MySQL and hex(col) matches HEX(col)
-#                      on the source. Use this when binary values are compared
-#                      against MySQL, e.g. by the db_compare checksum jobs.
+#                      on the source. Checksum such tables with
+#                      --binary_encoding raw on both sides (the top-level
+#                      driver then tells the ClickHouse side which columns
+#                      to hex via --hex_columns).
+#   With binary.handling.mode=base64 (below) the stored text is base64;
+#   checksum with --binary_encoding base64 on both sides.
 #
 # The default stays false for backward compatibility: flipping it changes the
 # stored representation, so existing tables would need to be rewritten.
