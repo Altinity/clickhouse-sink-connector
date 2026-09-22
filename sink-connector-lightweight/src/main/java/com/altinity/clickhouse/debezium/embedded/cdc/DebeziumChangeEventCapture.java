@@ -384,7 +384,7 @@ public class DebeziumChangeEventCapture {
                 props.setProperty("column.propagate.source.type", ".*");
             }
             // Debezium's default remaps years below 100 (0001-01-01 arrives as
-            // 2001-01-01). Off unless the user set it (spec 07.03 section 3.3).
+            // 2001-01-01). Off unless the user set it (spec 07.03 section 3.4).
             ensureTimeAdjusterDisabled(props);
 
             changeEventBuilder.using(props);
@@ -827,7 +827,7 @@ public class DebeziumChangeEventCapture {
 
     /**
      * Forces {@code enable.time.adjuster=false} unless the user set it
-     * (spec 07.03 §3.3).
+     * (spec 07.03 §3.4).
      *
      * <p>Debezium's default is {@code true}: a two-digit year — and, on the
      * MySQL connector, any year below 100 — is remapped into 1970–2069, so a
@@ -1200,7 +1200,17 @@ public class DebeziumChangeEventCapture {
         // kind the parser found (DROP TABLE / TRUNCATE TABLE / DROP DATABASE).
         // It used to be tested BEFORE parseSql computed the flag, so it was
         // dead: a false flag, every time (spec 06.08 section 3.3).
-        if (isDropOrTruncateDisabled(props) && isDropOrTruncate.get()) {
+        //
+        // Snapshot-phase DDL is EXEMPT: with enable.snapshot.ddl=true Debezium
+        // bootstraps the schema by emitting DROP TABLE IF EXISTS + CREATE TABLE
+        // for every captured table, and that DROP is schema initialisation, not
+        // a source-initiated data drop during streaming. Suppressing it leaves
+        // a stale target table (e.g. a pre-created one with a narrower column
+        // type) that the CREATE ... IF NOT EXISTS then cannot replace, so the
+        // replica no longer matches MySQL. disable.drop.truncate exists to keep
+        // rows the source removed WHILE REPLICATING, not to freeze the snapshot
+        // schema (spec 06.08 section 3.5).
+        if (isDropOrTruncateDisabled(props) && isDropOrTruncate.get() && !isSnapshotDDL(sr)) {
             lastIgnoredDDL = DDL;
             // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
             log.warn("Ignoring DROP/TRUNCATE statement because {}=true; ClickHouse keeps the rows the "

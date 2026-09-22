@@ -1202,13 +1202,18 @@ public class DBMetadata {
      */
     public void truncateTable(Connection conn, String databaseName, String tableName) throws SQLException {
         int retryCount = 0;
-        PreparedStatement ps = null;
+        SQLException lastFailure = null;
         while(retryCount < MAX_RETRIES) {
-            try {
-                ps = conn.prepareStatement("TRUNCATE TABLE `" + databaseName + "`.`" + tableName + "`");
+            // DESTRUCTIVE: applies a TRUNCATE that MySQL already executed and
+            // that arrived as a replicated binlog change event (op = t); the
+            // replica must follow the source. Safe because it is never issued
+            // on the connector's own initiative -- only for a source event.
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "TRUNCATE TABLE `" + databaseName + "`.`" + tableName + "`")) {
                 ps.execute();
-                break;
+                return;
             } catch (SQLException e) {
+                lastFailure = e;
                 log.error("*** Error: Truncate table statement error, retry attempt ({}/{}) failed" ,retryCount,MAX_RETRIES, e);
                 if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
                     conn = HikariDbSource.initiateNewConnectionIfClosed(
@@ -1217,6 +1222,17 @@ public class DBMetadata {
                 retryCount++;
             }
         }
+        // Every attempt failed. Returning normally here -- the previous
+        // behaviour -- let the caller treat the truncate as applied: the batch
+        // continued, reported success and was acknowledged, so the
+        // pre-truncate rows survived in ClickHouse while MySQL had emptied the
+        // table (Spec 04.05 section 3 step 2).
+        // DESTRUCTIVE: message text only -- names the TRUNCATE that was NOT
+        // applied; nothing is executed here.
+        throw new SQLException(String.format(
+                "TRUNCATE TABLE `%s`.`%s` failed on all %d attempts; the replicated TRUNCATE was "
+                        + "NOT applied and this batch must not be acknowledged.",
+                databaseName, tableName, MAX_RETRIES), lastFailure);
     }
 
     /**
@@ -1229,12 +1245,12 @@ public class DBMetadata {
      */
     public PreparedStatement getPreparedStatement(Connection conn, String sql) throws SQLException {
         int retryCount = 0;
-        PreparedStatement ps = null;
+        SQLException lastFailure = null;
         while (retryCount < MAX_RETRIES) {
             try {
-                ps = conn.prepareStatement(sql);
-                break;
+                return conn.prepareStatement(sql);
             } catch (SQLException e) {
+                lastFailure = e;
                 log.error("Error getting prepared statement, retry attempt ({}/{}) failed",retryCount,MAX_RETRIES, e);
                 if (!config.getBoolean(String.valueOf(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE))) {
                     conn = HikariDbSource.initiateNewConnectionIfClosed(
@@ -1243,6 +1259,10 @@ public class DBMetadata {
                 retryCount++;
             }
         }
-        return ps;
+        // Returning null here handed the caller a statement it could only
+        // dereference into a NullPointerException, far from the cause. The
+        // last refusal is the cause; say so.
+        throw new SQLException(String.format(
+                "Could not prepare statement after %d attempts: %s", MAX_RETRIES, sql), lastFailure);
     }
 }

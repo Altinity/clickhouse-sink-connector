@@ -37,6 +37,53 @@ public class GroupInsertQueryWithBatchRecords {
             LogManager.getLogger(GroupInsertQueryWithBatchRecords.class);
 
     /**
+     * The target table's resolved ReplacingMergeTree version column
+     * ({@code DbWriter.getVersionColumn()}), or null when unknown.
+     */
+    private final String versionColumn;
+
+    /**
+     * The target table's resolved CollapsingMergeTree sign column
+     * ({@code DbWriter.getSignColumn()}), or null when unknown.
+     */
+    private final String signColumn;
+
+    /**
+     * The target table's resolved ReplacingMergeTree delete column
+     * ({@code DbWriter.getReplacingMergeTreeDeleteColumn()}), or null to fall
+     * back to the configured {@code replacingmergetree.delete.column}.
+     */
+    private final String deleteColumn;
+
+    /**
+     * A grouper that knows only the connector's default engine-column names.
+     * The INSERT it builds retains {@code _version} / {@code is_deleted} /
+     * {@code _sign} and the configured delete column, but not an engine
+     * column with any other name -- use the resolved-column constructor on
+     * every production path.
+     */
+    public GroupInsertQueryWithBatchRecords() {
+        this(null, null, null);
+    }
+
+    /**
+     * A grouper that builds INSERTs for a table whose engine columns have
+     * been resolved from its engine clause (Spec 08.01 §3.1). The resolved
+     * names are treated as connector-managed columns: always in the INSERT
+     * column list, always bind parameters, whatever they are called.
+     *
+     * @param versionColumn the resolved version column, may be null.
+     * @param signColumn    the resolved sign column, may be null.
+     * @param deleteColumn  the resolved delete column, may be null.
+     */
+    public GroupInsertQueryWithBatchRecords(String versionColumn, String signColumn,
+                                            String deleteColumn) {
+        this.versionColumn = versionColumn;
+        this.signColumn = signColumn;
+        this.deleteColumn = deleteColumn;
+    }
+
+    /**
      * Groups records by their insert query template and updates the
      * topic-partition offset map.
      * <p>
@@ -46,25 +93,45 @@ public class GroupInsertQueryWithBatchRecords {
      * map with the highest offset per topic partition.
      * </p>
      *
-     * @param records              list of ClickHouseStruct records.
-     * @param queryToRecordsMap    map of query template to list of records.
+     * <p>The output is an ORDERED list of segments (Spec 04.05 §3). Within a
+     * segment, records are keyed by their INSERT template and the executor
+     * may run the templates in any order; a replicated truncation event ends
+     * the current segment, occupies a segment of its own, and a new segment
+     * begins after it. A single map cannot express this: its iteration order
+     * is hash order, so a truncation landed before or after the INSERTs of the
+     * same batch depending on the table name, and two TRUNCATEs in one batch
+     * collapsed onto one key.</p>
+     *
+     * @param records              list of ClickHouseStruct records, in binlog order.
+     * @param querySegments        receives the ordered segments; each is a map
+     *                             of query template to list of records.
      * @param partitionToOffsetMap map of TopicPartition to latest offset.
      * @param config               connector configuration.
      * @param tableName            target table name.
      * @param databaseName         target database name.
      * @param connection           JDBC connection.
      * @param columnNameToDataTypeMap map of column names to their data types.
-     * @return true if grouping is successful; false otherwise.
+     * @throws IllegalStateException when a record cannot be grouped (no image
+     *         for its operation, no column metadata, no template). Every
+     *         record is grouped or the batch fails: a skipped record is
+     *         written nowhere while the offset advances past it, so there is
+     *         deliberately no boolean status to report one (Spec 04.01
+     *         section 3.3).
      */
-    public boolean groupQueryWithRecords(
+    public void groupQueryWithRecords(
             List<ClickHouseStruct> records,
-            Map<MutablePair<String, Map<String, Integer>>,
-                    List<ClickHouseStruct>> queryToRecordsMap,
+            List<Map<MutablePair<String, Map<String, Integer>>,
+                    List<ClickHouseStruct>>> querySegments,
             Map<TopicPartition, Long> partitionToOffsetMap,
             ClickHouseSinkConnectorConfig config,
             String tableName, String databaseName, Connection connection,
             Map<String, String> columnNameToDataTypeMap) {
-        boolean result = false;
+
+        // The segment currently being filled. It is appended to querySegments
+        // the first time a record lands in it, and replaced by a fresh map
+        // after every TRUNCATE.
+        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap =
+                new HashMap<>();
 
         // Co4 = {ClickHouseStruct@9220} de block to create a Map of Query ->
         // list of records so that all records belonging to the same query
@@ -108,9 +175,25 @@ public class GroupInsertQueryWithBatchRecords {
                 columnNameToDataTypeMap = verified;
             }
 
+            // A replicated truncation (MySQL's own TRUNCATE, delivered as a
+            // change event) must run at its binlog position: rows before it
+            // belong to the pre-truncation state and must reach ClickHouse
+            // first, rows after it are the new state and must survive. It
+            // closes the current segment, takes a segment of its own, and a
+            // new segment starts behind it (Spec 04.05 section 3).
+            if (isTruncate(record)) {
+                Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> truncateSegment =
+                        new HashMap<>();
+                updateQueryToRecordsMap(record, null, truncateSegment, tableName, config,
+                        columnNameToDataTypeMap);
+                querySegments.add(truncateSegment);
+                queryToRecordsMap = new HashMap<>();
+                continue;
+            }
+
             if (CdcRecordState.CDC_RECORD_STATE_BEFORE ==
                     getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                result = updateQueryToRecordsMap(record,
+                updateQueryToRecordsMap(record,
                         record.getBeforeModifiedFields(), queryToRecordsMap,
                         tableName, config, columnNameToDataTypeMap);
             } else if (CdcRecordState.CDC_RECORD_STATE_AFTER ==
@@ -129,45 +212,72 @@ public class GroupInsertQueryWithBatchRecords {
                 }
                 // columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(
                 // tableName, connection, databaseName, config );
-                result = updateQueryToRecordsMap(record,
+                updateQueryToRecordsMap(record,
                         record.getAfterModifiedFields(), queryToRecordsMap,
                         tableName, config, columnNameToDataTypeMap);
             }
-            // UPDATE: This creates 2 records, one with before and another one with after.
+            // UPDATE: the record carries a before and an after image. It is
+            // grouped ONCE, under the template built from the after image;
+            // PreparedStatementExecutor binds whichever images the engine
+            // needs (the before image shares the schema, so it resolves to the
+            // same template and the same parameter map). Grouping it once per
+            // image -- the previous behaviour -- appended the SAME record twice
+            // to the same list, so every UPDATE was bound and written twice:
+            // 2x write amplification on ReplacingMergeTree, and two +1 rows
+            // with no -1 row on CollapsingMergeTree (Spec 04.01 section 3.2,
+            // 04.04 section 3.1).
             else if (CdcRecordState.CDC_RECORD_STATE_BOTH ==
                     getCdcSectionBasedOnOperation(record.getCdcOperation())) {
-                // if replication history is enabled, then dont split to 2 records.
-                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-                        result = updateQueryToRecordsMap(record,
-                                record.getAfterModifiedFields(), queryToRecordsMap,
-                                tableName, config, columnNameToDataTypeMap);
-                        // `continue`, NOT `return`: this is inside the per-record
-                        // loop. Returning here abandoned every remaining record in
-                        // the batch the moment the first UPDATE was seen -- silently,
-                        // with no error and no metric, while the offset still
-                        // advanced past the discarded rows. A single MySQL statement
-                        // touching N rows emits N records in one batch, so all but
-                        // the first were lost. Only history mode took this branch,
-                        // which is why the standard flow was unaffected.
-                        continue;
-                }
-                                
-                if (record.getBeforeModifiedFields() != null) {
-                    result = updateQueryToRecordsMap(record,
-                            record.getBeforeModifiedFields(), queryToRecordsMap,
-                            tableName, config, columnNameToDataTypeMap);
-                }
-                if (record.getAfterModifiedFields() != null) {
-                    result = updateQueryToRecordsMap(record,
-                            record.getAfterModifiedFields(), queryToRecordsMap,
-                            tableName, config, columnNameToDataTypeMap);
-                }
+                // In history mode the handler builds its own SCD Type 2
+                // statement from the after image; the standard flow binds
+                // both images from the one entry. Either way: one entry.
+                //
+                // No early `return` here: returning from inside the per-record
+                // loop abandoned every remaining record in the batch the moment
+                // the first UPDATE was seen -- silently, with no error and no
+                // metric, while the offset still advanced past the discarded
+                // rows. A single MySQL statement touching N rows emits N
+                // records in one batch, so all but the first were lost.
+                updateQueryToRecordsMap(record,
+                        record.getAfterModifiedFields(), queryToRecordsMap,
+                        tableName, config, columnNameToDataTypeMap);
             } else {
-                log.error("************ RECORD DROPPED: INVALID CDC RECORD " +
-                        "STATE *****************" + record.getSourceRecord());
+                // Not reachable today (getCdcSectionBasedOnOperation defaults
+                // to AFTER), but a record that is neither BEFORE, AFTER nor
+                // BOTH must never be logged and forgotten: it would be written
+                // nowhere while the batch's offset advanced past it.
+                throw new IllegalStateException(String.format(
+                        "%s on table %s has no recognised CDC record state and cannot be "
+                                + "grouped into a statement. Refusing to drop it (Spec 04.01 "
+                                + "section 3.3).",
+                        describe(record), tableName));
+            }
+            // The record landed in the current segment; publish the segment
+            // the first time that happens (identity check: the same map is
+            // never appended twice).
+            if (querySegments.isEmpty()
+                    || querySegments.get(querySegments.size() - 1) != queryToRecordsMap) {
+                querySegments.add(queryToRecordsMap);
             }
         }
-        return result;
+    }
+
+    /** Whether the record is a replicated truncation event ({@code op = t}, MySQL TRUNCATE). */
+    static boolean isTruncate(ClickHouseStruct record) {
+        return record.getCdcOperation() != null
+                && record.getCdcOperation().getOperation() != null
+                && record.getCdcOperation().getOperation().equalsIgnoreCase(
+                        ClickHouseConverter.CDC_OPERATION.TRUNCATE.getOperation());
+    }
+
+    /**
+     * Identifies a record in an error message: operation, topic, partition
+     * and offset. Never throws for a sparsely populated record.
+     */
+    private static String describe(ClickHouseStruct record) {
+        return String.format("Record(operation=%s, topic=%s, partition=%s, offset=%s)",
+                record.getCdcOperation() == null ? null : record.getCdcOperation().getOperation(),
+                record.getTopic(), record.getKafkaPartition(), record.getKafkaOffset());
     }
 
     /**
@@ -181,13 +291,17 @@ public class GroupInsertQueryWithBatchRecords {
      *
      * @param record             a ClickHouseStruct record.
      * @param modifiedFields     list of modified fields.
-     * @param queryToRecordsMap  map from query template to list of records.
+     * @param queryToRecordsMap  the segment being filled: map from query
+     *                           template to list of records.
      * @param tableName          target table name.
      * @param config             connector configuration.
      * @param columnNameToDataTypeMap map of column names to data types.
-     * @return true if the mapping is updated; false otherwise.
+     * @throws IllegalStateException when the record carries no image for the
+     *         section its operation binds, when no column metadata is
+     *         available, or when no template can be built. The record is
+     *         never skipped (Spec 04.01 section 3.3).
      */
-    public boolean updateQueryToRecordsMap(
+    public void updateQueryToRecordsMap(
             ClickHouseStruct record, List<Field> modifiedFields,
             Map<MutablePair<String, Map<String, Integer>>,
                     List<ClickHouseStruct>> queryToRecordsMap,
@@ -195,16 +309,44 @@ public class GroupInsertQueryWithBatchRecords {
             Map<String, String> columnNameToDataTypeMap) {
 
         // Step 1: If its a TRUNCATE OPERATION, add a TRUNCATE TABLE command.
-        if (record.getCdcOperation().getOperation()
-                .equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.TRUNCATE
-                        .getOperation())) {
+        // The key is a marker only: the executor recognises the group by the
+        // record's operation and issues the qualified statement itself,
+        // against ITS database (the resolved target), never this text.
+        if (isTruncate(record)) {
             MutablePair<String, Map<String, Integer>> mp = new MutablePair<>();
+            // DESTRUCTIVE: marker text for a replicated MySQL TRUNCATE event;
+            // it is never executed as SQL (see PreparedStatementExecutor).
             mp.setLeft(String.format("TRUNCATE TABLE `%s`", tableName));
             mp.setRight(new HashMap<String, Integer>());
             ArrayList<ClickHouseStruct> records = new ArrayList<>();
             records.add(record);
             queryToRecordsMap.put(mp, records);
-            return true;
+            return;
+        }
+
+        if (columnNameToDataTypeMap == null || columnNameToDataTypeMap.isEmpty()) {
+            throw new IllegalStateException(String.format(
+                    "No ClickHouse column metadata is available for table %s while grouping %s, "
+                            + "so no INSERT can be built for it. Skipping the record would drop it "
+                            + "while the batch's offset advances past it; failing the batch instead "
+                            + "(Spec 04.01 section 3.3).",
+                    tableName, describe(record)));
+        }
+
+        // A record whose operation binds an image it does not carry cannot
+        // be grouped. Returning false here (the previous behaviour) dropped
+        // the record silently -- and an UPDATE without its after image was
+        // grouped by its BEFORE image alone, i.e. written as a live row
+        // holding the pre-update values.
+        if (modifiedFields == null && schemaFieldsFor(record, modifiedFields) == null) {
+            boolean bindsBefore = CdcRecordState.CDC_RECORD_STATE_BEFORE
+                    == getCdcSectionBasedOnOperation(record.getCdcOperation());
+            throw new IllegalStateException(String.format(
+                    "%s on table %s carries no %s image, so its row cannot be built. A %s event "
+                            + "must carry the %s image (MySQL binlog_row_image=FULL). Refusing to "
+                            + "drop the record (Spec 04.01 section 3.3).",
+                    describe(record), tableName, bindsBefore ? "before" : "after",
+                    bindsBefore ? "DELETE" : "row", bindsBefore ? "before" : "after"));
         }
 
         // Step 2: Create the Prepared Statement Query.
@@ -235,17 +377,23 @@ public class GroupInsertQueryWithBatchRecords {
                                 ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN
                                         .toString()),
                         record.getDatabase(),
-                        config.getString(
-                                ClickHouseSinkConnectorConfigVariables
-                                        .REPLACING_MERGE_TREE_DELETE_COLUMN.toString()),
-                        schemaFields);
+                        // The table's resolved delete column when the writer
+                        // knows it (new-style RMT: read from the engine
+                        // clause), else the configured name.
+                        deleteColumn != null && !deleteColumn.isEmpty()
+                                ? deleteColumn
+                                : config.getString(
+                                        ClickHouseSinkConnectorConfigVariables
+                                                .REPLACING_MERGE_TREE_DELETE_COLUMN.toString()),
+                        schemaFields, versionColumn, signColumn);
 
-        String insertQueryTemplate = response.getKey();
-        if (response.getKey() == null || response.getValue() == null) {
-            log.error("********* QUERY or COLUMN TO INDEX MAP EMPTY");
-            return false;
-            // this.columnNametoIndexMap = response.right;
+        if (response == null || response.getKey() == null || response.getValue() == null) {
+            throw new IllegalStateException(String.format(
+                    "No INSERT template could be built for %s on table %s (query or parameter "
+                            + "map empty). Refusing to drop the record (Spec 04.01 section 3.3).",
+                    describe(record), tableName));
         }
+        String insertQueryTemplate = response.getKey();
 
         MutablePair<String, Map<String, Integer>> mp =
                 new MutablePair<>();
@@ -261,7 +409,6 @@ public class GroupInsertQueryWithBatchRecords {
             recordsList.add(record);
             queryToRecordsMap.put(mp, recordsList);
         }
-        return true;
     }
 
     /**

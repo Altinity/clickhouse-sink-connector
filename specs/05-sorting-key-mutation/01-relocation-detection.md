@@ -19,10 +19,23 @@ Specifies the detection algorithm that determines whether an incoming MySQL UPDA
 2. Read `before = record.getBeforeStruct()` and `after = record.getAfterStruct()`. If either is `null`, return `false`.
 3. For each column name $C$ in `sortingKeyColumns`:
    - If `before.schema().field(C) == null` or `after.schema().field(C) == null`, skip $C$: the sorting key may be an expression over columns the record does not carry (for example `toDate(deleted_time)`), and absence is not guessed either way.
-   - If `!Objects.equals(before.get(C), after.get(C))`, return `true` (relocation detected; a `NULL`-to-value or value-to-`NULL` transition counts as a change).
+   - If `!Objects.equals(before.getWithoutDefault(C), after.getWithoutDefault(C))`, return `true` (relocation detected; a `NULL`-to-value or value-to-`NULL` transition counts as a change).
 4. If every carried sorting-key column is equal, return `false` (in-place update).
 
 The method does not inspect the CDC operation; the caller invokes it only for UPDATE records.
+
+### 3.2 The comparison reads STORED values, never the Connect-schema default
+Both images are read with `Struct.getWithoutDefault`, never `Struct.get`.
+`Struct.get` substitutes `schema.defaultValue()` for a stored `null`, and
+Debezium fills that default from the MySQL column `DEFAULT` (Spec 07.07 §3.1).
+For a sorting-key column declared `DEFAULT 'x'`, an UPDATE that changes the
+stored value from `NULL` to `'x'` therefore compared `'x'` against `'x'` and
+was judged an in-place update: no tombstone was written, the row was inserted
+under its new sorting key, and the pre-update row at the `NULL` key survived
+forever — MySQL one row, ClickHouse two. The bind path already reads stored
+values (Spec 04.03 §3.3); the relocation decision must observe the same values
+the rows are written with, or the two halves of Invariant I4 disagree about
+which key a row lives under.
 
 ---
 
@@ -33,3 +46,4 @@ The method does not inspect the CDC operation; the caller invokes it only for UP
 
 ## 5. Verification Criteria
 - `PreparedStatementExecutorSortingKeyTombstoneTest.testSortingKeyColumnChangeRequiresTombstone()`, `PreparedStatementExecutorSortingKeyTombstoneTest.testNonSortingKeyColumnChangeNeedsNoTombstone()`, `PreparedStatementExecutorSortingKeyTombstoneTest.testKeylessTableAllColumnsSortingKeyDetectsAnyChange()`, `PreparedStatementExecutorSortingKeyTombstoneTest.testNoOpUpdateNeedsNoTombstone()`, `PreparedStatementExecutorSortingKeyTombstoneTest.testNullTransitionInSortingKeyIsAChange()`, `PreparedStatementExecutorSortingKeyTombstoneTest.testUnknownSortingKeyEmitsNoTombstone()`, `PreparedStatementExecutorSortingKeyTombstoneTest.testSortingKeyColumnAbsentFromRecordIsSkipped()`, `PreparedStatementExecutorSortingKeyTombstoneTest.testMissingAfterImageEmitsNoTombstone()`.
+- `PreparedStatementExecutorSortingKeyTombstoneTest.testNullToSchemaDefaultInSortingKeyIsAChange()` — §3.2: a `NULL` → `DEFAULT`-valued transition of a sorting-key column (Connect-schema `defaultValue` equal to the new value) is detected as a relocation in both directions, and `NULL` → `NULL` under a default is not.

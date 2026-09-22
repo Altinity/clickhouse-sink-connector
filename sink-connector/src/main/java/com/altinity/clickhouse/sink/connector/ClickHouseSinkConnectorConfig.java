@@ -612,6 +612,20 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.HIGH,
+                        "If false (default), a DATE/DATETIME/TIMESTAMP or decimal value outside the "
+                                + "range of the ClickHouse column type fails the batch with an error "
+                                + "naming the column and the value. If true, the value is saturated to "
+                                + "the ClickHouse bound and a WARN naming the column and both values "
+                                + "is logged for every such row.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(),
                         Type.STRING,
                         "",

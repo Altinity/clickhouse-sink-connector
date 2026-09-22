@@ -34,6 +34,9 @@ Incoming Record Field Evaluation
 ### 3.2 Production Hazard Prevented
 In earlier versions, `null`-valued fields were omitted from the query column list. Consequently, ClickHouse applied column defaults (e.g. converting `NULL` to `0`, `""`, or `1970-01-01`), causing silent data divergence. The 2.11.0 rule strictly preserves explicit `NULL`s.
 
+### 3.2.1 Engine columns are members by name, not by record
+`_version`, the delete column and the sign column are never in the record's schema, so Case B would wrongly exclude them. They are retained by name — the defaults and the names resolved from the table's engine clause (spec 04.02 §3.1) — and a table engine column with no placeholder in the INSERT is refused at bind time rather than stored as its type default.
+
 ### 3.3 The Connect-schema default is the same hazard at bind time
 Membership (this spec) is decided from the record's unfiltered schema. The
 *value* bound for a member column is read with `Struct.getWithoutDefault`, never
@@ -41,6 +44,27 @@ Membership (this spec) is decided from the record's unfiltered schema. The
 Debezium fills from the MySQL column `DEFAULT`) for a stored `null`, so the
 column would be present in the INSERT but bound to the default. See Spec 07.07
 §3.1. Both halves are required for Case A to actually store `NULL`.
+
+### 3.4 Column names are matched to source fields case-insensitively, everywhere
+Membership (`QueryFormatter.createColumns`) compares the ClickHouse column name
+to the record's field names case-insensitively, so a table created by hand as
+`` `ID` Int32, `Amount` Float64 `` for source columns `id, amount` is a member
+match. The bind-time value read, however, used the ClickHouse column name
+verbatim (`struct.getWithoutDefault(colName)`), which Kafka Connect resolves
+case-sensitively: it threw `DataException`, `PreparedStatementFieldMapper`
+classified that as a stale cache (`StaleSchemaCacheException`) and the batch
+was retried forever against a cache that was never stale — a permanent stall
+with nothing written.
+
+Rule (`PreparedStatementFieldMapper.resolveSourceField(struct, colName)`): the
+source field a column is bound from is resolved against the **record's
+schema** — an exact name match first, then a case-insensitive match — and the
+value is read with `getWithoutDefault(field.name())`. The record's schema, not
+the modified-field list, is consulted because that list omits NULL-valued
+fields; a NULL source value in a case-mismatched column must still be bound as
+NULL (Case A). Only a column that matches no field under either comparison
+reaches the stale-cache branch, which is exactly the condition it was written
+for.
 
 ---
 
@@ -55,6 +79,10 @@ column would be present in the INSERT but bound to the default. See Spec 07.07
   bound as SQL NULL.
 - `NullValueColumnDropTest.testUpdateClearingColumnBindsIt()` — an UPDATE that
   sets a column to `null` binds it (Case A on the after-image).
+- `PreparedStatementFieldMapperColumnCaseTest.columnCaseMismatchIsResolvedToTheSourceField()`
+  — §3.4: ClickHouse columns `ID`, `Amount`, `NOTE` for source fields `id`,
+  `amount`, `note` (the last NULL) are bound (`7`, `12.5`, `setNull`); the
+  pre-fix code throws `StaleSchemaCacheException` for `ID`.
 - `NullValueColumnDropTest.testPreAlterRecordStillOmitsUnknownColumn()` — Case B:
   a column absent from a pre-ALTER record's schema is not a member.
 - `NullValueColumnDropTest.testSchemaDefaultIsNotSubstitutedForNull()` — §3.3:

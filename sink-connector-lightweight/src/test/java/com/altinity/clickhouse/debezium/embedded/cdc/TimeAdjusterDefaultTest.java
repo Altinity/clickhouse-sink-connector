@@ -10,7 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 /**
  * Debezium's {@code enable.time.adjuster} must be forced off unless the user
- * set it (spec 07.03 §3.3).
+ * set it (spec 07.03 §3.4).
  *
  * <p><b>The defect.</b> Debezium's default is {@code true}: a two-digit year
  * (and, on the MySQL connector, any year below 100) is remapped into

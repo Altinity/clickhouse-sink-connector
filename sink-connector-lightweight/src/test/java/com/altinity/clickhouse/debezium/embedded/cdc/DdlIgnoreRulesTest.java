@@ -152,6 +152,19 @@ public class DdlIgnoreRulesTest {
         return new SourceRecord(null, null, "db1", 0, keySchema, key, valueSchema, value);
     }
 
+    /**
+     * Like {@link #ddlRecord} but carrying a source offset {@code snapshot=INITIAL},
+     * so {@code DebeziumChangeEventCapture.isSnapshotDDL} reports it as snapshot DDL.
+     */
+    private static SourceRecord snapshotDdlRecord(String database, String ddl, String... tableIds) {
+        SourceRecord streaming = ddlRecord(database, ddl, tableIds);
+        Map<String, Object> sourceOffset = new HashMap<>();
+        sourceOffset.put("snapshot", "INITIAL");
+        return new SourceRecord(null, sourceOffset, "db1", 0,
+                streaming.keySchema(), streaming.key(),
+                streaming.valueSchema(), streaming.value());
+    }
+
     private static boolean invokeIgnored(DebeziumChangeEventCapture capture, String ddl, Properties props,
                                          SourceRecord sr) throws Exception {
         Method m = DebeziumChangeEventCapture.class.getDeclaredMethod("checkIfDDLNeedsToBeIgnored",
@@ -271,5 +284,32 @@ public class DdlIgnoreRulesTest {
         assertThrows(DDLReplicationException.class,
                 // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
                 () -> invokeProcess(capture(), ddlRecord("db1", "DROP TABLE t", "db1.t"), mysqlProps()));
+    }
+
+    @Test
+    // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+    @DisplayName("disable.drop.truncate exempts snapshot-phase DDL: the snapshot DROP TABLE still executes")
+    public void disableDropTruncateExemptsSnapshotDdl() throws Exception {
+        // enable.snapshot.ddl=true so the snapshot DDL is not ignored by the
+        // snapshot branch first; disable.drop.truncate=true would, before the
+        // fix, still swallow the snapshot DROP and freeze a pre-created schema.
+        Properties props = mysqlProps(
+                SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, "true",
+                SinkConnectorLightWeightConfig.ENABLE_SNAPSHOT_DDL, "true");
+
+        // A snapshot DROP TABLE reaches execution (and fails loudly here because
+        // there is no ClickHouse), proving it was NOT swallowed by the flag.
+        assertThrows(DDLReplicationException.class,
+                // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+                () -> invokeProcess(capture(),
+                        snapshotDdlRecord("db1", "DROP TABLE t", "db1.t"), props),
+                "a snapshot DROP is schema bootstrap and must execute despite disable.drop.truncate");
+
+        // A STREAMING DROP with the same properties is still skipped.
+        DebeziumChangeEventCapture capture = capture();
+        // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+        assertNull(invokeProcess(capture, ddlRecord("db1", "DROP TABLE t", "db1.t"), props));
+        assertEquals("DROP TABLE t", capture.getLastIgnoredDDL(),
+                "a streaming DROP is still frozen by disable.drop.truncate");
     }
 }

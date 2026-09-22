@@ -190,5 +190,29 @@ public class QueryFormatterNullValueDropTest {
                 response.right.containsKey("_version"));
         Assert.assertTrue("is_deleted must be retained",
                 response.right.containsKey("is_deleted"));
+
+        // Spec 04.02 section 3.1: the engine clause decides the real names.
+        // ReplacingMergeTree(ver) / CollapsingMergeTree(sgn) columns are never
+        // in the source record; recognised only by the _version/_sign
+        // constants they were omitted and stored as 0 for every row.
+        Map<String, String> customEngineColumns = new LinkedHashMap<>();
+        customEngineColumns.put("id", "Int32");
+        customEngineColumns.put("request", "Nullable(String)");
+        customEngineColumns.put("ver", "UInt64");
+        customEngineColumns.put("sgn", "Int8");
+        customEngineColumns.put("removed", "UInt8");
+
+        MutablePair<String, Map<String, Integer>> custom =
+                new QueryFormatter().getInsertQueryUsingInputFunction(
+                        "event", valueFilteredFields(), customEngineColumns,
+                        false, false, null, "db1", "removed",
+                        fullSchemaFields(), "ver", "sgn");
+
+        Assert.assertTrue("the resolved version column ver must be retained: " + custom.left,
+                custom.right.containsKey("ver"));
+        Assert.assertTrue("the resolved sign column sgn must be retained: " + custom.left,
+                custom.right.containsKey("sgn"));
+        Assert.assertTrue("the resolved delete column removed must be retained: " + custom.left,
+                custom.right.containsKey("removed"));
     }
 }

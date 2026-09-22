@@ -5,6 +5,7 @@ import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.data.VariableScaleDecimal;
+import io.debezium.data.geometry.Geometry;
 import io.debezium.time.MicroTimestamp;
 import io.debezium.time.Timestamp;
 import io.debezium.time.ZonedTimestamp;
@@ -13,14 +14,16 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.VERSION_COLUMN;
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.SIGN_COLUMN;
-import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.IS_DELETED_COLUMN;
 
 import static com.altinity.clickhouse.sink.connector.config.DefaultColumnDataTypeMappingConfig.loadDefaultColumnDataTypeMapping;
 
@@ -34,28 +37,12 @@ public class ClickHouseTableOperationsBase {
     /**
      * The schema parameter key for scale.
      */
-    public static final String SCALE = "scale";
+    public static final String SCALE = ClickHouseDataTypeMapper.CONNECT_DECIMAL_SCALE_PARAM;
 
     /**
      * The schema parameter key for precision in decimal types.
      */
-    public static final String PRECISION = "connect.decimal.precision";
-
-    /**
-     * Default precision for decimal columns.
-     */
-    private static final int DEFAULT_PRECISION = 10;
-
-    /**
-     * Default scale for decimal columns.
-     */
-    private static final int DEFAULT_SCALE = 2;
-
-    /**
-     * String constant for default Decimal(10,2) type.
-     */
-    private static final String DEFAULT_DECIMAL_TYPE = "Decimal("
-            + DEFAULT_PRECISION + "," + DEFAULT_SCALE + ")";
+    public static final String PRECISION = ClickHouseDataTypeMapper.CONNECT_DECIMAL_PRECISION_PARAM;
 
     /**
      * String constant for Decimal(64,18) type used by variable scale decimals.
@@ -63,24 +50,31 @@ public class ClickHouseTableOperationsBase {
     private static final String DECIMAL_64_18 = "Decimal(64,18)";
 
     /**
-     * String constant for DateTime64(3, 'UTC') type (millisecond precision).
-     * Explicit UTC timezone prevents DST-related corruption when the
-     * ClickHouse server timezone is a DST-observing zone like America/Chicago.
+     * The zone every auto-created DateTime64 column declares. A zone-less
+     * DATETIME's digits survive only in a zone without DST transitions (a
+     * spring-forward gap wall time cannot be stored in a DST zone), and the
+     * writer renders instants in the column's declared zone (Spec 07.03
+     * section 3.1.3).
      */
-    private static final String DATETIME64_3 = "DateTime64(3, 'UTC')";
+    private static final String DATETIME64_ZONE = "'UTC'";
 
-    /**
-     * String constant for DateTime64(6, 'UTC') type (microsecond precision).
-     * Explicit UTC timezone prevents DST-related corruption when the
-     * ClickHouse server timezone is a DST-observing zone like America/Chicago.
-     */
-    private static final String DATETIME64_6 = "DateTime64(6, 'UTC')";
+    /** DateTime64 precision declared for io.debezium.time.Timestamp without a propagated source type. */
+    private static final int TIMESTAMP_DEFAULT_PRECISION = 3;
+
+    /** DateTime64 precision declared for MicroTimestamp / ZonedTimestamp without a propagated source type. */
+    private static final int MICRO_TIMESTAMP_DEFAULT_PRECISION = 6;
 
     /**
      * Logger for this class.
      */
     private static final Logger log = LogManager.getLogger(
             ClickHouseTableOperationsBase.class.getName());
+
+    /**
+     * Tables already reported for an INT64 field without a propagated source
+     * type (Spec 07.01 section 3.2): one ERROR per table per JVM.
+     */
+    static final Set<String> REPORTED_UNTYPED_INT64_TABLES = ConcurrentHashMap.newKeySet();
 
     /**
      * Default constructor.
@@ -134,12 +128,22 @@ public class ClickHouseTableOperationsBase {
                                                                 String tableName) {
         ClickHouseDataTypeMapper mapper = new ClickHouseDataTypeMapper();
         Map<String, String> columnToDataTypesMap = new HashMap<>();
+        // INT64 fields with no logical name and no propagated source type: a
+        // signed BIGINT and a BIGINT UNSIGNED are indistinguishable here, and
+        // the latter's values >= 2^63 would be stored negative in the Int64
+        // this path has to declare (Spec 07.01 section 3.2).
+        List<String> untypedInt64Columns = new ArrayList<>();
 
         for (Field f : fields) {
             String colName = f.name();
             Schema.Type type = f.schema().type();
             String fieldSchemaName = f.schema().name();
             boolean isOptional = f.schema().isOptional();
+            if (type == Schema.Type.INT64 && fieldSchemaName == null
+                    && (f.schema().parameters() == null || !f.schema().parameters()
+                    .containsKey(ClickHouseDataTypeMapper.DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM))) {
+                untypedInt64Columns.add(colName);
+            }
 
             if (type == Schema.Type.ARRAY) {
                 fieldSchemaName = f.schema().valueSchema().type().name();
@@ -165,7 +169,30 @@ public class ClickHouseTableOperationsBase {
                 String unsignedType = ClickHouseDataTypeMapper
                         .getUnsignedClickHouseType(sourceColumnType);
                 if (unsignedType != null) {
-                    columnToDataTypesMap.put(colName, unsignedType);
+                    // Nullable when optional: this branch used to skip the
+                    // wrap below, so ADD COLUMN declared a non-Nullable
+                    // unsigned column for a nullable source column and the
+                    // first NULL failed the batch (Spec 08.05 section 3.1.1).
+                    columnToDataTypesMap.put(colName, isOptional
+                            ? "Nullable(" + unsignedType + ")" : unsignedType);
+                    continue;
+                }
+                // A signed TINYINT arrives as INT16; the DDL path declares Int8.
+                String tinyIntType = ClickHouseDataTypeMapper.getSignedTinyIntType(sourceColumnType);
+                if (tinyIntType != null) {
+                    columnToDataTypesMap.put(colName, isOptional
+                            ? "Nullable(" + tinyIntType + ")" : tinyIntType);
+                    continue;
+                }
+                // The Debezium Geometry logical type covers every spatial type
+                // except POINT, but ClickHouse Polygon holds only a polygon. A
+                // LINESTRING / MULTI* / GEOMETRY column is typed String and
+                // stored as WKB hex (Spec 07.06 section 3.1).
+                if (Geometry.LOGICAL_NAME.equalsIgnoreCase(fieldSchemaName)
+                        && ClickHouseDataTypeMapper.isNonPolygonSpatialType(sourceColumnType)) {
+                    columnToDataTypesMap.put(colName, isOptional
+                            ? "Nullable(" + ClickHouseDataType.String.name() + ")"
+                            : ClickHouseDataType.String.name());
                     continue;
                 }
             }
@@ -183,21 +210,23 @@ public class ClickHouseTableOperationsBase {
                     if (fieldSchemaName.equalsIgnoreCase(
                             VariableScaleDecimal.LOGICAL_NAME)) {
                         chType = DECIMAL_64_18;
-                    } else if (params != null
-                            && params.containsKey(SCALE)
-                            && params.containsKey(PRECISION)) {
-                        chType = "Decimal(" + params.get(PRECISION) + ","
-                                + params.get(SCALE) + ")";
                     } else {
-                        chType = DEFAULT_DECIMAL_TYPE;
+                        // Decimal(p, s) from the parameters; a dimensionless
+                        // DECIMAL is Decimal(10,0), as on the DDL path
+                        // (Spec 08.05 section 3.1.1).
+                        chType = ClickHouseDataTypeMapper.decimalType(params);
                     }
                 } else if (dataType == ClickHouseDataType.DateTime64) {
-                    // Timestamp (with milliseconds scale),
-                    // DATETIME, DATETIME(0 -3) -> DateTime64(3)
+                    // DATETIME(0..3) arrives as Timestamp, DATETIME(4..6) as
+                    // MicroTimestamp, TIMESTAMP(p) as ZonedTimestamp. The
+                    // declared precision is the source column's when the
+                    // source type is propagated, else the widest the logical
+                    // type carries (Spec 08.05 section 3.1.1).
+                    int defaultPrecision = -1;
                     if (f.schema().type() == Schema.INT64_SCHEMA.type()
                             && f.schema().name().equalsIgnoreCase(
                             Timestamp.SCHEMA_NAME)) {
-                        chType = DATETIME64_3;
+                        defaultPrecision = TIMESTAMP_DEFAULT_PRECISION;
                     } else if (
                             (f.schema().type() == Schema.INT64_SCHEMA.type()
                                     && f.schema().name().equalsIgnoreCase(
@@ -206,13 +235,14 @@ public class ClickHouseTableOperationsBase {
                                     && f.schema().name().equalsIgnoreCase(
                                     ZonedTimestamp.SCHEMA_NAME))
                     ) {
-                        // MicroTimestamp (with microseconds precision),
-                        // DATETIME(3 -6) -> DateTime64(6)
-                        // TIMESTAMP(1..6) -> ZONEDTIMESTAMP(Debezium)
-                        // -> DateTime64(6)
-                        chType = DATETIME64_6;
-                    } else {
+                        defaultPrecision = MICRO_TIMESTAMP_DEFAULT_PRECISION;
+                    }
+                    if (defaultPrecision < 0) {
                         chType = dataType.name();
+                    } else {
+                        int precision = ClickHouseDataTypeMapper.temporalPrecision(
+                                f.schema().parameters(), defaultPrecision);
+                        chType = "DateTime64(" + precision + ", " + DATETIME64_ZONE + ")";
                     }
                 } else {
                     chType = dataType.name();
@@ -223,17 +253,17 @@ public class ClickHouseTableOperationsBase {
                 // auto-created tables and ALTER TABLE statements use the correct
                 // Nullable type and can accept NULL values from CDC events.
                 // ClickHouse does NOT support Nullable() around composite types
-                // such as Array, Map, or Tuple, so those must be left as-is.
-                // System/engine columns (_version, _sign, is_deleted) must stay
+                // such as Array, Map, Tuple or the geo types (Point, Polygon,
+                // ...), so those must be left as-is (canBeNullable).
+                // System/engine columns (_version, _sign) must stay
                 // non-nullable because ClickHouse requires them as bare integer
                 // types for ReplacingMergeTree / CollapsingMergeTree engines.
-                if (isOptional && !chType.startsWith("Nullable(")
-                        && !chType.startsWith("Array(")
-                        && !chType.startsWith("Map(")
-                        && !chType.startsWith("Tuple(")
+                // A SOURCE column named is_deleted is an ordinary column (the
+                // engine column is renamed _is_deleted by createTableSyntax,
+                // Spec 08.05 section 3.1.1), so it is wrapped like any other.
+                if (isOptional && ClickHouseDataTypeMapper.canBeNullable(chType)
                         && !colName.equals(VERSION_COLUMN)
-                        && !colName.equals(SIGN_COLUMN)
-                        && !colName.equals(IS_DELETED_COLUMN)) {
+                        && !colName.equals(SIGN_COLUMN)) {
                     chType = "Nullable(" + chType + ")";
                 }
                 columnToDataTypesMap.put(colName, chType);
@@ -243,11 +273,19 @@ public class ClickHouseTableOperationsBase {
             }
         }
 
-        // Print the columnToDataTypesMap entries to verify the changes
-        /*log.info("No changes for columnToDataTypesMap:");
-        for (Map.Entry<String, String> entry : columnToDataTypesMap.entrySet()) {
-            log.info("Key: {}, Value: {}",entry.getKey(),entry.getValue());
-        }*/
+        if (!untypedInt64Columns.isEmpty()) {
+            String tableLabel = (schemaName == null ? "" : schemaName + ".")
+                    + (tableName == null ? "<unknown table>" : tableName);
+            if (REPORTED_UNTYPED_INT64_TABLES.add(tableLabel)) {
+                log.error("Table {}: column(s) {} arrive as INT64 without the source column type and are "
+                                + "declared Int64. If any of them is a MySQL BIGINT UNSIGNED, values at or "
+                                + "above 2^63 will be stored as NEGATIVE numbers. Set "
+                                + "column.propagate.source.type=.* on the source connector so the column "
+                                + "can be declared UInt64, or create the ClickHouse table by hand "
+                                + "(Spec 07.01 section 3.2). Reported once per table.",
+                        tableLabel, untypedInt64Columns);
+            }
+        }
 
         // Call the method to load the default column data type mapping.
         Map<String, String> defaultColumnDataTypeMap = loadDefaultColumnDataTypeMapping(config.originalsStrings());

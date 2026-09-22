@@ -20,6 +20,7 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
   - `Replication.DdlBarrier`: DDL barrier covers every handoff path (Invariant I5, spec 06.01)
   - `Replication.OffsetFifo`: Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01)
   - `Replication.DdlTranslation`: ALTER clause classification (specs 06.03/06.04/06.05/06.07)
+  - `Replication.BatchOrder`: batch execution order around a replicated TRUNCATE (spec 04.05)
 - **CI**: `.github/workflows/spec-governance.yml`
 - **Empirical gap registries**: `sink-connector-lightweight/tests/integration/regression_manual.py` (TestFlows `xfails`), `@Disabled` annotations under `sink-connector/src/test` and `sink-connector-lightweight/src/test`
 
@@ -82,6 +83,11 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
 12. `OffsetFifo.old_overlap_rule_unsafe`: concrete counterexample — two batches
    with equal timestamps where the strict timestamp-overlap rule acknowledges
    the later-finished one while the other is outstanding, and the FIFO does not.
+13. `BatchOrder.segments_match_source`, `segmented_batch_converges`: executing a
+   batch split at every TRUNCATE as ordered segments equals applying the
+   events in binlog order; `every_truncate_is_its_own_segment`: two TRUNCATEs
+   never collapse; `truncate_last_loses_rows`, `truncate_first_resurrects_rows`:
+   the pre-fix hash-map order disagrees with the source either way (spec 04.05).
 
 The proposition `ReplayIdempotency` in `Invariants.lean` is stated but has no theorem.
 

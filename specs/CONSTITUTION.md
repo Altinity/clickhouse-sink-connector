@@ -199,6 +199,7 @@ To provide mathematical proof of system correctness, the invariants and state tr
 - `Replication.DdlBarrier`: The pre-DDL barrier of Invariant I5 — the DDL step is enabled only when the legacy queue, every routed queue and the unacknowledged-batch counter are all empty, and a machine-checked counterexample showing that an empty legacy queue alone does not imply that.
 - `Replication.OffsetFifo`: Handoff-sequence FIFO for offset acknowledgement (Invariant I8): commit never passes an outstanding batch, written-once, and the timestamp-overlap counterexample.
 - `Replication.DdlTranslation`: ALTER clause classification for Specs 06.03/06.04/06.05/06.07 — no bare `ALTER TABLE`, an all-no-op statement is skipped, a widening key-column change is loud, every ADD COLUMN is preserved.
+- `Replication.BatchOrder`: Batch execution order around a replicated TRUNCATE (Spec 04.05) — executing the batch as ordered segments split at each TRUNCATE reproduces binlog order (`segments_match_source`), every TRUNCATE stays its own segment, and the pre-fix hash-map order is shown to lose or resurrect rows.
 
 ### 5.1 Coverage of the thirteen invariants
 Honest status per invariant. "Lean" means a proposition and a machine-checked theorem exist; "model only" means the property holds in the abstract model but the shipped arithmetic is not modelled.

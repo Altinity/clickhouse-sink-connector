@@ -136,6 +136,17 @@ Then, **after** `parseSql` (which is what computes the statement kind):
    `DROP INDEX` and `ALTER COLUMN ... DROP DEFAULT` are schema evolution and
    are never caught. The statement is logged at WARN and skipped.
 
+   **Snapshot-phase DDL is exempt.** The suppression applies only to streaming
+   DDL (`isSnapshotDDL(sr)` is false). With `enable.snapshot.ddl=true` Debezium
+   bootstraps the target schema by emitting `DROP TABLE IF EXISTS` +
+   `CREATE TABLE` for each captured table; that `DROP` is schema initialisation,
+   not a source-initiated data drop during replication. Suppressing it would
+   leave a stale target table (e.g. a pre-created one with a narrower column
+   type) that the following `CREATE ... IF NOT EXISTS` cannot replace, so the
+   replica would no longer match MySQL — the opposite of the option's purpose.
+   `disable.drop.truncate` freezes drops seen WHILE STREAMING, never the
+   snapshot schema.
+
    **Deliberate, operator-chosen divergence.** With `disable.drop.truncate=true`
    ClickHouse keeps rows and tables the source removed, so the replica is no
    longer equal to MySQL; the option exists for targets that must retain
@@ -157,7 +168,8 @@ Then, **after** `parseSql` (which is what computes the statement kind):
 - `DdlCaptureFilterTest` — §3.3 rule 3: include/exclude table lists, database lists, include-over-exclude, full case-insensitive match, unknown database kept, uncompilable patterns.
 - `DdlIgnoreRulesTest.ddlOutsideIncludeListIsIgnored`, `DdlIgnoreRulesTest.excludeAndDatabaseListsApply`, `DdlIgnoreRulesTest.multiTableAndNoLists` — §3.3 rule 3 through `checkIfDDLNeedsToBeIgnored` with schema-change records carrying `databaseName` and `tableChanges`.
 - `DdlIgnoreRulesTest.mysqlFlagIsStatementKind`, `DdlIgnoreRulesTest.postgresFlagIsStatementKind` — §3.3 rule 5: `DROP TABLE`/`TRUNCATE`/`DROP DATABASE|SCHEMA` set the flag; `DROP COLUMN`, `DROP INDEX`, `DROP DEFAULT` do not (pre-fix: any `DROP` token).
-- `DdlIgnoreRulesTest.disableDropTruncateIsScopedAndLive` — §3.3 rule 5 through `processEveryChangeRecord`: with `disable.drop.truncate=true` a `DROP TABLE`/`TRUNCATE` returns without executing and is recorded as `lastIgnoredDDL`; a `DROP COLUMN` still reaches execution; without the property the `DROP TABLE` reaches execution (pre-fix: the property was dead).
+- `DdlIgnoreRulesTest.disableDropTruncateIsScopedAndLive` — §3.5 through `processEveryChangeRecord`: with `disable.drop.truncate=true` a STREAMING `DROP TABLE`/`TRUNCATE` returns without executing and is recorded as `lastIgnoredDDL`; a `DROP COLUMN` still reaches execution; without the property the `DROP TABLE` reaches execution (pre-fix: the property was dead).
+- `DdlIgnoreRulesTest.disableDropTruncateExemptsSnapshotDdl` — §3.5 snapshot exemption: a snapshot `DROP TABLE` (source offset `snapshot=INITIAL`, `enable.snapshot.ddl=true`) reaches execution despite `disable.drop.truncate=true`, so the snapshot schema bootstrap is not frozen.
 - `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()` — a DDL whose drain aborts throws `DDLReplicationException` out of `processEveryChangeRecord` rather than returning null.
 - `DdlFailureLoudTest.drainIsNoOpWhenExecutorIsNull()` — single-threaded mode drains as a no-op instead of an NPE.
 - `DdlFailureLoudTest.ddlExecutionFailureWithoutRetryIsLoud()` — `ddl.retry`

@@ -28,6 +28,22 @@ for (int i = 0; i < sourceBytes.length; i++) {
 ```
 Single-byte values and BLOB / `ByteBuffer` payloads (non-`Bits` schemas) are bound unchanged. Failure to reverse multi-byte values results in byte transposition (e.g. `BIT(16)` value `0x0001` stored as `0x0100`).
 
+### 3.2 Canonical stored representation of binary values
+The text that lands in the (`String`) ClickHouse column depends on two
+settings, and a value-level comparison must know which one applies:
+
+| Debezium `binary.handling.mode` | Connector `persist.raw.bytes` | Delivered as | Stored as |
+|---|---|---|---|
+| `bytes` (Debezium default) | `false` (default) | `BYTES` (`byte[]` / `ByteBuffer`) | **lower-case hex text** of the bytes (`BaseEncoding.base16().lowerCase()`), e.g. `deadbeef` — equals `LOWER(HEX(col))` on MySQL |
+| `bytes` | `true` | `BYTES` | the raw bytes (`ps.setBytes`); the `String` column holds the bytes verbatim — equals the MySQL bytes |
+| `base64` (set by the shipped deployment templates) | any | `STRING` (Debezium already base64-encoded it) | the **base64 text** verbatim, e.g. `3q2+7w==` — equals `TO_BASE64(col)` on MySQL; `persist.raw.bytes` has no effect because the value is no longer `BYTES` |
+| `hex` | any | `STRING` | Debezium's hex text verbatim (`DEADBEEF`, upper case — note the case difference from the connector's own hex) |
+
+`BIT(n>1)` is delivered as `BYTES` (`io.debezium.data.Bits`) under every
+`binary.handling.mode` and follows the first two rows after the §3.1
+reversal; `BIT(1)` is delivered as `BOOLEAN` (Spec 07.04 §3.1). Spatial values
+bound for a `String` column follow the first two rows as well (Spec 07.06 §3.2).
+
 ---
 
 ## 4. Invariants Preserved

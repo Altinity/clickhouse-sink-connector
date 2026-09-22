@@ -169,6 +169,32 @@ their generic catch (spec 08.05 §3.3).
 
 ---
 
+### 3.5 The grouping stage never drops a record
+A record that reaches `GroupInsertQueryWithBatchRecords` is either grouped
+into a statement or fails the batch with an exception that names the record.
+The grouper used to answer `false` for a record it could not build a
+statement for, and the caller kept only the last record's answer — a
+per-record skip with the offset still advancing, the same silence as §3.1
+with a row-shaped victim (in practice the missing-image case died earlier
+with an opaque `NullPointerException`, which told the operator nothing).
+Spec 04.01 §3.3 states the exceptions; an empty query map is likewise refused
+by the executor instead of being retried forever.
+
+The Kafka Connect entry point follows the same rule one stage earlier.
+`ClickHouseSinkTask.put` skips exactly one kind of record: a Kafka tombstone
+(`record.value() == null`), which Debezium emits after a DELETE for log
+compaction and which carries no change event. Any other record that
+`ClickHouseConverter.convert` cannot turn into a `ClickHouseStruct` (a value
+with no Debezium envelope `op` / row image, a non-STRUCT value schema) fails
+the task with `org.apache.kafka.connect.errors.DataException` naming the
+topic, partition and offset. Dropping such a record at DEBUG — the previous
+behaviour — lost the change while the committed offset advanced past it.
+
+Kafka-mode liveness (a dead runnable behind `put` / `preCommit`) is §3.4's
+counterpart for the sink task: spec 03.01 §3.4.
+
+---
+
 ## 4. Invariants Preserved
 - **Invariant I9 (Loud Failure / Zero Silence)**: Guarantees that data divergence is never masked by silent error suppression.
 
@@ -182,6 +208,9 @@ their generic catch (spec 08.05 §3.3).
 - `ClickHouseErrorClassifierTest.testIsFatal()`, `ClickHouseErrorClassifierTest.testClassifyFatal()` — the FATAL set that triggers the rethrow.
 - `ClickHouseBatchWriterMissingTableTest` — a missing target table fails the batch loudly instead of being skipped.
 - `WorkerDeathIsLoudTest.deadWorkerFailsTheNextBatchLoudly()`
+- `GroupInsertQueryWithBatchRecordsTest.deleteWithoutBeforeImageFailsLoudly()`, `PreparedStatementExecutorNoSilentDropTest.emptyQueryMapIsRefusedNotRetried()` — §3.5.
+- `ClickHouseSinkTaskTest.tombstoneIsDroppedQuietly()`, `ClickHouseSinkTaskTest.unconvertibleRecordIsLoud()` — §3.5 Kafka entry point: a null-value tombstone is skipped, a non-converting non-null value fails the task.
+- `ClickHouseSinkTaskTest.deadRunnableFailsPut()`, `ClickHouseSinkTaskTest.deadRunnableFailsPreCommit()` — §3.4 in Kafka Connect mode.
 - `TerminalFailureExitTest.exitHookFiresAfterMaxRetries()` — §3.5: `MAX_RETRIES` restarts, then the exit hook fires exactly once with `TERMINAL_FAILURE_EXIT_CODE` and replication is reported stopped (pre-fix: nothing fired, one extra restart).
 - `TerminalFailureExitTest.successfulStartResetsTheBudget()` — §3.5: `markEngineStarted()` restores the full budget (pre-fix: `numRetries` never reset).
 - `TerminalFailureExitTest.exitDisabledIsALoudLivenessFailure()` — §3.5: `exit.on.terminal.failure=false` keeps the process up, logs FATAL naming replication as STOPPED, reports `Replica_Running=false`.

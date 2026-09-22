@@ -947,12 +947,19 @@ public class ClickHouseBatchRunnable implements Runnable {
         }
         // Step 1: The Batch Insert with preparedStatement in JDBC works by
         // forming the Query and then adding records to the Batch.
-        // This step creates a Map of Query -> Records (List of ClickHouseStruct).
-        Map<MutablePair<String, Map<String, Integer>>,
-                List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
+        // This step creates an ordered list of segments, each a Map of
+        // Query -> Records (List of ClickHouseStruct); a replicated TRUNCATE
+        // is a segment of its own (spec 04.05).
+        List<Map<MutablePair<String, Map<String, Integer>>,
+                List<ClickHouseStruct>>> querySegments = new ArrayList<>();
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<>();
-        result = new GroupInsertQueryWithBatchRecords()
-                .groupQueryWithRecords(records, queryToRecordsMap,
+        // The resolved engine columns (spec 08.01) must reach query
+        // construction: a version / sign / delete column with a
+        // non-default name is otherwise omitted from the INSERT and stored
+        // as the type default for every row (spec 04.02 section 3.1).
+        new GroupInsertQueryWithBatchRecords(writer.getVersionColumn(), writer.getSignColumn(),
+                writer.getReplacingMergeTreeDeleteColumn())
+                .groupQueryWithRecords(records, querySegments,
                         partitionToOffsetMap, this.config, tableName,
                         writer.getDatabaseName(), writer.getConnection(),
                         writer.getColumnNameToDataTypeMap());
@@ -961,10 +968,10 @@ public class ClickHouseBatchRunnable implements Runnable {
                 ClickHouseSinkConnectorConfigVariables.
                         BUFFER_MAX_RECORDS.toString());
         // Step 2: Create a PreparedStatement and add the records to the
-        // batch. In DbWriter, the queryToRecordsMap is converted to
-        // PreparedStatement and added to the batch. The batch is then executed
-        // and the records are flushed to ClickHouse.
-        result = flushRecordsToClickHouse(topicName, writer, queryToRecordsMap,
+        // batch. In DbWriter, the query segments are converted to
+        // PreparedStatements and added to the batch. The batch is then
+        // executed and the records are flushed to ClickHouse.
+        result = flushRecordsToClickHouse(topicName, writer, querySegments,
                 bmd, maxBufferSize, preparedStatementExecutor);
         if (result) {
             // Records are now DURABLY in ClickHouse: advance the shared watermark
@@ -974,8 +981,6 @@ public class ClickHouseBatchRunnable implements Runnable {
             // records that were consumed but never inserted.
             partitionToOffsetMap.forEach((tp, offset) ->
                     this.durablyInsertedOffsets.merge(tp, offset, Math::max));
-            // Remove the entry.
-            queryToRecordsMap.remove(topicName);
         }
         if (this.config.getBoolean(
                 ClickHouseSinkConnectorConfigVariables.
@@ -1005,7 +1010,7 @@ public class ClickHouseBatchRunnable implements Runnable {
      *
      * @param topicName the topic name
      * @param writer the DbWriter for the table
-     * @param queryToRecordsMap a map of insert queries to records
+     * @param querySegments the ordered segments of insert queries to records
      * @param bmd block metadata used for metrics
      * @param maxBufferSize the maximum buffer size before flushing
      * @param preparedStatementExecutor the executor to add batches
@@ -1013,15 +1018,15 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @throws Exception if an error occurs during batch execution
      */
     private boolean flushRecordsToClickHouse(String topicName, DbWriter writer,
-                                             Map<MutablePair<String, Map<String, Integer>>,
-                                                     List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd,
+                                             List<Map<MutablePair<String, Map<String, Integer>>,
+                                                     List<ClickHouseStruct>>> querySegments, BlockMetaData bmd,
                                              long maxBufferSize,
                                              PreparedStatementExecutor preparedStatementExecutor)
             throws Exception {
         boolean result = false;
-        synchronized (queryToRecordsMap) {
+        synchronized (querySegments) {
             result = preparedStatementExecutor.addToPreparedStatementBatch(
-                    topicName, queryToRecordsMap, bmd, config,
+                    topicName, querySegments, bmd, config,
                     writer.getConnection(), writer.getTableName(),
                     writer.getColumnNameToDataTypeMap(), writer.getEngine());
         }
@@ -1049,7 +1054,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             // Log the error with the first record from current batch if available
             if (currentBatch != null && !currentBatch.isEmpty()) {
                 ClickHouseStruct firstRecord = currentBatch.get(0);
-                SourceRecord sourceRecord = firstRecord.getSourceRecord().value();
+                SourceRecord sourceRecord = sourceRecordOrNull(firstRecord);
                 String topicName = firstRecord.getTopic();
                 String databaseName = firstRecord.getDatabase();
                 String serverName = getServerNameFromTopic(topicName);
@@ -1079,9 +1084,32 @@ public class ClickHouseBatchRunnable implements Runnable {
             log.error("******* ERROR **** Thread interrupted *********",
                     ex);
             throw new RuntimeException(ex);
-        } catch (SQLException ex) {
+        } catch (SQLException | RuntimeException ex) {
+            // Best-effort diagnostics only. The exception being logged is
+            // classified and handled by the caller right after this; a
+            // failure INSIDE the error logger must not replace it, or a FATAL
+            // ClickHouse error would surface as an unrelated logger failure
+            // and its classification would never run (spec 03.01 section 3.4).
             log.error("******* ERROR **** Failed to log error to ClickHouse *********",
                     ex);
         }
+    }
+
+    /**
+     * The Debezium {@code SourceRecord} behind a batch record, or null.
+     *
+     * <p>Only the embedded (lightweight) runtime attaches a source record; a
+     * record built from a Kafka {@code SinkRecord} carries none, so reading
+     * {@code getSourceRecord().value()} unguarded threw
+     * {@code NullPointerException} from inside the error logger in Kafka
+     * mode whenever {@code error.logging.enable} was on -- replacing the
+     * ClickHouse error that was being reported.</p>
+     */
+    @VisibleForTesting
+    static SourceRecord sourceRecordOrNull(ClickHouseStruct record) {
+        if (record == null || record.getSourceRecord() == null) {
+            return null;
+        }
+        return record.getSourceRecord().value();
     }
 }
