@@ -9,6 +9,8 @@ Specifies the non-negotiable policy that unrecoverable replication errors must t
 - **System Constitution**: Invariant I9
 - **Error Classifier**: `ClickHouseErrorClassifier`
 - **DDL failure type**: `DDLReplicationException` (`...embedded/cdc/DDLReplicationException.java`), re-thrown ahead of the catch-all in `DebeziumChangeEventCapture#processEveryChangeRecord`
+- **Row failure type**: `RecordReplicationException` (`...embedded/cdc/RecordReplicationException.java`), re-thrown ahead of the same catch-all
+- **Engine retry budget and terminal failure**: `DebeziumChangeEventCapture#handleEngineCompletion`, `#markEngineStarted`, `#terminalFailureHook`, `#TERMINAL_FAILURE_EXIT_CODE`; property `exit.on.terminal.failure` (`SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE`)
 
 ---
 
@@ -32,23 +34,39 @@ When an unrecoverable failure occurs:
 3. Throw an unchecked runtime exception to terminate the JVM process or task thread.
 4. Leaves `replica_source_info` intact at the last known good commit.
 
-### 3.3 DDL Path Anti-Swallowing (DDLReplicationException)
+### 3.3 Record-path anti-swallowing: `DDLReplicationException` and `RecordReplicationException`
 
-The DDL path has its own catch-all in
-`DebeziumChangeEventCapture#processEveryChangeRecord`
-(`catch (Exception e) { log.error("Exception processing record", e); }`) whose
-legitimate purpose is to keep one malformed DML record from killing the stream.
-A DDL failure absorbed by that catch is a §3.1 violation with a worse blast
-radius: the schema change is lost, offsets advance past it, and every later row
-diverges silently from MySQL.
+`DebeziumChangeEventCapture#processEveryChangeRecord` ends in a catch-all
+(`catch (Exception e) { log.error("Exception processing record", e); }`). It
+used to be described as keeping "one malformed DML record from killing the
+stream". That description was the defect: a record absorbed there returns
+`null`, and the batch loop treated every null as a control record whose offset
+it committed once the pipeline was quiescent — so the "malformed" row was not
+merely skipped, its offset was durably acknowledged and a restart never
+redelivered it (spec 01.06 §3.1). There is no record for which continuing past
+it is correct:
 
-Therefore a DDL that cannot be applied — a `drainBeforeDDL()` abort, or retry
-exhaustion in `performDDLOperation()` — is raised as `DDLReplicationException`
-and re-thrown **ahead of** the generic catch, so it leaves the Debezium
-`handleBatch` consumer and halts the engine. The offset is not committed past
-the DDL, so a restart re-delivers it — the same loud-but-recoverable contract as
-§3.2. This mirrors `ClickHouseBatchRunnable`'s FATAL rethrow, which stops the
-scheduled executor rather than retrying a doomed batch forever.
+- **DDL** — a schema change that cannot be applied (a `drainBeforeDDL()` abort,
+  or retry exhaustion in `performDDLOperation()`) is raised as
+  `DDLReplicationException`. Absorbing it loses the schema change, advances the
+  offset past it, and every later row diverges silently from MySQL.
+- **Row** — a record whose value carries an `op` field but for which the parser
+  returned `null` or threw is raised as `RecordReplicationException`. Absorbing
+  it loses that row with the offset advanced past it.
+
+Both types are re-thrown **ahead of** the generic catch, so they leave the
+Debezium `handleBatch` consumer and halt the engine. The offset is not committed
+past the failed record, so a restart redelivers it — the same
+loud-but-recoverable contract as §3.2. This mirrors `ClickHouseBatchRunnable`'s
+FATAL rethrow, which stops the scheduled executor rather than retrying a doomed
+batch forever. The catch-all that remains is reached only by exceptions raised
+BEFORE classification (a record whose schema cannot even be read); for a
+non-control record that path still ends in `RecordReplicationException`, thrown
+by `handleChangeEventBatch` when the null reaches it (spec 01.06 §3.1 rule 3).
+
+Records that carry no row by contract — heartbeats, transaction markers,
+Debezium tombstones — are classified as control records before this rule
+applies and are never raised (spec 01.06 §3.1 table).
 
 ### 3.4 Worker death must reach the engine (no silent stall)
 A `RuntimeException` thrown from a `scheduleAtFixedRate` task only cancels
@@ -59,7 +77,95 @@ with no error after the first one. `DebeziumChangeEventCapture` retains the
 workers' `ScheduledFuture`s and checks them at the top of every
 `handleChangeEventBatch` (`failIfWorkerDied`); a done future is re-raised as
 a `RuntimeException` carrying the worker's cause, which stops the engine
-through its completion callback (spec 03.01 §3.3).
+through its completion callback (spec 03.01 §3.3). The DDL drain runs the same
+check on every poll (spec 06.01 §3.2): a dead worker is the ONE condition that
+makes a pending backlog undrainable, and the only one that aborts the drain.
+
+### 3.5 Terminal failures terminate (retry budget, then exit)
+The engine's `CompletionCallback` (`handleEngineCompletion`) recreates a failed
+engine up to `errors.max.retries` (`MAX_RETRIES`, default 10) times in a row,
+`SLEEP_TIME` apart. Two things used to be wrong once that budget was spent, and
+one before it:
+1. **Nothing happened.** After the last retry the callback returned; the JVM
+   stayed up with replication stopped, the REST API answering and the metrics
+   port open, and no process-level signal for a supervisor (systemd,
+   Kubernetes) or a liveness probe to act on. Replication was dead and quiet.
+2. **The budget never refilled.** `numRetries` was never reset, so a connector
+   that had recovered from ten transient failures over its lifetime died on the
+   eleventh, however long ago the first ten were.
+3. **A transient backlog was terminal.** The DDL drain aborted after a fixed
+   60 s; a worker retrying `TOO_MANY_PARTS` for longer than that produced
+   `DDLReplicationException` → engine restart → the same drain → … → the
+   budget spent → stop, for a condition that would have cleared (spec 06.01).
+
+Contract:
+- `markEngineStarted()` (the `connectorStarted` callback) resets `numRetries`
+  to 0: a successful start restores the full budget.
+- A failure while `numRetries < MAX_RETRIES` increments the counter, sleeps
+  `SLEEP_TIME`, and recreates the engine (exactly `MAX_RETRIES` retries; the
+  previous `<=` test allowed one more than configured).
+- When the budget is spent the failure is TERMINAL: replication is marked not
+  running (`/status` reports `Replica_Running=false`), a **FATAL** line names
+  the count, the last failure and the fact that offsets were not committed past
+  the failing point, and — unless `exit.on.terminal.failure=false` — the
+  process exits through `terminalFailureHook` (`System::exit` in production,
+  replaced in tests) with `TERMINAL_FAILURE_EXIT_CODE` (3), so a supervisor
+  restarts or alerts on it. With the exit disabled the process stays up as a
+  visible liveness failure; it never idles silently.
+- The DDL drain waits while the workers are alive (spec 06.01 §3.2); only a
+  dead worker or an interrupt aborts it.
+
+Redelivery: a terminal failure commits nothing; the next start (by the
+supervisor or an operator) resumes from the last committed offset (spec 09.03).
+
+### 3.6 A source configuration that guarantees divergence is refused at start
+Some divergences cannot be made loud per record because every record is
+affected and nothing in the record says so. `binlog_row_image` other than
+`FULL` is the case the connector checks: with `MINIMAL` or `NOBLOB` every
+UPDATE arrives with its untouched (or BLOB/TEXT) columns absent, and the
+full-row replace writes them as NULL — silent, count-clean, on every update.
+`BinlogRowImagePreflight.check(props)` therefore refuses to start
+(`IllegalStateException` out of `setup()`, with an ERROR banner naming the
+value and the fix) when the source reports a readable value other than `FULL`;
+an unreadable value is a WARN, and `binlog.row.image.check.skip=true` is a WARN
+banner on every start (spec 01.01 §3.2).
+
+### 3.7 Loss-by-design options are announced, never defaulted on
+Two options make the replica diverge from the source on purpose. They are
+honoured — an operator may want them — but neither may be a default, and the
+connector says so when they are set:
+
+- **`ignore_delete=true`** (`ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE`,
+  read by `PreparedStatementFieldMapper`): the delete marker is never bound, so
+  rows deleted at the source stay visible in ClickHouse forever. The config
+  constructor (`ClickHouseSinkConnectorConfig#warnIfIgnoreDelete`, predicate
+  `isIgnoreDeleteEnabled`) logs one WARN per JVM naming the key and the
+  divergence. `doc/configuration.md` documents it as loss by design. The
+  systemd deployment role emits the key under its real name (`ignore_delete`;
+  it used to emit `ignore.delete`, which nothing reads).
+- **`schema.history.internal.skip.unparseable.ddl=true`**: Debezium drops any
+  DDL it cannot parse from the schema history, so later rows of that table are
+  decoded against a stale schema. Debezium's default is `false`; the systemd
+  deployment role (`deploy/ansible-systemd/defaults/main.yml`,
+  `sink_connector_skip_unparseable_ddl_default`) used to default it to `true`
+  fleet-wide. It now defaults to `false`; enabling it is a per-connector,
+  deliberate override.
+
+The same deployment template also emitted keys the connector never reads
+(`clickhouse.table.engine`, `clickhouse.table.sign.column`,
+`clickhouse.table.version.column`, the deprecated `clickhouse.server.database`)
+and Debezium's `max.queue.size` where it meant the sink's
+`sink.connector.max.queue.size`; a configuration that looks set but is not
+read is a silent divergence of its own, so those keys were removed or renamed.
+
+### 3.8 A configuration contradiction found while building a writer halts
+`ColumnTypeOverrideMismatchException` is raised by `ClickHouseAutoCreateTable`
+when a configured column type override contradicts the existing table, and is
+documented there as "must halt the connector". `DbWriter`'s constructor and
+`DbWriter#autoCreateTable` used to catch `Exception` around it and log, so the
+writer came up anyway and wrote rows against a type the operator had declared
+wrong. Both sites now re-throw `ColumnTypeOverrideMismatchException` ahead of
+their generic catch (spec 08.05 §3.3).
 
 ---
 
@@ -96,9 +202,20 @@ counterpart for the sink task: spec 03.01 §3.4.
 
 ## 5. Verification Criteria
 - `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()` — §3.3: a DDL failure escapes the catch-all as `DDLReplicationException`.
+- `UnparseableRowRecordIsTerminalTest.insertWhoseParserThrowsIsTerminal()`, `UnparseableRowRecordIsTerminalTest.updateWhoseParserReturnsNullIsTerminal()` — §3.3: a row record whose parse throws / returns null escapes the catch-all as `RecordReplicationException`; nothing is acknowledged.
+- `NullParsedRowRecordIsTerminalTest.unconvertibleRowRecordIsTerminal()` — §3.3 at the `processEveryChangeRecord` seam (inverted from the former NullParsedRecordSkipTest, which asserted the skip).
+- `Replication.Snapshot.unparsed_row_halts`, `Replication.Snapshot.unparsed_row_never_committed` — the row half of §3.3 in the offset-commit model.
 - `ClickHouseErrorClassifierTest.testIsFatal()`, `ClickHouseErrorClassifierTest.testClassifyFatal()` — the FATAL set that triggers the rethrow.
 - `ClickHouseBatchWriterMissingTableTest` — a missing target table fails the batch loudly instead of being skipped.
 - `WorkerDeathIsLoudTest.deadWorkerFailsTheNextBatchLoudly()`
 - `GroupInsertQueryWithBatchRecordsTest.deleteWithoutBeforeImageFailsLoudly()`, `PreparedStatementExecutorNoSilentDropTest.emptyQueryMapIsRefusedNotRetried()` — §3.5.
 - `ClickHouseSinkTaskTest.tombstoneIsDroppedQuietly()`, `ClickHouseSinkTaskTest.unconvertibleRecordIsLoud()` — §3.5 Kafka entry point: a null-value tombstone is skipped, a non-converting non-null value fails the task.
 - `ClickHouseSinkTaskTest.deadRunnableFailsPut()`, `ClickHouseSinkTaskTest.deadRunnableFailsPreCommit()` — §3.4 in Kafka Connect mode.
+- `TerminalFailureExitTest.exitHookFiresAfterMaxRetries()` — §3.5: `MAX_RETRIES` restarts, then the exit hook fires exactly once with `TERMINAL_FAILURE_EXIT_CODE` and replication is reported stopped (pre-fix: nothing fired, one extra restart).
+- `TerminalFailureExitTest.successfulStartResetsTheBudget()` — §3.5: `markEngineStarted()` restores the full budget (pre-fix: `numRetries` never reset).
+- `TerminalFailureExitTest.exitDisabledIsALoudLivenessFailure()` — §3.5: `exit.on.terminal.failure=false` keeps the process up, logs FATAL naming replication as STOPPED, reports `Replica_Running=false`.
+- `TerminalFailureExitTest.successIsANoOp()`.
+- `DdlDrainDeadlockTest.testUndrainableQueueWithLiveWorkersKeepsWaiting()`, `DdlDrainDeadlockTest.testStuckQueueWithDeadWorkerAborts()` — §3.5 point 3: live workers are waited for; only a dead worker aborts.
+- `BinlogRowImagePreflightTest.minimalIsRefused()`, `BinlogRowImagePreflightTest.noblobIsRefused()`, `BinlogRowImagePreflightTest.skipIsLoud()` — §3.6.
+- `IgnoreDeleteWarningTest.trueIsDetectedCaseAndSpaceInsensitively()`, `IgnoreDeleteWarningTest.unsetFalseOrNullIsNot()` — §3.7: the predicate behind the startup WARN.
+- §3.8 has no unit test: constructing a `DbWriter` needs a live ClickHouse (`DbWriterTest` is Testcontainers-based); the change is two `catch (ColumnTypeOverrideMismatchException e) { throw e; }` clauses ahead of the generic catches.

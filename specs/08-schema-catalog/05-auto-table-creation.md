@@ -105,6 +105,17 @@ table to one row — total, silent data loss for any keyless source table
 (measured with `clickhouse local`: two distinct rows inserted, `count() FROM t
 FINAL` = 1). `ORDER BY tuple()` is therefore **never emitted** by this class.
 
+**Both creation paths follow this rule.** A ClickHouse table is created either
+here (from the first record's schema) or by the lightweight DDL translator
+(from the source `CREATE TABLE`, `MySqlDDLParserListenerImpl.enterColumnCreateTable`,
+Spec 06.05 §3.6). They must produce the same identity for the same source table:
+schema-override `primary_key` first, then the declared `PRIMARY KEY`, then a
+fully `NOT NULL` `UNIQUE` key (only the DDL path can see one), then the
+all-columns fallback with `allow_nullable_key=1` when needed. The DDL path used
+to stop at `ORDER BY tuple()` for a keyless table while this class already
+emitted the all-columns key, so the same source table got a different — and
+row-losing — identity depending on which path created it first.
+
 Precedence:
 1. **Schema override** `primary_key` for the table, if configured. This is the
    operator's override for any table whose key the record does not carry.
@@ -149,6 +160,15 @@ schema-override `primary_key` is the operator's escape hatch in the meantime.
 `SETTINGS` is always the last clause: user `settings` from the schema override,
 with `allow_nullable_key=1` appended when §3.2.1 requires it.
 
+### 3.3 A column type override that contradicts the table halts the connector
+`createNewTable()` reconciles `column_type_override.*` against an existing
+table and raises `ColumnTypeOverrideMismatchException` (unchecked) when the
+override contradicts the actual column type; the operator must resolve it
+before rows may flow. The caller must let it propagate: `DbWriter`'s
+constructor and `DbWriter#autoCreateTable` re-throw it ahead of their generic
+`catch (Exception)` (which only logs) so the writer is never built against a
+type the operator has declared wrong (spec 10.04 §3.8).
+
 ---
 
 ## 4. Invariants Preserved
@@ -170,6 +190,7 @@ with `allow_nullable_key=1` appended when §3.2.1 requires it.
 - `ClickHouseAutoCreateTableTest.testCreateTableEmptyPrimaryKey()` /
   `testCreateTableMultiplePrimaryKeys()` — updated expectations (all-columns key).
 - `ClickHouseAutoCreateTableTest.testCreateTableSyntax()` — the PK path is unchanged.
+- DDL path (same rule, Spec 06.05 §3.6): `MySqlDDLParserListenerImplTest.testCreateTableKeylessOrdersByAllColumns()`, `CreateTableNoKeySortKeyTest`; formal `Replication.CreateTable.sorting_key_nonempty`.
 - Probe (recorded in the PR): the emitted DDL executed with `clickhouse local`
   keeps two distinct rows under `FINAL`; the `tuple()` form keeps one.
 - `ClickHouseTableOperationsBaseTest.getColumnNameToCHDataTypeMappingTest()` —

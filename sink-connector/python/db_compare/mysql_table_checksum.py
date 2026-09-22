@@ -14,9 +14,11 @@ import sys
 import datetime
 import re
 import os
-import hashlib
 import concurrent.futures
 from db.mysql import *
+from db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
+                                clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
+                                validate_timezone, shift_datetime_bounds, warn_not_compared)
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
@@ -50,95 +52,128 @@ def compute_checksum(table, statements, conn):
     return result
 
 
+# information_schema DATA_TYPE keywords of the IEEE 754 types (REAL is an alias
+# of DOUBLE and never appears as a DATA_TYPE).
+FLOATING_POINT_DATA_TYPES = frozenset({"float", "double"})
+
+# (database, table, kind) already reported as not compared; a chunked table
+# builds its expression once per chunk and must warn once (spec 11.02 section 3.9).
+warned_tables = set()
+
+
+def mysql_datetime_rendering(column_name):
+    """Canonical text of a DATETIME / TIMESTAMP column (spec 11.02 section 3.4):
+    'YYYY-MM-DD HH:MM:SS.ffffff', six digits for every declared precision.
+    TIMESTAMP is rendered in the session time zone."""
+    return f"date_format({column_name}, '%Y-%m-%d %H:%i:%s.%f')"
+
+
+def mysql_column_expression(column, options, binary_encoding, same_charset, bounds=(DATETIME_MIN, DATETIME_MAX)):
+    """Text rendering of one MySQL column (spec 11.02 section 3.3).
+
+    ``column`` is an ``information_schema.columns`` row. Classification uses
+    ``data_type`` (DATA_TYPE, the bare type keyword) and ``datetime_precision``;
+    ``column_type`` (COLUMN_TYPE) carries user text such as enum/set labels and
+    is never substring-matched -- an enum('float','json') is a string column.
+    ``bounds`` are the canonical (min, max) datetime clamp bounds.
+    """
+    column_name = '`' + column['column_name'] + '`'
+    data_type = column['data_type'].lower()
+    collation = column['collation']
+    min_date_value = options.min_date_value
+    max_date_value = options.max_date_value
+    (min_datetime_value, max_datetime_value) = bounds
+    if data_type == 'json':
+        # convert to a compact representation, best effort, it is not perfect and it is advised to ignore those columns
+        # https://bugs.mysql.com/bug.php?id=118990
+        # https://github.com/Altinity/clickhouse-sink-connector/issues/1137
+        return f"""REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(convert(json_pretty({column_name}) using utf8mb4),'": "','":"'),'":\\\\s(-*\\\\d|\\\\[|\\\\{{|true|false)','":$1'),'\\\\.0\\\\b',''),'\\\\s+(".*?)\\\\s*','$1'),'\\\\s*\\\\n\\\\s*',''), '\\\\\\\\u([0-9A-F]{{3}})a', '\\\\\\\\u$1A'), '\\\\\\\\u([0-9A-F]{{3}})b', '\\\\\\\\u$1B'), '\\\\\\\\u([0-9A-F]{{3}})c', '\\\\\\\\u$1C'), '\\\\\\\\u([0-9A-F]{{3}})d', '\\\\\\\\u$1D'), '\\\\\\\\u([0-9A-F]{{3}})e', '\\\\\\\\u$1E'), '\\\\\\\\u([0-9A-F]{{3}})f', '\\\\\\\\u$1F')"""
+    if data_type in ('datetime', 'timestamp'):
+        # ClickHouse DateTime64 cannot hold the whole MySQL range; the connector
+        # clamps on write, so the rendered text is clamped to the same bounds here.
+        return clamp_datetime_expression(mysql_datetime_rendering(column_name),
+                                         min_datetime_value, max_datetime_value, 'mysql')
+    if data_type == 'time':
+        # The connector stores TIME as [-]HH:MM:SS.ffffff for every declared
+        # precision (spec 07.03 section 3.2), so render six digits unconditionally.
+        return f"cast({column_name} as time(6))"
+    if data_type == 'date':  # Date are converted to Date32 in CH
+        # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
+        return f"case when {column_name} >='{max_date_value}' then CAST('{max_date_value}' AS date) else case when {column_name} <= '{min_date_value}' then CAST('{min_date_value}' AS date) else {column_name} end end"
+    if data_type == 'bit' and column['column_type'].lower() == 'bit(1)':
+        # Debezium emits BIT(1) as BOOLEAN and the connector stores Bool;
+        # ClickHouse renders it as 1 / 0 (toUInt8), so render the bit as an integer.
+        return f"{column_name}+0"
+    if is_binary_datatype(data_type):
+        if binary_encoding == 'base64':
+            return "replace(to_base64(cast(" + column_name + " as binary)),'\\n','')"
+        return "lower(hex(cast(" + column_name + " as binary)))"
+    if same_charset or collation is None:
+        return column_name
+    return f"convert({column_name} using utf8mb4)"
+
+
+def build_mysql_row_expression(columns, options, binary_encoding, excluded_columns,
+                               include_floating_point_columns, include_json_columns):
+    """Build the pieces of the canonical row string from ``information_schema``
+    rows in ordinal order (spec 11.02 section 3.3).
+
+    Returns ``(select, nullables, data_types, clamped_expression, skipped)``;
+    ``select`` is the comma separated argument list of ``concat_ws('#', ...)``,
+    ``clamped_expression`` the per-row count of datetime values the clamp
+    changed and ``skipped`` the columns not compared by kind. Skipped columns
+    contribute nothing; the nullability flags are one trailing element.
+    """
+    pieces = []
+    nullables = []
+    data_types = {}
+    clamped_flags = []
+    skipped = {"floating point": [], "JSON": []}
+    # TIMESTAMP is an instant, rendered in UTC by the session (spec 11.02
+    # section 3.4) and clamped with the UTC bounds; DATETIME is a wall clock of
+    # the source zone and is clamped with the bounds rendered in that zone.
+    utc_bounds = datetime_bounds(options)
+    wall_clock_bounds = shift_datetime_bounds(utc_bounds, options.source_timezone)
+    collations = [column['collation'] for column in columns if column['collation'] is not None]
+    same_charset = len(collations) <= 1
+    for column in columns:
+        name = column['column_name']
+        column_name = '`' + name + '`'
+        data_type = column['data_type'].lower()
+        if name in excluded_columns:
+            logging.info("Excluding column " + name)
+            continue
+        if not include_floating_point_columns and data_type in FLOATING_POINT_DATA_TYPES:
+            skipped["floating point"].append(name)
+            continue
+        if not include_json_columns and data_type == 'json':
+            skipped["JSON"].append(name)
+            continue
+        bounds = utc_bounds if data_type == 'timestamp' else wall_clock_bounds
+        expression = mysql_column_expression(column, options, binary_encoding, same_charset, bounds)
+        if data_type in ('datetime', 'timestamp'):
+            clamped_flags.append(clamped_datetime_flag(mysql_datetime_rendering(column_name), bounds[0], bounds[1]))
+        if column['is_nullable'] == 'YES':
+            nullables.append(column_name)
+            expression = f"ifnull({expression},'')"
+        pieces.append(expression)
+        data_types[name] = column['column_type']
+    logging.debug(str(nullables))
+    if len(nullables) > 0:
+        pieces.append("concat(" + ",".join("ISNULL(" + nullable + ")" for nullable in nullables) + ")")
+    return (",".join(pieces), nullables, data_types, clamped_count_expression(clamped_flags), skipped)
+
+
 def get_table_checksum_query(table, conn, binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns):
 
-    (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, column_type as data_type, IS_NULLABLE as is_nullable, COLLATION_NAME as collation from information_schema.columns where table_schema='" +
+    (rowset, rowcount) = execute_mysql(conn, "select COLUMN_NAME as column_name, DATA_TYPE as data_type, COLUMN_TYPE as column_type, IS_NULLABLE as is_nullable, COLLATION_NAME as collation, DATETIME_PRECISION as datetime_precision from information_schema.columns where table_schema='" +
                                        args.mysql_database+"' and table_name = '"+table+"' order by ordinal_position")
 
     logging.debug("Excluded columns: "+str(excluded_columns))
-    select = ""
-    nullables = []
-    data_types = {}
-    first_column = True
-    min_date_value = args.min_date_value
-    max_date_value = args.max_date_value
-    max_datetime_value = args.max_datetime_value
     row_list = [row for row in rowset.mappings()]
-    same_charset = True
-    collations = [row['collation'] for row in row_list if row['collation'] is not None]
-    same_charset = len(collations) <= 1
-    for row in row_list:
-        column_name = '`'+row['column_name']+'`'
-        data_type = row['data_type']
-        is_nullable = row['is_nullable']
-        collation =  row['collation']
-        if row['column_name'] in excluded_columns:
-            logging.info("Excluding column "+row['column_name'])
-            continue
-        if not include_floating_point_columns:
-            if 'float' in data_type or 'double' in data_type or 'real' in data_type:
-                logging.info(f"Excluding floating point column {column_name} of type {data_type}")
-                continue
-        if not include_json_columns:
-            if 'json' in data_type:
-                logging.info(f"Excluding json column {column_name} of type {data_type}")
-                continue
-        if not first_column:
-            select += ","
-            
-        if is_nullable == 'YES':
-            nullables.append(column_name)
-        
-        select_column = ""
-        if 'json' in data_type :
-            # convert to a compact representation, best effort, it is not perfect and it is advised to ignore those columns
-            # https://bugs.mysql.com/bug.php?id=118990
-            # https://github.com/Altinity/clickhouse-sink-connector/issues/1137
-            select_column += f"""REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(REGEXP_REPLACE(regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(convert(json_pretty({column_name}) using utf8mb4),'": "','":"'),'":\\\\s(-*\\\\d|\\\\[|\\\\{{|true|false)','":$1'),'\\\\.0\\\\b',''),'\\\\s+(".*?)\\\\s*','$1'),'\\\\s*\\\\n\\\\\\s*',''), '\\\\\\\\u([0-9A-F]{{3}})a', '\\\\\\\\u$1A'), '\\\\\\\\u([0-9A-F]{{3}})b', '\\\\\\\\u$1B'), '\\\\\\\\u([0-9A-F]{{3}})c', '\\\\\\\\u$1C'), '\\\\\\\\u([0-9A-F]{{3}})d', '\\\\\\\\u$1D'), '\\\\\\\\u([0-9A-F]{{3}})e', '\\\\\\\\u$1E'), '\\\\\\\\u([0-9A-F]{{3}})f', '\\\\\\\\u$1F')"""
-        elif 'datetime' == data_type or 'datetime(1)' == data_type or 'datetime(2)' == data_type or 'datetime(3)' == data_type:
-            # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/
-            select_column += f"case when {column_name} >=  substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(3))),1,length({column_name})) else case when {column_name} <= '{args.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{args.min_datetime_value}' AS datetime(3)))) else substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name})) end end"
-        elif 'datetime(4)' == data_type or 'datetime(5)' == data_type or 'datetime(6)' == data_type:
-            # CH datetime range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/datetime64/ii
-            select_column += f"case when {column_name} >= substr('{max_datetime_value}', 1, length({column_name})) then substr(TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{max_datetime_value}' AS datetime(6)))),1,length({column_name})) else case when {column_name} <= '{args.min_datetime_value}' then TRIM(TRAILING '.' FROM TRIM(TRAILING '0' FROM CAST('{args.min_datetime_value}' AS datetime(6)))) else  substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name})) end end"
-        elif 'time' == data_type or 'time(1)' == data_type or 'time(2)' == data_type or 'time(3)' == data_type or 'time(4)' == data_type or 'time(5)' == data_type or 'time(6)' == data_type:
-            select_column += f"substr(cast({column_name} as time(6)),1,length({column_name}))"
-        elif 'timestamp' == data_type or 'timestamp(1)' == data_type or 'timestamp(2)' == data_type or 'timestamp(3)' == data_type or 'timestamp(4)' == data_type or 'timestamp(5)' == data_type or 'timestamp(6)' == data_type:
-            select_column += f"substr(TRIM(TRAILING '.' from (TRIM(TRAILING '0' from cast({column_name} as char)))),1,length({column_name}))"
-        else:
-            if 'date' == data_type:  # Date are converted to Date32 in CH
-              # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
-                select_column += f"case when {column_name} >='{max_date_value}' then CAST('{max_date_value}' AS {data_type}) else case when {column_name} <= '{min_date_value}' then CAST('{min_date_value}' AS {data_type}) else {column_name} end end"
-            else:
-                if is_binary_datatype(data_type):
-                    binary_encode = "lower(hex(cast(" + \
-                        column_name+"as binary)))"
-                    if binary_encoding == 'base64':
-                        binary_encode = "replace(to_base64(cast(" + \
-                            column_name+" as binary)),'\\n','')"
-                    select_column += binary_encode
-                else:
-                    if same_charset or collation is None:
-                        select_column += f"{column_name}"
-                    else:
-                        select_column += f"convert({column_name} using utf8mb4)"
-        if is_nullable == 'YES':
-            select_column = f"ifnull({select_column},'')"
-        select+=select_column
-        first_column = False
-        data_types[row['column_name']] = data_type
-
-    logging.debug(str(nullables))
-    if len(nullables) > 0:
-        select += ", concat("
-        first = True
-        for nullable in nullables:
-            if not first:
-                select += ','
-            else:
-                first = False
-            select += "ISNULL("+nullable+")"
-        select += ")"
+    (select, nullables, data_types, clamped_expression, skipped) = build_mysql_row_expression(
+        row_list, args, binary_encoding, excluded_columns, include_floating_point_columns, include_json_columns)
+    warn_not_compared(args.mysql_database, table, skipped, warned_tables)
     # order is not important
     primary_key_columns = []
     logging.debug(str(primary_key_columns))
@@ -158,7 +193,7 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
         external_column_types += ","+column+" "+data_types[column]
 
     logging.debug("order by columns "+order_by_columns)
-    return (query, select, order_by_columns, external_column_types)
+    return (query, select, order_by_columns, external_column_types, clamped_expression)
 
 
 def fstr(template, partition_expression):
@@ -169,8 +204,10 @@ def fstr(template, partition_expression):
         return template
 
 
-def select_table_statements(table, query, select_query, order_by, external_column_types, _where):
-    statements = ['set names utf8mb4', 'set session wait_timeout=28000']
+def select_table_statements(table, query, select_query, order_by, external_column_types, _where, clamped_expression="0"):
+    # time_zone = '+00:00': TIMESTAMP columns are printed as UTC instants
+    # (spec 11.02 section 3.4); DATETIME is unaffected by the session zone.
+    statements = ['set names utf8mb4', 'set session wait_timeout=28000', "set time_zone = '+00:00'"]
     # todo make sure the fifo is there
     external_table_name = args.mysql_database+"."+table
     limit = ""
@@ -189,16 +226,18 @@ def select_table_statements(table, query, select_query, order_by, external_colum
            coalesce(max(a),0) as a,
            coalesce(max(b),0) as b,
 	   coalesce(max(c),0) as c,
-	   coalesce(max(d),0) as d
+	   coalesce(max(d),0) as d,
+           coalesce(sum(clamped),0) as clamped
          from (
           select @md5sum :=md5( convert(concat_ws('#',{select_query}) using utf8mb4  )) as `hash`,
 		   @a:=@a+cast(conv(substring(@md5sum, 1, 8), -16, 10) as signed) as a,
                    @b:=@b+cast(conv(substring(@md5sum, 9, 8), -16, 10) as signed) as b,
 		   @c:=@c+cast(conv(substring(@md5sum, 17, 8), -16, 10) as signed) as c,
-		   @d:=@d+cast(conv(substring(@md5sum, 25, 8), -16, 10) as signed) as d
+		   @d:=@d+cast(conv(substring(@md5sum, 25, 8), -16, 10) as signed) as d,
+                   {clamped_expression} as clamped
            from {schema}.{table} where {where}
          ) as t;
-  """.format(select_query=select_query, schema=args.mysql_database, table=table, where=where, order_by=order_by, limit=limit)
+  """.format(select_query=select_query, schema=args.mysql_database, table=table, where=where, order_by=order_by, limit=limit, clamped_expression=clamped_expression)
 
     if args.debug_output:
         sql = """select concat_ws('#',{select_query})  as `hash`   from {schema}.{table} where  {where}  {limit}""".format(
@@ -224,9 +263,9 @@ def calculate_sql_checksum(conn, table, where, excluded_columns,  include_floati
         statements = []
 
         (query, select_query, distributed_by,
-         external_table_types) = get_table_checksum_query(table, conn, args.binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns)
+         external_table_types, clamped_expression) = get_table_checksum_query(table, conn, args.binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns)
         statements = select_table_statements(
-            table, query, select_query, distributed_by, external_table_types, where)
+            table, query, select_query, distributed_by, external_table_types, where, clamped_expression)
         result = compute_checksum(table, statements, conn)
     finally:
         conn.close()
@@ -276,8 +315,6 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns
             partition_key = get_table_partition_key(conn, args.mysql_database, mysql_table)
             if partition_key is not None:
                 where = fstr(where, partition_key)
-    md5_sum = ""
-    cnt = -1
     result = []
 
     # initialize debug output
@@ -301,20 +338,17 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns
         # checksum is not output in debug_output mode
         return
     logging.debug(str(result))
-    to_add = (0,0,0,0,0)
+    # cnt, a, b, c, d and the clamped count, summed over the chunks
+    totals = [0, 0, 0, 0, 0, 0]
     for r in result:
-       to_add  = (to_add[0]+r[0], to_add[1]+r[1], to_add[2]+r[2], to_add[3]+r[3], to_add[4]+r[4])
-    x = list(to_add)
-    # print the checksum
-    for line in x:
-            logging.debug(str(line))
-            md5_sum += str(line) + '#'
-            if cnt == - 1:
-                  cnt = str(line)
-    logging.debug(md5_sum)
-    m = hashlib.md5()
-    m.update(md5_sum.encode('utf-8'))
-    logging.info("Checksum for table "+args.mysql_database + "."+mysql_table+" = "+m.hexdigest() + " count "+str(cnt))
+        for position, value in enumerate(r):
+            totals[position] += value
+    (cnt, a, b, c, d, clamped) = totals
+    checksum = checksum_from_aggregate(cnt, a, b, c, d)
+    if clamped > 0:
+        (min_datetime_value, max_datetime_value) = datetime_bounds(args)
+        logging.warning(f"{clamped} out-of-range datetime values clamped to [{min_datetime_value}, {max_datetime_value}] in table {args.mysql_database}.{mysql_table}")
+    logging.info("Checksum for table "+args.mysql_database + "."+mysql_table+" = "+checksum + " count "+str(cnt))
 
 # hack to add the user to the logger, which needs it apparently
 old_factory = logging.getLogRecordFactory()
@@ -329,8 +363,7 @@ def record_factory(*args, **kwargs):
 logging.setLogRecordFactory(record_factory)
 
 
-def main():
-
+def build_argument_parser():
     parser = argparse.ArgumentParser(description='''Compute a ClickHouse compatible checksum.
           ''')
     # Required
@@ -356,15 +389,18 @@ def main():
     parser.add_argument(
         '--debug_limit', help='Limit the debug output in lines', required=False)
     parser.add_argument(
-        '--binary_encoding', help='either hex or base64 to encode MySQL binary content', default='hex', required=False)
+        '--binary_encoding', choices=['hex', 'base64', 'raw'], default='hex', required=False,
+        help='how the connector wrote binary values: hex text (default), base64 text (binary.handling.mode=base64) or raw bytes (persist.raw.bytes=true, compared as hex); pass the same value to the ClickHouse side')
     parser.add_argument(
         '--min_date_value', help='Minimum Date32/DateTime64 date', default='1900-01-01', required=False)
     parser.add_argument(
         '--max_date_value', help='Maximum Date32/Datetime64 date', default='2299-12-31', required=False)
     parser.add_argument(
-            '--min_datetime_value', help='Min Datetime64 datetime', default='1970-01-01 00:00:00', required=False)
+            '--source_timezone', help='IANA time zone the connector interprets DATETIME values in (its database.connectionTimeZone); only used to clamp DATETIME columns with the same bounds as the ClickHouse side', default='UTC', required=False)
     parser.add_argument(
-            '--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59', required=False)
+            '--min_datetime_value', help='Lower clamp bound for datetime/timestamp values (same value on both sides; default is the ClickHouse DateTime64 minimum)', default=DATETIME_MIN, required=False)
+    parser.add_argument(
+            '--max_datetime_value', help='Upper clamp bound for datetime/timestamp values (same value on both sides; default is the ClickHouse DateTime64 maximum)', default=DATETIME_MAX, required=False)
     parser.add_argument('--debug', dest='debug',
                         action='store_true', default=False)
     parser.add_argument('--exclude_columns', help='columns exclude',
@@ -376,10 +412,17 @@ def main():
                         help='number of tables in parallel to compute', default=1)
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
                         help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
-    parser.add_argument('--include_json_columns', action='store_true', default=True,
-                        help='JSON data types are included by default. This flag is a no-op (always True). Use --exclude_columns to skip JSON columns.', required=False)
+    parser.add_argument('--include_json_columns', action='store_true', default=False,
+                        help='JSON columns are not compared by default (each table logs a WARNING naming them); this compares a best-effort compact text rendering against the text the connector stored. Pass it to both sides.', required=False)
+    return parser
+
+
+def main():
+    parser = build_argument_parser()
     global args
     args = parser.parse_args()
+    (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
+    validate_timezone(args.source_timezone, '--source_timezone')
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)

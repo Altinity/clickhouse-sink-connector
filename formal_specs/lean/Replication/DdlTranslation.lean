@@ -10,10 +10,12 @@ Authors: ClickHouse Sink Connector Maintainers
 A MySQL `ALTER TABLE` is a list of clauses. ClickHouse can represent some of them
 (add / drop / modify a data column), cannot represent others at all but loses
 nothing by skipping them (indexes, constraints, charset, table options,
-`DROP PRIMARY KEY`, a re-declaration of a sorting-key column with a
+a restated `PRIMARY KEY`, a re-declaration of a sorting-key column with a
 same-or-narrower type), and must refuse the rest loudly (a change that WIDENS a
-sorting-key column: ClickHouse rejects it with `Code: 524` and nothing the
-connector can emit makes it hold the source values).
+sorting-key column, or an `ADD`/`DROP PRIMARY KEY` that changes the row identity
+the replica is keyed by: ClickHouse rejects the former with `Code: 524` and
+cannot re-key a table for the latter, and nothing the connector can emit makes
+the existing table hold the source rows).
 
 Two production defects motivate this model:
 
@@ -39,7 +41,8 @@ inductive Clause where
   | modifyDataColumn (name : String)               -- MODIFY/CHANGE of a non-key column
   | modifyKeyColumnSameOrNarrower (name : String)  -- MODIFY of a sorting-key column, loss-free to skip
   | modifyKeyColumnWider (name : String)           -- MODIFY of a sorting-key column that widens it
-  | noOp                                           -- index / key / constraint / charset / table option / partition
+  | primaryKeyChange (cols : List String)          -- ADD/DROP PRIMARY KEY whose net identity differs from the known sorting key
+  | noOp                                           -- index / key restatement / constraint / charset / table option / partition
 deriving Repr, DecidableEq
 
 /-- What the translator emits for one statement. -/
@@ -56,9 +59,10 @@ def Clause.representable : Clause → Bool
   | Clause.modifyDataColumn _ => true
   | _                         => false
 
-/-- A clause the translator must refuse (Spec 06.05 §3.4 rule 3). -/
+/-- A clause the translator must refuse (Spec 06.05 §3.4 rule 3, Spec 06.07 §3.1 rule 3). -/
 def Clause.loud : Clause → Bool
   | Clause.modifyKeyColumnWider _ => true
+  | Clause.primaryKeyChange _     => true
   | _                             => false
 
 /-- Does any clause of the statement have to be refused? -/
@@ -150,6 +154,19 @@ theorem all_noop_skips (cs : List Clause)
 /-- **(b) A widening key change is loud.** Any statement containing one fails. -/
 theorem wider_key_change_is_loud (cs : List Clause) (n : String)
     (h : Clause.modifyKeyColumnWider n ∈ cs) : translate cs = Emission.fail := by
+  have hl : anyLoud cs = true := anyLoud_of_mem h rfl
+  unfold translate
+  rw [if_pos hl]
+
+/--
+**(b') A change of row identity is loud.** An `ADD`/`DROP PRIMARY KEY` whose net
+identity differs from the replica's known sorting key fails the whole statement
+(Spec 06.07 §3.1 rule 3): ClickHouse cannot re-key a table in place, and keeping
+the old key collapses rows the source keeps distinct. A restatement of the same
+key, or an unknown key, is a `noOp` and is skipped.
+-/
+theorem primary_key_change_is_loud (cs : List Clause) (cols : List String)
+    (h : Clause.primaryKeyChange cols ∈ cs) : translate cs = Emission.fail := by
   have hl : anyLoud cs = true := anyLoud_of_mem h rfl
   unfold translate
   rw [if_pos hl]

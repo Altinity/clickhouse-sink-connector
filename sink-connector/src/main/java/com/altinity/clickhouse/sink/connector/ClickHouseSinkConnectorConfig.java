@@ -172,6 +172,39 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                                          Map<String, String> properties) {
         super(config, properties, false);
         warnIfNonDefaultValueDisabled(properties);
+        warnIfIgnoreDelete(properties);
+    }
+
+    /** Emitted at most once per JVM. */
+    private static final java.util.concurrent.atomic.AtomicBoolean IGNORE_DELETE_WARNED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * {@code ignore_delete=true} is loss by design: the writer never binds the
+     * delete marker, so rows the source deleted stay visible in ClickHouse
+     * forever and the replica stops being equal to the source (Spec 10.04
+     * section 3.7). It is an operator's explicit choice, so it is honoured, but
+     * it is announced once at startup so nobody mistakes the divergence for a
+     * bug later.
+     *
+     * @param properties the raw properties; {@code null} is tolerated.
+     * @return whether the warning applies (exposed for tests).
+     */
+    static boolean isIgnoreDeleteEnabled(Map<String, String> properties) {
+        if (properties == null) {
+            return false;
+        }
+        String value = properties.get(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString());
+        return value != null && "true".equalsIgnoreCase(value.trim());
+    }
+
+    private static void warnIfIgnoreDelete(Map<String, String> properties) {
+        if (isIgnoreDeleteEnabled(properties) && IGNORE_DELETE_WARNED.compareAndSet(false, true)) {
+            log.warn("{}=true: source row removals are NOT replicated. Rows removed at the source stay "
+                            + "visible in ClickHouse and the replica will no longer equal the source. "
+                            + "This is loss by design; unset it unless that divergence is intended.",
+                    ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString());
+        }
     }
 
     /** Emitted at most once per JVM; the key is a no-op either way. */

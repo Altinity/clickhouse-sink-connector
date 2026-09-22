@@ -1,9 +1,5 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
-
 /**
  * This class holds commonly used constants for DDL (Data Definition Language)
  * operations in ClickHouse, such as commands for creating, altering, or
@@ -74,11 +70,6 @@ public class Constants {
      * ORDER BY clause for ClickHouse DDL statements.
      */
     public static final String ORDER_BY = " ORDER BY ";
-
-    /**
-     * ORDER BY clause used with empty tuple.
-     */
-    public static final String ORDER_BY_TUPLE = " ORDER BY tuple()";
 
     /**
      * LIKE keyword used in certain DDL contexts.
@@ -300,20 +291,8 @@ public class Constants {
     public static final String DROP_COLUMN = "DROP COLUMN IF EXISTS %s";
 
     /**
-     * Template for dropping a constraint, e.g. "DROP CONSTRAINT %s".
-     */
-    public static final String DROP_CONSTRAINT = "DROP CONSTRAINT IF EXISTS %s";
-
-    /**
      * Version number associated with ReplacingMergeTree improvements
      * introduced in ClickHouse 23.2.
      */
     public static final String NEW_REPLACING_MERGE_TREE_VERSION = "23.2";
-
-    /**
-     * A set of data types that do not support being marked as Nullable
-     * in ClickHouse. This is used as a workaround during DDL processing.
-     */
-    public static final Set<String> NULLABLE_NOT_SUPPORTED_DATA_TYPES =
-            new HashSet<>(Arrays.asList("point", "polygon"));
 }

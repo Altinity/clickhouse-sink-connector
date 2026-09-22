@@ -298,7 +298,13 @@ public class BinLogHistory {
             case ROW_COLUMN:
                 return struct.getRow();
             case SEQUENCE_COLUMN:
-                return struct.getSequenceNumber();
+                // The sorting key is (server_id, logfile, position, sequence, _time).
+                // The lightweight engine assigns a unique sequence number; the Kafka
+                // Connect path never does, and binding its -1 sentinel gave every row
+                // of a multi-row statement the same key, collapsing them into one
+                // row. The row index within the event is unique per (logfile,
+                // position) and stands in for it (spec 02.01 section 3.5 d).
+                return struct.getSequenceNumber() >= 0 ? struct.getSequenceNumber() : (long) struct.getRow();
             default:
                 return null;
         }

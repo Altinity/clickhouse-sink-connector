@@ -58,23 +58,29 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProp
  * snapshot that never completed while the log filled with the same stack
  * trace rather than an outright crash.</p>
  *
- * <p>{@link NullParsedRecordSkipTest} pins the caller's behaviour directly.
- * This test pins it where it actually failed: a real MySQL, a real Debezium
- * engine and a real ClickHouse, with the unparseable records produced by the
- * connector itself rather than by a stub.</p>
+ * <p>{@link NullParsedRowRecordIsTerminalTest} and
+ * {@link UnparseableRowRecordIsTerminalTest} pin the caller's behaviour
+ * directly. This test pins it where it actually failed: a real MySQL, a real
+ * Debezium engine and a real ClickHouse, with the no-row records produced by
+ * the connector itself rather than by a stub.</p>
+ *
+ * <p><b>Scope, after spec 01.06 section 3.1 was corrected.</b> The records this
+ * run produces (transaction markers, heartbeats) are CONTROL records: no
+ * {@code op} field, no row by contract. They are skipped at DEBUG and their
+ * offset is committed once the pipeline is quiescent. A ROW record the parser
+ * cannot convert is no longer skipped at all -- it is terminal
+ * ({@link RecordReplicationException}) because the skip let its offset be
+ * committed and the row be lost. So the earlier "WARN skip for a row record"
+ * leg of assertion (1) no longer exists: seeing one would now be a defect.</p>
  *
  * <p>Two things are asserted, and the first exists so the second cannot pass
  * vacuously:</p>
  * <ol>
- *   <li>the unparseable path was actually reached during the run -- either a
- *       deliberate skip (fixed) or a NullPointerException (broken). If
- *       neither appears, no such record was ever produced and the test would
- *       be proving nothing, so it fails. A deliberate skip is logged at
- *       DEBUG for a control record (heartbeat / transaction metadata,
- *       Spec 01.06 section 3.1 -- WARN per heartbeat is forbidden there) and
- *       at WARN for a row record the parser could not convert, so the
- *       capture's logger is opened to DEBUG for the run and both lines
- *       count;</li>
+ *   <li>the no-row path was actually reached during the run -- either the
+ *       deliberate DEBUG control-record skip (fixed) or a NullPointerException
+ *       (broken). If neither appears, no such record was ever produced and the
+ *       test would be proving nothing, so it fails. The capture's logger is
+ *       opened to DEBUG for the run so the skip is visible;</li>
  *   <li>no NullPointerException was raised while processing records, and the
  *       rows written after those records are all in ClickHouse -- the
  *       pipeline kept making progress.</li>
@@ -201,28 +207,24 @@ public class UnparseableRecordProgressIT {
 
             Thread.sleep(25000);
 
-            // (1) The unparseable path must have been reached, otherwise this
-            // test asserts nothing. Post-fix that shows up as the deliberate
-            // skip -- the DEBUG control-record line for a heartbeat or
-            // transaction-boundary record (Spec 01.06 section 3.1), or the
-            // WARN skip for a row record the parser could not convert;
-            // pre-fix as the NullPointerException asserted on below.
+            // (1) The no-row path must have been reached, otherwise this test
+            // asserts nothing. Post-fix that shows up as the deliberate skip --
+            // the DEBUG control-record line for a heartbeat or
+            // transaction-boundary record (Spec 01.06 section 3.1); pre-fix as
+            // the NullPointerException asserted on below. A row record the
+            // parser cannot convert is terminal now (RecordReplicationException),
+            // so there is no "WARN skip" leg any more; one would be a defect.
             long controlRecordSkips = appender.events.stream()
                     .filter(e -> e.getLevel() == Level.DEBUG)
                     .filter(e -> e.getMessage().getFormattedMessage().toLowerCase()
                             .contains("control record"))
                     .count();
-            long rowRecordSkips = appender.events.stream()
-                    .filter(e -> e.getLevel().isMoreSpecificThan(Level.WARN))
-                    .filter(e -> e.getMessage().getFormattedMessage().toLowerCase()
-                            .contains("skipping"))
-                    .count();
             List<Throwable> npes = collectNullPointerExceptions(appender);
-            Assert.assertTrue("no unparseable record reached the connector during this run, so "
+            Assert.assertTrue("no control record reached the connector during this run, so "
                             + "this test exercised nothing; expected transaction-boundary or "
-                            + "heartbeat records to be produced (DEBUG control-record skip or "
-                            + "WARN row-record skip from DebeziumChangeEventCapture)",
-                    controlRecordSkips > 0 || rowRecordSkips > 0 || !npes.isEmpty());
+                            + "heartbeat records to be produced (DEBUG control-record skip "
+                            + "from DebeziumChangeEventCapture)",
+                    controlRecordSkips > 0 || !npes.isEmpty());
 
             // (2) The regression itself. A record the parser cannot convert
             // must be skipped deliberately, never by way of an NPE.

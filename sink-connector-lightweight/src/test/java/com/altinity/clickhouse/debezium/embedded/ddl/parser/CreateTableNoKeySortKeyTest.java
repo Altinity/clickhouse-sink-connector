@@ -41,22 +41,25 @@ import java.util.HashMap;
  * lists only the declared columns while {@code innodb_indexes} shows the
  * {@code GEN_CLUST_INDEX}, and the value is never binlogged.</p>
  *
- * <p>Deriving an identity downstream was tried twice and abandoned. Both
- * attempts are pinned here as things the parser must NOT do, because both
- * cost the table its ability to take any other operation:</p>
- * <ul>
- *   <li>{@code ORDER BY (every column)} -- ClickHouse forbids altering any
- *       column in the sorting key, so the schema FREEZES: MODIFY and RENAME
- *       fail with {@code Code: 524}, DROP with {@code Code: 47}, and the
- *       connector's ten DDL retries (~45s) all fail.</li>
- *   <li>{@code ORDER BY (a hash of the row)} -- a column the hash names cannot
- *       be dropped ({@code Code: 44}), and a column added later is absent from
- *       it, so two rows differing only in the new column collapse: 2 in, 1 out.</li>
- * </ul>
+ * <p>Until the source gets that key, the table still has to be replicated
+ * without losing every row but one. This class previously pinned the opposite
+ * -- that the parser must emit {@code ORDER BY tuple()} and "invent nothing",
+ * because an all-columns key lets ClickHouse refuse MODIFY/RENAME/DROP of a
+ * key column ({@code Code: 524} / {@code 47}). That trade was wrong:
+ * {@code ORDER BY tuple()} is not a conservative choice but a total data loss
+ * (the table above), while a frozen schema is loud and recoverable, and the
+ * sorting-key policy of Spec 06.05 §3.4 already turns such a MODIFY into a
+ * suppressed clause or a named rebuild. The record-schema auto-create path
+ * has emitted the all-columns key since Spec 08.05 §3.2; a table must get the
+ * same identity whichever path creates it. So the DDL path now emits
+ * {@code ORDER BY (every stored column)} with {@code allow_nullable_key=1}
+ * when that key names a nullable column (Spec 06.05 §3.6), and
+ * {@link com.altinity.clickhouse.debezium.embedded.cdc.KeylessTablePreflight}
+ * plus the CREATE-time banner keep telling the operator to fix the source.</p>
  *
- * <p>So the parser invents nothing. {@link com.altinity.clickhouse.debezium.embedded.cdc.KeylessTablePreflight}
- * reports such a table at startup -- a loud banner naming it and the
- * {@code ALTER TABLE} that fixes it -- and replication continues.</p>
+ * <p>A row-fingerprint column ({@code ORDER BY (a hash of the row)}) remains
+ * something the parser must NOT invent: a column the hash names cannot be
+ * dropped ({@code Code: 44}), and a column added later is absent from it.</p>
  */
 public class CreateTableNoKeySortKeyTest {
 
@@ -98,41 +101,51 @@ public class CreateTableNoKeySortKeyTest {
     }
 
     /**
-     * A genuinely keyless table gets NO invented sorting key.
+     * A genuinely keyless table gets the all-columns sorting key, never
+     * {@code ORDER BY tuple()} (Spec 06.05 §3.6).
      *
      * <p>The exact DDL Alembic emits, and the shape that produced the
-     * whole-table collapse. The preflight refuses this source; if it was
-     * skipped, the parser must still not fabricate an identity, because every
-     * fabrication costs the table its schema.</p>
+     * whole-table collapse. This test previously asserted the OPPOSITE (that
+     * {@code version_num} must NOT be the sorting key, to keep the schema
+     * alterable); that pinned the data-losing {@code ORDER BY tuple()} and
+     * disagreed with the record-schema path, which already keys such a table
+     * by every column.</p>
      */
     @Test
-    public void testKeylessTableGetsNoInventedSortKey() {
+    public void testKeylessTableGetsAllColumnsSortKey() {
         String createQuery = "CREATE TABLE alembic_version (version_num VARCHAR(32) NOT NULL) ENGINE=InnoDB;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "alembic_version", clickHouseQuery);
 
         String query = clickHouseQuery.toString().toLowerCase();
-        Assert.assertFalse("keying on the data column freezes the schema: ClickHouse then refuses "
-                        + "to MODIFY (524), RENAME (524) or DROP (47) it, was: " + clickHouseQuery,
+        Assert.assertFalse("ORDER BY tuple() keeps ONE row for the whole table, was: " + clickHouseQuery,
+                query.contains("order by tuple()"));
+        Assert.assertTrue("the stored column is the only identity available, was: " + clickHouseQuery,
                 query.contains("order by (version_num)"));
-        Assert.assertFalse("no row-fingerprint column may be invented either -- a column it names "
+        Assert.assertFalse("the key column is NOT NULL, so no allow_nullable_key, was: " + clickHouseQuery,
+                query.contains("allow_nullable_key"));
+        Assert.assertFalse("no row-fingerprint column may be invented -- a column it names "
                         + "cannot be dropped (44), was: " + clickHouseQuery,
                 query.contains("_row_key"));
     }
 
     /**
-     * Nor is a multi-column keyless table given an all-column key.
+     * A multi-column keyless table is keyed by every stored column in
+     * declaration order; because that key names nullable columns the CREATE
+     * carries {@code allow_nullable_key=1} (Code: 44 otherwise).
      */
     @Test
-    public void testMultiColumnKeylessTableGetsNoAllColumnSortKey() {
+    public void testMultiColumnKeylessTableGetsAllColumnSortKey() {
         String createQuery = "CREATE TABLE nokey_multi (a INT, b VARCHAR(64), c DATETIME) ENGINE=InnoDB;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "nokey_multi", clickHouseQuery);
 
         String query = clickHouseQuery.toString().toLowerCase();
-        Assert.assertFalse("all-column sorting key freezes every column of the table, was: "
+        Assert.assertFalse("ORDER BY tuple() keeps ONE row for the whole table, was: " + clickHouseQuery,
+                query.contains("order by tuple()"));
+        Assert.assertTrue("every stored column, in declaration order, was: "
                         + clickHouseQuery, query.contains("order by (a,b,c)"));
-        Assert.assertFalse("allow_nullable_key only existed to support that wide key, was: "
+        Assert.assertTrue("a nullable key column needs allow_nullable_key, was: "
                         + clickHouseQuery, query.replace(" ", "").contains("allow_nullable_key=1"));
     }
 

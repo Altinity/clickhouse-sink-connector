@@ -105,9 +105,13 @@ when every lower-sequence batch (queued, in flight, or parked) has been
 acknowledged, and a batch written out of turn is parked, not re-executed. A
 handed-off batch is outstanding from the instant of handoff until its
 acknowledgement, and the pipeline is quiescent iff no sequence is outstanding.
+An in-process engine restart (`stop()`) abandons what is still outstanding once
+the pool has terminated — never anything acknowledged — so the next engine
+starts quiescent and redelivers the abandoned rows (spec 09.01 §3.8).
 Formalised in `formal_specs/lean/Replication/OffsetFifo.lean`
 (`commit_never_passes_outstanding`, `acked_downward_closed`,
-`outstanding_ge_commitPoint`, `write_at_most_once`, `old_overlap_rule_unsafe`).
+`outstanding_ge_commitPoint`, `write_at_most_once`, `old_overlap_rule_unsafe`,
+`restart_quiescent`, `acked_never_rolled_back`, `old_restart_poisons_fifo`).
 
 ### Invariant I9: Loud Failure (Zero Silence)
 Replication errors, checksum mismatches, and schema translation failures must fail loudly. No replication exception shall be caught and suppressed to allow a batch to proceed. Row count parity shall never substitute for value-level checksum verification.
@@ -126,11 +130,16 @@ across the boundary: both versions assign `_version` strictly increasing in sour
 commit order, and the new version continues that ordering ABOVE the last version
 the old version wrote (across the restart the source commit clock only advances).
 Concretely this requires: the `_version` formula precedence and arithmetic are
-preserved; the persisted offset store and schema-history table formats (and the
+preserved; the new version seeds its version floor at start from a durable
+high-water mark of the versions already handed to the writers (or, absent one,
+from `max(_version)` over the targets), so its first deliveries rank above the
+old version's rows whatever timestamp the old version anchored on (spec 02.02
+§3.5); the persisted offset store and schema-history table formats (and the
 Debezium version that serialises them) are compatible so committed positions are
 readable; no config key is removed or renamed and no hardcoded default that maps
 to an existing table column changes. Formalised as `upgrade_safe` in
-`formal_specs/lean/Replication/Upgrade.lean`.
+`formal_specs/lean/Replication/Upgrade.lean` and `restart_boundary` in
+`formal_specs/lean/Replication/VersionFloor.lean`.
 
 ### Invariant I12: Snapshot Completion & Control-Record Offset Progress
 A record that produces no ClickHouse row (a heartbeat or transaction-boundary
@@ -194,8 +203,10 @@ To provide mathematical proof of system correctness, the invariants and state tr
 - `Replication.Upgrade`: Invariant I11. `Replication.Snapshot`: Invariant I12. `Replication.GeneratedColumn`: Invariant I13.
 - `Replication.DdlBarrier`: The pre-DDL barrier of Invariant I5 — the DDL step is enabled only when the legacy queue, every routed queue and the unacknowledged-batch counter are all empty, and a machine-checked counterexample showing that an empty legacy queue alone does not imply that.
 - `Replication.OffsetFifo`: Handoff-sequence FIFO for offset acknowledgement (Invariant I8): commit never passes an outstanding batch, written-once, and the timestamp-overlap counterexample.
-- `Replication.DdlTranslation`: ALTER clause classification for Specs 06.03/06.04/06.05/06.07 — no bare `ALTER TABLE`, an all-no-op statement is skipped, a widening key-column change is loud, every ADD COLUMN is preserved.
+- `Replication.DdlTranslation`: ALTER clause classification for Specs 06.03/06.04/06.05/06.07 — no bare `ALTER TABLE`, an all-no-op statement is skipped, a widening key-column change and a change of the row identity (`ADD`/`DROP PRIMARY KEY`) are loud, every ADD COLUMN is preserved.
 - `Replication.BatchOrder`: Batch execution order around a replicated TRUNCATE (Spec 04.05) — executing the batch as ordered segments split at each TRUNCATE reproduces binlog order (`segments_match_source`), every TRUNCATE stays its own segment, and the pre-fix hash-map order is shown to lose or resurrect rows.
+- `Replication.VersionFloor`: the shipped version-sequence statics (`effectiveTs * 1e6 + counter`, floor, anchor, seeds, high-water position) at the restart boundary (Invariant I2 across a restart, specs 02.02 §3.5 / 02.04 §3.2) — seeding the floor from a high-water mark orders every first delivery of a new run above the previous run, and control records leave the state unchanged, with the pre-fix heartbeat counterexample.
+- `Replication.CreateTable`: CREATE TABLE sorting-key selection for Specs 06.05 §3.6 / 08.05 §3.2 — a table with a storable column never gets `ORDER BY tuple()`, a declared key always wins, and only the value-derived fallback key can require `allow_nullable_key`.
 
 ### 5.1 Coverage of the thirteen invariants
 Honest status per invariant. "Lean" means a proposition and a machine-checked theorem exist; "model only" means the property holds in the abstract model but the shipped arithmetic is not modelled.
@@ -203,16 +214,16 @@ Honest status per invariant. "Lean" means a proposition and a machine-checked th
 | Invariant | Lean status | Where |
 |---|---|---|
 | I1 Log Sequence Monotonicity | Lean (ordinal model; `encodeVersion` order-witness within `BinlogPos.WellFormed`) | `VersionMonotonicityProp`, `version_strictly_monotonic` |
-| I2 Deterministic Version Monotonicity | Lean, model only — the ordinal scheme `liveVersion i = 2*i` is monotone by construction; the shipped `effectiveTs * 1e6 + seq` formula, the high-water floor and the counter seeds are **not** modelled (specs 02.01–02.04 record the known defects) | `Engine.lean`, `Proofs.lean` |
+| I2 Deterministic Version Monotonicity | Lean at the restart boundary — the shipped `effectiveTs * 1e6 + seq` statics are modelled and seeding the floor is proved to order a new run above the old one, and control records are proved not to touch the state; within-run monotonicity of the shipped formula is model only (`liveVersion i = 2*i`), stated with its counter bound in spec 02.02 §3.3 | `VersionFloor.lean`: `restart_boundary`, `version_ge_floor`, `dispatch_control_preserves_state`; `Engine.lean`, `Proofs.lean` |
 | I3 Eventual Convergence | Lean | `ReplicationConvergence`, `master_replication_convergence` |
 | I4 Sorting Key Mutation Integrity | Lean | `PKRelocationSoundness`, `update_pk_relocation_soundness` |
 | I5 DDL Barrier Quiescence | Lean | `DdlBarrier.lean`: `ddl_applies_only_when_no_pending_rows`, `old_predicate_insufficient`, `queues_empty_insufficient` |
 | I6 Column Authority & Shadowing Prohibition | none (`ColumnKind` is modelled in `Basic.lean`; no theorem) | — |
 | I7 Value-Level Type Equivalence | none | — |
-| I8 Durable Offset Quiescence | Lean (handoff FIFO); the control-record half is covered under I12 | `OffsetFifo.lean`: `commit_never_passes_outstanding`, `write_at_most_once`, `old_overlap_rule_unsafe` |
-| I9 Loud Failure | none (empirical only: spec 10.04) | — |
+| I8 Durable Offset Quiescence | Lean (handoff FIFO, including the in-process restart reset); the control-record half is covered under I12 | `OffsetFifo.lean`: `commit_never_passes_outstanding`, `write_at_most_once`, `old_overlap_rule_unsafe`, `restart_quiescent`, `acked_never_rolled_back`, `old_restart_poisons_fifo` |
+| I9 Loud Failure | Lean (row half only: an unconvertible row record halts, its offset is never committed); the rest is empirical (spec 10.04) | `Snapshot.lean`: `unparsed_row_halts`, `unparsed_row_never_committed`, `old_rule_commits_unparsed_row` |
 | I10 Structural Separation of Concerns | none (architectural rule, not a state-machine property) | — |
-| I11 Drop-in Upgrade Safety | Lean, conditional on `GapMono` (spec 02.06 §6 lists where the code does not establish it) | `upgrade_safe`, `replicate_convergesV`, `liveVersion_gapMono` |
+| I11 Drop-in Upgrade Safety | Lean, conditional on `GapMono`; the boundary clause ("continues above the old version's last write") is proved for the seeded floor (spec 02.06 §6 lists the remaining first-start-without-seed case) | `upgrade_safe`, `replicate_convergesV`, `liveVersion_gapMono`; `VersionFloor.lean`: `restart_boundary` |
 | I12 Snapshot Completion & Control-Record Offset Progress | Lean | `control_commit_safe`, `quiescent_control_commits`, `snapshot_completes` |
 | I13 Generated-Column Type Integrity | Lean | `alter_preserves_type`, `type_is_never_expression`, `generated_has_default` |
 

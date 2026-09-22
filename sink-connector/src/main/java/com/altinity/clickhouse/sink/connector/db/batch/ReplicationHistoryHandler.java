@@ -20,6 +20,7 @@ import org.apache.logging.log4j.Logger;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.ZoneId;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -105,23 +106,25 @@ public class ReplicationHistoryHandler {
         // Generate unique version using snowflake algorithm
         long version = SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
 
-        // Get the primary key column name and its value from the record
-        String primaryKeyColumnName = record.getPrimaryKey().get(0);
-
-        Object primaryKeyValue = null;
-        Struct afterStruct = record.getAfterStruct();
-        if(afterStruct == null) {
-            primaryKeyValue = record.getBeforeStruct().get(primaryKeyColumnName);
-        } else {
-            primaryKeyValue = afterStruct.get(primaryKeyColumnName);
+        // Every primary-key column with its value, in key order: the previous history
+        // row is closed by the WHOLE key. Closing on the first column alone closed
+        // every row that shared it (spec 02.01 section 3.5 a).
+        List<String> primaryKeyColumns = record.getPrimaryKey();
+        if (primaryKeyColumns == null || primaryKeyColumns.isEmpty()) {
+            throw new IllegalStateException("History mode cannot close the previous row for topic "
+                    + record.getTopic() + ": the record carries no primary key (spec 02.01 section 3.5 a)");
+        }
+        Struct image = record.getAfterStruct() != null ? record.getAfterStruct() : record.getBeforeStruct();
+        Map<String, Object> primaryKey = new LinkedHashMap<>();
+        for (String column : primaryKeyColumns) {
+            primaryKey.put(column, image.get(column));
         }
 
         return new UpdateQueryParams(
                 validToMax,
                 binlogRecordTimestamp,
                 version,
-                primaryKeyColumnName,
-                primaryKeyValue,
+                primaryKey,
                 record.getCdcOperation()
         );
     }
@@ -144,8 +147,7 @@ public class ReplicationHistoryHandler {
         return queryFormatter.getInsertQueryForUpdate(
                 tableName,
                 columnToDataTypeMap,
-                params.getPrimaryKeyColumnName(),
-                params.getPrimaryKeyValue(),
+                params.getPrimaryKey(),
                 params.getValidToMax(),
                 params.getBinlogRecordTimestamp(),
                 params.getVersion(),
@@ -171,8 +173,7 @@ public class ReplicationHistoryHandler {
         return queryFormatter.getInsertQueryForDelete(
                 tableName,
                 columnToDataTypeMap,
-                params.getPrimaryKeyColumnName(),
-                params.getPrimaryKeyValue(),
+                params.getPrimaryKey(),
                 params.getValidToMax(),
                 params.getBinlogRecordTimestamp(),
                 params.getVersion(),
@@ -270,8 +271,8 @@ public class ReplicationHistoryHandler {
         private final String validToMax;
         private final String binlogRecordTimestamp;
         private final long version;
-        private final String primaryKeyColumnName;
-        private final Object primaryKeyValue;
+        /** Every primary-key column with its value, in key order (spec 02.01 section 3.5 a). */
+        private final Map<String, Object> primaryKey;
         private final ClickHouseConverter.CDC_OPERATION cdcOperation;
 
         public UpdateQueryParams(
@@ -281,12 +282,32 @@ public class ReplicationHistoryHandler {
                 String primaryKeyColumnName,
                 Object primaryKeyValue,
                 ClickHouseConverter.CDC_OPERATION cdcOperation) {
+            this(validToMax, binlogRecordTimestamp, version,
+                    singleColumn(primaryKeyColumnName, primaryKeyValue), cdcOperation);
+        }
+
+        public UpdateQueryParams(
+                String validToMax,
+                String binlogRecordTimestamp,
+                long version,
+                Map<String, Object> primaryKey,
+                ClickHouseConverter.CDC_OPERATION cdcOperation) {
             this.validToMax = validToMax;
             this.binlogRecordTimestamp = binlogRecordTimestamp;
             this.version = version;
-            this.primaryKeyColumnName = primaryKeyColumnName;
-            this.primaryKeyValue = primaryKeyValue;
+            this.primaryKey = new LinkedHashMap<>(primaryKey);
             this.cdcOperation = cdcOperation;
+        }
+
+        private static Map<String, Object> singleColumn(String columnName, Object value) {
+            Map<String, Object> primaryKey = new LinkedHashMap<>();
+            primaryKey.put(columnName, value);
+            return primaryKey;
+        }
+
+        /** The whole primary key: column name to value, in key order. */
+        public Map<String, Object> getPrimaryKey() {
+            return primaryKey;
         }
 
         public String getValidToMax() {
@@ -301,12 +322,14 @@ public class ReplicationHistoryHandler {
             return version;
         }
 
+        /** The first primary-key column (the whole key is {@link #getPrimaryKey()}). */
         public String getPrimaryKeyColumnName() {
-            return primaryKeyColumnName;
+            return primaryKey.isEmpty() ? null : primaryKey.keySet().iterator().next();
         }
 
+        /** The first primary-key column's value (the whole key is {@link #getPrimaryKey()}). */
         public Object getPrimaryKeyValue() {
-            return primaryKeyValue;
+            return primaryKey.isEmpty() ? null : primaryKey.values().iterator().next();
         }
 
         public ClickHouseConverter.CDC_OPERATION getCdcOperation() {
@@ -319,8 +342,9 @@ public class ReplicationHistoryHandler {
                     "validToMax='" + validToMax + '\'' +
                     ", binlogRecordTimestamp='" + binlogRecordTimestamp + '\'' +
                     ", version=" + version +
-                    ", primaryKeyColumnName='" + primaryKeyColumnName + '\'' +
-                    ", primaryKeyValue=" + primaryKeyValue +
+                    ", primaryKeyColumnName='" + getPrimaryKeyColumnName() + '\'' +
+                    ", primaryKeyValue=" + getPrimaryKeyValue() +
+                    ", primaryKey=" + primaryKey +
                     ", cdcOperation=" + cdcOperation +
                     '}';
         }

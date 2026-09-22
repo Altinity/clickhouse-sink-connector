@@ -53,6 +53,18 @@ bound for the life of the task.)
 `OFF`. De-duplication is opt-in; the writers are idempotent under
 `ReplacingMergeTree` versioning for a redelivered event, so `OFF` is safe.
 
+### 3.4 Scope: the Kafka Connect sink only
+`DeDuplicator` is constructed only in `ClickHouseSinkTask.start()` and consulted
+only in `ClickHouseSinkTask.put()`; no other class references it.
+The lightweight engine (`DebeziumChangeEventCapture`) has **no** record-identity
+de-duplication of any kind: a redelivered row is always written again, and its
+fate is decided by `_version` under `ReplacingMergeTree` — within one run by the
+high-water gate of spec 02.04 §3.2 (the redelivered copy keeps its own, lower
+version), and across a restart by the seeded floor of spec 02.02 §3.5 (the
+replayed copies carry the same data and rank above the stored ones). Lightweight
+replay safety therefore rests entirely on version ordering, never on this
+filter; do not cite `deduplication.policy` as a lightweight safeguard.
+
 ---
 
 ## 4. Invariants Preserved
@@ -73,3 +85,4 @@ bound for the life of the task.)
   grows without bound).
 - `DeDuplicatorTest.testIsNew()` — policy `OFF` accepts everything; different
   topics have independent pools.
+- §3.4 (lightweight engine has no record-identity de-duplication) is a code-structure fact (`DebeziumChangeEventCapture` never references `DeDuplicator`); the lightweight replay behaviour it defers to is pinned by `DebeziumChangeEventCaptureTest.replayAfterSeededRestartIsClampedAboveTheOldRun()` and `CommitOrderVersionClampTest.redeliveryKeepsRedeliveryStableVersion()`.

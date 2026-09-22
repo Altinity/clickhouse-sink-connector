@@ -184,6 +184,20 @@ public class DebeziumChangeEventCapture {
     Connection systemDbConnection;
 
     /**
+     * Durable high-water mark of the versions handed to the writers (spec 02.02
+     * section 3.5, 09.03 section 3.4). Created in {@link #setupDebeziumEventCapture}
+     * once the offset database exists; every version the dispatch loop assigns to a
+     * row is covered by it BEFORE the row is handed off, and a new run seeds its
+     * version floor from it. Null only in unit tests that drive
+     * {@link #handleChangeEventBatch} directly, which is logged once.
+     */
+    VersionHighWaterMark versionHighWaterMark;
+
+    /** One WARN per JVM when rows are versioned without a durable high-water mark. */
+    private static final java.util.concurrent.atomic.AtomicBoolean UNSEEDED_WARNED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
      * Connection to the replication history database.
      */
     Connection replicationHistoryDbConnection;
@@ -275,6 +289,12 @@ public class DebeziumChangeEventCapture {
      *   the redelivery-stable, source-timestamp anchored assignment of issue #1346 is
      *   kept unchanged.</li>
      * </ul>
+     *
+     * <p>The mark is comparable only within one binary log: a positioned record from a
+     * differently named log ({@link SourcePosition#sameLog} false -- the basename
+     * changed) is a first delivery and replaces the mark (spec 01.02 section 3.1.1).
+     * It is reset by a process restart; a new run starts with an empty mark and a
+     * floor seeded from the durable high-water mark (spec 02.02 section 3.5).</p>
      */
     public static SourcePosition sequenceHighWaterPosition = null;
 
@@ -282,10 +302,17 @@ public class DebeziumChangeEventCapture {
      * Highest effective timestamp (ms) versioned in this run - the floor applied to the
      * timestamp component of every first delivery.
      *
-     * <p>It is raised by every record that goes through the sequence, positioned or not
-     * (a heartbeat carrying a newer envelope timestamp moves the anchor and resets the
-     * counter exactly like a newer commit does, so it must move the floor too), and it
-     * is applied only to first deliveries - redeliveries keep their own timestamp.</p>
+     * <p>It is raised by every record that goes through the sequence - row or DDL,
+     * positioned or not (a record that moves the anchor and resets the counter must
+     * move the floor with it) - and it is applied only to first deliveries; redeliveries
+     * keep their own timestamp. Control records (heartbeats, transaction metadata) do
+     * NOT go through the sequence: they carry the connector's wall clock, not a source
+     * time, and produce no row, so letting them in pinned the floor to the connector
+     * clock and made the restart window lag-sized (spec 02.02 section 3.2).</p>
+     *
+     * <p>It is seeded at engine start from the durable high-water mark
+     * ({@link #seedVersionFloor}), so the first deliveries of a new run rank above
+     * every version the previous run assigned (spec 02.02 section 3.5).</p>
      *
      * <p>On MySQL {@code source.ts_ms} is the timestamp of the STATEMENT that produced
      * the row event, not of the commit. A transaction that stays open while others
@@ -328,6 +355,10 @@ public class DebeziumChangeEventCapture {
         } catch (SQLException e) {
             log.error("Error creating Debezium storage database", e);
         }
+        // The version floor must be seeded BEFORE the engine delivers its first
+        // record: every first delivery of this run must rank above every version
+        // the previous run handed off (spec 02.02 section 3.5).
+        seedVersionFloorFromDurableMark(props, config);
         try {
             DBMetadata dbMetadata = new DBMetadata(config);
             String clickHouseVersion = dbMetadata.getClickHouseVersion(systemDbConnection);
@@ -383,6 +414,9 @@ public class DebeziumChangeEventCapture {
             if (props.getProperty("column.propagate.source.type") == null) {
                 props.setProperty("column.propagate.source.type", ".*");
             }
+            // Debezium's default remaps years below 100 (0001-01-01 arrives as
+            // 2001-01-01). Off unless the user set it (spec 07.03 section 3.4).
+            ensureTimeAdjusterDisabled(props);
 
             changeEventBuilder.using(props);
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
@@ -399,35 +433,20 @@ public class DebeziumChangeEventCapture {
                     .using(new DebeziumEngine.CompletionCallback() {
                         @Override
                         public void handle(boolean success, String message, Throwable throwable) {
-                            if (success == false) {
-                                log.error("Error starting connector" + throwable + " Message:" + message);
-                                if (throwable != null && throwable.getCause() != null &&
-                                        throwable.getCause().getLocalizedMessage() != null)
-                                    log.error("Error stating connector: Cause" +
-                                            throwable.getCause().getLocalizedMessage());
-                                log.error("Retrying - try number:" + numRetries);
-                                if (numRetries++ <= MAX_RETRIES) {
-                                    try {
-                                        Thread.sleep(SLEEP_TIME);
-                                    } catch (InterruptedException e) {
-                                        log.error("Error sleeping", e);
-                                        throw new RuntimeException(e);
-                                    }
-                                    try {
-                                        setupDebeziumEventCapture(props, debeziumRecordParserService, config);
-                                    } catch (IOException | ClassNotFoundException e) {
-                                        log.error("Error setting up debezium event capture", e);
-                                        throw new RuntimeException(e);
-                                    }
+                            handleEngineCompletion(success, message, throwable, props, () -> {
+                                try {
+                                    setupDebeziumEventCapture(props, debeziumRecordParserService, config);
+                                } catch (IOException | ClassNotFoundException e) {
+                                    log.error("Error setting up debezium event capture", e);
+                                    throw new RuntimeException(e);
                                 }
-                            }
-                            log.debug("Completion callback");
+                            });
                         }
                     })
                     .using(new DebeziumEngine.ConnectorCallback() {
                         @Override
                         public void connectorStarted() {
-                            ReplicationStatusSingleton.getInstance().setIsReplicationRunning(true);
+                            markEngineStarted();
                             log.debug("Connector started");
                             // Create view.
                             try {
@@ -481,6 +500,97 @@ public class DebeziumChangeEventCapture {
         }
     }
 
+    /** Exit code used when the engine has exhausted its retry budget. */
+    static final int TERMINAL_FAILURE_EXIT_CODE = 3;
+
+    /**
+     * What a terminal failure does to the process: {@code System.exit} in
+     * production, replaced by tests.
+     */
+    static volatile java.util.function.IntConsumer terminalFailureHook = System::exit;
+
+    /**
+     * Called from the engine's {@code connectorStarted} callback: the engine is
+     * up, so the retry budget is whole again. Without the reset a connector
+     * that had recovered from {@code MAX_RETRIES} transient failures over its
+     * lifetime died for good on the next one (spec 10.04 §3.5).
+     */
+    void markEngineStarted() {
+        numRetries = 0;
+        ReplicationStatusSingleton.getInstance().setIsReplicationRunning(true);
+    }
+
+    /**
+     * The engine's completion callback body (spec 10.04 §3.5).
+     *
+     * <p>A failed engine is recreated up to {@code MAX_RETRIES}
+     * ({@code errors.max.retries}) times in a row, {@code SLEEP_TIME} apart.
+     * When that budget is spent the failure is TERMINAL: previously nothing
+     * happened at that point -- the JVM stayed up with replication stopped,
+     * the REST API answering and the metrics port open, and no process-level
+     * signal for a supervisor or a liveness probe to act on. Now replication
+     * is marked not running, the failure is logged at FATAL, and unless
+     * {@code exit.on.terminal.failure=false} the process exits through
+     * {@link #terminalFailureHook} with {@link #TERMINAL_FAILURE_EXIT_CODE}.</p>
+     *
+     * @param success       whether the engine completed normally.
+     * @param message       the engine's completion message.
+     * @param throwable     the failure, if any.
+     * @param props         the connector properties.
+     * @param restartEngine recreates the engine (a retry).
+     */
+    @VisibleForTesting
+    void handleEngineCompletion(boolean success, String message, Throwable throwable,
+                                Properties props, Runnable restartEngine) {
+        if (success) {
+            log.debug("Completion callback");
+            return;
+        }
+        log.error("Engine stopped with an error: " + throwable + " Message: " + message);
+        if (throwable != null && throwable.getCause() != null
+                && throwable.getCause().getLocalizedMessage() != null) {
+            log.error("Engine stopped with an error: cause: "
+                    + throwable.getCause().getLocalizedMessage());
+        }
+        if (numRetries < MAX_RETRIES) {
+            numRetries++;
+            log.error("Restarting the engine - retry {} of {}", numRetries, MAX_RETRIES);
+            try {
+                Thread.sleep(SLEEP_TIME);
+            } catch (InterruptedException e) {
+                log.error("Error sleeping", e);
+                throw new RuntimeException(e);
+            }
+            restartEngine.run();
+            return;
+        }
+        onTerminalFailure(throwable, props);
+    }
+
+    /**
+     * The retry budget is spent: replication is STOPPED for good in this
+     * process. Say so at FATAL, mark it for {@code /status}, and exit unless
+     * the operator chose to keep the process up.
+     */
+    private void onTerminalFailure(Throwable throwable, Properties props) {
+        ReplicationStatusSingleton.getInstance().setIsReplicationRunning(false);
+        boolean exit = props == null
+                || !"false".equalsIgnoreCase(props.getProperty(
+                        SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE, "true").trim());
+        log.fatal("Replication is STOPPED: the engine failed {} time(s) in a row "
+                + "(errors.max.retries={}) and will not be restarted. Last failure: {}. "
+                + "Offsets were not committed past the failing point; fix the cause and restart. {}",
+                MAX_RETRIES, MAX_RETRIES, String.valueOf(throwable),
+                exit ? "Exiting with code " + TERMINAL_FAILURE_EXIT_CODE + " ("
+                        + SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE + "=true)."
+                        : "The process stays up with replication stopped ("
+                        + SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE + "=false); "
+                        + "/status reports Replica_Running=false.", throwable);
+        if (exit) {
+            terminalFailureHook.accept(TERMINAL_FAILURE_EXIT_CODE);
+        }
+    }
+
     /**
      * Sets up the Debezium engine and processing thread.
      *
@@ -494,6 +604,18 @@ public class DebeziumChangeEventCapture {
                       DebeziumRecordParserService debeziumRecordParserService,
                       boolean forceStart)
             throws IOException, ClassNotFoundException {
+
+        // A new engine on a FIFO that still holds unacknowledged units would park
+        // every one of its own units behind them forever (spec 09.01 §3.8).
+        // stop() abandons them; refuse to start until it has.
+        if (DebeziumOffsetManagement.hasUnwrittenBatches()) {
+            throw new IllegalStateException(String.format(
+                    "Refusing to start the engine: %d handed-off batch(es) from a previous engine "
+                            + "in this process are still unacknowledged (queued, in flight or "
+                            + "parked). Call stop() first; it abandons them so the next engine "
+                            + "redelivers them from the last committed offset.",
+                    DebeziumOffsetManagement.outstandingCount()));
+        }
 
         // Check if max queue size was defined by the user.
         if (props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()) != null) {
@@ -520,8 +642,19 @@ public class DebeziumChangeEventCapture {
         // would take every correctly-keyed table on the same source down with
         // it. This call never throws.
         KeylessTablePreflight.check(props);
+        // binlog_row_image, by contrast, is all-or-nothing: anything but FULL
+        // makes EVERY update of EVERY table diverge (untouched columns arrive
+        // as NULL), and nothing downstream can recover what the source never
+        // logged. This call refuses to start (spec 01.01 section 3.2).
+        BinlogRowImagePreflight.check(props);
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
+
+        // snowflake.id=false versions GTID rows with the raw transaction number,
+        // which ranks below every snapshot row; say so loudly before the engine
+        // starts (spec 02.06 section 3.2.1). Not refused: an existing config must
+        // keep starting after an upgrade (Invariant I11).
+        warnIfRawGtidVersioningWithDataSnapshot(props, config);
 
         // Initialize PostgreSQL-specific configuration from properties.
         this.pgConfig = new PostgresConnectorConfig(props);
@@ -547,20 +680,56 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
-     * Stops the Debezium engine and shuts down all executor services.
+     * Longest time {@link #stop()} lets the still-running worker pool drain
+     * handed-off work before shutting it down. Package-private and mutable so
+     * tests do not wait a minute; production keeps the default.
+     */
+    static volatile long stopDrainTimeoutMs = 60_000;
+
+    /**
+     * Stops the engine and shuts the worker pool down, in the only order that
+     * neither drops queued work needlessly nor poisons the offset FIFO for the
+     * next engine in this process (spec 01.01 §3.3, spec 09.01 §3.8).
      *
+     * <p>The bookkeeping in {@code DebeziumOffsetManagement} is static, but the
+     * engine is restarted INSIDE the process (REST {@code /restart},
+     * {@code /start} after {@code /stop}, the restart monitor): a new instance
+     * of this class on the same FIFO. The previous order -- shut the pool down
+     * first, close the engine last, never touch the FIFO -- abandoned every
+     * queued batch and left its sequence outstanding forever: the next engine's
+     * units all parked behind that ghost, no offset was ever acknowledged
+     * again, {@code hasUnwrittenBatches()} stayed true (no control-record
+     * commit, every DDL drain timed out into a restart loop), rows kept being
+     * inserted while the durable offset froze, and the parked units leaked.</p>
+     *
+     * <ol>
+     *   <li>close the engine -- the producer -- so nothing more is handed off;</li>
+     *   <li>stop the Debezium event thread;</li>
+     *   <li>let the pool, still running, drain what is queued or in flight,
+     *       bounded by {@link #stopDrainTimeoutMs};</li>
+     *   <li>shut the pool down and await termination;</li>
+     *   <li>reset the FIFO: whatever is still outstanding is abandoned. It was
+     *       never acknowledged, so the next engine redelivers it from the last
+     *       committed offset -- redelivery, never loss or a rolled-back offset
+     *       ({@code Replication.OffsetFifo.acked_never_rolled_back}).</li>
+     * </ol>
+     *
+     * @return the number of handed-off units abandoned (0 when the drain
+     *         completed).
      * @throws IOException If an I/O error occurs during shutdown.
      */
-    public void stop() throws IOException {
+    public int stop() throws IOException {
+        // 1. Producer first. While the pool is still alive, anything the
+        //    closing engine has already handed off can still be written.
         try {
-            if (this.executor != null) {
-                this.executor.shutdown();
-                this.executor.awaitTermination(60, TimeUnit.SECONDS);
+            if (this.engine != null) {
+                this.engine.close();
             }
         } catch (Exception e) {
-            log.error("Error stopping executor", e);
+            log.error("Error stopping debezium engine", e);
         }
 
+        // 2. The event thread returns from engine.run() once the engine is closed.
         try {
             if (this.singleThreadDebeziumEventExecutor != null) {
                 this.singleThreadDebeziumEventExecutor.shutdown();
@@ -570,15 +739,61 @@ public class DebeziumChangeEventCapture {
             log.error("Error stopping debezium event executor", e);
         }
 
+        // 3. Drain through the still-running pool; nothing new can arrive now.
+        drainBeforeStop();
+
+        // 4. Only now stop the workers.
         try {
-            if (this.engine != null) {
-                this.engine.close();
+            if (this.executor != null) {
+                this.executor.shutdown();
+                this.executor.awaitTermination(60, TimeUnit.SECONDS);
             }
         } catch (Exception e) {
-            log.error("Error stopping debezium engine", e);
+            log.error("Error stopping executor", e);
+        }
+
+        // 5. Nobody can write or acknowledge anything registered so far: abandon
+        //    it so the next engine in this process starts from a quiescent FIFO.
+        int abandoned = DebeziumOffsetManagement.reset();
+        if (abandoned > 0) {
+            log.warn("stop(): {} handed-off batch(es) were still unacknowledged when the worker "
+                    + "pool terminated and have been abandoned. Their offsets were never "
+                    + "committed, so the next start redelivers them from the last committed "
+                    + "position.", abandoned);
         }
 
         Metrics.stop();
+        return abandoned;
+    }
+
+    /**
+     * Waits, bounded by {@link #stopDrainTimeoutMs}, for the still-running pool
+     * to write and acknowledge everything handed off before the engine was
+     * closed. A timeout is logged and tolerated: whatever remains is abandoned
+     * by {@link #stop()} and redelivered on the next start. Skipped when there
+     * is no pool (single-threaded mode) or it is already shut down.
+     */
+    private void drainBeforeStop() {
+        if (this.executor == null || this.executor.isShutdown()) {
+            return;
+        }
+        long deadline = System.currentTimeMillis() + stopDrainTimeoutMs;
+        while (!isPipelineQuiescent()) {
+            if (System.currentTimeMillis() >= deadline) {
+                log.warn("stop(): {} still pending after {} ms; shutting the pool down anyway. "
+                        + "The pending batches are abandoned and redelivered on the next start.",
+                        describePendingHandoff(), stopDrainTimeoutMs);
+                return;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                log.warn("stop(): interrupted while draining; {} still pending and abandoned.",
+                        describePendingHandoff());
+                return;
+            }
+        }
     }
 
     /**
@@ -644,6 +859,43 @@ public class DebeziumChangeEventCapture {
      *
      * @param props the Debezium properties, mutated in place.
      */
+    /** Debezium's two-digit-year adjuster property. Defaults to true in Debezium. */
+    static final String ENABLE_TIME_ADJUSTER = "enable.time.adjuster";
+
+    /**
+     * Forces {@code enable.time.adjuster=false} unless the user set it
+     * (spec 07.03 §3.4).
+     *
+     * <p>Debezium's default is {@code true}: a two-digit year — and, on the
+     * MySQL connector, any year below 100 — is remapped into 1970–2069, so a
+     * source value of {@code 0001-01-01} arrives as {@code 2001-01-01}. That is
+     * a value-level divergence with row counts intact, and it is not something
+     * the connector may decide on the source's behalf. Only the Ansible
+     * deployment template disabled it; the JAR, the Docker configurations and
+     * every hand-written configuration ran with the adjuster on. A blank value
+     * counts as unset; an explicit value, even {@code true}, is the operator's
+     * call and is left alone.</p>
+     *
+     * @param props the Debezium properties, mutated in place.
+     */
+    static void ensureTimeAdjusterDisabled(Properties props) {
+        if (props == null) {
+            return;
+        }
+        String configured = props.getProperty(ENABLE_TIME_ADJUSTER);
+        if (configured != null && !configured.trim().isEmpty()) {
+            if (Boolean.parseBoolean(configured.trim())) {
+                log.warn("{}={} is set by configuration: Debezium will remap years below 100 into "
+                        + "1970-2069 (e.g. 0001-01-01 -> 2001-01-01), so such source values will not "
+                        + "match in ClickHouse.", ENABLE_TIME_ADJUSTER, configured);
+            }
+            return;
+        }
+        props.setProperty(ENABLE_TIME_ADJUSTER, "false");
+        log.info("{} not set; defaulting it to false so years below 100 are replicated as the source "
+                + "holds them.", ENABLE_TIME_ADJUSTER);
+    }
+
     static void ensureHeartbeatInterval(Properties props) {
         if (props == null) {
             return;
@@ -807,9 +1059,11 @@ public class DebeziumChangeEventCapture {
      * @param lastRecordInBatch True if this is the last record in the batch.
      */
     /**
-     * Maximum time to wait for the writer to become quiescent before a DDL.
+     * How often the DDL drain logs the backlog it is still waiting on. NOT a
+     * timeout: the drain waits as long as the workers are alive (spec 06.01
+     * §3.2). Package-private and mutable for tests.
      */
-    private static final long DDL_DRAIN_TIMEOUT_MS = 60_000;
+    static volatile long ddlDrainWarnIntervalMs = 60_000;
 
     /**
      * Brings the writer to a standstill before a DDL is applied.
@@ -822,11 +1076,20 @@ public class DebeziumChangeEventCapture {
      * Only then is every record that was read under the pre-ALTER schema
      * actually in ClickHouse.</p>
      *
-     * <p>On timeout the DDL attempt is ABORTED with an {@link IllegalStateException}
-     * naming the backlog; the caller raises it as a {@link DDLReplicationException}
-     * and the engine halts. Applying the DDL over pending rows would write them
-     * against the altered table with matching row counts -- silent corruption --
-     * so the loud abort is the only safe outcome.</p>
+     * <p>The wait is bounded by LIVENESS, not by time. A backlog that is slow to
+     * drain -- a worker retrying a transient ClickHouse error such as
+     * {@code TOO_MANY_PARTS}, or a reconnect -- is waited for, with a WARN
+     * naming the backlog every {@link #ddlDrainWarnIntervalMs}; a fixed timeout
+     * used to turn that into a {@link DDLReplicationException}, an engine
+     * restart, the same drain again, and after {@code errors.max.retries} a
+     * permanent stop -- for a condition that would have cleared. The only
+     * backlog that can NEVER drain is one whose worker is dead
+     * ({@link #failIfWorkerDied}); that, and an interrupt (the engine being
+     * closed), abort the attempt with an {@link IllegalStateException} naming
+     * the backlog; the caller raises it as a {@link DDLReplicationException}.
+     * Applying the DDL over pending rows would write them against the altered
+     * table with matching row counts -- silent corruption -- so the DDL is never
+     * applied until the backlog is gone.</p>
      */
     private void drainBeforeDDL() {
         // Single-threaded mode has no worker pool and no async handoff queue:
@@ -840,7 +1103,8 @@ public class DebeziumChangeEventCapture {
             return;
         }
 
-        long deadline = System.currentTimeMillis() + DDL_DRAIN_TIMEOUT_MS;
+        long started = System.currentTimeMillis();
+        long warnAt = started + ddlDrainWarnIntervalMs;
 
         // Step 1: let the pool consume what is already queued -- on EVERY
         // handoff path, not just the legacy queue.
@@ -872,19 +1136,17 @@ public class DebeziumChangeEventCapture {
         // the pool is free to consume it to empty. Step 2 then closes the
         // pause window properly.
         while (!isPipelineQuiescent()) {
-            if (System.currentTimeMillis() >= deadline) {
-                // NOT survivable. Applying the ALTER now writes records that
-                // were read under the PREVIOUS schema against the NEW table --
-                // the rows insert successfully with wrong contents and matching
-                // row counts, which is the exact production failure. Aborting
-                // instead routes into the DDL retry path, which drains again
-                // from a consistent point.
-                throw new IllegalStateException(String.format(
-                        "DDL drain: %s still pending after %d ms. Applying the DDL now would "
-                                + "write records captured under the previous schema against the "
-                                + "altered table, silently corrupting them. Aborting this DDL "
-                                + "attempt so it can be retried.",
-                        describePendingHandoff(), DDL_DRAIN_TIMEOUT_MS));
+            // A backlog whose worker is dead can never drain: abort now, with
+            // the worker's cause. Anything else is waited for -- a slow or
+            // retrying batch is not terminal (spec 06.01 section 3.2 step 1).
+            failIfWorkerDiedDuringDrain();
+            long now = System.currentTimeMillis();
+            if (now >= warnAt) {
+                log.warn("DDL drain: {} still pending after {} ms; waiting. The writers are alive, "
+                        + "so the backlog is a slow or retrying batch, not a dead one; the DDL is "
+                        + "applied only once every pre-DDL row is in ClickHouse.",
+                        describePendingHandoff(), now - started);
+                warnAt = now + ddlDrainWarnIntervalMs;
             }
             try {
                 Thread.sleep(50);
@@ -907,13 +1169,35 @@ public class DebeziumChangeEventCapture {
         // the in-flight increment share one monitor). A batch that slipped
         // onto a thread just before the pause is therefore counted, and waited
         // out here, rather than racing the ALTER.
-        long remaining = Math.max(0, deadline - System.currentTimeMillis());
-        if (!this.executor.awaitQuiescent(remaining)) {
+        //
+        // A batch retrying a transient error stays inside its task body for
+        // the whole retry sequence, so this wait is bounded by liveness too.
+        while (!this.executor.awaitQuiescent(ddlDrainWarnIntervalMs)) {
+            failIfWorkerDiedDuringDrain();
+            if (Thread.currentThread().isInterrupted()) {
+                throw new IllegalStateException(
+                        "DDL drain interrupted while a batch was in flight; aborting this DDL "
+                                + "attempt rather than applying it over in-flight writes.");
+            }
+            log.warn("DDL drain: a batch is still inside a worker after {} ms; waiting for it to "
+                    + "finish before the DDL is applied.", System.currentTimeMillis() - started);
+        }
+    }
+
+    /**
+     * The drain's liveness check: a dead worker makes the pending backlog
+     * undrainable, so the DDL attempt is aborted -- naming the backlog and
+     * carrying the worker's cause -- instead of waiting forever.
+     */
+    private void failIfWorkerDiedDuringDrain() {
+        try {
+            failIfWorkerDied();
+        } catch (RuntimeException dead) {
             throw new IllegalStateException(String.format(
-                    "DDL drain: writer did not become quiescent within %d ms. Applying the "
-                            + "DDL now would interleave it with in-flight writes captured under "
-                            + "the previous schema. Aborting this DDL attempt so it can be "
-                            + "retried.", DDL_DRAIN_TIMEOUT_MS));
+                    "DDL drain: a worker died while %s; that backlog can never drain and applying "
+                            + "the DDL over it would write records captured under the previous "
+                            + "schema against the altered table. Aborting this DDL attempt.",
+                    describePendingHandoff()), dead);
         }
     }
 
@@ -946,7 +1230,35 @@ public class DebeziumChangeEventCapture {
         }
 
         DDLParserService ddlParserService = DDLParserFactory.getParser(props, writer, config, databaseName);
+        // The statement time of this DDL event: an ADD COLUMN ... DEFAULT
+        // CURRENT_TIMESTAMP is back-filled on the source with this instant,
+        // so the translator needs it to emit the same value (Spec 06.04 §3.2.2).
+        ddlParserService.setDdlEventTimestampMs(chStruct.getTs_ms());
         ddlParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
+
+        // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+        // disable.drop.truncate is decided AFTER the parse, on the statement
+        // kind the parser found (DROP TABLE / TRUNCATE TABLE / DROP DATABASE).
+        // It used to be tested BEFORE parseSql computed the flag, so it was
+        // dead: a false flag, every time (spec 06.08 section 3.3).
+        //
+        // Snapshot-phase DDL is EXEMPT: with enable.snapshot.ddl=true Debezium
+        // bootstraps the schema by emitting DROP TABLE IF EXISTS + CREATE TABLE
+        // for every captured table, and that DROP is schema initialisation, not
+        // a source-initiated data drop during streaming. Suppressing it leaves
+        // a stale target table (e.g. a pre-created one with a narrower column
+        // type) that the CREATE ... IF NOT EXISTS then cannot replace, so the
+        // replica no longer matches MySQL. disable.drop.truncate exists to keep
+        // rows the source removed WHILE REPLICATING, not to freeze the snapshot
+        // schema (spec 06.08 section 3.5).
+        if (isDropOrTruncateDisabled(props) && isDropOrTruncate.get() && !isSnapshotDDL(sr)) {
+            lastIgnoredDDL = DDL;
+            // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+            log.warn("Ignoring DROP/TRUNCATE statement because {}=true; ClickHouse keeps the rows the "
+                    + "source removed (a deliberate, operator-chosen divergence). DDL: {}",
+                    SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, DDL);
+            return;
+        }
 
 
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
@@ -1674,24 +1986,49 @@ public class DebeziumChangeEventCapture {
             if (i == list.size() - 1) {
                 lastRecordInBatch = true;
             }
-            // Anchor the version to the SOURCE commit timestamp (source.ts_ms),
-            // not the envelope/processing timestamp. The source timestamp is
-            // identical on every Debezium re-delivery, so a re-delivered DELETE
-            // keeps its original (lower) _version and can no longer out-rank a
-            // later re-INSERT (issue #1346). The emitted formula is unchanged
-            // from 2.8.0 (ts_ms * 1_000_000 + counter), so values stay in the
-            // same numeric domain: upgrades AND downgrades remain safe.
-            long recordTs = ClickHouseStruct.getSourceTsFromChangeEvent(record);
+            boolean ddlRecord = isDDLRecord(record);
 
-            // The intra-second counter is keyed on the source commit clock and its
-            // anchor is global (survives batch boundaries and binlog rotations)
-            // and never moves backward. The log position decides whether this
-            // record is a FIRST delivery - which must rank above everything
-            // already versioned, however old its statement timestamp is - or a
-            // redelivery, which keeps its #1346 redelivery-stable version. See
-            // nextSequenceNumber.
-            long recordSequenceNumber = nextSequenceNumber(recordTs,
-                    ClickHouseStruct.getSourcePositionFromChangeEvent(record));
+            // A value that is neither a Struct nor null is not a row and not a
+            // control record: nothing downstream can represent it, so it is
+            // terminal here, before the version sequence is touched (spec
+            // 01.06 section 3.1).
+            rejectUnrepresentableValue(record);
+
+            // Only rows and DDL enter the version sequence. A control record
+            // (heartbeat, transaction metadata) produces no row and needs no
+            // version; its only timestamp is the envelope ts_ms - the connector's
+            // wall clock - and running it through the sequence pinned the floor
+            // to that clock, which on a lagging source pushed every later row's
+            // version into the connector's second and made the restart window
+            // lag-sized (spec 02.02 section 3.2).
+            VersionAssignment assignment = null;
+            if (ddlRecord || !isControlRecord(record.value())) {
+                // Anchor the version to the SOURCE commit timestamp (source.ts_ms),
+                // not the envelope/processing timestamp. The source timestamp is
+                // identical on every Debezium re-delivery, so a re-delivered DELETE
+                // keeps its original (lower) _version and can no longer out-rank a
+                // later re-INSERT (issue #1346). The emitted formula is unchanged
+                // from 2.8.0 (ts_ms * 1_000_000 + counter), so values stay in the
+                // same numeric domain: upgrades AND downgrades remain safe.
+                long recordTs = ClickHouseStruct.getSourceTsFromChangeEvent(record);
+
+                // The intra-second counter is keyed on the source commit clock and its
+                // anchor is global (survives batch boundaries and binlog rotations)
+                // and never moves backward. The log position decides whether this
+                // record is a FIRST delivery - which must rank above everything
+                // already versioned, however old its statement timestamp is - or a
+                // redelivery, which keeps its #1346 redelivery-stable version. See
+                // nextVersionAssignment. The clamped effectiveTs travels with the
+                // record so the GTID version is floored the same way.
+                assignment = nextVersionAssignment(recordTs,
+                        ClickHouseStruct.getSourcePositionFromChangeEvent(record));
+                if (!ddlRecord) {
+                    // Make the durable horizon cover this version BEFORE the row
+                    // can reach the writers: the next start seeds its floor from
+                    // that horizon, so no row may be in ClickHouse above it.
+                    coverAssignedVersion(assignment.sequenceNumber);
+                }
+            }
 
             // A DDL inside this loop is applied to ClickHouse synchronously,
             // while the rows read before it in the same Debezium batch are
@@ -1704,7 +2041,6 @@ public class DebeziumChangeEventCapture {
             //
             // Hand the pending rows over BEFORE the DDL is applied, so the
             // schema change lands at its true position in the stream.
-            boolean ddlRecord = isDDLRecord(record);
             if (ddlRecord && batch.size() > 0) {
                 // Every handed-off batch MUST carry a terminal marker so the
                 // writer path calls markBatchFinished() and flushes this batch's
@@ -1719,10 +2055,23 @@ public class DebeziumChangeEventCapture {
             }
 
             ClickHouseStruct chStruct = processEveryChangeRecord(props, record,
-                    debeziumRecordParserService, config, recordCommitter, lastRecordInBatch, recordSequenceNumber);
+                    debeziumRecordParserService, config, recordCommitter, lastRecordInBatch, assignment);
             if (chStruct != null) {
                 batch.add(chStruct);
             } else if (!ddlRecord) {
+                // Only a record that carries no row BY CONTRACT (heartbeat,
+                // transaction marker, tombstone) may have its offset committed
+                // as a control record. A row record that produced no struct is
+                // a dropped row; committing its offset would move the durable
+                // position past data that is not in ClickHouse (spec 01.06
+                // section 3.1). processEveryChangeRecord already raises this
+                // case; the guard here is the second line, so no future path
+                // through that method can turn a lost row into a heartbeat.
+                if (!isControlRecord(record.value())) {
+                    throw new RecordReplicationException(String.format(
+                            "Row record produced no ClickHouse row and is not a control record; "
+                                    + "refusing to acknowledge its offset. Record(%s)", record));
+                }
                 lastControlRecord = record;
             }
         }
@@ -1943,6 +2292,9 @@ public class DebeziumChangeEventCapture {
      * @param config                      The connector configuration.
      * @param recordCommitter             The record committer for offset management.
      * @param lastRecordInBatch           True if this is the last record in the batch.
+     * @param assignment                  The version assignment of the record (sequence
+     *                                    number and clamped timestamp); null for a
+     *                                    control record, which produces no row.
      * @return A {@link ClickHouseStruct} representing the processed record,
      *         or null if the record is invalid.
      */
@@ -1952,15 +2304,20 @@ public class DebeziumChangeEventCapture {
                                                       ClickHouseSinkConnectorConfig config,
                                                       DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter,
                                                       boolean lastRecordInBatch,
-                                                      long sequenceNumber) {
+                                                      VersionAssignment assignment) {
         ClickHouseStruct chStruct = null;
 
         try {
             SourceRecord sr = record.value();
-            Struct struct = (Struct) sr.value();
+            rejectUnrepresentableValue(record);
+            Struct struct = sr == null ? null : (Struct) sr.value();
 
             if (struct == null) {
-                log.debug(String.format("STRUCT EMPTY - not a valid CDC record + Record(%s)", record.toString()));
+                // A Debezium tombstone (key, null value; follows a DELETE when
+                // tombstones.on.delete=true): no row by contract, a control
+                // record for offset purposes. See isControlRecord.
+                log.debug(String.format("Tombstone (null value) - no row to write; its offset is "
+                        + "committed once the pipeline is quiescent. Record(%s)", record));
                 return null;
             }
             if (struct.schema() == null) {
@@ -2030,7 +2387,10 @@ public class DebeziumChangeEventCapture {
 
                         ClickHouseStruct ddlStruct = new ClickHouseStruct();
                         ddlStruct.setAdditionalMetaData(sourceObjStruct);
-                        ddlStruct.setSequenceNumber(sequenceNumber);
+                        if (assignment != null) {
+                            ddlStruct.setSequenceNumber(assignment.sequenceNumber);
+                            ddlStruct.setVersionTs(assignment.effectiveTs);
+                        }
                         performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
                     } catch (DDLReplicationException dre) {
                         // Already the loud, terminal type -- do not re-wrap.
@@ -2071,25 +2431,30 @@ public class DebeziumChangeEventCapture {
                                 schemaEx.getMessage(), schemaEx);
                     }
                 }
-                chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
-                // NOTE: do NOT early-return on a null chStruct here. A null is
-                // contract (heartbeat / transaction-boundary record), and the
-                // caller -- handleChangeEventBatch -- must still see this record
-                // so commitControlRecordOffset can acknowledge its offset. That
-                // acknowledgement is the whole of the #1379 fix (#1428): on an
-                // idle source the post-snapshot state rides exclusively on
-                // heartbeats, so returning early here strands
-                // snapshot_completed=false forever and re-snapshots on restart.
+                // A parser that THROWS on a row record is terminal. The generic
+                // catch-all below used to absorb it, return null, and the
+                // caller then acknowledged the record's offset as if it were a
+                // heartbeat: a lost row with the durable position moved past
+                // it (spec 01.06 section 3.1, spec 10.04 section 3.3).
                 try {
-                    if (chStruct != null) {
-                        chStruct.setSequenceNumber(sequenceNumber);
-                        ReplicationStatusSingleton rss = ReplicationStatusSingleton.getInstance();
-                        rss.setReplicationLag(chStruct.getReplicationLag());
-                        rss.setLastRecordTimestamp(chStruct.getTs_ms());
-                        rss.setBinLogFile(chStruct.getFile());
-                        rss.setBinLogPosition(String.valueOf(chStruct.getPos()));
-                        rss.setGtid(String.valueOf(chStruct.getGtid()));
-                    } else if (isControlRecord(sr)) {
+                    chStruct = debeziumRecordParserService.parse(record, recordCommitter, lastRecordInBatch);
+                } catch (Exception parseEx) {
+                    throw new RecordReplicationException(String.format(
+                            "Record could not be converted to a ClickHouse row (parser threw); "
+                                    + "stopping the pipeline rather than acknowledging its offset and "
+                                    + "silently dropping it. Record(%s)", record), parseEx);
+                }
+                // NOTE: do NOT early-return on a null chStruct here. A null is
+                // contract for a CONTROL record (heartbeat / transaction
+                    // boundary), and the caller -- handleChangeEventBatch -- must
+                    // still see this record so commitControlRecordOffset can
+                    // acknowledge its offset. That acknowledgement is the whole of
+                    // the #1379 fix (#1428): on an idle source the post-snapshot
+                    // state rides exclusively on heartbeats, so returning early
+                    // here strands snapshot_completed=false forever and
+                    // re-snapshots on restart.
+                    if (chStruct == null) {
+                        if (isControlRecord(sr)) {
                         // A heartbeat or transaction-metadata record: it has no
                         // `op` field, so parse() returns null BY CONTRACT --
                         // there is no row to write. Its offset is still
@@ -2102,22 +2467,55 @@ public class DebeziumChangeEventCapture {
                                 + "write; its offset is committed once the pipeline is quiescent. "
                                 + "Record({})", record);
                     } else {
-                        // parse() returns null for a record it cannot convert, such as
-                        // a null or non-Struct source value. Setting the sequence number
-                        // before this check raised an NPE that the catch-all below then
-                        // swallowed, so the record was dropped silently while the
-                        // snapshot loop logged the same stack trace per record (#1379).
-                        // This branch is reached only for a record that DOES carry an
-                        // `op` field (or no Struct at all): a real row was dropped, so
-                        // it must stay visible.
-                        log.warn(String.format(
-                                "Record could not be parsed to a ClickHouseStruct - skipping. Record(%s)",
-                                record));
+                        // A record that DOES carry an `op` field is a row. A null
+                        // here means the row was not converted -- a missing
+                        // before/after section, an unknown op, a converter gap.
+                        // It must NOT be skipped: skipping it and letting the
+                        // batch loop acknowledge its offset as a control record
+                        // loses the row permanently (a restart never redelivers
+                        // past a committed offset). Halt instead; the offset
+                        // stays behind the record and a restart redelivers it.
+                        throw new RecordReplicationException(String.format(
+                                "Row record (op present) could not be converted to a ClickHouse "
+                                        + "row; stopping the pipeline rather than acknowledging its "
+                                        + "offset and silently dropping it. Topic(%s) Record(%s)",
+                                sr.topic(), record));
                     }
-                } catch (Exception e) {
-                    log.error("Error retrieving status metrics: Exception" + e.toString());
+                } else {
+                    if (assignment == null) {
+                        // Cannot happen by construction (a parsed row carries an
+                        // `op`, so it is not a control record); if it ever does,
+                        // version the row now rather than hand it off unordered.
+                        // Kept out of the metrics try/catch below so the durable
+                        // horizon is never swallowed.
+                        log.error("Row record reached the writer path without a version "
+                                + "assignment; assigning one now. Record({})", record);
+                        assignment = nextVersionAssignment(
+                                ClickHouseStruct.getSourceTsFromChangeEvent(record),
+                                ClickHouseStruct.getSourcePositionFromChangeEvent(record));
+                        coverAssignedVersion(assignment.sequenceNumber);
+                    }
+                    try {
+                        chStruct.setSequenceNumber(assignment.sequenceNumber);
+                        chStruct.setVersionTs(assignment.effectiveTs);
+                        ReplicationStatusSingleton rss = ReplicationStatusSingleton.getInstance();
+                        rss.setReplicationLag(chStruct.getReplicationLag());
+                        rss.setLastRecordTimestamp(chStruct.getTs_ms());
+                        rss.setBinLogFile(chStruct.getFile());
+                        rss.setBinLogPosition(String.valueOf(chStruct.getPos()));
+                        rss.setGtid(String.valueOf(chStruct.getGtid()));
+                    } catch (Exception e) {
+                        log.error("Error retrieving status metrics: Exception" + e.toString());
+                    }
                 }
             }
+        } catch (RecordReplicationException rre) {
+            // A row that could not be converted must NOT be swallowed and then
+            // acknowledged as a heartbeat by the caller. Re-throw so it leaves
+            // handleBatch and halts the engine with the offset still behind the
+            // record. Kept ahead of the catch-all below, which would otherwise
+            // absorb it (spec 10.04 section 3.3).
+            throw rre;
         } catch (DDLReplicationException dre) {
             // A DDL that could not be applied must NOT be swallowed like a bad
             // DML record. Re-throw so it leaves handleBatch and halts the
@@ -2143,12 +2541,23 @@ public class DebeziumChangeEventCapture {
      * {@code ts_ms}; transaction metadata carries {@code status}/{@code id}/
      * {@code event_count}).
      * <p>
-     * A null or non-Struct value is NOT a control record: a null parse result
-     * for such a record is a dropped record and must stay visible at WARN.
+     * A record with a NULL value is a Debezium tombstone (emitted after a
+     * DELETE when {@code tombstones.on.delete=true}, the MySQL connector
+     * default): it carries no row by contract and is a control record. A
+     * non-null value that is not a Struct is NOT a control record: nothing can
+     * represent it, so a null parse result for such a record is a dropped
+     * record and is terminal ({@link RecordReplicationException}).
      * </p>
      *
+     * <p>This classification decides whether a record that produced no
+     * {@code ClickHouseStruct} may have its offset committed
+     * ({@code commitControlRecordOffset}) or must halt the engine: a
+     * {@code true} here is the ONLY way a no-row record becomes the batch's
+     * {@code lastControlRecord} (spec 01.06 section 3.1).</p>
+     *
      * @param sr the source record; may be null.
-     * @return true if the record is a heartbeat or transaction-metadata record.
+     * @return true if the record is a heartbeat, transaction-metadata record or
+     *         tombstone.
      */
     @VisibleForTesting
     static boolean isControlRecord(SourceRecord sr) {
@@ -2160,12 +2569,40 @@ public class DebeziumChangeEventCapture {
             return true;
         }
         Object value = sr.value();
+        if (value == null) {
+            return true;
+        }
         if (!(value instanceof Struct)) {
             return false;
         }
         Struct struct = (Struct) value;
         return struct.schema() != null
                 && struct.schema().field(SinkRecordColumns.OPERATION) == null;
+    }
+
+    /**
+     * Refuses a record whose value is neither a Struct nor null.
+     * <p>
+     * Every record Debezium emits is either a Struct-valued envelope / control
+     * record or a null-valued tombstone. Anything else cannot be turned into a
+     * row, is not a control record, and previously died in a
+     * {@code ClassCastException} whose message named nothing. It is terminal
+     * (spec 01.06 section 3.1); the offset stays behind it.
+     * </p>
+     *
+     * @param record the change event to check.
+     * @throws RecordReplicationException if the value is non-null and not a Struct.
+     */
+    private static void rejectUnrepresentableValue(ChangeEvent<SourceRecord, SourceRecord> record) {
+        SourceRecord sr = record == null ? null : record.value();
+        Object value = sr == null ? null : sr.value();
+        if (value != null && !(value instanceof Struct)) {
+            throw new RecordReplicationException(String.format(
+                    "Record value is a %s, not a Struct: it is neither a row nor a control record and "
+                            + "cannot be replicated; stopping the pipeline rather than acknowledging "
+                            + "its offset. Topic(%s) Record(%s)",
+                    value.getClass().getName(), sr.topic(), record));
+        }
     }
 
     /**
@@ -2295,17 +2732,78 @@ public class DebeziumChangeEventCapture {
             return true;
         }
 
-        String disableDropAndTruncateProperty = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
-        if (disableDropAndTruncateProperty != null && disableDropAndTruncateProperty.equalsIgnoreCase("true") && isDropOrTruncate.get() == true) {
-            log.debug("Ignoring Drop or Truncate");
+        // A DDL for a table the connector does not capture is not replicated:
+        // its rows never reach the sink, so neither may its schema (spec 06.08
+        // section 3.3). Debezium only pre-filters these when
+        // store.only.captured.tables.ddl=true.
+        String sourceDb = sourceDatabaseName(sr);
+        List<String> tables = getTableNamesFromDDL(sr, DDL);
+        boolean anyCaptured = tables.isEmpty()
+                ? DdlCaptureFilter.isCaptured(sourceDb, null, props)
+                : tables.stream().anyMatch(t -> DdlCaptureFilter.isCaptured(sourceDb, t, props));
+        if (!anyCaptured) {
+            lastIgnoredDDL = DDL;
+            log.info("Ignoring DDL for {}.{}: outside database/table include/exclude lists, so the "
+                    + "table is not replicated. DDL: {}", sourceDb, tables, DDL);
             return true;
         }
+
         if (isSnapshotDDL == true && enableSnapshotDDLPropertyFlag == false) {
             // User wants to ignore snapshot
             return true;
         } else {
             return false;
         }
+    }
+
+    /** Whether {@code disable.drop.truncate} is set. */
+    // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+    private static boolean isDropOrTruncateDisabled(Properties props) {
+        String value = props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
+        return value != null && value.trim().equalsIgnoreCase("true");
+    }
+
+    /**
+     * The SOURCE database of a schema-change record: the key's
+     * {@code databaseName} (MySQL) or {@code db} (PostgreSQL), else the value's
+     * {@code source.db}. Unlike {@link #getDatabaseName} this applies no
+     * destination prefix/suffix/override: capture lists are written against
+     * source names.
+     *
+     * @return the source database, or {@code null} when the record carries none.
+     */
+    private static String sourceDatabaseName(SourceRecord sr) {
+        if (sr == null) {
+            return null;
+        }
+        try {
+            if (sr.key() instanceof Struct) {
+                Struct key = (Struct) sr.key();
+                for (String field : new String[] {"databaseName", "db"}) {
+                    if (key.schema().field(field) != null) {
+                        Object v = key.get(field);
+                        if (v instanceof String && !((String) v).isEmpty()) {
+                            return (String) v;
+                        }
+                    }
+                }
+            }
+            if (sr.value() instanceof Struct) {
+                Struct value = (Struct) sr.value();
+                if (value.schema().field("source") != null && value.get("source") instanceof Struct) {
+                    Struct source = (Struct) value.get("source");
+                    if (source.schema().field("db") != null) {
+                        Object v = source.get("db");
+                        if (v instanceof String && !((String) v).isEmpty()) {
+                            return (String) v;
+                        }
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Could not read the source database of a schema-change record", e);
+        }
+        return null;
     }
 
     /**
@@ -2497,10 +2995,14 @@ public class DebeziumChangeEventCapture {
      *   while it was open, carrying an OLDER timestamp. Versioning it by that older
      *   timestamp put it below the earlier write of the same key whenever the counter
      *   had been reset in between, and ReplacingMergeTree discarded the newer row.</li>
-     *   <li>A redelivery - a position at or below the mark - or a record without a
+     *   <li>A redelivery - a position at or below the mark - or a row without a
      *   position keeps the source-timestamp anchored assignment of issue #1346
      *   unchanged: identical on every redelivery, so a replayed DELETE can never
      *   out-rank the later re-INSERT.</li>
+     *   <li>After a restart the mark is empty and the floor is seeded from the durable
+     *   high-water mark ({@link #seedVersionFloor}), so the events Debezium re-publishes
+     *   are first deliveries to the new run, clamped above everything the previous run
+     *   wrote (spec 02.04 section 3.2).</li>
      * </ul>
      *
      * @param recordTs source timestamp of the record in ms (envelope timestamp for
@@ -2509,24 +3011,67 @@ public class DebeziumChangeEventCapture {
      * @return the {@code _version} to store with the record
      */
     static synchronized long nextSequenceNumber(long recordTs, SourcePosition position) {
+        return nextVersionAssignment(recordTs, position).sequenceNumber;
+    }
+
+    /**
+     * The outcome of one step of the version sequence: the sequence-domain
+     * {@code _version} and the clamped timestamp it was built from. The timestamp
+     * is what the GTID (snowflake) version must use instead of the raw statement
+     * time, so that the commit-order floor governs both paths (spec 02.01 section 3.1).
+     */
+    static final class VersionAssignment {
+        /** {@code effectiveTs * 1_000_000 + counter}. */
+        final long sequenceNumber;
+        /** The record's source timestamp, clamped up to the floor when a first delivery. */
+        final long effectiveTs;
+
+        VersionAssignment(long sequenceNumber, long effectiveTs) {
+            this.sequenceNumber = sequenceNumber;
+            this.effectiveTs = effectiveTs;
+        }
+    }
+
+    /**
+     * Same assignment as {@link #nextSequenceNumber}, also returning the clamped
+     * timestamp. See that method for the rules.
+     *
+     * @param recordTs source timestamp of the record in ms
+     * @param position source-log position of the record, or {@code null}
+     * @return the version and the effective timestamp it encodes
+     */
+    static synchronized VersionAssignment nextVersionAssignment(long recordTs, SourcePosition position) {
         if (sequenceAnchorTs == 0L) {
             sequenceAnchorTs = recordTs;
             sequenceNumber = SEQUENCE_START_INITIAL;
         }
         long effectiveTs = recordTs;
+        // A position is comparable with the mark only inside one binary log. After
+        // a log basename change (log_bin reconfigured, failover to a differently
+        // named log, RESET MASTER with the engine re-created in this JVM) the
+        // prefix order is string order and would have classified the whole new
+        // log as a redelivery ("binlog" < "mysql-bin"), never clamping it. The
+        // first position of a differently named log is a first delivery and
+        // becomes the mark (spec 01.02 section 3.1.1, 02.02 section 3.1).
         if (position != null
                 && (sequenceHighWaterPosition == null
+                        || !position.sameLog(sequenceHighWaterPosition)
                         || position.compareTo(sequenceHighWaterPosition) > 0)) {
+            if (sequenceHighWaterPosition != null && !position.sameLog(sequenceHighWaterPosition)) {
+                log.warn("Binary log identity changed: high-water position {} is replaced by {} from a "
+                        + "differently named log; its first record is versioned as a first delivery",
+                        sequenceHighWaterPosition, position);
+            }
             sequenceHighWaterPosition = position;
             if (effectiveTs < sequenceMaxSourceTs) {
                 effectiveTs = sequenceMaxSourceTs;
             }
         }
         // Every record that can move the anchor (and so reset the counter) also
-        // raises the floor - including records without a position, such as a
-        // heartbeat carrying a newer envelope timestamp. Otherwise the counter
-        // reset would happen without the floor following it, and the next late
-        // first delivery would again be versioned in its own older second.
+        // raises the floor - including rows without a position. Otherwise the
+        // counter reset would happen without the floor following it, and the
+        // next late first delivery would again be versioned in its own older
+        // second. Control records never reach this method (see the dispatch loop).
         if (effectiveTs > sequenceMaxSourceTs) {
             sequenceMaxSourceTs = effectiveTs;
         }
@@ -2537,7 +3082,187 @@ public class DebeziumChangeEventCapture {
         } else {
             sequenceNumber++;
         }
-        return effectiveTs * 1_000_000L + sequenceNumber;
+        return new VersionAssignment(effectiveTs * 1_000_000L + sequenceNumber, effectiveTs);
+    }
+
+    /**
+     * Seeds the version floor from a high-water version at or above everything the
+     * previous run handed to the writers (spec 02.02 section 3.5): the floor becomes
+     * {@code floorDiv(highWaterVersion, 1_000_000) + 1}, the first whole-millisecond
+     * slot whose versions all exceed it. Because a first delivery is versioned at
+     * least {@code floor * 1_000_000 + 1}, every first delivery of this run then ranks
+     * above every version of the previous run ({@code Replication.VersionFloor
+     * .restart_boundary}). The floor is only ever raised; the anchor and counter keep
+     * their start-of-run rules.
+     *
+     * @param highWaterVersion the persisted high-water version; {@code <= 0} is ignored
+     * @return the floor in force after the call
+     */
+    static synchronized long seedVersionFloor(long highWaterVersion) {
+        if (highWaterVersion <= 0) {
+            return sequenceMaxSourceTs;
+        }
+        return raiseVersionFloor(VersionHighWaterMark.sequenceFloor(highWaterVersion));
+    }
+
+    /**
+     * Raises the version floor to {@code floorMs} if it is higher than the floor in
+     * force; never lowers it.
+     *
+     * @param floorMs the floor in ms
+     * @return the floor in force after the call
+     */
+    static synchronized long raiseVersionFloor(long floorMs) {
+        if (floorMs > sequenceMaxSourceTs) {
+            sequenceMaxSourceTs = floorMs;
+        }
+        return sequenceMaxSourceTs;
+    }
+
+    /**
+     * Establishes the durable high-water mark for this connector and seeds the
+     * version floor from it -- or, when no mark exists yet (first start after an
+     * upgrade, a ClickHouse replica that never saw this connector), from
+     * {@code max(_version)} over the target tables (spec 02.02 section 3.5). Never
+     * throws: a mark that cannot be read leaves this start unseeded, logged at
+     * ERROR, and the mark still guards every handoff through {@link #coverAssignedVersion}.
+     *
+     * @param props  the Debezium properties (offset table name, database include list)
+     * @param config the connector configuration
+     */
+    private void seedVersionFloorFromDurableMark(Properties props, ClickHouseSinkConnectorConfig config) {
+        String offsetTable = props.getProperty(
+                ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME.toString());
+        if (offsetTable == null || offsetTable.isBlank()) {
+            log.error("{} is not set; the version floor cannot be persisted or seeded, so a restart "
+                    + "can invert versions across the boundary (spec 02.02 section 3.5)",
+                    ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME);
+            return;
+        }
+        VersionHighWaterMark mark = VersionHighWaterMark.forOffsetTable(this::systemConnection, offsetTable);
+        this.versionHighWaterMark = mark;
+        try {
+            mark.ensureTable();
+            long persisted = mark.load();
+            long now = System.currentTimeMillis();
+            String source = null;
+            long floor = 0L;
+            if (persisted > 0) {
+                long candidate = VersionHighWaterMark.sequenceFloor(persisted);
+                if (VersionHighWaterMark.isPlausibleFloor(candidate, now)) {
+                    floor = seedVersionFloor(persisted);
+                    source = "the persisted high-water version " + persisted;
+                } else {
+                    log.error("The persisted high-water version {} in {} decodes to floor {} ms, which is "
+                            + "not a plausible timestamp; ignoring it", persisted, mark.qualifiedTableName(),
+                            candidate);
+                }
+            }
+            if (source == null) {
+                long scanned = mark.scanTargets(VersionHighWaterMark.targetDatabases(props, config),
+                        com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.VERSION_COLUMN);
+                if (scanned > 0) {
+                    floor = raiseVersionFloor(scanned);
+                    source = "max(" + com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.VERSION_COLUMN + ") over the target tables";
+                }
+            }
+            if (source == null) {
+                log.warn("The version floor is UNSEEDED for this start: no row in {} and nothing usable in "
+                        + "the target tables. Rows versioned in this run may rank below rows of a "
+                        + "previous run for the lag at start (spec 02.06 section 6.2); the mark is "
+                        + "written from the first handoff on.", mark.qualifiedTableName());
+            } else {
+                log.info("Version floor seeded to {} ms from {}", floor, source);
+            }
+        } catch (Exception e) {
+            log.error("Could not establish the version high-water mark in {}; this start is unseeded and "
+                    + "the first handoff will retry the mark before any row is written",
+                    mark.qualifiedTableName(), e);
+        }
+    }
+
+    private Connection systemConnection() {
+        return this.writer != null ? this.writer.getConnection() : this.systemDbConnection;
+    }
+
+    /** Debezium's snapshot mode property; unset means the default {@code initial}. */
+    static final String SNAPSHOT_MODE = "snapshot.mode";
+
+    /**
+     * Snapshot modes that read NO data rows. Every other mode ({@code initial},
+     * {@code initial_only}, {@code always}, {@code when_needed}, and
+     * {@code configuration_based} / {@code custom} when they snapshot data) writes
+     * snapshot rows versioned on the sequence path.
+     */
+    static final Set<String> NO_DATA_SNAPSHOT_MODES = new HashSet<>(Arrays.asList(
+            "never", "no_data", "schema_only", "recovery", "schema_only_recovery"));
+
+    /**
+     * Whether {@code snowflake.id=false} is combined with a snapshot mode that reads
+     * data (spec 02.06 section 3.2.1). With the raw GTID transaction number as the
+     * version (order 1e6-1e10) and snapshot rows on the sequence path (order 1.7e18),
+     * every streamed change of a snapshotted key loses to the snapshot row,
+     * permanently.
+     *
+     * @param props  the Debezium properties ({@code snapshot.mode}).
+     * @param config the connector configuration ({@code snowflake.id}).
+     * @return true if the combination is present.
+     */
+    static boolean rawGtidVersioningWithDataSnapshot(Properties props, ClickHouseSinkConnectorConfig config) {
+        if (config == null || config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())) {
+            return false;
+        }
+        String mode = props == null ? null : props.getProperty(SNAPSHOT_MODE);
+        if (mode == null || mode.trim().isEmpty()) {
+            return true; // Debezium's default is `initial`: a data snapshot.
+        }
+        return !NO_DATA_SNAPSHOT_MODES.contains(mode.trim().toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /**
+     * Logs {@link #rawGtidVersioningWithDataSnapshot} at ERROR, naming both keys, the
+     * consequence and the remediation. Never throws: under Invariant I11 an existing
+     * configuration must keep starting after an upgrade.
+     *
+     * @param props  the Debezium properties.
+     * @param config the connector configuration.
+     */
+    static void warnIfRawGtidVersioningWithDataSnapshot(Properties props, ClickHouseSinkConnectorConfig config) {
+        if (!rawGtidVersioningWithDataSnapshot(props, config)) {
+            return;
+        }
+        String mode = props == null ? null : props.getProperty(SNAPSHOT_MODE);
+        log.error("{}=false with {}={} versions streamed GTID rows with the raw transaction number, "
+                + "which ranks BELOW every snapshot row's sequence version: after the snapshot, every "
+                + "UPDATE and DELETE of a snapshotted key is discarded by ReplacingMergeTree, with row "
+                + "counts still matching. Set {}=true (the default) or use a no-data snapshot mode ({}). "
+                + "Continuing because an existing configuration must keep starting (spec 02.06 "
+                + "section 3.2.1).",
+                ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID, SNAPSHOT_MODE,
+                mode == null ? "<unset, default initial>" : mode,
+                ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID, NO_DATA_SNAPSHOT_MODES);
+    }
+
+    /**
+     * Makes the durable horizon cover a version just assigned to a row, before the
+     * row is handed to the writers. Without a mark (unit tests driving the batch
+     * handler directly) this is logged once and skipped.
+     *
+     * @param sequenceVersion the sequence-domain version assigned to the row
+     * @throws IllegalStateException if the horizon could not be persisted; the batch
+     *                               fails and the engine stops rather than hand off
+     *                               a row the next start could not order above
+     */
+    private void coverAssignedVersion(long sequenceVersion) {
+        VersionHighWaterMark mark = this.versionHighWaterMark;
+        if (mark == null) {
+            if (UNSEEDED_WARNED.compareAndSet(false, true)) {
+                log.warn("Versioning rows without a durable high-water mark (no setup ran); a restart "
+                        + "of this process will not be seeded (spec 02.02 section 3.5)");
+            }
+            return;
+        }
+        mark.cover(sequenceVersion);
     }
 
     /**
@@ -2559,7 +3284,9 @@ public class DebeziumChangeEventCapture {
         for (ClickHouseStruct chStruct : chStructs) {
             long recordTs = chStruct.getTs_ms() > 0
                     ? chStruct.getTs_ms() : chStruct.getDebezium_ts_ms();
-            chStruct.setSequenceNumber(nextSequenceNumber(recordTs, chStruct.getSourcePosition()));
+            VersionAssignment assignment = nextVersionAssignment(recordTs, chStruct.getSourcePosition());
+            chStruct.setSequenceNumber(assignment.sequenceNumber);
+            chStruct.setVersionTs(assignment.effectiveTs);
         }
     }
 }
