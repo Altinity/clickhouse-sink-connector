@@ -26,6 +26,7 @@ In `PreparedStatementExecutor.executePreparedStatement`, the UPDATE branch on a
 `CollapsingMergeTree` target performs, in this order:
 1. `insertPreparedStatement(before image, beforeSection = true)` → `sign = -1`;
 2. `ps.addBatch()` — the cancel row is staged;
+2a. `ps.clearParameters()` — the cancel row's bind state is cleared;
 3. `insertPreparedStatement(after image, beforeSection = false)` → `sign = +1`;
 4. `ps.addBatch()` — the live row is staged.
 
@@ -35,6 +36,17 @@ by the after image before the only `addBatch()`, so no `-1` row ever reached
 ClickHouse, and because the grouping stage appended every UPDATE twice (spec
 04.04 §3.1) each UPDATE produced two `+1` rows — the table grew by two live
 rows per update and nothing ever collapsed.
+
+Step 2a is required for the same reason the ReplacingMergeTree relocation
+tombstone clears its bind state (spec 05.02, spec 07.07 §3.2.2): the V2
+ClickHouse JDBC driver retains the parameters bound for a row across
+`addBatch()`. The after image at step 3 binds `sign = +1` and its own columns,
+but any parameter it does not rebind — a column absent from the after image —
+would otherwise silently inherit the cancel row's value, including `sign = -1`,
+turning the live row into a second cancel row so the UPDATE never lands.
+Clearing the bind state between the two rows makes the after image depend only
+on what it explicitly binds, exactly as the general per-row path and the
+ReplacingMergeTree tombstone path already do.
 
 ---
 
@@ -46,7 +58,7 @@ rows per update and nothing ever collapsed.
 ## 5. Verification Criteria
 - `ReplaySafetyTest.testEngineIdentityDoesNotDependOnStringInterning()` — the engine test that gates the sign binding compares the enum constant.
 - `ReplaySafetyTest.testAutoCreatedEnginesAreReplaceNotAdditive()` — auto-create never emits `CollapsingMergeTree`.
-- `PreparedStatementExecutorCollapsingSignTest.testUpdateStagesCancelRowThenLiveRow()` — §3.1: a recording `PreparedStatement` observes the sign bound at each `addBatch()` for one UPDATE as `[-1, +1]`, the first row carrying the before-image values and the second the after-image values.
+- `PreparedStatementExecutorCollapsingSignTest.testUpdateStagesCancelRowThenLiveRow()` — §3.1: a recording `PreparedStatement` observes the sign bound at each `addBatch()` for one UPDATE as `[-1, +1]`, the first row carrying the before-image values and the second the after-image values; the recording statement also clears its parameter map on `addBatch()`, so the after image's `+1` is bound independently of the cancel row (step 2a).
 - `PreparedStatementExecutorCollapsingSignTest.testInsertStagesOneLiveRow()`, `PreparedStatementExecutorCollapsingSignTest.testDeleteStagesOneCancelRow()` — an INSERT stages exactly `[+1]`, a DELETE exactly `[-1]`.
 - `PreparedStatementFieldMapperEngineColumnTest.testNonStandardSignColumnIsBoundOrRefused()` — `CollapsingMergeTree(sgn)`: the sign is bound at `sgn`'s placeholder; a table sign column with no placeholder is refused.
 - Verification: an integration test asserting that `-1` rows collapse against their `+1` counterparts on a `CollapsingMergeTree` target is not yet covered by an automated test (gap).
