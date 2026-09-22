@@ -252,7 +252,17 @@ public class PreparedStatementFieldMapper {
                 // matching row counts. This used to be gated behind
                 // non.default.value=true, whose default was false; the source
                 // value is the only value there is to bind (Spec 07.07).
-                Object value = struct.getWithoutDefault(colName);
+                //
+                // The field is resolved against the record's schema, exact
+                // name first and then case-insensitively, because membership
+                // was decided case-insensitively: reading the ClickHouse name
+                // verbatim (case-sensitive in Kafka Connect) threw for a table
+                // hand-created as `ID` for source column `id`, and the batch
+                // stalled forever on a "stale cache" that was never stale
+                // (Spec 04.03 section 3.4). A name that matches no field under
+                // either comparison still throws DataException below.
+                Field sourceField = resolveSourceField(struct, colName);
+                Object value = struct.getWithoutDefault(sourceField == null ? colName : sourceField.name());
                 if (value == null) {
                     ps.setNull(index, Types.OTHER);
                     continue;
@@ -305,7 +315,8 @@ public class PreparedStatementFieldMapper {
             }
 
             // Get the field information for the column and handle its data type.
-            Field f = getFieldByColumnName(fields, colName);
+            // Non-null here: a null resolution threw DataException above.
+            Field f = resolveSourceField(struct, colName);
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
             // Same rule as above: the stored value, not the schema default.
@@ -326,10 +337,27 @@ public class PreparedStatementFieldMapper {
                 schemaName = f.schema().valueSchema().type().name();
             }
             // This will throw an exception, unknown data type.
-            ClickHouseDataType chDataType = getClickHouseDataType(colName, columnNameToDataTypeMap);
-            if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType, serverTimeZone)) {
-                log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
-                        schemaName, colName));
+            ClickHouseColumn column = parseColumn(colName, columnNameToDataTypeMap);
+            ClickHouseDataType chDataType = column == null ? null : column.getDataType();
+            // ClickHouse parses a DateTime literal in the COLUMN's declared
+            // zone, so instants must be rendered in it (Spec 07.03 section 3.1.3).
+            ZoneId columnTimeZone = ClickHouseDataTypeMapper.columnTimeZoneOf(column);
+            // A value outside the ClickHouse type's range fails the batch unless
+            // clamp.out.of.range=true; either way the column is named (Spec
+            // 07.03 section 3.3).
+            DebeziumConverter.RangePolicy rangePolicy = DebeziumConverter.RangePolicy.of(config,
+                    databaseName + "." + tableName + "." + colName);
+            if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType,
+                    serverTimeZone, columnTimeZone, rangePolicy)) {
+                // An unhandled type leaves the parameter unbound. Logging and
+                // continuing (the previous behaviour) let the V2 JDBC driver
+                // -- whose addBatch() does not clear its bound values -- write
+                // the PREVIOUS row's value at this index for every row after
+                // the first, silently (Spec 07.07 section 3.2.2).
+                throw new DataException(String.format(
+                        "No ClickHouse binding for type(%s), name(%s) of column %s in Database(%s), Table(%s); "
+                                + "the parameter would be left unbound. Failing the batch instead.",
+                        type, schemaName, colName, databaseName, tableName));
             }
         }
 
@@ -726,24 +754,27 @@ public class PreparedStatementFieldMapper {
     }
 
     /**
-     * Retrieves a field from a list of fields based on the column name. The search
-     * is case-insensitive.
+     * Resolves the record field a ClickHouse column is bound from: an exact
+     * name match against the record's schema first, then a case-insensitive
+     * one. The schema (not the modified-field list, which omits NULL-valued
+     * fields) is consulted so a NULL source value in a case-mismatched column
+     * is still bound as NULL (Spec 04.03 section 3.4).
      *
-     * @param fields The list of fields to search through.
-     * @param colName The column name to search for.
-     * @return The matching field, or null if no field matches the column name.
+     * @param struct  the record image being bound
+     * @param colName the ClickHouse column name
+     * @return the matching field, or null when no field matches under either comparison
      */
-    private Field getFieldByColumnName(List<Field> fields, String colName) {
-        // ToDo: Change it to a map so that multiple loops are avoided
-        Field matchingField = null;
-        for (Field f : fields) {
-            // Case-insensitive comparison of field name with column name
+    static Field resolveSourceField(Struct struct, String colName) {
+        Field exact = struct.schema().field(colName);
+        if (exact != null) {
+            return exact;
+        }
+        for (Field f : struct.schema().fields()) {
             if (f.name().equalsIgnoreCase(colName)) {
-                matchingField = f;
-                break;
+                return f;
             }
         }
-        return matchingField;
+        return null;
     }
 
     /**
@@ -757,24 +788,31 @@ public class PreparedStatementFieldMapper {
      */
     public ClickHouseDataType getClickHouseDataType(String columnName,
                                                     Map<String, String> columnNameToDataTypeMap) {
+        ClickHouseColumn column = parseColumn(columnName, columnNameToDataTypeMap);
+        return column == null ? null : column.getDataType();
+    }
 
-        ClickHouseDataType chDataType = null;
+    /**
+     * Parses the column's declared ClickHouse type from the map into a
+     * {@link ClickHouseColumn}, which carries both the data type and the
+     * declared time zone.
+     *
+     * @param columnName The name of the column.
+     * @param columnNameToDataTypeMap A map of column names to declared types.
+     * @return The parsed column, or null if the type is unknown or unparseable.
+     */
+    private ClickHouseColumn parseColumn(String columnName,
+                                         Map<String, String> columnNameToDataTypeMap) {
         try {
             // Retrieve the column data type from the map
             String columnDataType = columnNameToDataTypeMap.get(columnName);
             // Create a ClickHouse column object based on the column name and type
-            ClickHouseColumn column = ClickHouseColumn.of(columnName, columnDataType);
-
-            // Retrieve the data type from the ClickHouse column if available
-            if (column != null) {
-                chDataType = column.getDataType();
-            }
+            return ClickHouseColumn.of(columnName, columnDataType);
         } catch (Exception e) {
             // Log any error related to unknown data types
             log.debug("Unknown data type for column: " + columnName, e);
+            return null;
         }
-
-        return chDataType;
     }
 }
 

@@ -114,8 +114,16 @@ public class TableMetaDataWriter {
 
         HashMap<String, Object> result = new HashMap<String, Object>();
         for (Field f: fields) {
-            if (f != null && s.get(f) != null) {
-                result.put(f.name(), s.get(f));
+            if (f == null) {
+                continue;
+            }
+            // The STORED value, never the Connect-schema default: Struct.get
+            // substitutes schema.defaultValue() (the MySQL column DEFAULT via
+            // Debezium) for a source NULL, so the raw copy would show 'new'
+            // where the source holds NULL (Spec 07.07 section 3.2.2 rule 3).
+            Object value = s.getWithoutDefault(f.name());
+            if (value != null) {
+                result.put(f.name(), value);
             }
         }
 

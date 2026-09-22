@@ -5,6 +5,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.ConnectorType;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
+import com.google.common.annotations.VisibleForTesting;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 import lombok.Getter;
 import lombok.Setter;
@@ -298,14 +299,27 @@ public class DbWriter extends BaseDbWriter {
      *
      * @return true if new ReplacingMergeTree is supported, false otherwise.
      */
-    private boolean isNewReplacingMergeTreeEngine() {
-        try {
-            String clickHouseVersion = dbMetadata.getClickHouseVersion(this.conn);
-            return dbMetadata.checkIfNewReplacingMergeTree(clickHouseVersion);
-        } catch (Exception e) {
-            log.error("Error retrieving ClickHouse version");
-            return false;
-        }
+    private boolean isNewReplacingMergeTreeEngine() throws SQLException {
+        return isNewReplacingMergeTreeEngine(dbMetadata, this.conn);
+    }
+
+    /**
+     * Whether the server supports {@code ReplacingMergeTree(ver, is_deleted)}.
+     *
+     * @param dbMetadata the metadata reader
+     * @param conn       the connection to read the version with
+     * @return true when the server version supports the is_deleted argument
+     * @throws SQLException when the version cannot be read
+     */
+    @VisibleForTesting
+    static boolean isNewReplacingMergeTreeEngine(DBMetadata dbMetadata, Connection conn) throws SQLException {
+        // A failure to read the version PROPAGATES. Returning false here
+        // decided the engine on a transient metadata failure and created the
+        // table with the legacy ReplacingMergeTree(_version) + _sign layout
+        // permanently (Spec 08.05 section 3.1.1); the caller's initialisation
+        // fails loudly instead and the batch is retried against a rebuilt writer.
+        String clickHouseVersion = dbMetadata.getClickHouseVersion(conn);
+        return dbMetadata.checkIfNewReplacingMergeTree(clickHouseVersion);
     }
 
     /**
