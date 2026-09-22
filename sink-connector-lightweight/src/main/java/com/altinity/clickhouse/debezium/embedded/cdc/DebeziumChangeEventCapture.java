@@ -184,6 +184,20 @@ public class DebeziumChangeEventCapture {
     Connection systemDbConnection;
 
     /**
+     * Durable high-water mark of the versions handed to the writers (spec 02.02
+     * section 3.5, 09.03 section 3.4). Created in {@link #setupDebeziumEventCapture}
+     * once the offset database exists; every version the dispatch loop assigns to a
+     * row is covered by it BEFORE the row is handed off, and a new run seeds its
+     * version floor from it. Null only in unit tests that drive
+     * {@link #handleChangeEventBatch} directly, which is logged once.
+     */
+    VersionHighWaterMark versionHighWaterMark;
+
+    /** One WARN per JVM when rows are versioned without a durable high-water mark. */
+    private static final java.util.concurrent.atomic.AtomicBoolean UNSEEDED_WARNED =
+            new java.util.concurrent.atomic.AtomicBoolean();
+
+    /**
      * Connection to the replication history database.
      */
     Connection replicationHistoryDbConnection;
@@ -275,6 +289,12 @@ public class DebeziumChangeEventCapture {
      *   the redelivery-stable, source-timestamp anchored assignment of issue #1346 is
      *   kept unchanged.</li>
      * </ul>
+     *
+     * <p>The mark is comparable only within one binary log: a positioned record from a
+     * differently named log ({@link SourcePosition#sameLog} false -- the basename
+     * changed) is a first delivery and replaces the mark (spec 01.02 section 3.1.1).
+     * It is reset by a process restart; a new run starts with an empty mark and a
+     * floor seeded from the durable high-water mark (spec 02.02 section 3.5).</p>
      */
     public static SourcePosition sequenceHighWaterPosition = null;
 
@@ -282,10 +302,17 @@ public class DebeziumChangeEventCapture {
      * Highest effective timestamp (ms) versioned in this run - the floor applied to the
      * timestamp component of every first delivery.
      *
-     * <p>It is raised by every record that goes through the sequence, positioned or not
-     * (a heartbeat carrying a newer envelope timestamp moves the anchor and resets the
-     * counter exactly like a newer commit does, so it must move the floor too), and it
-     * is applied only to first deliveries - redeliveries keep their own timestamp.</p>
+     * <p>It is raised by every record that goes through the sequence - row or DDL,
+     * positioned or not (a record that moves the anchor and resets the counter must
+     * move the floor with it) - and it is applied only to first deliveries; redeliveries
+     * keep their own timestamp. Control records (heartbeats, transaction metadata) do
+     * NOT go through the sequence: they carry the connector's wall clock, not a source
+     * time, and produce no row, so letting them in pinned the floor to the connector
+     * clock and made the restart window lag-sized (spec 02.02 section 3.2).</p>
+     *
+     * <p>It is seeded at engine start from the durable high-water mark
+     * ({@link #seedVersionFloor}), so the first deliveries of a new run rank above
+     * every version the previous run assigned (spec 02.02 section 3.5).</p>
      *
      * <p>On MySQL {@code source.ts_ms} is the timestamp of the STATEMENT that produced
      * the row event, not of the commit. A transaction that stays open while others
@@ -328,6 +355,10 @@ public class DebeziumChangeEventCapture {
         } catch (SQLException e) {
             log.error("Error creating Debezium storage database", e);
         }
+        // The version floor must be seeded BEFORE the engine delivers its first
+        // record: every first delivery of this run must rank above every version
+        // the previous run handed off (spec 02.02 section 3.5).
+        seedVersionFloorFromDurableMark(props, config);
         try {
             DBMetadata dbMetadata = new DBMetadata(config);
             String clickHouseVersion = dbMetadata.getClickHouseVersion(systemDbConnection);
@@ -618,6 +649,12 @@ public class DebeziumChangeEventCapture {
         BinlogRowImagePreflight.check(props);
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
+
+        // snowflake.id=false versions GTID rows with the raw transaction number,
+        // which ranks below every snapshot row; say so loudly before the engine
+        // starts (spec 02.06 section 3.2.1). Not refused: an existing config must
+        // keep starting after an upgrade (Invariant I11).
+        warnIfRawGtidVersioningWithDataSnapshot(props, config);
 
         // Initialize PostgreSQL-specific configuration from properties.
         this.pgConfig = new PostgresConnectorConfig(props);
@@ -1945,29 +1982,49 @@ public class DebeziumChangeEventCapture {
             if (i == list.size() - 1) {
                 lastRecordInBatch = true;
             }
+            boolean ddlRecord = isDDLRecord(record);
+
             // A value that is neither a Struct nor null is not a row and not a
             // control record: nothing downstream can represent it, so it is
             // terminal here, before the version sequence is touched (spec
             // 01.06 section 3.1).
             rejectUnrepresentableValue(record);
-            // Anchor the version to the SOURCE commit timestamp (source.ts_ms),
-            // not the envelope/processing timestamp. The source timestamp is
-            // identical on every Debezium re-delivery, so a re-delivered DELETE
-            // keeps its original (lower) _version and can no longer out-rank a
-            // later re-INSERT (issue #1346). The emitted formula is unchanged
-            // from 2.8.0 (ts_ms * 1_000_000 + counter), so values stay in the
-            // same numeric domain: upgrades AND downgrades remain safe.
-            long recordTs = ClickHouseStruct.getSourceTsFromChangeEvent(record);
 
-            // The intra-second counter is keyed on the source commit clock and its
-            // anchor is global (survives batch boundaries and binlog rotations)
-            // and never moves backward. The log position decides whether this
-            // record is a FIRST delivery - which must rank above everything
-            // already versioned, however old its statement timestamp is - or a
-            // redelivery, which keeps its #1346 redelivery-stable version. See
-            // nextSequenceNumber.
-            long recordSequenceNumber = nextSequenceNumber(recordTs,
-                    ClickHouseStruct.getSourcePositionFromChangeEvent(record));
+            // Only rows and DDL enter the version sequence. A control record
+            // (heartbeat, transaction metadata) produces no row and needs no
+            // version; its only timestamp is the envelope ts_ms - the connector's
+            // wall clock - and running it through the sequence pinned the floor
+            // to that clock, which on a lagging source pushed every later row's
+            // version into the connector's second and made the restart window
+            // lag-sized (spec 02.02 section 3.2).
+            VersionAssignment assignment = null;
+            if (ddlRecord || !isControlRecord(record.value())) {
+                // Anchor the version to the SOURCE commit timestamp (source.ts_ms),
+                // not the envelope/processing timestamp. The source timestamp is
+                // identical on every Debezium re-delivery, so a re-delivered DELETE
+                // keeps its original (lower) _version and can no longer out-rank a
+                // later re-INSERT (issue #1346). The emitted formula is unchanged
+                // from 2.8.0 (ts_ms * 1_000_000 + counter), so values stay in the
+                // same numeric domain: upgrades AND downgrades remain safe.
+                long recordTs = ClickHouseStruct.getSourceTsFromChangeEvent(record);
+
+                // The intra-second counter is keyed on the source commit clock and its
+                // anchor is global (survives batch boundaries and binlog rotations)
+                // and never moves backward. The log position decides whether this
+                // record is a FIRST delivery - which must rank above everything
+                // already versioned, however old its statement timestamp is - or a
+                // redelivery, which keeps its #1346 redelivery-stable version. See
+                // nextVersionAssignment. The clamped effectiveTs travels with the
+                // record so the GTID version is floored the same way.
+                assignment = nextVersionAssignment(recordTs,
+                        ClickHouseStruct.getSourcePositionFromChangeEvent(record));
+                if (!ddlRecord) {
+                    // Make the durable horizon cover this version BEFORE the row
+                    // can reach the writers: the next start seeds its floor from
+                    // that horizon, so no row may be in ClickHouse above it.
+                    coverAssignedVersion(assignment.sequenceNumber);
+                }
+            }
 
             // A DDL inside this loop is applied to ClickHouse synchronously,
             // while the rows read before it in the same Debezium batch are
@@ -1980,7 +2037,6 @@ public class DebeziumChangeEventCapture {
             //
             // Hand the pending rows over BEFORE the DDL is applied, so the
             // schema change lands at its true position in the stream.
-            boolean ddlRecord = isDDLRecord(record);
             if (ddlRecord && batch.size() > 0) {
                 // Every handed-off batch MUST carry a terminal marker so the
                 // writer path calls markBatchFinished() and flushes this batch's
@@ -1995,7 +2051,7 @@ public class DebeziumChangeEventCapture {
             }
 
             ClickHouseStruct chStruct = processEveryChangeRecord(props, record,
-                    debeziumRecordParserService, config, recordCommitter, lastRecordInBatch, recordSequenceNumber);
+                    debeziumRecordParserService, config, recordCommitter, lastRecordInBatch, assignment);
             if (chStruct != null) {
                 batch.add(chStruct);
             } else if (!ddlRecord) {
@@ -2232,6 +2288,9 @@ public class DebeziumChangeEventCapture {
      * @param config                      The connector configuration.
      * @param recordCommitter             The record committer for offset management.
      * @param lastRecordInBatch           True if this is the last record in the batch.
+     * @param assignment                  The version assignment of the record (sequence
+     *                                    number and clamped timestamp); null for a
+     *                                    control record, which produces no row.
      * @return A {@link ClickHouseStruct} representing the processed record,
      *         or null if the record is invalid.
      */
@@ -2241,7 +2300,7 @@ public class DebeziumChangeEventCapture {
                                                       ClickHouseSinkConnectorConfig config,
                                                       DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> recordCommitter,
                                                       boolean lastRecordInBatch,
-                                                      long sequenceNumber) {
+                                                      VersionAssignment assignment) {
         ClickHouseStruct chStruct = null;
 
         try {
@@ -2324,7 +2383,10 @@ public class DebeziumChangeEventCapture {
 
                         ClickHouseStruct ddlStruct = new ClickHouseStruct();
                         ddlStruct.setAdditionalMetaData(sourceObjStruct);
-                        ddlStruct.setSequenceNumber(sequenceNumber);
+                        if (assignment != null) {
+                            ddlStruct.setSequenceNumber(assignment.sequenceNumber);
+                            ddlStruct.setVersionTs(assignment.effectiveTs);
+                        }
                         performDDLOperation(DDL, props, sr, config, recordCommitter, record, lastRecordInBatch, ddlStruct);
                     } catch (DDLReplicationException dre) {
                         // Already the loud, terminal type -- do not re-wrap.
@@ -2380,15 +2442,15 @@ public class DebeziumChangeEventCapture {
                 }
                 // NOTE: do NOT early-return on a null chStruct here. A null is
                 // contract for a CONTROL record (heartbeat / transaction
-                // boundary), and the caller -- handleChangeEventBatch -- must
-                // still see this record so commitControlRecordOffset can
-                // acknowledge its offset. That acknowledgement is the whole of
-                // the #1379 fix (#1428): on an idle source the post-snapshot
-                // state rides exclusively on heartbeats, so returning early
-                // here strands snapshot_completed=false forever and
-                // re-snapshots on restart.
-                if (chStruct == null) {
-                    if (isControlRecord(sr)) {
+                    // boundary), and the caller -- handleChangeEventBatch -- must
+                    // still see this record so commitControlRecordOffset can
+                    // acknowledge its offset. That acknowledgement is the whole of
+                    // the #1379 fix (#1428): on an idle source the post-snapshot
+                    // state rides exclusively on heartbeats, so returning early
+                    // here strands snapshot_completed=false forever and
+                    // re-snapshots on restart.
+                    if (chStruct == null) {
+                        if (isControlRecord(sr)) {
                         // A heartbeat or transaction-metadata record: it has no
                         // `op` field, so parse() returns null BY CONTRACT --
                         // there is no row to write. Its offset is still
@@ -2416,8 +2478,22 @@ public class DebeziumChangeEventCapture {
                                 sr.topic(), record));
                     }
                 } else {
+                    if (assignment == null) {
+                        // Cannot happen by construction (a parsed row carries an
+                        // `op`, so it is not a control record); if it ever does,
+                        // version the row now rather than hand it off unordered.
+                        // Kept out of the metrics try/catch below so the durable
+                        // horizon is never swallowed.
+                        log.error("Row record reached the writer path without a version "
+                                + "assignment; assigning one now. Record({})", record);
+                        assignment = nextVersionAssignment(
+                                ClickHouseStruct.getSourceTsFromChangeEvent(record),
+                                ClickHouseStruct.getSourcePositionFromChangeEvent(record));
+                        coverAssignedVersion(assignment.sequenceNumber);
+                    }
                     try {
-                        chStruct.setSequenceNumber(sequenceNumber);
+                        chStruct.setSequenceNumber(assignment.sequenceNumber);
+                        chStruct.setVersionTs(assignment.effectiveTs);
                         ReplicationStatusSingleton rss = ReplicationStatusSingleton.getInstance();
                         rss.setReplicationLag(chStruct.getReplicationLag());
                         rss.setLastRecordTimestamp(chStruct.getTs_ms());
@@ -2915,10 +2991,14 @@ public class DebeziumChangeEventCapture {
      *   while it was open, carrying an OLDER timestamp. Versioning it by that older
      *   timestamp put it below the earlier write of the same key whenever the counter
      *   had been reset in between, and ReplacingMergeTree discarded the newer row.</li>
-     *   <li>A redelivery - a position at or below the mark - or a record without a
+     *   <li>A redelivery - a position at or below the mark - or a row without a
      *   position keeps the source-timestamp anchored assignment of issue #1346
      *   unchanged: identical on every redelivery, so a replayed DELETE can never
      *   out-rank the later re-INSERT.</li>
+     *   <li>After a restart the mark is empty and the floor is seeded from the durable
+     *   high-water mark ({@link #seedVersionFloor}), so the events Debezium re-publishes
+     *   are first deliveries to the new run, clamped above everything the previous run
+     *   wrote (spec 02.04 section 3.2).</li>
      * </ul>
      *
      * @param recordTs source timestamp of the record in ms (envelope timestamp for
@@ -2927,24 +3007,67 @@ public class DebeziumChangeEventCapture {
      * @return the {@code _version} to store with the record
      */
     static synchronized long nextSequenceNumber(long recordTs, SourcePosition position) {
+        return nextVersionAssignment(recordTs, position).sequenceNumber;
+    }
+
+    /**
+     * The outcome of one step of the version sequence: the sequence-domain
+     * {@code _version} and the clamped timestamp it was built from. The timestamp
+     * is what the GTID (snowflake) version must use instead of the raw statement
+     * time, so that the commit-order floor governs both paths (spec 02.01 section 3.1).
+     */
+    static final class VersionAssignment {
+        /** {@code effectiveTs * 1_000_000 + counter}. */
+        final long sequenceNumber;
+        /** The record's source timestamp, clamped up to the floor when a first delivery. */
+        final long effectiveTs;
+
+        VersionAssignment(long sequenceNumber, long effectiveTs) {
+            this.sequenceNumber = sequenceNumber;
+            this.effectiveTs = effectiveTs;
+        }
+    }
+
+    /**
+     * Same assignment as {@link #nextSequenceNumber}, also returning the clamped
+     * timestamp. See that method for the rules.
+     *
+     * @param recordTs source timestamp of the record in ms
+     * @param position source-log position of the record, or {@code null}
+     * @return the version and the effective timestamp it encodes
+     */
+    static synchronized VersionAssignment nextVersionAssignment(long recordTs, SourcePosition position) {
         if (sequenceAnchorTs == 0L) {
             sequenceAnchorTs = recordTs;
             sequenceNumber = SEQUENCE_START_INITIAL;
         }
         long effectiveTs = recordTs;
+        // A position is comparable with the mark only inside one binary log. After
+        // a log basename change (log_bin reconfigured, failover to a differently
+        // named log, RESET MASTER with the engine re-created in this JVM) the
+        // prefix order is string order and would have classified the whole new
+        // log as a redelivery ("binlog" < "mysql-bin"), never clamping it. The
+        // first position of a differently named log is a first delivery and
+        // becomes the mark (spec 01.02 section 3.1.1, 02.02 section 3.1).
         if (position != null
                 && (sequenceHighWaterPosition == null
+                        || !position.sameLog(sequenceHighWaterPosition)
                         || position.compareTo(sequenceHighWaterPosition) > 0)) {
+            if (sequenceHighWaterPosition != null && !position.sameLog(sequenceHighWaterPosition)) {
+                log.warn("Binary log identity changed: high-water position {} is replaced by {} from a "
+                        + "differently named log; its first record is versioned as a first delivery",
+                        sequenceHighWaterPosition, position);
+            }
             sequenceHighWaterPosition = position;
             if (effectiveTs < sequenceMaxSourceTs) {
                 effectiveTs = sequenceMaxSourceTs;
             }
         }
         // Every record that can move the anchor (and so reset the counter) also
-        // raises the floor - including records without a position, such as a
-        // heartbeat carrying a newer envelope timestamp. Otherwise the counter
-        // reset would happen without the floor following it, and the next late
-        // first delivery would again be versioned in its own older second.
+        // raises the floor - including rows without a position. Otherwise the
+        // counter reset would happen without the floor following it, and the
+        // next late first delivery would again be versioned in its own older
+        // second. Control records never reach this method (see the dispatch loop).
         if (effectiveTs > sequenceMaxSourceTs) {
             sequenceMaxSourceTs = effectiveTs;
         }
@@ -2955,7 +3078,187 @@ public class DebeziumChangeEventCapture {
         } else {
             sequenceNumber++;
         }
-        return effectiveTs * 1_000_000L + sequenceNumber;
+        return new VersionAssignment(effectiveTs * 1_000_000L + sequenceNumber, effectiveTs);
+    }
+
+    /**
+     * Seeds the version floor from a high-water version at or above everything the
+     * previous run handed to the writers (spec 02.02 section 3.5): the floor becomes
+     * {@code floorDiv(highWaterVersion, 1_000_000) + 1}, the first whole-millisecond
+     * slot whose versions all exceed it. Because a first delivery is versioned at
+     * least {@code floor * 1_000_000 + 1}, every first delivery of this run then ranks
+     * above every version of the previous run ({@code Replication.VersionFloor
+     * .restart_boundary}). The floor is only ever raised; the anchor and counter keep
+     * their start-of-run rules.
+     *
+     * @param highWaterVersion the persisted high-water version; {@code <= 0} is ignored
+     * @return the floor in force after the call
+     */
+    static synchronized long seedVersionFloor(long highWaterVersion) {
+        if (highWaterVersion <= 0) {
+            return sequenceMaxSourceTs;
+        }
+        return raiseVersionFloor(VersionHighWaterMark.sequenceFloor(highWaterVersion));
+    }
+
+    /**
+     * Raises the version floor to {@code floorMs} if it is higher than the floor in
+     * force; never lowers it.
+     *
+     * @param floorMs the floor in ms
+     * @return the floor in force after the call
+     */
+    static synchronized long raiseVersionFloor(long floorMs) {
+        if (floorMs > sequenceMaxSourceTs) {
+            sequenceMaxSourceTs = floorMs;
+        }
+        return sequenceMaxSourceTs;
+    }
+
+    /**
+     * Establishes the durable high-water mark for this connector and seeds the
+     * version floor from it -- or, when no mark exists yet (first start after an
+     * upgrade, a ClickHouse replica that never saw this connector), from
+     * {@code max(_version)} over the target tables (spec 02.02 section 3.5). Never
+     * throws: a mark that cannot be read leaves this start unseeded, logged at
+     * ERROR, and the mark still guards every handoff through {@link #coverAssignedVersion}.
+     *
+     * @param props  the Debezium properties (offset table name, database include list)
+     * @param config the connector configuration
+     */
+    private void seedVersionFloorFromDurableMark(Properties props, ClickHouseSinkConnectorConfig config) {
+        String offsetTable = props.getProperty(
+                ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME.toString());
+        if (offsetTable == null || offsetTable.isBlank()) {
+            log.error("{} is not set; the version floor cannot be persisted or seeded, so a restart "
+                    + "can invert versions across the boundary (spec 02.02 section 3.5)",
+                    ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME);
+            return;
+        }
+        VersionHighWaterMark mark = VersionHighWaterMark.forOffsetTable(this::systemConnection, offsetTable);
+        this.versionHighWaterMark = mark;
+        try {
+            mark.ensureTable();
+            long persisted = mark.load();
+            long now = System.currentTimeMillis();
+            String source = null;
+            long floor = 0L;
+            if (persisted > 0) {
+                long candidate = VersionHighWaterMark.sequenceFloor(persisted);
+                if (VersionHighWaterMark.isPlausibleFloor(candidate, now)) {
+                    floor = seedVersionFloor(persisted);
+                    source = "the persisted high-water version " + persisted;
+                } else {
+                    log.error("The persisted high-water version {} in {} decodes to floor {} ms, which is "
+                            + "not a plausible timestamp; ignoring it", persisted, mark.qualifiedTableName(),
+                            candidate);
+                }
+            }
+            if (source == null) {
+                long scanned = mark.scanTargets(VersionHighWaterMark.targetDatabases(props, config),
+                        com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.VERSION_COLUMN);
+                if (scanned > 0) {
+                    floor = raiseVersionFloor(scanned);
+                    source = "max(" + com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.VERSION_COLUMN + ") over the target tables";
+                }
+            }
+            if (source == null) {
+                log.warn("The version floor is UNSEEDED for this start: no row in {} and nothing usable in "
+                        + "the target tables. Rows versioned in this run may rank below rows of a "
+                        + "previous run for the lag at start (spec 02.06 section 6.2); the mark is "
+                        + "written from the first handoff on.", mark.qualifiedTableName());
+            } else {
+                log.info("Version floor seeded to {} ms from {}", floor, source);
+            }
+        } catch (Exception e) {
+            log.error("Could not establish the version high-water mark in {}; this start is unseeded and "
+                    + "the first handoff will retry the mark before any row is written",
+                    mark.qualifiedTableName(), e);
+        }
+    }
+
+    private Connection systemConnection() {
+        return this.writer != null ? this.writer.getConnection() : this.systemDbConnection;
+    }
+
+    /** Debezium's snapshot mode property; unset means the default {@code initial}. */
+    static final String SNAPSHOT_MODE = "snapshot.mode";
+
+    /**
+     * Snapshot modes that read NO data rows. Every other mode ({@code initial},
+     * {@code initial_only}, {@code always}, {@code when_needed}, and
+     * {@code configuration_based} / {@code custom} when they snapshot data) writes
+     * snapshot rows versioned on the sequence path.
+     */
+    static final Set<String> NO_DATA_SNAPSHOT_MODES = new HashSet<>(Arrays.asList(
+            "never", "no_data", "schema_only", "recovery", "schema_only_recovery"));
+
+    /**
+     * Whether {@code snowflake.id=false} is combined with a snapshot mode that reads
+     * data (spec 02.06 section 3.2.1). With the raw GTID transaction number as the
+     * version (order 1e6-1e10) and snapshot rows on the sequence path (order 1.7e18),
+     * every streamed change of a snapshotted key loses to the snapshot row,
+     * permanently.
+     *
+     * @param props  the Debezium properties ({@code snapshot.mode}).
+     * @param config the connector configuration ({@code snowflake.id}).
+     * @return true if the combination is present.
+     */
+    static boolean rawGtidVersioningWithDataSnapshot(Properties props, ClickHouseSinkConnectorConfig config) {
+        if (config == null || config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())) {
+            return false;
+        }
+        String mode = props == null ? null : props.getProperty(SNAPSHOT_MODE);
+        if (mode == null || mode.trim().isEmpty()) {
+            return true; // Debezium's default is `initial`: a data snapshot.
+        }
+        return !NO_DATA_SNAPSHOT_MODES.contains(mode.trim().toLowerCase(java.util.Locale.ROOT));
+    }
+
+    /**
+     * Logs {@link #rawGtidVersioningWithDataSnapshot} at ERROR, naming both keys, the
+     * consequence and the remediation. Never throws: under Invariant I11 an existing
+     * configuration must keep starting after an upgrade.
+     *
+     * @param props  the Debezium properties.
+     * @param config the connector configuration.
+     */
+    static void warnIfRawGtidVersioningWithDataSnapshot(Properties props, ClickHouseSinkConnectorConfig config) {
+        if (!rawGtidVersioningWithDataSnapshot(props, config)) {
+            return;
+        }
+        String mode = props == null ? null : props.getProperty(SNAPSHOT_MODE);
+        log.error("{}=false with {}={} versions streamed GTID rows with the raw transaction number, "
+                + "which ranks BELOW every snapshot row's sequence version: after the snapshot, every "
+                + "UPDATE and DELETE of a snapshotted key is discarded by ReplacingMergeTree, with row "
+                + "counts still matching. Set {}=true (the default) or use a no-data snapshot mode ({}). "
+                + "Continuing because an existing configuration must keep starting (spec 02.06 "
+                + "section 3.2.1).",
+                ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID, SNAPSHOT_MODE,
+                mode == null ? "<unset, default initial>" : mode,
+                ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID, NO_DATA_SNAPSHOT_MODES);
+    }
+
+    /**
+     * Makes the durable horizon cover a version just assigned to a row, before the
+     * row is handed to the writers. Without a mark (unit tests driving the batch
+     * handler directly) this is logged once and skipped.
+     *
+     * @param sequenceVersion the sequence-domain version assigned to the row
+     * @throws IllegalStateException if the horizon could not be persisted; the batch
+     *                               fails and the engine stops rather than hand off
+     *                               a row the next start could not order above
+     */
+    private void coverAssignedVersion(long sequenceVersion) {
+        VersionHighWaterMark mark = this.versionHighWaterMark;
+        if (mark == null) {
+            if (UNSEEDED_WARNED.compareAndSet(false, true)) {
+                log.warn("Versioning rows without a durable high-water mark (no setup ran); a restart "
+                        + "of this process will not be seeded (spec 02.02 section 3.5)");
+            }
+            return;
+        }
+        mark.cover(sequenceVersion);
     }
 
     /**
@@ -2977,7 +3280,9 @@ public class DebeziumChangeEventCapture {
         for (ClickHouseStruct chStruct : chStructs) {
             long recordTs = chStruct.getTs_ms() > 0
                     ? chStruct.getTs_ms() : chStruct.getDebezium_ts_ms();
-            chStruct.setSequenceNumber(nextSequenceNumber(recordTs, chStruct.getSourcePosition()));
+            VersionAssignment assignment = nextVersionAssignment(recordTs, chStruct.getSourcePosition());
+            chStruct.setSequenceNumber(assignment.sequenceNumber);
+            chStruct.setVersionTs(assignment.effectiveTs);
         }
     }
 }

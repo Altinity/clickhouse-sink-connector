@@ -48,5 +48,5 @@ When `replication.history.enable = true`:
 - `GroupInsertQueryHistoryMultiRowTest.standardModeGroupsEachUpdateOnce()`, `GroupInsertQueryHistoryMultiRowTest.standardModeGroupsOneUpdateUnderOneTemplateOnce()` — §3.1: an UPDATE contributes exactly one entry to its template's record list (20 UPDATEs → 20 grouped records, one UPDATE → one template with a list of size 1).
 - `GroupInsertQueryHistoryMultiRowTest.historyModeStillEmitsOneRowPerUpdate()`, `GroupInsertQueryHistoryMultiRowTest.recordsAfterTheFirstUpdateSurviveInHistoryMode()`.
 - `PreparedStatementExecutorCollapsingSignTest.testUpdateStagesCancelRowThenLiveRow()` — §3.1 CollapsingMergeTree: the sign values staged by `addBatch()` for one UPDATE are `[-1, +1]`, the `-1` row carrying the before image.
-- `ReplicationHistoryHandlerTest` — history-column population.
+- `ReplicationHistoryHandlerTest` — history-column population; `ReplicationHistoryHandlerTest.compositePrimaryKeyClosesOnlyTheMatchingRow()` — the previous history row is closed by every primary-key column, not only the first (spec 02.01 §3.5 a).
 - `BinLogHistoryIT` — end to end history mode.

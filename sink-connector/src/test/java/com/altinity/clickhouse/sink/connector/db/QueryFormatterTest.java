@@ -382,4 +382,41 @@ public class QueryFormatterTest {
         Assert.assertTrue("Column index map should be empty",
                 columnIndexMap.isEmpty());
     }
+
+    /**
+     * Spec 02.01 section 3.5 (a): the history UPDATE and DELETE queries take the
+     * whole primary key (column -> value, in key order) and close the previous
+     * row with a conjunction over every column, each value formatted for its type.
+     */
+    @Test
+    public void updateAndDeleteQueriesUseEveryPrimaryKeyColumn() {
+        QueryFormatter qf = new QueryFormatter();
+        Map<String, String> columns = new HashMap<>();
+        columns.put("tenant", "String");
+        columns.put("item_id", "Int32");
+        columns.put("qty", "Int32");
+        columns.put(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN, "DateTime");
+        columns.put(ClickHouseDbConstants.DELETED_TIME_COLUMN, "DateTime");
+        columns.put(ClickHouseDbConstants.OPERATION_COLUMN, "String");
+        columns.put(ClickHouseDbConstants.VERSION_COLUMN, "Int64");
+        columns.put(ClickHouseDbConstants.IS_DELETED_COLUMN, "Int8");
+        java.util.LinkedHashMap<String, Object> primaryKey = new java.util.LinkedHashMap<>();
+        primaryKey.put("tenant", "acme");
+        primaryKey.put("item_id", 99);
+
+        String update = qf.getInsertQueryForUpdate("h.items", columns, primaryKey, "2100-01-01 00:00:00",
+                "2025-03-01 10:30:00", 5L, ClickHouseConverter.CDC_OPERATION.UPDATE, "UTC").left;
+        String delete = qf.getInsertQueryForDelete("h.items", columns, primaryKey, "2100-01-01 00:00:00",
+                "2025-03-01 10:30:00", 5L, "UTC").left;
+
+        String predicate = "WHERE `tenant`='acme' AND `item_id`=99 AND `_valid_to`";
+        Assert.assertEquals(2, update.split(java.util.regex.Pattern.quote(predicate), -1).length - 1);
+        Assert.assertEquals(2, delete.split(java.util.regex.Pattern.quote(predicate), -1).length - 1);
+        Assert.assertEquals("the single-column form is the one-entry case of the same predicate",
+                qf.getInsertQueryForDelete("h.items", columns, "item_id", 99, "2100-01-01 00:00:00",
+                        "2025-03-01 10:30:00", 5L, "UTC").left,
+                qf.getInsertQueryForDelete("h.items", columns, new java.util.LinkedHashMap<>(
+                        java.util.Collections.singletonMap("item_id", (Object) 99)), "2100-01-01 00:00:00",
+                        "2025-03-01 10:30:00", 5L, "UTC").left);
+    }
 }

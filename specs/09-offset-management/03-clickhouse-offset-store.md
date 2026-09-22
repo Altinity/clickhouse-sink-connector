@@ -12,6 +12,7 @@ Specifies how replication offsets are persisted in a ClickHouse table (conventio
 - **Connector-side reader**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumOffsetStorage.java` — `getDebeziumLatestRecordTimestamp(Properties, Connection)`, `getDebeziumStorageStatusQuery(Properties, Connection)` / `offsetValueQuery(Properties)` / `isKeeperMapOffsetTable(Properties)`, plus `updateBinLogInformation` / `updateLsnInformation` / `deleteOffsetStorageRow` for the REST API's position edits (§3.4).
 - **REST position edits**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/api/DebeziumEmbeddedRestApi.java` — `POST /binlog`, `POST /lsn` (§3.4).
 - **Database bootstrap**: `DebeziumJdbcStorageOperations.createDatabaseForDebeziumStorage(Connection, Properties)` in `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumJdbcStorageOperations.java` creates the database that hosts the table; Debezium creates the table itself from the configured DDL.
+- **Version high-water mark (connector-owned, same database)**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionHighWaterMark.java` — table `replica_version_high_water` (§3.4), created and written by the connector, read by `DebeziumChangeEventCapture.seedVersionFloor` at engine start (spec 02.02 §3.5).
 
 ---
 
@@ -46,6 +47,27 @@ The KeeperMap example uses `ENGINE = KeeperMap('/asc_offsets201', 10) PRIMARY KE
 ### 3.3 Writes
 Debezium's `JdbcOffsetBackingStore` inserts a new row per flush (`offset_key`, `offset_val`, `record_insert_ts`, `record_insert_seq`, and an `id`); the connector never writes the table directly except through the REST API position-edit path (`deleteOffsetStorageRow` followed by Debezium's next flush). Under ReplacingMergeTree the newest row per `offset_key` supersedes earlier checkpoints on merge / `FINAL`.
 
+### 3.4 The version high-water table (`replica_version_high_water`)
+Next to the offset table, in the same database, the connector keeps the durable
+version horizon of spec 02.02 §3.5. It is connector-owned code, not
+configuration:
+```sql
+CREATE TABLE IF NOT EXISTS <offset database>.replica_version_high_water
+(
+    `offset_table`       String,
+    `high_water_version` UInt64,
+    `updated_at`         DateTime64(3) DEFAULT now64(3)
+)
+ENGINE = ReplacingMergeTree(high_water_version)
+ORDER BY offset_table
+```
+- **Key**: the fully qualified offset table name (`offset.storage.jdbc.table.name`), so several connectors sharing one offset database keep separate marks. No new configuration key exists; the database is the one parsed from `offset.storage.jdbc.table.name` by `DebeziumJdbcStorageOperations`.
+- **Write** (`VersionHighWaterMark.cover`, dispatch thread, before handoff): `INSERT INTO ... (offset_table, high_water_version) VALUES (?, ?)` with the new horizon, only when an assigned version exceeds the persisted horizon — at most once per ~5 s of source time under load, never on an idle source. The insert is synchronous and retried; if it cannot succeed the batch fails and the engine stops (spec 02.02 §3.5 (1)).
+- **Read** (`VersionHighWaterMark.load`, engine start): `SELECT max(high_water_version) FROM ... WHERE offset_table = ?` — the maximum, not `FINAL`, so unmerged rows are harmless. An absent row reads as `0` and triggers the target scan of spec 02.02 §3.5 (2).
+- **Meaning of the value**: an upper bound on every `_version` this connector has ever handed to the writers (sequence-domain value, spec 02.01 §3.2), not the last version written. It may legitimately exceed every stored `_version` by up to the horizon head-room.
+- **Not replicated**: the table is created with a plain `ReplacingMergeTree`. If the connector is pointed at another ClickHouse replica the mark is absent there and the first start falls back to the target scan (the targets are replicated); the table is then created on that replica.
+- **Downgrade**: older releases neither read nor write the table (spec 02.06 §3.2 item 5).
+
 ---
 
 ### 3.4 REST position edits are validated (`POST /binlog`, `POST /lsn`)
@@ -66,11 +88,14 @@ The `sink-connector-client` CLI performs no validation of its own; the server si
 
 ## 4. Invariants Preserved
 - **Crash Recovery Parity**: because offsets are flushed only after rows are acknowledged as written (specs 09.01, 09.02), restarting resumes from the last durably acknowledged position; anything after it is redelivered (spec 02.04).
-- **Invariant I11**: the table format and Debezium version are unchanged across 2.8.0 → 2.11.0 (spec 02.06 §3.2).
+- **Invariant I2 across a restart**: the high-water table gives the new run its version floor (§3.4, spec 02.02 §3.5).
+- **Invariant I11**: the offset table format and Debezium version are unchanged across 2.8.0 → 2.11.0 (spec 02.06 §3.2); the high-water table is additive.
 
 ---
 
 ## 5. Verification Criteria
+- `VersionHighWaterMarkTest.tableIsCreatedNextToTheOffsetTable()` — the DDL of §3.4 is issued against the offset database, keyed by the offset table name.
+- `VersionHighWaterMarkTest.horizonIsWrittenAheadOfHandoffAndReusedUntilExceeded()`, `VersionHighWaterMarkTest.loadReadsTheHighestPersistedMark()`, `VersionHighWaterMarkTest.horizonWriteFailureIsLoud()` — write, read and failure behaviour of §3.4.
 - `OffsetTableDdlSortKeyTest.everyOffsetTableDdlSortsByOffsetKey()`, `OffsetTableDdlSortKeyTest.offsetDdlKeepsRequiredColumns()` — every shipped offset DDL keys by `offset_key` and keeps the required columns.
 - `OffsetStorageDatabaseNameTest` — database/table name resolution for the store.
 - `DebeziumJdbcStorageOperationsTest.createDatabaseForDebeziumStorage_throwsOnMissingOffsetTableName()`, `DebeziumJdbcStorageOperationsTest.getLatestRecordTimestamp_returnsSentinelWhenQueryHasNoResult()`.

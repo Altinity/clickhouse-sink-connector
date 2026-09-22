@@ -97,6 +97,12 @@ engine that cannot represent a source row must say so, not skip it. The engine's
 completion callback retries the start up to `MAX_RETRIES` and then terminates
 (spec 10.04).
 
+**Version sequence.** A control record is never run through the version
+sequence: `handleChangeEventBatch` calls `nextSequenceNumber` only for DDL and
+row records, so a heartbeat's envelope `ts_ms` — the connector's wall clock —
+cannot raise the floor, move the anchor, reset the counter or advance the
+high-water position (spec 02.02 §3.2; `Replication.VersionFloor.dispatch_control_preserves_state`).
+
 ### 3.2 Safety — quiescence gate on the control-record commit
 `commitControlRecordOffset` commits the control offset ONLY when both:
 1. `handedOffRows == false` — this batch handed no rows to the writers; and
@@ -154,3 +160,4 @@ committing a control offset past rows not yet in ClickHouse (issue #1285).
 - `ControlRecordLogLevelTest.transactionMetadataIsLoggedAtDebug` — a transaction-boundary record (no `op`, non-heartbeat topic) is DEBUG, not WARN.
 - `ControlRecordLogLevelTest.unparseableRowRecordIsTerminal` — INVERTED from `unparseableRowRecordStillWarns`: a record WITH `op` for which `parse` returns null is terminal, not a WARN skip.
 - `UnparseableRecordProgressIT` — end to end: the control records a real pipeline produces (transaction markers, heartbeats) are skipped at DEBUG and rows keep landing; its former "WARN row-record skip" leg is removed because that outcome is now a defect.
+- `DebeziumChangeEventCaptureTest.heartbeatAndTransactionMetadataDoNotTouchTheSequenceState` — a heartbeat-only and a transaction-metadata-only batch leave the version-sequence statics unchanged (§3.1, "Version sequence").

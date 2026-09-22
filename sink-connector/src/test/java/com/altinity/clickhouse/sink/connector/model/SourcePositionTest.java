@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.model;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -194,5 +195,33 @@ public class SourcePositionTest {
         ClickHouseStruct pg = new ClickHouseStruct();
         pg.setLsn(99L);
         assertEquals(SourcePosition.ofLsn(99L), pg.getSourcePosition());
+    }
+
+    /**
+     * Positions are comparable only within one binary log. Across a basename
+     * change (log_bin reconfigured, a failover to a differently named log, or a
+     * RESET MASTER with the engine re-created in the same JVM) the prefix order
+     * is just string order, so the version sequence must not use compareTo to
+     * tell a first delivery from a redelivery; sameLog says whether it may
+     * (spec 01.02 section 3.1.1).
+     */
+    @Test
+    @DisplayName("sameLog is equality of the file prefix: true across a rotation, false across a basename change")
+    public void sameLogIsByFilePrefix() {
+        SourcePosition oldLog = SourcePosition.ofBinlog("mysql-bin.000123", 900L, 0);
+        SourcePosition rotated = SourcePosition.ofBinlog("mysql-bin.000124", 4L, 0);
+        SourcePosition renamed = SourcePosition.ofBinlog("binlog.000001", 4L, 0);
+
+        assertTrue(oldLog.sameLog(rotated), "a rotation keeps the basename: the same log");
+        assertTrue(rotated.sameLog(oldLog));
+        assertTrue(oldLog.sameLog(oldLog));
+        assertFalse(oldLog.sameLog(renamed), "a different basename is a different log");
+        assertFalse(renamed.sameLog(oldLog));
+        assertTrue(renamed.compareTo(oldLog) < 0,
+                "sanity: by string order the new log ranks BELOW the old one, which is why compareTo "
+                        + "alone would call the whole new log a redelivery");
+
+        assertTrue(SourcePosition.ofLsn(10L).sameLog(SourcePosition.ofLsn(20L)),
+                "PostgreSQL positions have no file: always the same log");
     }
 }

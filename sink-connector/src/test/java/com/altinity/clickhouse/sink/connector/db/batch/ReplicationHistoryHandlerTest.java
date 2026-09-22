@@ -343,4 +343,68 @@ public class ReplicationHistoryHandlerTest {
 
         System.out.println("UpdateQueryParams from real record: " + params);
     }
+
+    private static int occurrences(String haystack, String needle) {
+        int count = 0;
+        for (int i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + needle.length())) {
+            count++;
+        }
+        return count;
+    }
+
+    /**
+     * Spec 02.01 section 3.5 (a): a table whose primary key has several columns
+     * must close exactly the history row of that composite key. Closing on the
+     * first column alone ({@code getPrimaryKey().get(0)}) closed every row that
+     * shared it -- every line of an order when one line changed.
+     */
+    @Test
+    public void compositePrimaryKeyClosesOnlyTheMatchingRow() {
+        Schema lineSchema = SchemaBuilder.struct()
+                .field("order_id", Schema.INT32_SCHEMA)
+                .field("line_no", Schema.INT32_SCHEMA)
+                .field("qty", Schema.INT32_SCHEMA)
+                .build();
+        Struct after = new Struct(lineSchema).put("order_id", 42).put("line_no", 7).put("qty", 3);
+        Schema pkSchema = SchemaBuilder.struct()
+                .field("order_id", Schema.INT32_SCHEMA)
+                .field("line_no", Schema.INT32_SCHEMA)
+                .build();
+        Struct pk = new Struct(pkSchema).put("order_id", 42).put("line_no", 7);
+        ClickHouseStruct record = new ClickHouseStruct(0L, "orders-topic", pk, 0, System.currentTimeMillis(),
+                null, after, null, ClickHouseConverter.CDC_OPERATION.UPDATE);
+        record.setTs_ms(1709290200000L);
+        record.setTsSec(1709290200L);
+        record.setGtid(12345L);
+
+        Map<String, String> columns = new LinkedHashMap<>();
+        columns.put("order_id", "Int32");
+        columns.put("line_no", "Int32");
+        columns.put("qty", "Int32");
+        columns.put(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN, "DateTime");
+        columns.put(ClickHouseDbConstants.DELETED_TIME_COLUMN, "DateTime");
+        columns.put(ClickHouseDbConstants.OPERATION_COLUMN, "String");
+        columns.put(ClickHouseDbConstants.VERSION_COLUMN, "Int64");
+        columns.put(ClickHouseDbConstants.IS_DELETED_COLUMN, "Int8");
+        List<Field> fields = new ArrayList<>();
+        fields.add(new Field("order_id", 0, Schema.INT32_SCHEMA));
+        fields.add(new Field("line_no", 1, Schema.INT32_SCHEMA));
+        fields.add(new Field("qty", 2, Schema.INT32_SCHEMA));
+
+        ReplicationHistoryHandler handler = new ReplicationHistoryHandler(queryFormatter, null);
+        ReplicationHistoryHandler.UpdateQueryParams params = handler.buildUpdateQueryParams(record);
+        Assert.assertTrue("the params carry every primary-key column: " + params,
+                params.toString().contains("order_id") && params.toString().contains("line_no"));
+
+        String update = handler.generateUpdateQuery("order_lines_history", fields, columns, params).left;
+        String fullPredicate = "WHERE `order_id`=42 AND `line_no`=7 AND `_valid_to`";
+        Assert.assertEquals("both table-reading SELECTs of the UPDATE query close exactly the composite key: "
+                + update, 2, occurrences(update, fullPredicate));
+        Assert.assertFalse("the first-column-only predicate would close every line of order 42: " + update,
+                update.contains("WHERE `order_id`=42 AND `_valid_to`"));
+
+        String delete = handler.generateDeleteQuery("order_lines_history", columns, params).left;
+        Assert.assertEquals("both SELECTs of the DELETE query close exactly the composite key: " + delete,
+                2, occurrences(delete, fullPredicate));
+    }
 }

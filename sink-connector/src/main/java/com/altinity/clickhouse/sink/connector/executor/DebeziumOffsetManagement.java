@@ -367,33 +367,45 @@ public class DebeziumOffsetManagement {
      * <p>That ordering is the safety property, and it is load-bearing in a way
      * that is easy to break by accident. It depends on the version being
      * anchored to the SOURCE commit timestamp ({@code source.ts_ms}), which is
-     * identical on every re-delivery. Anchoring it to any processing-side or
-     * wall-clock value instead would give the replayed copy a HIGHER version,
-     * so it would supersede the correct row -- silently, with row counts still
-     * matching. See the anchoring comment in
-     * {@code DebeziumChangeEventCapture#handleBatch} before changing either
-     * the sequence seeding or the timestamp source.</p>
+     * identical on every re-delivery, so an IN-RUN redelivery (an engine retry
+     * without a restart) is recognised by its log position, keeps its own
+     * source-timestamp anchored version and loses to the stored copy.</p>
      *
-     * <p><b>KNOWN DEFECT, not fixed here.</b> The guarantee above holds only
-     * for the SAME event re-delivered. It does not generalise, because the
-     * encoding {@code sourceTsMs * 1_000_000 + sequence} leaves six decimal
-     * digits for the sequence while the seeds are ten digits, so the addition
-     * carries into the timestamp field and acts as a ~1000&nbsp;ms shift.
-     * A genuinely NEWER event arriving just after a resume can then rank BELOW
-     * an older pre-restart event and be discarded:</p>
+     * <p>Across a RESTART the outcome described above is no longer decided by
+     * the counter seed (spec 02.04 section 3.2): the version floor is seeded at
+     * engine start from the durable high-water mark (spec 02.02 section 3.5),
+     * so every replayed copy is a first delivery to the new run and is versioned
+     * ABOVE the copy already stored. That is safe because a replay is the
+     * contiguous suffix of the binlog from the committed offset, delivered in
+     * log order: for every key the last replayed event is the same event that
+     * was last in the original run, so {@code FINAL} resolves to the same row
+     * image whichever copy wins, and every genuinely new event after the suffix
+     * ranks above both. What is load-bearing, and easy to break by accident, is
+     * therefore that the new run's versions are totally ordered above the old
+     * run's and in log order among themselves. See the anchoring comment in
+     * {@code DebeziumChangeEventCapture#handleChangeEventBatch} and
+     * {@code seedVersionFloor} before changing the sequence seeding, the floor
+     * seeding or the timestamp source.</p>
+     *
+     * <p><b>Inherited arithmetic.</b> The encoding
+     * {@code sourceTsMs * 1_000_000 + sequence} leaves six decimal digits for
+     * the sequence while the seeds are ten digits, so the addition carries into
+     * the timestamp field and acts as a ~1000&nbsp;ms shift. With the floor
+     * starting at 0 after a restart, a genuinely NEWER event arriving just after
+     * a resume ranked BELOW an older pre-restart event and was discarded:</p>
      *
      * <pre>
      *   older, pre-restart  (T)     -&gt; T*1e6 + 1_000_000_000 = 1787635798000000000
      *   newer, post-restart (T+1ms) -&gt; (T+1)*1e6 + 500_000_000 = 1787635797501000000
      * </pre>
      *
-     * <p>The {@code diff &gt; 1} second reset does not cover it: a 1&nbsp;ms
-     * advance yields {@code diff == 0}, so the 500m seed still applies. Fixing
-     * it means widening the multiplier (or shrinking the seeds) so the
-     * sequence cannot carry -- a change to the version scheme itself, which
-     * needs its own review and a migration story for existing versions.
-     * {@code ReplaySafetyTest} pins the arithmetic so the gap cannot be
-     * mistaken for intended behaviour.</p>
+     * <p>The arithmetic is kept as it is (it is the 2.8.0 contract; changing it
+     * would break upgrade and downgrade against every stored version). The
+     * inversion is closed by what feeds it: the floor is seeded at engine start
+     * from the durable high-water mark, so the post-restart event is clamped to
+     * {@code T + 1001} and out-ranks the older one (spec 02.02 section 3.5).
+     * {@code SequenceSeedOverflowTest} pins the raw arithmetic; the lightweight
+     * {@code DebeziumChangeEventCaptureTest} pins the seeded restart.</p>
      *
      * <p>The engine matters too. ReplacingMergeTree resolves a duplicate by
      * version, so a losing replay is simply dropped. CollapsingMergeTree sign

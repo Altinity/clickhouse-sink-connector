@@ -21,6 +21,7 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
   - `Replication.OffsetFifo`: Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01)
   - `Replication.DdlTranslation`: ALTER clause classification (specs 06.03/06.04/06.05/06.07)
   - `Replication.BatchOrder`: batch execution order around a replicated TRUNCATE (spec 04.05)
+  - `Replication.VersionFloor`: the shipped version-sequence statics, the restart-boundary floor seed and control-record exclusion (Invariant I2 across a restart, specs 02.02 §3.5 / 02.04 §3.2)
 - **CI**: `.github/workflows/spec-governance.yml`
 - **Empirical gap registries**: `sink-connector-lightweight/tests/integration/regression_manual.py` (TestFlows `xfails`), `@Disabled` annotations under `sink-connector/src/test` and `sink-connector-lightweight/src/test`
 
@@ -37,9 +38,13 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
   receives a strictly greater `_version` than the events before it — the
   property the high-water floor and sequence counter enforce concretely.
   Because the ordinal is strictly monotonic by construction, convergence holds
-  for ANY stream, with no monotonic-position hypothesis required. **The shipped formula `effectiveTs * 1_000_000 + seq`,
-  the floor `sequenceMaxSourceTs`, the counter seeds and the GTID precedence are
-  not modelled** (specs 02.01–02.04 state the consequences).
+  for ANY stream, with no monotonic-position hypothesis required. The shipped
+  formula `effectiveTs * 1_000_000 + seq`, the floor `sequenceMaxSourceTs`, the
+  counter seeds and the high-water position are modelled separately in
+  `VersionFloor.lean` for the **restart boundary** only (seeding the floor from a
+  high-water mark orders every first delivery of a new run above the previous
+  run; control records do not touch the state); within-run monotonicity of that
+  formula and the GTID precedence are not modelled (specs 02.01–02.04).
 - **`FINAL` resolves equal versions to the later-inserted row.** `maxStep`
   compares with `>=`, so among records of one key with equal version the one
   appended later wins — ClickHouse's ReplacingMergeTree tie rule. This is what
@@ -88,6 +93,17 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
    events in binlog order; `every_truncate_is_its_own_segment`: two TRUNCATEs
    never collapse; `truncate_last_loses_rows`, `truncate_first_resurrects_rows`:
    the pre-fix hash-map order disagrees with the source either way (spec 04.05).
+14. `VersionFloor.restart_boundary`, `version_ge_floor`, `floor_mono`,
+   `seed_floor_gt`: with the floor seeded as `v / 1_000_000 + 1` from a
+   high-water mark `v` at or above every previous version, every first delivery
+   of the new run is versioned strictly above `v`.
+15. `VersionFloor.dispatch_control_preserves_state`,
+   `old_dispatch_control_moves_floor`, `dispatch_control_keeps_source_floor`:
+   a heartbeat leaves the sequence statics unchanged; the pre-fix loop pinned
+   the floor to the connector clock.
+16. `VersionFloor.seeded_restart_example`, `unseeded_restart_inverts`: the
+   regression scenario of spec 02.02 §6, executed (`decide`) with and without
+   the seed.
 
 The proposition `ReplayIdempotency` in `Invariants.lean` is stated but has no theorem.
 

@@ -39,7 +39,7 @@ Consequences:
 ---
 
 ## 4. Invariants Preserved
-- **Zero collision within a run**: two records versioned by the same JVM with the same `effectiveTs` receive distinct, increasing counters. This does not extend across a restart (the 500m seed re-arms and the seeds carry into the timestamp field — spec 02.01 §4).
+- **Zero collision within a run**: two records versioned by the same JVM with the same `effectiveTs` receive distinct, increasing counters. Across a restart the counter re-arms at the 500m seed (and the seeds carry into the timestamp field — spec 02.01 §4); collisions with the previous run are excluded not by the counter but by the seeded floor, which places every first delivery of the new run above the previous run's highest version (spec 02.02 §3.5).
 
 ---
 
