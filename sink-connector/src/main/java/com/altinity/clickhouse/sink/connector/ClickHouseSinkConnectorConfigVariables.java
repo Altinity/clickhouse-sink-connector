@@ -65,6 +65,11 @@ public enum ClickHouseSinkConnectorConfigVariables {
     SOURCE_DATETIME_TIMEZONE("database.connectionTimeZone"),
     CLICKHOUSE_DATETIME_TIMEZONE("clickhouse.datetime.timezone"),
 
+    // When false (default) a DATE/DATETIME/TIMESTAMP/decimal value outside the
+    // ClickHouse type's range fails the batch; when true it is saturated to
+    // the bound with a WARN naming the column (spec 07.03 section 3.3).
+    CLAMP_OUT_OF_RANGE("clamp.out.of.range"),
+
     SKIP_REPLICA_START("skip_replica_start"),
 
     RESTART_EVENT_LOOP("restart.event.loop"),

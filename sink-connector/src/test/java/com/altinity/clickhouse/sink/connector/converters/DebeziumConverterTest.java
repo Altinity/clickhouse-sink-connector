@@ -294,6 +294,95 @@ public class DebeziumConverterTest {
                 DebeziumConverter.MicroTimeConverter.convert(-1L));
     }
 
+    /** Debezium encodes DATETIME digits as a UTC epoch; this is that encoding. */
+    private static long datetimeDigitsAsUtcEpochMillis(LocalDateTime digits) {
+        return digits.toInstant(ZoneOffset.UTC).toEpochMilli();
+    }
+
+    /**
+     * Spec 07.03 section 3.1.1: MySQL DATETIME is zone-less digits. When the
+     * source and session zones are the same DST zone, TimestampConverter used
+     * to push the digits through TimeZone.getRawOffset/inDaylightTime, which
+     * moved every spring-forward gap time back by an hour: 2026-03-08 02:30:00
+     * in America/Chicago came out as 01:30:00. MicroTimestampConverter already
+     * decoded the digits as UTC (the inverse of Debezium's encoding); this pins
+     * the same behaviour for DATETIME(0..3).
+     */
+    @Test
+    public void testTimestampConverterGapTimePreserved() {
+        ZoneId chicago = ZoneId.of("America/Chicago");
+
+        long gap = datetimeDigitsAsUtcEpochMillis(LocalDateTime.of(2026, 3, 8, 2, 30, 0));
+        Assert.assertEquals("a wall time inside the spring-forward gap must keep its digits",
+                "2026-03-08 02:30:00.000",
+                DebeziumConverter.TimestampConverter.convert(gap, ClickHouseDataType.DateTime64, chicago, chicago));
+        Assert.assertEquals("2026-03-08 02:30:00",
+                DebeziumConverter.TimestampConverter.convert(gap, ClickHouseDataType.DateTime, chicago, chicago));
+
+        long overlap = datetimeDigitsAsUtcEpochMillis(LocalDateTime.of(2026, 11, 1, 1, 30, 0));
+        Assert.assertEquals("a wall time inside the fall-back overlap must keep its digits",
+                "2026-11-01 01:30:00.000",
+                DebeziumConverter.TimestampConverter.convert(overlap, ClickHouseDataType.DateTime64, chicago, chicago));
+
+        // Same digits, same-zone decode, both converters agree.
+        Assert.assertEquals("2026-03-08 02:30:00.00000000",
+                DebeziumConverter.MicroTimestampConverter.convert(gap * 1000L, chicago, chicago, ClickHouseDataType.DateTime64));
+
+        // Explicitly different zones: the digits are a Chicago wall time; a gap
+        // time takes the offset before the transition (-06:00), exactly as
+        // MicroTimestampConverter does, so 02:30 CST is 08:30 UTC.
+        ZoneId utc = ZoneId.of("UTC");
+        Assert.assertEquals("2026-03-08 08:30:00.000",
+                DebeziumConverter.TimestampConverter.convert(gap, ClickHouseDataType.DateTime64, chicago, utc));
+        Assert.assertEquals("2026-03-08 08:30:00.00000000",
+                DebeziumConverter.MicroTimestampConverter.convert(gap * 1000L, chicago, utc, ClickHouseDataType.DateTime64));
+        // And an ordinary summer wall time uses the DST offset (-05:00).
+        long summer = datetimeDigitsAsUtcEpochMillis(LocalDateTime.of(2026, 7, 1, 10, 0, 0));
+        Assert.assertEquals("2026-07-01 15:00:00.000",
+                DebeziumConverter.TimestampConverter.convert(summer, ClickHouseDataType.DateTime64, chicago, utc));
+    }
+
+    /**
+     * Spec 07.03 section 3.1.3: ClickHouse parses a DateTime literal in the
+     * COLUMN's zone, so an instant must be rendered in that zone. With the
+     * session zone America/Chicago and the column declared 'UTC' (what
+     * auto-create emits), rendering in the session zone stored every instant
+     * six hours early.
+     */
+    @Test
+    public void testTimestampIntoUtcColumnWhenServerZoneIsChicago() {
+        ZoneId chicago = ZoneId.of("America/Chicago");
+        ZoneId utc = ZoneId.of("UTC");
+
+        // TIMESTAMP (an instant): rendered in the column zone.
+        Assert.assertEquals("2022-01-01 16:00:00.000000",
+                DebeziumConverter.ZonedTimestampConverter.convert("2022-01-01T16:00:00Z", utc));
+        Assert.assertEquals("2022-01-01 10:00:00.000000",
+                DebeziumConverter.ZonedTimestampConverter.convert("2022-01-01T16:00:00Z", chicago));
+
+        // DATETIME with an explicitly different source zone (UTC) and session
+        // zone (Chicago): the digits 10:00 are the instant 10:00Z ...
+        long digits = datetimeDigitsAsUtcEpochMillis(LocalDateTime.of(2022, 1, 1, 10, 0, 0));
+        // ... rendered in the column zone when the column declares one,
+        Assert.assertEquals("2022-01-01 10:00:00.000",
+                DebeziumConverter.TimestampConverter.convert(digits, ClickHouseDataType.DateTime64, utc, chicago, utc));
+        Assert.assertEquals("2022-01-01 10:00:00.00000000",
+                DebeziumConverter.MicroTimestampConverter.convert(digits * 1000L, utc, chicago, ClickHouseDataType.DateTime64, utc));
+        // ... and in the session zone when it declares none (pre-existing 4-arg behaviour).
+        Assert.assertEquals("2022-01-01 04:00:00.000",
+                DebeziumConverter.TimestampConverter.convert(digits, ClickHouseDataType.DateTime64, utc, chicago, null));
+        Assert.assertEquals("2022-01-01 04:00:00.000",
+                DebeziumConverter.TimestampConverter.convert(digits, ClickHouseDataType.DateTime64, utc, chicago));
+        Assert.assertEquals("2022-01-01 04:00:00.00000000",
+                DebeziumConverter.MicroTimestampConverter.convert(digits * 1000L, utc, chicago, ClickHouseDataType.DateTime64, null));
+
+        // Same-zone digits decode (section 3.1.1) does not depend on the column zone.
+        Assert.assertEquals("2022-01-01 10:00:00.000",
+                DebeziumConverter.TimestampConverter.convert(digits, ClickHouseDataType.DateTime64, chicago, chicago, utc));
+        Assert.assertEquals("2022-01-01 10:00:00.00000000",
+                DebeziumConverter.MicroTimestampConverter.convert(digits * 1000L, chicago, chicago, ClickHouseDataType.DateTime64, utc));
+    }
+
 
     @Test
     public void testTrailingZeros() {

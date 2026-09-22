@@ -22,7 +22,7 @@ Specifies the accumulation, chunking, and JDBC `executeBatch()` dispatching of p
 ### 3.2 JDBC Batch Execution
 For each partition:
 - a `PreparedStatement` is obtained from `DBMetadata.getPreparedStatement(conn, insertQuery)`;
-- rows are bound by `PreparedStatementFieldMapper.insertPreparedStatement` (before/after image per operation), a sorting-key relocation additionally binds a tombstone (`insertTombstonePreparedStatement`, spec 05.02), each followed by `ps.addBatch()`;
+- rows are bound by `PreparedStatementFieldMapper.insertPreparedStatement` (before/after image per operation), a sorting-key relocation additionally binds a tombstone (`insertTombstonePreparedStatement`, spec 05.02), each followed by `ps.addBatch()` **and then `ps.clearParameters()`** — the V2 driver's `addBatch()` does not clear its bound values, so without the clear a parameter one row failed to bind silently carried the previous row's value (Spec 07.07 §3.2.2);
 - a TRUNCATE record flushes the rows staged so far and truncates in place (spec 04.05);
 - `int[] batchResult = ps.executeBatch()` sends the partition.
 A failure inside the partition is rethrown as `RuntimeException` from `executePreparedStatement`; the caller (`ClickHouseBatchRunnable`) classifies it via `ClickHouseErrorClassifier` (spec 10.01) — the executor itself does not classify or retry.
@@ -36,5 +36,6 @@ A failure inside the partition is rethrown as `RuntimeException` from `executePr
 
 ## 5. Verification Criteria
 - `PreparedStatementExecutorSortingKeyTombstoneTest` — the per-record tombstone decision inside the batch loop.
+- `PreparedStatementExecutorClearParametersTest.parametersAreClearedAfterEveryAddBatch()` — through `addToPreparedStatementBatch` with a recording connection: for a two-row batch the statement receives `addBatch` twice and `clearParameters` once after each `addBatch` (pre-fix code never calls `clearParameters`).
 - `TruncateTableIT.testRowsInsertedAfterTruncateSurvive()` — in-place TRUNCATE flush ordering within one batch.
 - Verification: chunking at `buffer.max.records` (e.g. 50,000 rows split into partitions) and the `buffer.flush.time.ms` cadence are not yet covered by an automated test (gap).
