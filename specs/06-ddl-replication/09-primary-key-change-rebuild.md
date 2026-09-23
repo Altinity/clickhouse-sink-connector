@@ -232,9 +232,15 @@ row twice collapses to one (`PkRebuild.lean`: `backfill_never_shadows_newer`,
    because it is simply absent.
 3. **Completeness check**: every live key of `R` must be present in `T`
    (live, tombstoned or relocated — presence by key, not liveness):
-   `SELECT count() FROM R FINAL AS r [JOIN K] LEFT JOIN T AS t ON <new key
-   equality> WHERE <r live> AND t.<key> IS NULL` (using `join_use_nulls = 1`)
-   must return `0`. The probed column is the first new-key column, or
+   `SELECT count() FROM (SELECT <new key> FROM R FINAL [JOIN K] WHERE <r live>)
+   AS r LEFT JOIN (SELECT DISTINCT <new key> FROM T) AS t ON <new key
+   equality> WHERE t.<key> IS NULL SETTINGS join_use_nulls = 1` must return
+   `0`. The `FINAL` MUST be confined to the retired table's subquery: written
+   as `FROM R FINAL LEFT JOIN T`, ClickHouse 24.8 reads the right-hand
+   `ReplacingMergeTree` table with FINAL semantics too, so a key whose only
+   rows in `T` are tombstones (deleted or relocated after the swap) does not
+   match and the check reports it missing forever (measured: 3 phantom
+   misses for 2 deleted + 1 relocated row; 0 with the subquery form). The probed column is the first new-key column, or
    `t._version` when that column is `Nullable` on `T` (the keyless fallback),
    and `Nullable` key columns are joined with `isNotDistinctFrom` (plain `=`
    would report every NULL-keyed row as missing forever). Rows deleted or
@@ -261,6 +267,44 @@ row twice collapses to one (`PkRebuild.lean`: `backfill_never_shadows_newer`,
    the next attempt's step 1 while `T` is still keyed by the old identity) or
    a completed copy kept under `disable.drop.truncate` — neither is resumed
    nor dropped here.
+
+7. **Superseding DDL while a backfill is pending.** A replicated `TRUNCATE
+   TABLE T` or `DROP TABLE T` that arrives after the swap makes every
+   pre-DDL row of `T` obsolete: on the source the table is empty (or gone)
+   at that binlog position, so the retired rows must never reach `T` again.
+   When such a statement executes for `T` (Spec 04.05 / 06.08; also when
+   `disable.drop.truncate` suppresses it, since the operator keeps the rows
+   already in `T`, not the retired ones), the connector **cancels** the
+   pending or running backfill of `T` (a running copy is interrupted at the
+   next statement boundary and its task is not re-scheduled) and drops the
+   retired copy and the key map before the statement's own effect is
+   applied — a TRUNCATE that ran first and a backfill statement that
+   followed would otherwise resurrect truncated rows. A backfill whose
+   retired table has vanished under it (cancelled) logs that and stops. A
+   copy statement already executing on ClickHouse cannot be interrupted;
+   the TRUNCATE then waits for it behind the table's exclusive lock
+   (`lock_acquire_timeout`) and runs after it, so the truncated state is
+   still the final one. The cancel is performed on the DDL thread's
+   connection (`PrimaryKeyBackfill.cancelFor(connection, database, table)`;
+   `cancelAllFor` for `DROP DATABASE`), and the backfill of one table never
+   overtakes an earlier-submitted backfill of the same table.
+   Formally: the TRUNCATE is a segment boundary in binlog order (Spec 04.05);
+   rows written before it, whether by the writer or by the backfill, belong
+   to the segment it clears.
+8. **Concurrent key changes on the same table.** A second identity change
+   on `T` while the first backfill is pending swaps again (step 1 keeps the
+   pending retired table; the new `S` is created from the CURRENT `T`),
+   and the backfill of the first retired table then runs against a `T` that
+   is keyed differently: the copy statement is built at run time from the
+   current columns of `T` and the completeness check uses the first plan's
+   new key, which still exists as ordinary columns. Backfills of one table
+   run in submission order on the single backfill thread, so the older
+   retired rows land before the newer ones.
+9. **Schema change on `T` during a backfill.** A column added to `T` after
+   the swap is absent from the retired table; the copy omits it (ClickHouse
+   fills the column default, as MySQL back-fills an added column) and logs
+   the omission at INFO. A column dropped from `T` after the swap is simply
+   not in the copied set. A widening on `T` converts on insert.
 
 #### 3.3.3 Observability
 The swap and each backfill step log at INFO with the exact statement; the
@@ -349,6 +393,10 @@ is unaffected.
 - `PrimaryKeyRebuildTest.backfillRetriesWithBackoff()` — a failing `INSERT` re-schedules the backfill (10 s, 20 s, ... capped at 5 min) and the next attempt re-issues the same statements; nothing is dropped meanwhile.
 - `PrimaryKeyRebuildTest.restartResumesPendingBackfill()` — `resumePending` finds a marker-bearing `T__pk_rebuild_%` table whose companion `T` is keyed by the marker's new key and schedules its backfill; a marker-less scratch table, or one whose companion is still keyed by the old identity, is not resumed.
 - `PrimaryKeyRebuildTest.retiredCopyKeptWhenDropTruncateDisabled()` — `disable.drop.truncate=true`: the backfill completes, nothing is dropped, both names logged.
+- `PrimaryKeyRebuildTest.truncateDuringBackfillCancelsAndDropsRetired()` — §3.3.2 step 7: a `TRUNCATE TABLE T` arriving while `T`'s backfill is queued cancels the task (no copy statement is ever issued) and drops the retired table and the key map before the truncate runs; `dropTableDuringBackfillCancels()` — the same for `DROP TABLE T`; `cancelledBackfillStopsWithoutRescheduling()` — a running copy whose retired table is gone logs and does not re-schedule.
+- `PrimaryKeyRebuildTest.secondSwapKeepsPendingRetiredTable()` — §3.3.2 step 8: the second swap's step 1 leaves a marker-bearing pending retired table in place and the two tasks run in submission order.
+- `PrimaryKeyRebuildTest.columnAddedDuringBackfillIsOmittedFromCopy()` — §3.3.2 step 9: a column present on `T` but absent from the retired table is left out of the copy column list.
+- Integration (`PrimaryKeyChangeIT`, backfill session slowed with `clickhouse.jdbc.settings` `max_execution_speed`/`timeout_before_checking_execution_speed=0` so the online window is seconds long): `dmlDuringBackfillIsShadowedByNewerVersions()` (UPDATE / DELETE / INSERT / relocation on rows the backfill has not copied yet, issued while the retired table still exists; final value-level equality), `truncateDuringBackfillLeavesTableEmpty()` (TRUNCATE while the backfill is pending: the table ends empty, the retired copy is gone, no resurrected rows), `secondKeyChangeWhileBackfillPending()` (two key changes back to back; final equality and the second key), `restartDuringBackfillResumesFromMarker()` (engine stopped while the retired table still exists, restarted: the backfill completes and the retired table is dropped), `columnAddedDuringBackfill()` (ADD COLUMN on the source while the backfill runs; final equality including the new column).
 - `PrimaryKeyRebuildTest.replicatedLiteralPathIsLoud()`, `PrimaryKeyRebuildTest.nullableOldKeyWithSourceMapIsLoud()` — §3.2 preconditions.
 - `MySqlDDLParserListenerImplTest.testModifyKeyColumnWiderPlansRebuild()`, `testChangeKeyColumnRenamePlansRebuild()`, `testKeyColumnChangeIsLoudWhenRebuildDisabled()` — §3.1.1/§3.1.2: a widening `MODIFY` and a `CHANGE`/`RENAME` of a key column plan a same-identity rebuild with the deferred clause and (for a rename) the renamed key; nothing for the key column is emitted against the current table; `ddl.primary.key.rebuild=false` is loud.
 - `MySqlDDLParserListenerImplTest.testDroppedKeyColumnIsDeferredToRebuiltTable()` — the GIPK promotion `DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`: plan with new key `id`, deferred `DROP COLUMN IF EXISTS my_row_id`, and no `DROP COLUMN` in the emitted statement.

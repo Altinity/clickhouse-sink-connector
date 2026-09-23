@@ -18,15 +18,18 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
 import static com.altinity.clickhouse.debezium.embedded.cdc.PrimaryKeyRebuild.ColumnInfo;
@@ -62,7 +65,14 @@ import static com.altinity.clickhouse.debezium.embedded.cdc.PrimaryKeyRebuild.qL
  * re-scheduled with exponential backoff (10 s doubling to 5 min),
  * indefinitely -- replication is never stopped by a backfill failure; 6. at
  * engine start {@link #resumePending} schedules again every backfill whose
- * retired table still exists.</p>
+ * retired table still exists; 7. a replicated statement that empties or
+ * DESTRUCTIVE: the next lines only name the source statements that supersede a backfill; nothing is executed here.
+ * removes the table (TRUNCATE TABLE / DROP TABLE, or DROP DATABASE) while a
+ * backfill is pending {@link #cancelFor cancels} it -- a running copy stops
+ * at its next statement boundary and is not re-scheduled -- and drops the
+ * retired copy and key map BEFORE the statement runs, so no copy statement
+ * can ever resurrect rows the source removed (§3.3.2 step 7); 8. backfills
+ * of one table run in submission order (§3.3.2 step 8).</p>
  *
  * <p><b>Restart safety.</b> The swap phase records the task -- old key, new
  * key, renames, source-valued columns, source database -- as a marker line in
@@ -89,6 +99,14 @@ public final class PrimaryKeyBackfill {
 
     /** Longest time {@link #shutdown()} waits for an in-flight attempt. */
     static final long SHUTDOWN_WAIT_MS = 3_000L;
+
+    /**
+     * Delay before a task re-checks whether an earlier-submitted task of the
+     * same table is still pending (Spec 06.09 §3.3.2 step 8: one table's
+     * backfills run in submission order, so a re-scheduled retry is never
+     * overtaken by a later task of the same table).
+     */
+    static final long FIFO_RECHECK_MS = 10_000L;
 
     /** Rows bound per {@code executeBatch} when filling the source key map. */
     static final int SOURCE_BATCH_SIZE = 10000;
@@ -135,6 +153,10 @@ public final class PrimaryKeyBackfill {
         private final long epochMs;
         private int failures;
         private boolean keyMapLoaded;
+        /** Set by {@link PrimaryKeyBackfill#cancelFor}; read by the run loop between statements. */
+        private volatile boolean cancelled;
+        /** Submission order within one runner (Spec 06.09 §3.3.2 step 8). */
+        private long sequence;
 
         /**
          * @param database       destination database (clean).
@@ -229,6 +251,20 @@ public final class PrimaryKeyBackfill {
         /** Failed attempts so far. */
         public int failures() {
             return failures;
+        }
+
+        /**
+         * DESTRUCTIVE: only reports a flag; the statements that set it are the source's own, replicated ones.
+         * Whether a TRUNCATE TABLE / DROP TABLE of the table superseded this
+         * backfill (Spec 06.09 §3.3.2 step 7): the run loop stops at its next
+         * statement boundary and the task is not re-scheduled.
+         */
+        public boolean cancelled() {
+            return cancelled;
+        }
+
+        void cancel() {
+            cancelled = true;
         }
 
         /** Identity of the pending work: one backfill per retired table. */
@@ -382,6 +418,23 @@ public final class PrimaryKeyBackfill {
         }
     }
 
+    /**
+     * Raised by the run loop at a statement boundary when the attempt must
+     * stop without failing: the task was {@link Task#cancelled() cancelled}
+     * (Spec 06.09 §3.3.2 step 7) or the runner is shutting down. Never
+     * reported as a failure and never re-scheduled here.
+     */
+    static final class BackfillStopped extends RuntimeException {
+        final String step;
+        final boolean cancelled;
+
+        BackfillStopped(String step, boolean cancelled, String detail) {
+            super(detail);
+            this.step = step;
+            this.cancelled = cancelled;
+        }
+    }
+
     // ------------------------------------------------------------------
     // The runner
     // ------------------------------------------------------------------
@@ -392,7 +445,11 @@ public final class PrimaryKeyBackfill {
     private final FailureReporter reporter;
     private final Scheduler scheduler;
     private final ScheduledExecutorService executor;
-    private final Set<String> inFlight = ConcurrentHashMap.newKeySet();
+    /** Pending tasks by {@link Task#key()}: submitted and not yet complete, cancelled or terminally failed. */
+    private final Map<String, Task> inFlight = new ConcurrentHashMap<>();
+    /** The queued attempt of each pending task on the production executor, so a cancel can remove it. */
+    private final Map<String, Future<?>> queued = new ConcurrentHashMap<>();
+    private final AtomicLong submissions = new AtomicLong();
     private volatile boolean shutdown;
 
     /**
@@ -429,7 +486,9 @@ public final class PrimaryKeyBackfill {
             pool.setExecuteExistingDelayedTasksAfterShutdownPolicy(false);
             pool.setRemoveOnCancelPolicy(true);
             this.executor = pool;
-            this.scheduler = (action, delayMs) -> pool.schedule(action, delayMs, TimeUnit.MILLISECONDS);
+            // Scheduled through the executor directly (schedule below) so the
+            // queued attempt's Future is kept and a cancel can remove it.
+            this.scheduler = null;
         }
     }
 
@@ -445,11 +504,12 @@ public final class PrimaryKeyBackfill {
                     + "engine start from the retired table (Spec 06.09 §3.3.2 step 6)", task);
             return false;
         }
-        if (!inFlight.add(task.key())) {
+        if (inFlight.putIfAbsent(task.key(), task) != null) {
             log.info("Primary-key backfill of {}.{} from {}.{} is already pending in this process; not scheduled "
                     + "twice", task.database(), task.table(), task.database(), task.retired());
             return false;
         }
+        task.sequence = submissions.incrementAndGet();
         log.info("Primary-key backfill scheduled on the {} thread: {} (Spec 06.09 §3.3.1 step 5)", THREAD_NAME, task);
         return schedule(task, 0L);
     }
@@ -501,7 +561,11 @@ public final class PrimaryKeyBackfill {
 
     private boolean schedule(Task task, long delayMs) {
         try {
-            scheduler.schedule(() -> attempt(task), delayMs);
+            if (executor != null) {
+                queued.put(task.key(), executor.schedule(() -> attempt(task), delayMs, TimeUnit.MILLISECONDS));
+            } else {
+                scheduler.schedule(() -> attempt(task), delayMs);
+            }
             return true;
         } catch (RejectedExecutionException e) {
             inFlight.remove(task.key());
@@ -511,12 +575,158 @@ public final class PrimaryKeyBackfill {
         }
     }
 
+    // ------------------------------------------------------------------
+    // Superseding DDL (Spec 06.09 §3.3.2 step 7)
+    // ------------------------------------------------------------------
+
+    /**
+     * DESTRUCTIVE: drops the connector-owned retired copy (<table>__pk_rebuild_<ts> / __pk_retired_<ts>) and key map
+     * DESTRUCTIVE: of a pending rebuild of ONE table, because the source's own replicated TRUNCATE TABLE / DROP TABLE
+     * DESTRUCTIVE: of that table just made every pre-DDL row obsolete; never a mirrored table, never source data.
+     * Cancels the pending or running backfill(s) of {@code database.table}
+     * because a replicated TRUNCATE TABLE / DROP TABLE of that table is about
+     * to run (or is suppressed by {@code disable.drop.truncate}, in which case
+     * the operator keeps the rows already in the table, not the retired ones):
+     * every queued task of the table is removed, a running one stops at its
+     * next statement boundary and is not re-scheduled, and on {@code ch} --
+     * the caller's connection, so the drops precede the statement -- the
+     * retired table(s) and key map(s) are dropped, including any marker-bearing
+     * scratch table of that table found in {@code system.tables} (a pending
+     * copy of a previous run that was not resumed in this process). A failed
+     * drop escapes to the caller: the statement must not run before the
+     * retired rows are gone (Spec 06.09 §3.3.2 step 7).
+     *
+     * @return the number of tasks cancelled in this runner.
+     */
+    public int cancelFor(Connection ch, String database, String table) {
+        return cancel(ch, database, table);
+    }
+
+    /**
+     * DESTRUCTIVE: as {@link #cancelFor}, for every table of one destination database, because the source's own
+     * DESTRUCTIVE: replicated DROP DATABASE is about to remove them all; only rebuild scratch tables are dropped here.
+     * {@link #cancelFor} for every table of {@code database} (a replicated
+     * DROP DATABASE).
+     */
+    public int cancelAllFor(Connection ch, String database) {
+        return cancel(ch, database, null);
+    }
+
+    private int cancel(Connection ch, String database, String table) {
+        List<Task> victims = new ArrayList<>();
+        for (Task task : inFlight.values()) {
+            if (task.database().equals(database) && (table == null || task.table().equalsIgnoreCase(table))) {
+                victims.add(task);
+            }
+        }
+        for (Task task : victims) {
+            task.cancel();
+            inFlight.remove(task.key());
+            Future<?> attempt = queued.remove(task.key());
+            if (attempt != null) {
+                attempt.cancel(false);
+            }
+            // DESTRUCTIVE: a log line naming the source statement that superseded the backfill; nothing runs here.
+            log.warn("Primary-key backfill of {}.{} from {}.{} cancelled: superseded by TRUNCATE/DROP TABLE of the table "
+                    + "(Spec 06.09 §3.3.2 step 7); a running copy stops at its next statement and is not re-scheduled",
+                    task.database(), task.table(), task.database(), task.retired());
+        }
+        Set<String> dropped = new LinkedHashSet<>();
+        for (Task task : victims) {
+            dropScratch(ch, database, task.retired(), dropped, "the retired pre-rebuild copy");
+            if (task.needKeyMap()) {
+                dropScratch(ch, database, task.keyMapTable(), dropped, "the source key map");
+            }
+        }
+        dropMarkedScratchTables(ch, database, table, dropped);
+        // DESTRUCTIVE: nothing more is dropped below; the setting is only named in the log line.
+        if (PrimaryKeyRebuild.dropTruncateDisabled(props) && !dropped.isEmpty()) {
+            log.warn("Primary-key backfill: {} dropped although {}=true: the superseding statement leaves the operator "
+                    + "the rows already in the table, not the retired pre-DDL ones (Spec 06.09 §3.3.2 step 7)",
+                    dropped, SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
+        }
+        return victims.size();
+    }
+
+    /** Drops one rebuild scratch table of the cancelled backfill(s), once. */
+    private static void dropScratch(Connection ch, String database, String name, Set<String> dropped, String what) {
+        if (!dropped.add(name)) {
+            return;
+        }
+        // DESTRUCTIVE: drops a connector-owned rebuild scratch table (the
+        // retired copy or key map of ONE cancelled backfill, named by the
+        // task or by its marker) because the source's replicated
+        // TRUNCATE/DROP of the table made its rows obsolete; never a
+        // mirrored table. IF EXISTS makes a repeat a no-op.
+        exec(ch, "DROP TABLE IF EXISTS " + q(database) + "." + q(name), "cancel (drop " + what + ")", null);
+    }
+
+    /**
+     * Drops every marker-bearing {@code <table>__pk_rebuild_%} /
+     * {@code <table>__pk_retired_%} table of {@code database} (every table
+     * when {@code table} is null) and its key map: a pending copy of a
+     * previous run that this process did not resume is superseded too.
+     */
+    private static void dropMarkedScratchTables(Connection ch, String database, String table, Set<String> dropped) {
+        String prefix = table == null ? "%" : likeLit(table);
+        String scan = "SELECT name, comment FROM system.tables WHERE database = '" + lit(database) + "' AND (name LIKE '"
+                + prefix + likeLit("__pk_rebuild_") + "%' OR name LIKE '" + prefix + likeLit("__pk_retired_")
+                + "%') AND name NOT LIKE '%" + likeLit("__pk_rebuild_keys_") + "%' ORDER BY name";
+        List<String[]> scratch;
+        try {
+            scratch = rows(ch, scan, 2);
+        } catch (Exception e) {
+            throw new BackfillFailure("cancel (find pending retired copies)", scan, e.getMessage(), e);
+        }
+        for (String[] row : scratch) {
+            Marker marker = Marker.parse(row[1]);
+            if (marker == null || (table != null && !marker.table.equalsIgnoreCase(table))) {
+                continue;
+            }
+            dropScratch(ch, database, row[0], dropped, "the retired pre-rebuild copy of a previous run");
+            if (!marker.sourceValued.isEmpty()) {
+                // Only a source-valued rebuild ever created its key map.
+                String keyMap = marker.keyMap != null ? marker.keyMap
+                        : marker.table + "__pk_rebuild_keys_" + marker.epochMs;
+                dropScratch(ch, database, keyMap, dropped, "the source key map of a previous run");
+            }
+        }
+    }
+
+    /** The earliest-submitted other pending task of the same table, or null (Spec 06.09 §3.3.2 step 8). */
+    private Task earlierPendingOfSameTable(Task task) {
+        Task earliest = null;
+        for (Task other : inFlight.values()) {
+            if (other != task && other.database().equals(task.database()) && other.table().equalsIgnoreCase(task.table())
+                    && other.sequence < task.sequence && (earliest == null || other.sequence < earliest.sequence)) {
+                earliest = other;
+            }
+        }
+        return earliest;
+    }
+
     /**
      * One attempt: open a connection, {@link #run}, and on failure report and
      * re-schedule with backoff (Spec 06.09 §3.3.2 step 5). Package-private so
      * tests can drive attempts directly.
      */
     void attempt(Task task) {
+        queued.remove(task.key());
+        if (task.cancelled()) {
+            // DESTRUCTIVE: a log line naming the source statement that superseded the backfill; nothing runs here.
+            log.info("Primary-key backfill of {}.{} from {}.{} not started: cancelled: superseded by TRUNCATE/DROP TABLE "
+                    + "(Spec 06.09 §3.3.2 step 7)", task.database(), task.table(), task.database(), task.retired());
+            return;
+        }
+        Task earlier = earlierPendingOfSameTable(task);
+        if (earlier != null) {
+            log.info("Primary-key backfill of {}.{} from {}.{} waits for the earlier backfill from {}.{} of the same "
+                            + "table (submission order, Spec 06.09 §3.3.2 step 8); re-checked in {} s",
+                    task.database(), task.table(), task.database(), task.retired(), earlier.database(),
+                    earlier.retired(), FIFO_RECHECK_MS / 1000);
+            schedule(task, FIFO_RECHECK_MS);
+            return;
+        }
         Connection ch = null;
         try {
             try {
@@ -531,6 +741,17 @@ public final class PrimaryKeyBackfill {
             }
             run(task, ch);
             inFlight.remove(task.key());
+        } catch (BackfillStopped stopped) {
+            inFlight.remove(task.key());
+            if (stopped.cancelled) {
+                // DESTRUCTIVE: a log line naming the source statement that superseded the backfill; nothing runs here.
+                log.warn("Primary-key backfill of {}.{} from {}.{} stopped at {}: cancelled: superseded by TRUNCATE/DROP "
+                                + "TABLE (Spec 06.09 §3.3.2 step 7); not re-scheduled. {}", task.database(), task.table(),
+                        task.database(), task.retired(), stopped.step, stopped.getMessage());
+            } else {
+                log.warn("Primary-key backfill of {}.{} from {}.{} stopped at {}: {}", task.database(), task.table(),
+                        task.database(), task.retired(), stopped.step, stopped.getMessage());
+            }
         } catch (Exception e) {
             if (interrupted(e)) {
                 inFlight.remove(task.key());
@@ -613,12 +834,16 @@ public final class PrimaryKeyBackfill {
         log.info("Primary-key backfill of {}.{} from {}.{}: attempt {} (Spec 06.09 §3.3.2): {}", db, table, db,
                 retired, task.failures() + 1, task);
 
+        checkpoint(task, "step 0 (columns of the retired table)");
         List<ColumnInfo> retiredColumns = columns(ch, db, retired, "step 0 (columns of the retired table)", task);
         if (retiredColumns.isEmpty()) {
+            checkpoint(task, "step 0 (columns of the retired table)");
+            // DESTRUCTIVE: the message only names the source statements that may have removed the retired copy.
             throw new BackfillFailure("step 0 (columns of the retired table)", null, "the retired table " + db + "."
                     + retired + " no longer exists, so there is nothing to backfill into " + db + "." + table
-                    + "; if it was dropped by hand before the copy completed, the pre-DDL rows are lost and the "
-                    + "table must be re-snapshotted", null, true);
+                    + "; a replicated TRUNCATE/DROP TABLE of the table supersedes the backfill and removes the copy "
+                    + "(Spec 06.09 §3.3.2 step 7); if it was dropped by hand before the copy completed, the pre-DDL rows "
+                    + "are lost and the table must be re-snapshotted", null, true);
         }
         List<ColumnInfo> targetColumns = columns(ch, db, table, "step 0 (columns of the rebuilt table)", task);
         if (targetColumns.isEmpty()) {
@@ -637,6 +862,7 @@ public final class PrimaryKeyBackfill {
 
         // ---- Step 1: source key map (SOURCE_VALUED columns only, §3.4). ----
         if (task.needKeyMap()) {
+            checkpoint(task, "step 1 (source key map)");
             if (task.keyMapLoaded) {
                 log.info("Primary-key backfill of {}.{}: source key map {}.{} was filled by an earlier attempt of this "
                         + "process and is reused", db, table, db, keyMap);
@@ -732,7 +958,9 @@ public final class PrimaryKeyBackfill {
             String insert = "INSERT INTO " + q(db) + "." + q(table) + " (" + qList(copyColumns) + ") " + select;
             String step = partition == null ? "step 2 (copy the live rows)"
                     : "step 2 (copy the live rows of partition " + partition + ")";
+            checkpoint(task, step);
             exec(ch, insert, step, task);
+            checkpoint(task, step + " row count");
             long rows = count(ch, "SELECT count() FROM (" + select + ")", step + " row count", task);
             total += rows;
             log.info("Primary-key backfill of {}.{}: copied {} live rows{} from {}.{}", db, table, rows,
@@ -742,6 +970,7 @@ public final class PrimaryKeyBackfill {
                 db, retired, partitions.size());
 
         // ---- Step 3: completeness check -- every live key of R is present in T. ----
+        checkpoint(task, "step 3 (completeness check)");
         String check = completenessCheck(task, targetTypes);
         long missing = count(ch, check, "step 3 (completeness check)", task);
         if (missing != 0) {
@@ -754,6 +983,7 @@ public final class PrimaryKeyBackfill {
                 db, retired);
 
         // ---- Step 4: retire. ----
+        checkpoint(task, "step 4 (retire)");
         if (PrimaryKeyRebuild.dropTruncateDisabled(props)) {
             // DESTRUCTIVE: nothing is dropped on this branch; the setting name is only logged.
             log.warn("Primary-key backfill of {}.{} complete: {}=true, so the retired pre-rebuild copy {}.{}{} kept; "
@@ -780,6 +1010,24 @@ public final class PrimaryKeyBackfill {
         }
         log.info("Primary-key backfill of {}.{} from {}.{} COMPLETE: sorting key ({}) (Spec 06.09 §3.3.2)", db, table,
                 db, retired, String.join(", ", task.newKey()));
+    }
+
+    /**
+     * A statement boundary of the run loop: stops the attempt when the task
+     * DESTRUCTIVE: the next line only names the source statements that cancel a backfill; nothing is executed here.
+     * was cancelled by a superseding TRUNCATE/DROP TABLE (Spec 06.09 §3.3.2
+     * step 7) or the runner is shutting down. A statement already sent to
+     * ClickHouse completes; the next one is never issued.
+     */
+    private void checkpoint(Task task, String step) {
+        if (task.cancelled()) {
+            throw new BackfillStopped(step, true, "the retired copy " + task.database() + "." + task.retired()
+                    + " is dropped by the cancel and the rows the source removed are never copied again");
+        }
+        if (shutdown) {
+            throw new BackfillStopped(step, false, "interrupted by shutdown; it resumes at the next engine start "
+                    + "from the retired table (the copy is idempotent, Spec 06.09 §3.3.2 step 6)");
+        }
     }
 
     /**
@@ -847,52 +1095,75 @@ public final class PrimaryKeyBackfill {
      * key, not liveness -- which must be 0. A Nullable key column (the keyless
      * all-columns fallback) is compared null-safely, since {@code NULL = NULL}
      * would report every such row as missing.
+     *
+     * <p>Both sides are explicit subqueries so that {@code FINAL} is confined
+     * to the retired table. Measured on ClickHouse 24.8.14: with
+     * {@code FROM R AS r FINAL LEFT JOIN T AS t ON t.b = r.b ... WHERE t.b IS
+     * NULL}, the right-hand ReplacingMergeTree {@code T} was read FINAL-like
+     * as well, so a key whose only rows in {@code T} were tombstones (deleted
+     * or relocated during the backfill, {@code is_deleted = 1}) did not match
+     * and was counted as missing -- 3 for exactly the 2 deleted and the 1
+     * relocated row -- and the backfill retried forever. The same probe with
+     * {@code T} read as {@code (SELECT DISTINCT <key> FROM T)} matched all
+     * three and returned 0, which is what presence by key means.</p>
      */
     static String completenessCheck(Task task, Map<String, String> targetTypes) {
         String db = task.database();
-        StringBuilder sb = new StringBuilder("SELECT count() FROM ").append(q(db)).append('.').append(q(task.retired()))
-                .append(" AS r FINAL");
+        // The retired side: the new-key values of every live row of R, under
+        // the new-key names (a renamed column read as o.<old> AS <new>, a
+        // source-valued one from the key map).
+        StringBuilder retired = new StringBuilder("SELECT ");
+        boolean first = true;
+        for (String column : task.newKey()) {
+            String expr = task.sourceValued().contains(column) ? "k." + q(column)
+                    : "r." + q(oldNameOf(column, task.renames()));
+            retired.append(first ? "" : ", ").append(expr).append(" AS ").append(q(column));
+            first = false;
+        }
+        retired.append(" FROM ").append(q(db)).append('.').append(q(task.retired())).append(" AS r FINAL");
         if (task.needKeyMap()) {
-            sb.append(" INNER JOIN ").append(q(db)).append('.').append(q(task.keyMapTable())).append(" AS k ON ");
-            boolean first = true;
+            retired.append(" INNER JOIN ").append(q(db)).append('.').append(q(task.keyMapTable())).append(" AS k ON ");
+            first = true;
             for (String column : task.oldKey()) {
-                sb.append(first ? "" : " AND ").append("r.").append(q(column)).append(" = k.").append(q(column));
+                retired.append(first ? "" : " AND ").append("r.").append(q(column)).append(" = k.").append(q(column));
                 first = false;
             }
         }
-        sb.append(" LEFT JOIN ").append(q(db)).append('.').append(q(task.table())).append(" AS t ON ");
-        boolean first = true;
+        if (task.deleteFlag() != null) {
+            retired.append(" WHERE r.").append(q(task.deleteFlag())).append(" = 0");
+        }
+
+        // The rebuilt side: the distinct keys T holds, live or tombstoned.
+        StringBuilder join = new StringBuilder();
         String nullProbe = null;
+        first = true;
         for (String column : task.newKey()) {
             String type = targetTypes.get(column);
             boolean nullable = type != null && type.contains("Nullable(");
-            String rhs = task.sourceValued().contains(column) ? "k." + q(column)
-                    : "r." + q(oldNameOf(column, task.renames()));
-            sb.append(first ? "" : " AND ");
+            join.append(first ? "" : " AND ");
             if (nullable) {
-                sb.append("isNotDistinctFrom(t.").append(q(column)).append(", ").append(rhs).append(')');
+                join.append("isNotDistinctFrom(t.").append(q(column)).append(", r.").append(q(column)).append(')');
             } else {
-                sb.append("t.").append(q(column)).append(" = ").append(rhs);
+                join.append("t.").append(q(column)).append(" = r.").append(q(column));
                 if (nullProbe == null) {
                     nullProbe = column;
                 }
             }
             first = false;
         }
+        List<String> rebuiltColumns = new ArrayList<>(task.newKey());
         if (nullProbe == null) {
             // Every key column is Nullable: probe a column T always has non-Nullable.
             nullProbe = PrimaryKeyRebuild.versionColumn(targetTypes);
             if (nullProbe == null) {
                 nullProbe = task.newKey().get(0);
+            } else {
+                rebuiltColumns.add(nullProbe);
             }
         }
-        List<String> where = new ArrayList<>();
-        if (task.deleteFlag() != null) {
-            where.add("r." + q(task.deleteFlag()) + " = 0");
-        }
-        where.add("t." + q(nullProbe) + " IS NULL");
-        sb.append(" WHERE ").append(String.join(" AND ", where)).append(" SETTINGS join_use_nulls = 1");
-        return sb.toString();
+        return "SELECT count() FROM (" + retired + ") AS r LEFT JOIN (SELECT DISTINCT " + qList(rebuiltColumns)
+                + " FROM " + q(db) + "." + q(task.table()) + ") AS t ON " + join + " WHERE t." + q(nullProbe)
+                + " IS NULL SETTINGS join_use_nulls = 1";
     }
 
     /**

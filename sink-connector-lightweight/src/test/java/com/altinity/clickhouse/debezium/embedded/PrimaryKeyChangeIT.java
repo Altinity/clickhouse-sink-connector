@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
@@ -27,7 +28,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Properties;
 import java.util.concurrent.ExecutorService;
@@ -405,6 +408,294 @@ public class PrimaryKeyChangeIT {
         } finally {
             mysql.close();
         }
+    }
+
+    // ------------------------------------------------------------------
+    // The online window (Spec 06.09 §3.3.2 steps 7-9, §5): the backfill of a
+    // big table is slowed to seconds and an action is taken while the retired
+    // table still exists
+    // ------------------------------------------------------------------
+
+    /**
+     * Session settings of the connector's ClickHouse connections in these
+     * scenarios: the list every connection gets when
+     * {@code clickhouse.jdbc.settings} is unset
+     * ({@code BaseDbWriter.DEFAULT_CUSTOM_SETTINGS}) plus a read-speed cap
+     * that makes the backfill's {@code INSERT ... SELECT} of {@link #BIG_ROWS}
+     * rows take about 20 s (300k rows at 15k rows/s, enforced from the first
+     * block). The backfill opens its connections through
+     * {@code BaseDbWriter.createConnection} with the connector config, exactly
+     * as the engine's system connection is opened, so the cap reaches it.
+     */
+    private static final String SLOW_BACKFILL_JDBC_SETTINGS = "input_format_null_as_default=0,"
+            + "allow_experimental_object_type=1,insert_allow_materialized_columns=1,"
+            + "max_execution_speed=15000,timeout_before_checking_execution_speed=0";
+
+    /** The capped backfill reads BIG_ROWS several times (copy, row count, completeness check): minutes, plus CI margin. */
+    private static final long SLOW_BACKFILL_TIMEOUT_MS = 900_000;
+
+    /** How long the swap (the retired table's appearance, or the new sorting key) is awaited after an ALTER. */
+    private static final long SWAP_TIMEOUT_MS = 300_000;
+
+    /** How long the test waits after convergence to be sure no late copy statement resurrects rows. */
+    private static final long SETTLE_MS = 30_000;
+
+    private static final String BIG_TABLE = "t_big";
+
+    @Test
+    @DisplayName("DML on rows the backfill has not copied yet is never shadowed by the copy: UPDATE / DELETE / INSERT / relocation in the window, value-level equality at the end")
+    public void dmlDuringBackfillIsShadowedByNewerVersions() throws Exception {
+        try (SlowBackfill s = new SlowBackfill(BIG_TABLE)) {
+            s.alterAndAwaitWindow("ALTER TABLE " + BIG_TABLE + " DROP PRIMARY KEY, ADD PRIMARY KEY (b)", "b");
+            // The copy reads R in its old key order, so the highest ids are copied last.
+            execute(s.mysql, "UPDATE " + BIG_TABLE + " SET v = 'updated-in-window' WHERE id BETWEEN 299000 AND 299009");
+            // DESTRUCTIVE: statement text used only by this test; nothing outside the test containers/fakes is touched.
+            execute(s.mysql, "DELETE FROM " + BIG_TABLE + " WHERE id BETWEEN 299010 AND 299019");
+            execute(s.mysql, "INSERT INTO " + BIG_TABLE + " (id, b, c, v) VALUES (300001, 300001, 300001, 'new-a'), "
+                    + "(300002, 300002, 300002, 'new-b')");
+            execute(s.mysql, "UPDATE " + BIG_TABLE + " SET b = 400000, v = 'relocated-in-window' WHERE id = 299020");
+            s.assertConverged("b", "b");
+        }
+    }
+
+    @Test
+    // DESTRUCTIVE: statement text used only by this test; nothing outside the test containers/fakes is touched.
+    @DisplayName("TRUNCATE TABLE while the backfill is pending: the backfill is cancelled, the retired copy dropped, the table ends empty, no row is resurrected, a later INSERT replicates")
+    public void truncateDuringBackfillLeavesTableEmpty() throws Exception {
+        try (SlowBackfill s = new SlowBackfill(BIG_TABLE)) {
+            s.alterAndAwaitWindow("ALTER TABLE " + BIG_TABLE + " DROP PRIMARY KEY, ADD PRIMARY KEY (b)", "b");
+            // DESTRUCTIVE: the source's own statement, on the test's MySQL container only.
+            execute(s.mysql, "TRUNCATE TABLE " + BIG_TABLE);
+
+            // The cancel drops the retired copy before the truncate runs on
+            // ClickHouse; the truncate then waits for a copy statement that was
+            // in flight and empties the table.
+            awaitBackfillComplete(s.ch, BIG_TABLE, SLOW_BACKFILL_TIMEOUT_MS);
+            // DESTRUCTIVE: a log label naming the source statement this test issued above.
+            awaitLiveCount(s.ch, BIG_TABLE, 0, SLOW_BACKFILL_TIMEOUT_MS, "the TRUNCATE of " + BIG_TABLE);
+
+            execute(s.mysql, "INSERT INTO " + BIG_TABLE + " (id, b, c, v) VALUES (1, 1, 1, 'after-truncate')");
+            awaitMatch(s.mysql, s.ch, BIG_TABLE, "b", CONVERGE_TIMEOUT_MS, "the INSERT after the truncate of " + BIG_TABLE);
+            // Nothing may bring the truncated rows back once every statement
+            // that was in flight has finished.
+            Thread.sleep(SETTLE_MS);
+            // DESTRUCTIVE: an assertion label naming the source statement this test issued above.
+            assertMatch(s.mysql, s.ch, BIG_TABLE, "b", "no resurrected rows after the truncate of " + BIG_TABLE);
+            Assert.assertEquals("the retired copy must be gone", 0L, scratchTables(s.ch, BIG_TABLE));
+            Assert.assertEquals("sorting key of " + DB + "." + BIG_TABLE, "b", sortingKey(s.ch, BIG_TABLE));
+            assertMatch(s.mysql, s.ch, CONTROL_TABLE, "id", "the control table " + CONTROL_TABLE);
+        }
+    }
+
+    @Test
+    @DisplayName("A second key change while the first backfill is pending: both retired copies are backfilled in order, final equality under the second key")
+    public void secondKeyChangeWhileBackfillPending() throws Exception {
+        try (SlowBackfill s = new SlowBackfill(BIG_TABLE)) {
+            s.alterAndAwaitWindow("ALTER TABLE " + BIG_TABLE + " DROP PRIMARY KEY, ADD PRIMARY KEY (b)", "b");
+            execute(s.mysql, "ALTER TABLE " + BIG_TABLE + " DROP PRIMARY KEY, ADD PRIMARY KEY (c)");
+            long scratchAtSecondSwap = s.awaitSortingKey("c");
+            if (scratchAtSecondSwap >= 2) {
+                log.info("Observed: both retired copies of {} existed when the second swap landed (Spec 06.09 §3.3.2 "
+                        + "step 8)", BIG_TABLE);
+            } else {
+                log.warn("Race not observed: the first backfill of {} had completed before the second swap landed; "
+                        + "the property is not contradicted, only not witnessed", BIG_TABLE);
+            }
+            // DML under the final key, including a relocation.
+            execute(s.mysql, "INSERT INTO " + BIG_TABLE + " (id, b, c, v) VALUES (300001, 300001, 300001, 'new-a')");
+            execute(s.mysql, "UPDATE " + BIG_TABLE + " SET v = 'updated-under-c' WHERE c = 7");
+            execute(s.mysql, "UPDATE " + BIG_TABLE + " SET c = 400000 WHERE c = 8");
+            // DESTRUCTIVE: statement text used only by this test; nothing outside the test containers/fakes is touched.
+            execute(s.mysql, "DELETE FROM " + BIG_TABLE + " WHERE c = 9");
+            s.assertConverged("c", "c");
+        }
+    }
+
+    @Test
+    @DisplayName("The engine stopped while the retired table still exists: the restarted engine resumes the backfill from the marker, completes it and drops the retired copy")
+    public void restartDuringBackfillResumesFromMarker() throws Exception {
+        try (SlowBackfill s = new SlowBackfill(BIG_TABLE)) {
+            s.alterAndAwaitWindow("ALTER TABLE " + BIG_TABLE + " DROP PRIMARY KEY, ADD PRIMARY KEY (b)", "b");
+            s.stopEngine();
+            if (scratchTables(s.ch, BIG_TABLE) > 0) {
+                log.info("Observed: the retired table of {} survives the stop; the restarted engine must resume its "
+                        + "backfill from the marker (Spec 06.09 §3.3.2 step 6)", BIG_TABLE);
+            } else {
+                log.warn("Race not observed: the backfill of {} had completed before the engine stopped; the restart "
+                        + "finds nothing to resume", BIG_TABLE);
+            }
+            // The same offset and schema-history storage, in the same ClickHouse.
+            Thread.sleep(10_000);
+            s.startEngine();
+            s.assertConverged("b", "b");
+        }
+    }
+
+    @Test
+    @DisplayName("ADD COLUMN on the source while the backfill runs: the copy omits the column T gained after the swap and the table converges including it")
+    public void columnAddedDuringBackfill() throws Exception {
+        try (SlowBackfill s = new SlowBackfill(BIG_TABLE)) {
+            s.alterAndAwaitWindow("ALTER TABLE " + BIG_TABLE + " DROP PRIMARY KEY, ADD PRIMARY KEY (b)", "b");
+            execute(s.mysql, "ALTER TABLE " + BIG_TABLE + " ADD COLUMN extra INT NULL");
+            execute(s.mysql, "UPDATE " + BIG_TABLE + " SET extra = id WHERE id IN (5, 150000, 299999)");
+            s.assertConverged("b", "b");
+            Assert.assertEquals("type of " + BIG_TABLE + ".extra", "Nullable(Int32)",
+                    scalar(s.ch, "SELECT type FROM system.columns WHERE database = '" + DB + "' AND table = '"
+                            + BIG_TABLE + "' AND name = 'extra'"));
+        }
+    }
+
+    /**
+     * One slow-backfill scenario: the control table and {@code table}
+     * ({@code id} key, {@code b} and {@code c} unique candidates, {@code v})
+     * seeded with {@link #BIG_ROWS} rows before the engine starts; the engine
+     * runs with {@link #SLOW_BACKFILL_JDBC_SETTINGS}; the test's own
+     * ClickHouse connection is a direct one (no pool), so it neither inherits
+     * the read cap nor seeds the engine's pool first with a config that lacks
+     * it (pools are keyed by server and database name and keep the settings
+     * of whoever created them).
+     */
+    private final class SlowBackfill implements AutoCloseable {
+        final String table;
+        final Connection mysql;
+        final Connection ch;
+        final Properties props;
+        private final AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
+        private ExecutorService engineThread;
+
+        SlowBackfill(String table) throws Exception {
+            this.table = table;
+            this.mysql = connectToMySQLWithRetry();
+            execute(mysql, "CREATE TABLE " + CONTROL_TABLE + " (id INT NOT NULL, v VARCHAR(32), PRIMARY KEY (id))");
+            execute(mysql, "INSERT INTO " + CONTROL_TABLE + " (id, v) VALUES (1, 'ctl-a'), (2, 'ctl-b')");
+            execute(mysql, "CREATE TABLE " + table + " (id INT NOT NULL, b INT NOT NULL, c INT NOT NULL, v VARCHAR(32), "
+                    + "PRIMARY KEY (id))");
+            // One statement from a recursive numbers generator (MySQL 8.0): well under a minute.
+            execute(mysql, "SET SESSION cte_max_recursion_depth = " + (BIG_ROWS + 10));
+            execute(mysql, "INSERT INTO " + table + " (id, b, c, v) WITH RECURSIVE seq (n) AS (SELECT 1 UNION ALL "
+                    + "SELECT n + 1 FROM seq WHERE n < " + BIG_ROWS + ") SELECT n, n, n, CONCAT('v', n) FROM seq");
+
+            this.props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
+            this.props.setProperty("clickhouse.jdbc.settings", SLOW_BACKFILL_JDBC_SETTINGS);
+            this.ch = directClickHouseConnection();
+            startEngine();
+            awaitLiveCount(ch, table, BIG_ROWS, SNAPSHOT_TIMEOUT_MS, "snapshot of " + table);
+            awaitMatch(mysql, ch, CONTROL_TABLE, "id", SNAPSHOT_TIMEOUT_MS, "snapshot of " + CONTROL_TABLE);
+        }
+
+        /** Starts an engine on {@link #props}; a second start after {@link #stopEngine} resumes from the same storage. */
+        void startEngine() {
+            engineThread = Executors.newFixedThreadPool(1);
+            engineThread.execute(() -> {
+                try {
+                    engine.set(new DebeziumChangeEventCapture());
+                    engine.get().setup(props, new SourceRecordParserService(), false);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+        }
+
+        /** Stops the engine the way a restart would (the backfill thread is interrupted with it). */
+        void stopEngine() throws Exception {
+            DebeziumChangeEventCapture running = engine.getAndSet(null);
+            if (running != null) {
+                running.stop();
+            }
+            if (engineThread != null) {
+                engineThread.shutdown();
+                engineThread = null;
+            }
+        }
+
+        /**
+         * Issues the key change and waits for its swap: returns once the
+         * retired table exists (the window is open) or, when the backfill was
+         * already complete by then (fast CI), once the sorting key has changed
+         * -- logged at WARN, never a failure: the action still runs.
+         */
+        boolean alterAndAwaitWindow(String alter, String newSortingKey) throws Exception {
+            execute(mysql, alter);
+            long deadline = System.currentTimeMillis() + SWAP_TIMEOUT_MS;
+            while (System.currentTimeMillis() < deadline) {
+                if (scratchTables(ch, table) > 0) {
+                    log.info("Observed: the retired table of {} exists; the action runs inside the backfill window", table);
+                    return true;
+                }
+                if (newSortingKey.equals(sortingKey(ch, table))) {
+                    log.warn("Window not witnessed: the backfill of {} had already completed when the swap was first "
+                            + "seen; the action runs anyway and the end state is still asserted", table);
+                    return false;
+                }
+                Thread.sleep(200);
+            }
+            Assert.fail("the key change of " + DB + "." + table + " did not reach ClickHouse within " + SWAP_TIMEOUT_MS
+                    + " ms: neither a retired table nor the sorting key (" + newSortingKey + ")");
+            return false;
+        }
+
+        /** Waits until the table is keyed by {@code sortingKey}; returns how many scratch/retired tables exist then. */
+        long awaitSortingKey(String sortingKey) throws Exception {
+            long deadline = System.currentTimeMillis() + SWAP_TIMEOUT_MS;
+            while (System.currentTimeMillis() < deadline) {
+                long scratch = scratchTables(ch, table);
+                if (sortingKey.equals(sortingKey(ch, table))) {
+                    return scratch;
+                }
+                Thread.sleep(200);
+            }
+            Assert.fail("the key change of " + DB + "." + table + " to (" + sortingKey + ") did not reach ClickHouse "
+                    + "within " + SWAP_TIMEOUT_MS + " ms");
+            return 0;
+        }
+
+        /** The backfill completes, the table matches value for value under {@code orderBy}, the key and the control table are as expected. */
+        void assertConverged(String orderBy, String sortingKey) throws Exception {
+            awaitBackfillComplete(ch, table, SLOW_BACKFILL_TIMEOUT_MS);
+            awaitMatch(mysql, ch, table, orderBy, SLOW_BACKFILL_TIMEOUT_MS, "the rebuild of " + table);
+            Assert.assertEquals("sorting key of " + DB + "." + table, sortingKey, sortingKey(ch, table));
+            Assert.assertEquals("no scratch or retired table may remain", 0L, scratchTables(ch, table));
+            assertMatch(mysql, ch, CONTROL_TABLE, "id", "the control table " + CONTROL_TABLE);
+        }
+
+        @Override
+        public void close() throws Exception {
+            try {
+                stopEngine();
+            } finally {
+                try {
+                    ch.close();
+                } catch (SQLException e) {
+                    log.warn("could not close the test's ClickHouse connection", e);
+                }
+                HikariDbSource.close();
+                mysql.close();
+            }
+        }
+    }
+
+    /**
+     * A direct, un-pooled ClickHouse connection for the test's own reads. It
+     * must not go through {@code HikariDbSource}: the pool is keyed by server
+     * and database name and keeps the settings of whoever created it, so a
+     * test connection opened first with the default config would hand the
+     * engine's backfill un-capped connections, and one opened second would
+     * inherit the cap and slow every assertion.
+     */
+    private Connection directClickHouseConnection() {
+        Map<String, String> config = new HashMap<>();
+        config.put("connection.pool.disable", "true");
+        String url = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(),
+                clickHouseContainer.getFirstMappedPort(), DB);
+        Connection conn = BaseDbWriter.createConnection(url, BaseDbWriter.DATABASE_CLIENT_NAME,
+                clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), DB,
+                new ClickHouseSinkConnectorConfig(config));
+        Assert.assertNotNull("could not open a direct ClickHouse connection", conn);
+        return conn;
+    }
+
+    private static String sortingKey(Connection ch, String table) throws SQLException {
+        return scalar(ch, "SELECT sorting_key FROM system.tables WHERE database = '" + DB + "' AND name = '" + table + "'");
     }
 
     // ------------------------------------------------------------------

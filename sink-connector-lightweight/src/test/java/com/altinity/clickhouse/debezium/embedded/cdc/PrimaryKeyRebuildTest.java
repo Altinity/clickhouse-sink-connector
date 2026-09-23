@@ -28,6 +28,7 @@ import java.util.Properties;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -85,7 +86,28 @@ public class PrimaryKeyRebuildTest {
         final AtomicInteger executeBatchCalls = new AtomicInteger();
         private final List<Map.Entry<Predicate<String>, List<Object[]>>> answers = new ArrayList<>();
         private final List<Map.Entry<String, int[]>> failures = new ArrayList<>();
+        private final List<Map.Entry<String, Runnable>> hooks = new ArrayList<>();
         private int[] metaTypes = new int[0];
+
+        /**
+         * Runs {@code action} once, right after the first statement containing
+         * {@code fragment} has been sent -- the test's way of doing something
+         * on another connection while an attempt is between two statements.
+         */
+        FakeDb onStatement(String fragment, Runnable action) {
+            hooks.add(new java.util.AbstractMap.SimpleEntry<>(fragment, action));
+            return this;
+        }
+
+        private void runHooks(String sql) {
+            for (java.util.Iterator<Map.Entry<String, Runnable>> it = hooks.iterator(); it.hasNext(); ) {
+                Map.Entry<String, Runnable> hook = it.next();
+                if (sql.contains(hook.getKey())) {
+                    it.remove();
+                    hook.getValue().run();
+                }
+            }
+        }
 
         /** Answers queries containing {@code fragment} with {@code rows} (first script wins). */
         FakeDb answer(String fragment, Object[]... rows) {
@@ -170,10 +192,12 @@ public class PrimaryKeyRebuildTest {
                     case "execute":
                         executed.add((String) args[0]);
                         maybeFail((String) args[0]);
+                        runHooks((String) args[0]);
                         return false;
                     case "executeQuery":
                         executed.add((String) args[0]);
                         maybeFail((String) args[0]);
+                        runHooks((String) args[0]);
                         return resultSet(rowsFor((String) args[0]));
                     default:
                         return plain(proxy, method, args, "FakeStatement");
@@ -313,13 +337,23 @@ public class PrimaryKeyRebuildTest {
             if (sql.contains(" MODIFY COMMENT ")) {
                 continue;
             }
+            // DESTRUCTIVE: statement prefixes matched against text a fake connection recorded; nothing is executed against any database.
             if (sql.startsWith("CREATE") || sql.startsWith("ALTER") || sql.startsWith("INSERT")
                     || sql.startsWith("SELECT count()") || sql.startsWith("EXCHANGE") || sql.startsWith("RENAME")
-                    || sql.startsWith("DROP")) {
+                    || sql.startsWith("DROP") || sql.startsWith("TRUNCATE")) {
                 out.add(sql);
             }
         }
         return out;
+    }
+
+    /** Sends {@code sql} on a fresh statement of {@code db}'s connection (the DDL path's own statement). */
+    private static void execute(FakeDb db, String sql) {
+        try (Statement st = db.connection().createStatement()) {
+            st.execute(sql);
+        } catch (SQLException e) {
+            throw new AssertionError(e);
+        }
     }
 
     /** The {@code MODIFY COMMENT} statements issued, in order. */
@@ -377,7 +411,8 @@ public class PrimaryKeyRebuildTest {
                 .answer("AND table = 't' ORDER BY position", rebuiltColumns)
                 .answer("AND table = '" + retired + "' ORDER BY position", retiredColumns)
                 .answer("SELECT DISTINCT partition_id FROM system.parts", parts.toArray(new Object[0][]))
-                .answer("SELECT count() FROM `employees`.`" + retired + "` AS r FINAL", row(missingKeys))
+                // The completeness check reads R as "AS r FINAL" inside its subquery; the copy's row count does not.
+                .answer("FROM `employees`.`" + retired + "` AS r FINAL", row(missingKeys))
                 .answer("SELECT count() FROM (", row(5L))
                 .answer("SELECT comment FROM system.tables", row(COMMENT + "\n" + PrimaryKeyBackfill.MARKER_PREFIX
                         + "{\"v\":1}"));
@@ -650,9 +685,15 @@ public class PrimaryKeyRebuildTest {
                 + "WHERE `is_deleted` = 0" + (partition == null ? "" : " AND _partition_id = '" + partition + "'");
     }
 
-    private static final String TENANT_CHECK = "SELECT count() FROM `employees`.`" + S + "` AS r FINAL "
-            + "LEFT JOIN `employees`.`t` AS t ON t.`tenant` = r.`tenant` WHERE r.`is_deleted` = 0 "
-            + "AND t.`tenant` IS NULL SETTINGS join_use_nulls = 1";
+    /**
+     * The completeness check: FINAL confined to the retired table's subquery,
+     * the rebuilt table read as its distinct keys (live or tombstoned) -- on
+     * 24.8.14 a plain {@code R FINAL LEFT JOIN T} read T FINAL-like and
+     * reported every key T held only as a tombstone as missing.
+     */
+    private static final String TENANT_CHECK = "SELECT count() FROM (SELECT r.`tenant` AS `tenant` FROM `employees`.`" + S
+            + "` AS r FINAL WHERE r.`is_deleted` = 0) AS r LEFT JOIN (SELECT DISTINCT `tenant` FROM `employees`.`t`) AS t "
+            + "ON t.`tenant` = r.`tenant` WHERE t.`tenant` IS NULL SETTINGS join_use_nulls = 1";
 
     @Test
     @DisplayName("Local backfill: INSERT...SELECT FROM R FINAL WHERE is_deleted = 0 per partition, completeness check, drop of R; no source read")
@@ -730,9 +771,10 @@ public class PrimaryKeyRebuildTest {
                 "INSERT INTO `employees`.`" + K + "` (`id`, `new_id`) VALUES (?, ?)",
                 "INSERT INTO `employees`.`t` (`id`, `tenant`, `name`, `new_id`, `_version`, `is_deleted`) " + select,
                 "SELECT count() FROM (" + select + ")",
-                "SELECT count() FROM `employees`.`" + S + "` AS r FINAL INNER JOIN `employees`.`" + K
-                        + "` AS k ON r.`id` = k.`id` LEFT JOIN `employees`.`t` AS t ON t.`new_id` = k.`new_id` "
-                        + "WHERE r.`is_deleted` = 0 AND t.`new_id` IS NULL SETTINGS join_use_nulls = 1",
+                "SELECT count() FROM (SELECT k.`new_id` AS `new_id` FROM `employees`.`" + S + "` AS r FINAL INNER JOIN "
+                        + "`employees`.`" + K + "` AS k ON r.`id` = k.`id` WHERE r.`is_deleted` = 0) AS r LEFT JOIN "
+                        + "(SELECT DISTINCT `new_id` FROM `employees`.`t`) AS t ON t.`new_id` = r.`new_id` "
+                        + "WHERE t.`new_id` IS NULL SETTINGS join_use_nulls = 1",
                 // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
                 "DROP TABLE IF EXISTS `employees`.`" + S + "`",
                 "DROP TABLE IF EXISTS `employees`.`" + K + "`");
@@ -761,7 +803,7 @@ public class PrimaryKeyRebuildTest {
 
         // Once the check passes, the re-scheduled attempt re-issues the copy and drops R.
         ch.answers.add(0, new java.util.AbstractMap.SimpleEntry<>(
-                sql -> sql.startsWith("SELECT count() FROM `employees`.`" + S + "` AS r FINAL"),
+                sql -> sql.contains("FROM `employees`.`" + S + "` AS r FINAL"),
                 Collections.singletonList(row(0L))));
         h.scheduler.runNext();
         List<String> actions = actions(ch);
@@ -946,6 +988,306 @@ public class PrimaryKeyRebuildTest {
     }
 
     // ------------------------------------------------------------------
+    // Superseding DDL, a second key change, a schema change during the
+    // backfill (Spec 06.09 §3.3.2 steps 7-9)
+    // ------------------------------------------------------------------
+
+    private static final String SHOW_CREATE_NEW_ID = SHOW_CREATE.replace("    `name` Nullable(String),\n",
+            "    `name` Nullable(String),\n    `new_id` UInt64,\n");
+
+    /** The DDL path's (writer's) connection as a cancel sees it: the scan finds the task's retired table with its marker. */
+    private static FakeDb writerSeeing(PrimaryKeyBackfill.Task task) {
+        return new FakeDb().answer("SELECT name, comment FROM system.tables WHERE database = 'employees' AND (name LIKE 't",
+                row(task.retired(), COMMENT + "\n" + PrimaryKeyBackfill.MARKER_PREFIX + task.markerJson()));
+    }
+
+    private static List<String> startingWith(List<String> statements, String prefix) {
+        return statements.stream().filter(sql -> sql.startsWith(prefix)).collect(Collectors.toList());
+    }
+
+    @Test
+    // DESTRUCTIVE: statement text recorded by fake connections only; nothing is executed against any database in this test.
+    @DisplayName("A TRUNCATE TABLE arriving while the backfill is queued cancels it and drops R and K before the truncate runs; no copy statement is ever issued")
+    public void truncateDuringBackfillCancelsAndDropsRetired() {
+        // A source-valued rebuild: both the retired copy and the key map are at stake.
+        PrimaryKeyBackfill.Task task = swapped(sourceValuedPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE_NEW_ID, false, true));
+        FakeDb backfillDb = afterSwap(tColumns(false, true), tColumns(false, true), S, 0, "all");
+        Harness h = new Harness(backfillDb, null, new Properties());
+        assertTrue(h.backfill.submit(task));
+        assertEquals(Collections.singletonList(0L), h.scheduler.delays);
+        assertEquals(1, h.backfill.pending());
+
+        // A superseding statement for ANOTHER table leaves the task alone.
+        FakeDb unrelated = new FakeDb();
+        assertEquals(0, h.backfill.cancelFor(unrelated.connection(), "employees", "other"));
+        assertTrue(actions(unrelated).isEmpty(), unrelated.executed.toString());
+        assertEquals(1, h.backfill.pending());
+        assertFalse(task.cancelled());
+
+        // The DDL path for t: the cancel on the writer's connection, then the statement itself.
+        FakeDb writer = writerSeeing(task);
+        int cancelled = h.backfill.cancelFor(writer.connection(), "employees", "t");
+        // DESTRUCTIVE: the source's own replicated statement, recorded by a fake connection; nothing is executed against any database.
+        execute(writer, "TRUNCATE TABLE `employees`.`t`");
+
+        assertEquals(1, cancelled);
+        assertTrue(task.cancelled());
+        assertEquals(0, h.backfill.pending());
+        // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+        assertEquals(Arrays.asList(
+                "DROP TABLE IF EXISTS `employees`.`" + S + "`",
+                "DROP TABLE IF EXISTS `employees`.`" + K + "`",
+                "TRUNCATE TABLE `employees`.`t`"), actions(writer), "R and K are dropped BEFORE the truncate runs");
+
+        // The queued attempt is a no-op: no connection opened, no statement, no retry, no failure.
+        h.scheduler.runNext();
+        assertTrue(backfillDb.executed.isEmpty(), "no copy statement may be issued: " + backfillDb.executed);
+        assertEquals(Collections.singletonList(0L), h.scheduler.delays, "nothing re-scheduled");
+        assertTrue(h.reporter.steps.isEmpty(), "a cancel is not a failure: " + h.reporter.steps);
+        assertEquals(0, h.backfill.pending());
+
+        // DESTRUCTIVE: a setting name only; nothing is executed against any database in this test.
+        // disable.drop.truncate=true: the retired copy is dropped all the same --
+        // the operator keeps the rows already in T, not the retired ones.
+        Properties keep = new Properties();
+        // DESTRUCTIVE: a setting name only; nothing is executed against any database in this test.
+        keep.setProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, "true");
+        PrimaryKeyBackfill.Task kept = PrimaryKeyRebuild.swap(existingKeyPlan(),
+                clickHouse(ENGINE_FULL, SHOW_CREATE, false, false).connection(), keep, config(), "hr", EPOCH);
+        Harness hk = new Harness(afterSwap(tColumns(false, false), tColumns(false, false), S, 0, "all"), null, keep);
+        assertTrue(hk.backfill.submit(kept));
+        FakeDb writerKeep = writerSeeing(kept);
+        assertEquals(1, hk.backfill.cancelFor(writerKeep.connection(), "employees", "t"));
+        // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+        assertEquals(Collections.singletonList("DROP TABLE IF EXISTS `employees`.`" + S + "`"), actions(writerKeep));
+        assertEquals(0, hk.backfill.pending());
+    }
+
+    @Test
+    // DESTRUCTIVE: statement text recorded by fake connections only; nothing is executed against any database in this test.
+    @DisplayName("A DROP TABLE arriving while the backfill is queued cancels it; a pending copy of a previous run is dropped by its marker, a marker-less scratch table is not; DROP DATABASE cancels every table of the database")
+    public void dropTableDuringBackfillCancels() {
+        PrimaryKeyBackfill.Task task = swapped(existingKeyPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE, false, false));
+        FakeDb backfillDb = afterSwap(tColumns(false, false), tColumns(false, false), S, 0, "all");
+        Harness h = new Harness(backfillDb, null, new Properties());
+        assertTrue(h.backfill.submit(task));
+
+        // The writer's connection also sees, for the same table, a pending copy
+        // of a previous run that this process did not resume (marker) with its
+        // key map, and a marker-less leftover of a swap that never completed.
+        String previous = "t__pk_retired_1600000000000";
+        String previousKeys = "t__pk_rebuild_keys_1600000000000";
+        String stale = "t__pk_rebuild_1500000000000";
+        PrimaryKeyBackfill.Task older = new PrimaryKeyBackfill.Task("employees", "t", previous, previousKeys, null, "hr",
+                "is_deleted", Collections.singletonList("id"), Collections.singletonList("new_id"),
+                Collections.emptyMap(), Collections.singletonList("new_id"), false, 1600000000000L);
+        FakeDb writer = new FakeDb().answer(
+                "SELECT name, comment FROM system.tables WHERE database = 'employees' AND (name LIKE 't",
+                row(stale, ""),
+                row(previous, PrimaryKeyBackfill.MARKER_PREFIX + older.markerJson()),
+                row(S, COMMENT + "\n" + PrimaryKeyBackfill.MARKER_PREFIX + task.markerJson()));
+
+        assertEquals(1, h.backfill.cancelFor(writer.connection(), "employees", "t"));
+        // DESTRUCTIVE: the source's own replicated statement, recorded by a fake connection; nothing is executed against any database.
+        execute(writer, "DROP TABLE IF EXISTS `employees`.`t`");
+
+        // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+        assertEquals(Arrays.asList(
+                "DROP TABLE IF EXISTS `employees`.`" + S + "`",
+                "DROP TABLE IF EXISTS `employees`.`" + previous + "`",
+                "DROP TABLE IF EXISTS `employees`.`" + previousKeys + "`",
+                "DROP TABLE IF EXISTS `employees`.`t`"), actions(writer),
+                "the task's R, the previous run's R and K by its marker, never the marker-less leftover; all before the drop");
+        assertTrue(task.cancelled());
+        h.scheduler.runNext();
+        assertTrue(backfillDb.executed.isEmpty(), "no copy statement may be issued: " + backfillDb.executed);
+        assertEquals(0, h.backfill.pending());
+        assertEquals(Collections.singletonList(0L), h.scheduler.delays, "nothing re-scheduled");
+        assertTrue(h.reporter.steps.isEmpty(), h.reporter.steps.toString());
+
+        // DROP DATABASE: every pending backfill of that database, whatever the
+        // table; a backfill in another database is untouched.
+        PrimaryKeyBackfill.Task t1 = swapped(existingKeyPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE, false, false));
+        PrimaryKeyBackfill.Task u1 = new PrimaryKeyBackfill.Task("employees", "u", "u__pk_rebuild_" + EPOCH,
+                "u__pk_rebuild_keys_" + EPOCH, null, "hr", "is_deleted", Collections.singletonList("id"),
+                Collections.singletonList("b"), Collections.emptyMap(), Collections.emptyList(), false, EPOCH);
+        PrimaryKeyBackfill.Task elsewhere = new PrimaryKeyBackfill.Task("other", "t", S, K, null, "hr", "is_deleted",
+                Collections.singletonList("id"), Collections.singletonList("tenant"), Collections.emptyMap(),
+                Collections.emptyList(), false, EPOCH);
+        Harness all = new Harness(new FakeDb(), null, new Properties());
+        assertEquals(3, all.backfill.submitAll(Arrays.asList(t1, u1, elsewhere)));
+        FakeDb writerAll = new FakeDb();
+        assertEquals(2, all.backfill.cancelAllFor(writerAll.connection(), "employees"));
+        // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+        assertEquals(Arrays.asList(
+                "DROP TABLE IF EXISTS `employees`.`" + S + "`",
+                "DROP TABLE IF EXISTS `employees`.`u__pk_rebuild_" + EPOCH + "`"), actions(writerAll));
+        assertTrue(writerAll.executed.stream().anyMatch(sql -> sql.contains("name LIKE '%\\_\\_pk\\_rebuild\\_%'")),
+                "the scan covers every table of the database: " + writerAll.executed);
+        assertTrue(t1.cancelled() && u1.cancelled() && !elsewhere.cancelled());
+        assertEquals(1, all.backfill.pending());
+    }
+
+    @Test
+    // DESTRUCTIVE: statement text recorded by fake connections only; nothing is executed against any database in this test.
+    @DisplayName("A running copy cancelled between two statements stops there without a retry; a retired table already gone at run time is terminal; a shutdown stops at the boundary too")
+    public void cancelledBackfillStopsWithoutRescheduling() {
+        PrimaryKeyBackfill.Task task = swapped(existingKeyPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE, false, false));
+        FakeDb backfillDb = afterSwap(tColumns(false, false), tColumns(false, false), S, 0, "all");
+        Harness h = new Harness(backfillDb, null, new Properties());
+        FakeDb writer = writerSeeing(task);
+        // The superseding statement arrives while the copy statement is in flight.
+        backfillDb.onStatement("INSERT INTO `employees`.`t`", () -> {
+            assertEquals(1, h.backfill.cancelFor(writer.connection(), "employees", "t"));
+            // DESTRUCTIVE: the source's own replicated statement, recorded by a fake connection; nothing is executed against any database.
+            execute(writer, "TRUNCATE TABLE `employees`.`t`");
+        });
+
+        h.runOnce(task);
+
+        String insert = "INSERT INTO `employees`.`t` (`id`, `tenant`, `name`, `_version`, `is_deleted`) "
+                + tenantSelect(null);
+        assertEquals(Collections.singletonList(insert), actions(backfillDb),
+                "the attempt stops at the next statement boundary: no row count, no check, no drop by the task");
+        // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+        assertEquals(Arrays.asList("DROP TABLE IF EXISTS `employees`.`" + S + "`", "TRUNCATE TABLE `employees`.`t`"),
+                actions(writer));
+        assertEquals(Collections.singletonList(0L), h.scheduler.delays, "not re-scheduled");
+        assertTrue(h.reporter.steps.isEmpty(), "a cancel is not a failure: " + h.reporter.steps);
+        assertEquals(0, h.backfill.pending());
+        assertEquals(0, task.failures());
+
+        // The retired table vanished before the attempt, with no cancel seen in
+        // this process: logged, reported, terminal -- never retried, nothing copied.
+        PrimaryKeyBackfill.Task gone = swapped(existingKeyPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE, false, false));
+        FakeDb noRetired = new FakeDb().answer("AND table = 't' ORDER BY position", tColumns(false, false));
+        Harness hg = new Harness(noRetired, null, new Properties());
+        hg.runOnce(gone);
+        assertEquals(Collections.singletonList(0L), hg.scheduler.delays, "terminal: not re-scheduled");
+        assertEquals(Collections.singletonList("step 0 (columns of the retired table)"), hg.reporter.steps);
+        assertTrue(hg.reporter.messages.get(0).contains("no longer exists"), hg.reporter.messages.get(0));
+        assertTrue(actions(noRetired).isEmpty(), "no copy, no drop: " + actions(noRetired));
+        assertEquals(0, hg.backfill.pending());
+
+        // A shutdown between two statements stops the attempt as well; the
+        // marker on the retired table resumes it at the next start.
+        PrimaryKeyBackfill.Task interrupted = swapped(existingKeyPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE, false, false));
+        FakeDb shut = afterSwap(tColumns(false, false), tColumns(false, false), S, 0, "all");
+        Harness hs = new Harness(shut, null, new Properties());
+        shut.onStatement("INSERT INTO `employees`.`t`", hs.backfill::shutdown);
+        hs.runOnce(interrupted);
+        assertEquals(Collections.singletonList(insert), actions(shut), shut.executed.toString());
+        assertNothingDropped(shut);
+        assertEquals(Collections.singletonList(0L), hs.scheduler.delays);
+        assertTrue(hs.reporter.steps.isEmpty(), hs.reporter.steps.toString());
+        assertEquals(0, hs.backfill.pending());
+    }
+
+    private static PrimaryKeyRebuildPlan backToIdPlan() {
+        Map<String, Provenance> provenance = new LinkedHashMap<>();
+        provenance.put("id", Provenance.EXISTING);
+        return new PrimaryKeyRebuildPlan("employees", "t", Collections.singletonList("tenant"),
+                Collections.singletonList("id"), false, provenance,
+                "ALTER TABLE t DROP PRIMARY KEY, ADD PRIMARY KEY (id)");
+    }
+
+    @Test
+    @DisplayName("A second key change while the first backfill is pending: step 1 keeps the marker-bearing retired table, and the two backfills run in submission order")
+    public void secondSwapKeepsPendingRetiredTable() {
+        // First change: id -> tenant; its backfill is still pending.
+        PrimaryKeyBackfill.Task first = swapped(existingKeyPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE, false, false));
+        assertEquals(S, first.retired());
+
+        // Second change on the same table, tenant -> id, while R1 (marker) and
+        // its key map are still there and T is keyed by tenant.
+        String S2 = "t__pk_rebuild_" + (EPOCH + 1);
+        FakeDb second = clickHouse(ENGINE_FULL.replace("ORDER BY id", "ORDER BY tenant"),
+                SHOW_CREATE.replace("ORDER BY id", "ORDER BY tenant"), false, false)
+                .answer("AND (name LIKE 't", row(S, COMMENT + "\n" + PrimaryKeyBackfill.MARKER_PREFIX + first.markerJson()),
+                        row(K, ""))
+                .answer("AND table = 't' AND is_in_sorting_key = 1", row("tenant"));
+        PrimaryKeyBackfill.Task later = PrimaryKeyRebuild.swap(backToIdPlan(), second.connection(), new Properties(),
+                config(), "hr", EPOCH + 1);
+
+        assertNothingDropped(second);
+        assertEquals(S2, later.retired());
+        assertEquals("EXCHANGE TABLES `employees`.`t` AND `employees`.`" + S2 + "`",
+                actions(second).get(actions(second).size() - 1));
+        assertEquals(Collections.singletonList("tenant"), later.oldKey());
+        assertEquals(Collections.singletonList("id"), later.newKey());
+
+        // Both backfills on one runner: T now carries both key columns as
+        // ordinary columns, so each copy and check is built against it.
+        String copy1 = "INSERT INTO `employees`.`t` (`id`, `tenant`, `name`, `_version`, `is_deleted`) " + tenantSelect(null);
+        String copy2 = copy1.replace("`" + S + "`", "`" + S2 + "`");
+        FakeDb run = new FakeDb()
+                .answer("AND table = 't' ORDER BY position", tColumns(false, false))
+                .answer("AND table = '" + S + "' ORDER BY position", tColumns(false, false))
+                .answer("AND table = '" + S2 + "' ORDER BY position", tColumns(false, false))
+                .answer("SELECT DISTINCT partition_id FROM system.parts", row("all"))
+                .answer("FROM `employees`.`" + S + "` AS r FINAL", row(0L))
+                .answer("FROM `employees`.`" + S2 + "` AS r FINAL", row(0L))
+                .answer("SELECT count() FROM (", row(5L))
+                // The first backfill's first copy fails, so it is re-scheduled behind the second one.
+                .failOn(copy1, 1);
+        Harness h = new Harness(run, null, new Properties());
+        assertTrue(h.backfill.submit(first));
+        assertTrue(h.backfill.submit(later));
+        assertEquals(2, h.backfill.pending());
+        assertEquals(Arrays.asList(0L, 0L), h.scheduler.delays);
+
+        h.scheduler.runNext();  // first, attempt 1: the copy fails -> retry in 10 s
+        assertEquals(Arrays.asList(0L, 0L, 10_000L), h.scheduler.delays);
+        h.scheduler.runNext();  // later: the earlier backfill of the same table is still pending -> waits, issues nothing
+        assertEquals(Arrays.asList(0L, 0L, 10_000L, PrimaryKeyBackfill.FIFO_RECHECK_MS), h.scheduler.delays);
+        assertFalse(run.executed.stream().anyMatch(sql -> sql.contains("`" + S2 + "`")),
+                "the later backfill must not overtake the earlier one: " + run.executed);
+        h.scheduler.runNext();  // first, attempt 2: copies R1, drops it
+        h.scheduler.runNext();  // later: copies R2, drops it
+
+        List<String> actions = actions(run);
+        assertEquals(Arrays.asList(copy1, copy1, copy2), startingWith(actions, "INSERT"));
+        // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+        assertEquals(Arrays.asList("DROP TABLE IF EXISTS `employees`.`" + S + "`",
+                "DROP TABLE IF EXISTS `employees`.`" + S2 + "`"), startingWith(actions, "DROP"));
+        assertEquals(Collections.singletonList("step 2 (copy the live rows)"), h.reporter.steps);
+        assertEquals(0, h.backfill.pending());
+        assertEquals(4, h.scheduler.delays.size(), "nothing more scheduled");
+    }
+
+    @Test
+    @DisplayName("A column on T that R lacks (added after the swap) is left out of the copy, as are ALIAS/MATERIALIZED columns; the list follows T's current columns")
+    public void columnAddedDuringBackfillIsOmittedFromCopy() {
+        PrimaryKeyBackfill.Task task = swapped(existingKeyPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE, false, false));
+        Object[][] widened = {row("id", "Int32", ""), row("tenant", "Int32", ""), row("name", "Nullable(String)", ""),
+                row("extra", "Nullable(Int32)", ""), row("doubled", "Int32", "MATERIALIZED"),
+                row("shadow", "Int32", "ALIAS"), row("_version", "UInt64", ""), row("is_deleted", "UInt8", "")};
+        FakeDb ch = afterSwap(widened, tColumns(false, false), S, 0, "all");
+
+        new Harness(ch, null, new Properties()).runOnce(task);
+
+        String insert = "INSERT INTO `employees`.`t` (`id`, `tenant`, `name`, `_version`, `is_deleted`) "
+                + tenantSelect(null);
+        assertEquals(Arrays.asList(
+                insert,
+                "SELECT count() FROM (" + tenantSelect(null) + ")",
+                TENANT_CHECK,
+                // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+                "DROP TABLE IF EXISTS `employees`.`" + S + "`"), actions(ch));
+
+        // A column removed from T after the swap is simply not in the copied set.
+        Object[][] narrower = {row("id", "Int32", ""), row("tenant", "Int32", ""), row("_version", "UInt64", ""),
+                row("is_deleted", "UInt8", "")};
+        FakeDb removed = afterSwap(narrower, tColumns(false, false), S, 0, "all");
+        new Harness(removed, null, new Properties()).runOnce(
+                swapped(existingKeyPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE, false, false)));
+        String narrowSelect = "SELECT `id`, `tenant`, `_version`, `is_deleted` FROM `employees`.`" + S
+                + "` FINAL WHERE `is_deleted` = 0";
+        assertEquals("INSERT INTO `employees`.`t` (`id`, `tenant`, `_version`, `is_deleted`) " + narrowSelect,
+                actions(removed).get(0));
+    }
+
+    // ------------------------------------------------------------------
     // Deferred clauses on old-key columns (Spec 06.09 §3.1.1, §3.3.1 step 3)
     // ------------------------------------------------------------------
 
@@ -1015,8 +1357,9 @@ public class PrimaryKeyRebuildTest {
         assertEquals(Arrays.asList(
                 "INSERT INTO `employees`.`t` (`id`, `v`, `_version`, `is_deleted`) " + select,
                 "SELECT count() FROM (" + select + ")",
-                "SELECT count() FROM `employees`.`" + S + "` AS r FINAL LEFT JOIN `employees`.`t` AS t ON t.`id` = r.`id` "
-                        + "WHERE r.`is_deleted` = 0 AND t.`id` IS NULL SETTINGS join_use_nulls = 1",
+                "SELECT count() FROM (SELECT r.`id` AS `id` FROM `employees`.`" + S + "` AS r FINAL WHERE r.`is_deleted` = 0) "
+                        + "AS r LEFT JOIN (SELECT DISTINCT `id` FROM `employees`.`t`) AS t ON t.`id` = r.`id` "
+                        + "WHERE t.`id` IS NULL SETTINGS join_use_nulls = 1",
                 // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
                 "DROP TABLE IF EXISTS `employees`.`" + S + "`"), actions(after));
     }
@@ -1064,8 +1407,9 @@ public class PrimaryKeyRebuildTest {
         assertEquals(Arrays.asList(
                 "INSERT INTO `employees`.`t` (`ref_id`, `tenant`, `name`, `_version`, `is_deleted`) " + select,
                 "SELECT count() FROM (" + select + ")",
-                "SELECT count() FROM `employees`.`" + S + "` AS r FINAL LEFT JOIN `employees`.`t` AS t ON t.`ref_id` = r.`id` "
-                        + "WHERE r.`is_deleted` = 0 AND t.`ref_id` IS NULL SETTINGS join_use_nulls = 1",
+                "SELECT count() FROM (SELECT r.`id` AS `ref_id` FROM `employees`.`" + S + "` AS r FINAL WHERE r.`is_deleted` = 0) "
+                        + "AS r LEFT JOIN (SELECT DISTINCT `ref_id` FROM `employees`.`t`) AS t ON t.`ref_id` = r.`ref_id` "
+                        + "WHERE t.`ref_id` IS NULL SETTINGS join_use_nulls = 1",
                 // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
                 "DROP TABLE IF EXISTS `employees`.`" + S + "`"), actions(after));
         for (String sql : ch.executed) {
