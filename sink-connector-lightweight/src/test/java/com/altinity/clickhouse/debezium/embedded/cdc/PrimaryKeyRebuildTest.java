@@ -859,6 +859,45 @@ public class PrimaryKeyRebuildTest {
     }
 
     @Test
+    @DisplayName("A re-typed key column is read from R as T's type in the completeness check (Spec 06.09 §3.3.2 step 3)")
+    public void completenessCheckCastsRetypedKeyColumns() {
+        // MODIFY tenant INT on a VARCHAR key column: R holds Nullable(String), T holds Int32.
+        Object[][] retired = {row("id", "Int32", ""), row("tenant", "Nullable(String)", ""),
+                row("name", "Nullable(String)", ""), row("_version", "UInt64", ""), row("is_deleted", "UInt8", "")};
+        FakeDb ch = afterSwap(tColumns(false, false), retired, S, 0, "all");
+        Harness h = new Harness(ch, null, new Properties());
+        h.runOnce(swapped(existingKeyPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE, false, false)));
+        String nullableToPlain = "SELECT count() FROM (SELECT ifNull(CAST(r.`tenant`, 'Nullable(Int32)'), "
+                + "defaultValueOfTypeName('Int32')) AS `tenant` FROM `employees`.`" + S
+                + "` AS r FINAL WHERE r.`is_deleted` = 0) AS r LEFT JOIN (SELECT DISTINCT `tenant` FROM `employees`.`t`) AS t "
+                + "ON t.`tenant` = r.`tenant` WHERE t.`tenant` IS NULL SETTINGS join_use_nulls = 1";
+        assertEquals(nullableToPlain, actions(ch).get(2),
+                "a NULL on R became the type's default on T (insert_null_as_default), so the probe compares that value");
+        assertTrue(h.reporter.steps.isEmpty(), "the check passed: " + h.reporter.steps);
+        assertEquals(0, h.backfill.pending());
+
+        // A non-Nullable re-type: a plain CAST to T's type.
+        Object[][] plain = {row("id", "Int32", ""), row("tenant", "String", ""), row("name", "Nullable(String)", ""),
+                row("_version", "UInt64", ""), row("is_deleted", "UInt8", "")};
+        FakeDb cast = afterSwap(tColumns(false, false), plain, S, 0, "all");
+        new Harness(cast, null, new Properties()).runOnce(
+                swapped(existingKeyPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE, false, false)));
+        assertEquals(TENANT_CHECK.replace("SELECT r.`tenant` AS `tenant`", "SELECT CAST(r.`tenant`, 'Int32') AS `tenant`"),
+                actions(cast).get(2));
+
+        // The conversion itself: unchanged when the types agree or are unknown,
+        // Nullable-preserving, LowCardinality-aware, quotes in the type escaped.
+        assertEquals("r.`x`", PrimaryKeyBackfill.asRebuiltType("r.`x`", "Int32", "Int32"));
+        assertEquals("r.`x`", PrimaryKeyBackfill.asRebuiltType("r.`x`", null, "Int32"));
+        assertEquals("CAST(r.`x`, 'Nullable(Int32)')",
+                PrimaryKeyBackfill.asRebuiltType("r.`x`", "Nullable(String)", "Nullable(Int32)"));
+        assertEquals("ifNull(CAST(r.`x`, 'LowCardinality(Nullable(String))'), defaultValueOfTypeName('LowCardinality(String)'))",
+                PrimaryKeyBackfill.asRebuiltType("r.`x`", "Nullable(String)", "LowCardinality(String)"));
+        assertEquals("CAST(r.`d`, 'DateTime64(3, \\'UTC\\')')",
+                PrimaryKeyBackfill.asRebuiltType("r.`d`", "DateTime", "DateTime64(3, 'UTC')"));
+    }
+
+    @Test
     @DisplayName("A SOURCE_VALUED column: key-map table, read-only source SELECT, JOIN copy from the map, K dropped after the check")
     public void sourceKeyMapJoinSequence() {
         String showCreate = SHOW_CREATE.replace("    `name` Nullable(String),\n",

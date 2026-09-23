@@ -260,7 +260,17 @@ row twice collapses to one (`PkRebuild.lean`: `backfill_never_shadows_newer`,
    misses for 2 deleted + 1 relocated row; 0 with the subquery form). The probed column is the first new-key column, or
    `t._version` when that column is `Nullable` on `T` (the keyless fallback),
    and `Nullable` key columns are joined with `isNotDistinctFrom` (plain `=`
-   would report every NULL-keyed row as missing forever). Rows deleted or
+   would report every NULL-keyed row as missing forever). A new-key column
+   whose type on `R` differs from its type on `T` (a re-typed key column,
+   §3.1.1) is read from `R` through the conversion the copy applied —
+   `CAST(r.<old>, '<type on T>')`, or `ifNull(CAST(r.<old>, 'Nullable(<type on
+   T>)'), defaultValueOfTypeName('<type on T>'))` when `R` has it `Nullable`
+   and `T` does not (the value `insert_null_as_default` stored) — because
+   ClickHouse rejects the join of a String key against a numeric one with
+   `Code: 386 NO_COMMON_TYPE` (measured on 24.8.14 after `MODIFY class_name
+   INT` on a VARCHAR key column: "Left key class_name type Nullable(String).
+   Right key class_name type Int32") and the backfill would retry forever
+   with the retired table never released. Rows deleted or
    re-keyed on the source between the DDL and the key-map read are absent
    from `K` and excluded from the check, as in §3.4.
 4. **Retire**: `DROP TABLE R` and `K` — unless `disable.drop.truncate=true`,
@@ -407,6 +417,7 @@ is unaffected.
 - `PrimaryKeyRebuildTest.localCopyStatementSequence()` — the backfill on the retired table: `INSERT INTO T ... SELECT ... FROM R FINAL WHERE is_deleted = 0` (one per partition), the completeness check (`LEFT JOIN ... IS NULL` count = 0), `DROP TABLE R`; no source connection opened.
 - `PrimaryKeyRebuildTest.sourceKeyMapJoinSequence()` — a `SOURCE_VALUED` column: the key-map table, the source `SELECT`, the JOIN copy, the source-valued column taken from the map, `K` dropped after the check.
 - `PrimaryKeyRebuildTest.completenessCheckGuardsDrop()` — a non-zero completeness count: no DROP of `R`/`K`, the failure is reported and the task is re-scheduled.
+- `PrimaryKeyRebuildTest.completenessCheckCastsRetypedKeyColumns()` — §3.3.2 step 3: a new-key column re-typed by the rebuild is read from `R` as `CAST(r.<old>, '<type on T>')` (`ifNull(CAST(..., 'Nullable(<type on T>)'), defaultValueOfTypeName(...))` when only `R` is Nullable); same-typed columns are read as before. Pre-fix code compared the raw columns, so every String<->numeric re-type of a key column failed the check with `Code: 386` and the backfill retried forever.
 - `PrimaryKeyRebuildTest.backfillRetriesWithBackoff()` — a failing `INSERT` re-schedules the backfill (10 s, 20 s, ... capped at 5 min) and the next attempt re-issues the same statements; nothing is dropped meanwhile.
 - `PrimaryKeyRebuildTest.restartResumesPendingBackfill()` — `resumePending` finds a marker-bearing `T__pk_rebuild_%` table whose companion `T` is keyed by the marker's new key and schedules its backfill; a marker-less scratch table, or one whose companion is still keyed by the old identity, is not resumed.
 - `PrimaryKeyRebuildTest.retiredCopyKeptWhenDropTruncateDisabled()` — `disable.drop.truncate=true`: the backfill completes, nothing is dropped, both names logged.

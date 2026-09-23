@@ -971,7 +971,7 @@ public final class PrimaryKeyBackfill {
 
         // ---- Step 3: completeness check -- every live key of R is present in T. ----
         checkpoint(task, "step 3 (completeness check)");
-        String check = completenessCheck(task, targetTypes);
+        String check = completenessCheck(task, retiredTypes, targetTypes);
         long missing = count(ch, check, "step 3 (completeness check)", task);
         if (missing != 0) {
             throw new BackfillFailure("step 3 (completeness check)", check, missing + " live key(s) of " + db + "."
@@ -1106,17 +1106,35 @@ public final class PrimaryKeyBackfill {
      * relocated row -- and the backfill retried forever. The same probe with
      * {@code T} read as {@code (SELECT DISTINCT <key> FROM T)} matched all
      * three and returned 0, which is what presence by key means.</p>
+     *
+     * <p>A new-key column whose type on {@code R} differs from its type on
+     * {@code T} (a re-typed key column, Spec 06.09 §3.1.1) is read from
+     * {@code R} through the conversion the copy applied -- {@code CAST(r.<old>,
+     * '<type on T>')}, and {@code ifNull(CAST(r.<old>, 'Nullable(<type on T>)'),
+     * defaultValueOfTypeName('<type on T>'))} when {@code R} has it Nullable
+     * and {@code T} does not, the value {@code insert_null_as_default} stored.
+     * Without it ClickHouse rejects the join of a String column against a
+     * numeric one with {@code Code: 386 NO_COMMON_TYPE} (measured on 24.8.14
+     * after {@code MODIFY class_name INT} on a VARCHAR key column: "Left key
+     * class_name type Nullable(String). Right key class_name type Int32") and
+     * the backfill retried forever.</p>
      */
-    static String completenessCheck(Task task, Map<String, String> targetTypes) {
+    static String completenessCheck(Task task, Map<String, String> retiredTypes, Map<String, String> targetTypes) {
         String db = task.database();
         // The retired side: the new-key values of every live row of R, under
         // the new-key names (a renamed column read as o.<old> AS <new>, a
-        // source-valued one from the key map).
+        // source-valued one from the key map), converted to T's type when the
+        // column was re-typed by the rebuild.
         StringBuilder retired = new StringBuilder("SELECT ");
         boolean first = true;
         for (String column : task.newKey()) {
-            String expr = task.sourceValued().contains(column) ? "k." + q(column)
-                    : "r." + q(oldNameOf(column, task.renames()));
+            String expr;
+            if (task.sourceValued().contains(column)) {
+                expr = "k." + q(column);
+            } else {
+                String old = oldNameOf(column, task.renames());
+                expr = asRebuiltType("r." + q(old), retiredTypes.get(old), targetTypes.get(column));
+            }
             retired.append(first ? "" : ", ").append(expr).append(" AS ").append(q(column));
             first = false;
         }
@@ -1164,6 +1182,27 @@ public final class PrimaryKeyBackfill {
         return "SELECT count() FROM (" + retired + ") AS r LEFT JOIN (SELECT DISTINCT " + qList(rebuiltColumns)
                 + " FROM " + q(db) + "." + q(task.table()) + ") AS t ON " + join + " WHERE t." + q(nullProbe)
                 + " IS NULL SETTINGS join_use_nulls = 1";
+    }
+
+    /**
+     * {@code expr} (a column of the retired table, of type {@code from}) read
+     * as the rebuilt table's type {@code to}: the conversion the copy's
+     * {@code INSERT ... SELECT} applied, so the completeness check compares
+     * like with like (Spec 06.09 §3.3.2 step 3). Unchanged when either type is
+     * unknown or both agree.
+     */
+    static String asRebuiltType(String expr, String from, String to) {
+        if (from == null || to == null || from.equals(to)) {
+            return expr;
+        }
+        if (from.contains("Nullable(") && !to.contains("Nullable(")) {
+            // The copy stored the type's default for a NULL (insert_null_as_default).
+            String nullableTo = to.startsWith("LowCardinality(") && to.endsWith(")")
+                    ? "LowCardinality(Nullable(" + to.substring("LowCardinality(".length(), to.length() - 1) + "))"
+                    : "Nullable(" + to + ")";
+            return "ifNull(CAST(" + expr + ", '" + lit(nullableTo) + "'), defaultValueOfTypeName('" + lit(to) + "'))";
+        }
+        return "CAST(" + expr + ", '" + lit(to) + "')";
     }
 
     /**
