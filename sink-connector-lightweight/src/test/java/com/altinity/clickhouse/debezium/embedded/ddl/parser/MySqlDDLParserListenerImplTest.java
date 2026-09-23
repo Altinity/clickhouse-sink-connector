@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import org.apache.logging.log4j.LogManager;
@@ -3090,20 +3091,27 @@ public class MySqlDDLParserListenerImplTest {
     public void testAlterDropPrimaryKeyModifyKeyAddColumnAddPrimaryKey() {
         // The production shape that used to produce NO usable ClickHouse DDL.
         // With the target schema known (id is the sorting key, Int32) the
-        // statement moves the source's identity from id to ref_id, which the
-        // replica cannot follow: it must be loud and name the rebuild, never
-        // quietly emit the ADD COLUMN and leave the table keyed by id
-        // (Spec 06.07 §3.1 rule 3). This assertion previously pinned exactly
-        // that quiet outcome.
+        // statement moves the source's identity from id to ref_id. The ADD
+        // COLUMN is emitted (the key-column MODIFY is a loss-free narrowing,
+        // suppressed) and the table is rebuilt under ref_id at the DDL
+        // barrier: ref_id is AUTO_INCREMENT, so its values come from the
+        // source (Spec 06.07 §3.1 rule 3, Spec 06.09 §3.1). Never quietly the
+        // ADD COLUMN alone with the table left keyed by id.
         String alter = "ALTER TABLE t DROP PRIMARY KEY, "
                 + "MODIFY COLUMN id SMALLINT UNSIGNED NOT NULL, "
                 + "ADD COLUMN ref_id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, "
                 + "ADD PRIMARY KEY (ref_id)";
         MySQLDDLParserService keyed = parserWithTarget(
                 columns("id", "Int32", "name", "Nullable(String)"), Collections.singletonList("id"));
-        DDLReplicationException loud = assertThrows(DDLReplicationException.class, () -> translate(keyed, alter));
-        Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("ref_id"));
-        Assert.assertTrue(loud.getMessage(), loud.getMessage().toLowerCase().contains("rebuild"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS ref_id UInt32 FIRST",
+                translate(keyed, alter));
+        PrimaryKeyRebuildPlan plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertNotNull("a rebuild must be planned", plan);
+        Assert.assertEquals(Collections.singletonList("id"), plan.oldKey());
+        Assert.assertEquals(Collections.singletonList("ref_id"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.SOURCE_VALUED, plan.provenance().get("ref_id"));
+        Assert.assertTrue(plan.requiresSourceKeyMap());
+        Assert.assertFalse(plan.keylessFallback());
 
         // Without a target schema the key is unknown, so the key clauses are
         // skipped and the MODIFY is still emitted (previous behaviour) -- but
@@ -3118,50 +3126,165 @@ public class MySqlDDLParserListenerImplTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("ADD PRIMARY KEY that changes the replica's identity is loud; a restatement is skipped")
-    public void testAddPrimaryKeyThatChangesIdentityIsLoud() {
+    @DisplayName("ADD PRIMARY KEY that changes the replica's identity plans a rebuild; a restatement is skipped")
+    public void testAddPrimaryKeyThatChangesIdentityPlansRebuild() {
         MySQLDDLParserService keyed = parserWithTarget(
                 columns("id", "Int32", "tenant", "Int32", "name", "Nullable(String)"),
                 Collections.singletonList("id"));
 
-        // Restatement: same column set (case and quoting ignored) -> skipped.
+        // Restatement: same column set (case and quoting ignored) -> skipped, nothing planned.
         Assert.assertEquals("", translate(keyed, "ALTER TABLE t ADD PRIMARY KEY (id)").trim());
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
         Assert.assertEquals("", translate(keyed, "ALTER TABLE t ADD CONSTRAINT pk PRIMARY KEY (`ID`)").trim());
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
         Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
                 translate(keyed, "ALTER TABLE t ADD PRIMARY KEY (id), ADD COLUMN c INT"));
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
 
-        // A different or wider identity: loud, nothing emitted, rebuild named.
-        for (String ddl : new String[] {
-                "ALTER TABLE t ADD PRIMARY KEY (name)",
-                "ALTER TABLE t ADD PRIMARY KEY (id, tenant)",
-                "ALTER TABLE t ADD COLUMN c INT, ADD PRIMARY KEY (tenant)",
-                "ALTER TABLE t ADD COLUMN new_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT INVISIBLE PRIMARY KEY",
-                "ALTER TABLE t MODIFY COLUMN tenant INT NOT NULL PRIMARY KEY"}) {
-            DDLReplicationException loud = assertThrows(DDLReplicationException.class, () -> translate(keyed, ddl));
-            Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("(id)"));
-            Assert.assertTrue(loud.getMessage(), loud.getMessage().toLowerCase().contains("rebuild"));
-        }
+        // A different identity over existing columns: the key clause emits
+        // nothing, the other clauses are emitted, a rebuild is planned whose
+        // new-key columns are read from the old table (Spec 06.09 §3.1).
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t ADD PRIMARY KEY (name)").trim());
+        PrimaryKeyRebuildPlan plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertNotNull(plan);
+        Assert.assertEquals("employees", plan.database());
+        Assert.assertEquals("t", plan.table());
+        Assert.assertEquals(Collections.singletonList("id"), plan.oldKey());
+        Assert.assertEquals(Collections.singletonList("name"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("name"));
+        Assert.assertFalse(plan.keylessFallback());
+        Assert.assertFalse(plan.requiresSourceKeyMap());
+
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t ADD PRIMARY KEY (id, tenant)").trim());
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Arrays.asList("id", "tenant"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("id"));
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("tenant"));
+
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t ADD COLUMN c INT, ADD PRIMARY KEY (tenant)"));
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonList("tenant"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("tenant"));
+
+        // A key column added by the statement without AUTO_INCREMENT:
+        // ClickHouse back-fills the ADD COLUMN default, as MySQL did.
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t ADD COLUMN c INT, ADD PRIMARY KEY (c)"));
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonList("c"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.ADDED_DEFAULTED, plan.provenance().get("c"));
+        Assert.assertFalse(plan.requiresSourceKeyMap());
+
+        // A column-level PRIMARY KEY on an AUTO_INCREMENT ADD COLUMN (the fix a
+        // keyless table receives): the values only the source knows.
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS new_id UInt64",
+                translate(keyed, "ALTER TABLE t ADD COLUMN new_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT "
+                        + "INVISIBLE PRIMARY KEY"));
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonList("id"), plan.oldKey());
+        Assert.assertEquals(Collections.singletonList("new_id"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.SOURCE_VALUED, plan.provenance().get("new_id"));
+        Assert.assertTrue(plan.requiresSourceKeyMap());
+        Assert.assertEquals(Collections.singletonList("new_id"), plan.sourceValuedColumns());
+
+        // A column-level PRIMARY KEY on a MODIFY of an existing column.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN tenant Int32",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN tenant INT NOT NULL PRIMARY KEY"));
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonList("tenant"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("tenant"));
+
+        // A new key naming a column the statement does not add and the
+        // replica does not have: the identity cannot be represented -- loud.
+        DDLReplicationException loud = assertThrows(DDLReplicationException.class,
+                () -> translate(keyed, "ALTER TABLE t ADD PRIMARY KEY (ghost)"));
+        Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("(id)"));
+        Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("unknown to the replica"));
+        Assert.assertTrue(loud.getMessage(), loud.getMessage().toLowerCase().contains("rebuild"));
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
 
         // A composite key restated in another order is the same identity.
         MySQLDDLParserService composite = parserWithTarget(
                 columns("id", "Int32", "tenant", "Int32"), Arrays.asList("id", "tenant"));
         Assert.assertEquals("", translate(composite, "ALTER TABLE t DROP PRIMARY KEY, ADD PRIMARY KEY (tenant, id)").trim());
+        Assert.assertNull(composite.primaryKeyRebuildPlan());
     }
 
     @Test
-    @DisplayName("DROP PRIMARY KEY without a replacement identity is loud")
-    public void testDropPrimaryKeyIsLoud() {
+    @DisplayName("DROP PRIMARY KEY without a replacement plans a rebuild under the keyless all-columns identity")
+    public void testDropPrimaryKeyPlansRebuild() {
         MySQLDDLParserService keyed = parserWithTarget(
                 columns("id", "Int32", "name", "Nullable(String)"), Collections.singletonList("id"));
-        DDLReplicationException loud = assertThrows(DDLReplicationException.class,
-                () -> translate(keyed, "ALTER TABLE t DROP PRIMARY KEY"));
-        Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("(id)"));
-        assertThrows(DDLReplicationException.class,
-                () -> translate(keyed, "ALTER TABLE t DROP PRIMARY KEY, ADD COLUMN c INT"));
-        // DROP then ADD of the same key is a restatement.
+
+        // A lone DROP: the identity a keyless table has on this replica --
+        // every stored non-connector column in position order (Spec 06.05 §3.6).
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t DROP PRIMARY KEY").trim());
+        PrimaryKeyRebuildPlan plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertNotNull(plan);
+        Assert.assertTrue(plan.keylessFallback());
+        Assert.assertEquals(Collections.singletonList("id"), plan.oldKey());
+        Assert.assertEquals(Arrays.asList("id", "name"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("id"));
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("name"));
+        Assert.assertFalse(plan.requiresSourceKeyMap());
+
+        // Columns the statement adds join the identity; columns it drops leave it.
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t DROP PRIMARY KEY, ADD COLUMN c INT"));
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertTrue(plan.keylessFallback());
+        Assert.assertEquals(Arrays.asList("id", "name", "c"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.ADDED_DEFAULTED, plan.provenance().get("c"));
+
+        // DESTRUCTIVE: statement text is only translated and compared here; nothing is executed against any database.
+        Assert.assertEquals("ALTER TABLE `employees`.t DROP COLUMN IF EXISTS name",
+                translate(keyed, "ALTER TABLE t DROP PRIMARY KEY, DROP COLUMN name"));
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertTrue(plan.keylessFallback());
+        Assert.assertEquals(Collections.singletonList("id"), plan.newKey());
+
+        // DROP then ADD of the same key is a restatement: nothing planned.
         Assert.assertEquals("", translate(keyed, "ALTER TABLE t DROP PRIMARY KEY, ADD PRIMARY KEY (id)").trim());
-        // Unknown key: skipped as before (Spec 06.07 §3.1 rule 1).
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
+        // Unknown key: skipped as before (Spec 06.07 §3.1 rule 1), nothing planned.
         Assert.assertEquals("", translate("ALTER TABLE t DROP PRIMARY KEY").trim());
+        Assert.assertNull(mySQLDDLParserService.primaryKeyRebuildPlan());
+    }
+
+    @Test
+    @DisplayName("ddl.primary.key.rebuild=false restores the loud refusal of an identity change")
+    public void testPrimaryKeyChangeIsLoudWhenRebuildDisabled() {
+        Map<String, String> config = new HashMap<>();
+        config.put(SinkConnectorLightWeightConfig.DDL_PRIMARY_KEY_REBUILD, "false");
+        MySQLDDLParserService disabled = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config),
+                "employees");
+        disabled.setTargetSchemaLookup(TargetSchemaLookup.fromColumns(
+                columns("id", "Int32", "tenant", "Int32", "name", "Nullable(String)"),
+                Collections.singletonList("id")));
+
+        // Loud, naming table, existing key and the manual rebuild; the
+        // exception leaves parseSql before anything reaches ClickHouse, so
+        // nothing is emitted for the statement (Invariant I9).
+        for (String ddl : new String[] {
+                "ALTER TABLE t ADD PRIMARY KEY (name)",
+                "ALTER TABLE t ADD COLUMN c INT, ADD PRIMARY KEY (tenant)",
+                "ALTER TABLE t DROP PRIMARY KEY",
+                "ALTER TABLE t DROP PRIMARY KEY, ADD COLUMN new_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, "
+                        + "ADD PRIMARY KEY (new_id)"}) {
+            DDLReplicationException loud = assertThrows(DDLReplicationException.class,
+                    () -> translate(disabled, ddl));
+            Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("(id)"));
+            Assert.assertTrue(loud.getMessage(), loud.getMessage().toLowerCase().contains("rebuild"));
+            Assert.assertNull("nothing may be planned when the rebuild is disabled",
+                    disabled.primaryKeyRebuildPlan());
+        }
+
+        // Restatement and unknown key are unaffected by the switch.
+        Assert.assertEquals("", translate(disabled, "ALTER TABLE t ADD PRIMARY KEY (id)").trim());
+        MySQLDDLParserService disabledUnknown = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(config), "employees");
+        Assert.assertEquals("", translate(disabledUnknown, "ALTER TABLE t DROP PRIMARY KEY").trim());
     }
 
     // ------------------------------------------------------------------

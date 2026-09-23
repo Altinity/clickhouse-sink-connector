@@ -45,10 +45,11 @@ formal_specs/lean/
     ├── GeneratedColumn.lean           # Generated-Column Type Integrity (Invariant I13): expression maps to DEFAULT, never the type
     ├── DdlBarrier.lean                # DDL Barrier Quiescence (Invariant I5): the barrier covers legacy + routed queues + unacknowledged batches
     ├── OffsetFifo.lean                # Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01): commit never passes an outstanding batch, written-once, in-process restart abandons but never rolls back
-    ├── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07): no bare ALTER, loud key widening, ADD COLUMN preserved
+    ├── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07/06.09): no bare ALTER, loud key widening, identity change rebuilds, ADD COLUMN preserved
     ├── BatchOrder.lean                # Batch execution order around a replicated TRUNCATE (Spec 04.05): ordered segments reproduce binlog order; hash-map order does not
     ├── VersionFloor.lean              # Version floor across a restart (Invariant I2 at the boundary, specs 02.02/02.04): seeded floor orders the new run above the old; heartbeats never touch the sequence
-    └── CreateTable.lean               # CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2): never ORDER BY tuple(), declared key wins, nullable fallback key needs allow_nullable_key
+    ├── CreateTable.lean               # CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2): never ORDER BY tuple(), declared key wins, nullable fallback key needs allow_nullable_key
+    └── PkRebuild.lean                 # Primary-key change rebuild (Spec 06.09 §3.3 steps 5–7, §3.6, §4): re-keying the FINAL live set by an injective map keeps every live row exactly once, versions unchanged
 ```
 
 ---
@@ -191,21 +192,44 @@ sequences `0,1,2,…` that are all acknowledged.
 | `type_is_never_expression` | for a generated column, the emitted type is never the generation expression | The exact bug (`ADD COLUMN c AS(a+b)`) cannot recur. |
 | `generated_has_default` | a generated column always emits a `DEFAULT` | The source value stays authoritative (I6). |
 
-### ALTER TABLE clause classification (Specs 06.03 / 06.04 / 06.05 / 06.07, `DdlTranslation.lean`)
+### ALTER TABLE clause classification (Specs 06.03 / 06.04 / 06.05 / 06.07 / 06.09, `DdlTranslation.lean`)
 
 An `ALTER TABLE` is modelled as a list of classified clauses (`addColumn`,
 `dropColumn`, `modifyDataColumn`, `modifyKeyColumnSameOrNarrower`,
 `modifyKeyColumnWider`, `primaryKeyChange`, `noOp`) and `translate` yields
-`skip`, `emit kept` or `fail`, mirroring `enterAlterTable`.
+`skip`, `emit kept`, `rebuild kept` or `fail`, mirroring `enterAlterTable`:
+a loud clause fails the statement; otherwise a `primaryKeyChange` turns it into
+`rebuild (keep cs)` (Spec 06.09); otherwise the representable clauses are
+emitted, or the statement is skipped when there are none.
 
 | Theorem Name | Statement | Significance |
 |---|---|---|
 | `no_bare_alter` | `translate cs ≠ emit []` | The translator never sends a bare `ALTER TABLE db.t` (`Code: 62`); an all-no-op statement yields `skip`. |
-| `all_noop_skips` | every clause unrepresentable and not loud → `translate cs = skip` | Index / key / constraint / charset / option-only statements are acknowledged, not sent. |
-| `wider_key_change_is_loud` | `modifyKeyColumnWider n ∈ cs → translate cs = fail` | A sorting-key widening is refused with `DDLReplicationException` (I9), never emitted to fail with `Code: 524` after retries. |
-| `primary_key_change_is_loud` | `primaryKeyChange cols ∈ cs → translate cs = fail` | An `ADD`/`DROP PRIMARY KEY` that changes the row identity the replica is keyed by is refused and names the rebuild (Spec 06.07 §3.1); a restatement is a `noOp`. |
+| `all_noop_skips` | every clause unrepresentable, not loud and not an identity change → `translate cs = skip` | Index / key / constraint / charset / option-only statements are acknowledged, not sent. |
+| `wider_key_change_is_loud` | `modifyKeyColumnWider n ∈ cs → translate cs = fail` | A sorting-key widening is refused with `DDLReplicationException` (I9), never emitted to fail with `Code: 524` after retries; it wins over a rebuild in the same statement. |
+| `primary_key_change_rebuilds` | `primaryKeyChange cols ∈ cs → anyLoud cs = false → translate cs = rebuild (keep cs)` | An `ADD`/`DROP PRIMARY KEY` that changes the row identity the replica is keyed by applies the representable clauses and rebuilds the table under the new key at the DDL barrier (Spec 06.07 §3.1 rule 3, Spec 06.09); a restatement or an unknown key is a `noOp`. Replaces the former `primary_key_change_is_loud`. |
+| `rebuild_never_bare` | `translate cs = rebuild kept → kept = keep cs` | The rebuild branch carries exactly the representable clauses (possibly none: a lone `DROP PRIMARY KEY` rebuilds without an `ALTER`); with `no_bare_alter`, no branch ever produces `emit []`. |
+| `rebuild_only_when_not_loud` | `translate cs = rebuild kept → anyLoud cs = false` | The loud refusal wins over the rebuild. |
 | `add_columns_preserved` | `translate cs = emit kept → addColumn n ∈ cs → addColumn n ∈ kept` | Skipping an unrepresentable neighbour never drops an `ADD COLUMN` (I6). |
+| `rebuild_add_columns_preserved` | `translate cs = rebuild kept → addColumn n ∈ cs → addColumn n ∈ kept` | The `ADD COLUMN new_id ...` of the migration shape is applied before the rebuild (Spec 06.09 §3.1). |
 | `emitted_are_representable` | `translate cs = emit kept → kept = keep cs` (`keep` = the representable clauses, in source order) | Exactly the representable clauses are emitted, in source order. |
+
+### Primary-key change rebuild (Spec 06.09 §3.3 steps 5–7 / §3.6 / §4, `PkRebuild.lean`)
+
+The stored table is the `CHTable` of `ClickHouse.lean`. `liveRecord t k` is the
+max-version record of `k` (`findMaxVersion`, same tie rule as `FINAL`) unless it
+is a tombstone; `live t` is one such record per distinct key (the result of
+`SELECT ... FROM T FINAL WHERE is_deleted = 0`); `rebuild t f` is `live t` with
+every key re-mapped by `f : Key → Key`, the map from the old identity to the new
+one, which is injective (`∀ a b, f a = f b → a = b`, stated explicitly since core
+Lean has no `Function.Injective`). Versions are copied unchanged.
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `rebuild_preserves_live_rows` | `(∀ r ∈ rebuild t f, r.is_deleted = false) ∧ (rebuild t f).length = (live t).length` | The rebuilt table holds no tombstone and exactly the live row count: the count reconciliation of §3.3 step 6 is an identity, not a coincidence. |
+| `rebuild_view_eq` | `f` injective → `∀ k, chFinalView (rebuild t f) (f k) = chFinalView t k` | Re-keying the live set by an injective map preserves the `FINAL` view exactly: every live row is carried over once, a tombstoned or absent key stays absent (I3). |
+| `rebuild_final_record` | `liveRecord t k = some r →` the collapsed record at `f k` is `rekey f r`: key `f k`, same `version`, same `row`, `is_deleted = false` | Versions are untouched by the rebuild (§3.6, I2). |
+| `rebuild_view_outside_image` | `(∀ k, f k ≠ k') → chFinalView (rebuild t f) k' = none` | The rebuild invents no row under the new key. |
 
 ### CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2, `CreateTable.lean`)
 

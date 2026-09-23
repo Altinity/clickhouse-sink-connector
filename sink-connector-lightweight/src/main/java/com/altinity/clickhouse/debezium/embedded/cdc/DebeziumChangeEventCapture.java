@@ -4,6 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.PrimaryKeyRebuildPlan;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
@@ -1282,8 +1283,21 @@ public class DebeziumChangeEventCapture {
         while (numRetries < MAX_DDL_RETRIES) {
             try {
 
-                if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString()))
+                if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString())) {
                     executeDDL(clickHouseQuery.toString(), writer, config);
+
+                    // The statement changed the source table's row identity:
+                    // rebuild the ClickHouse table under the new sorting key,
+                    // here inside the DDL barrier and before the cache
+                    // invalidation below (Spec 06.09 §3.3). A failure is a
+                    // DDLReplicationException and escapes this loop unretried.
+                    PrimaryKeyRebuildPlan plan = ddlParserService.primaryKeyRebuildPlan();
+                    if (plan != null) {
+                        PrimaryKeyRebuild.execute(plan, writer.getConnection(), props, config,
+                                sourceDatabaseName(sr), PrimaryKeyRebuild.sourceConnectionSupplier(props),
+                                System.currentTimeMillis());
+                    }
+                }
 
                 // Invalidate cached DbWriter for the affected table(s) so that subsequent
                 // inserts use the updated schema after DDL changes (e.g., ADD/DROP COLUMN).
@@ -1398,6 +1412,20 @@ public class DebeziumChangeEventCapture {
 
                 DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
                 break;
+            } catch (DDLReplicationException rebuildFailure) {
+                // A primary-key rebuild that refused or failed (Spec 06.09):
+                // already the loud, terminal type. It must NOT be retried by
+                // this loop -- a repeated INSERT ... SELECT could double the
+                // rows -- so it is recorded and re-thrown as is.
+                log.error("Error executing DDL", rebuildFailure);
+                try {
+                    ErrorLogger.createErrorTable(systemDbConnection, config);
+                    ErrorLogger.logError(systemDbConnection, rebuildFailure.getMessage(),
+                        sr, databaseName, clickHouseQuery.toString(), props.getProperty("name"), errorTableName);
+                } catch (SQLException ex) {
+                    log.error("Failed to log DDL error to ClickHouse", ex);
+                }
+                throw rebuildFailure;
             } catch (Exception e) {
                 lastFailure = e;
                 log.error("Error executing DDL", e);

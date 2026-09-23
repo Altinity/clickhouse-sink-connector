@@ -19,7 +19,8 @@ ALTER TABLE
 | CHANGE COLUMN FIRST, AFTER                             | MODIFY COLUMN                   |
 | ALTER COLUMN col_name ADD DEFAULT                      | Not supported by grammar        |
 | ALTER COLUMN col_name ADD DROP DEFAULT                 | Not supported by grammar        |
-| ADD PRIMARY KEY                                        | Cannot modify primary key in CH |
+| ADD PRIMARY KEY                                        | The sorting key is fixed at CREATE in CH, so a key that changes the row identity rebuilds the table under the new key at the DDL barrier (Spec 06.09); a restatement of the existing key is skipped. `ddl.primary.key.rebuild=false` restores the loud stop instead of the rebuild. |
+| DROP PRIMARY KEY                                       | The sorting key is fixed at CREATE in CH, so a drop without a replacement key rebuilds the table under the keyless all-columns key at the DDL barrier (Spec 06.09). `ddl.primary.key.rebuild=false` restores the loud stop instead of the rebuild. |
 
 
 ## TABLE operations
