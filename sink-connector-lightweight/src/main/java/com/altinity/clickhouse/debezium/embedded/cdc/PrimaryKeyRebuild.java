@@ -136,11 +136,29 @@ public final class PrimaryKeyRebuild {
             targetTypes.put(c.name, c.type);
         }
         List<String> oldKey = resolveAll(plan.oldKey(), targetColumns, plan, "old-key");
-        List<String> newKey = resolveAll(plan.newKey(), targetColumns, plan, "new-key");
+        // Deferred renames of old-key columns (Spec 06.09 §3.1.1): the old
+        // table's spelling -> the name the column carries on the rebuilt
+        // table. The new key names renamed columns by their NEW name, so it is
+        // resolved against the old table under the old names.
+        Map<String, String> renames = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : plan.renamedColumns().entrySet()) {
+            renames.put(resolveAll(Collections.singletonList(e.getKey()), targetColumns, plan, "renamed").get(0),
+                    e.getValue());
+        }
+        List<String> newKeyInOldNames = new ArrayList<>();
+        for (String column : plan.newKey()) {
+            newKeyInOldNames.add(oldNameOf(column, renames));
+        }
+        List<String> newKeyOldNames = resolveAll(newKeyInOldNames, targetColumns, plan, "new-key");
         if (plan.keylessFallback()) {
             // The keyless identity is every stored column in POSITION order
             // (Spec 06.05 §3.6); the translator's column map is unordered.
-            newKey = inPositionOrder(newKey, targetColumns);
+            newKeyOldNames = inPositionOrder(newKeyOldNames, targetColumns);
+        }
+        List<String> newKey = new ArrayList<>();
+        for (String column : newKeyOldNames) {
+            String renamed = renames.get(column);
+            newKey.add(renamed != null ? renamed : column);
         }
         List<String> sourceValued = resolveAll(plan.sourceValuedColumns(), targetColumns, plan, "source-valued");
         boolean needKeyMap = !sourceValued.isEmpty();
@@ -189,13 +207,38 @@ public final class PrimaryKeyRebuild {
         }
         String createScratch;
         try {
-            createScratch = rewriteCreateStatement(showCreate, db, table, scratch, newKey, plan.keylessFallback(),
-                    targetTypes);
+            createScratch = rewriteCreateStatement(showCreate, db, table, scratch, newKeyOldNames,
+                    plan.keylessFallback(), targetTypes, renames, plan.retypedColumns());
         } catch (RuntimeException e) {
             throw new DDLReplicationException(failure(plan, "step 3 (rewrite CREATE TABLE)",
                     e.getMessage() + " -- statement: [" + showCreate + "]"), e);
         }
         exec(ch, createScratch, "step 3 (create the rebuilt table)", plan);
+
+        // ---- Step 3b: deferred clauses on old-key columns (Spec 06.09 §3.1.1). ----
+        // A DROP is applied to the empty rebuilt table as its own ALTER (the
+        // column is not part of the rebuilt table's key). A RENAME or MODIFY
+        // of a key column is NOT: ClickHouse rejects both on a sorting-key
+        // column even when the table is empty (Code: 524 "Trying to ALTER
+        // RENAME key ... column" / "ALTER of key column ... is not safe",
+        // measured on 24.8.14), so they were folded into the CREATE TABLE
+        // above (the column is declared under its new name and type) and the
+        // copy converts the values (step 5).
+        for (String clause : plan.deferredClauses()) {
+            // DESTRUCTIVE: statement text is only translated/logged here; nothing is executed against any database.
+            if (clause.regionMatches(true, 0, "DROP COLUMN", 0, "DROP COLUMN".length())) {
+                // DESTRUCTIVE: drops from the EMPTY rebuilt copy of this one
+                // table the column the SOURCE statement dropped; the old table
+                // and its rows are untouched until the swap at step 7.
+                exec(ch, "ALTER TABLE " + q(db) + "." + q(scratch) + " " + clause,
+                        "step 3b (deferred clause on the rebuilt table)", plan);
+            } else {
+                log.info("Primary-key rebuild of {}.{} step 3b: deferred clause [{}] is applied through the CREATE "
+                                + "TABLE of {}.{} (ClickHouse rejects RENAME/MODIFY of a sorting-key column with "
+                                + "Code: 524 even on an empty table); the copy converts the values",
+                        db, table, clause, db, scratch);
+            }
+        }
 
         // ---- Step 4: source key map (SOURCE_VALUED columns only). ----
         if (needKeyMap) {
@@ -247,7 +290,8 @@ public final class PrimaryKeyRebuild {
                     "system.columns lists no column for " + db + "." + scratch), null);
         }
         String deleteFlag = deleteFlagColumn(engineFull);
-        String select = copySelect(db, table, keyMapTable, copyColumns, oldKey, sourceValued, deleteFlag, needKeyMap);
+        String select = copySelect(db, table, keyMapTable, copyColumns, oldKey, sourceValued, deleteFlag, needKeyMap,
+                renames);
         String insert = "INSERT INTO " + q(db) + "." + q(scratch) + " (" + qList(copyColumns) + ") " + select;
         exec(ch, insert, "step 5 (copy the live rows)", plan);
 
@@ -436,6 +480,30 @@ public final class PrimaryKeyRebuild {
     static String rewriteCreateStatement(String showCreate, String database, String table, String newTable,
                                          List<String> newKey, boolean keylessFallback,
                                          Map<String, String> columnTypes) {
+        return rewriteCreateStatement(showCreate, database, table, newTable, newKey, keylessFallback, columnTypes,
+                Collections.emptyMap(), Collections.emptyMap());
+    }
+
+    /**
+     * As {@link #rewriteCreateStatement(String, String, String, String, List, boolean, Map)},
+     * with the deferred renames and re-typings of old-key columns (Spec 06.09
+     * §3.1.1) folded into the definition: a renamed column is declared under
+     * its new name (and the {@code ORDER BY} names it so), a re-typed column
+     * under its translated type. ClickHouse rejects {@code RENAME COLUMN} and
+     * {@code MODIFY COLUMN} of a sorting-key column with {@code Code: 524}
+     * even on an empty table, so the rebuilt table must be created in its
+     * final shape and the copy converts the values.
+     *
+     * @param newKey  the new key, in the OLD table's column spellings (a renamed
+     *                column by its old name).
+     * @param renames old column spelling -> new name.
+     * @param retypes column name AS ON THE REBUILT TABLE (the new name when
+     *                renamed) -> translated ClickHouse type.
+     */
+    static String rewriteCreateStatement(String showCreate, String database, String table, String newTable,
+                                         List<String> newKey, boolean keylessFallback,
+                                         Map<String, String> columnTypes, Map<String, String> renames,
+                                         Map<String, String> retypes) {
         String create = showCreate.replace("\r\n", "\n");
         Matcher header = CREATE_HEADER.matcher(create);
         if (!header.find()) {
@@ -449,8 +517,27 @@ public final class PrimaryKeyRebuild {
         String columnBlock = rest.substring(0, engineAt);
         String clauseText = rest.substring(engineAt + 1);
 
+        // Re-typings arrive keyed by the rebuilt table's names; the rendered
+        // definition still carries the old ones.
+        Map<String, String> retypesByOldName = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : retypes.entrySet()) {
+            retypesByOldName.put(oldNameOf(e.getKey(), renames), e.getValue());
+        }
+
         boolean nullableKey = false;
         for (String column : newKey) {
+            String retype = getIgnoreCase(retypesByOldName, column);
+            if (retype != null) {
+                // The translator already applied the nullability rules; a
+                // declared key column is non-Nullable unless the new key is
+                // the keyless fallback (Spec 06.05 §3.6).
+                String type = keylessFallback ? retype : withoutNullable(retype);
+                if (keylessFallback && type.contains("Nullable(")) {
+                    nullableKey = true;
+                }
+                columnBlock = replaceType(columnBlock, column, type);
+                continue;
+            }
             String type = columnTypes == null ? null : columnTypes.get(column);
             boolean nullable = type != null ? type.contains("Nullable(") : columnLineHasNullable(columnBlock, column);
             if (!nullable) {
@@ -462,12 +549,26 @@ public final class PrimaryKeyRebuild {
                 columnBlock = stripNullable(columnBlock, column);
             }
         }
+        // A re-typed old-key column that is not part of the new key.
+        for (Map.Entry<String, String> e : retypesByOldName.entrySet()) {
+            if (!containsIgnoreCase(newKey, e.getKey())) {
+                columnBlock = replaceType(columnBlock, e.getKey(), e.getValue());
+            }
+        }
+        List<String> orderKey = new ArrayList<>();
+        for (String column : newKey) {
+            String renamed = getIgnoreCase(renames, column);
+            orderKey.add(renamed != null ? renamed : column);
+        }
+        for (Map.Entry<String, String> e : renames.entrySet()) {
+            columnBlock = renameColumnLine(columnBlock, e.getKey(), e.getValue());
+        }
 
         List<String> clauses = splitClauses(clauseText);
         List<String> out = new ArrayList<>();
         boolean sawOrderBy = false;
         boolean sawSettings = false;
-        String orderBy = "ORDER BY (" + qList(newKey) + ")";
+        String orderBy = "ORDER BY (" + qList(orderKey) + ")";
         for (String clause : clauses) {
             String keyword = clauseKeyword(clause);
             if (keyword.equals("PRIMARY KEY")) {
@@ -539,11 +640,17 @@ public final class PrimaryKeyRebuild {
     // Statement builders
     // ------------------------------------------------------------------
 
+    /**
+     * The SELECT feeding the copy (Spec 06.09 §3.3 step 5). {@code columns}
+     * are the rebuilt table's columns; a renamed old-key column is read from
+     * the old table as {@code o.<old> AS <new>} (step 3b), a source-valued one
+     * from the key map.
+     */
     private static String copySelect(String db, String table, String keyMapTable, List<String> columns,
                                      List<String> oldKey, List<String> sourceValued, String deleteFlag,
-                                     boolean needKeyMap) {
+                                     boolean needKeyMap, Map<String, String> renames) {
         StringBuilder sb = new StringBuilder("SELECT ");
-        if (!needKeyMap) {
+        if (!needKeyMap && renames.isEmpty()) {
             sb.append(qList(columns)).append(" FROM ").append(q(db)).append('.').append(q(table)).append(" FINAL");
             if (deleteFlag != null) {
                 sb.append(" WHERE ").append(q(deleteFlag)).append(" = 0");
@@ -552,20 +659,58 @@ public final class PrimaryKeyRebuild {
         }
         boolean first = true;
         for (String column : columns) {
-            sb.append(first ? "" : ", ").append(sourceValued.contains(column) ? "k." : "o.").append(q(column));
+            sb.append(first ? "" : ", ");
+            String oldName = oldNameOf(column, renames);
+            if (sourceValued.contains(column)) {
+                sb.append("k.").append(q(column));
+            } else if (!oldName.equals(column)) {
+                sb.append("o.").append(q(oldName)).append(" AS ").append(q(column));
+            } else {
+                sb.append("o.").append(q(column));
+            }
             first = false;
         }
-        sb.append(" FROM ").append(q(db)).append('.').append(q(table)).append(" AS o FINAL INNER JOIN ")
-                .append(q(db)).append('.').append(q(keyMapTable)).append(" AS k ON ");
-        first = true;
-        for (String column : oldKey) {
-            sb.append(first ? "" : " AND ").append("o.").append(q(column)).append(" = k.").append(q(column));
-            first = false;
+        sb.append(" FROM ").append(q(db)).append('.').append(q(table)).append(" AS o FINAL");
+        if (needKeyMap) {
+            sb.append(" INNER JOIN ").append(q(db)).append('.').append(q(keyMapTable)).append(" AS k ON ");
+            first = true;
+            for (String column : oldKey) {
+                sb.append(first ? "" : " AND ").append("o.").append(q(column)).append(" = k.").append(q(column));
+                first = false;
+            }
         }
         if (deleteFlag != null) {
             sb.append(" WHERE o.").append(q(deleteFlag)).append(" = 0");
         }
         return sb.toString();
+    }
+
+    /** The old table's name of {@code column}: the key of {@code renames} whose value is it, else itself. */
+    private static String oldNameOf(String column, Map<String, String> renames) {
+        for (Map.Entry<String, String> e : renames.entrySet()) {
+            if (e.getValue().equalsIgnoreCase(column)) {
+                return e.getKey();
+            }
+        }
+        return column;
+    }
+
+    private static String getIgnoreCase(Map<String, String> map, String key) {
+        for (Map.Entry<String, String> e : map.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(key)) {
+                return e.getValue();
+            }
+        }
+        return null;
+    }
+
+    private static boolean containsIgnoreCase(List<String> names, String name) {
+        for (String candidate : names) {
+            if (candidate.equalsIgnoreCase(name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static String placeholders(int n) {
@@ -624,6 +769,52 @@ public final class PrimaryKeyRebuild {
     private static boolean columnLineHasNullable(String columnBlock, String column) {
         Matcher m = columnLine(column).matcher(columnBlock);
         return m.find() && m.group(4).contains("Nullable(");
+    }
+
+    /** Re-declares {@code column} as {@code newType}, keeping DEFAULT/CODEC/COMMENT and the rest of its line. */
+    private static String replaceType(String columnBlock, String column, String newType) {
+        Matcher m = columnLine(column).matcher(columnBlock);
+        if (!m.find()) {
+            throw new IllegalArgumentException("re-typed column " + column + " is not declared in the column list");
+        }
+        String declaration = m.group(4);
+        int end = leadingTypeLength(declaration);
+        String rewritten = newType + declaration.substring(end);
+        return columnBlock.substring(0, m.start(4)) + rewritten + columnBlock.substring(m.end(4));
+    }
+
+    /** Length of the type expression a rendered column declaration starts with (balanced parentheses, quoted args). */
+    private static int leadingTypeLength(String declaration) {
+        int depth = 0;
+        boolean quoted = false;
+        for (int i = 0; i < declaration.length(); i++) {
+            char c = declaration.charAt(i);
+            if (quoted) {
+                if (c == '\\' && i + 1 < declaration.length()) {
+                    i++;
+                } else if (c == '\'') {
+                    quoted = false;
+                }
+            } else if (c == '\'') {
+                quoted = true;
+            } else if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+            } else if (depth == 0 && (Character.isWhitespace(c) || c == ',')) {
+                return i;
+            }
+        }
+        return declaration.length();
+    }
+
+    /** Declares {@code column} under {@code newName}; every other part of its line is kept. */
+    private static String renameColumnLine(String columnBlock, String column, String newName) {
+        Matcher m = columnLine(column).matcher(columnBlock);
+        if (!m.find()) {
+            throw new IllegalArgumentException("renamed column " + column + " is not declared in the column list");
+        }
+        return columnBlock.substring(0, m.start(2)) + q(newName) + columnBlock.substring(m.end(2));
     }
 
     /** Re-declares {@code column}'s {@code Nullable(X)} (also inside {@code LowCardinality}) as {@code X}. */

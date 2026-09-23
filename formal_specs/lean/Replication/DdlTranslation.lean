@@ -11,15 +11,26 @@ A MySQL `ALTER TABLE` is a list of clauses. ClickHouse can represent some of the
 (add / drop / modify a data column), cannot represent others at all but loses
 nothing by skipping them (indexes, constraints, charset, table options,
 a restated `PRIMARY KEY`, a re-declaration of a sorting-key column with a
-same-or-narrower type), must refuse one kind loudly (a change that WIDENS a
-sorting-key column: ClickHouse rejects it with `Code: 524` and nothing the
-connector can emit makes the existing table hold the source rows), and follows
-an `ADD`/`DROP PRIMARY KEY` that changes the row identity the replica is keyed
-by with a REBUILD of the table under the new sorting key at the DDL barrier
-(Spec 06.09: ClickHouse cannot re-key a table in place, so — as MySQL itself
-does for this statement — the representable clauses are applied and the live
-rows are copied into a table created under the new key; `PkRebuild.lean` proves
-that copy preserves every live row exactly once, versions unchanged).
+same-or-narrower type), and follows two kinds with a REBUILD of the table at
+the DDL barrier (Spec 06.09: ClickHouse cannot re-key a table in place, so — as
+MySQL itself does for these statements — the representable clauses are applied
+and the live rows are copied into a table created under the new key;
+`PkRebuild.lean` proves that copy preserves every live row exactly once,
+versions unchanged):
+
+* an `ADD`/`DROP PRIMARY KEY` that changes the row identity the replica is
+  keyed by rebuilds under the NEW sorting key (Spec 06.09 §3.1);
+* a `MODIFY`/`CHANGE`/`RENAME` that WIDENS or renames a sorting-key column
+  rebuilds under the SAME identity (Spec 06.05 §3.4 rule 3, Spec 06.09 §3.1.2):
+  ClickHouse rejects the change on the existing table with `Code: 524` after
+  every retry, while MySQL rebuilds its clustered index for it, so the clause
+  is deferred to the empty rebuilt table and the copy converts the values.
+
+No clause of the current model is loud. The loud path (`Clause.loud`,
+`anyLoud`, the `fail` branch of `translate`, `rebuild_only_when_not_loud`) is
+kept because it models future loud clauses and the refusal still wins over a
+rebuild whenever one is present; the connector's `ddl.primary.key.rebuild=false`
+refusal of a widening is a configuration switch outside this model.
 
 Two production defects motivate this model:
 
@@ -30,10 +41,12 @@ Two production defects motivate this model:
   again taking the neighbouring `ADD COLUMN` down with it.
 
 This module models the clause classification and proves that the fixed
-translator (i) never emits an empty clause list, (ii) always fails loudly when a
-widening key change is present (a loud clause wins over a rebuild), (iii) never
-loses an `ADD COLUMN` when it does emit or rebuild, and (iv) turns a change of
-row identity into a rebuild that carries exactly the representable clauses.
+translator (i) never emits an empty clause list, (ii) turns a widening or
+rename of a sorting-key column into a rebuild under the same identity, never a
+type change against the existing table (a loud clause, when one is present,
+still wins over a rebuild), (iii) never loses an `ADD COLUMN` when it does emit
+or rebuild, and (iv) turns a change of row identity into a rebuild that carries
+exactly the representable clauses.
 -/
 
 namespace Replication
@@ -45,7 +58,7 @@ inductive Clause where
   | dropColumn (name : String)                     -- DROP COLUMN c
   | modifyDataColumn (name : String)               -- MODIFY/CHANGE of a non-key column
   | modifyKeyColumnSameOrNarrower (name : String)  -- MODIFY of a sorting-key column, loss-free to skip
-  | modifyKeyColumnWider (name : String)           -- MODIFY of a sorting-key column that widens it
+  | modifyKeyColumnWider (name : String)           -- MODIFY/CHANGE/RENAME of a sorting-key column that widens or renames it (deferred to a rebuild)
   | primaryKeyChange (cols : List String)          -- ADD/DROP PRIMARY KEY whose net identity differs from the known sorting key
   | noOp                                           -- index / key restatement / constraint / charset / table option / partition
 deriving Repr, DecidableEq
@@ -65,23 +78,30 @@ def Clause.representable : Clause → Bool
   | Clause.modifyDataColumn _ => true
   | _                         => false
 
-/-- A clause the translator must refuse (Spec 06.05 §3.4 rule 3). -/
+/-- A clause the translator must refuse. No clause of the current model is
+    loud: a widening or rename of a sorting-key column, formerly the one loud
+    kind, is deferred to a rebuild (Spec 06.05 §3.4 rule 3). The classification
+    is kept so that a future loud clause slots in here and the refusal keeps
+    winning over a rebuild (`translate`, `rebuild_only_when_not_loud`). -/
 def Clause.loud : Clause → Bool
+  | _ => false
+
+/-- A clause that requires the table to be rebuilt at the DDL barrier: a change
+    of row identity rebuilds under the new key (Spec 06.07 §3.1 rule 3,
+    Spec 06.09 §3.1); a widening or rename of a sorting-key column rebuilds
+    under the same identity (Spec 06.05 §3.4 rule 3, Spec 06.09 §3.1.2). -/
+def Clause.rebuilds : Clause → Bool
+  | Clause.primaryKeyChange _     => true
   | Clause.modifyKeyColumnWider _ => true
   | _                             => false
-
-/-- A clause that changes the row identity and so requires the table to be
-    rebuilt under the new key (Spec 06.07 §3.1 rule 3, Spec 06.09 §3.1). -/
-def Clause.rebuilds : Clause → Bool
-  | Clause.primaryKeyChange _ => true
-  | _                         => false
 
 /-- Does any clause of the statement have to be refused? -/
 def anyLoud : List Clause → Bool
   | []      => false
   | c :: cs => c.loud || anyLoud cs
 
-/-- Does any clause of the statement change the row identity (a `primaryKeyChange` is present)? -/
+/-- Does any clause of the statement require a rebuild (a `primaryKeyChange` or a
+    `modifyKeyColumnWider` is present)? -/
 def anyRebuild : List Clause → Bool
   | []      => false
   | c :: cs => c.rebuilds || anyRebuild cs
@@ -93,10 +113,10 @@ def keep : List Clause → List Clause
 
 /--
 The clause-list translation of `enterAlterTable`: refuse the whole statement if
-any clause is loud; otherwise, if the statement changes the row identity, emit
-the representable clauses (possibly none) and rebuild the table under the new
-key (Spec 06.09); otherwise keep the representable clauses, and if none is left
-emit nothing at all (never a bare `ALTER TABLE`).
+any clause is loud; otherwise, if the statement changes the row identity or
+widens/renames a sorting-key column, emit the representable clauses (possibly
+none) and rebuild the table (Spec 06.09); otherwise keep the representable
+clauses, and if none is left emit nothing at all (never a bare `ALTER TABLE`).
 -/
 def translate (cs : List Clause) : Emission :=
   if anyLoud cs then Emission.fail
@@ -195,12 +215,23 @@ theorem all_noop_skips (cs : List Clause)
   unfold translate
   rw [if_neg (by simp [hl]), if_neg (by simp [hr]), if_pos hk]
 
-/-- **(b) A widening key change is loud.** Any statement containing one fails. -/
-theorem wider_key_change_is_loud (cs : List Clause) (n : String)
-    (h : Clause.modifyKeyColumnWider n ∈ cs) : translate cs = Emission.fail := by
-  have hl : anyLoud cs = true := anyLoud_of_mem h rfl
+/--
+**(b) A widening or rename of a sorting-key column rebuilds.** ClickHouse
+rejects the change on the existing table (`Code: 524`) after every retry, and
+MySQL rebuilds its clustered index for it, so — as for a change of row identity
+— the representable clauses are applied and the table is rebuilt, here under
+the same identity, with the deferred clause applied to the empty rebuilt table
+before the copy (Spec 06.05 §3.4 rule 3, Spec 06.09 §3.1.2). The clause is
+never emitted as a type change against the existing table. A loud clause
+elsewhere in the statement still wins, hence `hl` (trivially satisfiable while
+no clause of the model is loud).
+-/
+theorem wider_key_change_rebuilds (cs : List Clause) (n : String)
+    (h : Clause.modifyKeyColumnWider n ∈ cs) (hl : anyLoud cs = false) :
+    translate cs = Emission.rebuild (keep cs) := by
+  have hr : anyRebuild cs = true := anyRebuild_of_mem h rfl
   unfold translate
-  rw [if_pos hl]
+  rw [if_neg (by simp [hl]), if_pos hr]
 
 /--
 **(b') A change of row identity rebuilds.** An `ADD`/`DROP PRIMARY KEY` whose
@@ -209,8 +240,8 @@ into a rebuild (Spec 06.07 §3.1 rule 3, Spec 06.09): ClickHouse cannot re-key a
 table in place, and keeping the old key collapses rows the source keeps
 distinct, so the representable clauses are applied and the table is rebuilt
 under the new key at the DDL barrier. A restatement of the same key, or an
-unknown key, is a `noOp` and is skipped. A loud clause still wins
-(`wider_key_change_is_loud` needs no `anyLoud` hypothesis), hence `hl`.
+unknown key, is a `noOp` and is skipped. A loud clause still wins over the
+rebuild, hence `hl` (trivially satisfiable while no clause of the model is loud).
 -/
 theorem primary_key_change_rebuilds (cs : List Clause) (cols : List String)
     (h : Clause.primaryKeyChange cols ∈ cs) (hl : anyLoud cs = false) :
@@ -220,7 +251,8 @@ theorem primary_key_change_rebuilds (cs : List Clause) (cols : List String)
   rw [if_neg (by simp [hl]), if_pos hr]
 
 /-- A rebuild is only ever planned for a statement without a loud clause: the
-    loud refusal wins over the rebuild. -/
+    loud refusal wins over the rebuild. (No clause of the current model is
+    loud; the theorem pins the precedence for any future loud clause.) -/
 theorem rebuild_only_when_not_loud (cs kept : List Clause)
     (hreb : translate cs = Emission.rebuild kept) : anyLoud cs = false := by
   unfold translate at hreb

@@ -232,8 +232,9 @@ public class PrimaryKeyRebuildTest {
     private static List<String> actions(FakeDb db) {
         List<String> out = new ArrayList<>();
         for (String sql : db.executed) {
-            if (sql.startsWith("CREATE") || sql.startsWith("INSERT") || sql.startsWith("SELECT count()")
-                    || sql.startsWith("EXCHANGE") || sql.startsWith("RENAME") || sql.startsWith("DROP")) {
+            if (sql.startsWith("CREATE") || sql.startsWith("ALTER") || sql.startsWith("INSERT")
+                    || sql.startsWith("SELECT count()") || sql.startsWith("EXCHANGE") || sql.startsWith("RENAME")
+                    || sql.startsWith("DROP")) {
                 out.add(sql);
             }
         }
@@ -571,6 +572,153 @@ public class PrimaryKeyRebuildTest {
         List<String> ordinaryActions = actions(ordinary);
         assertEquals("RENAME TABLE `employees`.`t` TO `employees`.`t__pk_retired_" + EPOCH + "`, `employees`.`" + S
                 + "` TO `employees`.`t`", ordinaryActions.get(ordinaryActions.size() - 1));
+    }
+
+    // ------------------------------------------------------------------
+    // Deferred clauses on old-key columns (Spec 06.09 §3.1.1, §3.3 step 3b)
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("A deferred DROP is applied to the empty rebuilt table before the copy, which excludes the column")
+    public void deferredClausesApplyToRebuiltTableBeforeCopy() {
+        // The GIPK promotion: my_row_id was the key, id becomes it, my_row_id is
+        // dropped -- on the rebuilt table, never on the existing one (Code: 524).
+        String engineFull = "ReplacingMergeTree(_version, is_deleted) ORDER BY my_row_id SETTINGS index_granularity = 8192";
+        String showCreate = "CREATE TABLE employees.t\n"
+                + "(\n"
+                + "    `my_row_id` UInt64,\n"
+                + "    `id` Int32,\n"
+                + "    `v` String,\n"
+                + "    `_version` UInt64,\n"
+                + "    `is_deleted` UInt8\n"
+                + ")\n"
+                + "ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
+                + "ORDER BY my_row_id\n"
+                + "SETTINGS index_granularity = 8192";
+        FakeDb ch = new FakeDb()
+                .answer("SELECT engine_full FROM system.tables", row(engineFull))
+                .answer("AND table = 't' ORDER BY position", row("my_row_id", "UInt64", ""), row("id", "Int32", ""),
+                        row("v", "String", ""), row("_version", "UInt64", ""), row("is_deleted", "UInt8", ""))
+                // The rebuilt table's columns AFTER step 3b: my_row_id is gone.
+                .answer("AND table = '" + S + "' ORDER BY position", row("id", "Int32", ""), row("v", "String", ""),
+                        row("_version", "UInt64", ""), row("is_deleted", "UInt8", ""))
+                .answer("SHOW CREATE TABLE", row(showCreate))
+                .answer("SELECT count() FROM (", row(3L))
+                .answer("SELECT count() FROM `employees`.`" + S + "`", row(3L))
+                .answer("SELECT engine FROM system.databases", row("Atomic"));
+        Map<String, Provenance> provenance = new LinkedHashMap<>();
+        provenance.put("id", Provenance.EXISTING);
+        PrimaryKeyRebuildPlan plan = new PrimaryKeyRebuildPlan("employees", "t",
+                Collections.singletonList("my_row_id"), Collections.singletonList("id"), false, provenance,
+                // DESTRUCTIVE: statement text used only by this test; nothing outside the test containers/fakes is touched.
+                "ALTER TABLE t DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)",
+                Collections.singletonList("DROP COLUMN IF EXISTS my_row_id"), Collections.emptyMap(),
+                Collections.emptyMap());
+
+        PrimaryKeyRebuild.execute(plan, ch.connection(), new Properties(), config(), "hr", noSource(), EPOCH);
+
+        String select = "SELECT `id`, `v`, `_version`, `is_deleted` FROM `employees`.`t` FINAL WHERE `is_deleted` = 0";
+        List<String> expected = Arrays.asList(
+                "CREATE TABLE `employees`.`" + S + "`\n"
+                        + "(\n"
+                        + "    `my_row_id` UInt64,\n"
+                        + "    `id` Int32,\n"
+                        + "    `v` String,\n"
+                        + "    `_version` UInt64,\n"
+                        + "    `is_deleted` UInt8\n"
+                        + ")\n"
+                        + "ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
+                        + "ORDER BY (`id`)\n"
+                        + "SETTINGS index_granularity = 8192",
+                // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+                "ALTER TABLE `employees`.`" + S + "` DROP COLUMN IF EXISTS my_row_id",
+                "INSERT INTO `employees`.`" + S + "` (`id`, `v`, `_version`, `is_deleted`) " + select,
+                "SELECT count() FROM (" + select + ")",
+                "SELECT count() FROM `employees`.`" + S + "`",
+                "EXCHANGE TABLES `employees`.`t` AND `employees`.`" + S + "`",
+                // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+                "DROP TABLE IF EXISTS `employees`.`" + S + "`");
+        assertEquals(expected, actions(ch));
+        // The deferred DROP never targets the existing table.
+        for (String sql : ch.executed) {
+            assertFalse(sql.startsWith("ALTER TABLE `employees`.`t`"), "must not ALTER the existing table: " + sql);
+        }
+    }
+
+    @Test
+    @DisplayName("A renamed key column is declared under its new name on the rebuilt table and copied as o.old AS new")
+    public void renamedKeyColumnIsCopiedUnderNewName() {
+        // CHANGE id ref_id INT: ClickHouse rejects RENAME COLUMN of a key column
+        // even on an empty table (Code: 524, measured on 24.8.14), so the
+        // rebuilt table is created keyed by `ref_id` directly and the copy
+        // reads o.`id` AS `ref_id`; no ALTER RENAME is issued anywhere.
+        FakeDb ch = new FakeDb()
+                .answer("SELECT engine_full FROM system.tables", row(ENGINE_FULL))
+                .answer("AND table = 't' ORDER BY position", tColumns(false, false))
+                .answer("AND table = '" + S + "' ORDER BY position", row("ref_id", "Int32", ""),
+                        row("tenant", "Int32", ""), row("name", "Nullable(String)", ""), row("_version", "UInt64", ""),
+                        row("is_deleted", "UInt8", ""))
+                .answer("SHOW CREATE TABLE", row(SHOW_CREATE))
+                .answer("SELECT count() FROM (", row(5L))
+                .answer("SELECT count() FROM `employees`.`" + S + "`", row(5L))
+                .answer("SELECT engine FROM system.databases", row("Atomic"));
+        Map<String, Provenance> provenance = new LinkedHashMap<>();
+        provenance.put("ref_id", Provenance.EXISTING);
+        PrimaryKeyRebuildPlan plan = new PrimaryKeyRebuildPlan("employees", "t", Collections.singletonList("id"),
+                Collections.singletonList("ref_id"), false, provenance,
+                "ALTER TABLE t CHANGE COLUMN id ref_id INT NOT NULL",
+                Collections.singletonList("RENAME COLUMN id TO ref_id"), Collections.singletonMap("id", "ref_id"),
+                Collections.emptyMap());
+
+        PrimaryKeyRebuild.execute(plan, ch.connection(), new Properties(), config(), "hr", noSource(), EPOCH);
+
+        String select = "SELECT o.`id` AS `ref_id`, o.`tenant`, o.`name`, o.`_version`, o.`is_deleted` "
+                + "FROM `employees`.`t` AS o FINAL WHERE o.`is_deleted` = 0";
+        List<String> expected = Arrays.asList(
+                "CREATE TABLE `employees`.`" + S + "`\n"
+                        + "(\n"
+                        + "    `ref_id` Int32,\n"
+                        + "    `tenant` Int32,\n"
+                        + "    `name` Nullable(String),\n"
+                        + "    `_version` UInt64,\n"
+                        + "    `is_deleted` UInt8\n"
+                        + ")\n"
+                        + "ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
+                        + "ORDER BY (`ref_id`)\n"
+                        + "SETTINGS index_granularity = 8192",
+                "INSERT INTO `employees`.`" + S + "` (`ref_id`, `tenant`, `name`, `_version`, `is_deleted`) " + select,
+                "SELECT count() FROM (" + select + ")",
+                "SELECT count() FROM `employees`.`" + S + "`",
+                "EXCHANGE TABLES `employees`.`t` AND `employees`.`" + S + "`",
+                // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+                "DROP TABLE IF EXISTS `employees`.`" + S + "`");
+        assertEquals(expected, actions(ch));
+        for (String sql : ch.executed) {
+            assertFalse(sql.contains("RENAME COLUMN"), "a key column is never renamed by ALTER: " + sql);
+        }
+
+        // A rename that also widens, and a widening alone: the rebuilt table
+        // declares the translated type; the INSERT ... SELECT converts.
+        Map<String, String> types = new LinkedHashMap<>();
+        types.put("id", "Int32");
+        String widenedAndRenamed = PrimaryKeyRebuild.rewriteCreateStatement(SHOW_CREATE, "employees", "t", S,
+                Collections.singletonList("id"), false, types, Collections.singletonMap("id", "ref_id"),
+                Collections.singletonMap("ref_id", "Int64"));
+        assertTrue(widenedAndRenamed.contains("    `ref_id` Int64,\n"), widenedAndRenamed);
+        assertTrue(widenedAndRenamed.endsWith("ORDER BY (`ref_id`)\nSETTINGS index_granularity = 8192"),
+                widenedAndRenamed);
+        assertFalse(widenedAndRenamed.contains("`id`"), widenedAndRenamed);
+        String widened = PrimaryKeyRebuild.rewriteCreateStatement(SHOW_CREATE, "employees", "t", S,
+                Collections.singletonList("id"), false, types, Collections.emptyMap(),
+                Collections.singletonMap("id", "Int64"));
+        assertTrue(widened.contains("    `id` Int64,\n"), widened);
+        assertTrue(widened.endsWith("ORDER BY (`id`)\nSETTINGS index_granularity = 8192"), widened);
+        // A declaration with arguments, DEFAULT and CODEC keeps everything after the type.
+        String decorated = SHOW_CREATE.replace("    `id` Int32,\n", "    `id` Decimal(10, 2) DEFAULT 0 CODEC(ZSTD(1)),\n");
+        String retyped = PrimaryKeyRebuild.rewriteCreateStatement(decorated, "employees", "t", S,
+                Collections.singletonList("id"), false, Collections.singletonMap("id", "Decimal(10, 2)"),
+                Collections.emptyMap(), Collections.singletonMap("id", "Decimal(12, 2)"));
+        assertTrue(retyped.contains("    `id` Decimal(12, 2) DEFAULT 0 CODEC(ZSTD(1)),\n"), retyped);
     }
 
     // ------------------------------------------------------------------

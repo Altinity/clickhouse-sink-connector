@@ -39,8 +39,13 @@ public final class PrimaryKeyRebuildPlan {
     private final boolean keylessFallback;
     private final Map<String, Provenance> provenance;
     private final String sourceSql;
+    private final List<String> deferredClauses;
+    private final Map<String, String> renamedColumns;
+    private final Map<String, String> retypedColumns;
 
     /**
+     * A plan without deferred clauses (Spec 06.09 §3.1).
+     *
      * @param database        destination database (clean).
      * @param table           table name (clean).
      * @param oldKey          the replica's current sorting key, connector columns removed, lower-cased.
@@ -52,6 +57,37 @@ public final class PrimaryKeyRebuildPlan {
      */
     public PrimaryKeyRebuildPlan(String database, String table, List<String> oldKey, List<String> newKey,
                                  boolean keylessFallback, Map<String, Provenance> provenance, String sourceSql) {
+        this(database, table, oldKey, newKey, keylessFallback, provenance, sourceSql,
+                Collections.emptyList(), Collections.emptyMap(), Collections.emptyMap());
+    }
+
+    /**
+     * @param database        destination database (clean).
+     * @param table           table name (clean).
+     * @param oldKey          the replica's current sorting key, connector columns removed, lower-cased.
+     * @param newKey          the new key, clean names in declaration (or position) order;
+     *                        a renamed key column is named by its NEW name.
+     * @param keylessFallback whether {@code newKey} is the all-columns identity of a
+     *                        keyless table (DROP PRIMARY KEY without a replacement).
+     * @param provenance      per new-key column, where its values come from.
+     * @param sourceSql       the source statement, for log messages.
+     * @param deferredClauses ClickHouse {@code ALTER TABLE} clause texts (without the
+     *                        {@code ALTER TABLE x} prefix) the statement applies to an
+     *                        old-key column, which the translator did not emit against
+     *                        the current table and the rebuild applies to the rebuilt
+     *                        one instead (Spec 06.09 §3.1.1): {@code DROP COLUMN IF
+     *                        EXISTS k}, then {@code RENAME COLUMN k TO k2}, then
+     *                        {@code MODIFY COLUMN k <type>}, in that order.
+     * @param renamedColumns  old clean name -> new clean name of every old-key column
+     *                        the statement renames; the copy reads {@code o.old AS new}.
+     * @param retypedColumns  clean name (the NEW name when also renamed) -> the
+     *                        translated ClickHouse type of every old-key column the
+     *                        statement re-types (a widening or non-comparable change).
+     */
+    public PrimaryKeyRebuildPlan(String database, String table, List<String> oldKey, List<String> newKey,
+                                 boolean keylessFallback, Map<String, Provenance> provenance, String sourceSql,
+                                 List<String> deferredClauses, Map<String, String> renamedColumns,
+                                 Map<String, String> retypedColumns) {
         this.database = database;
         this.table = table;
         this.oldKey = Collections.unmodifiableList(new ArrayList<>(oldKey));
@@ -59,6 +95,9 @@ public final class PrimaryKeyRebuildPlan {
         this.keylessFallback = keylessFallback;
         this.provenance = Collections.unmodifiableMap(new LinkedHashMap<>(provenance));
         this.sourceSql = sourceSql;
+        this.deferredClauses = Collections.unmodifiableList(new ArrayList<>(deferredClauses));
+        this.renamedColumns = Collections.unmodifiableMap(new LinkedHashMap<>(renamedColumns));
+        this.retypedColumns = Collections.unmodifiableMap(new LinkedHashMap<>(retypedColumns));
     }
 
     /** @return destination database (clean). */
@@ -112,9 +151,34 @@ public final class PrimaryKeyRebuildPlan {
         return !sourceValuedColumns().isEmpty();
     }
 
+    /**
+     * @return the ClickHouse {@code ALTER TABLE} clauses on old-key columns the
+     *         translator deferred to the rebuilt table (Spec 06.09 §3.1.1), in
+     *         application order: DROP, then RENAME, then MODIFY; empty when none.
+     */
+    public List<String> deferredClauses() {
+        return deferredClauses;
+    }
+
+    /** @return old clean name -> new clean name of every renamed old-key column; empty when none. */
+    public Map<String, String> renamedColumns() {
+        return renamedColumns;
+    }
+
+    /**
+     * @return clean name (the new name when also renamed) -> translated ClickHouse
+     *         type of every re-typed old-key column; empty when none.
+     */
+    public Map<String, String> retypedColumns() {
+        return retypedColumns;
+    }
+
     @Override
     public String toString() {
         return "PrimaryKeyRebuildPlan{" + database + "." + table + ": oldKey=" + oldKey + ", newKey=" + newKey
-                + (keylessFallback ? " (keyless all-columns fallback)" : "") + ", provenance=" + provenance + "}";
+                + (keylessFallback ? " (keyless all-columns fallback)" : "") + ", provenance=" + provenance
+                + (deferredClauses.isEmpty() ? "" : ", deferredClauses=" + deferredClauses)
+                + (renamedColumns.isEmpty() ? "" : ", renamedColumns=" + renamedColumns)
+                + (retypedColumns.isEmpty() ? "" : ", retypedColumns=" + retypedColumns) + "}";
     }
 }

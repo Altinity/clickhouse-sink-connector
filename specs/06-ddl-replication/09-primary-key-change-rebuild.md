@@ -105,6 +105,31 @@ A new-key column that is none of these (a column the statement neither adds nor
 the replica has) is loud: the replica cannot represent the identity
 (`DDLReplicationException`, nothing emitted).
 
+#### 3.1.1 Clauses that touch an old-key column are deferred to the rebuilt table
+ClickHouse rejects every `DROP`, type change or rename of a sorting-key column
+on the existing table (`Code: 524`/`Code: 47`), while MySQL applies them inside
+the same clustered-index rebuild. The translator therefore never emits such a
+clause against the current table when a rebuild is planned. Instead the plan
+carries them as **deferred clauses** — ClickHouse `ALTER TABLE` clauses to
+apply to the empty rebuilt table before the copy (§3.3 step 3b):
+
+| Source clause on an old-key column | Plan | Deferred clause |
+|---|---|---|
+| `DROP COLUMN k` (e.g. the GIPK promotion `DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`) | `k` removed from the copied column set (and from the key when it was a key column) | `DROP COLUMN IF EXISTS k` on the empty rebuilt table (§3.3 step 3b) |
+| `MODIFY k <wider or non-comparable type>` (Spec 06.05 §3.4 rule 3) | identity unchanged (a rebuild under the same key, §3.1.2); `k` re-typed | folded into the `CREATE` of the rebuilt table (§3.3 step 3) — ClickHouse refuses `MODIFY` of a key column even on an empty table |
+| `CHANGE k k2 <type>` / `RENAME COLUMN k TO k2` | new key names `k2` where the old named `k`; the copy reads `o.k AS k2` | folded into the `CREATE` of the rebuilt table (column declared as `k2`, `ORDER BY` names `k2`) |
+
+Same-or-narrower re-declarations stay suppressed (Spec 06.05 §3.4 rule 2) and
+never trigger a rebuild on their own. Clauses on non-key columns are emitted
+against the current table as before (Spec 06.04).
+
+#### 3.1.2 Key-column widening or rename is a rebuild under the same identity
+A statement whose only key effect is a deferred `MODIFY`/`CHANGE`/`RENAME`
+(Spec 06.05 §3.4 rule 3) plans a rebuild whose new key is the current key
+(renamed where applicable) — MySQL rebuilds the clustered index for a type
+change of a primary-key column exactly as for a key change. With
+`ddl.primary.key.rebuild=false` the former loud refusal applies.
+
 ### 3.2 Preconditions (loud when not met)
 The rebuild is only defined for the `ReplacingMergeTree(_version[, is_deleted])`
 and `ReplicatedReplacingMergeTree(...)` targets the connector creates
@@ -154,7 +179,20 @@ All statements run on the writer's connection, inside the DDL barrier
    except when the new key is the keyless all-columns fallback, where nullable
    columns stay `Nullable` and `allow_nullable_key=1` is added to `SETTINGS`
    (Spec 06.05 §3.6); engine, `PARTITION BY`, `SAMPLE BY`, `TTL` and every other
-   setting are kept verbatim. `S` is created with the result.
+   setting are kept verbatim. A deferred `RENAME`/`MODIFY` of a key column
+   (§3.1.1) is folded into this definition: the column is declared under its
+   new name and/or new type and the `ORDER BY` names it that way — ClickHouse
+   refuses `ALTER ... RENAME COLUMN` / `MODIFY COLUMN` on a key column even
+   of an EMPTY table (`Code: 524`, measured on 24.8.14), so the only place a
+   key column can change is the `CREATE` of the rebuilt table. `S` is created
+   with the result.
+3b. **Deferred `DROP COLUMN` clauses (§3.1.1).** Each deferred drop is applied
+   to the empty `S` as its own `ALTER TABLE S DROP COLUMN IF EXISTS k`
+   (metadata-only; `k` is not part of the new key). The copied column set
+   (step 5) is then read from `S`, so a dropped column is not copied and a
+   renamed one is copied as `o.<old> AS <new>`, its values converted by the
+   `INSERT ... SELECT` to the new type (a widening never loses a value; MySQL
+   applied the same conversion on the source).
 4. **Source key map (SOURCE_VALUED columns only, §3.4).** `K` is created as
    `MergeTree ORDER BY (<old key>)` with the old-key columns typed as in `T` and
    the source-valued columns typed as in `S`, and filled from the source.
@@ -261,5 +299,11 @@ is unaffected.
 - `PrimaryKeyRebuildTest.countMismatchAbortsBeforeSwap()` — a count mismatch throws `DDLReplicationException` and no EXCHANGE/RENAME/DROP is issued.
 - `PrimaryKeyRebuildTest.retiredCopyKeptWhenDropTruncateDisabled()` — `disable.drop.truncate=true`: swap happens, nothing is dropped.
 - `PrimaryKeyRebuildTest.replicatedLiteralPathIsLoud()`, `PrimaryKeyRebuildTest.nullableOldKeyWithSourceMapIsLoud()` — §3.2 preconditions.
-- End-to-end (MySQL 8.0 → connector → ClickHouse 24.8, `csc_e2e_suite.sh` case `t_pk`): the production migration `DROP PRIMARY KEY, ADD COLUMN id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, ADD PRIMARY KEY (id)` followed by INSERT/UPDATE/DELETE; value-level equality and `ORDER BY id` on the replica. Case `t_pk2`: `DROP PRIMARY KEY, ADD PRIMARY KEY (existing column)` without a source read.
-- Formal: `primary_key_change_rebuilds`, `rebuild_never_bare` in `DdlTranslation.lean`; `rebuild_preserves_live_rows`, `rebuild_view_eq` in `PkRebuild.lean`.
+- `MySqlDDLParserListenerImplTest.testModifyKeyColumnWiderPlansRebuild()`, `testChangeKeyColumnRenamePlansRebuild()`, `testKeyColumnChangeIsLoudWhenRebuildDisabled()` — §3.1.1/§3.1.2: a widening `MODIFY` and a `CHANGE`/`RENAME` of a key column plan a same-identity rebuild with the deferred clause and (for a rename) the renamed key; nothing for the key column is emitted against the current table; `ddl.primary.key.rebuild=false` is loud.
+- `MySqlDDLParserListenerImplTest.testDroppedKeyColumnIsDeferredToRebuiltTable()` — the GIPK promotion `DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`: plan with new key `id`, deferred `DROP COLUMN IF EXISTS my_row_id`, and no `DROP COLUMN` in the emitted statement.
+- `MySqlDDLParserListenerImplTest.testRedeliveredPrimaryKeyChangeIsRestatement()` — §3.5: once the target's sorting key equals the declared key, the same statement plans nothing and emits only its idempotent clauses.
+- `PrimaryKeyRebuildTest.deferredClausesApplyToRebuiltTableBeforeCopy()` — step 3b ordering: CREATE `S`, then `ALTER TABLE S DROP COLUMN IF EXISTS ...`, then the copy whose column list excludes the dropped column.
+- `PrimaryKeyRebuildTest.renamedKeyColumnIsCopiedUnderNewName()` — the `CREATE` of `S` declares the renamed column under its new name and keys by it (no `RENAME COLUMN` ALTER is issued), and the copy reads `o.<old> AS <new>`.
+- Integration (`PrimaryKeyChangeIT`, MySQL 8.0 → embedded connector → ClickHouse, the `AbstractCDCBaseIT` harness): `compositeKeyToAutoIncrementId()` (the production migration `DROP PRIMARY KEY, ADD COLUMN id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, ADD PRIMARY KEY (id)`, source values joined in), `rekeyOntoExistingColumn()`, `supersetKey()` (`(a)` → `(a, b)`), `addPrimaryKeyOnNullableColumn()` (MySQL makes the column `NOT NULL`; the replica key column is non-Nullable), `dropPrimaryKeyBecomesKeyless()` (`sql_generate_invisible_primary_key=OFF`; all-columns identity), `gipkTablePromotedToExplicitKey()` (`DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`), `keyColumnWidened()` (`MODIFY id BIGINT`), `keyColumnRenamed()` (`CHANGE id ref_id INT`), each preceded by DML under the old key and followed by INSERT / UPDATE / DELETE and a relocation (`UPDATE ... SET <new key> = ...`) under the new key; every case asserts value-level equality with MySQL (`FINAL`, live rows), the replica sorting key, no leftover `__pk_rebuild_` tables, and an untouched control table.
+- End-to-end on a built jar (`csc_e2e_pk.sh`, podman: MySQL 8.0 → connector → ClickHouse 24.8): the same matrix at the value level; `t_pk` → `ORDER BY pk_id`, `t_pk2` → `ORDER BY b`, `t_pk3` → `ORDER BY (id, v)`.
+- Formal: `primary_key_change_rebuilds`, `wider_key_change_rebuilds`, `rebuild_never_bare`, `rebuild_only_when_not_loud` in `DdlTranslation.lean`; `rebuild_preserves_live_rows`, `rebuild_view_eq` in `PkRebuild.lean`.

@@ -9,18 +9,19 @@ ALTER TABLE
 | ADD COLUMN NULL/NOT NULL                               |                                 |
 | ADD COLUMN DEFAULT                                     |                                 |
 | ADD COLUMN FIRST, AFTER                                |                                 |
-| DROP COLUMN                                            | Supported                       |
-| MODIFY COLUMN data_type                                |                                 |
+| DROP COLUMN                                            | Supported. A sorting-key column cannot be dropped from the existing CH table (Code: 524): the drop is deferred to the rebuilt table (Spec 06.09 §3.1.1), e.g. the GIPK promotion `DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`. |
+| MODIFY COLUMN data_type                                | Supported. On a sorting-key column: a same-or-narrower type is skipped as loss-free; a wider or non-comparable type rebuilds the table under the same key with the new type (Spec 06.05 §3.4 / Spec 06.09 §3.1.2); `ddl.primary.key.rebuild=false` restores the loud stop. |
 | MODIFY COLUMN data_type NULL/NOT NULL                  |                                 |
 | MODIFY COLUMN data_type DEFAULT                        |                                 |
 | MODIFY COLUMN FIRST, AFTER                             |                                 |
-| MODIFY COLUMN old_name new_name datatype NULL/NOT NULL | Supported                       |
-| RENAME COLUMN col1 to col2                             | Supported                       |
+| MODIFY COLUMN old_name new_name datatype NULL/NOT NULL | Supported. A sorting-key column cannot be renamed on the existing CH table (Code: 524): a CHANGE of one rebuilds the table keyed by the new name (Spec 06.09 §3.1.1); `ddl.primary.key.rebuild=false` restores the loud stop. |
+| RENAME COLUMN col1 to col2                             | Supported. A sorting-key column: rebuild keyed by the new name, as for CHANGE (Spec 06.09 §3.1.1). |
 | CHANGE COLUMN FIRST, AFTER                             | MODIFY COLUMN                   |
 | ALTER COLUMN col_name ADD DEFAULT                      | Not supported by grammar        |
 | ALTER COLUMN col_name ADD DROP DEFAULT                 | Not supported by grammar        |
 | ADD PRIMARY KEY                                        | The sorting key is fixed at CREATE in CH, so a key that changes the row identity rebuilds the table under the new key at the DDL barrier (Spec 06.09); a restatement of the existing key is skipped. `ddl.primary.key.rebuild=false` restores the loud stop instead of the rebuild. |
 | DROP PRIMARY KEY                                       | The sorting key is fixed at CREATE in CH, so a drop without a replacement key rebuilds the table under the keyless all-columns key at the DDL barrier (Spec 06.09). `ddl.primary.key.rebuild=false` restores the loud stop instead of the rebuild. |
+| DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id) | The GIPK promotion: the table is rebuilt keyed by `id`, and `my_row_id` (the old key column, which CH cannot drop in place) is dropped from the rebuilt table before the rows are copied (Spec 06.09 §3.1.1). |
 
 
 ## TABLE operations

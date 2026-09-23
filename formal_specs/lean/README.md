@@ -45,7 +45,7 @@ formal_specs/lean/
     ├── GeneratedColumn.lean           # Generated-Column Type Integrity (Invariant I13): expression maps to DEFAULT, never the type
     ├── DdlBarrier.lean                # DDL Barrier Quiescence (Invariant I5): the barrier covers legacy + routed queues + unacknowledged batches
     ├── OffsetFifo.lean                # Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01): commit never passes an outstanding batch, written-once, in-process restart abandons but never rolls back
-    ├── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07/06.09): no bare ALTER, loud key widening, identity change rebuilds, ADD COLUMN preserved
+    ├── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07/06.09): no bare ALTER, key widening/rename rebuilds under the same identity, identity change rebuilds, ADD COLUMN preserved
     ├── BatchOrder.lean                # Batch execution order around a replicated TRUNCATE (Spec 04.05): ordered segments reproduce binlog order; hash-map order does not
     ├── VersionFloor.lean              # Version floor across a restart (Invariant I2 at the boundary, specs 02.02/02.04): seeded floor orders the new run above the old; heartbeats never touch the sequence
     ├── CreateTable.lean               # CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2): never ORDER BY tuple(), declared key wins, nullable fallback key needs allow_nullable_key
@@ -198,18 +198,23 @@ An `ALTER TABLE` is modelled as a list of classified clauses (`addColumn`,
 `dropColumn`, `modifyDataColumn`, `modifyKeyColumnSameOrNarrower`,
 `modifyKeyColumnWider`, `primaryKeyChange`, `noOp`) and `translate` yields
 `skip`, `emit kept`, `rebuild kept` or `fail`, mirroring `enterAlterTable`:
-a loud clause fails the statement; otherwise a `primaryKeyChange` turns it into
-`rebuild (keep cs)` (Spec 06.09); otherwise the representable clauses are
-emitted, or the statement is skipped when there are none.
+a loud clause fails the statement (no clause of the current model is loud —
+`Clause.loud` is uniformly `false` — the `fail` branch and `anyLoud` are kept
+for future loud clauses and pin that a refusal wins over a rebuild); otherwise a
+`primaryKeyChange` or a `modifyKeyColumnWider` turns it into `rebuild (keep cs)`
+(Spec 06.09 §3.1 / §3.1.2 — a widening or rename of a sorting-key column is a
+rebuild under the same identity, as MySQL rebuilds its clustered index for it);
+otherwise the representable clauses are emitted, or the statement is skipped
+when there are none.
 
 | Theorem Name | Statement | Significance |
 |---|---|---|
 | `no_bare_alter` | `translate cs ≠ emit []` | The translator never sends a bare `ALTER TABLE db.t` (`Code: 62`); an all-no-op statement yields `skip`. |
 | `all_noop_skips` | every clause unrepresentable, not loud and not an identity change → `translate cs = skip` | Index / key / constraint / charset / option-only statements are acknowledged, not sent. |
-| `wider_key_change_is_loud` | `modifyKeyColumnWider n ∈ cs → translate cs = fail` | A sorting-key widening is refused with `DDLReplicationException` (I9), never emitted to fail with `Code: 524` after retries; it wins over a rebuild in the same statement. |
+| `wider_key_change_rebuilds` | `modifyKeyColumnWider n ∈ cs → anyLoud cs = false → translate cs = rebuild (keep cs)` | A widening or rename of a sorting-key column is never emitted against the existing table (it would fail with `Code: 524` after every retry); as MySQL rebuilds its clustered index for the change, the connector applies the representable clauses and rebuilds the table under the same identity, the deferred `MODIFY`/`CHANGE`/`RENAME` applied to the empty rebuilt table before the copy (Spec 06.05 §3.4 rule 3, Spec 06.09 §3.1.2). The `ddl.primary.key.rebuild=false` loud refusal (I9) is a configuration switch outside this model. Replaces the former `wider_key_change_is_loud`. |
 | `primary_key_change_rebuilds` | `primaryKeyChange cols ∈ cs → anyLoud cs = false → translate cs = rebuild (keep cs)` | An `ADD`/`DROP PRIMARY KEY` that changes the row identity the replica is keyed by applies the representable clauses and rebuilds the table under the new key at the DDL barrier (Spec 06.07 §3.1 rule 3, Spec 06.09); a restatement or an unknown key is a `noOp`. Replaces the former `primary_key_change_is_loud`. |
 | `rebuild_never_bare` | `translate cs = rebuild kept → kept = keep cs` | The rebuild branch carries exactly the representable clauses (possibly none: a lone `DROP PRIMARY KEY` rebuilds without an `ALTER`); with `no_bare_alter`, no branch ever produces `emit []`. |
-| `rebuild_only_when_not_loud` | `translate cs = rebuild kept → anyLoud cs = false` | The loud refusal wins over the rebuild. |
+| `rebuild_only_when_not_loud` | `translate cs = rebuild kept → anyLoud cs = false` | The loud refusal wins over the rebuild (no clause of the current model is loud; the theorem pins the precedence for any future loud clause). |
 | `add_columns_preserved` | `translate cs = emit kept → addColumn n ∈ cs → addColumn n ∈ kept` | Skipping an unrepresentable neighbour never drops an `ADD COLUMN` (I6). |
 | `rebuild_add_columns_preserved` | `translate cs = rebuild kept → addColumn n ∈ cs → addColumn n ∈ kept` | The `ADD COLUMN new_id ...` of the migration shape is applied before the rebuild (Spec 06.09 §3.1). |
 | `emitted_are_representable` | `translate cs = emit kept → kept = keep cs` (`keep` = the representable clauses, in source order) | Exactly the representable clauses are emitted, in source order. |

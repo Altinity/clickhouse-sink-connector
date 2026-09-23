@@ -60,4 +60,4 @@ All lookups against ClickHouse `system.columns` (nullability fallback, sorting-k
 ## 5. Verification Criteria
 - `MySqlDDLParserListenerImplTest` (the full class; the tests named in Specs 06.04, 06.05, 06.07 are the regression pins for the rules above).
 - `DdlReplayIdempotencyTest` (replay safety of every emitted statement shape).
-- `formal_specs/lean/Replication/DdlTranslation.lean`: `no_bare_alter`, `wider_key_change_is_loud`, `add_columns_preserved` (zero `sorry`, standard axioms only).
+- `formal_specs/lean/Replication/DdlTranslation.lean`: `no_bare_alter`, `wider_key_change_rebuilds`, `primary_key_change_rebuilds`, `add_columns_preserved` (zero `sorry`, standard axioms only).
