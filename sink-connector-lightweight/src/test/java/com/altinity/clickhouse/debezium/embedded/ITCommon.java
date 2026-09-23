@@ -211,8 +211,20 @@ public class ITCommon {
 
     static public BaseDbWriter getDBWriter(ClickHouseContainer clickHouseContainer) {
 
+        // The pool is registered under the "system" key, so its URL must address
+        // the system database too. Pools are process-wide and keyed by
+        // host:port|database (Spec 03.05 section 3.2): when this helper ran
+        // before the engine's own setSystemDbConnection, it seeded the "system"
+        // pool with a .../employees URL, the engine inherited connections whose
+        // default database was employees, and the snapshot's replicated
+        // DROP DATABASE IF EXISTS employees removed the connection's own default
+        // database -- every later statement failed with
+        // "Code: 81 ... Database employees does not exist" (PrimaryKeyChangeIT).
+        // Lookups through this writer qualify their tables with the database,
+        // and the production callers of createConnection pair a system URL with
+        // their pool name the same way (ClickHouseBatchRunnable, ClickHouseBatchWriter).
          String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), 
-         "employees");
+         BaseDbWriter.SYSTEM_DB);
         Connection connection = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, clickHouseContainer.getUsername(), 
         clickHouseContainer.getPassword(), BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
@@ -224,8 +236,10 @@ public class ITCommon {
 
     static public BaseDbWriter getDBWriter(ClickHouseContainer clickHouseContainer, String databaseName) {
 
+        // Same rule as above: a pool registered as "system" addresses the
+        // system database, whatever database the writer is for.
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                databaseName);
+                BaseDbWriter.SYSTEM_DB);
         Connection connection = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, clickHouseContainer.getUsername(),
                 clickHouseContainer.getPassword(), BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
