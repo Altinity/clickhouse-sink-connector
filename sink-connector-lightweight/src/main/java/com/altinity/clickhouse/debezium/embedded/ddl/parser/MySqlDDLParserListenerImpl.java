@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DDLReplicationException;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.parser.DataTypeConverter;
 
 import static com.altinity.clickhouse.sink.connector.config.DefaultColumnDataTypeMappingConfig.loadDefaultColumnDataTypeMapping;
@@ -219,6 +220,54 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private List<String> statementPrimaryKey;
 
     /**
+     * Columns ADDED by the ALTER TABLE being walked: clean name -> whether the
+     * column is {@code AUTO_INCREMENT} (Spec 06.09 §3.1 provenance); reset per
+     * statement.
+     */
+    private final Map<String, Boolean> statementAddedColumns = new LinkedHashMap<>();
+
+    /**
+     * Clean names of the columns DROPPED by the ALTER TABLE being walked
+     * (Spec 06.09 §3.1, the keyless all-columns fallback); reset per statement.
+     */
+    private final Set<String> statementDroppedColumns = new LinkedHashSet<>();
+
+    /**
+     * Every column the ALTER TABLE being walked renames, clean old name ->
+     * clean new name (key and non-key alike), so a key derived from the
+     * pre-statement column list names the post-statement columns; reset per
+     * statement.
+     */
+    private final Map<String, String> statementRenamedColumns = new LinkedHashMap<>();
+
+    /**
+     * ClickHouse ALTER clauses on OLD-key columns the walked statement carries
+     * (DROP, rename, widening/non-comparable MODIFY) that are not emitted
+     * against the current table -- ClickHouse rejects them with Code: 524 --
+     * but deferred to the rebuilt table (Spec 06.09 §3.1.1); reset per
+     * statement. Kept in application order: DROP, then RENAME, then MODIFY.
+     */
+    private final List<String> deferredDropClauses = new ArrayList<>();
+    private final List<String> deferredRenameClauses = new ArrayList<>();
+    private final List<String> deferredModifyClauses = new ArrayList<>();
+
+    /** Clean old name -> clean new name of the renamed old-key columns (Spec 06.09 §3.1.1). */
+    private final Map<String, String> deferredRenamedColumns = new LinkedHashMap<>();
+
+    /** Clean (new) name -> translated ClickHouse type of the re-typed old-key columns. */
+    private final Map<String, String> deferredRetypedColumns = new LinkedHashMap<>();
+
+    /** Clean names of the old-key columns the statement drops (deferred to the rebuilt table). */
+    private final Set<String> deferredDroppedColumns = new LinkedHashSet<>();
+
+    /**
+     * The rebuild the walked ALTER TABLE requires because it changed the
+     * table's row identity (Spec 06.09 §3.1); null when none; reset per
+     * statement.
+     */
+    private PrimaryKeyRebuildPlan primaryKeyRebuildPlan;
+
+    /**
      * Statement time of the DDL event being translated ({@code source.ts_ms},
      * epoch milliseconds); 0 when unknown. An {@code ADD COLUMN ... DEFAULT
      * CURRENT_TIMESTAMP} is back-filled on the source with this instant
@@ -236,6 +285,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * {@code disable.drop.truncate} is scoped to.
      */
     private boolean dropOrTruncateStatement;
+
+    /**
+     * @return the rebuild the walked ALTER TABLE requires on the replica
+     *         (Spec 06.09 §3.1), or null when it changed no row identity.
+     */
+    public PrimaryKeyRebuildPlan primaryKeyRebuildPlan() {
+        return primaryKeyRebuildPlan;
+    }
 
     /** @return whether the walked statement drops or truncates a table or database. */
     public boolean isDropOrTruncateStatement() {
@@ -1369,6 +1426,36 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // failure stalls the ENTIRE replication stream. Debezium flushes
         // offsets periodically, so any restart can re-deliver DDL already
         // applied downstream.
+        // The OLD name must exist in ClickHouse: resolve MySQL's
+        // case-insensitive spelling to the case-sensitive one (Spec 06.03
+        // §3.3). A sorting-key column cannot be renamed on the existing
+        // table (Code: 524, Spec 06.05 §3.4): with the rebuild enabled the
+        // rename is deferred to the rebuilt table (Spec 06.09 §3.1.1) and
+        // nothing is emitted for the clause; with it disabled, loud.
+        String oldName = null;
+        String newName = null;
+        for (ParseTree child : ((MySqlParser.AlterSpecificationContext) tree).children) {
+            if (child instanceof MySqlParser.UidContext) {
+                if (oldName == null) {
+                    oldName = resolveExistingColumnName(child.getText());
+                } else if (newName == null) {
+                    newName = child.getText();
+                }
+            }
+        }
+        if (oldName != null && newName != null) {
+            this.statementRenamedColumns.put(stripBackticks(oldName), stripBackticks(newName));
+            String keyType = targetSortingKeyTypes().get(stripBackticks(oldName));
+            if (keyType != null) {
+                if (!primaryKeyRebuildEnabled()) {
+                    throw keyColumnNotRepresentable(oldName, keyType, null,
+                            "cannot be renamed (ALTER RENAME of a key column)");
+                }
+                deferKeyColumnRename(oldName, newName, keyType, null);
+                removeTrailingComma();
+                return;
+            }
+        }
         boolean guardEmitted = false;
         boolean oldNameSeen = false;
         while (it.hasNext()) {
@@ -1377,17 +1464,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 String name = child.getText();
                 if (!oldNameSeen) {
                     oldNameSeen = true;
-                    // The OLD name must exist in ClickHouse: resolve MySQL's
-                    // case-insensitive spelling to the case-sensitive one
-                    // (Spec 06.03 §3.3) and refuse to rename a sorting-key
-                    // column, which ClickHouse rejects with Code: 524
-                    // (Spec 06.05 §3.4).
-                    name = resolveExistingColumnName(name);
-                    String keyType = targetSortingKeyTypes().get(stripBackticks(name));
-                    if (keyType != null) {
-                        throw keyColumnNotRepresentable(name, keyType, null,
-                                "cannot be renamed (ALTER RENAME of a key column)");
-                    }
+                    name = oldName != null ? oldName : resolveExistingColumnName(name);
                 }
                 // Append the column name to the query
                 this.query.append(" ").append(name);
@@ -1563,6 +1640,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         MySqlParser.DefaultColumnConstraintContext defaultConstraint = null;
         boolean nullExplicitlySet = false;
 
+        if (clause == ColumnClause.ADD) {
+            // Recorded for the rebuild plan's provenance (Spec 06.09 §3.1):
+            // an added column is ADDED_DEFAULTED unless AUTO_INCREMENT below
+            // marks it SOURCE_VALUED.
+            this.statementAddedColumns.put(stripBackticks(columnName), Boolean.FALSE);
+        }
+
         for (ParseTree columnDefChild : columnDefinition.children) {
             if (columnDefChild instanceof MySqlParser.DataTypeContext) {
                 // The type comes from the data-type node only. Deriving it
@@ -1614,6 +1698,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 // brand-new column has no existing rows to violate it.
                 nullExplicitlySet = true;
                 isNullColumn = false;
+                // Its values are generated by the source: SOURCE_VALUED if it
+                // becomes part of the new key (Spec 06.09 §3.1).
+                this.statementAddedColumns.put(stripBackticks(columnName), Boolean.TRUE);
             } else if (columnDefChild instanceof MySqlParser.PrimaryKeyColumnConstraintContext) {
                 // A column-level PRIMARY KEY declares the statement's identity
                 // (judged in enforcePrimaryKeyPolicy, Spec 06.07 §3.1) and,
@@ -1669,21 +1756,25 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     columnDefinition, isNullColumn);
         }
 
+        if (renames) {
+            this.statementRenamedColumns.put(stripBackticks(columnName), stripBackticks(newColumnName));
+        }
+
         // Sorting-key policy (Spec 06.05 §3.4): ClickHouse rejects EVERY type
         // change and every rename of a sorting-key column with Code: 524, so a
-        // MODIFY/CHANGE of one is never emitted. Skip it when the existing
-        // column already holds every value of the requested type; otherwise
-        // stop loudly rather than emit a statement that fails on every retry
-        // and takes the neighbouring clauses down with it.
+        // MODIFY/CHANGE of one is never emitted against the existing table.
+        // Skip it when the existing column already holds every value of the
+        // requested type (rule 2); a widening, non-comparable or renaming
+        // change is what MySQL rebuilds its clustered index for, and so does
+        // the replica: deferred to the rebuilt table (rule 3, Spec 06.09
+        // §3.1.1) -- or, with ddl.primary.key.rebuild=false, loud rather than
+        // a statement that fails on every retry and takes the neighbouring
+        // clauses down with it.
         if (clause != ColumnClause.ADD) {
             String existingKeyType = targetSortingKeyTypes().get(stripBackticks(columnName));
             if (existingKeyType != null) {
-                if (renames) {
-                    throw keyColumnNotRepresentable(columnName, existingKeyType, columnType,
-                            "cannot be renamed to " + newColumnName + " (ALTER RENAME of a key column)");
-                }
                 KeyColumnTypeChange.Verdict verdict = KeyColumnTypeChange.compare(existingKeyType, columnType);
-                if (verdict == KeyColumnTypeChange.Verdict.SAME_OR_NARROWER) {
+                if (!renames && verdict == KeyColumnTypeChange.Verdict.SAME_OR_NARROWER) {
                     log.warn("Sorting-key column {}.{}.{}: key column type change to {} is not representable "
                                     + "in ClickHouse (Code: 524, the sorting key is fixed at CREATE); keeping {} "
                                     + "which holds every value of the source type. Clause skipped.",
@@ -1692,10 +1783,30 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     removeTrailingComma();
                     return;
                 }
-                throw keyColumnNotRepresentable(columnName, existingKeyType, columnType,
-                        verdict == KeyColumnTypeChange.Verdict.WIDER
-                                ? "the requested type is wider than the existing column"
-                                : "the requested type is not comparable with the existing column");
+                if (!primaryKeyRebuildEnabled()) {
+                    if (renames) {
+                        throw keyColumnNotRepresentable(columnName, existingKeyType, columnType,
+                                "cannot be renamed to " + newColumnName + " (ALTER RENAME of a key column)");
+                    }
+                    throw keyColumnNotRepresentable(columnName, existingKeyType, columnType,
+                            verdict == KeyColumnTypeChange.Verdict.WIDER
+                                    ? "the requested type is wider than the existing column"
+                                    : "the requested type is not comparable with the existing column");
+                }
+                // The translated type, under the nullability rules of Spec
+                // 06.05 §3.2 (a key column keeps its existing, non-Nullable,
+                // nullability); the DEFAULT and position of the clause do not
+                // carry over to the rebuilt table.
+                String deferredType = columnType == null ? existingKeyType
+                        : isNullColumn ? "Nullable(" + columnType + ")" : columnType;
+                if (renames) {
+                    deferKeyColumnRename(columnName, newColumnName, existingKeyType,
+                            verdict == KeyColumnTypeChange.Verdict.SAME_OR_NARROWER ? null : deferredType);
+                } else {
+                    deferKeyColumnModify(columnName, columnName, existingKeyType, deferredType, verdict);
+                }
+                removeTrailingComma();
+                return;
             }
         }
 
@@ -2036,6 +2147,66 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     /**
+     * Defers the rename of an old-key column to the rebuilt table (Spec 06.09
+     * §3.1.1): records {@code RENAME COLUMN old TO new} and, when the clause
+     * also changes the type, {@code MODIFY COLUMN new <type>}.
+     *
+     * @param oldName      the column's ClickHouse spelling, as written (may be backticked).
+     * @param newName      the new name, as written.
+     * @param existingType the column's existing ClickHouse type.
+     * @param newType      the translated new type, or null when the type does not change.
+     */
+    private void deferKeyColumnRename(String oldName, String newName, String existingType, String newType) {
+        String rename = "RENAME COLUMN " + oldName + " TO " + newName;
+        this.deferredRenameClauses.add(rename);
+        this.deferredRenamedColumns.put(stripBackticks(oldName), stripBackticks(newName));
+        log.warn("Sorting-key column {}.{}.{}: rename to {} cannot be applied to the existing table (Code: 524); "
+                        + "deferred to the rebuilt table as [{}] (Spec 06.09 §3.1.1)",
+                this.databaseName, this.cleanTableName, stripBackticks(oldName), stripBackticks(newName), rename);
+        if (newType != null) {
+            deferKeyColumnModify(oldName, newName, existingType, newType, null);
+        }
+    }
+
+    /**
+     * Defers the re-typing of an old-key column to the rebuilt table (Spec
+     * 06.09 §3.1.1 / Spec 06.05 §3.4 rule 3): records
+     * {@code MODIFY COLUMN <name> <type>}, where the name is the column's NEW
+     * name when the same statement renames it.
+     *
+     * @param oldName      the column's ClickHouse spelling, as written.
+     * @param name         the name the column carries on the rebuilt table, as written.
+     * @param existingType the column's existing ClickHouse type.
+     * @param newType      the translated new type.
+     * @param verdict      the width comparison, or null when the clause also renames.
+     */
+    private void deferKeyColumnModify(String oldName, String name, String existingType, String newType,
+                                      KeyColumnTypeChange.Verdict verdict) {
+        String modify = String.format(Constants.MODIFY_COLUMN, name, newType);
+        this.deferredModifyClauses.add(modify);
+        this.deferredRetypedColumns.put(stripBackticks(name), newType);
+        log.warn("Sorting-key column {}.{}.{}: type change from {} to {} ({}) cannot be applied to the existing "
+                        + "table (Code: 524); deferred to the rebuilt table as [{}] (Spec 06.09 §3.1.1)",
+                this.databaseName, this.cleanTableName, stripBackticks(oldName), existingType, newType,
+                verdict == null ? "with the rename" : verdict == KeyColumnTypeChange.Verdict.WIDER
+                        ? "wider than the existing column" : "not comparable with the existing column", modify);
+    }
+
+    /** Whether the walked statement deferred any clause on an old-key column (Spec 06.09 §3.1.1). */
+    private boolean hasDeferredKeyClauses() {
+        return !this.deferredDropClauses.isEmpty() || !this.deferredRenameClauses.isEmpty()
+                || !this.deferredModifyClauses.isEmpty();
+    }
+
+    /** The deferred clauses in application order: DROP, then RENAME, then MODIFY (Spec 06.09 §3.3 step 3b). */
+    private List<String> deferredClauses() {
+        List<String> all = new ArrayList<>(this.deferredDropClauses);
+        all.addAll(this.deferredRenameClauses);
+        all.addAll(this.deferredModifyClauses);
+        return all;
+    }
+
+    /**
      * The ALTER target as ClickHouse must see it: the destination database
      * (backticked) and the table part of the source identifier, with any
      * source database prefix dropped.
@@ -2065,6 +2236,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.targetSortingKeyTypes = null;
         this.statementDropsPrimaryKey = false;
         this.statementPrimaryKey = null;
+        this.statementAddedColumns.clear();
+        this.statementDroppedColumns.clear();
+        this.statementRenamedColumns.clear();
+        this.deferredDropClauses.clear();
+        this.deferredRenameClauses.clear();
+        this.deferredModifyClauses.clear();
+        this.deferredRenamedColumns.clear();
+        this.deferredRetypedColumns.clear();
+        this.deferredDroppedColumns.clear();
+        this.primaryKeyRebuildPlan = null;
         for (ParseTree tree : pt) {
 
             if (tree instanceof TableNameContext) {
@@ -2089,11 +2270,32 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 // never originates a drop. Blast radius is the single named
                 // column of the single mirrored table; IF EXISTS makes a
                 // replay a no-op.
-                this.query.append(" ");
+                StringBuilder dropClause = new StringBuilder();
                 for (ParseTree dropColumnTree : ((MySqlParser.AlterByDropColumnContext) (tree)).children) {
                     if (dropColumnTree instanceof MySqlParser.UidContext) {
                         String droppedColumn = resolveExistingColumnName(dropColumnTree.getText());
-                        this.query.append(String.format(Constants.DROP_COLUMN, droppedColumn));
+                        String cleanDropped = stripBackticks(droppedColumn);
+                        // Leaves the keyless all-columns identity (Spec 06.09 §3.1).
+                        this.statementDroppedColumns.add(cleanDropped);
+                        if (targetSortingKeyTypes().containsKey(cleanDropped) && primaryKeyRebuildEnabled()) {
+                            // A sorting-key column cannot be dropped from the
+                            // existing table (Code: 524); MySQL drops it inside
+                            // its clustered-index rebuild, and so does the
+                            // replica: deferred to the rebuilt table (Spec
+                            // 06.09 §3.1.1), nothing emitted here.
+                            String deferred = String.format(Constants.DROP_COLUMN, droppedColumn);
+                            this.deferredDropClauses.add(deferred);
+                            this.deferredDroppedColumns.add(cleanDropped);
+                            // DESTRUCTIVE: statement text is only translated/logged here; nothing is executed against any database.
+                            log.warn("Sorting-key column {}.{}.{}: DROP COLUMN cannot be applied to the existing "
+                                            + "table (Code: 524); deferred to the rebuilt table as [{}] (Spec 06.09 "
+                                            + "§3.1.1)", this.databaseName, this.cleanTableName, cleanDropped, deferred);
+                        } else {
+                            if (dropClause.length() > 0) {
+                                dropClause.append(",");
+                            }
+                            dropClause.append(String.format(Constants.DROP_COLUMN, droppedColumn));
+                        }
 
                         // Check for ALIAS column companion drops
                         if (this.config != null) {
@@ -2106,14 +2308,23 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                         overrideConfig.getAliasOverrides(this.databaseName, cleanTableName);
                                 for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
                                     if (entry.getColumn().equalsIgnoreCase(droppedColName)) {
-                                        this.query.append(",");
-                                        this.query.append(String.format(Constants.DROP_COLUMN,
+                                        if (dropClause.length() > 0) {
+                                            dropClause.append(",");
+                                        }
+                                        dropClause.append(String.format(Constants.DROP_COLUMN,
                                                 entry.getAliasColumnName()));
                                     }
                                 }
                             }
                         }
                     }
+                }
+                if (dropClause.length() > 0) {
+                    this.query.append(" ").append(dropClause);
+                } else {
+                    // Every drop of this clause was deferred: leave no separator
+                    // behind (Spec 06.07 §3.4, no bare ALTER).
+                    removeTrailingComma();
                 }
             } else if (tree instanceof MySqlParser.AlterByRenameColumnContext) {
                 parseRenameColumn(tree);
@@ -2170,7 +2381,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // preceded it dangling once the clause itself emits nothing.
         removeTrailingComma();
         // The statement's net row identity versus the replica's (Spec 06.07
-        // §3.1): a change the replica cannot follow is loud, nothing emitted.
+        // §3.1): a change is rebuilt at the DDL barrier (Spec 06.09) -- or,
+        // with the rebuild disabled, loud and nothing emitted.
         enforcePrimaryKeyPolicy();
         // Every clause emitted nothing (e.g. a lone ADD PRIMARY KEY): the query
         // is just "ALTER TABLE t", which ClickHouse rejects with Code: 62. Clear
@@ -2201,11 +2413,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      *       replacement -- the source no longer identifies rows the way the
      *       replica does. ClickHouse cannot re-key a table in place and keeping
      *       the old key collapses rows the source keeps distinct, so the
-     *       statement is refused loudly, naming the rebuild (Invariant I9).</li>
+     *       replica is rebuilt under the new key at the DDL barrier (Spec
+     *       06.09): a {@link PrimaryKeyRebuildPlan} is recorded and the
+     *       statement's other clauses are emitted as usual. With
+     *       {@code ddl.primary.key.rebuild=false} the statement is refused
+     *       loudly instead, naming the manual rebuild (Invariant I9).</li>
      * </ul>
      */
     private void enforcePrimaryKeyPolicy() {
-        if (!this.statementDropsPrimaryKey && this.statementPrimaryKey == null) {
+        boolean deferred = hasDeferredKeyClauses();
+        if (!this.statementDropsPrimaryKey && this.statementPrimaryKey == null && !deferred) {
             return;
         }
         Set<String> existingKey = new LinkedHashSet<>();
@@ -2225,14 +2442,148 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             for (String column : this.statementPrimaryKey) {
                 requestedKey.add(stripBackticks(column).toLowerCase());
             }
-            if (requestedKey.equals(existingKey)) {
+            if (requestedKey.equals(existingKey) && !deferred) {
                 log.info("Table {}.{}: PRIMARY KEY {} restates the ClickHouse sorting key; nothing to do",
                         this.databaseName, this.cleanTableName, existing);
                 return;
             }
-            throw identityChangeNotRepresentable("(" + String.join(",", requestedKey) + ")", existing);
+            String requested = "(" + String.join(",", requestedKey) + ")";
+            if (!primaryKeyRebuildEnabled()) {
+                throw identityChangeNotRepresentable(requested, existing);
+            }
+            List<String> newKey = new ArrayList<>();
+            for (String column : this.statementPrimaryKey) {
+                newKey.add(stripBackticks(column));
+            }
+            this.primaryKeyRebuildPlan = planRebuild(existingKey, newKey, false, requested, existing);
+            return;
         }
-        throw identityChangeNotRepresentable("none (DROP PRIMARY KEY without a replacement)", existing);
+        if (!this.statementDropsPrimaryKey) {
+            // Only a deferred DROP/MODIFY/CHANGE/RENAME of a key column: a
+            // rebuild under the SAME identity -- the current key with the
+            // renames applied and the dropped columns removed (Spec 06.09
+            // §3.1.2), as MySQL rebuilds its clustered index for such a
+            // change. Every key column dropped falls through to the keyless
+            // identity below, as a DROP PRIMARY KEY would.
+            List<String> newKey = new ArrayList<>();
+            for (String keyColumn : targetSortingKeyTypes().keySet()) {
+                if (!isConnectorColumn(keyColumn) && !anyEqualsIgnoreCase(this.deferredDroppedColumns, keyColumn)) {
+                    newKey.add(renamedName(keyColumn));
+                }
+            }
+            if (!newKey.isEmpty()) {
+                this.primaryKeyRebuildPlan = planRebuild(existingKey, newKey, false,
+                        "(" + String.join(",", newKey) + ") (the same identity; a key column is re-typed, renamed "
+                                + "or dropped)", existing);
+                return;
+            }
+        }
+        String requested = this.statementDropsPrimaryKey ? "none (DROP PRIMARY KEY without a replacement)"
+                : "none (every key column dropped)";
+        if (!primaryKeyRebuildEnabled()) {
+            throw identityChangeNotRepresentable(requested, existing);
+        }
+        // The identity a keyless table has on this replica: every stored
+        // non-connector column after the statement, in position order (Spec
+        // 06.05 §3.6 / Spec 06.09 §3.1), under the names it carries after
+        // the statement.
+        List<String> newKey = new ArrayList<>();
+        for (String column : targetColumnNullability().keySet()) {
+            if (!isConnectorColumn(column) && !anyEqualsIgnoreCase(this.statementDroppedColumns, column)
+                    && !anyEqualsIgnoreCase(this.statementAddedColumns.keySet(), column)) {
+                newKey.add(renamedName(column));
+            }
+        }
+        newKey.addAll(this.statementAddedColumns.keySet());
+        if (newKey.isEmpty()) {
+            throw identityChangeNotRepresentable(requested, existing,
+                    "the replica's columns are unknown to the DDL translator, so the keyless all-columns "
+                            + "identity cannot be derived");
+        }
+        this.primaryKeyRebuildPlan = planRebuild(existingKey, newKey, true,
+                "(" + String.join(",", newKey) + ") (keyless all-columns identity)", existing);
+    }
+
+    /**
+     * Whether {@code ddl.primary.key.rebuild} is on (default true, Spec 06.09
+     * §2): a change of row identity is then rebuilt at the DDL barrier
+     * instead of refused.
+     */
+    private boolean primaryKeyRebuildEnabled() {
+        if (this.config == null) {
+            return true;
+        }
+        String value = this.config.originalsStrings().get(SinkConnectorLightWeightConfig.DDL_PRIMARY_KEY_REBUILD);
+        return value == null || value.trim().isEmpty() || Boolean.parseBoolean(value.trim());
+    }
+
+    /**
+     * Builds the rebuild plan for an identity change (Spec 06.09 §3.1),
+     * classifying every new-key column by provenance; a column the statement
+     * neither adds nor the replica has is loud.
+     *
+     * @param existingKey     the replica's sorting key, connector columns removed, lower-cased.
+     * @param newKey          the new key, clean names in order.
+     * @param keylessFallback whether {@code newKey} is the keyless all-columns identity.
+     * @param requested       the requested key as rendered for the log / refusal message.
+     * @param existing        the existing key as rendered for the log / refusal message.
+     */
+    private PrimaryKeyRebuildPlan planRebuild(Set<String> existingKey, List<String> newKey, boolean keylessFallback,
+                                              String requested, String existing) {
+        Map<String, PrimaryKeyRebuildPlan.Provenance> provenance = new LinkedHashMap<>();
+        for (String column : newKey) {
+            Boolean autoIncrement = getIgnoreCase(this.statementAddedColumns, column);
+            if (autoIncrement != null) {
+                provenance.put(column, autoIncrement
+                        ? PrimaryKeyRebuildPlan.Provenance.SOURCE_VALUED
+                        : PrimaryKeyRebuildPlan.Provenance.ADDED_DEFAULTED);
+            } else if (anyEqualsIgnoreCase(targetColumnNullability().keySet(), column)
+                    || anyEqualsIgnoreCase(targetSortingKeyTypes().keySet(), column)
+                    || anyEqualsIgnoreCase(this.deferredRenamedColumns.values(), column)) {
+                // An existing column, possibly under the new name a deferred
+                // rename gives it on the rebuilt table (Spec 06.09 §3.1.1).
+                provenance.put(column, PrimaryKeyRebuildPlan.Provenance.EXISTING);
+            } else {
+                throw identityChangeNotRepresentable(requested, existing, "key column " + column
+                        + " is unknown to the replica: the statement does not add it and the ClickHouse table "
+                        + "has no such column, so the new identity cannot be represented");
+            }
+        }
+        List<String> deferred = deferredClauses();
+        PrimaryKeyRebuildPlan plan = new PrimaryKeyRebuildPlan(this.databaseName, this.cleanTableName,
+                new ArrayList<>(existingKey), newKey, keylessFallback, provenance, this.originalSql, deferred,
+                this.deferredRenamedColumns, this.deferredRetypedColumns);
+        log.warn("Table {}.{}: the source changes its PRIMARY KEY from {} to {} (provenance {}); the ClickHouse "
+                        + "sorting key is fixed at CREATE TABLE (Code: 524), so the table is rebuilt under the new key -- "
+                        + "rebuild scheduled at the DDL barrier (Spec 06.09).{} Source DDL: [{}]",
+                this.databaseName, this.cleanTableName, existing, requested, provenance,
+                deferred.isEmpty() ? "" : " Clauses on old-key columns deferred to the rebuilt table (Spec 06.09 "
+                        + "§3.1.1): " + deferred + ".", this.originalSql);
+        return plan;
+    }
+
+    /** The name {@code column} carries after the walked statement (Spec 06.09 §3.1.1), else itself. */
+    private String renamedName(String column) {
+        String renamed = getIgnoreCase(this.statementRenamedColumns, column);
+        return renamed != null ? renamed : column;
+    }
+
+    private static boolean anyEqualsIgnoreCase(Collection<String> names, String name) {
+        for (String candidate : names) {
+            if (candidate.equalsIgnoreCase(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static <V> V getIgnoreCase(Map<String, V> map, String key) {
+        for (Map.Entry<String, V> e : map.entrySet()) {
+            if (e.getKey().equalsIgnoreCase(key)) {
+                return e.getValue();
+            }
+        }
+        return null;
     }
 
     /** A column the connector manages itself, never part of the source identity. */
@@ -2251,13 +2602,23 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * (Spec 06.07 §3.1 rule 3, Invariant I9).
      */
     private DDLReplicationException identityChangeNotRepresentable(String requestedKey, String existingKey) {
+        return identityChangeNotRepresentable(requestedKey, existingKey, null);
+    }
+
+    /**
+     * As {@link #identityChangeNotRepresentable(String, String)}, naming in
+     * addition why the automatic rebuild (Spec 06.09) cannot plan the change.
+     */
+    private DDLReplicationException identityChangeNotRepresentable(String requestedKey, String existingKey,
+                                                                   String reason) {
         String message = String.format(
                 "Table %s.%s: the source changes its PRIMARY KEY to %s but the ClickHouse sorting key is %s. "
                         + "ClickHouse fixes the sorting key at CREATE TABLE (Code: 524), and keeping the old key "
                         + "would collapse rows the source keeps distinct, so this cannot be applied by ALTER and is "
-                        + "not retried. Manual rebuild required: re-create `%s`.%s with ORDER BY matching the new "
+                        + "not retried.%s Manual rebuild required: re-create `%s`.%s with ORDER BY matching the new "
                         + "key and re-snapshot the table. Source DDL: [%s]",
-                this.databaseName, this.cleanTableName, requestedKey, existingKey, this.databaseName,
+                this.databaseName, this.cleanTableName, requestedKey, existingKey,
+                reason == null ? "" : " " + reason + ".", this.databaseName,
                 this.cleanTableName, this.originalSql);
         log.error(message);
         return new DDLReplicationException(message, null);

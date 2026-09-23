@@ -45,10 +45,11 @@ formal_specs/lean/
     ├── GeneratedColumn.lean           # Generated-Column Type Integrity (Invariant I13): expression maps to DEFAULT, never the type
     ├── DdlBarrier.lean                # DDL Barrier Quiescence (Invariant I5): the barrier covers legacy + routed queues + unacknowledged batches
     ├── OffsetFifo.lean                # Handoff-sequence FIFO for offset acknowledgement (Invariant I8, spec 09.01): commit never passes an outstanding batch, written-once, in-process restart abandons but never rolls back
-    ├── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07): no bare ALTER, loud key widening, ADD COLUMN preserved
+    ├── DdlTranslation.lean            # ALTER TABLE clause classification (Specs 06.03/06.04/06.05/06.07/06.09): no bare ALTER, key widening/rename rebuilds under the same identity, identity change rebuilds, ADD COLUMN preserved
     ├── BatchOrder.lean                # Batch execution order around a replicated TRUNCATE (Spec 04.05): ordered segments reproduce binlog order; hash-map order does not
     ├── VersionFloor.lean              # Version floor across a restart (Invariant I2 at the boundary, specs 02.02/02.04): seeded floor orders the new run above the old; heartbeats never touch the sequence
-    └── CreateTable.lean               # CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2): never ORDER BY tuple(), declared key wins, nullable fallback key needs allow_nullable_key
+    ├── CreateTable.lean               # CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2): never ORDER BY tuple(), declared key wins, nullable fallback key needs allow_nullable_key
+    └── PkRebuild.lean                 # Primary-key change rebuild (Spec 06.09 §3.3, §3.6, §4): re-keying the FINAL live set by an injective map keeps every live row exactly once, versions unchanged; the online backfill never shadows a post-DDL row and is idempotent
 ```
 
 ---
@@ -191,21 +192,59 @@ sequences `0,1,2,…` that are all acknowledged.
 | `type_is_never_expression` | for a generated column, the emitted type is never the generation expression | The exact bug (`ADD COLUMN c AS(a+b)`) cannot recur. |
 | `generated_has_default` | a generated column always emits a `DEFAULT` | The source value stays authoritative (I6). |
 
-### ALTER TABLE clause classification (Specs 06.03 / 06.04 / 06.05 / 06.07, `DdlTranslation.lean`)
+### ALTER TABLE clause classification (Specs 06.03 / 06.04 / 06.05 / 06.07 / 06.09, `DdlTranslation.lean`)
 
 An `ALTER TABLE` is modelled as a list of classified clauses (`addColumn`,
 `dropColumn`, `modifyDataColumn`, `modifyKeyColumnSameOrNarrower`,
 `modifyKeyColumnWider`, `primaryKeyChange`, `noOp`) and `translate` yields
-`skip`, `emit kept` or `fail`, mirroring `enterAlterTable`.
+`skip`, `emit kept`, `rebuild kept` or `fail`, mirroring `enterAlterTable`:
+a loud clause fails the statement (no clause of the current model is loud —
+`Clause.loud` is uniformly `false` — the `fail` branch and `anyLoud` are kept
+for future loud clauses and pin that a refusal wins over a rebuild); otherwise a
+`primaryKeyChange` or a `modifyKeyColumnWider` turns it into `rebuild (keep cs)`
+(Spec 06.09 §3.1 / §3.1.2 — a widening or rename of a sorting-key column is a
+rebuild under the same identity, as MySQL rebuilds its clustered index for it);
+otherwise the representable clauses are emitted, or the statement is skipped
+when there are none.
 
 | Theorem Name | Statement | Significance |
 |---|---|---|
 | `no_bare_alter` | `translate cs ≠ emit []` | The translator never sends a bare `ALTER TABLE db.t` (`Code: 62`); an all-no-op statement yields `skip`. |
-| `all_noop_skips` | every clause unrepresentable and not loud → `translate cs = skip` | Index / key / constraint / charset / option-only statements are acknowledged, not sent. |
-| `wider_key_change_is_loud` | `modifyKeyColumnWider n ∈ cs → translate cs = fail` | A sorting-key widening is refused with `DDLReplicationException` (I9), never emitted to fail with `Code: 524` after retries. |
-| `primary_key_change_is_loud` | `primaryKeyChange cols ∈ cs → translate cs = fail` | An `ADD`/`DROP PRIMARY KEY` that changes the row identity the replica is keyed by is refused and names the rebuild (Spec 06.07 §3.1); a restatement is a `noOp`. |
+| `all_noop_skips` | every clause unrepresentable, not loud and not an identity change → `translate cs = skip` | Index / key / constraint / charset / option-only statements are acknowledged, not sent. |
+| `wider_key_change_rebuilds` | `modifyKeyColumnWider n ∈ cs → anyLoud cs = false → translate cs = rebuild (keep cs)` | A widening or rename of a sorting-key column is never emitted against the existing table (it would fail with `Code: 524` after every retry); as MySQL rebuilds its clustered index for the change, the connector applies the representable clauses and rebuilds the table under the same identity, the deferred `MODIFY`/`CHANGE`/`RENAME` applied to the empty rebuilt table before the copy (Spec 06.05 §3.4 rule 3, Spec 06.09 §3.1.2). The `ddl.primary.key.rebuild=false` loud refusal (I9) is a configuration switch outside this model. Replaces the former `wider_key_change_is_loud`. |
+| `primary_key_change_rebuilds` | `primaryKeyChange cols ∈ cs → anyLoud cs = false → translate cs = rebuild (keep cs)` | An `ADD`/`DROP PRIMARY KEY` that changes the row identity the replica is keyed by applies the representable clauses and rebuilds the table under the new key at the DDL barrier (Spec 06.07 §3.1 rule 3, Spec 06.09); a restatement or an unknown key is a `noOp`. Replaces the former `primary_key_change_is_loud`. |
+| `rebuild_never_bare` | `translate cs = rebuild kept → kept = keep cs` | The rebuild branch carries exactly the representable clauses (possibly none: a lone `DROP PRIMARY KEY` rebuilds without an `ALTER`); with `no_bare_alter`, no branch ever produces `emit []`. |
+| `rebuild_only_when_not_loud` | `translate cs = rebuild kept → anyLoud cs = false` | The loud refusal wins over the rebuild (no clause of the current model is loud; the theorem pins the precedence for any future loud clause). |
 | `add_columns_preserved` | `translate cs = emit kept → addColumn n ∈ cs → addColumn n ∈ kept` | Skipping an unrepresentable neighbour never drops an `ADD COLUMN` (I6). |
+| `rebuild_add_columns_preserved` | `translate cs = rebuild kept → addColumn n ∈ cs → addColumn n ∈ kept` | The `ADD COLUMN new_id ...` of the migration shape is applied before the rebuild (Spec 06.09 §3.1). |
 | `emitted_are_representable` | `translate cs = emit kept → kept = keep cs` (`keep` = the representable clauses, in source order) | Exactly the representable clauses are emitted, in source order. |
+
+### Primary-key change rebuild (Spec 06.09 §3.3 / §3.6 / §4, `PkRebuild.lean`)
+
+The stored table is the `CHTable` of `ClickHouse.lean`. `liveRecord t k` is the
+max-version record of `k` (`findMaxVersion`, same tie rule as `FINAL`) unless it
+is a tombstone; `live t` is one such record per distinct key (the result of
+`SELECT ... FROM T FINAL WHERE is_deleted = 0`); `rebuild t f` is `live t` with
+every key re-mapped by `f : Key → Key`, the map from the old identity to the new
+one, which is injective (`∀ a b, f a = f b → a = b`, stated explicitly since core
+Lean has no `Function.Injective`). Versions are copied unchanged.
+
+The online backfill of §3.3 is modelled as the post-DDL records `n` of the
+swapped-in table followed (or preceded) by `rebuild r f`, the re-keyed live rows
+of the retired table `r`; the DDL barrier makes every backfilled record strictly
+older than every post-DDL record of the same key, and that single hypothesis is
+what lets the copy run outside the barrier: it cannot shadow a newer row or
+tombstone, it supplies the keys the new table lacks, and a retried copy changes
+nothing.
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `rebuild_preserves_live_rows` | `(∀ r ∈ rebuild t f, r.is_deleted = false) ∧ (rebuild t f).length = (live t).length` | The rebuilt table holds no tombstone and exactly the live row count: the count of the copy equals the count of the `SELECT ... FROM R FINAL WHERE is_deleted = 0` that fed it (§3.3.2 step 2). |
+| `rebuild_view_eq` | `f` injective → `∀ k, chFinalView (rebuild t f) (f k) = chFinalView t k` | Re-keying the live set by an injective map preserves the `FINAL` view exactly: every live row is carried over once, a tombstoned or absent key stays absent (I3). |
+| `rebuild_final_record` | `liveRecord t k = some r →` the collapsed record at `f k` is `rekey f r`: key `f k`, same `version`, same `row`, `is_deleted = false` | Versions are untouched by the rebuild (§3.6, I2). |
+| `rebuild_view_outside_image` | `(∀ k, f k ≠ k') → chFinalView (rebuild t f) k' = none` | The rebuild invents no row under the new key. |
+| `backfill_never_shadows_newer` | `(∀ x ∈ rebuild r f, ∀ y ∈ n, y.key = x.key → x.version < y.version) →` (a) `(∃ y ∈ n, y.key = k) → chFinalView (n ++ rebuild r f) k = chFinalView n k`; (b) `(∀ y ∈ n, y.key ≠ k) → chFinalView (n ++ rebuild r f) k = chFinalView (rebuild r f) k` | The online backfill (§3.3, §3.3.2 step 2): a key the new table already holds — a newer live row, a `DELETE` tombstone, the tombstone half of a relocation — keeps the view it had, because the backfilled row has the smaller version and loses in `FINAL`; a key the new table lacks shows the pre-DDL row the backfill brings (I2, I3). `backfill_never_shadows_newer_prepend` proves the same two conclusions for `rebuild r f ++ n`: the copy interleaves with new inserts, and with strictly smaller versions the `>=` tie rule never decides. |
+| `backfill_idempotent` | `∀ k, chFinalView (n ++ rebuild r f ++ rebuild r f) k = chFinalView (n ++ rebuild r f) k` | A retried or restarted copy (§3.3.2 steps 5–6) re-inserts rows already present and changes nothing; via `chFinalView_append_dup` / `findMaxVersion_append_dup`, which hold for any tables: the duplicate that wins the equal-version tie is the identical record, so even the collapsed `Option CHRecord` is unchanged. |
 
 ### CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2, `CreateTable.lean`)
 

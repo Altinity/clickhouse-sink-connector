@@ -47,4 +47,16 @@ public interface DDLParserService {
      */
     default void setDdlEventTimestampMs(long ddlEventTimestampMs) {
     }
+
+    /**
+     * The table rebuild the last parsed statement requires on the replica
+     * because it changed the source table's row identity (Spec 06.09 §3.1);
+     * executed by {@code PrimaryKeyRebuild} at the DDL barrier once the
+     * statement's other clauses have been applied.
+     *
+     * @return the plan, or {@code null} when the last statement needs none.
+     */
+    default PrimaryKeyRebuildPlan primaryKeyRebuildPlan() {
+        return null;
+    }
 }

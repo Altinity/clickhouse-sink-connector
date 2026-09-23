@@ -4,6 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.PrimaryKeyRebuildPlan;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
@@ -203,6 +204,15 @@ public class DebeziumChangeEventCapture {
     Connection replicationHistoryDbConnection;
 
     /**
+     * The online primary-key backfill runner (Spec 06.09 §3.3.2): one
+     * {@code pk-rebuild-backfill} daemon thread per engine, created on first
+     * use by {@link #primaryKeyBackfill}, fed by {@link #performDDLOperation}
+     * after a swap and by {@link #resumePendingPrimaryKeyBackfills} at start,
+     * shut down by {@link #stop()}.
+     */
+    private PrimaryKeyBackfill primaryKeyBackfill;
+
+    /**
      * Last ignored DDL statement.
      */
     @Getter
@@ -366,6 +376,12 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Error retrieving version", e);
         }
+
+        // A primary-key rebuild whose swap happened but whose online backfill
+        // did not complete before the last stop is resumed from the retired
+        // tables themselves, before the engine delivers its first batch
+        // (Spec 06.09 §3.3.2 step 6). Never fails the start.
+        resumePendingPrimaryKeyBackfills(props, config);
 
         // This is required for Debezium JDBC storage to identify the clickhouse driver.
         // when it's bundled as a shaded JAR.
@@ -750,6 +766,21 @@ public class DebeziumChangeEventCapture {
             }
         } catch (Exception e) {
             log.error("Error stopping executor", e);
+        }
+
+        // 4b. The online primary-key backfill thread: interrupted and waited
+        //     for a few seconds at most; an interrupted copy re-runs at the
+        //     next start (idempotent, Spec 06.09 §3.3.2 step 6).
+        try {
+            PrimaryKeyBackfill backfill;
+            synchronized (this) {
+                backfill = this.primaryKeyBackfill;
+            }
+            if (backfill != null) {
+                backfill.shutdown();
+            }
+        } catch (Exception e) {
+            log.error("Error stopping the primary-key backfill thread", e);
         }
 
         // 5. Nobody can write or acknowledge anything registered so far: abandon
@@ -1257,6 +1288,10 @@ public class DebeziumChangeEventCapture {
             log.warn("Ignoring DROP/TRUNCATE statement because {}=true; ClickHouse keeps the rows the "
                     + "source removed (a deliberate, operator-chosen divergence). DDL: {}",
                     SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, DDL);
+            // The suppressed statement still supersedes a pending primary-key
+            // backfill of the table: the operator keeps the rows already in
+            // the table, not the retired pre-DDL ones (Spec 06.09 §3.3.2 step 7).
+            cancelPrimaryKeyBackfillsSupersededBy(DDL, sr, props, config, databaseName, clickHouseQuery.toString());
             return;
         }
 
@@ -1282,8 +1317,34 @@ public class DebeziumChangeEventCapture {
         while (numRetries < MAX_DDL_RETRIES) {
             try {
 
-                if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString()))
+                if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString())) {
+                    // DESTRUCTIVE: statement text is only classified here; the drop of the retired copy it triggers is bounded to rebuild scratch tables.
+                    if (isDropOrTruncate.get()) {
+                        // A DROP TABLE / TRUNCATE TABLE / DROP DATABASE makes the
+                        // pre-DDL rows of the table obsolete: cancel its pending
+                        // primary-key backfill and drop the retired copy BEFORE
+                        // the statement runs, so no later copy statement can
+                        // resurrect the removed rows (Spec 06.09 §3.3.2 step 7).
+                        cancelPrimaryKeyBackfillsSupersededBy(DDL, sr, props, config, databaseName,
+                                clickHouseQuery.toString());
+                    }
                     executeDDL(clickHouseQuery.toString(), writer, config);
+
+                    // The statement changed the source table's row identity:
+                    // swap in the empty table keyed by the new identity, here
+                    // inside the DDL barrier and before the cache invalidation
+                    // below (Spec 06.09 §3.3.1) -- metadata only -- and hand
+                    // the copy of the rows to the online backfill thread
+                    // (§3.3.2), so no table's replication waits on the copy. A
+                    // swap failure is a DDLReplicationException and escapes
+                    // this loop unretried.
+                    PrimaryKeyRebuildPlan plan = ddlParserService.primaryKeyRebuildPlan();
+                    if (plan != null) {
+                        PrimaryKeyBackfill.Task task = PrimaryKeyRebuild.swap(plan, writer.getConnection(), props,
+                                config, sourceDatabaseName(sr), System.currentTimeMillis());
+                        primaryKeyBackfill(props, config).submit(task);
+                    }
+                }
 
                 // Invalidate cached DbWriter for the affected table(s) so that subsequent
                 // inserts use the updated schema after DDL changes (e.g., ADD/DROP COLUMN).
@@ -1398,6 +1459,20 @@ public class DebeziumChangeEventCapture {
 
                 DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
                 break;
+            } catch (DDLReplicationException rebuildFailure) {
+                // A primary-key rebuild that refused or failed (Spec 06.09):
+                // already the loud, terminal type. It must NOT be retried by
+                // this loop -- a repeated INSERT ... SELECT could double the
+                // rows -- so it is recorded and re-thrown as is.
+                log.error("Error executing DDL", rebuildFailure);
+                try {
+                    ErrorLogger.createErrorTable(systemDbConnection, config);
+                    ErrorLogger.logError(systemDbConnection, rebuildFailure.getMessage(),
+                        sr, databaseName, clickHouseQuery.toString(), props.getProperty("name"), errorTableName);
+                } catch (SQLException ex) {
+                    log.error("Failed to log DDL error to ClickHouse", ex);
+                }
+                throw rebuildFailure;
             } catch (Exception e) {
                 lastFailure = e;
                 log.error("Error executing DDL", e);
@@ -3183,6 +3258,173 @@ public class DebeziumChangeEventCapture {
 
     private Connection systemConnection() {
         return this.writer != null ? this.writer.getConnection() : this.systemDbConnection;
+    }
+
+    /**
+     * The engine's online primary-key backfill runner (Spec 06.09 §3.3.2),
+     * created on first use. Every attempt opens a NEW ClickHouse connection
+     * built exactly as {@link #setSystemDbConnection} builds the writer's, so
+     * the backfill never shares the writer's connection; failed attempts are
+     * recorded in the error table when {@code error.logging.enable} is set,
+     * with the same pieces the DDL error path uses.
+     */
+    synchronized PrimaryKeyBackfill primaryKeyBackfill(Properties props, ClickHouseSinkConnectorConfig config) {
+        if (this.primaryKeyBackfill == null || this.primaryKeyBackfill.isShutdown()) {
+            final DBCredentials dbCredentials = parseDBConfiguration(config);
+            final String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(),
+                    dbCredentials.getPort(), BaseDbWriter.SYSTEM_DB);
+            java.util.function.Supplier<Connection> connections = () -> BaseDbWriter.createConnection(
+                    jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, dbCredentials.getUserName(),
+                    dbCredentials.getPassword(), BaseDbWriter.SYSTEM_DB, config);
+            final String errorTableName = props.getProperty(
+                    ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
+            final String connectorName = props.getProperty("name");
+            PrimaryKeyBackfill.FailureReporter reporter = (ch, task, step, statement, cause) -> {
+                if (!config.getBoolean(ClickHouseSinkConnectorConfigVariables.ERROR_LOGGING_ENABLE.toString())) {
+                    return;
+                }
+                if (ch == null) {
+                    log.error("Primary-key backfill of {}: no ClickHouse connection, so the failure is not "
+                            + "recorded in the error table", task);
+                    return;
+                }
+                try {
+                    ErrorLogger.createErrorTable(ch, config);
+                    ErrorLogger.logError(ch, "Primary-key backfill of " + task.database() + "." + task.table()
+                                    + " from " + task.database() + "." + task.retired() + " failed at " + step + ": "
+                                    + cause.getMessage(), null, task.database(),
+                            statement == null ? task.plan().sourceSql() : statement, connectorName, errorTableName);
+                } catch (SQLException ex) {
+                    log.error("Failed to log the primary-key backfill error to ClickHouse", ex);
+                }
+            };
+            this.primaryKeyBackfill = new PrimaryKeyBackfill(connections, props, reporter);
+        }
+        return this.primaryKeyBackfill;
+    }
+
+    /**
+     * DESTRUCTIVE: the statements named below are the SOURCE's own, replicated ones; what this method drops is
+     * DESTRUCTIVE: bounded to the connector-owned retired copy / key map of a pending rebuild of the named table(s).
+     * Spec 06.09 §3.3.2 step 7: a replicated DROP TABLE / TRUNCATE TABLE (or
+     * DROP DATABASE) makes the pre-DDL rows of the named table(s) obsolete,
+     * so the pending or running primary-key backfill of each is cancelled and
+     * its retired copy and key map are dropped on the DDL path's own
+     * connection, BEFORE the statement's effect is applied -- also when
+     * DESTRUCTIVE: the setting named next only suppresses the source's statement; the drop here stays bounded as above.
+     * {@code disable.drop.truncate} suppresses the statement, since the
+     * operator then keeps the rows already in the table, not the retired
+     * ones. The tables are the ones the DDL names (as resolved for the cache
+     * invalidation); the database is the destination the rebuild named the
+     * retired copy in (the source database after
+     * {@code clickhouse.database.override.map}, as the DDL translator maps
+     * it). A failure escapes as the DDL's failure (loud, Invariant I9): the
+     * statement must not run while a copy could still follow it.
+     */
+    private void cancelPrimaryKeyBackfillsSupersededBy(String ddl, SourceRecord sr, Properties props,
+                                                        ClickHouseSinkConnectorConfig config, String databaseName,
+                                                        String clickHouseQuery) {
+        Connection ch = systemConnection();
+        if (ch == null) {
+            // No connection: nothing could have been swapped or resumed in this
+            // process either, unless a runner already holds pending tasks --
+            // then the retired rows cannot be dropped and the statement must
+            // not proceed silently.
+            PrimaryKeyBackfill runner;
+            synchronized (this) {
+                runner = this.primaryKeyBackfill;
+            }
+            if (runner != null && runner.pending() > 0) {
+                throw new IllegalStateException("no ClickHouse connection to cancel the " + runner.pending()
+                        + " pending primary-key backfill(s) superseded by [" + ddl + "] (Spec 06.09 §3.3.2 step 7)");
+            }
+            log.debug("Superseding DDL [{}]: no ClickHouse connection and no primary-key backfill pending in this "
+                    + "process; nothing to cancel", ddl);
+            return;
+        }
+        String destination = destinationDatabaseOf(databaseName, config);
+        PrimaryKeyBackfill backfill = primaryKeyBackfill(props, config);
+        String query = clickHouseQuery == null ? "" : clickHouseQuery.trim();
+        // DESTRUCTIVE: only classifies the translated statement's kind; the statement itself is executed by the
+        // caller, and what is cancelled/dropped here are the connector's own pending rebuild scratch tables.
+        if (query.regionMatches(true, 0, "DROP DATABASE", 0, "DROP DATABASE".length())) {
+            int cancelled = backfill.cancelAllFor(ch, destination);
+            log.info("Superseding DDL [{}]: {} pending primary-key backfill(s) of database {} cancelled and their "
+                    + "retired copies dropped (Spec 06.09 §3.3.2 step 7)", ddl, cancelled, destination);
+            return;
+        }
+        List<String> affected = getTableNamesFromDDL(sr, ddl);
+        if (affected.isEmpty()) {
+            log.warn("Superseding DDL [{}]: no table name could be resolved from the event or the statement, so no "
+                    + "pending primary-key backfill is cancelled for it; a backfill of that table, if any, fails "
+                    + "loudly at its next statement once the retired copy is gone", ddl);
+            return;
+        }
+        for (String table : affected) {
+            int cancelled = backfill.cancelFor(ch, destination, table);
+            log.info("Superseding DDL [{}]: {} pending primary-key backfill(s) of {}.{} cancelled and the retired "
+                    + "copy dropped, if any (Spec 06.09 §3.3.2 step 7)", ddl, cancelled, destination, table);
+        }
+    }
+
+    /**
+     * The destination database a source database's tables are mirrored in:
+     * the name without backticks, mapped through
+     * {@code clickhouse.database.override.map} exactly as the DDL translator
+     * maps it when it names a rebuild's tables ({@code MySqlDDLParserListenerImpl}).
+     */
+    private static String destinationDatabaseOf(String databaseName, ClickHouseSinkConnectorConfig config) {
+        String name = databaseName == null ? "" : databaseName.replace("`", "");
+        try {
+            String overrideMap = config.getString(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString());
+            if (overrideMap != null && !overrideMap.isEmpty()) {
+                Map<String, String> map = Utils.parseSourceToDestinationDatabaseMap(overrideMap);
+                if (map.containsKey(name)) {
+                    return map.get(name);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Could not apply the database override map to {} ({}); using the name as is", name, e.toString());
+        }
+        return name;
+    }
+
+    /**
+     * Schedules again every primary-key backfill whose retired table is still
+     * present in the destination database(s) (Spec 06.09 §3.3.2 step 6). The
+     * databases are those {@code database.include.list} maps to, as the
+     * startup version-floor scan resolves them; when that list is not
+     * knowable, every non-system database is scanned. Never throws.
+     */
+    private void resumePendingPrimaryKeyBackfills(Properties props, ClickHouseSinkConnectorConfig config) {
+        try {
+            Connection ch = systemConnection();
+            if (ch == null) {
+                log.warn("No ClickHouse connection at start; pending primary-key backfills (if any) are resumed at "
+                        + "the next start");
+                return;
+            }
+            String include = props.getProperty("database.include.list");
+            List<String> databases = include == null || include.trim().isEmpty()
+                    ? Collections.emptyList()
+                    : VersionHighWaterMark.targetDatabases(props, config);
+            if (databases.isEmpty()) {
+                databases = PrimaryKeyBackfill.nonSystemDatabases(ch);
+            }
+            List<PrimaryKeyBackfill.Task> tasks = new ArrayList<>();
+            for (String database : databases) {
+                tasks.addAll(PrimaryKeyBackfill.resumePending(ch, props, config, database));
+            }
+            if (!tasks.isEmpty()) {
+                int accepted = primaryKeyBackfill(props, config).submitAll(tasks);
+                log.warn("{} pending primary-key backfill(s) found at start, {} scheduled on the {} thread",
+                        tasks.size(), accepted, PrimaryKeyBackfill.THREAD_NAME);
+            }
+        } catch (Exception e) {
+            log.error("Could not scan for pending primary-key backfills at start; any pending backfill is resumed "
+                    + "at the next start", e);
+        }
     }
 
     /** Debezium's snapshot mode property; unset means the default {@code initial}. */

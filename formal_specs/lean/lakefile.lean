@@ -25,4 +25,5 @@ lean_lib «Replication» where
              `Replication.DdlTranslation,
              `Replication.BatchOrder,
              `Replication.VersionFloor,
-             `Replication.CreateTable]
+             `Replication.CreateTable,
+             `Replication.PkRebuild]

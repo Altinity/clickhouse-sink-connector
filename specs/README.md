@@ -69,8 +69,9 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 - **[06.04: ALTER TABLE Clause Translation Rules](06-ddl-replication/04-alter-table-translation.md)**: Clause mapping (ADD, DROP, MODIFY, RENAME).
 - **[06.05: Nullability Translation & NOT NULL Modification Rules](06-ddl-replication/05-nullability-rules.md)**: Preserving Nullable to prevent Code: 36.
 - **[06.06: Generated Columns Mapping: DEFAULT vs. MATERIALIZED](06-ddl-replication/06-generated-columns.md)**: Mapping to `DEFAULT` to prevent write rejection.
-- **[06.07: Primary Key Alteration Suppression Rules](06-ddl-replication/07-primary-key-alteration-rules.md)**: Suppressing `ADD PRIMARY KEY` on existing tables.
+- **[06.07: Primary Key Alteration Rules](06-ddl-replication/07-primary-key-alteration-rules.md)**: Restatement skipped; identity change rebuilt (06.09) or loud.
 - **[06.08: DDL Execution, Cache Invalidation & Pipeline Resumption](06-ddl-replication/08-pipeline-resumption.md)**: Cache bump, offset commit, and resume.
+- **[06.09: Primary Key Change — Replica Rebuild at the DDL Barrier](06-ddl-replication/09-primary-key-change-rebuild.md)**: MySQL's clustered-index rebuild adapted to ClickHouse; source-valued key columns read from MySQL.
 
 ---
 

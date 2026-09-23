@@ -58,6 +58,12 @@ public class MySQLDDLParserService implements DDLParserService {
     private long ddlEventTimestampMs;
 
     /**
+     * The rebuild plan of the last {@code parseSql} (Spec 06.09 §3.1); null
+     * when that statement changed no row identity.
+     */
+    private PrimaryKeyRebuildPlan primaryKeyRebuildPlan;
+
+    /**
      * Default constructor for MySQLDDLParserService.
      */
     @Inject
@@ -79,6 +85,11 @@ public class MySQLDDLParserService implements DDLParserService {
     @Override
     public void setDdlEventTimestampMs(long ddlEventTimestampMs) {
         this.ddlEventTimestampMs = ddlEventTimestampMs;
+    }
+
+    @Override
+    public PrimaryKeyRebuildPlan primaryKeyRebuildPlan() {
+        return primaryKeyRebuildPlan;
     }
 
     /**
@@ -131,8 +142,10 @@ public class MySQLDDLParserService implements DDLParserService {
         MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, config, sql);
         listener.setTargetSchemaLookup(targetSchemaLookup);
         listener.setDdlEventTimestampMs(ddlEventTimestampMs);
+        this.primaryKeyRebuildPlan = null;
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
+        this.primaryKeyRebuildPlan = listener.primaryKeyRebuildPlan();
 
         return clickHouseResult;
     }
@@ -163,8 +176,10 @@ public class MySQLDDLParserService implements DDLParserService {
         MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, this.config, sql);
         listener.setTargetSchemaLookup(targetSchemaLookup);
         listener.setDdlEventTimestampMs(ddlEventTimestampMs);
+        this.primaryKeyRebuildPlan = null;
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
+        this.primaryKeyRebuildPlan = listener.primaryKeyRebuildPlan();
 
         // Statement KIND, decided by the parse tree: DROP TABLE / TRUNCATE
         // TABLE / DROP DATABASE. The earlier token scan flagged any DROP
