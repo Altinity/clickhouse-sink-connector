@@ -11,13 +11,14 @@ import Replication.Proofs
 -- DESTRUCTIVE: none -- this module is an abstract model of the rebuild; the
 -- table drops it describes are constructors of a proof, never executed statements.
 /-!
-# Primary-key change: replica rebuild under a new key (Spec 06.09 §3.3 steps 5–7, §3.6, §4)
+# Primary-key change: replica rebuild under a new key (Spec 06.09 §3.3, §3.6, §4)
 
 When a source `ALTER TABLE` changes the row identity, the connector rebuilds the
-ClickHouse table under the new sorting key inside the DDL barrier: it creates a
-table with the new `ORDER BY`, copies the **live** rows of `T FINAL`
-(`is_deleted = 0`, `_version` unchanged), count-reconciles the copy against the
-`SELECT` that fed it, and swaps the tables.
+ClickHouse table under the new sorting key: inside the DDL barrier it creates a
+table with the new `ORDER BY` and swaps it into place (§3.3.1); afterwards, online,
+it copies the **live** rows of the retired table `R FINAL` (`is_deleted = 0`,
+`_version` unchanged) into the new table while new events keep arriving, checks
+that every live key of `R` is present, and only then retires `R` (§3.3.2).
 
 This module models that copy on the stored-table model of `ClickHouse.lean`
 (`CHRecord`, `CHTable`, `findMaxVersion`, `chFinalView`):
@@ -34,7 +35,7 @@ This module models that copy on the stored-table model of `ClickHouse.lean`
 Proved:
 
 * `rebuild_preserves_live_rows` — the rebuilt table holds no tombstone and has
-  exactly `(live t).length` rows (the count reconciliation of §3.3 step 6);
+  exactly `(live t).length` rows (the completeness check of §3.3.2 step 3);
 * `rebuild_view_eq` — for every key `k`, the `FINAL` view of the rebuilt table
   at `f k` equals the `FINAL` view of `t` at `k` (live rows are preserved
   exactly once; tombstoned or absent keys stay absent);
@@ -341,5 +342,286 @@ theorem rebuild_view_outside_image (t : CHTable) (f : Key → Key) (k' : Key)
     rcases List.mem_map.mp hr with ⟨s, _, hs⟩
     rw [← hs]
     exact h s.key
+
+/-! ## The online backfill (Spec 06.09 §3.3, §3.3.2)
+
+After the swap the rebuilt table `T` is empty and keyed by the new identity;
+replication resumes at once, so `T` accumulates the post-DDL records `n` (new
+live rows, `DELETE` tombstones, the two halves of a relocation) while the
+backfill copies the live rows of the retired table `R` into it. The backfill is
+`rebuild r f` — the live rows of `r`, re-keyed, `_version` unchanged — and every
+one of its records is versioned strictly below every post-DDL record of the same
+key (the DDL barrier: Spec 02.02, Spec 06.09 §3.6). The stored table is then
+`n ++ rebuild r f` (or, since the copy runs while inserts keep arriving, any
+interleaving of the two; both ends are covered below).
+
+The theorems: the backfill never changes the `FINAL` view of a key the new
+table already holds, it supplies the view of the keys the new table lacks, and
+running it twice (retry, restart) yields the same `FINAL` state. -/
+
+/-- A record of `t` carrying key `k` is among the records `filterKey` keeps for `k`. -/
+theorem mem_filterKey_of_mem {t : CHTable} {r : CHRecord} {k : Key}
+    (hr : r ∈ t) (hk : r.key = k) : r ∈ filterKey t k := by
+  induction t with
+  | nil => simp at hr
+  | cons d ds ih =>
+    rw [filterKey_cons]
+    rcases List.mem_cons.mp hr with heq | hmem
+    · subst heq
+      rw [if_pos hk]
+      exact List.mem_cons_self _ _
+    · by_cases hd : d.key = k
+      · rw [if_pos hd]
+        exact List.mem_cons_of_mem _ (ih hmem)
+      · rw [if_neg hd]
+        exact ih hmem
+
+/-- A record kept by `filterKey t k` carries key `k`. -/
+theorem key_of_mem_filterKey {t : CHTable} {k : Key} {r : CHRecord}
+    (h : r ∈ filterKey t k) : r.key = k := by
+  have hp := pred_of_mem_filter' h
+  exact eq_of_beq hp
+
+/-- The max-version fold started at `some m` ends at a record whose version is
+    at least `m.version`: the accumulator's version never decreases. -/
+theorem foldl_maxStep_some_ge (xs : List CHRecord) (m : CHRecord) :
+    ∃ m', xs.foldl maxStep (some m) = some m' ∧ m.version ≤ m'.version := by
+  induction xs generalizing m with
+  | nil => exact ⟨m, rfl, Nat.le_refl _⟩
+  | cons x xs ih =>
+    rw [List.foldl_cons]
+    by_cases h : x.version ≥ m.version
+    · have e : maxStep (some m) x = some x := by simp [maxStep, h]
+      rw [e]
+      rcases ih x with ⟨m', hm', hle⟩
+      exact ⟨m', hm', Nat.le_trans h hle⟩
+    · have e : maxStep (some m) x = some m := by simp [maxStep, h]
+      rw [e]
+      exact ih m
+
+/-- A non-empty record list has a max-version record. -/
+theorem findMaxVersion_of_mem {xs : List CHRecord} {y : CHRecord} (h : y ∈ xs) :
+    ∃ m, findMaxVersion xs = some m := by
+  cases xs with
+  | nil => simp at h
+  | cons x xs =>
+    unfold findMaxVersion
+    rw [List.foldl_cons]
+    have e : maxStep none x = some x := rfl
+    rw [e]
+    rcases foldl_maxStep_some_ge xs x with ⟨m, hm, _⟩
+    exact ⟨m, hm⟩
+
+/-- Folding records that are all strictly older than `m` over `some m` leaves `m`
+    in place: an older record never displaces a newer one, whatever the order. -/
+theorem foldl_maxStep_of_lt (xs : List CHRecord) (m : CHRecord)
+    (h : ∀ x ∈ xs, x.version < m.version) : xs.foldl maxStep (some m) = some m := by
+  induction xs with
+  | nil => rfl
+  | cons x xs ih =>
+    have hx : ¬ (x.version ≥ m.version) :=
+      fun hge => Nat.lt_irrefl _ (Nat.lt_of_lt_of_le (h x (List.mem_cons_self _ _)) hge)
+    have e : maxStep (some m) x = some m := by simp [maxStep, hx]
+    rw [List.foldl_cons, e]
+    exact ih (fun y hy => h y (List.mem_cons_of_mem _ hy))
+
+/-- A start record that is at most as new as the first record folded is
+    forgotten by the first step (`maxStep` uses `>=`): the fold from `some x0`
+    and the fold from `none` agree. -/
+theorem foldl_maxStep_cons_of_le (x0 y : CHRecord) (ys : List CHRecord)
+    (h : x0.version ≤ y.version) :
+    (y :: ys).foldl maxStep (some x0) = (y :: ys).foldl maxStep none := by
+  have e1 : maxStep (some x0) y = some y := by simp [maxStep, h]
+  have e2 : maxStep none y = some y := rfl
+  rw [List.foldl_cons, List.foldl_cons, e1, e2]
+
+/-- **General form of the no-shadowing argument, backfill appended.** If every
+    record of `b` is strictly older than every record of `n` with the same key,
+    appending `b` to `n` leaves the `FINAL` view of every key that occurs in `n`
+    unchanged. -/
+theorem chFinalView_append_present (n b : CHTable) (k : Key)
+    (hv : ∀ x ∈ b, ∀ y ∈ n, y.key = x.key → x.version < y.version)
+    (hk : ∃ y ∈ n, y.key = k) :
+    chFinalView (n ++ b) k = chFinalView n k := by
+  rcases hk with ⟨y, hy, hyk⟩
+  have hmem : y ∈ filterKey n k := mem_filterKey_of_mem hy hyk
+  rcases findMaxVersion_of_mem hmem with ⟨m, hm⟩
+  have hm' : (filterKey n k).foldl maxStep none = some m := hm
+  have hmmem : m ∈ filterKey n k := by
+    rcases foldlMax_mem _ none m hm' with h1 | h2
+    · exact h1
+    · exact absurd h2 (by simp)
+  have hmn : m ∈ n := mem_of_mem_filterKey hmmem
+  have hmk : m.key = k := key_of_mem_filterKey hmmem
+  have hall : ∀ x ∈ filterKey b k, x.version < m.version := by
+    intro x hx
+    have hxb : x ∈ b := mem_of_mem_filterKey hx
+    have hxk : x.key = k := key_of_mem_filterKey hx
+    exact hv x hxb m hmn (by rw [hmk, hxk])
+  have hfm : findMaxVersion (filterKey (n ++ b) k) = some m := by
+    rw [filterKey_append]
+    unfold findMaxVersion
+    rw [List.foldl_append, hm']
+    exact foldl_maxStep_of_lt _ m hall
+  unfold chFinalView
+  rw [hfm, hm]
+
+/-- A key that occurs nowhere in `n` is seen through `b` alone (backfill appended). -/
+theorem chFinalView_append_absent (n b : CHTable) (k : Key)
+    (hk : ∀ y ∈ n, y.key ≠ k) :
+    chFinalView (n ++ b) k = chFinalView b k := by
+  unfold chFinalView
+  rw [filterKey_append, filterKey_eq_nil_of_ne n k hk, List.nil_append]
+
+/-- **General form of the no-shadowing argument, backfill first.** With the same
+    version hypothesis, putting `b` BEFORE `n` also leaves the `FINAL` view of
+    every key that occurs in `n` unchanged: the first record of `n` for that key
+    is at least as new as whatever `b` accumulated, so the `>=` step forgets it. -/
+theorem chFinalView_prepend_present (n b : CHTable) (k : Key)
+    (hv : ∀ x ∈ b, ∀ y ∈ n, y.key = x.key → x.version < y.version)
+    (hk : ∃ y ∈ n, y.key = k) :
+    chFinalView (b ++ n) k = chFinalView n k := by
+  rcases hk with ⟨y, hy, hyk⟩
+  have hmem : y ∈ filterKey n k := mem_filterKey_of_mem hy hyk
+  have hfm : findMaxVersion (filterKey (b ++ n) k) = findMaxVersion (filterKey n k) := by
+    rw [filterKey_append]
+    unfold findMaxVersion
+    rw [List.foldl_append]
+    cases hb : (filterKey b k).foldl maxStep none with
+    | none => rfl
+    | some x0 =>
+      have hx0 : x0 ∈ filterKey b k := by
+        rcases foldlMax_mem _ none x0 hb with h1 | h2
+        · exact h1
+        · exact absurd h2 (by simp)
+      have hx0b : x0 ∈ b := mem_of_mem_filterKey hx0
+      have hx0k : x0.key = k := key_of_mem_filterKey hx0
+      have hne : filterKey n k ≠ [] := List.ne_nil_of_mem hmem
+      cases hn : filterKey n k with
+      | nil => exact absurd hn hne
+      | cons z zs =>
+        have hz : z ∈ filterKey n k := by
+          rw [hn]
+          exact List.mem_cons_self _ _
+        have hzn : z ∈ n := mem_of_mem_filterKey hz
+        have hzk : z.key = k := key_of_mem_filterKey hz
+        have hlt : x0.version < z.version := hv x0 hx0b z hzn (by rw [hzk, hx0k])
+        exact foldl_maxStep_cons_of_le x0 z zs (Nat.le_of_lt hlt)
+  unfold chFinalView
+  rw [hfm]
+
+/-- A key that occurs nowhere in `n` is seen through `b` alone (backfill first). -/
+theorem chFinalView_prepend_absent (n b : CHTable) (k : Key)
+    (hk : ∀ y ∈ n, y.key ≠ k) :
+    chFinalView (b ++ n) k = chFinalView b k := by
+  unfold chFinalView
+  rw [filterKey_append, filterKey_eq_nil_of_ne n k hk, List.append_nil]
+
+/-- Folding the same records a second time over the result of the first fold
+    changes nothing: the first pass ends at the last record of maximal version
+    (ties go to the later record), and the second pass, which only ever meets
+    records of at most that version, ends at the very same record — the
+    duplicate that "wins" the tie is the same record. Stated for every starting
+    accumulator so that the induction goes through. -/
+theorem foldl_maxStep_twice (xs : List CHRecord) :
+    ∀ init : Option CHRecord,
+      xs.foldl maxStep (xs.foldl maxStep init) = xs.foldl maxStep init := by
+  induction xs with
+  | nil =>
+    intro init
+    rfl
+  | cons x xs ih =>
+    intro init
+    rw [List.foldl_cons, List.foldl_cons]
+    have hstep : ∃ m0, maxStep init x = some m0 ∧ (m0 = x ∨ x.version < m0.version) := by
+      cases init with
+      | none => exact ⟨x, rfl, Or.inl rfl⟩
+      | some m =>
+        by_cases h : x.version ≥ m.version
+        · exact ⟨x, by simp [maxStep, h], Or.inl rfl⟩
+        · exact ⟨m, by simp [maxStep, h], Or.inr (Nat.lt_of_not_le h)⟩
+    rcases hstep with ⟨m0, hm0, hm0x⟩
+    rw [hm0]
+    rcases foldl_maxStep_some_ge xs m0 with ⟨a, ha, hle⟩
+    rw [ha]
+    by_cases hx : x.version ≥ a.version
+    · have e : maxStep (some a) x = some x := by simp [maxStep, hx]
+      rw [e]
+      have hm0eq : m0 = x := by
+        rcases hm0x with h1 | h2
+        · exact h1
+        · exact absurd (Nat.lt_of_lt_of_le h2 (Nat.le_trans hle hx)) (Nat.lt_irrefl _)
+      rw [hm0eq] at ha
+      exact ha
+    · have e : maxStep (some a) x = some a := by simp [maxStep, hx]
+      rw [e]
+      have h2 := ih (some m0)
+      rw [ha] at h2
+      exact h2
+
+/-- Appending a second copy of the tail `l2` does not change the max-version
+    record (the `Option CHRecord` itself, not just the row it shows). -/
+theorem findMaxVersion_append_dup (l1 l2 : List CHRecord) :
+    findMaxVersion (l1 ++ l2 ++ l2) = findMaxVersion (l1 ++ l2) := by
+  unfold findMaxVersion
+  simp only [List.foldl_append]
+  exact foldl_maxStep_twice l2 (l1.foldl maxStep none)
+
+/-- **General idempotence.** Appending the same records twice yields the same
+    `FINAL` view for every key. -/
+theorem chFinalView_append_dup (t1 t2 : CHTable) (k : Key) :
+    chFinalView (t1 ++ t2 ++ t2) k = chFinalView (t1 ++ t2) k := by
+  have h : findMaxVersion (filterKey (t1 ++ t2 ++ t2) k)
+      = findMaxVersion (filterKey (t1 ++ t2) k) := by
+    simp only [filterKey_append]
+    exact findMaxVersion_append_dup _ _
+  unfold chFinalView
+  rw [h]
+
+/--
+**The backfill never shadows a newer row (Spec 06.09 §3.3, §3.3.2 step 2; I2).**
+`n` is the rebuilt table's content after the swap — every post-DDL record — and
+`rebuild r f` the backfill: the live rows of the retired table `r`, re-keyed,
+versions unchanged. Under the barrier hypothesis that every backfilled record is
+strictly older than every post-DDL record of the same key:
+
+* (a) a key the new table already holds — a newer live row, a `DELETE`
+  tombstone, the tombstone half of a relocation — shows exactly what it showed
+  before the backfill: the backfilled row has the smaller version and loses in
+  `FINAL`;
+* (b) a key the new table does not hold yet shows exactly what the backfill
+  brings: the pre-DDL state of that row.
+-/
+theorem backfill_never_shadows_newer (n r : CHTable) (f : Key → Key)
+    (hv : ∀ x ∈ rebuild r f, ∀ y ∈ n, y.key = x.key → x.version < y.version) (k : Key) :
+    ((∃ y ∈ n, y.key = k) → chFinalView (n ++ rebuild r f) k = chFinalView n k)
+    ∧ ((∀ y ∈ n, y.key ≠ k) → chFinalView (n ++ rebuild r f) k = chFinalView (rebuild r f) k) :=
+  ⟨chFinalView_append_present n (rebuild r f) k hv, chFinalView_append_absent n (rebuild r f) k⟩
+
+/--
+**Order independence (Spec 06.09 §3.3: the copy runs online).** The backfill is
+inserted while post-DDL events keep arriving, so the stored order is not
+`n ++ rebuild r f` in general. With the backfill FIRST the conclusions are the
+same: a strictly smaller version loses under `maxStep`'s `>=` whichever record
+was inserted first, so the equal-version tie rule never comes into play. Any
+interleaving lies between these two ends.
+-/
+theorem backfill_never_shadows_newer_prepend (n r : CHTable) (f : Key → Key)
+    (hv : ∀ x ∈ rebuild r f, ∀ y ∈ n, y.key = x.key → x.version < y.version) (k : Key) :
+    ((∃ y ∈ n, y.key = k) → chFinalView (rebuild r f ++ n) k = chFinalView n k)
+    ∧ ((∀ y ∈ n, y.key ≠ k) → chFinalView (rebuild r f ++ n) k = chFinalView (rebuild r f) k) :=
+  ⟨chFinalView_prepend_present n (rebuild r f) k hv, chFinalView_prepend_absent n (rebuild r f) k⟩
+
+/--
+**The backfill is idempotent (Spec 06.09 §3.3.2 steps 5–6).** A retried or
+restarted copy re-inserts rows that are already there; appending the same
+backfill twice yields the same `FINAL` view for every key. Under the `>=` tie
+rule the second copy of a row wins over the first, but it is the same record
+(same key, version, row and delete flag), so the collapsed record — and the view
+— are unchanged (`findMaxVersion_append_dup`).
+-/
+theorem backfill_idempotent (n r : CHTable) (f : Key → Key) (k : Key) :
+    chFinalView (n ++ rebuild r f ++ rebuild r f) k = chFinalView (n ++ rebuild r f) k :=
+  chFinalView_append_dup n (rebuild r f) k
 
 end Replication

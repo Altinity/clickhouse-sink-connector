@@ -49,7 +49,7 @@ formal_specs/lean/
     ├── BatchOrder.lean                # Batch execution order around a replicated TRUNCATE (Spec 04.05): ordered segments reproduce binlog order; hash-map order does not
     ├── VersionFloor.lean              # Version floor across a restart (Invariant I2 at the boundary, specs 02.02/02.04): seeded floor orders the new run above the old; heartbeats never touch the sequence
     ├── CreateTable.lean               # CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2): never ORDER BY tuple(), declared key wins, nullable fallback key needs allow_nullable_key
-    └── PkRebuild.lean                 # Primary-key change rebuild (Spec 06.09 §3.3 steps 5–7, §3.6, §4): re-keying the FINAL live set by an injective map keeps every live row exactly once, versions unchanged
+    └── PkRebuild.lean                 # Primary-key change rebuild (Spec 06.09 §3.3, §3.6, §4): re-keying the FINAL live set by an injective map keeps every live row exactly once, versions unchanged; the online backfill never shadows a post-DDL row and is idempotent
 ```
 
 ---
@@ -219,7 +219,7 @@ when there are none.
 | `rebuild_add_columns_preserved` | `translate cs = rebuild kept → addColumn n ∈ cs → addColumn n ∈ kept` | The `ADD COLUMN new_id ...` of the migration shape is applied before the rebuild (Spec 06.09 §3.1). |
 | `emitted_are_representable` | `translate cs = emit kept → kept = keep cs` (`keep` = the representable clauses, in source order) | Exactly the representable clauses are emitted, in source order. |
 
-### Primary-key change rebuild (Spec 06.09 §3.3 steps 5–7 / §3.6 / §4, `PkRebuild.lean`)
+### Primary-key change rebuild (Spec 06.09 §3.3 / §3.6 / §4, `PkRebuild.lean`)
 
 The stored table is the `CHTable` of `ClickHouse.lean`. `liveRecord t k` is the
 max-version record of `k` (`findMaxVersion`, same tie rule as `FINAL`) unless it
@@ -229,12 +229,22 @@ every key re-mapped by `f : Key → Key`, the map from the old identity to the n
 one, which is injective (`∀ a b, f a = f b → a = b`, stated explicitly since core
 Lean has no `Function.Injective`). Versions are copied unchanged.
 
+The online backfill of §3.3 is modelled as the post-DDL records `n` of the
+swapped-in table followed (or preceded) by `rebuild r f`, the re-keyed live rows
+of the retired table `r`; the DDL barrier makes every backfilled record strictly
+older than every post-DDL record of the same key, and that single hypothesis is
+what lets the copy run outside the barrier: it cannot shadow a newer row or
+tombstone, it supplies the keys the new table lacks, and a retried copy changes
+nothing.
+
 | Theorem Name | Statement | Significance |
 |---|---|---|
-| `rebuild_preserves_live_rows` | `(∀ r ∈ rebuild t f, r.is_deleted = false) ∧ (rebuild t f).length = (live t).length` | The rebuilt table holds no tombstone and exactly the live row count: the count reconciliation of §3.3 step 6 is an identity, not a coincidence. |
+| `rebuild_preserves_live_rows` | `(∀ r ∈ rebuild t f, r.is_deleted = false) ∧ (rebuild t f).length = (live t).length` | The rebuilt table holds no tombstone and exactly the live row count: the count of the copy equals the count of the `SELECT ... FROM R FINAL WHERE is_deleted = 0` that fed it (§3.3.2 step 2). |
 | `rebuild_view_eq` | `f` injective → `∀ k, chFinalView (rebuild t f) (f k) = chFinalView t k` | Re-keying the live set by an injective map preserves the `FINAL` view exactly: every live row is carried over once, a tombstoned or absent key stays absent (I3). |
 | `rebuild_final_record` | `liveRecord t k = some r →` the collapsed record at `f k` is `rekey f r`: key `f k`, same `version`, same `row`, `is_deleted = false` | Versions are untouched by the rebuild (§3.6, I2). |
 | `rebuild_view_outside_image` | `(∀ k, f k ≠ k') → chFinalView (rebuild t f) k' = none` | The rebuild invents no row under the new key. |
+| `backfill_never_shadows_newer` | `(∀ x ∈ rebuild r f, ∀ y ∈ n, y.key = x.key → x.version < y.version) →` (a) `(∃ y ∈ n, y.key = k) → chFinalView (n ++ rebuild r f) k = chFinalView n k`; (b) `(∀ y ∈ n, y.key ≠ k) → chFinalView (n ++ rebuild r f) k = chFinalView (rebuild r f) k` | The online backfill (§3.3, §3.3.2 step 2): a key the new table already holds — a newer live row, a `DELETE` tombstone, the tombstone half of a relocation — keeps the view it had, because the backfilled row has the smaller version and loses in `FINAL`; a key the new table lacks shows the pre-DDL row the backfill brings (I2, I3). `backfill_never_shadows_newer_prepend` proves the same two conclusions for `rebuild r f ++ n`: the copy interleaves with new inserts, and with strictly smaller versions the `>=` tie rule never decides. |
+| `backfill_idempotent` | `∀ k, chFinalView (n ++ rebuild r f ++ rebuild r f) k = chFinalView (n ++ rebuild r f) k` | A retried or restarted copy (§3.3.2 steps 5–6) re-inserts rows already present and changes nothing; via `chFinalView_append_dup` / `findMaxVersion_append_dup`, which hold for any tables: the duplicate that wins the equal-version tie is the identical record, so even the collapsed `Option CHRecord` is unchanged. |
 
 ### CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2, `CreateTable.lean`)
 

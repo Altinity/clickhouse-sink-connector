@@ -4,54 +4,58 @@ import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeight
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.PrimaryKeyRebuildPlan;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
-import java.sql.PreparedStatement;
 import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Rebuilds a ClickHouse table under a new sorting key at the DDL barrier when
- * the source changed the table's row identity (Spec 06.09) -- the same
- * clustered-index rebuild MySQL performs for {@code ADD PRIMARY KEY} /
- * {@code DROP PRIMARY KEY}: copy the live rows into a table with the new key,
- * count-reconcile, swap, retire the original.
+ * Rebuilds a ClickHouse table under a new sorting key when the source changed
+ * the table's row identity (Spec 06.09) -- the same clustered-index rebuild
+ * MySQL performs for {@code ADD PRIMARY KEY} / {@code DROP PRIMARY KEY}. This
+ * class is the <b>swap phase</b> (§3.3.1): inside the DDL barrier it creates
+ * the rebuilt definition empty and exchanges it into place with metadata-only
+ * statements, then hands the copy of the rows to {@link PrimaryKeyBackfill},
+ * which runs it online afterwards (§3.3.2) while replication of this and every
+ * other table continues.
  *
- * <p>Invoked by {@code DebeziumChangeEventCapture.performDDLOperation} right
- * after the statement's other clauses have been applied ({@code executeDDL})
- * and before the cache invalidation, with the plan
+ * <p>{@link #swap} is invoked by {@code DebeziumChangeEventCapture.performDDLOperation}
+ * right after the statement's other clauses have been applied
+ * ({@code executeDDL}) and before the cache invalidation, with the plan
  * {@code MySqlDDLParserListenerImpl.enforcePrimaryKeyPolicy} produced. Every
- * statement runs on the writer's connection inside the existing barrier
- * (Invariant I5); every failure is a {@link DDLReplicationException}
- * (Invariant I9) so no offset is committed past the DDL.</p>
+ * statement of the swap runs on the writer's connection inside the existing
+ * barrier (Invariant I5); every failure of the swap is a
+ * {@link DDLReplicationException} (Invariant I9) so no offset is committed
+ * past the DDL. The swap never runs an {@code INSERT} and never opens the
+ * source.</p>
  *
  * <p>Values only the source knows -- an {@code AUTO_INCREMENT} column the
- * statement added -- are read from MySQL with a single read-only
- * {@code SELECT} keyed by the old identity ({@link #loadSourceKeyMap}, Spec
- * 06.09 §3.4); the connector never re-derives them (Invariant I6) and never
- * writes to its source ({@link KeylessTablePreflight#assertReadOnlySql}).</p>
+ * statement added -- are read by the backfill from MySQL with a single
+ * read-only {@code SELECT} keyed by the old identity
+ * ({@link PrimaryKeyBackfill#loadSourceKeyMap}, Spec 06.09 §3.4); the connector
+ * never re-derives them (Invariant I6) and never writes to its source
+ * ({@link KeylessTablePreflight#assertReadOnlySql}).</p>
  */
 public final class PrimaryKeyRebuild {
 
     private static final Logger log = LogManager.getLogger(PrimaryKeyRebuild.class);
-
-    /** Rows bound per {@code executeBatch} when filling the source key map. */
-    static final int SOURCE_BATCH_SIZE = 10000;
 
     /** Header of a rendered {@code SHOW CREATE TABLE}: {@code CREATE TABLE db.t} with or without backticks. */
     private static final Pattern CREATE_HEADER = Pattern.compile(
@@ -72,7 +76,7 @@ public final class PrimaryKeyRebuild {
     }
 
     /** One row of {@code system.columns}. */
-    private static final class ColumnInfo {
+    static final class ColumnInfo {
         final String name;
         final String type;
         final String defaultKind;
@@ -85,26 +89,35 @@ public final class PrimaryKeyRebuild {
     }
 
     /**
-     * Executes the rebuild (Spec 06.09 §3.2 preconditions, §3.3 protocol).
+     * The swap phase (Spec 06.09 §3.2 preconditions, §3.3.1): metadata-only
+     * statements on the writer's connection inside the DDL barrier. The
+     * rebuilt definition {@code S} is created empty and exchanged into place;
+     * the copy of the rows from the retired table into it is returned as a
+     * {@link PrimaryKeyBackfill.Task} for the caller to schedule. No
+     * {@code INSERT} runs here and the source is never opened.
      *
-     * @param plan                     the plan the translator produced.
-     * @param ch                       the writer's ClickHouse connection.
-     * @param props                    the connector properties ({@code disable.drop.truncate}).
-     * @param config                   the connector configuration ({@code replication.history.enable}).
-     * @param sourceDatabase           the RAW source database of the DDL event (for the source read).
-     * @param sourceConnectionSupplier opens a read-only connection to the source; only
-     *                                 invoked when the plan requires a source key map.
-     * @param epochMs                  names the scratch tables of this attempt.
-     * @throws DDLReplicationException on any precondition failure, count mismatch or failed statement.
+     * <p>Before the exchange the task is recorded as a marker line in the
+     * comment of the table about to be retired, so a restart resumes the
+     * backfill from that table alone ({@link PrimaryKeyBackfill#resumePending}).</p>
+     *
+     * @param plan           the plan the translator produced.
+     * @param ch             the writer's ClickHouse connection.
+     * @param props          the connector properties ({@code disable.drop.truncate}).
+     * @param config         the connector configuration ({@code replication.history.enable}).
+     * @param sourceDatabase the RAW source database of the DDL event (for the backfill's source read).
+     * @param epochMs        names the scratch tables of this attempt.
+     * @return the backfill of the retired table into the rebuilt one.
+     * @throws DDLReplicationException on any precondition failure or failed statement (terminal).
      */
-    public static void execute(PrimaryKeyRebuildPlan plan, Connection ch, Properties props,
-                               ClickHouseSinkConnectorConfig config, String sourceDatabase,
-                               Supplier<Connection> sourceConnectionSupplier, long epochMs) {
+    public static PrimaryKeyBackfill.Task swap(PrimaryKeyRebuildPlan plan, Connection ch, Properties props,
+                                               ClickHouseSinkConnectorConfig config, String sourceDatabase,
+                                               long epochMs) {
         final String db = plan.database();
         final String table = plan.table();
         final String scratch = table + "__pk_rebuild_" + epochMs;
         final String keyMapTable = table + "__pk_rebuild_keys_" + epochMs;
-        log.info("Primary-key rebuild of {}.{} at the DDL barrier: {} (Spec 06.09)", db, table, plan);
+        log.info("Primary-key rebuild of {}.{} at the DDL barrier (swap phase): {} (Spec 06.09 §3.3.1)", db, table,
+                plan);
 
         // ---- §3.2 preconditions: nothing has been executed yet. ----
         if (config != null && config.getBoolean(
@@ -116,8 +129,10 @@ public final class PrimaryKeyRebuild {
             throw refuse(plan, "the target uses the legacy sign-based engine, which the rebuild does not "
                     + "cover (§3.2 item 2)");
         }
-        String engineFull = scalar(ch, "SELECT engine_full FROM system.tables WHERE database = '"
-                + lit(db) + "' AND name = '" + lit(table) + "'", "precondition (engine)");
+        List<List<String>> tableRow = rows(ch, "SELECT engine_full, comment FROM system.tables WHERE database = '"
+                + lit(db) + "' AND name = '" + lit(table) + "'", 2, "precondition (engine)");
+        String engineFull = tableRow.isEmpty() ? null : tableRow.get(0).get(0);
+        String comment = tableRow.isEmpty() || tableRow.get(0).get(1) == null ? "" : tableRow.get(0).get(1);
         if (engineFull == null) {
             throw refuse(plan, "the table was not found in system.tables");
         }
@@ -184,18 +199,10 @@ public final class PrimaryKeyRebuild {
             }
         }
 
+        String deleteFlag = deleteFlagColumn(engineFull);
+
         // ---- Step 1: clean a previous attempt's scratch tables. ----
-        String leftoverQuery = "SELECT name FROM system.tables WHERE database = '" + lit(db) + "' AND (name LIKE '"
-                + likeLit(table + "__pk_rebuild_") + "%' OR name LIKE '" + likeLit(table + "__pk_rebuild_keys_") + "%')";
-        for (String leftover : column(ch, leftoverQuery, "step 1 (find scratch tables)")) {
-            log.info("Primary-key rebuild of {}.{}: dropping scratch table {}.{} left by an earlier attempt",
-                    db, table, db, leftover);
-            // DESTRUCTIVE: drops a connector-owned scratch table of a previous
-            // rebuild attempt for this same table (name pattern
-            // <table>__pk_rebuild_% / <table>__pk_rebuild_keys_% in the
-            // destination database), never a mirrored source table.
-            exec(ch, "DROP TABLE IF EXISTS " + q(db) + "." + q(leftover), "step 1 (clean previous attempt)", plan);
-        }
+        cleanPreviousAttempt(ch, db, table, plan, oldKey, deleteFlag, props);
 
         // ---- Step 2 (the statement's other clauses) was applied by the caller. ----
 
@@ -223,143 +230,149 @@ public final class PrimaryKeyRebuild {
         // RENAME key ... column" / "ALTER of key column ... is not safe",
         // measured on 24.8.14), so they were folded into the CREATE TABLE
         // above (the column is declared under its new name and type) and the
-        // copy converts the values (step 5).
+        // backfill's copy converts the values.
         for (String clause : plan.deferredClauses()) {
             // DESTRUCTIVE: statement text is only translated/logged here; nothing is executed against any database.
             if (clause.regionMatches(true, 0, "DROP COLUMN", 0, "DROP COLUMN".length())) {
                 // DESTRUCTIVE: drops from the EMPTY rebuilt copy of this one
                 // table the column the SOURCE statement dropped; the old table
-                // and its rows are untouched until the swap at step 7.
+                // and its rows are untouched until the swap at step 4.
                 exec(ch, "ALTER TABLE " + q(db) + "." + q(scratch) + " " + clause,
                         "step 3b (deferred clause on the rebuilt table)", plan);
             } else {
                 log.info("Primary-key rebuild of {}.{} step 3b: deferred clause [{}] is applied through the CREATE "
                                 + "TABLE of {}.{} (ClickHouse rejects RENAME/MODIFY of a sorting-key column with "
-                                + "Code: 524 even on an empty table); the copy converts the values",
+                                + "Code: 524 even on an empty table); the backfill's copy converts the values",
                         db, table, clause, db, scratch);
             }
         }
 
-        // ---- Step 4: source key map (SOURCE_VALUED columns only). ----
-        if (needKeyMap) {
-            StringBuilder createKeys = new StringBuilder("CREATE TABLE ").append(q(db)).append('.')
-                    .append(q(keyMapTable)).append(" (");
-            boolean first = true;
-            for (String column : oldKey) {
-                createKeys.append(first ? "" : ", ").append(q(column)).append(' ').append(targetTypes.get(column));
-                first = false;
-            }
-            for (String column : sourceValued) {
-                // Typed as in the rebuilt table: the key column is non-Nullable there.
-                createKeys.append(", ").append(q(column)).append(' ').append(withoutNullable(targetTypes.get(column)));
-            }
-            createKeys.append(") ENGINE = MergeTree ORDER BY (").append(qList(oldKey)).append(')');
-            exec(ch, createKeys.toString(), "step 4 (create the source key map)", plan);
-
-            Connection source;
-            try {
-                source = sourceConnectionSupplier.get();
-            } catch (RuntimeException e) {
-                throw new DDLReplicationException(failure(plan, "step 4 (connect to the source)",
-                        e.getMessage()), e);
-            }
-            try {
-                long rows = loadSourceKeyMap(source, sourceDatabase, table, oldKey, sourceValued, ch, db,
-                        keyMapTable, plan);
-                log.info("Primary-key rebuild of {}.{}: source key map {}.{} holds {} rows read from `{}`.`{}`",
-                        db, table, db, keyMapTable, rows, sourceDatabase, table);
-            } finally {
-                try {
-                    source.close();
-                } catch (Exception e) {
-                    log.warn("Primary-key rebuild of {}.{}: could not close the source connection ({})",
-                            db, table, e.toString());
-                }
-            }
-        }
-
-        // ---- Step 5: copy the live rows, versions preserved. ----
-        List<String> copyColumns = new ArrayList<>();
-        for (ColumnInfo c : columns(ch, db, scratch, "step 5 (columns of the rebuilt table)")) {
-            if (!c.defaultKind.equalsIgnoreCase("ALIAS") && !c.defaultKind.equalsIgnoreCase("MATERIALIZED")) {
-                copyColumns.add(c.name);
-            }
-        }
-        if (copyColumns.isEmpty()) {
-            throw new DDLReplicationException(failure(plan, "step 5 (columns of the rebuilt table)",
-                    "system.columns lists no column for " + db + "." + scratch), null);
-        }
-        String deleteFlag = deleteFlagColumn(engineFull);
-        String select = copySelect(db, table, keyMapTable, copyColumns, oldKey, sourceValued, deleteFlag, needKeyMap,
-                renames);
-        String insert = "INSERT INTO " + q(db) + "." + q(scratch) + " (" + qList(copyColumns) + ") " + select;
-        exec(ch, insert, "step 5 (copy the live rows)", plan);
-
-        // ---- Step 6: count-reconcile. ----
-        long expected = count(ch, "SELECT count() FROM (" + select + ")", "step 6 (expected count)", plan);
-        long actual = count(ch, "SELECT count() FROM " + q(db) + "." + q(scratch), "step 6 (actual count)", plan);
-        log.info("Primary-key rebuild of {}.{}: copied {} live rows into {}.{} (the feeding SELECT counts {})",
-                db, table, actual, db, scratch, expected);
-        if (expected != actual) {
-            throw new DDLReplicationException(String.format(
-                    "Primary-key rebuild of %s.%s aborted at step 6 (count-reconcile): the feeding SELECT counts %d "
-                            + "rows but %s.%s holds %d. %s.%s is untouched; %s.%s%s left in place for inspection. "
-                            + "Source DDL: [%s]",
-                    db, table, expected, db, scratch, actual, db, table, db, scratch,
-                    needKeyMap ? " and " + db + "." + keyMapTable + " are" : " is", plan.sourceSql()), null);
-        }
-        if (needKeyMap) {
-            String live = deleteFlag == null ? "" : " WHERE " + q(deleteFlag) + " = 0";
-            long liveRows = count(ch, "SELECT count() FROM " + q(db) + "." + q(table) + " FINAL" + live,
-                    "step 6 (live rows before the JOIN)", plan);
-            log.info("Primary-key rebuild of {}.{}: {} live rows in {}.{}, {} matched the source key map, {} dropped "
-                            + "by the JOIN (their old identity is no longer on the source; their later events re-key "
-                            + "or retire them, Spec 06.09 §3.4)",
-                    db, table, liveRows, db, table, expected, liveRows - expected);
-        }
-
-        // ---- Step 7: swap. ----
+        // ---- Step 4: swap. ----
         String dbEngine = scalar(ch, "SELECT engine FROM system.databases WHERE name = '" + lit(db) + "'",
-                "step 7 (database engine)");
-        String retired;
-        if (dbEngine != null && (dbEngine.equalsIgnoreCase("Atomic") || dbEngine.equalsIgnoreCase("Replicated"))) {
-            // DESTRUCTIVE: atomically swaps the mirrored table with its rebuilt
-            // copy; no rows are lost -- the pre-rebuild table lives on under
-            // the scratch name until step 8 decides its fate.
+                "step 4 (database engine)");
+        boolean exchange = dbEngine != null
+                && (dbEngine.equalsIgnoreCase("Atomic") || dbEngine.equalsIgnoreCase("Replicated"));
+        String retired = exchange ? scratch : table + "__pk_retired_" + epochMs;
+        PrimaryKeyBackfill.Task task = new PrimaryKeyBackfill.Task(db, table, retired, keyMapTable, plan,
+                sourceDatabase, deleteFlag, oldKey, newKey, renames, sourceValued, plan.keylessFallback(), epochMs);
+        // The pending backfill is recorded on the table about to be retired,
+        // BEFORE the swap, so a restart resumes it from that table alone
+        // (PrimaryKeyBackfill.resumePending) and never has to guess renames or
+        // source-valued columns from the column sets.
+        exec(ch, "ALTER TABLE " + q(db) + "." + q(table) + " MODIFY COMMENT '"
+                        + lit(PrimaryKeyBackfill.withMarker(comment, task.markerJson())) + "'",
+                "step 4 (record the pending backfill on the table to be retired)", plan);
+        if (exchange) {
+            // DESTRUCTIVE: atomically swaps the mirrored table with its empty
+            // rebuilt copy; no rows are lost -- the pre-rebuild table lives on
+            // under the scratch name until the backfill has copied and verified it.
             exec(ch, "EXCHANGE TABLES " + q(db) + "." + q(table) + " AND " + q(db) + "." + q(scratch),
-                    "step 7 (EXCHANGE TABLES)", plan);
-            retired = scratch;
+                    "step 4 (EXCHANGE TABLES)", plan);
         } else {
-            retired = table + "__pk_retired_" + epochMs;
-            // DESTRUCTIVE: renames the mirrored table aside and the rebuilt copy
-            // into its place in one statement; no rows are lost -- the
-            // pre-rebuild table lives on under the retired name until step 8.
+            // DESTRUCTIVE: renames the mirrored table aside and the empty rebuilt
+            // copy into its place in one statement; no rows are lost -- the
+            // pre-rebuild table lives on under the retired name until the backfill
+            // has copied and verified it.
             exec(ch, "RENAME TABLE " + q(db) + "." + q(table) + " TO " + q(db) + "." + q(retired) + ", "
-                    + q(db) + "." + q(scratch) + " TO " + q(db) + "." + q(table), "step 7 (RENAME TABLE)", plan);
+                    + q(db) + "." + q(scratch) + " TO " + q(db) + "." + q(table), "step 4 (RENAME TABLE)", plan);
         }
+        log.info("Primary-key rebuild of {}.{} swapped: {}.{} is now the empty table keyed by ({}); {}.{} holds the "
+                        + "pre-DDL rows and is backfilled online (Spec 06.09 §3.3.2). A value-level comparison of "
+                        + "{}.{} differs until the backfill logs its completion and the retired table is gone.",
+                db, table, db, table, String.join(", ", newKey), db, retired, db, table);
+        return task;
+    }
 
-        // ---- Step 8: retire. ----
-        if (dropTruncateDisabled(props)) {
-            log.warn("Primary-key rebuild of {}.{}: {}=true, so the retired pre-rebuild copy {}.{}{} kept; drop "
-                            + "them once the rebuilt table is verified",
-                    db, table, SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, db, retired,
-                    needKeyMap ? " and the source key map " + db + "." + keyMapTable + " are" : " is");
-        } else {
-            // DESTRUCTIVE: drops the pre-rebuild copy of this one table, whose
-            // live rows were copied and count-reconciled into the rebuilt
-            // table at steps 5-6 and which was swapped out at step 7 -- as
-            // MySQL drops the original after its own rebuild. Bounded to the
-            // retired name of this attempt; disable.drop.truncate=true keeps it.
-            exec(ch, "DROP TABLE IF EXISTS " + q(db) + "." + q(retired), "step 8 (drop the retired copy)", plan);
-            if (needKeyMap) {
-                // DESTRUCTIVE: drops the connector-owned source key map of this
-                // attempt (scratch, never source data).
-                exec(ch, "DROP TABLE IF EXISTS " + q(db) + "." + q(keyMapTable), "step 8 (drop the source key map)",
-                        plan);
+    /**
+     * Step 1 of the swap (Spec 06.09 §3.3.1): removes the scratch tables of an
+     * earlier attempt whose swap never completed. A scratch or retired table
+     * that carries the pending-backfill marker is a swap that DID complete and
+     * is never touched here, nor is the key map of the same attempt; nothing
+     * is dropped unless {@code T} is still keyed by the old identity, and
+     * nothing at all when {@code disable.drop.truncate=true}.
+     */
+    private static void cleanPreviousAttempt(Connection ch, String db, String table, PrimaryKeyRebuildPlan plan,
+                                             List<String> oldKey, String deleteFlag, Properties props) {
+        String leftoverQuery = "SELECT name, comment FROM system.tables WHERE database = '" + lit(db)
+                + "' AND (name LIKE '" + likeLit(table + "__pk_rebuild_") + "%' OR name LIKE '"
+                + likeLit(table + "__pk_retired_") + "%') ORDER BY name";
+        List<List<String>> leftovers = rows(ch, leftoverQuery, 2, "step 1 (find scratch tables)");
+        if (leftovers.isEmpty()) {
+            return;
+        }
+        List<String> currentKey = withoutConnectorColumns(column(ch, sortingKeyQuery(db, table),
+                "step 1 (current sorting key)"), deleteFlag);
+        boolean keyedByOld = PrimaryKeyBackfill.sameNames(currentKey, oldKey);
+        Set<String> pendingEpochs = new HashSet<>();
+        for (List<String> row : leftovers) {
+            if (PrimaryKeyBackfill.Marker.parse(row.get(1)) != null) {
+                pendingEpochs.add(epochSuffix(row.get(0)));
             }
         }
-        log.info("Primary-key rebuild of {}.{} complete: sorting key is now ({}) (Spec 06.09)", db, table,
-                String.join(", ", newKey));
+        for (List<String> row : leftovers) {
+            String leftover = row.get(0);
+            if (PrimaryKeyBackfill.Marker.parse(row.get(1)) != null) {
+                log.info("Primary-key rebuild of {}.{}: {}.{} holds the pre-DDL rows of a rebuild whose backfill is "
+                        + "still pending; left in place", db, table, db, leftover);
+                continue;
+            }
+            if (pendingEpochs.contains(epochSuffix(leftover))) {
+                log.info("Primary-key rebuild of {}.{}: {}.{} belongs to the attempt whose backfill is still pending; "
+                        + "left in place", db, table, db, leftover);
+                continue;
+            }
+            if (!keyedByOld) {
+                log.warn("Primary-key rebuild of {}.{}: scratch table {}.{} left in place because the table is keyed "
+                        + "by {} rather than the old identity {}", db, table, db, leftover, currentKey, oldKey);
+                continue;
+            }
+            if (dropTruncateDisabled(props)) {
+                // DESTRUCTIVE: nothing is dropped on this branch; the setting name is only logged.
+                log.warn("Primary-key rebuild of {}.{}: scratch table {}.{} of an earlier attempt is kept because {}=true",
+                        db, table, db, leftover, SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
+                continue;
+            }
+            log.info("Primary-key rebuild of {}.{}: dropping scratch table {}.{} left by an earlier attempt whose "
+                    + "swap never completed", db, table, db, leftover);
+            // DESTRUCTIVE: drops a connector-owned scratch table of a previous
+            // rebuild attempt for this same table (<table>__pk_rebuild_% /
+            // <table>__pk_retired_% in the destination database) that carries
+            // no pending-backfill marker, never a mirrored source table.
+            exec(ch, "DROP TABLE IF EXISTS " + q(db) + "." + q(leftover), "step 1 (clean previous attempt)", plan);
+        }
+    }
+
+    /** The digits after the last underscore of a scratch table name (its attempt's epoch). */
+    private static String epochSuffix(String scratchName) {
+        int at = scratchName.lastIndexOf('_');
+        return at < 0 ? scratchName : scratchName.substring(at + 1);
+    }
+
+    /** {@code columns} without the connector's own columns ({@code _version}, the delete flag, {@code _sign}). */
+    static List<String> withoutConnectorColumns(List<String> columns, String deleteFlag) {
+        List<String> out = new ArrayList<>();
+        for (String c : columns) {
+            if (c.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)
+                    || c.equalsIgnoreCase(ClickHouseDbConstants.SIGN_COLUMN)
+                    || c.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)
+                    || (deleteFlag != null && c.equalsIgnoreCase(deleteFlag))) {
+                continue;
+            }
+            out.add(c);
+        }
+        return out;
+    }
+
+    /** The {@code system.columns} query for a table's sorting-key columns in position order. */
+    static String sortingKeyQuery(String db, String table) {
+        return "SELECT name FROM system.columns WHERE database = '" + lit(db) + "' AND table = '" + lit(table)
+                + "' AND is_in_sorting_key = 1 ORDER BY position";
+    }
+
+    /** The engine's version column when the table has it non-Nullable, else {@code null}. */
+    static String versionColumn(Map<String, String> columnTypes) {
+        String type = columnTypes == null ? null : columnTypes.get(ClickHouseDbConstants.VERSION_COLUMN);
+        return type != null && !type.contains("Nullable(") ? ClickHouseDbConstants.VERSION_COLUMN : null;
     }
 
     /**
@@ -396,65 +409,6 @@ public final class PrimaryKeyRebuild {
                         + e.getMessage(), e);
             }
         };
-    }
-
-    /**
-     * Fills the source key map (Spec 06.09 §3.4): one streaming read-only
-     * {@code SELECT <old key>, <source-valued> FROM `<source db>`.`<table>`},
-     * bound into {@code K} with {@code setObject} in batches.
-     *
-     * @return the number of rows loaded.
-     */
-    static long loadSourceKeyMap(Connection source, String sourceDatabase, String table, List<String> oldKey,
-                                 List<String> sourceValued, Connection ch, String db, String keyMapTable,
-                                 PrimaryKeyRebuildPlan plan) {
-        List<String> readColumns = new ArrayList<>(oldKey);
-        readColumns.addAll(sourceValued);
-        String select = "SELECT " + qList(readColumns) + " FROM " + q(sourceDatabase) + "." + q(table);
-        KeylessTablePreflight.assertReadOnlySql(select);
-        String insert = "INSERT INTO " + q(db) + "." + q(keyMapTable) + " (" + qList(readColumns) + ") VALUES ("
-                + placeholders(readColumns.size()) + ")";
-        log.info("Primary-key rebuild of {}.{}: reading the source key map with [{}] (read-only)", db, table, select);
-        long rows = 0;
-        try (Statement st = source.createStatement(ResultSet.TYPE_FORWARD_ONLY, ResultSet.CONCUR_READ_ONLY)) {
-            st.setFetchSize(Integer.MIN_VALUE);
-            try (ResultSet rs = st.executeQuery(select)) {
-                ResultSetMetaData md = rs.getMetaData();
-                for (int i = 1; i <= readColumns.size(); i++) {
-                    int jdbcType = md.getColumnType(i);
-                    if (!isKeyMapJdbcType(jdbcType)) {
-                        throw refuse(plan, "source column " + readColumns.get(i - 1) + " has MySQL type "
-                                + md.getColumnTypeName(i) + " (JDBC type " + jdbcType + "), which the source key map "
-                                + "cannot bind (integers and strings only, §3.2 item 4)");
-                    }
-                }
-                log.info("Primary-key rebuild of {}.{}: filling {}.{} with [{}] in batches of {}", db, table, db,
-                        keyMapTable, insert, SOURCE_BATCH_SIZE);
-                try (PreparedStatement ps = ch.prepareStatement(insert)) {
-                    int pending = 0;
-                    while (rs.next()) {
-                        for (int i = 1; i <= readColumns.size(); i++) {
-                            ps.setObject(i, rs.getObject(i));
-                        }
-                        ps.addBatch();
-                        rows++;
-                        if (++pending == SOURCE_BATCH_SIZE) {
-                            ps.executeBatch();
-                            pending = 0;
-                        }
-                    }
-                    if (pending > 0) {
-                        ps.executeBatch();
-                    }
-                }
-            }
-        } catch (DDLReplicationException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new DDLReplicationException(failure(plan, "step 4 (fill the source key map)",
-                    "[" + select + "] -> [" + insert + "]: " + e.getMessage()), e);
-        }
-        return rows;
     }
 
     /**
@@ -637,56 +591,11 @@ public final class PrimaryKeyRebuild {
     }
 
     // ------------------------------------------------------------------
-    // Statement builders
+    // Name helpers shared with PrimaryKeyBackfill
     // ------------------------------------------------------------------
 
-    /**
-     * The SELECT feeding the copy (Spec 06.09 §3.3 step 5). {@code columns}
-     * are the rebuilt table's columns; a renamed old-key column is read from
-     * the old table as {@code o.<old> AS <new>} (step 3b), a source-valued one
-     * from the key map.
-     */
-    private static String copySelect(String db, String table, String keyMapTable, List<String> columns,
-                                     List<String> oldKey, List<String> sourceValued, String deleteFlag,
-                                     boolean needKeyMap, Map<String, String> renames) {
-        StringBuilder sb = new StringBuilder("SELECT ");
-        if (!needKeyMap && renames.isEmpty()) {
-            sb.append(qList(columns)).append(" FROM ").append(q(db)).append('.').append(q(table)).append(" FINAL");
-            if (deleteFlag != null) {
-                sb.append(" WHERE ").append(q(deleteFlag)).append(" = 0");
-            }
-            return sb.toString();
-        }
-        boolean first = true;
-        for (String column : columns) {
-            sb.append(first ? "" : ", ");
-            String oldName = oldNameOf(column, renames);
-            if (sourceValued.contains(column)) {
-                sb.append("k.").append(q(column));
-            } else if (!oldName.equals(column)) {
-                sb.append("o.").append(q(oldName)).append(" AS ").append(q(column));
-            } else {
-                sb.append("o.").append(q(column));
-            }
-            first = false;
-        }
-        sb.append(" FROM ").append(q(db)).append('.').append(q(table)).append(" AS o FINAL");
-        if (needKeyMap) {
-            sb.append(" INNER JOIN ").append(q(db)).append('.').append(q(keyMapTable)).append(" AS k ON ");
-            first = true;
-            for (String column : oldKey) {
-                sb.append(first ? "" : " AND ").append("o.").append(q(column)).append(" = k.").append(q(column));
-                first = false;
-            }
-        }
-        if (deleteFlag != null) {
-            sb.append(" WHERE o.").append(q(deleteFlag)).append(" = 0");
-        }
-        return sb.toString();
-    }
-
     /** The old table's name of {@code column}: the key of {@code renames} whose value is it, else itself. */
-    private static String oldNameOf(String column, Map<String, String> renames) {
+    static String oldNameOf(String column, Map<String, String> renames) {
         for (Map.Entry<String, String> e : renames.entrySet()) {
             if (e.getValue().equalsIgnoreCase(column)) {
                 return e.getKey();
@@ -713,7 +622,7 @@ public final class PrimaryKeyRebuild {
         return false;
     }
 
-    private static String placeholders(int n) {
+    static String placeholders(int n) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < n; i++) {
             sb.append(i == 0 ? "?" : ", ?");
@@ -953,7 +862,7 @@ public final class PrimaryKeyRebuild {
         return KEY_MAP_TYPE.matcher(type).matches();
     }
 
-    private static boolean isKeyMapJdbcType(int jdbcType) {
+    static boolean isKeyMapJdbcType(int jdbcType) {
         switch (jdbcType) {
             case Types.TINYINT:
             case Types.SMALLINT:
@@ -971,7 +880,7 @@ public final class PrimaryKeyRebuild {
         }
     }
 
-    private static String withoutNullable(String type) {
+    static String withoutNullable(String type) {
         String t = type.trim();
         if (t.startsWith("Nullable(") && t.endsWith(")")) {
             return t.substring("Nullable(".length(), t.length() - 1);
@@ -1023,8 +932,8 @@ public final class PrimaryKeyRebuild {
     }
 
     // ------------------------------------------------------------------
-    // JDBC helpers -- plain Statement, no retry: a rebuild step is never
-    // retried blindly (a repeated INSERT ... SELECT would double the rows).
+    // JDBC helpers -- plain Statement, no retry: a swap statement is never
+    // retried blindly; the DDL is redelivered and the swap restarts at step 1.
     // ------------------------------------------------------------------
 
     private static void exec(Connection ch, String sql, String step, PrimaryKeyRebuildPlan plan) {
@@ -1046,16 +955,23 @@ public final class PrimaryKeyRebuild {
         }
     }
 
-    private static long count(Connection ch, String sql, String step, PrimaryKeyRebuildPlan plan) {
-        log.info("Primary-key rebuild of {}.{} {}: {}", plan.database(), plan.table(), step, sql);
+    /** The first {@code width} columns of every row of {@code sql}, as strings. */
+    private static List<List<String>> rows(Connection ch, String sql, int width, String step) {
+        log.info("Primary-key rebuild {}: {}", step, sql);
+        List<List<String>> out = new ArrayList<>();
         try (Statement st = ch.createStatement(); ResultSet rs = st.executeQuery(sql)) {
-            if (!rs.next()) {
-                throw new SQLException("count() returned no row");
+            while (rs.next()) {
+                List<String> row = new ArrayList<>(width);
+                for (int i = 1; i <= width; i++) {
+                    row.add(rs.getString(i));
+                }
+                out.add(row);
             }
-            return rs.getLong(1);
         } catch (Exception e) {
-            throw new DDLReplicationException(failure(plan, step, "[" + sql + "]: " + e.getMessage()), e);
+            throw new DDLReplicationException("Primary-key rebuild failed at " + step + " executing [" + sql + "]: "
+                    + e.getMessage(), e);
         }
+        return out;
     }
 
     private static List<String> column(Connection ch, String sql, String step) {
@@ -1088,7 +1004,7 @@ public final class PrimaryKeyRebuild {
         return columns;
     }
 
-    private static boolean dropTruncateDisabled(Properties props) {
+    static boolean dropTruncateDisabled(Properties props) {
         String value = props == null ? null : props.getProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
         return value != null && value.trim().equalsIgnoreCase("true");
     }
@@ -1127,7 +1043,7 @@ public final class PrimaryKeyRebuild {
         return "`" + identifier.replace("\\", "\\\\").replace("`", "\\`") + "`";
     }
 
-    private static String qList(List<String> identifiers) {
+    static String qList(List<String> identifiers) {
         StringBuilder sb = new StringBuilder();
         for (String id : identifiers) {
             sb.append(sb.length() == 0 ? "" : ", ").append(q(id));
@@ -1136,12 +1052,12 @@ public final class PrimaryKeyRebuild {
     }
 
     /** Escapes a value for a single-quoted ClickHouse string literal. */
-    private static String lit(String value) {
+    static String lit(String value) {
         return value.replace("\\", "\\\\").replace("'", "\\'");
     }
 
     /** As {@link #lit}, with LIKE's {@code _} and {@code %} escaped so they match literally. */
-    private static String likeLit(String value) {
+    static String likeLit(String value) {
         return lit(value).replace("_", "\\_").replace("%", "\\%");
     }
 }

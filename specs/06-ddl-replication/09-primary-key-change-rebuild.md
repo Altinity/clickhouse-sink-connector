@@ -55,9 +55,13 @@ verified) is what this spec automates.
   `PostgreSQLDDLParserService` never produces one).
 - **Executor**:
   `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/PrimaryKeyRebuild.java`
-  (`execute`, `rewriteCreateStatement`, `loadSourceKeyMap`), invoked by
-  `DebeziumChangeEventCapture.performDDLOperation` right after `executeDDL`
-  returns for the statement and before the cache invalidation of Spec 06.08.
+  — `swap` (the metadata-only phase, §3.3.1; `rewriteCreateStatement`),
+  invoked by `DebeziumChangeEventCapture.performDDLOperation` right after
+  `executeDDL` returns for the statement and before the cache invalidation of
+  Spec 06.08; `PrimaryKeyBackfill` (same package) — the online copy, §3.3.2
+  (`run`, `loadSourceKeyMap`, `completenessCheck`, `resumePending`), executed
+  on the connector's single `pk-rebuild-backfill` thread owned by
+  `DebeziumChangeEventCapture` and resumed at engine start.
 - **Source access**: `KeylessTablePreflight.jdbcUrl` and
   `KeylessTablePreflight.assertReadOnlySql` (same package) — the connector stays
   read-only against MySQL.
@@ -157,77 +161,115 @@ from the source `ResultSetMetaData`, i.e. at step 4 of §3.3, after the scratch
 tables `S` and `K` exist; a refusal there leaves them for step 1 of the next
 attempt to remove.
 
-### 3.3 Protocol
-All statements run on the writer's connection, inside the DDL barrier
-(`drainBeforeDDL` has already proven quiescence; the pool stays paused until the
-`finally` in `processEveryChangeRecord`). `T` is the target, `S = T__pk_rebuild_<epochMs>`,
-`K = T__pk_rebuild_keys_<epochMs>`.
+### 3.3 Protocol: swap first, backfill online
+The rebuild is split into a **swap phase**, executed inside the DDL barrier
+and made of metadata-only statements (milliseconds), and a **backfill phase**
+that copies the rows afterwards, online, while the rebuilt table already
+receives the events that follow the DDL. Replication of this table and of
+every other table resumes as soon as the swap phase returns; the barrier is
+never held for the duration of a copy. `T` is the target,
+`S = T__pk_rebuild_<epochMs>` the rebuilt definition, `R` the retired
+pre-rebuild table (after the swap it lives under the scratch name), `K` the
+source key map.
 
-1. **Clean previous attempt.** Tables named `T__pk_rebuild_%` /
-   `T__pk_rebuild_keys_%` left by a failed earlier attempt for the same table
-   are dropped (connector-owned scratch, never source data; each drop is logged
-   with the table name).
-2. **Apply the statement's other clauses** (`executeDDL` of the translated
-   `ALTER`, unchanged): `T` now has every column of the post-statement source
-   table.
-3. **Derive the new definition.** `SHOW CREATE TABLE T` is rewritten by
-   `PrimaryKeyRebuild.rewriteCreateStatement`: the table name becomes `S`; the
-   `ORDER BY` clause becomes the new key; an existing `PRIMARY KEY` clause is
-   replaced by the new key; every new-key column declared `Nullable(X)` is
-   re-declared `X` (MySQL makes primary-key columns `NOT NULL`; a NULL the
-   replica still holds becomes the type default, as `ALGORITHM=COPY` does) —
-   except when the new key is the keyless all-columns fallback, where nullable
-   columns stay `Nullable` and `allow_nullable_key=1` is added to `SETTINGS`
-   (Spec 06.05 §3.6); engine, `PARTITION BY`, `SAMPLE BY`, `TTL` and every other
-   setting are kept verbatim. A deferred `RENAME`/`MODIFY` of a key column
-   (§3.1.1) is folded into this definition: the column is declared under its
-   new name and/or new type and the `ORDER BY` names it that way — ClickHouse
-   refuses `ALTER ... RENAME COLUMN` / `MODIFY COLUMN` on a key column even
-   of an EMPTY table (`Code: 524`, measured on 24.8.14), so the only place a
-   key column can change is the `CREATE` of the rebuilt table. `S` is created
-   with the result.
-3b. **Deferred `DROP COLUMN` clauses (§3.1.1).** Each deferred drop is applied
-   to the empty `S` as its own `ALTER TABLE S DROP COLUMN IF EXISTS k`
-   (metadata-only; `k` is not part of the new key). The copied column set
-   (step 5) is then read from `S`, so a dropped column is not copied and a
-   renamed one is copied as `o.<old> AS <new>`, its values converted by the
-   `INSERT ... SELECT` to the new type (a widening never loses a value; MySQL
-   applied the same conversion on the source).
-4. **Source key map (SOURCE_VALUED columns only, §3.4).** `K` is created as
-   `MergeTree ORDER BY (<old key>)` with the old-key columns typed as in `T` and
-   the source-valued columns typed as in `S`, and filled from the source.
-5. **Copy the live rows, versions preserved.**
-   - without a key map:
-     `INSERT INTO S (<cols>) SELECT <cols> FROM T FINAL WHERE <live>`;
-   - with a key map:
-     `INSERT INTO S (<cols>) SELECT <T cols except source-valued>, <K source-valued> FROM T AS o FINAL INNER JOIN K AS k ON <old key equality> WHERE <live>`
-     (ClickHouse requires the alias before `FINAL`); the number of live rows
-     the INNER JOIN drops (`count()` of the live rows of `T` minus the copied
-     count) is logged;
+Why this is correct under `ReplacingMergeTree`: every row the backfill
+inserts carries the `_version` it had BEFORE the DDL, and every event that
+reaches the rebuilt table after the DDL is versioned above the run's floor
+(Spec 02.02). For a key the new table already holds — a newer live row, a
+DELETE tombstone, the tombstone half of a relocation — the backfilled row
+has the smaller version and loses in `FINAL`; for a key the new table does
+not hold yet, the backfilled row is the current state. Inserting an
+outdated row therefore never shadows a newer one, and inserting the same
+row twice collapses to one (`PkRebuild.lean`: `backfill_never_shadows_newer`,
+`backfill_idempotent`).
 
-   where `<cols>` is every ordinary column of `S` (`ALIAS`/`MATERIALIZED`
-   excluded) including `_version` and the delete flag, and `<live>` is
-   `is_deleted = 0` (the delete-flag column named by the engine; no predicate
-   when the engine has only `_version`). Tombstones are not copied: under the
-   new identity they retire nothing, and the MySQL rebuild copies live rows
-   only.
-6. **Count-reconcile.** `count()` of `S` must equal the count of the exact
-   `SELECT` that fed it (run separately, both after the copy). A mismatch is
-   `DDLReplicationException`; `S` and `K` are left in place for inspection and
-   `T` is untouched.
-7. **Swap.** `EXCHANGE TABLES T AND S` when the database engine is `Atomic` or
-   `Replicated` (`system.databases.engine`); otherwise
-   `RENAME TABLE T TO T__pk_retired_<epochMs>, S TO T` (one statement).
-8. **Retire.** The retired copy (`S` after an `EXCHANGE`, `T__pk_retired_*`
-   after a `RENAME`) and `K` are dropped, as MySQL drops the original table —
-   unless `disable.drop.truncate=true`, in which case both are kept and their
-   names logged (the operator has asked that the connector never drop data).
-9. The Spec 06.08 cache invalidation for `T` runs as for any DDL, so the next
-   batch re-reads the table's columns, engine and sorting key.
+#### 3.3.1 Swap phase (inside the barrier)
+1. **Clean previous attempt** — only scratch tables of a *swap* that never
+   completed: a `T__pk_rebuild_%` table is dropped only when `T` is still
+   keyed by the OLD identity (the swap did not happen); a retired table whose
+   backfill is pending (§3.3.2) is never touched here.
+2. **The statement's other clauses** (`ADD COLUMN IF NOT EXISTS ...`) have
+   been applied to `T` by `executeDDL`.
+3. **Create `S`** from `SHOW CREATE TABLE T` rewritten by
+   `rewriteCreateStatement`: the new key in `ORDER BY`, key columns
+   non-Nullable (the keyless all-columns fallback keeps `Nullable` +
+   `allow_nullable_key`), a deferred rename/type change of a key column
+   folded into the column list (§3.1.1), engine, `PARTITION BY`, `TTL` and
+   settings verbatim; then each deferred `DROP COLUMN IF EXISTS k` as its own
+   `ALTER TABLE S` (metadata-only on the empty table).
+4. **Mark the retired table**, then **swap**. Before the swap `T` (which is
+   about to become `R`) receives a metadata-only
+   `ALTER TABLE T MODIFY COMMENT '<original comment>\ncsc-pk-rebuild:{json}'`
+   carrying the plan (old key, new key, renames, source-valued columns, source
+   database, key-map name, epoch): this marker is what makes the backfill
+   resumable from the tables alone (§3.3.2 step 6) — it cannot be inferred
+   from column sets, because the statement's `ADD COLUMN` was applied to the
+   old table too (an added `AUTO_INCREMENT` column is present on `R` with its
+   default, not with the source values). Then `EXCHANGE TABLES T AND S` when
+   the database engine is `Atomic` or `Replicated`, otherwise `RENAME TABLE T
+   TO T__pk_retired_<epochMs>, S TO T` in one statement. From this instant `T`
+   is the empty table keyed by the new identity and `R` (= `S` after an
+   `EXCHANGE`, `T__pk_retired_*` after a `RENAME`) holds every pre-DDL row and
+   the marker; the Spec 06.08 cache invalidation follows, and the barrier is
+   released.
+5. **Schedule the backfill** of `R` into `T` on the connector's single
+   `pk-rebuild-backfill` thread (never a writer thread; its own ClickHouse
+   connection) and return.
 
-Every step is logged at INFO with the statement it ran and the row counts of
-steps 5–6; a failure at any step is `DDLReplicationException` (terminal, Spec
-06.08 §3.1) so no offset is committed past the DDL.
+#### 3.3.2 Backfill phase (online, retried, restart-safe)
+1. **Source key map** (SOURCE_VALUED columns only, §3.4): create `K` and fill
+   it from the source — read now, i.e. at a position at or after the DDL,
+   which is what makes the JOIN below safe (§3.4). A `K` left by an
+   interrupted attempt is dropped and re-read (a partially filled map would
+   silently drop rows from the JOIN); within one process a loaded `K` is
+   reused across retries.
+2. **Copy**: `INSERT INTO T (<cols>) SELECT <cols> FROM R FINAL WHERE <live>`
+   (with the `K` JOIN and `o.<old> AS <new>` for renamed columns as in the
+   previous protocol), one statement per partition of `R` in `system.parts`
+   order (a single statement when `R` is unpartitioned), each logged with its
+   row count. `<live>` is `is_deleted = 0` when the engine carries the delete
+   flag. Tombstones are not copied: a row deleted before the DDL stays deleted
+   because it is simply absent.
+3. **Completeness check**: every live key of `R` must be present in `T`
+   (live, tombstoned or relocated — presence by key, not liveness):
+   `SELECT count() FROM R FINAL AS r [JOIN K] LEFT JOIN T AS t ON <new key
+   equality> WHERE <r live> AND t.<key> IS NULL` (using `join_use_nulls = 1`)
+   must return `0`. The probed column is the first new-key column, or
+   `t._version` when that column is `Nullable` on `T` (the keyless fallback),
+   and `Nullable` key columns are joined with `isNotDistinctFrom` (plain `=`
+   would report every NULL-keyed row as missing forever). Rows deleted or
+   re-keyed on the source between the DDL and the key-map read are absent
+   from `K` and excluded from the check, as in §3.4.
+4. **Retire**: `DROP TABLE R` and `K` — unless `disable.drop.truncate=true`,
+   in which case both are kept and named at WARN, and the marker is stripped
+   from the kept copy so it is not copied again at the next start.
+5. **Failure and retry**: any failure in steps 1–3 is logged at ERROR with the
+   step and statement, recorded in the error table when `error.logging.enable`
+   is set, and the backfill is re-scheduled with exponential backoff
+   (10 s doubling to a 5 min cap), indefinitely — re-running the copy is
+   idempotent (§3.3 rationale). Replication is never stopped by a backfill
+   failure: the data already on the source is safe in `R` and the new events
+   are flowing into `T`; the visible symptom is the loud log line and the
+   retired table still present. `R` is never dropped before step 3 passes.
+6. **Restart**: at engine start, before the first batch, `PrimaryKeyBackfill.resumePending`
+   scans the destination database(s) for `T__pk_rebuild_%` / `T__pk_retired_%`
+   tables that carry the `csc-pk-rebuild:` marker (§3.3.1 step 4) and whose
+   companion `T` exists and is keyed by the marker's new key (i.e. the swap
+   happened), rebuilds the Task from the marker and schedules it; an
+   in-flight copy that was interrupted simply re-runs (idempotent). A
+   marker-less scratch table is either an incomplete swap's `S` (removed by
+   the next attempt's step 1 while `T` is still keyed by the old identity) or
+   a completed copy kept under `disable.drop.truncate` — neither is resumed
+   nor dropped here.
+
+#### 3.3.3 Observability
+The swap and each backfill step log at INFO with the exact statement; the
+backfill logs the per-partition and total row counts, the completeness-check
+result and the drop of `R`. Until the completeness check passes the rebuilt
+table is missing the pre-DDL rows that have not been copied yet — a
+value-level comparison (`db_compare`) of that table during the backfill is
+expected to differ and must be repeated once the log reports the backfill
+complete.
 
 ### 3.4 Source key map
 For the `SOURCE_VALUED` columns the connector runs, on a fresh JDBC connection
@@ -257,12 +299,12 @@ INSERT. Rows the JOIN drops are counted and logged.
 The DDL event is at-least-once (Spec 01.06). A redelivered statement finds the
 `ADD COLUMN IF NOT EXISTS` idempotent and the sorting key already equal to the
 declared key, i.e. a restatement (Spec 06.07 §3.1 rule 2): no second rebuild.
-A failure before step 7 leaves `T` keyed by the old identity, so the retried
-statement rebuilds again after step 1 removed the scratch tables. A failure
-between step 7 and step 8 leaves the rebuilt `T` plus a retired copy that the
-next attempt's step 1 does not touch (it is not a `__pk_rebuild_` name after a
-`RENAME`, and after an `EXCHANGE` it is — and is dropped as scratch, its data
-being the pre-rebuild state already superseded).
+A failure before the swap (§3.3.1 step 4) leaves `T` keyed by the old
+identity, so the retried statement rebuilds again after step 1 removed the
+scratch table of the failed attempt. After the swap the rebuilt `T` and the
+retired `R` both exist and the DDL is a restatement; the backfill of `R` is
+what still has to happen, and it is resumed from the tables themselves
+(§3.3.2 step 6), never from the DDL.
 
 ### 3.6 Late-committing transactions
 The rebuild copies `_version` unchanged and the DDL is a barrier: every row
@@ -279,8 +321,14 @@ is unaffected.
   statement; later events converge as before (`PkRebuild.lean`).
 - **I4 (Sorting Key Mutation Integrity)**: a change of identity is applied as
   an identity change, not as a value change under the old key.
-- **I5 (DDL Barrier Quiescence)**: the rebuild runs strictly inside the
-  existing barrier, like MySQL's serialization point.
+- **I5 (DDL Barrier Quiescence)**: the swap runs strictly inside the
+  existing barrier, like MySQL's serialization point, and holds it only for
+  metadata statements; the copy runs outside it, so no other table's
+  replication waits on a rebuild (§3.3).
+- **I2 (Version Monotonicity)**: backfilled rows keep their pre-DDL
+  `_version`, below every post-DDL event's version, so an outdated row can
+  never shadow a newer one and the copy is idempotent
+  (`backfill_never_shadows_newer`, `backfill_idempotent`).
 - **I9 (Loud Failure)**: every precondition failure, count mismatch or failed
   statement is `DDLReplicationException`; nothing is skipped and no offset
   passes an unrebuilt table.
@@ -294,16 +342,19 @@ is unaffected.
 - `MySqlDDLParserListenerImplTest.testDropPrimaryKeyPlansRebuild()` — a lone `DROP PRIMARY KEY` plans the all-columns fallback key; `DROP ..., ADD PRIMARY KEY (same)` plans nothing; unknown key: skipped as before.
 - `MySqlDDLParserListenerImplTest.testPrimaryKeyChangeIsLoudWhenRebuildDisabled()` — `ddl.primary.key.rebuild=false` restores the loud refusal, nothing emitted.
 - `PrimaryKeyRebuildTest.rewritesOrderByAndTableName()`, `PrimaryKeyRebuildTest.rewriteKeepsPartitionTtlAndSettings()`, `PrimaryKeyRebuildTest.rewriteMakesKeyColumnsNonNullable()`, `PrimaryKeyRebuildTest.keylessFallbackAddsAllowNullableKey()` — `rewriteCreateStatement` on rendered `SHOW CREATE TABLE` shapes.
-- `PrimaryKeyRebuildTest.localCopyStatementSequence()` — recording connection: CREATE, INSERT…SELECT FINAL WHERE is_deleted = 0, both counts, EXCHANGE, DROP, in that order; no source connection opened.
-- `PrimaryKeyRebuildTest.sourceKeyMapJoinSequence()` — a `SOURCE_VALUED` column: the key-map table, the source `SELECT`, the JOIN copy, and the source-valued column taken from the map.
-- `PrimaryKeyRebuildTest.countMismatchAbortsBeforeSwap()` — a count mismatch throws `DDLReplicationException` and no EXCHANGE/RENAME/DROP is issued.
-- `PrimaryKeyRebuildTest.retiredCopyKeptWhenDropTruncateDisabled()` — `disable.drop.truncate=true`: swap happens, nothing is dropped.
+- `PrimaryKeyRebuildTest.swapPhaseIsMetadataOnly()` — recording connection: the swap phase issues only the leftover scan, `SHOW CREATE TABLE`, `CREATE TABLE S`, deferred `ALTER TABLE S DROP COLUMN`, the `ALTER TABLE T MODIFY COMMENT` marker and `EXCHANGE TABLES`; no `INSERT`, no source connection, and it returns the backfill task instead of running it.
+- `PrimaryKeyRebuildTest.localCopyStatementSequence()` — the backfill on the retired table: `INSERT INTO T ... SELECT ... FROM R FINAL WHERE is_deleted = 0` (one per partition), the completeness check (`LEFT JOIN ... IS NULL` count = 0), `DROP TABLE R`; no source connection opened.
+- `PrimaryKeyRebuildTest.sourceKeyMapJoinSequence()` — a `SOURCE_VALUED` column: the key-map table, the source `SELECT`, the JOIN copy, the source-valued column taken from the map, `K` dropped after the check.
+- `PrimaryKeyRebuildTest.completenessCheckGuardsDrop()` — a non-zero completeness count: no DROP of `R`/`K`, the failure is reported and the task is re-scheduled.
+- `PrimaryKeyRebuildTest.backfillRetriesWithBackoff()` — a failing `INSERT` re-schedules the backfill (10 s, 20 s, ... capped at 5 min) and the next attempt re-issues the same statements; nothing is dropped meanwhile.
+- `PrimaryKeyRebuildTest.restartResumesPendingBackfill()` — `resumePending` finds a marker-bearing `T__pk_rebuild_%` table whose companion `T` is keyed by the marker's new key and schedules its backfill; a marker-less scratch table, or one whose companion is still keyed by the old identity, is not resumed.
+- `PrimaryKeyRebuildTest.retiredCopyKeptWhenDropTruncateDisabled()` — `disable.drop.truncate=true`: the backfill completes, nothing is dropped, both names logged.
 - `PrimaryKeyRebuildTest.replicatedLiteralPathIsLoud()`, `PrimaryKeyRebuildTest.nullableOldKeyWithSourceMapIsLoud()` — §3.2 preconditions.
 - `MySqlDDLParserListenerImplTest.testModifyKeyColumnWiderPlansRebuild()`, `testChangeKeyColumnRenamePlansRebuild()`, `testKeyColumnChangeIsLoudWhenRebuildDisabled()` — §3.1.1/§3.1.2: a widening `MODIFY` and a `CHANGE`/`RENAME` of a key column plan a same-identity rebuild with the deferred clause and (for a rename) the renamed key; nothing for the key column is emitted against the current table; `ddl.primary.key.rebuild=false` is loud.
 - `MySqlDDLParserListenerImplTest.testDroppedKeyColumnIsDeferredToRebuiltTable()` — the GIPK promotion `DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`: plan with new key `id`, deferred `DROP COLUMN IF EXISTS my_row_id`, and no `DROP COLUMN` in the emitted statement.
 - `MySqlDDLParserListenerImplTest.testRedeliveredPrimaryKeyChangeIsRestatement()` — §3.5: once the target's sorting key equals the declared key, the same statement plans nothing and emits only its idempotent clauses.
 - `PrimaryKeyRebuildTest.deferredClausesApplyToRebuiltTableBeforeCopy()` — step 3b ordering: CREATE `S`, then `ALTER TABLE S DROP COLUMN IF EXISTS ...`, then the copy whose column list excludes the dropped column.
 - `PrimaryKeyRebuildTest.renamedKeyColumnIsCopiedUnderNewName()` — the `CREATE` of `S` declares the renamed column under its new name and keys by it (no `RENAME COLUMN` ALTER is issued), and the copy reads `o.<old> AS <new>`.
-- Integration (`PrimaryKeyChangeIT`, MySQL 8.0 → embedded connector → ClickHouse, the `AbstractCDCBaseIT` harness): `compositeKeyToAutoIncrementId()` (the production migration `DROP PRIMARY KEY, ADD COLUMN id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, ADD PRIMARY KEY (id)`, source values joined in), `rekeyOntoExistingColumn()`, `supersetKey()` (`(a)` → `(a, b)`), `addPrimaryKeyOnNullableColumn()` (MySQL makes the column `NOT NULL`; the replica key column is non-Nullable), `dropPrimaryKeyBecomesKeyless()` (`sql_generate_invisible_primary_key=OFF`; all-columns identity), `gipkTablePromotedToExplicitKey()` (`DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`), `keyColumnWidened()` (`MODIFY id BIGINT`), `keyColumnRenamed()` (`CHANGE id ref_id INT`), each preceded by DML under the old key and followed by INSERT / UPDATE / DELETE and a relocation (`UPDATE ... SET <new key> = ...`) under the new key; every case asserts value-level equality with MySQL (`FINAL`, live rows), the replica sorting key, no leftover `__pk_rebuild_` tables, and an untouched control table.
+- Integration (`PrimaryKeyChangeIT`, MySQL 8.0 → embedded connector → ClickHouse, the `AbstractCDCBaseIT` harness): `compositeKeyToAutoIncrementId()` (the production migration `DROP PRIMARY KEY, ADD COLUMN id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, ADD PRIMARY KEY (id)`, source values joined in), `rekeyOntoExistingColumn()`, `supersetKey()` (`(a)` → `(a, b)`), `addPrimaryKeyOnNullableColumn()` (MySQL makes the column `NOT NULL`; the replica key column is non-Nullable), `dropPrimaryKeyBecomesKeyless()` (`sql_generate_invisible_primary_key=OFF`; all-columns identity), `gipkTablePromotedToExplicitKey()` (`DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`), `keyColumnWidened()` (`MODIFY id BIGINT`), `keyColumnRenamed()` (`CHANGE id ref_id INT`), each preceded by DML under the old key and followed by INSERT / UPDATE / DELETE and a relocation (`UPDATE ... SET <new key> = ...`) under the new key; every case asserts value-level equality with MySQL (`FINAL`, live rows) once the backfill has completed (the retired table is gone), the replica sorting key, no leftover `__pk_rebuild_` / `__pk_retired_` tables, and an untouched control table. `replicationContinuesWhileBackfillRuns()` — a key change on a table with enough rows for the backfill to take seconds; an INSERT into another table issued right after the ALTER is visible in ClickHouse before the backfill of the first table has finished (the retired table still exists at that moment), and both tables compare equal at the end.
 - End-to-end on a built jar (`csc_e2e_pk.sh`, podman: MySQL 8.0 → connector → ClickHouse 24.8): the same matrix at the value level; `t_pk` → `ORDER BY pk_id`, `t_pk2` → `ORDER BY b`, `t_pk3` → `ORDER BY (id, v)`.
-- Formal: `primary_key_change_rebuilds`, `wider_key_change_rebuilds`, `rebuild_never_bare`, `rebuild_only_when_not_loud` in `DdlTranslation.lean`; `rebuild_preserves_live_rows`, `rebuild_view_eq` in `PkRebuild.lean`.
+- Formal: `primary_key_change_rebuilds`, `wider_key_change_rebuilds`, `rebuild_never_bare`, `rebuild_only_when_not_loud` in `DdlTranslation.lean`; `rebuild_preserves_live_rows`, `rebuild_view_eq`, `backfill_never_shadows_newer` (appending the re-keyed live rows of the old table, all versioned below every post-DDL record of the same key, leaves the FINAL view of those keys unchanged and supplies the view of the keys the new table lacked), `backfill_idempotent` (appending the same backfill twice yields the same FINAL view) in `PkRebuild.lean`.

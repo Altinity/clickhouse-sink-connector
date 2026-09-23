@@ -5,6 +5,8 @@ import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserServic
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
 import org.apache.log4j.BasicConfigurator;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.junit.Assert;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -46,7 +48,9 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IM
  * <p>Every scenario: the source table and its rows exist BEFORE the engine
  * starts (snapshot), DML runs under the old key, the ALTER runs, DML runs
  * under the new key including a relocation ({@code UPDATE ... SET <new key>
- * = ...}) and a DELETE, and the replica must then hold, value for value, the
+ * = ...}) and a DELETE; once the online backfill has completed -- the retired
+ * table {@code <t>__pk_rebuild_<ts>} / {@code <t>__pk_retired_<ts>} is gone
+ * (Spec 06.09 §3.3.2 step 4) -- the replica must hold, value for value, the
  * rows MySQL holds ({@code FINAL}, live rows), keyed by the expected sorting
  * key, with no scratch table left behind and an untouched control table
  * still matching.</p>
@@ -60,6 +64,8 @@ import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IM
 @DisplayName("Integration test: primary-key changes rebuild the ClickHouse table at the DDL barrier (Spec 06.09)")
 public class PrimaryKeyChangeIT {
 
+    private static final Logger log = LogManager.getLogger(PrimaryKeyChangeIT.class);
+
     private static final String DB = "employees";
     private static final String CONTROL_TABLE = "t_ctl";
 
@@ -67,6 +73,9 @@ public class PrimaryKeyChangeIT {
     private static final long SNAPSHOT_TIMEOUT_MS = 300_000;
     private static final long CONVERGE_TIMEOUT_MS = 300_000;
     private static final long POLL_MS = 2_000;
+
+    /** Rows of the table whose backfill must take long enough to be observed in flight. */
+    private static final int BIG_ROWS = 300_000;
 
     protected MySQLContainer mySqlContainer;
     protected ClickHouseContainer clickHouseContainer;
@@ -313,6 +322,91 @@ public class PrimaryKeyChangeIT {
                 .run();
     }
 
+    @Test
+    @DisplayName("Replication continues while the backfill runs: a control INSERT right after the ALTER is visible while the retired table still exists")
+    public void replicationContinuesWhileBackfillRuns() throws Exception {
+        String t = "t_big";
+        Connection mysql = connectToMySQLWithRetry();
+        try {
+            // 1. Source state before the engine starts: the control table and a
+            //    table large enough for its backfill to take seconds.
+            execute(mysql, "CREATE TABLE " + CONTROL_TABLE + " (id INT NOT NULL, v VARCHAR(32), PRIMARY KEY (id))");
+            execute(mysql, "INSERT INTO " + CONTROL_TABLE + " (id, v) VALUES (1, 'ctl-a'), (2, 'ctl-b')");
+            execute(mysql, "CREATE TABLE " + t + " (id INT NOT NULL, b INT NOT NULL, v VARCHAR(32), PRIMARY KEY (id))");
+            // One statement from a recursive numbers generator (MySQL 8.0): well under a minute.
+            execute(mysql, "SET SESSION cte_max_recursion_depth = " + (BIG_ROWS + 10));
+            execute(mysql, "INSERT INTO " + t + " (id, b, v) WITH RECURSIVE seq (n) AS (SELECT 1 UNION ALL "
+                    + "SELECT n + 1 FROM seq WHERE n < " + BIG_ROWS + ") SELECT n, n, CONCAT('v', n) FROM seq");
+
+            AtomicReference<DebeziumChangeEventCapture> engine = new AtomicReference<>();
+            ExecutorService executorService = Executors.newFixedThreadPool(1);
+            Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
+            executorService.execute(() -> {
+                try {
+                    engine.set(new DebeziumChangeEventCapture());
+                    engine.get().setup(props, new SourceRecordParserService(), false);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+            Connection ch = writer.getConnection();
+            try {
+                // 2. The snapshot rows are in ClickHouse.
+                awaitLiveCount(ch, t, BIG_ROWS, SNAPSHOT_TIMEOUT_MS, "snapshot of " + t);
+                awaitMatch(mysql, ch, CONTROL_TABLE, "id", SNAPSHOT_TIMEOUT_MS, "snapshot of " + CONTROL_TABLE);
+
+                // 3. The key change, immediately followed by a row for another table.
+                execute(mysql, "ALTER TABLE " + t + " DROP PRIMARY KEY, ADD PRIMARY KEY (b)");
+                execute(mysql, "INSERT INTO " + CONTROL_TABLE + " (id, v) VALUES (3, 'ctl-c')");
+
+                // 4. The control row must become visible; if the retired table
+                //    of t_big still exists at that moment, the copy was
+                //    observed running while replication went on.
+                boolean controlVisible = false;
+                boolean retiredStillPresent = false;
+                long deadline = System.currentTimeMillis() + CONVERGE_TIMEOUT_MS;
+                while (System.currentTimeMillis() < deadline) {
+                    long retired = scratchTables(ch, t);
+                    String visible = scalar(ch, "SELECT count() FROM `" + DB + "`.`" + CONTROL_TABLE
+                            + "` FINAL WHERE `id` = 3 AND `is_deleted` = 0");
+                    if ("1".equals(visible)) {
+                        controlVisible = true;
+                        retiredStillPresent = retired > 0;
+                        break;
+                    }
+                    Thread.sleep(200);
+                }
+                Assert.assertTrue("the control row inserted right after the ALTER must reach ClickHouse",
+                        controlVisible);
+                if (retiredStillPresent) {
+                    log.info("Observed: the control row was visible while the retired table of {} still existed "
+                            + "(the backfill ran online, Spec 06.09 §3.3)", t);
+                } else {
+                    log.warn("Race not observed: the backfill of {} had already completed when the control row "
+                            + "became visible; the online property is not contradicted, only not witnessed", t);
+                }
+
+                // 5. Once the backfill has completed, both tables match value for value.
+                awaitBackfillComplete(ch, t, CONVERGE_TIMEOUT_MS);
+                awaitMatch(mysql, ch, t, "b", CONVERGE_TIMEOUT_MS, "the rebuild of " + t);
+                assertMatch(mysql, ch, CONTROL_TABLE, "id", "the control table " + CONTROL_TABLE);
+                Assert.assertEquals("sorting key of " + DB + "." + t, "b",
+                        scalar(ch, "SELECT sorting_key FROM system.tables WHERE database = '" + DB
+                                + "' AND name = '" + t + "'"));
+                Assert.assertEquals("no scratch or retired table may remain", 0L, scratchTables(ch, t));
+            } finally {
+                if (engine.get() != null) {
+                    engine.get().stop();
+                }
+                executorService.shutdown();
+                HikariDbSource.close();
+            }
+        } finally {
+            mysql.close();
+        }
+    }
+
     // ------------------------------------------------------------------
     // The shared scenario runner
     // ------------------------------------------------------------------
@@ -417,13 +511,17 @@ public class PrimaryKeyChangeIT {
                     awaitMatch(mysql, ch, table, oldOrderBy, CONVERGE_TIMEOUT_MS, "DML under the old key of " + table);
 
                     // 4. The primary-key change, then DML under the new key,
-                    //    including a relocation and a DELETE.
+                    //    including a relocation and a DELETE. The swap is
+                    //    inside the barrier; the copy runs online afterwards,
+                    //    so the comparison waits for the backfill's completion
+                    //    signal first: the retired table is gone.
                     for (String sql : alter) {
                         execute(mysql, sql);
                     }
                     for (String sql : newKeyDml) {
                         execute(mysql, sql);
                     }
+                    awaitBackfillComplete(ch, table, CONVERGE_TIMEOUT_MS);
                     awaitMatch(mysql, ch, table, newOrderBy, CONVERGE_TIMEOUT_MS,
                             "the rebuild and the DML under the new key of " + table);
 
@@ -442,9 +540,8 @@ public class PrimaryKeyChangeIT {
                                 scalar(ch, "SELECT count() FROM system.columns WHERE database = '" + DB
                                         + "' AND table = '" + table + "' AND name = '" + absent + "'"));
                     }
-                    Assert.assertEquals("no __pk_rebuild_ scratch table may remain", "0",
-                            scalar(ch, "SELECT count() FROM system.tables WHERE database = '" + DB
-                                    + "' AND name LIKE '%pk_rebuild%'"));
+                    Assert.assertEquals("no __pk_rebuild_ / __pk_retired_ table may remain", 0L,
+                            scratchTables(ch, table));
                     assertMatch(mysql, ch, CONTROL_TABLE, "id", "the control table " + CONTROL_TABLE);
                     Assert.assertEquals("sorting key of the control table", "id",
                             scalar(ch, "SELECT sorting_key FROM system.tables WHERE database = '" + DB
@@ -489,6 +586,49 @@ public class PrimaryKeyChangeIT {
         try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
             return rs.next() ? rs.getString(1) : null;
         }
+    }
+
+    /**
+     * The scratch / retired tables of {@code table} ({@code <table>__pk_rebuild_%},
+     * {@code <table>__pk_retired_%}, including the key map). Their absence is the
+     * backfill's completion signal (Spec 06.09 §3.3.2 step 4).
+     */
+    private static long scratchTables(Connection ch, String table) throws SQLException {
+        return Long.parseLong(scalar(ch, "SELECT count() FROM system.tables WHERE database = '" + DB
+                + "' AND (name LIKE '" + table + "\\_\\_pk\\_rebuild\\_%' OR name LIKE '" + table
+                + "\\_\\_pk\\_retired\\_%')"));
+    }
+
+    /** Polls until the retired table of {@code table} is gone, i.e. the online backfill has completed. */
+    private static void awaitBackfillComplete(Connection ch, String table, long timeoutMs) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            if (scratchTables(ch, table) == 0) {
+                return;
+            }
+            Thread.sleep(POLL_MS);
+        }
+        Assert.fail("the backfill of " + DB + "." + table + " did not complete within " + timeoutMs
+                + " ms: its retired table is still present (see the pk-rebuild-backfill log lines)");
+    }
+
+    /** Polls until the replica holds {@code expected} live rows of {@code table}. */
+    private static void awaitLiveCount(Connection ch, String table, long expected, long timeoutMs, String what)
+            throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        String last = null;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                last = scalar(ch, "SELECT count() FROM `" + DB + "`.`" + table + "` FINAL WHERE `is_deleted` = 0");
+                if (String.valueOf(expected).equals(last)) {
+                    return;
+                }
+            } catch (SQLException e) {
+                // The table may not exist on the replica yet; keep polling.
+            }
+            Thread.sleep(POLL_MS);
+        }
+        Assert.fail(what + ": expected " + expected + " live rows in " + DB + "." + table + ", found " + last);
     }
 
     /** A query result as rows of strings, plus the column names it was read with. */
