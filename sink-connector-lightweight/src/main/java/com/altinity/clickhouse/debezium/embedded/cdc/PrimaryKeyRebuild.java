@@ -15,6 +15,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.sql.Types;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -60,6 +61,15 @@ public final class PrimaryKeyRebuild {
     /** Header of a rendered {@code SHOW CREATE TABLE}: {@code CREATE TABLE db.t} with or without backticks. */
     private static final Pattern CREATE_HEADER = Pattern.compile(
             "^\\s*CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?(`(?:[^`\\\\]|\\\\.)*`|[^\\s.(`]+)\\.(`(?:[^`\\\\]|\\\\.)*`|[^\\s(`]+)",
+            Pattern.CASE_INSENSITIVE);
+
+    /**
+     * The {@code UUID 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'} token an Atomic
+     * database may render after the table name; the rebuilt table must not
+     * reuse it (duplicate UUID).
+     */
+    private static final Pattern TABLE_UUID = Pattern.compile(
+            "^\\s+UUID\\s+'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'",
             Pattern.CASE_INSENSITIVE);
 
     /** Clause keywords ClickHouse renders on their own line after the column list. */
@@ -442,7 +452,8 @@ public final class PrimaryKeyRebuild {
      * As {@link #rewriteCreateStatement(String, String, String, String, List, boolean, Map)},
      * with the deferred renames and re-typings of old-key columns (Spec 06.09
      * §3.1.1) folded into the definition: a renamed column is declared under
-     * its new name (and the {@code ORDER BY} names it so), a re-typed column
+     * its new name (and the {@code ORDER BY}, {@code PARTITION BY},
+     * {@code SAMPLE BY} and {@code TTL} clauses name it so), a re-typed column
      * under its translated type. ClickHouse rejects {@code RENAME COLUMN} and
      * {@code MODIFY COLUMN} of a sorting-key column with {@code Code: 524}
      * even on an empty table, so the rebuilt table must be created in its
@@ -464,6 +475,10 @@ public final class PrimaryKeyRebuild {
             throw new IllegalArgumentException("not a rendered CREATE TABLE <db>.<table> statement");
         }
         String rest = create.substring(header.end());
+        Matcher uuid = TABLE_UUID.matcher(rest);
+        if (uuid.find()) {
+            rest = rest.substring(uuid.end());
+        }
         int engineAt = rest.indexOf("\nENGINE");
         if (engineAt < 0) {
             throw new IllegalArgumentException("no ENGINE clause on its own line");
@@ -527,6 +542,11 @@ public final class PrimaryKeyRebuild {
             String keyword = clauseKeyword(clause);
             if (keyword.equals("PRIMARY KEY")) {
                 continue;
+            }
+            if (RENAMED_CLAUSES.contains(keyword)) {
+                for (Map.Entry<String, String> e : renames.entrySet()) {
+                    clause = renameIdentifier(clause, e.getKey(), e.getValue());
+                }
             }
             if (keyword.equals("ORDER BY")) {
                 out.add(orderBy);
@@ -724,6 +744,31 @@ public final class PrimaryKeyRebuild {
             throw new IllegalArgumentException("renamed column " + column + " is not declared in the column list");
         }
         return columnBlock.substring(0, m.start(2)) + q(newName) + columnBlock.substring(m.end(2));
+    }
+
+    /** Key-expression clauses in which a deferred rename of a column is applied (not ENGINE, SETTINGS, COMMENT). */
+    private static final List<String> RENAMED_CLAUSES =
+            Arrays.asList("PARTITION BY", "PRIMARY KEY", "ORDER BY", "SAMPLE BY", "TTL");
+
+    /**
+     * Renames every reference to {@code column} in a key-expression clause:
+     * the backticked form and the bare form as a whole word. References
+     * inside another identifier ({@code id_extra}, {@code `x id`}) and inside
+     * single-quoted string literals ({@code 'id'}) are left alone.
+     */
+    private static String renameIdentifier(String clause, String column, String newName) {
+        Pattern p = Pattern.compile("'(?:[^'\\\\]|\\\\.)*'|`(?:[^`\\\\]|\\\\.)*`|(?<![A-Za-z0-9_])"
+                + Pattern.quote(column) + "(?![A-Za-z0-9_])");
+        Matcher m = p.matcher(clause);
+        StringBuffer sb = new StringBuffer();
+        String quoted = q(column);
+        while (m.find()) {
+            String token = m.group();
+            boolean reference = token.equals(column) || token.equals(quoted);
+            m.appendReplacement(sb, Matcher.quoteReplacement(reference ? q(newName) : token));
+        }
+        m.appendTail(sb);
+        return sb.toString();
     }
 
     /** Re-declares {@code column}'s {@code Nullable(X)} (also inside {@code LowCardinality}) as {@code X}. */

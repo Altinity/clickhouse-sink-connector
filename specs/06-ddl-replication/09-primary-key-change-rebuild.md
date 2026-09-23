@@ -194,9 +194,15 @@ row twice collapses to one (`PkRebuild.lean`: `backfill_never_shadows_newer`,
    `rewriteCreateStatement`: the new key in `ORDER BY`, key columns
    non-Nullable (the keyless all-columns fallback keeps `Nullable` +
    `allow_nullable_key`), a deferred rename/type change of a key column
-   folded into the column list (§3.1.1), engine, `PARTITION BY`, `TTL` and
-   settings verbatim; then each deferred `DROP COLUMN IF EXISTS k` as its own
-   `ALTER TABLE S` (metadata-only on the empty table).
+   folded into the column list (§3.1.1) and renamed wherever `PARTITION BY`,
+   `SAMPLE BY`, `TTL` or the key clauses reference it as an identifier (never
+   inside a string literal or a longer identifier), a `UUID '...'` token that
+   `SHOW CREATE TABLE` may render after the table name on Atomic databases
+   dropped (two tables cannot share a UUID), engine, `PARTITION BY`, `TTL` and
+   settings otherwise verbatim; then each deferred `DROP COLUMN IF EXISTS k`
+   as its own `ALTER TABLE S` (metadata-only on the empty table). Pinned by
+   `PrimaryKeyRebuildTest.rewriteStripsTableUuid()` and
+   `PrimaryKeyRebuildTest.rewriteRenamesKeyColumnInPartitionAndTtl()`.
 4. **Mark the retired table**, then **swap**. Before the swap `T` (which is
    about to become `R`) receives a metadata-only
    `ALTER TABLE T MODIFY COMMENT '<original comment>\ncsc-pk-rebuild:{json}'`

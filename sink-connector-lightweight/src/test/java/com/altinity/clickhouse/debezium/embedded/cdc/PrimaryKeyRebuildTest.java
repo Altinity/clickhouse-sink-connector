@@ -589,6 +589,88 @@ public class PrimaryKeyRebuildTest {
         assertFalse(noNullable.contains("allow_nullable_key"), noNullable);
     }
 
+    @Test
+    @DisplayName("A UUID '...' token after the table name (Atomic databases) is stripped; a header without one is unchanged")
+    public void rewriteStripsTableUuid() {
+        String body = "\n"
+                + "(\n"
+                + "    `id` Int32,\n"
+                + "    `tenant` Int32,\n"
+                + "    `_version` UInt64,\n"
+                + "    `is_deleted` UInt8\n"
+                + ")\n"
+                + "ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
+                + "ORDER BY id\n"
+                + "SETTINGS index_granularity = 8192";
+        String expected = "CREATE TABLE `employees`.`t__pk_rebuild_5`" + body.replace("ORDER BY id", "ORDER BY (`tenant`)");
+        Map<String, String> types = new LinkedHashMap<>();
+        types.put("id", "Int32");
+        types.put("tenant", "Int32");
+
+        String bare = "CREATE TABLE employees.t UUID 'a1b2c3d4-e5f6-7890-abcd-ef1234567890'" + body;
+        String rewritten = PrimaryKeyRebuild.rewriteCreateStatement(bare, "employees", "t", "t__pk_rebuild_5",
+                Collections.singletonList("tenant"), false, types);
+        assertEquals(expected, rewritten);
+        assertFalse(rewritten.toUpperCase().contains("UUID"), rewritten);
+
+        // Backticked header, lower-case keyword: same result.
+        String quoted = "CREATE TABLE `employees`.`t` uuid 'A1B2C3D4-E5F6-7890-ABCD-EF1234567890'" + body;
+        assertEquals(expected, PrimaryKeyRebuild.rewriteCreateStatement(quoted, "employees", "t", "t__pk_rebuild_5",
+                Collections.singletonList("tenant"), false, types));
+
+        // No UUID token: the header is rewritten as before.
+        assertEquals(expected, PrimaryKeyRebuild.rewriteCreateStatement("CREATE TABLE employees.t" + body,
+                "employees", "t", "t__pk_rebuild_5", Collections.singletonList("tenant"), false, types));
+    }
+
+    @Test
+    @DisplayName("A deferred rename of a key column is applied in PARTITION BY, SAMPLE BY and TTL, not inside other identifiers or string literals")
+    public void rewriteRenamesKeyColumnInPartitionAndTtl() {
+        String create = "CREATE TABLE employees.t\n"
+                + "(\n"
+                + "    `id` Int32,\n"
+                + "    `id_extra` Int32,\n"
+                + "    `tag` String DEFAULT 'id',\n"
+                + "    `_version` UInt64,\n"
+                + "    `is_deleted` UInt8\n"
+                + ")\n"
+                + "ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
+                + "PARTITION BY intDiv(id, 1000)\n"
+                + "PRIMARY KEY id\n"
+                + "ORDER BY id\n"
+                + "SAMPLE BY id\n"
+                + "TTL toDateTime(id) + toIntervalDay(30) WHERE tag != 'id' AND id_extra != 0\n"
+                + "SETTINGS index_granularity = 8192\n"
+                + "COMMENT 'keyed by id'";
+        String expected = "CREATE TABLE `employees`.`t__pk_rebuild_6`\n"
+                + "(\n"
+                + "    `ref_id` Int32,\n"
+                + "    `id_extra` Int32,\n"
+                + "    `tag` String DEFAULT 'id',\n"
+                + "    `_version` UInt64,\n"
+                + "    `is_deleted` UInt8\n"
+                + ")\n"
+                + "ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
+                + "PARTITION BY intDiv(`ref_id`, 1000)\n"
+                + "ORDER BY (`ref_id`)\n"
+                + "SAMPLE BY `ref_id`\n"
+                + "TTL toDateTime(`ref_id`) + toIntervalDay(30) WHERE tag != 'id' AND id_extra != 0\n"
+                + "SETTINGS index_granularity = 8192\n"
+                + "COMMENT 'keyed by id'";
+        Map<String, String> types = new LinkedHashMap<>();
+        types.put("id", "Int32");
+        types.put("id_extra", "Int32");
+        Map<String, String> renames = Collections.singletonMap("id", "ref_id");
+        assertEquals(expected, PrimaryKeyRebuild.rewriteCreateStatement(create, "employees", "t", "t__pk_rebuild_6",
+                Collections.singletonList("id"), false, types, renames, Collections.emptyMap()));
+
+        // Backticked references are renamed the same way.
+        String quoted = create.replace("intDiv(id, 1000)", "intDiv(`id`, 1000)").replace("toDateTime(id)", "toDateTime(`id`)")
+                .replace("SAMPLE BY id", "SAMPLE BY `id`");
+        assertEquals(expected, PrimaryKeyRebuild.rewriteCreateStatement(quoted, "employees", "t", "t__pk_rebuild_6",
+                Collections.singletonList("id"), false, types, renames, Collections.emptyMap()));
+    }
+
     // ------------------------------------------------------------------
     // The swap phase (Spec 06.09 §3.3.1) against the recording connection
     // ------------------------------------------------------------------
