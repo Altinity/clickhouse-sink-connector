@@ -135,6 +135,21 @@ A statement whose only key effect is a deferred `MODIFY`/`CHANGE`/`RENAME`
 change of a primary-key column exactly as for a key change. With
 `ddl.primary.key.rebuild=false` the former loud refusal applies.
 
+When the current key is the keyless all-columns identity (Spec 06.05 §3.6 —
+every stored non-connector column is a key column, possibly `Nullable` under
+`allow_nullable_key = 1`), the same-identity plan is flagged keyless
+(`keylessFallback`): the rebuilt table keeps every key column's nullability,
+exactly as the source keeps it — a same-identity rebuild changes no column
+but the re-typed or renamed one. Planned as a declared key, the rebuild of
+§3.3.1 step 3 stripped the `Nullable` from every key column the statement did
+not touch: the second key-column `ALTER` on such a table re-declared the first
+one's `Nullable(Int32)` as `Int32` (`AlterTableModifyColumnIT.testModifyColumn`,
+`AlterTableChangeColumnIT.testChangeColumn`), and a copy of rows holding NULL
+in those columns would have stored the type's default in their place. A
+declared key is unaffected: its columns are non-Nullable already (Spec 06.05
+§3.3), and a column newly promoted into a declared key is still re-declared
+non-Nullable. Unknown columns (no target lookup) keep the declared-key plan.
+
 ### 3.2 Preconditions (loud when not met)
 The rebuild is only defined for the `ReplacingMergeTree(_version[, is_deleted])`
 and `ReplicatedReplacingMergeTree(...)` targets the connector creates
@@ -193,7 +208,9 @@ row twice collapses to one (`PkRebuild.lean`: `backfill_never_shadows_newer`,
    been applied to `T` by `executeDDL`.
 3. **Create `S`** from `SHOW CREATE TABLE T` rewritten by
    `rewriteCreateStatement`: the new key in `ORDER BY`, key columns
-   non-Nullable (the keyless all-columns fallback keeps `Nullable` +
+   non-Nullable (the keyless all-columns fallback — a `DROP PRIMARY KEY`
+   without replacement, or the same-identity rebuild of a keyless table,
+   §3.1.2 — keeps `Nullable` +
    `allow_nullable_key`; so does a deferred re-typing whose translated type
    is `Nullable(T)` — `MODIFY x ... NULL` on a keyless table's key column,
    Spec 06.05 §3.4 rule 3: the source column now holds NULL, so the rebuilt
@@ -432,6 +449,7 @@ is unaffected.
 - `PrimaryKeyRebuildTest.deferredClausesApplyToRebuiltTableBeforeCopy()` — step 3b ordering: CREATE `S`, then `ALTER TABLE S DROP COLUMN IF EXISTS ...`, then the copy whose column list excludes the dropped column.
 - `PrimaryKeyRebuildTest.rewriteKeepsNullableRetypeOfKeyColumn()` — §3.3.1 step 3: a re-typed key column whose translated type is `Nullable(String)` is declared so on `S` (also under its new name when renamed) with `allow_nullable_key = 1`; a non-Nullable re-type adds nothing. Pre-fix code stripped the `Nullable` whenever the plan was not the keyless fallback, so `MODIFY x VARCHAR(100) NULL` on a keyless table produced a non-Nullable `x String`.
 - `MySqlDDLParserListenerImplTest.testDeferredKeyColumnClauseCarriesPosition()` — §3.1.1: the `FIRST`/`AFTER` of a deferred `CHANGE`/`MODIFY` of a key column is recorded in `positionedColumns()` under the rebuilt table's name; absent without a position.
+- `MySqlDDLParserListenerImplTest.testSameIdentityRebuildOfKeylessTableIsFlaggedKeyless()` — §3.1.2: a deferred `MODIFY`/`CHANGE` of a key column on a table keyed on every stored column plans a rebuild with `keylessFallback()` true (the re-typed column `Nullable(Int32)`, the renamed one under its new name); the same shape on a declared key plans a declared-key rebuild. `PrimaryKeyRebuildTest.keylessSameIdentityRebuildKeepsOtherKeyColumnsNullable()` — §3.3.1 step 3 under that plan: the untouched key columns stay `Nullable`, the existing `allow_nullable_key = 1` is kept once; the declared-key plan of the same statement strips them (the pre-fix result).
 - `PrimaryKeyRebuildTest.renamedKeyColumnIsCopiedUnderNewName()` — the `CREATE` of `S` declares the renamed column under its new name and keys by it (no `RENAME COLUMN` ALTER is issued), and the copy reads `o.<old> AS <new>`.
 - Integration (`PrimaryKeyChangeIT`, MySQL 8.0 → embedded connector → ClickHouse, the `AbstractCDCBaseIT` harness): `compositeKeyToAutoIncrementId()` (the production migration `DROP PRIMARY KEY, ADD COLUMN id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, ADD PRIMARY KEY (id)`, source values joined in), `rekeyOntoExistingColumn()`, `supersetKey()` (`(a)` → `(a, b)`), `addPrimaryKeyOnNullableColumn()` (MySQL makes the column `NOT NULL`; the replica key column is non-Nullable), `dropPrimaryKeyBecomesKeyless()` (`sql_generate_invisible_primary_key=OFF`; all-columns identity), `gipkTablePromotedToExplicitKey()` (`DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`), `keyColumnWidened()` (`MODIFY id BIGINT`), `keyColumnRenamed()` (`CHANGE id ref_id INT`), each preceded by DML under the old key and followed by INSERT / UPDATE / DELETE and a relocation (`UPDATE ... SET <new key> = ...`) under the new key; every case asserts value-level equality with MySQL (`FINAL`, live rows) once the backfill has completed (the retired table is gone), the replica sorting key, no leftover `__pk_rebuild_` / `__pk_retired_` tables, and an untouched control table. `replicationContinuesWhileBackfillRuns()` — a key change on a table with enough rows for the backfill to take seconds; an INSERT into another table issued right after the ALTER is visible in ClickHouse before the backfill of the first table has finished (the retired table still exists at that moment), and both tables compare equal at the end.
 - End-to-end on a built jar (`csc_e2e_pk.sh`, podman: MySQL 8.0 → connector → ClickHouse 24.8): the same matrix at the value level; `t_pk` → `ORDER BY pk_id`, `t_pk2` → `ORDER BY b`, `t_pk3` → `ORDER BY (id, v)`.

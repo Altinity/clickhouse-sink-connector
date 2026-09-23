@@ -2510,9 +2510,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
             if (!newKey.isEmpty()) {
-                this.primaryKeyRebuildPlan = planRebuild(existingKey, newKey, false,
+                // A keyless table's identity is every stored column (Spec
+                // 06.05 §3.6), possibly Nullable under allow_nullable_key = 1;
+                // a same-identity rebuild of it stays keyless, so the rebuilt
+                // table keeps every key column's nullability (Spec 06.09
+                // §3.1.2). Planned as a declared key, the rebuild stripped the
+                // Nullable from every key column the statement did not touch.
+                boolean keyless = isKeylessIdentity(existingKey);
+                this.primaryKeyRebuildPlan = planRebuild(existingKey, newKey, keyless,
                         "(" + String.join(",", newKey) + ") (the same identity; a key column is re-typed, renamed "
-                                + "or dropped)", existing);
+                                + "or dropped" + (keyless ? "; keyless all-columns identity" : "") + ")", existing);
                 return;
             }
         }
@@ -2540,6 +2547,26 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
         this.primaryKeyRebuildPlan = planRebuild(existingKey, newKey, true,
                 "(" + String.join(",", newKey) + ") (keyless all-columns identity)", existing);
+    }
+
+    /**
+     * Whether the replica's current sorting key is the keyless all-columns
+     * identity of Spec 06.05 §3.6: every stored non-connector column is a key
+     * column. Such a key may hold {@code Nullable} columns (the table carries
+     * {@code allow_nullable_key = 1}); a declared {@code PRIMARY KEY} never does
+     * (Spec 06.05 §3.3). Unknown columns (no lookup) answer false, which keeps
+     * the declared-key rebuild of Spec 06.09 §3.3.1 step 3.
+     *
+     * @param existingKey the replica's sorting key, connector columns removed, lower-cased.
+     */
+    private boolean isKeylessIdentity(Set<String> existingKey) {
+        Set<String> stored = new LinkedHashSet<>();
+        for (String column : targetColumnNullability().keySet()) {
+            if (!isConnectorColumn(column)) {
+                stored.add(column.toLowerCase());
+            }
+        }
+        return !stored.isEmpty() && stored.equals(existingKey);
     }
 
     /**

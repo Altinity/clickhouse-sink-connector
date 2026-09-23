@@ -3378,6 +3378,45 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    @DisplayName("A same-identity rebuild of a keyless table is flagged keyless: every key column keeps its nullability")
+    public void testSameIdentityRebuildOfKeylessTableIsFlaggedKeyless() {
+        // Spec 06.09 §3.1.2: ship_class as the DDL path creates it (Spec 06.05
+        // §3.6) -- every stored column is a Nullable key column under
+        // allow_nullable_key = 1. MODIFY class_name INT re-types ONE key
+        // column; the rebuilt table must keep the others Nullable, so the
+        // plan carries the keyless flag. Pre-fix code planned it as a
+        // declared key and rewriteCreateStatement stripped the Nullable from
+        // every other key column: the second key-column ALTER on the table
+        // re-declared class_name's Nullable(Int32) as Int32.
+        MySQLDDLParserService keyless = parserWithTarget(
+                columns("id", "Nullable(Int32)", "class_name", "Nullable(String)",
+                        "tonange", "Nullable(Decimal(10, 2))", "_version", "UInt64", "is_deleted", "UInt8"),
+                Arrays.asList("id", "class_name", "tonange"));
+
+        Assert.assertEquals("", translate(keyless, "ALTER TABLE ship_class MODIFY COLUMN class_name INT").trim());
+        PrimaryKeyRebuildPlan plan = keyless.primaryKeyRebuildPlan();
+        Assert.assertNotNull("a same-identity rebuild must be planned", plan);
+        Assert.assertTrue("the keyless all-columns identity stays keyless", plan.keylessFallback());
+        Assert.assertEquals(Arrays.asList("id", "class_name", "tonange"), plan.newKey());
+        Assert.assertEquals(Collections.singletonMap("class_name", "Nullable(Int32)"), plan.retypedColumns());
+
+        // A rename of a key column on the same table: still keyless, under the new name.
+        Assert.assertEquals("", translate(keyless,
+                "ALTER TABLE ship_class CHANGE COLUMN tonange tonange_new DECIMAL(10,10)").trim());
+        plan = keyless.primaryKeyRebuildPlan();
+        Assert.assertTrue(plan.keylessFallback());
+        Assert.assertEquals(Arrays.asList("id", "class_name", "tonange_new"), plan.newKey());
+        Assert.assertEquals(Collections.singletonMap("tonange_new", "Nullable(Decimal(10,10))"),
+                plan.retypedColumns());
+
+        // A declared key is not keyless: the same shape on a keyed table plans a declared-key rebuild.
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "class_name", "Nullable(String)"), Collections.singletonList("id"));
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE ship_class MODIFY COLUMN id BIGINT NOT NULL").trim());
+        Assert.assertFalse(keyed.primaryKeyRebuildPlan().keylessFallback());
+    }
+
+    @Test
     @DisplayName("MODIFY of a sorting-key column to a wider type plans a same-identity rebuild with the MODIFY deferred")
     public void testModifyKeyColumnWiderPlansRebuild() {
         MySQLDDLParserService keyed = parserWithTarget(

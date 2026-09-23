@@ -633,6 +633,48 @@ public class PrimaryKeyRebuildTest {
     }
 
     @Test
+    @DisplayName("A same-identity rebuild of a keyless table keeps every other key column Nullable")
+    public void keylessSameIdentityRebuildKeepsOtherKeyColumnsNullable() {
+        // Spec 06.09 §3.1.2 / §3.3.1 step 3: ship_class after its first
+        // rebuild (class_name already Nullable(Int32)), now re-typing tonange.
+        // The plan is keyless (the current key is the all-columns identity),
+        // so the two untouched key columns keep their Nullable and the
+        // existing allow_nullable_key = 1 is kept, not duplicated.
+        String create = "CREATE TABLE employees.ship_class\n"
+                + "(\n"
+                + "    `id` Nullable(Int32),\n"
+                + "    `class_name` Nullable(Int32),\n"
+                + "    `tonange` Nullable(Decimal(10, 2)),\n"
+                + "    `_version` UInt64,\n"
+                + "    `is_deleted` UInt8\n"
+                + ")\n"
+                + "ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
+                + "ORDER BY (id, class_name, tonange)\n"
+                + "SETTINGS allow_nullable_key = 1, index_granularity = 8192";
+        Map<String, String> types = new LinkedHashMap<>();
+        types.put("id", "Nullable(Int32)");
+        types.put("class_name", "Nullable(Int32)");
+        types.put("tonange", "Nullable(Decimal(10, 2))");
+        List<String> key = Arrays.asList("id", "class_name", "tonange");
+        Map<String, String> retype = Collections.singletonMap("tonange", "Nullable(Decimal(10,10))");
+
+        String keyless = PrimaryKeyRebuild.rewriteCreateStatement(create, "employees", "ship_class",
+                "ship_class__pk_rebuild_7", key, true, types, Collections.emptyMap(), retype);
+        assertTrue(keyless.contains("    `id` Nullable(Int32),\n"), keyless);
+        assertTrue(keyless.contains("    `class_name` Nullable(Int32),\n"), keyless);
+        assertTrue(keyless.contains("    `tonange` Nullable(Decimal(10,10)),\n"), keyless);
+        assertTrue(keyless.endsWith("ORDER BY (`id`, `class_name`, `tonange`)\n"
+                + "SETTINGS allow_nullable_key = 1, index_granularity = 8192"), keyless);
+
+        // Planned as a declared key (the pre-fix plan), the same rewrite
+        // strips the two untouched key columns -- what the ITs observed.
+        String declared = PrimaryKeyRebuild.rewriteCreateStatement(create, "employees", "ship_class",
+                "ship_class__pk_rebuild_7", key, false, types, Collections.emptyMap(), retype);
+        assertTrue(declared.contains("    `id` Int32,\n"), declared);
+        assertTrue(declared.contains("    `class_name` Int32,\n"), declared);
+    }
+
+    @Test
     @DisplayName("A UUID '...' token after the table name (Atomic databases) is stripped; a header without one is unchanged")
     public void rewriteStripsTableUuid() {
         String body = "\n"
