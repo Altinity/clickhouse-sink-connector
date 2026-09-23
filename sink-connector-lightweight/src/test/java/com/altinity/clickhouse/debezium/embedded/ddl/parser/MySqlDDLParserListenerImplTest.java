@@ -3313,6 +3313,71 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    @DisplayName("A same-type MODIFY of a sorting-key column with FIRST/AFTER restates the existing type with the position")
+    public void testModifyKeyColumnSameTypeWithPositionIsRestated() {
+        // Spec 06.05 §3.4 rule 2: the position is what the clause is for. A
+        // MODIFY restating the identical type with FIRST/AFTER is a
+        // metadata-only reorder ClickHouse accepts on a key column (measured
+        // on 24.8.14); the requested type is never emitted (Code: 524).
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "x", "Int32", "name", "Nullable(String)"), Arrays.asList("id", "x"));
+
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN x Int32 FIRST",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN x INT FIRST"));
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN x Int32 AFTER id",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN x INT NOT NULL AFTER id"));
+        // A narrower requested type still restates the EXISTING type.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN x Int32 AFTER name",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN x SMALLINT AFTER name"));
+        // CHANGE c c <same type> FIRST is the same restatement.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN x Int32 FIRST",
+                translate(keyed, "ALTER TABLE t CHANGE COLUMN x x INT FIRST"));
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
+        // Without a position the clause stays suppressed (pre-fix code skipped both).
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN x INT").trim());
+        // Other clauses of the same statement are kept, in order.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN x Int32 FIRST, ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN x INT FIRST, ADD COLUMN c INT"));
+    }
+
+    @Test
+    @DisplayName("A deferred rename/re-type of a sorting-key column carries its FIRST/AFTER position to the rebuilt table")
+    public void testDeferredKeyColumnClauseCarriesPosition() {
+        // Spec 06.09 §3.1.1: the position cannot be applied to the existing
+        // table (the clause itself is deferred), so the plan carries it and
+        // the rebuild restates the column with it on the empty rebuilt table.
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "x", "Int32"), Arrays.asList("id", "x"));
+
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t CHANGE COLUMN x x2 INT FIRST").trim());
+        PrimaryKeyRebuildPlan plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertNotNull(plan);
+        Assert.assertEquals(Arrays.asList("id", "x2"), plan.newKey());
+        Assert.assertEquals(Collections.singletonMap("x", "x2"), plan.renamedColumns());
+        Assert.assertTrue(plan.retypedColumns().isEmpty());
+        Assert.assertEquals(Collections.singletonMap("x2", "FIRST"), plan.positionedColumns());
+
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN x BIGINT NOT NULL AFTER id").trim());
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonMap("x", "Int64"), plan.retypedColumns());
+        Assert.assertEquals(Collections.singletonMap("x", "AFTER id"), plan.positionedColumns());
+
+        // No position: nothing recorded.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t CHANGE COLUMN x x2 INT").trim());
+        Assert.assertTrue(keyed.primaryKeyRebuildPlan().positionedColumns().isEmpty());
+
+        // An explicit NULL on a keyless table's key column re-types it Nullable
+        // (Spec 06.05 §3.2 rule 3); the rebuilt table keeps it (Spec 06.09 §3.3.1 step 3).
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN x VARCHAR(100) NULL").trim());
+        Assert.assertEquals(Collections.singletonMap("x", "Nullable(String)"),
+                keyed.primaryKeyRebuildPlan().retypedColumns());
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t CHANGE COLUMN x x2 VARCHAR(255) NULL").trim());
+        Assert.assertEquals(Collections.singletonMap("x2", "Nullable(String)"),
+                keyed.primaryKeyRebuildPlan().retypedColumns());
+    }
+
+    @Test
     @DisplayName("MODIFY of a sorting-key column to a wider type plans a same-identity rebuild with the MODIFY deferred")
     public void testModifyKeyColumnWiderPlansRebuild() {
         MySQLDDLParserService keyed = parserWithTarget(

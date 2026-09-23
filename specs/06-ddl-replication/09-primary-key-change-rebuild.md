@@ -122,6 +122,7 @@ apply to the empty rebuilt table before the copy (§3.3 step 3b):
 | `DROP COLUMN k` (e.g. the GIPK promotion `DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`) | `k` removed from the copied column set (and from the key when it was a key column) | `DROP COLUMN IF EXISTS k` on the empty rebuilt table (§3.3 step 3b) |
 | `MODIFY k <wider or non-comparable type>` (Spec 06.05 §3.4 rule 3) | identity unchanged (a rebuild under the same key, §3.1.2); `k` re-typed | folded into the `CREATE` of the rebuilt table (§3.3 step 3) — ClickHouse refuses `MODIFY` of a key column even on an empty table |
 | `CHANGE k k2 <type>` / `RENAME COLUMN k TO k2` | new key names `k2` where the old named `k`; the copy reads `o.k AS k2` | folded into the `CREATE` of the rebuilt table (column declared as `k2`, `ORDER BY` names `k2`) |
+| `MODIFY k ... FIRST` / `CHANGE k k2 ... AFTER c` — a position on a deferred clause | the plan records `k'` (the name on the rebuilt table) → `FIRST` / `AFTER c` (`positionedColumns`) | `MODIFY COLUMN k' <type as declared on the rebuilt table> FIRST` / `AFTER c` executed on the empty rebuilt table (§3.3 step 3b): a `MODIFY` restating the identical type with a position is accepted on a sorting-key column as a metadata-only reorder (measured on 24.8.14); the type is read from the rebuilt table, never taken from the plan, because any other type is `Code: 524`. A `MODIFY` of a key column to a same-or-narrower type with a position is not deferred at all: it is restated against the current table (Spec 06.05 §3.4 rule 2) |
 
 Same-or-narrower re-declarations stay suppressed (Spec 06.05 §3.4 rule 2) and
 never trigger a rebuild on their own. Clauses on non-key columns are emitted
@@ -193,16 +194,26 @@ row twice collapses to one (`PkRebuild.lean`: `backfill_never_shadows_newer`,
 3. **Create `S`** from `SHOW CREATE TABLE T` rewritten by
    `rewriteCreateStatement`: the new key in `ORDER BY`, key columns
    non-Nullable (the keyless all-columns fallback keeps `Nullable` +
-   `allow_nullable_key`), a deferred rename/type change of a key column
+   `allow_nullable_key`; so does a deferred re-typing whose translated type
+   is `Nullable(T)` — `MODIFY x ... NULL` on a keyless table's key column,
+   Spec 06.05 §3.4 rule 3: the source column now holds NULL, so the rebuilt
+   column keeps `Nullable(T)` and `allow_nullable_key = 1` is merged into
+   `SETTINGS`; stripping it would reject the NULLs the source sends), a
+   deferred rename/type change of a key column
    folded into the column list (§3.1.1) and renamed wherever `PARTITION BY`,
    `SAMPLE BY`, `TTL` or the key clauses reference it as an identifier (never
    inside a string literal or a longer identifier), a `UUID '...'` token that
    `SHOW CREATE TABLE` may render after the table name on Atomic databases
    dropped (two tables cannot share a UUID), engine, `PARTITION BY`, `TTL` and
    settings otherwise verbatim; then each deferred `DROP COLUMN IF EXISTS k`
-   as its own `ALTER TABLE S` (metadata-only on the empty table). Pinned by
-   `PrimaryKeyRebuildTest.rewriteStripsTableUuid()` and
-   `PrimaryKeyRebuildTest.rewriteRenamesKeyColumnInPartitionAndTtl()`.
+   as its own `ALTER TABLE S` (metadata-only on the empty table), then each
+   deferred column position as `ALTER TABLE S MODIFY COLUMN k' <type of k' on
+   S> FIRST` / `AFTER c` (§3.1.1; the type is read from `system.columns` of
+   `S` so the statement is a pure restatement, which ClickHouse accepts on a
+   key column). Pinned by
+   `PrimaryKeyRebuildTest.rewriteStripsTableUuid()`,
+   `PrimaryKeyRebuildTest.rewriteRenamesKeyColumnInPartitionAndTtl()` and
+   `PrimaryKeyRebuildTest.rewriteKeepsNullableRetypeOfKeyColumn()`.
 4. **Mark the retired table**, then **swap**. Before the swap `T` (which is
    about to become `R`) receives a metadata-only
    `ALTER TABLE T MODIFY COMMENT '<original comment>\ncsc-pk-rebuild:{json}'`
@@ -408,6 +419,8 @@ is unaffected.
 - `MySqlDDLParserListenerImplTest.testDroppedKeyColumnIsDeferredToRebuiltTable()` — the GIPK promotion `DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`: plan with new key `id`, deferred `DROP COLUMN IF EXISTS my_row_id`, and no `DROP COLUMN` in the emitted statement.
 - `MySqlDDLParserListenerImplTest.testRedeliveredPrimaryKeyChangeIsRestatement()` — §3.5: once the target's sorting key equals the declared key, the same statement plans nothing and emits only its idempotent clauses.
 - `PrimaryKeyRebuildTest.deferredClausesApplyToRebuiltTableBeforeCopy()` — step 3b ordering: CREATE `S`, then `ALTER TABLE S DROP COLUMN IF EXISTS ...`, then the copy whose column list excludes the dropped column.
+- `PrimaryKeyRebuildTest.rewriteKeepsNullableRetypeOfKeyColumn()` — §3.3.1 step 3: a re-typed key column whose translated type is `Nullable(String)` is declared so on `S` (also under its new name when renamed) with `allow_nullable_key = 1`; a non-Nullable re-type adds nothing. Pre-fix code stripped the `Nullable` whenever the plan was not the keyless fallback, so `MODIFY x VARCHAR(100) NULL` on a keyless table produced a non-Nullable `x String`.
+- `MySqlDDLParserListenerImplTest.testDeferredKeyColumnClauseCarriesPosition()` — §3.1.1: the `FIRST`/`AFTER` of a deferred `CHANGE`/`MODIFY` of a key column is recorded in `positionedColumns()` under the rebuilt table's name; absent without a position.
 - `PrimaryKeyRebuildTest.renamedKeyColumnIsCopiedUnderNewName()` — the `CREATE` of `S` declares the renamed column under its new name and keys by it (no `RENAME COLUMN` ALTER is issued), and the copy reads `o.<old> AS <new>`.
 - Integration (`PrimaryKeyChangeIT`, MySQL 8.0 → embedded connector → ClickHouse, the `AbstractCDCBaseIT` harness): `compositeKeyToAutoIncrementId()` (the production migration `DROP PRIMARY KEY, ADD COLUMN id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, ADD PRIMARY KEY (id)`, source values joined in), `rekeyOntoExistingColumn()`, `supersetKey()` (`(a)` → `(a, b)`), `addPrimaryKeyOnNullableColumn()` (MySQL makes the column `NOT NULL`; the replica key column is non-Nullable), `dropPrimaryKeyBecomesKeyless()` (`sql_generate_invisible_primary_key=OFF`; all-columns identity), `gipkTablePromotedToExplicitKey()` (`DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`), `keyColumnWidened()` (`MODIFY id BIGINT`), `keyColumnRenamed()` (`CHANGE id ref_id INT`), each preceded by DML under the old key and followed by INSERT / UPDATE / DELETE and a relocation (`UPDATE ... SET <new key> = ...`) under the new key; every case asserts value-level equality with MySQL (`FINAL`, live rows) once the backfill has completed (the retired table is gone), the replica sorting key, no leftover `__pk_rebuild_` / `__pk_retired_` tables, and an untouched control table. `replicationContinuesWhileBackfillRuns()` — a key change on a table with enough rows for the backfill to take seconds; an INSERT into another table issued right after the ALTER is visible in ClickHouse before the backfill of the first table has finished (the retired table still exists at that moment), and both tables compare equal at the end.
 - End-to-end on a built jar (`csc_e2e_pk.sh`, podman: MySQL 8.0 → connector → ClickHouse 24.8): the same matrix at the value level; `t_pk` → `ORDER BY pk_id`, `t_pk2` → `ORDER BY b`, `t_pk3` → `ORDER BY (id, v)`.

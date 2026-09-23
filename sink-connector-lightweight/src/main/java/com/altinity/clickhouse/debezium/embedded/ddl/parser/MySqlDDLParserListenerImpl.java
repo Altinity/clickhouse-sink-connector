@@ -257,6 +257,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     /** Clean (new) name -> translated ClickHouse type of the re-typed old-key columns. */
     private final Map<String, String> deferredRetypedColumns = new LinkedHashMap<>();
 
+    /**
+     * Clean name on the rebuilt table -> FIRST / AFTER c of every deferred
+     * MODIFY/CHANGE of an old-key column that carries a position; the rebuild
+     * restates the column with it on the empty rebuilt table (Spec 06.09 §3.1.1).
+     */
+    private final Map<String, String> deferredColumnPositions = new LinkedHashMap<>();
+
     /** Clean names of the old-key columns the statement drops (deferred to the rebuilt table). */
     private final Set<String> deferredDroppedColumns = new LinkedHashSet<>();
 
@@ -1774,39 +1781,69 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             String existingKeyType = targetSortingKeyTypes().get(stripBackticks(columnName));
             if (existingKeyType != null) {
                 KeyColumnTypeChange.Verdict verdict = KeyColumnTypeChange.compare(existingKeyType, columnType);
+                boolean positioned = columnPositionModifier != null && !columnPositionModifier.isEmpty();
                 if (!renames && verdict == KeyColumnTypeChange.Verdict.SAME_OR_NARROWER) {
+                    if (!positioned) {
+                        log.warn("Sorting-key column {}.{}.{}: key column type change to {} is not representable "
+                                        + "in ClickHouse (Code: 524, the sorting key is fixed at CREATE); keeping {} "
+                                        + "which holds every value of the source type. Clause skipped.",
+                                this.databaseName, this.cleanTableName, stripBackticks(columnName), columnType,
+                                existingKeyType);
+                        removeTrailingComma();
+                        return;
+                    }
+                    // The clause moves the column (Spec 06.05 §3.4 rule 2): a
+                    // MODIFY that restates the IDENTICAL type with FIRST/AFTER
+                    // is accepted on a sorting-key column as a metadata-only
+                    // reorder (measured on 24.8.14), so the position is kept
+                    // and the existing type -- never the requested one -- is
+                    // restated. Loss-free: the column and its values are
+                    // untouched.
                     log.warn("Sorting-key column {}.{}.{}: key column type change to {} is not representable "
-                                    + "in ClickHouse (Code: 524, the sorting key is fixed at CREATE); keeping {} "
-                                    + "which holds every value of the source type. Clause skipped.",
+                                    + "in ClickHouse (Code: 524); keeping {} which holds every value of the "
+                                    + "source type, and restating it with the requested position [{}].",
                             this.databaseName, this.cleanTableName, stripBackticks(columnName), columnType,
-                            existingKeyType);
+                            existingKeyType, columnPositionModifier);
+                    columnType = existingKeyType;
+                    isNullColumn = false;
+                    defaultModifier = null;
+                } else {
+                    if (!primaryKeyRebuildEnabled()) {
+                        if (renames) {
+                            throw keyColumnNotRepresentable(columnName, existingKeyType, columnType,
+                                    "cannot be renamed to " + newColumnName + " (ALTER RENAME of a key column)");
+                        }
+                        throw keyColumnNotRepresentable(columnName, existingKeyType, columnType,
+                                verdict == KeyColumnTypeChange.Verdict.WIDER
+                                        ? "the requested type is wider than the existing column"
+                                        : "the requested type is not comparable with the existing column");
+                    }
+                    // The translated type, under the nullability rules of Spec
+                    // 06.05 §3.2 (a key column keeps its existing, non-Nullable,
+                    // nullability); the DEFAULT and position of the clause do not
+                    // carry over to the rebuilt table.
+                    String deferredType = columnType == null ? existingKeyType
+                            : isNullColumn ? "Nullable(" + columnType + ")" : columnType;
+                    if (renames) {
+                        deferKeyColumnRename(columnName, newColumnName, existingKeyType,
+                                verdict == KeyColumnTypeChange.Verdict.SAME_OR_NARROWER ? null : deferredType);
+                    } else {
+                        deferKeyColumnModify(columnName, columnName, existingKeyType, deferredType, verdict);
+                    }
+                    if (positioned) {
+                        // The position travels with the deferred clause: the
+                        // rebuild restates the column with it on the empty
+                        // rebuilt table (Spec 06.09 §3.1.1 / §3.3 step 3b).
+                        String nameOnRebuilt = stripBackticks(renames ? newColumnName : columnName);
+                        this.deferredColumnPositions.put(nameOnRebuilt, columnPositionModifier);
+                        log.warn("Sorting-key column {}.{}.{}: position [{}] deferred to the rebuilt table as a "
+                                        + "restatement of {} (Spec 06.09 §3.1.1)",
+                                this.databaseName, this.cleanTableName, stripBackticks(columnName),
+                                columnPositionModifier, nameOnRebuilt);
+                    }
                     removeTrailingComma();
                     return;
                 }
-                if (!primaryKeyRebuildEnabled()) {
-                    if (renames) {
-                        throw keyColumnNotRepresentable(columnName, existingKeyType, columnType,
-                                "cannot be renamed to " + newColumnName + " (ALTER RENAME of a key column)");
-                    }
-                    throw keyColumnNotRepresentable(columnName, existingKeyType, columnType,
-                            verdict == KeyColumnTypeChange.Verdict.WIDER
-                                    ? "the requested type is wider than the existing column"
-                                    : "the requested type is not comparable with the existing column");
-                }
-                // The translated type, under the nullability rules of Spec
-                // 06.05 §3.2 (a key column keeps its existing, non-Nullable,
-                // nullability); the DEFAULT and position of the clause do not
-                // carry over to the rebuilt table.
-                String deferredType = columnType == null ? existingKeyType
-                        : isNullColumn ? "Nullable(" + columnType + ")" : columnType;
-                if (renames) {
-                    deferKeyColumnRename(columnName, newColumnName, existingKeyType,
-                            verdict == KeyColumnTypeChange.Verdict.SAME_OR_NARROWER ? null : deferredType);
-                } else {
-                    deferKeyColumnModify(columnName, columnName, existingKeyType, deferredType, verdict);
-                }
-                removeTrailingComma();
-                return;
             }
         }
 
@@ -2244,6 +2281,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.deferredModifyClauses.clear();
         this.deferredRenamedColumns.clear();
         this.deferredRetypedColumns.clear();
+        this.deferredColumnPositions.clear();
         this.deferredDroppedColumns.clear();
         this.primaryKeyRebuildPlan = null;
         for (ParseTree tree : pt) {
@@ -2552,7 +2590,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         List<String> deferred = deferredClauses();
         PrimaryKeyRebuildPlan plan = new PrimaryKeyRebuildPlan(this.databaseName, this.cleanTableName,
                 new ArrayList<>(existingKey), newKey, keylessFallback, provenance, this.originalSql, deferred,
-                this.deferredRenamedColumns, this.deferredRetypedColumns);
+                this.deferredRenamedColumns, this.deferredRetypedColumns, this.deferredColumnPositions);
         log.warn("Table {}.{}: the source changes its PRIMARY KEY from {} to {} (provenance {}); the ClickHouse "
                         + "sorting key is fixed at CREATE TABLE (Code: 524), so the table is rebuilt under the new key -- "
                         + "rebuild scheduled at the DDL barrier (Spec 06.09).{} Source DDL: [{}]",

@@ -256,6 +256,27 @@ public final class PrimaryKeyRebuild {
                         db, table, clause, db, scratch);
             }
         }
+        // A FIRST/AFTER position on a deferred clause: restated on the empty
+        // rebuilt table with the type it is declared with there. A MODIFY that
+        // restates the IDENTICAL type with a position is accepted on a
+        // sorting-key column (metadata-only reorder, measured on 24.8.14); any
+        // other type would be Code: 524, so the type is read from the rebuilt
+        // table, never taken from the plan (Spec 06.09 §3.1.1 / §3.3 step 3b).
+        if (!plan.positionedColumns().isEmpty()) {
+            Map<String, String> rebuiltTypes = new LinkedHashMap<>();
+            for (ColumnInfo c : columns(ch, db, scratch, "step 3b (rebuilt table columns)")) {
+                rebuiltTypes.put(c.name, c.type);
+            }
+            for (Map.Entry<String, String> e : plan.positionedColumns().entrySet()) {
+                String type = getIgnoreCase(rebuiltTypes, e.getKey());
+                if (type == null) {
+                    throw new DDLReplicationException(failure(plan, "step 3b (column position on the rebuilt table)",
+                            "column " + e.getKey() + " is not declared on " + db + "." + scratch), null);
+                }
+                exec(ch, "ALTER TABLE " + q(db) + "." + q(scratch) + " MODIFY COLUMN " + q(e.getKey()) + " " + type
+                        + " " + e.getValue(), "step 3b (column position on the rebuilt table)", plan);
+            }
+        }
 
         // ---- Step 4: swap. ----
         String dbEngine = scalar(ch, "SELECT engine FROM system.databases WHERE name = '" + lit(db) + "'",
@@ -497,11 +518,16 @@ public final class PrimaryKeyRebuild {
         for (String column : newKey) {
             String retype = getIgnoreCase(retypesByOldName, column);
             if (retype != null) {
-                // The translator already applied the nullability rules; a
-                // declared key column is non-Nullable unless the new key is
-                // the keyless fallback (Spec 06.05 §3.6).
-                String type = keylessFallback ? retype : withoutNullable(retype);
-                if (keylessFallback && type.contains("Nullable(")) {
+                // The translator already applied the nullability rules (Spec
+                // 06.05 §3.2): a Nullable translated type means the SOURCE
+                // column is now nullable (`MODIFY x ... NULL` on a keyless
+                // table's key column -- a declared PRIMARY KEY column can
+                // never be made nullable on the source, error 1171), so the
+                // rebuilt column keeps it and the key allows NULL
+                // (allow_nullable_key = 1, Spec 06.09 §3.3.1 step 3). Stripping
+                // it would reject the NULLs the source sends.
+                String type = retype;
+                if (type.contains("Nullable(")) {
                     nullableKey = true;
                 }
                 columnBlock = replaceType(columnBlock, column, type);

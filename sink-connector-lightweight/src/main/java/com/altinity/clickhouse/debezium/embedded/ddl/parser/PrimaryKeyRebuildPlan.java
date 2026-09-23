@@ -42,6 +42,7 @@ public final class PrimaryKeyRebuildPlan {
     private final List<String> deferredClauses;
     private final Map<String, String> renamedColumns;
     private final Map<String, String> retypedColumns;
+    private final Map<String, String> positionedColumns;
 
     /**
      * A plan without deferred clauses (Spec 06.09 §3.1).
@@ -88,6 +89,25 @@ public final class PrimaryKeyRebuildPlan {
                                  boolean keylessFallback, Map<String, Provenance> provenance, String sourceSql,
                                  List<String> deferredClauses, Map<String, String> renamedColumns,
                                  Map<String, String> retypedColumns) {
+        this(database, table, oldKey, newKey, keylessFallback, provenance, sourceSql, deferredClauses,
+                renamedColumns, retypedColumns, Collections.emptyMap());
+    }
+
+    /**
+     * As {@link #PrimaryKeyRebuildPlan(String, String, List, List, boolean, Map, String, List, Map, Map)},
+     * with the column positions of the deferred clauses (Spec 06.09 §3.1.1).
+     *
+     * @param positionedColumns clean name AS ON THE REBUILT TABLE (the new name when
+     *                          renamed) -> the {@code FIRST} / {@code AFTER c} position
+     *                          the source clause carries for every deferred
+     *                          {@code MODIFY}/{@code CHANGE} of an old-key column; the
+     *                          rebuild restates the column with that position on the
+     *                          empty rebuilt table (§3.3 step 3b).
+     */
+    public PrimaryKeyRebuildPlan(String database, String table, List<String> oldKey, List<String> newKey,
+                                 boolean keylessFallback, Map<String, Provenance> provenance, String sourceSql,
+                                 List<String> deferredClauses, Map<String, String> renamedColumns,
+                                 Map<String, String> retypedColumns, Map<String, String> positionedColumns) {
         this.database = database;
         this.table = table;
         this.oldKey = Collections.unmodifiableList(new ArrayList<>(oldKey));
@@ -98,6 +118,7 @@ public final class PrimaryKeyRebuildPlan {
         this.deferredClauses = Collections.unmodifiableList(new ArrayList<>(deferredClauses));
         this.renamedColumns = Collections.unmodifiableMap(new LinkedHashMap<>(renamedColumns));
         this.retypedColumns = Collections.unmodifiableMap(new LinkedHashMap<>(retypedColumns));
+        this.positionedColumns = Collections.unmodifiableMap(new LinkedHashMap<>(positionedColumns));
     }
 
     /** @return destination database (clean). */
@@ -173,12 +194,22 @@ public final class PrimaryKeyRebuildPlan {
         return retypedColumns;
     }
 
+    /**
+     * @return clean name (the new name when also renamed) -> {@code FIRST} /
+     *         {@code AFTER c} of every deferred old-key column clause that
+     *         carries a position (Spec 06.09 §3.1.1); empty when none.
+     */
+    public Map<String, String> positionedColumns() {
+        return positionedColumns;
+    }
+
     @Override
     public String toString() {
         return "PrimaryKeyRebuildPlan{" + database + "." + table + ": oldKey=" + oldKey + ", newKey=" + newKey
                 + (keylessFallback ? " (keyless all-columns fallback)" : "") + ", provenance=" + provenance
                 + (deferredClauses.isEmpty() ? "" : ", deferredClauses=" + deferredClauses)
                 + (renamedColumns.isEmpty() ? "" : ", renamedColumns=" + renamedColumns)
-                + (retypedColumns.isEmpty() ? "" : ", retypedColumns=" + retypedColumns) + "}";
+                + (retypedColumns.isEmpty() ? "" : ", retypedColumns=" + retypedColumns)
+                + (positionedColumns.isEmpty() ? "" : ", positionedColumns=" + positionedColumns) + "}";
     }
 }

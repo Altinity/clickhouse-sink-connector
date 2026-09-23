@@ -549,6 +549,49 @@ public class PrimaryKeyRebuildTest {
     }
 
     @Test
+    @DisplayName("A re-typed key column whose translated type is Nullable keeps it and adds allow_nullable_key = 1")
+    public void rewriteKeepsNullableRetypeOfKeyColumn() {
+        // `MODIFY x VARCHAR(100) NULL` on a keyless table keyed on (id, x): the
+        // source column is now nullable, so the rebuilt column must hold NULL
+        // (Spec 06.09 §3.3.1 step 3). Pre-fix code stripped the Nullable
+        // whenever the plan was not the keyless fallback.
+        String create = "CREATE TABLE employees.t\n"
+                + "(\n"
+                + "    `id` Int32,\n"
+                + "    `x` Int32,\n"
+                + "    `_version` UInt64,\n"
+                + "    `is_deleted` UInt8\n"
+                + ")\n"
+                + "ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
+                + "ORDER BY (id, x)\n"
+                + "SETTINGS index_granularity = 8192";
+        Map<String, String> types = new LinkedHashMap<>();
+        types.put("id", "Int32");
+        types.put("x", "Int32");
+        String rewritten = PrimaryKeyRebuild.rewriteCreateStatement(create, "employees", "t", "t__pk_rebuild_9",
+                Arrays.asList("id", "x"), false, types, Collections.emptyMap(),
+                Collections.singletonMap("x", "Nullable(String)"));
+        assertTrue(rewritten.contains("    `x` Nullable(String),\n"), rewritten);
+        assertTrue(rewritten.endsWith("ORDER BY (`id`, `x`)\n"
+                + "SETTINGS index_granularity = 8192, allow_nullable_key = 1"), rewritten);
+
+        // Renamed and re-typed Nullable: declared under the new name, still Nullable.
+        String renamed = PrimaryKeyRebuild.rewriteCreateStatement(create, "employees", "t", "t__pk_rebuild_9",
+                Arrays.asList("id", "x"), false, types, Collections.singletonMap("x", "x2"),
+                Collections.singletonMap("x2", "Nullable(String)"));
+        assertTrue(renamed.contains("    `x2` Nullable(String),\n"), renamed);
+        assertTrue(renamed.endsWith("ORDER BY (`id`, `x2`)\n"
+                + "SETTINGS index_granularity = 8192, allow_nullable_key = 1"), renamed);
+
+        // A non-Nullable re-type adds nothing.
+        String plain = PrimaryKeyRebuild.rewriteCreateStatement(create, "employees", "t", "t__pk_rebuild_9",
+                Arrays.asList("id", "x"), false, types, Collections.emptyMap(),
+                Collections.singletonMap("x", "String"));
+        assertTrue(plain.contains("    `x` String,\n"), plain);
+        assertFalse(plain.contains("allow_nullable_key"), plain);
+    }
+
+    @Test
     @DisplayName("The keyless all-columns fallback keeps Nullable key columns and adds allow_nullable_key = 1")
     public void keylessFallbackAddsAllowNullableKey() {
         String create = "CREATE TABLE employees.t\n"
