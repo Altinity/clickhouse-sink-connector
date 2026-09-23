@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.common;
 
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier.ErrorCategory;
+import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -121,5 +122,38 @@ public class ClickHouseErrorClassifierTest {
         Exception mid = new RuntimeException("Insert batch failed", inner);
         Exception outer = new RuntimeException("ClickHouseBatchRunnable error", mid);
         assertEquals(ErrorCategory.FATAL, ClickHouseErrorClassifier.classify(outer));
+    }
+
+    /**
+     * A value the source holds that cannot be stored under the current
+     * ClickHouse column type ({@code DebeziumConverter.ValueOutOfRangeException},
+     * thrown by the loud-clamp default, spec 07.03 section 3.3) is raised by the
+     * converter, not by ClickHouse, so it carries no {@code Code: NNN}. Left to
+     * code extraction it classified UNKNOWN and the same batch was retried with
+     * backoff forever: the unit stayed outstanding, every DDL drain waited on
+     * it, and nothing was ever acknowledged again. Retrying can never succeed
+     * without widening the column, so it is FATAL like an unknown table
+     * (spec 10.01 section 3.1) -- wrapped or as the root -- while an ordinary
+     * exception without a code stays UNKNOWN.
+     */
+    @Test
+    public void valueOutOfRangeIsFatalRegardlessOfCode() {
+        Exception root = new DebeziumConverter.ValueOutOfRangeException(
+                "Value -57896044618658100000000000000000000000000000000000000000000000000000000000000000000000000 "
+                        + "in column amount is outside the ClickHouse Decimal128 range");
+
+        assertEquals(ErrorCategory.FATAL, ClickHouseErrorClassifier.classify(root),
+                "an unrepresentable value as the root exception is terminal");
+        assertEquals(ErrorCategory.FATAL, ClickHouseErrorClassifier.classify(
+                        new RuntimeException("ClickHouseBatchRunnable error",
+                                new RuntimeException("Insert batch failed", root))),
+                "an unrepresentable value anywhere in the cause chain is terminal");
+        assertEquals(-1, ClickHouseErrorClassifier.extractErrorCode(root),
+                "sanity: the converter's exception carries no ClickHouse error code");
+
+        assertEquals(ErrorCategory.UNKNOWN, ClickHouseErrorClassifier.classify(
+                        new RuntimeException("ClickHouseBatchRunnable error",
+                                new RuntimeException("Insert batch failed"))),
+                "a plain exception without a code is still UNKNOWN (retried), not terminal");
     }
 }

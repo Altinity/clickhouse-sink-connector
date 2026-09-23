@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
@@ -33,6 +34,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -58,7 +61,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * shuts the pool down, and only then resets the FIFO: whatever is still
  * outstanding is abandoned -- never acknowledged, so the next engine
  * redelivers it from the last committed offset. {@code setup()} refuses to
- * start a new engine while anything is outstanding.</p>
+ * start a new engine while anything is outstanding AND the engine that handed
+ * it off is still alive (its pool can still write and acknowledge it); when
+ * that engine terminated without {@code stop()} -- a FATAL worker, a failed
+ * test that never stopped its engine -- nobody can ever acknowledge its
+ * leftovers, so {@code setup()} abandons them loudly instead of refusing every
+ * later engine in the process.</p>
  *
  * <p>The tests wire a real {@link ClickHouseBatchExecutor} and real queues
  * exactly as {@code setupProcessingThread} does; no ClickHouse, MySQL or
@@ -77,6 +85,7 @@ public class EngineRestartFifoResetTest {
     @BeforeEach
     public void resetFifo() throws Exception {
         clearFifo();
+        setActiveEngine(null);
         savedStopDrainTimeout = DebeziumChangeEventCapture.stopDrainTimeoutMs;
     }
 
@@ -84,6 +93,7 @@ public class EngineRestartFifoResetTest {
     public void restore() throws Exception {
         DebeziumChangeEventCapture.stopDrainTimeoutMs = savedStopDrainTimeout;
         clearFifo();
+        setActiveEngine(null);
     }
 
     /** Records what the engine's committer was asked to do. */
@@ -222,6 +232,31 @@ public class EngineRestartFifoResetTest {
         Object c = f.get(null);
         return c instanceof Map ? ((Map<Object, Object>) c).size()
                 : ((java.util.Collection<Object>) c).size();
+    }
+
+    /** What setup() records as the process's engine; null after stop(). */
+    private static void setActiveEngine(DebeziumChangeEventCapture engine) throws Exception {
+        Field f = DebeziumChangeEventCapture.class.getDeclaredField("activeEngine");
+        f.setAccessible(true);
+        f.set(null, engine);
+    }
+
+    private static DebeziumChangeEventCapture activeEngine() throws Exception {
+        Field f = DebeziumChangeEventCapture.class.getDeclaredField("activeEngine");
+        f.setAccessible(true);
+        return (DebeziumChangeEventCapture) f.get(null);
+    }
+
+    /**
+     * Properties that let {@code setup()} run to completion without a source
+     * database, a ClickHouse or a Debezium engine: the FIFO rule at its top is
+     * what is under test, and with replication skipped nothing after it needs
+     * a live server.
+     */
+    private static Properties skipReplicaStart() {
+        Properties props = new Properties();
+        props.setProperty(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString(), "true");
+        return props;
     }
 
     private static void clearFifo() throws Exception {
@@ -382,20 +417,93 @@ public class EngineRestartFifoResetTest {
     }
 
     /**
-     * Starting a new engine on a FIFO that still has outstanding units would
-     * park every new unit behind them. Refuse, loudly, rather than start a
-     * connector that can never acknowledge an offset.
+     * The CI cascade. A previous engine whose worker pool terminated WITHOUT
+     * {@code stop()} (a FATAL worker, a failed test that never stopped its
+     * engine) leaves its handed-off units in the static FIFO, and nobody can
+     * ever write or acknowledge them. Refusing every later engine in the
+     * process on their account turned one failure into a failure of every
+     * test that followed in the same JVM. {@code setup()} must abandon them
+     * loudly and start from a quiescent FIFO.
+     *
+     * <p>Against the previous {@code setup()} this fails at the first
+     * assertion with the "Refusing to start the engine" exception.</p>
      */
     @Test
-    @DisplayName("setup() refuses to start while handed-off batches are still unacknowledged")
-    public void setupRefusesWhileBatchesAreOutstanding() {
+    @DisplayName("A previous engine that terminated without stop() has its leftovers abandoned by setup(), not every later engine refused")
+    public void deadEngineWithoutStopIsAbandonedNotPoisoning() throws Exception {
+        DebeziumChangeEventCapture dead = new DebeziumChangeEventCapture();
+        ClickHouseBatchExecutor deadPool = new ClickHouseBatchExecutor(2, FACTORY);
+        wire(dead, deadPool, 2);
+        setActiveEngine(dead);
+
+        // The dead engine handed this off; no worker ever wrote it.
         List<ClickHouseStruct> ghost = unit(new RecordingCommitter());
         DebeziumOffsetManagement.registerHandoff(ghost, Collections.singletonList(ghost));
 
+        // Its pool terminates without stop(): nothing will ever write the ghost.
+        deadPool.shutdownNow();
+        assertTrue(deadPool.awaitTermination(5, TimeUnit.SECONDS), "sanity: the pool terminated");
+        assertFalse(dead.isAlive(), "sanity: an engine whose pool has terminated is not alive");
+        assertTrue(DebeziumOffsetManagement.hasUnwrittenBatches(), "sanity: the FIFO is dirty, no stop()");
+
+        // The next engine, same JVM, same static FIFO: must start.
+        DebeziumChangeEventCapture fresh = new DebeziumChangeEventCapture();
+        fresh.setup(skipReplicaStart(), new SourceRecordParserService(), false);
+
+        assertFalse(DebeziumOffsetManagement.hasUnwrittenBatches(),
+                "the dead engine's leftovers must be abandoned: nobody can acknowledge them, and "
+                        + "left in place they refuse every later engine in the process");
+        assertEquals(0, DebeziumOffsetManagement.outstandingCount());
+        assertEquals(0, sizeOf("groupToUnit"), "no unwritten group may be tracked");
+        assertEquals(0, sizeOf("completedUnits"), "nothing may stay parked");
+        assertSame(fresh, activeEngine(), "the engine that started is now the process's engine");
+
+        // And the new engine's first unit is the FIFO head, acknowledged at once.
+        RecordingCommitter committer = new RecordingCommitter();
+        List<ClickHouseStruct> first = unit(committer);
+        DebeziumOffsetManagement.registerHandoff(first, Collections.singletonList(first));
+        assertTrue(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(first),
+                "the new engine's first written unit must not be parked behind the dead engine's ghost");
+        assertEquals(1, committer.processed.size());
+        assertEquals(1, committer.batchesFinished);
+        assertFalse(DebeziumOffsetManagement.hasUnwrittenBatches());
+    }
+
+    /**
+     * The invariant kept: a new engine never parks behind a LIVE engine's
+     * units. While the previous engine's pool is running it can still write
+     * and acknowledge what it handed off, so a second engine on the same FIFO
+     * is refused, loudly, and the live engine's units are left untouched;
+     * {@code stop()} on the live engine is what clears the way.
+     */
+    @Test
+    @DisplayName("setup() still refuses a second engine while the previous engine is alive with unacknowledged batches")
+    public void liveEngineStillRefusesASecondEngine() throws Exception {
+        DebeziumChangeEventCapture.stopDrainTimeoutMs = 300;
+        DebeziumChangeEventCapture live = new DebeziumChangeEventCapture();
+        ClickHouseBatchExecutor livePool = new ClickHouseBatchExecutor(2, FACTORY);
+        wire(live, livePool, 2);
+        setActiveEngine(live);
+        assertTrue(live.isAlive(), "sanity: a running pool and event executor make the engine alive");
+
+        List<ClickHouseStruct> inFlight = unit(new RecordingCommitter());
+        DebeziumOffsetManagement.registerHandoff(inFlight, Collections.singletonList(inFlight));
+
         IllegalStateException ex = assertThrows(IllegalStateException.class,
-                () -> new DebeziumChangeEventCapture().setup(new Properties(), null, false),
-                "a new engine must not be started on top of unacknowledged units");
+                () -> new DebeziumChangeEventCapture().setup(skipReplicaStart(), null, false),
+                "a new engine must not be started on top of a live engine's unacknowledged units");
         assertTrue(ex.getMessage().contains("unacknowledged"),
                 "the refusal must say why: " + ex.getMessage());
+        assertTrue(DebeziumOffsetManagement.hasUnwrittenBatches(),
+                "the live engine's unit must be left for its own pool to write and acknowledge");
+        assertEquals(1, DebeziumOffsetManagement.outstandingCount());
+        assertSame(live, activeEngine(), "a refused engine must not take over as the process's engine");
+
+        // stop() on the live engine abandons its leftovers and releases the slot.
+        live.stop();
+        assertNull(activeEngine(), "stop() must clear the process's engine");
+        assertFalse(live.isAlive());
+        new DebeziumChangeEventCapture().setup(skipReplicaStart(), null, false);
+        assertFalse(DebeziumOffsetManagement.hasUnwrittenBatches());
     }
 }

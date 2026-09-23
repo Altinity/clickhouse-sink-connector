@@ -46,8 +46,11 @@ hash routing (spec 03.03) and is deleted, not amended (see §3.5).
     iff the group's unit was acknowledged during this call.
   - `boolean hasUnwrittenBatches()` — `!outstandingSequences.isEmpty()`.
   - `int outstandingCount()` — size of the outstanding set.
-  - `int reset()` — abandons every outstanding unit (§3.8); called only from
-    `DebeziumChangeEventCapture.stop()` after the pool has terminated.
+  - `int reset()` — abandons every outstanding unit (§3.8); called from
+    `DebeziumChangeEventCapture.stop()` after the pool has terminated, and from
+    `DebeziumChangeEventCapture.setup()` when the units it finds belong to a
+    previous engine that terminated without `stop()` (`activeEngine` /
+    `isAlive()`).
   - `acknowledgeRecords(List<ClickHouseStruct>)` — `markProcessed` for every
     record in list order, `markBatchFinished()` at the terminal record, all
     inside `OFFSET_COMMIT_LOCK` (spec 09.02).
@@ -203,13 +206,38 @@ Contract:
    A unit that was written but parked is abandoned too: its rows are in
    ClickHouse and will be redelivered; the redelivery-stable versioning (spec
    02.04) makes the second write idempotent.
-3. `setup()` refuses to start a new engine while `hasUnwrittenBatches()`
-   (`IllegalStateException` naming the count): a restart path that skipped
-   `stop()` must fail loudly rather than start a connector that can never
-   acknowledge an offset.
+3. `setup()` never starts a new engine on top of a LIVE engine's units.
+   `DebeziumChangeEventCapture` keeps `private static volatile
+   DebeziumChangeEventCapture activeEngine` — set at the end of `setup()`,
+   cleared by that instance's `stop()` — and `isAlive()`: its worker pool
+   exists and is not terminated AND its Debezium event executor is not shut
+   down (the two things `stop()` tears down; single-threaded mode has no pool
+   and hands nothing off, so it is never alive here) AND at least one of its
+   scheduled workers has not terminated — a pool whose every worker died on a
+   FATAL rethrow (spec 03.01 §3.3) can never write or acknowledge a unit
+   again and counts as dead even though the pool object was never shut
+   down. When
+   `hasUnwrittenBatches()` at the top of `setup()`:
+   - `activeEngine != null && activeEngine != this && activeEngine.isAlive()`:
+     refuse (`IllegalStateException` naming the count). The live engine's pool
+     can still write and acknowledge those units; a second engine would park
+     behind them forever. `stop()` on the live engine is what clears the way.
+   - otherwise (no recorded engine, or the recorded engine is dead): the units
+     belong to an engine that terminated WITHOUT `stop()` — its pool taken
+     down by a FATAL worker, a test that never stopped its engine — and nobody
+     can ever acknowledge them. `setup()` logs at WARN ("previous engine in
+     this process terminated without stop(); abandoning N handed-off
+     batch(es) …") and calls `reset()` exactly as `stop()` step 5 does, so
+     this engine starts from a quiescent FIFO. Everything abandoned was never
+     acknowledged (item 2), so this is redelivery, never loss. Before this
+     rule a dead engine's leftovers refused every later engine in the process:
+     in CI one unrepresentable value (spec 10.01 §3.1) failed one Postgres IT
+     and then, through this refusal, 29 unrelated MySQL ITs in the same JVM.
 4. The engine's own completion-callback retry (`setupDebeziumEventCapture` on
    the same instance, spec 10.04 §3.5) does NOT reset: its pool is still alive
-   and will finish the outstanding units.
+   and will finish the outstanding units. (It does not pass through `setup()`
+   at all; `activeEngine != this` keeps the same-instance case out of the
+   refusal in any event.)
 
 Machine-checked as the `restart` event of `OffsetFifo.lean`:
 `restart_quiescent`, `acked_never_rolled_back`, `abandoned_not_acked`, the
@@ -267,9 +295,15 @@ would let a later batch commit an offset past rows that never reached a queue.
   quiescent only after the whole unit is acknowledged.
 - `EngineRestartFifoResetTest` — §3.8: `stop()` abandons a never-written unit and
   the next engine's heartbeat commits / first unit is acknowledged with nothing
-  parked; nothing outstanding after `stop()`; engine closed before the pool;
-  in-flight work drained before the pool stops; `setup()` refuses while a unit
-  is outstanding.
+  parked (`stopThenStartNewInstanceIsNotPoisoned`); nothing outstanding after
+  `stop()`; engine closed before the pool; in-flight work drained before the
+  pool stops; `deadEngineWithoutStopIsAbandonedNotPoisoning` — the recorded
+  engine's pool terminated without `stop()`, FIFO dirty: a second engine's
+  `setup()` succeeds, the FIFO is empty afterwards and its first unit is
+  acknowledged at once; `liveEngineStillRefusesASecondEngine` — the recorded
+  engine alive with a dirty FIFO: `setup()` of a second instance throws the
+  `IllegalStateException`, the live engine's unit is untouched, and after its
+  `stop()` (which clears `activeEngine`) a new engine starts.
 - `Replication.OffsetFifo` — `commit_never_passes_outstanding`,
   `acked_downward_closed`, `commitPoint_acked`, `outstanding_ge_commitPoint`,
   `write_at_most_once`, `written_batch_not_reexecuted`,
