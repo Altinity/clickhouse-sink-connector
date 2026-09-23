@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ScheduledExecutorService;
@@ -69,9 +70,10 @@ import static com.altinity.clickhouse.debezium.embedded.cdc.PrimaryKeyRebuild.qL
  * DESTRUCTIVE: the next lines only name the source statements that supersede a backfill; nothing is executed here.
  * removes the table (TRUNCATE TABLE / DROP TABLE, or DROP DATABASE) while a
  * backfill is pending {@link #cancelFor cancels} it -- a running copy stops
- * at its next statement boundary and is not re-scheduled -- and drops the
- * retired copy and key map BEFORE the statement runs, so no copy statement
- * can ever resurrect rows the source removed (§3.3.2 step 7); 8. backfills
+ * at its next statement boundary and is not re-scheduled, and the cancel
+ * waits for that boundary -- and drops the retired copy and key map BEFORE
+ * the statement runs, so no copy statement can ever resurrect rows the
+ * source removed (§3.3.2 step 7); 8. backfills
  * of one table run in submission order (§3.3.2 step 8).</p>
  *
  * <p><b>Restart safety.</b> The swap phase records the task -- old key, new
@@ -107,6 +109,15 @@ public final class PrimaryKeyBackfill {
      * overtaken by a later task of the same table).
      */
     static final long FIFO_RECHECK_MS = 10_000L;
+
+    /**
+     * How often a cancel waiting for the in-flight statement of a running
+     * attempt logs that it is still waiting (Spec 06.09 §3.3.2 step 7). The
+     * wait itself is not capped: the superseding TRUNCATE/DROP must run
+     * after the copy statement, and the statement is bounded by ClickHouse's
+     * own limits, not by this runner.
+     */
+    static final long CANCEL_WAIT_LOG_MS = 30_000L;
 
     /** Rows bound per {@code executeBatch} when filling the source key map. */
     static final int SOURCE_BATCH_SIZE = 10000;
@@ -155,6 +166,14 @@ public final class PrimaryKeyBackfill {
         private boolean keyMapLoaded;
         /** Set by {@link PrimaryKeyBackfill#cancelFor}; read by the run loop between statements. */
         private volatile boolean cancelled;
+        /**
+         * The thread running the current attempt and the latch it releases when
+         * that attempt has stopped, or null between attempts; a cancel waits on
+         * the latch so the superseding statement runs after the in-flight copy
+         * statement (Spec 06.09 §3.3.2 step 7).
+         */
+        private volatile Thread attemptThread;
+        private volatile CountDownLatch attemptDone;
         /** Submission order within one runner (Spec 06.09 §3.3.2 step 8). */
         private long sequence;
 
@@ -265,6 +284,24 @@ public final class PrimaryKeyBackfill {
 
         void cancel() {
             cancelled = true;
+        }
+
+        /**
+         * Marks an attempt as running on the calling thread. Published BEFORE
+         * the attempt reads {@link #cancelled()}, so a cancel that sees no
+         * running attempt is guaranteed to be seen by the attempt's own check
+         * (both fields are volatile), and a cancel that sees one waits for it.
+         */
+        void attemptStarted(CountDownLatch done) {
+            attemptThread = Thread.currentThread();
+            attemptDone = done;
+        }
+
+        /** Clears the running attempt and releases every cancel waiting for it. */
+        void attemptFinished(CountDownLatch done) {
+            attemptThread = null;
+            attemptDone = null;
+            done.countDown();
         }
 
         /** Identity of the pending work: one backfill per retired table. */
@@ -588,7 +625,9 @@ public final class PrimaryKeyBackfill {
      * to run (or is suppressed by {@code disable.drop.truncate}, in which case
      * the operator keeps the rows already in the table, not the retired ones):
      * every queued task of the table is removed, a running one stops at its
-     * next statement boundary and is not re-scheduled, and on {@code ch} --
+     * next statement boundary and is not re-scheduled -- this method waits
+     * for that boundary, so the statement about to run never overtakes the
+     * in-flight copy statement -- and on {@code ch} --
      * the caller's connection, so the drops precede the statement -- the
      * retired table(s) and key map(s) are dropped, including any marker-bearing
      * scratch table of that table found in {@code system.tables} (a pending
@@ -628,8 +667,12 @@ public final class PrimaryKeyBackfill {
             }
             // DESTRUCTIVE: a log line naming the source statement that superseded the backfill; nothing runs here.
             log.warn("Primary-key backfill of {}.{} from {}.{} cancelled: superseded by TRUNCATE/DROP TABLE of the table "
-                    + "(Spec 06.09 §3.3.2 step 7); a running copy stops at its next statement and is not re-scheduled",
-                    task.database(), task.table(), task.database(), task.retired());
+                    + "(Spec 06.09 §3.3.2 step 7); a running copy stops at its next statement and is not re-scheduled, "
+                    + "and the superseding statement waits for it", task.database(), task.table(), task.database(),
+                    task.retired());
+        }
+        for (Task task : victims) {
+            awaitRunningAttempt(task);
         }
         Set<String> dropped = new LinkedHashSet<>();
         for (Task task : victims) {
@@ -646,6 +689,44 @@ public final class PrimaryKeyBackfill {
                     dropped, SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE);
         }
         return victims.size();
+    }
+
+    /**
+     * Blocks until the running attempt of a cancelled {@code task}, if any,
+     * has stopped -- i.e. its in-flight statement has returned and its next
+     * checkpoint threw -- so the caller's TRUNCATE/DROP runs AFTER the last
+     * copy statement (Spec 06.09 §3.3.2 step 7). ClickHouse does not order
+     * them itself: {@code TRUNCATE TABLE} of a MergeTree table takes no
+     * exclusive table lock, so a truncate issued while the copy's
+     * {@code INSERT ... SELECT} is executing returns at once and the copied
+     * rows land after it. Uncapped by design (the statement is bounded by
+     * ClickHouse's own limits); logs every {@link #CANCEL_WAIT_LOG_MS}. A
+     * cancel issued from the attempt's own thread cannot wait for itself and
+     * does not. An interrupt while waiting fails loudly: the superseding
+     * statement must not run ahead of the copy.
+     */
+    private static void awaitRunningAttempt(Task task) {
+        CountDownLatch done = task.attemptDone;
+        Thread runner = task.attemptThread;
+        if (done == null || runner == Thread.currentThread()) {
+            return;
+        }
+        long waitedMs = 0;
+        try {
+            while (!done.await(CANCEL_WAIT_LOG_MS, TimeUnit.MILLISECONDS)) {
+                waitedMs += CANCEL_WAIT_LOG_MS;
+                log.warn("Primary-key backfill of {}.{} from {}.{}: the superseding TRUNCATE/DROP has waited {} s for "
+                                + "the in-flight copy statement of the cancelled backfill to return; it runs after it "
+                                + "(Spec 06.09 §3.3.2 step 7)", task.database(), task.table(), task.database(),
+                        task.retired(), waitedMs / 1000);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BackfillFailure("cancel (wait for the in-flight copy statement)", null, "interrupted while "
+                    + "waiting for the in-flight copy statement of " + task.database() + "." + task.table() + " from "
+                    + task.database() + "." + task.retired() + "; the superseding statement must not run before it "
+                    + "(Spec 06.09 §3.3.2 step 7)", e);
+        }
     }
 
     /** Drops one rebuild scratch table of the cancelled backfill(s), once. */
@@ -711,6 +792,19 @@ public final class PrimaryKeyBackfill {
      * tests can drive attempts directly.
      */
     void attempt(Task task) {
+        // Published before the cancelled check below: a cancel that does not
+        // see this attempt is then seen by the check, and one that does waits
+        // for attemptFinished (Spec 06.09 §3.3.2 step 7).
+        CountDownLatch done = new CountDownLatch(1);
+        task.attemptStarted(done);
+        try {
+            attemptOnce(task);
+        } finally {
+            task.attemptFinished(done);
+        }
+    }
+
+    private void attemptOnce(Task task) {
         queued.remove(task.key());
         if (task.cancelled()) {
             // DESTRUCTIVE: a log line naming the source statement that superseded the backfill; nothing runs here.

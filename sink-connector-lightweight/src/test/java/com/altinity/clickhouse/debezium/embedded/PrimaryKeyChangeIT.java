@@ -467,9 +467,10 @@ public class PrimaryKeyChangeIT {
             // DESTRUCTIVE: the source's own statement, on the test's MySQL container only.
             execute(s.mysql, "TRUNCATE TABLE " + BIG_TABLE);
 
-            // The cancel drops the retired copy before the truncate runs on
-            // ClickHouse; the truncate then waits for a copy statement that was
-            // in flight and empties the table.
+            // The cancel waits for a copy statement that was in flight (a
+            // MergeTree TRUNCATE takes no exclusive lock, so ClickHouse would
+            // not), drops the retired copy, and only then does the truncate run
+            // on ClickHouse and empty the table.
             awaitBackfillComplete(s.ch, BIG_TABLE, SLOW_BACKFILL_TIMEOUT_MS);
             // DESTRUCTIVE: a log label naming the source statement this test issued above.
             awaitLiveCount(s.ch, BIG_TABLE, 0, SLOW_BACKFILL_TIMEOUT_MS, "the TRUNCATE of " + BIG_TABLE);

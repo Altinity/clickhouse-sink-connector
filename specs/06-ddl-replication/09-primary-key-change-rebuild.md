@@ -325,13 +325,28 @@ row twice collapses to one (`PkRebuild.lean`: `backfill_never_shadows_newer`,
    applied — a TRUNCATE that ran first and a backfill statement that
    followed would otherwise resurrect truncated rows. A backfill whose
    retired table has vanished under it (cancelled) logs that and stops. A
-   copy statement already executing on ClickHouse cannot be interrupted;
-   the TRUNCATE then waits for it behind the table's exclusive lock
-   (`lock_acquire_timeout`) and runs after it, so the truncated state is
-   still the final one. The cancel is performed on the DDL thread's
-   connection (`PrimaryKeyBackfill.cancelFor(connection, database, table)`;
-   `cancelAllFor` for `DROP DATABASE`), and the backfill of one table never
-   overtakes an earlier-submitted backfill of the same table.
+   copy statement already executing on ClickHouse cannot be interrupted,
+   and ClickHouse does NOT order the superseding statement behind it: for
+   a MergeTree table `TRUNCATE TABLE` takes no exclusive table lock
+   (`InterpreterDropQuery`, Truncate branch, 24.8: "We don't need any lock
+   for ReplicatedMergeTree and for simple MergeTree"), so a TRUNCATE issued
+   while the copy's `INSERT ... SELECT` is executing returns at once and
+   the copied rows land after it (measured in CI: the truncate returned in
+   2 ms while the copy of 300000 rows was in flight, and all 300000 rows
+   survived it). The cancel therefore does the ordering itself: after
+   marking the task cancelled it **waits** for the running attempt to stop
+   at its next statement boundary — i.e. for the in-flight statement to
+   return — before it drops `R`/`K` and returns to the DDL path, so the
+   superseding statement always executes after the last copy statement
+   and the truncated (or dropped) state is the final one. The wait is not
+   capped (the copy statement is bounded by ClickHouse's own limits, and a
+   capped wait would let the truncate run ahead of the copy); it is logged
+   at WARN every 30 s, and an interrupt while waiting fails the DDL loudly
+   rather than proceeding. A cancel issued from the attempt's own thread
+   cannot wait for itself and does not. The cancel is performed on the DDL
+   thread's connection (`PrimaryKeyBackfill.cancelFor(connection, database,
+   table)`; `cancelAllFor` for `DROP DATABASE`), and the backfill of one
+   table never overtakes an earlier-submitted backfill of the same table.
    Formally: the TRUNCATE is a segment boundary in binlog order (Spec 04.05);
    rows written before it, whether by the writer or by the backfill, belong
    to the segment it clears.
@@ -438,7 +453,7 @@ is unaffected.
 - `PrimaryKeyRebuildTest.backfillRetriesWithBackoff()` — a failing `INSERT` re-schedules the backfill (10 s, 20 s, ... capped at 5 min) and the next attempt re-issues the same statements; nothing is dropped meanwhile.
 - `PrimaryKeyRebuildTest.restartResumesPendingBackfill()` — `resumePending` finds a marker-bearing `T__pk_rebuild_%` table whose companion `T` is keyed by the marker's new key and schedules its backfill; a marker-less scratch table, or one whose companion is still keyed by the old identity, is not resumed.
 - `PrimaryKeyRebuildTest.retiredCopyKeptWhenDropTruncateDisabled()` — `disable.drop.truncate=true`: the backfill completes, nothing is dropped, both names logged.
-- `PrimaryKeyRebuildTest.truncateDuringBackfillCancelsAndDropsRetired()` — §3.3.2 step 7: a `TRUNCATE TABLE T` arriving while `T`'s backfill is queued cancels the task (no copy statement is ever issued) and drops the retired table and the key map before the truncate runs; `dropTableDuringBackfillCancels()` — the same for `DROP TABLE T`; `cancelledBackfillStopsWithoutRescheduling()` — a running copy whose retired table is gone logs and does not re-schedule.
+- `PrimaryKeyRebuildTest.truncateDuringBackfillCancelsAndDropsRetired()` — §3.3.2 step 7: a `TRUNCATE TABLE T` arriving while `T`'s backfill is queued cancels the task (no copy statement is ever issued) and drops the retired table and the key map before the truncate runs; `dropTableDuringBackfillCancels()` — the same for `DROP TABLE T`; `cancelledBackfillStopsWithoutRescheduling()` — a running copy whose retired table is gone logs and does not re-schedule; `cancelWaitsForInFlightCopyStatement()` — a cancel issued from the DDL thread while the copy statement is executing does not return until that statement has (the DDL thread is still blocked 1.5 s later, nothing is dropped meanwhile), then `R` is dropped and the truncate runs, in that order, and the attempt stops at the boundary with no row count, check or retry; a queued task is cancelled without any wait. Pre-fix code returned at once and the truncate ran while the copy was in flight, so on MergeTree (no exclusive lock for TRUNCATE) every copied row landed after the truncate.
 - `PrimaryKeyRebuildTest.secondSwapKeepsPendingRetiredTable()` — §3.3.2 step 8: the second swap's step 1 leaves a marker-bearing pending retired table in place and the two tasks run in submission order.
 - `PrimaryKeyRebuildTest.columnAddedDuringBackfillIsOmittedFromCopy()` — §3.3.2 step 9: a column present on `T` but absent from the retired table is left out of the copy column list.
 - Integration (`PrimaryKeyChangeIT`, backfill session slowed with `clickhouse.jdbc.settings` `max_execution_speed`/`timeout_before_checking_execution_speed=0` so the online window is seconds long): `dmlDuringBackfillIsShadowedByNewerVersions()` (UPDATE / DELETE / INSERT / relocation on rows the backfill has not copied yet, issued while the retired table still exists; final value-level equality), `truncateDuringBackfillLeavesTableEmpty()` (TRUNCATE while the backfill is pending: the table ends empty, the retired copy is gone, no resurrected rows), `secondKeyChangeWhileBackfillPending()` (two key changes back to back; final equality and the second key), `restartDuringBackfillResumesFromMarker()` (engine stopped while the retired table still exists, restarted: the backfill completes and the retired table is dropped), `columnAddedDuringBackfill()` (ADD COLUMN on the source while the backfill runs; final equality including the new column).

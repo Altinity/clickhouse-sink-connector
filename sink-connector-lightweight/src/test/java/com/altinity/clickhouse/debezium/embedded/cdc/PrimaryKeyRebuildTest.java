@@ -25,7 +25,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -1387,6 +1390,91 @@ public class PrimaryKeyRebuildTest {
         assertEquals(Collections.singletonList(0L), hs.scheduler.delays);
         assertTrue(hs.reporter.steps.isEmpty(), hs.reporter.steps.toString());
         assertEquals(0, hs.backfill.pending());
+    }
+
+    @Test
+    // DESTRUCTIVE: statement text recorded by fake connections only; nothing is executed against any database in this test.
+    @DisplayName("A cancel issued from another thread while the copy statement is in flight does not return before that statement has: R is dropped and the truncate runs after the copy, so no copied row lands after the truncate")
+    public void cancelWaitsForInFlightCopyStatement() throws Exception {
+        PrimaryKeyBackfill.Task task = swapped(existingKeyPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE, false, false));
+        FakeDb backfillDb = afterSwap(tColumns(false, false), tColumns(false, false), S, 0, "all");
+        Harness h = new Harness(backfillDb, null, new Properties());
+        FakeDb writer = writerSeeing(task);
+        // The copy statement is "executing on ClickHouse" until the test releases it.
+        CountDownLatch copyStarted = new CountDownLatch(1);
+        CountDownLatch copyReleased = new CountDownLatch(1);
+        List<String> timeline = Collections.synchronizedList(new ArrayList<>());
+        backfillDb.onStatement("INSERT INTO `employees`.`t`", () -> {
+            copyStarted.countDown();
+            try {
+                assertTrue(copyReleased.await(30, TimeUnit.SECONDS), "the test must release the copy statement");
+            } catch (InterruptedException e) {
+                throw new AssertionError(e);
+            }
+            timeline.add("copy statement returned");
+        });
+        AtomicReference<Throwable> attemptFailure = new AtomicReference<>();
+        Thread attempt = new Thread(() -> {
+            try {
+                h.runOnce(task);
+            } catch (Throwable t) {
+                attemptFailure.set(t);
+            }
+        }, "test-backfill-attempt");
+        attempt.start();
+        assertTrue(copyStarted.await(30, TimeUnit.SECONDS), "the copy statement must have been issued");
+
+        // The DDL path, on its own thread: cancel, then the superseding statement.
+        AtomicReference<Throwable> ddlFailure = new AtomicReference<>();
+        AtomicInteger cancelled = new AtomicInteger(-1);
+        Thread ddl = new Thread(() -> {
+            try {
+                cancelled.set(h.backfill.cancelFor(writer.connection(), "employees", "t"));
+                timeline.add("cancel returned");
+                // DESTRUCTIVE: the source's own replicated statement, recorded by a fake connection; nothing is executed against any database.
+                execute(writer, "TRUNCATE TABLE `employees`.`t`");
+            } catch (Throwable t) {
+                ddlFailure.set(t);
+            }
+        }, "test-ddl-thread");
+        ddl.start();
+        // Pre-fix code returned here at once and the truncate ran while the copy was still executing.
+        ddl.join(1_500);
+        assertTrue(ddl.isAlive(), "the cancel must not return while the copy statement is in flight: " + timeline);
+        assertTrue(task.cancelled(), "the task is marked cancelled before the wait");
+        assertTrue(actions(writer).isEmpty(), "nothing is dropped before the copy statement returns: " + actions(writer));
+
+        copyReleased.countDown();
+        ddl.join(30_000);
+        attempt.join(30_000);
+        assertFalse(ddl.isAlive(), "the cancel returns once the copy statement has");
+        assertFalse(attempt.isAlive(), "the attempt stops at its next statement boundary");
+        assertNull(ddlFailure.get(), String.valueOf(ddlFailure.get()));
+        assertNull(attemptFailure.get(), String.valueOf(attemptFailure.get()));
+
+        assertEquals(1, cancelled.get());
+        assertEquals(Arrays.asList("copy statement returned", "cancel returned"), timeline);
+        String insert = "INSERT INTO `employees`.`t` (`id`, `tenant`, `name`, `_version`, `is_deleted`) "
+                + tenantSelect(null);
+        assertEquals(Collections.singletonList(insert), actions(backfillDb),
+                "the attempt stops at the boundary after the in-flight statement: no row count, no check, no drop");
+        // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+        assertEquals(Arrays.asList("DROP TABLE IF EXISTS `employees`.`" + S + "`", "TRUNCATE TABLE `employees`.`t`"),
+                actions(writer), "R is dropped and the truncate runs only after the copy statement returned");
+        assertEquals(Collections.singletonList(0L), h.scheduler.delays, "not re-scheduled");
+        assertTrue(h.reporter.steps.isEmpty(), "a cancel is not a failure: " + h.reporter.steps);
+        assertEquals(0, h.backfill.pending());
+
+        // A task with no attempt running (queued only) is cancelled without any wait.
+        PrimaryKeyBackfill.Task idle = swapped(existingKeyPlan(), clickHouse(ENGINE_FULL, SHOW_CREATE, false, false));
+        Harness hi = new Harness(afterSwap(tColumns(false, false), tColumns(false, false), S, 0, "all"), null,
+                new Properties());
+        assertTrue(hi.backfill.submit(idle));
+        long before = System.nanoTime();
+        assertEquals(1, hi.backfill.cancelFor(writerSeeing(idle).connection(), "employees", "t"));
+        assertTrue(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - before) < 1_000, "no wait for a queued task");
+        hi.scheduler.runNext();
+        assertEquals(0, hi.backfill.pending());
     }
 
     private static PrimaryKeyRebuildPlan backToIdPlan() {
