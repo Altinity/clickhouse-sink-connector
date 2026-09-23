@@ -47,6 +47,12 @@ SETTINGS index_granularity = 8198""",
     "database.serverTimezone": "UTC",
     "clickhouse.datetime.timezone": "UTC",
     "auto.create.tables": "true",
+    # The datatypes suites assert the BOUNDED values on purpose (9999-12-31 ->
+    # 2299-12-31, 1000-01-01 -> 1900-01-01, see tests/datatypes.py); the product
+    # default refuses an out-of-range value loudly (Spec 07.03 / 07.02), which
+    # under the previous retriable classification parked the batch forever and
+    # failed every later test. Opt into saturation for the whole suite.
+    "clamp.out.of.range": "true",
     "ddl.retry": "true",
     "schema.history.internal.store.only.captured.databases.ddl": "true",
 }
