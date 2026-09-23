@@ -19,11 +19,28 @@ to stop the task or retry the batch.
 ## 3. Operational Specification
 
 ### 3.1 Severity Rules
-Classification is by the extracted ClickHouse error code against a fixed
-`FATAL_ERROR_CODES` set. Anything not in that set (including an unextractable
-code) is treated as retriable/unknown so a transient condition is never turned
-into a hard stop.
+Classification is first by exception TYPE — a terminal exception type anywhere
+in the cause chain is FATAL whatever the message says — and then by the
+extracted ClickHouse error code against a fixed `FATAL_ERROR_CODES` set.
+Anything not matched by either rule (including an unextractable code) is
+treated as retriable/unknown so a transient condition is never turned into a
+hard stop.
 
+- **`FATAL`** (`TERMINAL_EXCEPTION_TYPES`, checked BEFORE code extraction) —
+  raised by the connector itself, not by ClickHouse, so no `Code: NNN` is
+  present; code extraction alone filed these under `UNKNOWN` and retried the
+  same batch with backoff forever (the unit stayed outstanding, every DDL drain
+  waited on it, nothing was ever acknowledged again). `classify` walks the
+  exception and every `getCause()` down to the root and returns `FATAL` when
+  any link is an instance of a listed type:
+  - `DebeziumConverter.ValueOutOfRangeException` — the value the source holds
+    cannot be stored under the current ClickHouse column type (the loud-clamp
+    default `clamp.out.of.range=false`, spec 07.03 §3.3). The value and the
+    column type are unchanged on every attempt, so retrying can never succeed:
+    it is FATAL exactly like an unknown table — the worker rethrows with the
+    batch retained and the Debezium thread turns the dead worker into a loud
+    engine stop (spec 03.01 §3.3, spec 10.04). Remedy: widen the column, or set
+    `clamp.out.of.range=true`.
 - **`FATAL`** (`FATAL_ERROR_CODES`) — deterministic; the same batch can never
   succeed without external intervention (config, schema, or privilege change),
   so the task is stopped:
@@ -83,5 +100,6 @@ never re-enters this path (spec 09.01 §3.2).
 - `ClickHouseErrorClassifierTest.testClassifyFatal()` — every code in `FATAL_ERROR_CODES` classifies FATAL (252 and 241 removed).
 - `ClickHouseErrorClassifierTest.testTooManyPartsIsRetriableBackpressure()` — 252 classifies RETRIABLE and `isFatal(252)` is false.
 - `ClickHouseErrorClassifierTest.testMemoryLimitExceededIsRetriable()` — 241 classifies RETRIABLE and `isFatal(241)` is false.
+- `ClickHouseErrorClassifierTest.valueOutOfRangeIsFatalRegardlessOfCode()` — `DebeziumConverter.ValueOutOfRangeException` classifies FATAL as the root exception and when wrapped two levels deep, with no error code extractable; a plain `RuntimeException` chain without a code stays UNKNOWN.
 - `WorkerDeathIsLoudTest` — a FATAL-killed worker stops the engine loudly (spec 03.01).
 - `ClickHouseErrorClassifierTest.testClassifyRetriable()` / `testClassifyUnknownAndNull()` / `testIsFatal()` / `testExtractErrorCode()`.

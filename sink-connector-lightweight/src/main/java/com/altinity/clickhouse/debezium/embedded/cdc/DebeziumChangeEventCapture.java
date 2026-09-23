@@ -101,6 +101,56 @@ public class DebeziumChangeEventCapture {
     private ClickHouseBatchExecutor executor;
 
     /**
+     * The engine most recently started in this process by {@link #setup},
+     * cleared by its {@link #stop()} (spec 09.01 section 3.8).
+     * <p>
+     * {@code DebeziumOffsetManagement}'s FIFO is static, so the next
+     * {@code setup()} in the same JVM must know WHOSE unacknowledged units it
+     * finds there: a LIVE predecessor's pool can still write and acknowledge
+     * them, so a second engine is refused (it would park behind them forever);
+     * a predecessor that terminated WITHOUT {@code stop()} -- its pool taken
+     * down by a FATAL worker, a test that never stopped its engine -- can never
+     * acknowledge anything again, so its leftovers are abandoned loudly instead
+     * of refusing every later engine in the process.
+     * </p>
+     */
+    private static volatile DebeziumChangeEventCapture activeEngine;
+
+    /**
+     * Whether this engine can still write and acknowledge what it handed off:
+     * its worker pool exists and has not terminated AND its Debezium event
+     * thread's executor has not been shut down (the two things {@link #stop()}
+     * tears down). Single-threaded mode has no pool and hands nothing off, so
+     * it never counts as alive here.
+     *
+     * @return true while this engine's workers can still finish its units.
+     */
+    @VisibleForTesting
+    boolean isAlive() {
+        ClickHouseBatchExecutor pool = this.executor;
+        if (pool == null || pool.isTerminated()
+                || this.singleThreadDebeziumEventExecutor == null
+                || this.singleThreadDebeziumEventExecutor.isShutdown()) {
+            return false;
+        }
+        // A pool whose every periodic worker has terminated (a FATAL rethrow,
+        // spec 03.01 §3.3) can never write or acknowledge a unit again: it is
+        // dead for the purpose of the FIFO even though the pool object is not
+        // shut down. Without this, a test (or a REST restart) after such a
+        // failure would be refused forever unless it called stop() first.
+        java.util.List<java.util.concurrent.ScheduledFuture<?>> futures = this.workerFutures;
+        if (futures == null || futures.isEmpty()) {
+            return true;
+        }
+        for (java.util.concurrent.ScheduledFuture<?> future : futures) {
+            if (!future.isDone()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Queue to hold records grouped by topic.
      * Records grouped by Topic Name (used in legacy mode)
      */
@@ -623,14 +673,28 @@ public class DebeziumChangeEventCapture {
 
         // A new engine on a FIFO that still holds unacknowledged units would park
         // every one of its own units behind them forever (spec 09.01 §3.8).
-        // stop() abandons them; refuse to start until it has.
+        // Whose units they are decides what to do. A LIVE previous engine's pool
+        // can still write and acknowledge them: stop() abandons them; refuse to
+        // start until it has. A previous engine that terminated WITHOUT stop()
+        // (a FATAL worker took its pool down, a test never stopped its engine)
+        // can never acknowledge anything again: left in place its leftovers
+        // would refuse every later engine in this process, so they are
+        // abandoned here, loudly, exactly as stop() step 5 does.
         if (DebeziumOffsetManagement.hasUnwrittenBatches()) {
-            throw new IllegalStateException(String.format(
-                    "Refusing to start the engine: %d handed-off batch(es) from a previous engine "
-                            + "in this process are still unacknowledged (queued, in flight or "
-                            + "parked). Call stop() first; it abandons them so the next engine "
-                            + "redelivers them from the last committed offset.",
-                    DebeziumOffsetManagement.outstandingCount()));
+            DebeziumChangeEventCapture previous = activeEngine;
+            if (previous != null && previous != this && previous.isAlive()) {
+                throw new IllegalStateException(String.format(
+                        "Refusing to start the engine: %d handed-off batch(es) from a previous engine "
+                                + "in this process are still unacknowledged (queued, in flight or "
+                                + "parked). Call stop() first; it abandons them so the next engine "
+                                + "redelivers them from the last committed offset.",
+                        DebeziumOffsetManagement.outstandingCount()));
+            }
+            int abandoned = DebeziumOffsetManagement.reset();
+            log.warn("setup(): the previous engine in this process terminated without stop(); "
+                    + "abandoning {} handed-off batch(es) so this engine starts from a quiescent "
+                    + "FIFO; their offsets were never committed, so they are redelivered from the "
+                    + "last committed position.", abandoned);
         }
 
         // Check if max queue size was defined by the user.
@@ -693,6 +757,9 @@ public class DebeziumChangeEventCapture {
             log.info(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString() +
                     " variable set to true, Replication is skipped, use sink-connector-client to start replication");
         }
+        // This engine now owns whatever it hands off; the next setup() in this
+        // process asks it (isAlive) before touching the FIFO (spec 09.01 §3.8).
+        activeEngine = this;
     }
 
     /**
@@ -791,6 +858,12 @@ public class DebeziumChangeEventCapture {
                     + "pool terminated and have been abandoned. Their offsets were never "
                     + "committed, so the next start redelivers them from the last committed "
                     + "position.", abandoned);
+        }
+        // 6. This engine no longer owns anything in the FIFO. Only its own
+        //    registration is released: a late stop() of an older instance must
+        //    not un-register the engine that replaced it.
+        if (activeEngine == this) {
+            activeEngine = null;
         }
 
         Metrics.stop();

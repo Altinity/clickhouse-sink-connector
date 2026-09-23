@@ -284,3 +284,11 @@ default. When `enable.time.adjuster` is absent or blank it is set to `false`
   `TimeAdjusterDefaultTest.blankIsForcedToFalse()` — §3.4: absent/blank is
   forced to `false`; `TimeAdjusterDefaultTest.explicitValueWins()` — an
   explicit `true` is left alone; `TimeAdjusterDefaultTest.nullIsTolerated()`.
+- The testflows regression suites (`sink-connector-lightweight/tests/integration`,
+  `datatypes/datetime`) assert the BOUNDED values on purpose (`9999-12-31` ->
+  `2299-12-31`, `1000-01-01` -> `1900-01-01`); they run the connector with
+  `clamp.out.of.range=true` (`helpers/default_config.py` and the `env/*/config.yml`
+  files). The loud default (rule 2) is pinned by the unit tests above; under the
+  previous retriable classification of the refusal (Spec 10.01 before its
+  terminal-exception rule) the refused batch parked forever and every later
+  suite test failed on a timeout.
