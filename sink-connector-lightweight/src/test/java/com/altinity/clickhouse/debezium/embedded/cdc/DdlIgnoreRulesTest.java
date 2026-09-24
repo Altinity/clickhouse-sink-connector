@@ -23,11 +23,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.time.Duration;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
+import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -313,5 +320,106 @@ public class DdlIgnoreRulesTest {
         assertNull(invokeProcess(capture, ddlRecord("db1", "DROP TABLE t", "db1.t"), props));
         assertEquals("DROP TABLE t", capture.getLastIgnoredDDL(),
                 "a streaming DROP is still frozen by disable.drop.truncate");
+    }
+
+    // ------------------------------------------------------------ 06.01 §3.5: an ignored DDL takes no barrier
+    private static final ThreadFactory FACTORY = r -> {
+        Thread t = new Thread(r, "ddl-ignore-rules-test");
+        t.setDaemon(true);
+        return t;
+    };
+
+    /**
+     * A capture with a live writer pool and one batch still queued -- what the
+     * DDL branch finds when a statement arrives while the writers are behind.
+     * Nothing consumes the queue, so a drain here can only end on interrupt.
+     */
+    private static DebeziumChangeEventCapture captureWithQueuedBatch(
+            ClickHouseBatchExecutor executor, LinkedBlockingQueue<List<ClickHouseStruct>> records)
+            throws Exception {
+        DebeziumChangeEventCapture capture = capture();
+        records.put(new ArrayList<>());
+        Field e = DebeziumChangeEventCapture.class.getDeclaredField("executor");
+        e.setAccessible(true);
+        e.set(capture, executor);
+        Field r = DebeziumChangeEventCapture.class.getDeclaredField("records");
+        r.setAccessible(true);
+        r.set(capture, records);
+        return capture;
+    }
+
+    /** The executor's pause flag is package-private in another package. */
+    private static boolean isPaused(ClickHouseBatchExecutor executor) throws Exception {
+        Field f = ClickHouseBatchExecutor.class.getDeclaredField("isPaused");
+        f.setAccessible(true);
+        return f.getBoolean(executor);
+    }
+
+    @Test
+    @DisplayName("a DDL matched by ignore.ddl.regex is skipped without draining the pipeline")
+    public void ignoredDdlDoesNotDrainThePipeline() throws Exception {
+        ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(1, FACTORY);
+        LinkedBlockingQueue<List<ClickHouseStruct>> records = new LinkedBlockingQueue<>();
+        try {
+            DebeziumChangeEventCapture capture = captureWithQueuedBatch(executor, records);
+            Properties props = mysqlProps(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX,
+                    "(?m).*SQL SECURITY DEFINER VIEW.*");
+            String view = "CREATE OR REPLACE ALGORITHM=UNDEFINED DEFINER=`app`@`%` SQL SECURITY DEFINER "
+                    + "VIEW `v_orders` AS SELECT id FROM orders";
+            // Pre-fix the DDL branch drained BEFORE consulting the ignore rules,
+            // so this call waited on the queued batch until interrupted; the
+            // barrier protects the apply, and nothing is applied.
+            Object result = assertTimeoutPreemptively(Duration.ofSeconds(10),
+                    () -> invokeProcess(capture, ddlRecord("db1", view, "db1.v_orders"), props),
+                    "an ignored DDL must not wait for the writers: nothing is applied, so there is "
+                            + "nothing for the barrier to protect");
+            assertNull(result);
+            assertEquals(view, capture.getLastIgnoredDDL());
+            assertEquals(1, records.size(),
+                    "the queued batch is left for the writers; nothing was drained");
+            assertFalse(isPaused(executor),
+                    "the pool must not be paused for a statement that is not applied");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("a DDL that is applied still takes the barrier: with a queued batch it waits, and does not return")
+    public void appliedDdlStillDrainsThePipeline() throws Exception {
+        ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(1, FACTORY);
+        LinkedBlockingQueue<List<ClickHouseStruct>> records = new LinkedBlockingQueue<>();
+        AtomicReference<Throwable> outcome = new AtomicReference<>();
+        Thread worker = null;
+        try {
+            DebeziumChangeEventCapture capture = captureWithQueuedBatch(executor, records);
+            String alter = "ALTER TABLE orders ADD COLUMN note VARCHAR(20)";
+            worker = new Thread(() -> {
+                try {
+                    invokeProcess(capture, ddlRecord("db1", alter, "db1.orders"), mysqlProps());
+                    outcome.set(new AssertionError("returned"));
+                } catch (Throwable t) {
+                    outcome.set(t);
+                }
+            }, "ddl-ignore-rules-applied");
+            worker.setDaemon(true);
+            worker.start();
+            worker.join(1_000);
+            assertTrue(worker.isAlive(),
+                    "an applied DDL must wait on the barrier while a batch is queued (the control "
+                            + "for ignoredDdlDoesNotDrainThePipeline: the drain is skipped only for a "
+                            + "statement that is ignored)");
+            assertEquals(1, records.size(), "still queued: the drain is waiting, not discarding");
+            worker.interrupt();
+            worker.join(10_000);
+            assertFalse(worker.isAlive(), "the drain ends on interrupt");
+            assertTrue(outcome.get() instanceof DDLReplicationException,
+                    "an interrupted drain is loud (spec 06.01 section 3.2): " + outcome.get());
+        } finally {
+            if (worker != null) {
+                worker.interrupt();
+            }
+            executor.shutdownNow();
+        }
     }
 }

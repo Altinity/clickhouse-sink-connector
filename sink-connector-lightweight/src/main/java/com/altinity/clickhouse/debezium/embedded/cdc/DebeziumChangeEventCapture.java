@@ -2556,6 +2556,27 @@ public class DebeziumChangeEventCapture {
                 log.debug("Source DB DDL: " + DDL);
 
                 if (DDL != null && !DDL.isEmpty()) {
+                    // A DDL the connector will not apply takes no barrier (spec
+                    // 06.01 section 3.5, spec 06.08 section 3.3). The drain below
+                    // exists so that every row read BEFORE the DDL is written
+                    // under the pre-DDL schema before that schema changes; a
+                    // statement that is ignored changes nothing, so there is
+                    // nothing for the barrier to protect. Deciding this FIRST
+                    // matters: the ignore rules cost regexes and list lookups,
+                    // the drain costs the whole queued backlog -- measured at
+                    // 6 min 28 s for one CREATE OR REPLACE ... SQL SECURITY
+                    // DEFINER VIEW that matched ignore.ddl.regex while 1,356
+                    // batches were queued, long enough for the binlog client's
+                    // keepalive to declare the source connection lost and
+                    // reconnect (a re-delivery), all of it spent deciding to do
+                    // nothing. The record's offset is still committed only once
+                    // the pipeline is quiescent, like any record that produces
+                    // no row (spec 09.04).
+                    if (checkIfDDLNeedsToBeIgnored(DDL, props, sr, new AtomicBoolean(false))) {
+                        log.info("Ignored Source DB DDL (no drain taken: nothing is applied): "
+                                + DDL + " Snapshot:" + isSnapshotDDL(sr));
+                        return null;
+                    }
                     log.info("***** DDL received, Flush all existing records");
                     // pause() stops NEW batches from starting; it does not drain
                     // what is already queued or already running. Records read

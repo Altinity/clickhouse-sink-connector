@@ -38,6 +38,9 @@ therefore not a barrier at all; see §3.1 and the formal counterexample in §3.4
   (spec 06.02).
 - **Liveness check**: `failIfWorkerDied()` (spec 03.01 §3.3), run on every
   poll of the drain through `failIfWorkerDiedDuringDrain()`.
+- **Pre-barrier filter**: `checkIfDDLNeedsToBeIgnored()` (spec 06.08 §3.3),
+  evaluated by the DDL branch of `processEveryChangeRecord()` BEFORE
+  `drainBeforeDDL()`; an ignored statement never reaches the barrier (§3.5).
 - **Progress log interval**: `ddlDrainWarnIntervalMs = 60_000` (60 seconds).
   NOT a timeout — see §3.2.
 - **Formal model**: `formal_specs/lean/Replication/DdlBarrier.lean`.
@@ -141,6 +144,32 @@ Theorems (machine-checked, no `sorry`):
 - `queues_empty_insufficient` — both queue sets empty is still not enough while
   a batch is dequeued and unacknowledged.
 
+### 3.5 An ignored DDL takes no barrier
+The ignore rules of spec 06.08 §3.3 (`checkIfDDLNeedsToBeIgnored()`:
+`disable.ddl=true`, an `ignore.ddl.regex` or bundled-pattern match, a table
+outside the capture lists, snapshot DDL without `enable.snapshot.ddl`) are
+evaluated BEFORE `drainBeforeDDL()`. A statement they reject is logged and
+recorded in `lastIgnoredDDL`, and the DDL branch ends there: no drain, no
+`pause()`, no `awaitQuiescent()`, no translation. Invariant I5 is about rows
+written under the pre-DDL schema before the schema CHANGES; a statement that is
+never applied changes nothing, so there is nothing for the barrier to protect.
+The record's offset is committed exactly like that of any other record without
+a row — only once the pipeline is quiescent (spec 09.04) — so skipping the
+drain moves no durable position past an unwritten batch.
+
+The order matters operationally. The ignore rules cost regex matches and list
+lookups; the drain costs the whole queued backlog. Measured: 6 min 28 s for one
+`CREATE OR REPLACE ... SQL SECURITY DEFINER VIEW` that matched
+`ignore.ddl.regex` while 1,356 batches were queued, during which the blocked
+event thread let the binlog client's keepalive declare the source connection
+lost and reconnect (a re-delivery). Every one of those seconds was spent
+deciding to do nothing; the twenty-two view statements that followed in the
+same minute were then cheap only because the queue had already been emptied.
+
+`disable.drop.truncate` (spec 06.08 §3.5) is NOT part of this pre-barrier
+decision: its flag is computed by the parser, after the drain, and a suppressed
+`DROP TABLE`/`TRUNCATE` is rare.
+
 ---
 
 ## 4. Invariants Preserved
@@ -159,6 +188,16 @@ Theorems (machine-checked, no `sorry`):
   `Replication.DdlBarrier.old_predicate_insufficient`,
   `Replication.DdlBarrier.old_predicate_admits_pending_rows`,
   `Replication.DdlBarrier.queues_empty_insufficient` (Lean, `lake build`).
+- `DdlIgnoreRulesTest.ignoredDdlDoesNotDrainThePipeline` — §3.5: with a live
+  pool and one batch queued that nobody consumes, a statement matching
+  `ignore.ddl.regex` returns at once through `processEveryChangeRecord`, is
+  recorded in `lastIgnoredDDL`, the batch is still queued and the pool was never
+  paused. Fails on the pre-fix code, which drained first and waited until
+  interrupted.
+- `DdlIgnoreRulesTest.appliedDdlStillDrainsThePipeline` — §3.5 control: the
+  same setup with an applied `ALTER TABLE` is still waiting on the barrier
+  after a second, has discarded nothing, and ends only on interrupt with
+  `DDLReplicationException`.
 - `DdlDrainDeadlockTest.testDrainDoesNotDeadlockOnItsOwnPause` — a non-empty
   legacy queue is drained before the pause (regression for #1445).
 - `DdlDrainDeadlockTest.testWriterIsPausedAndQuiescentAfterDrain` — the pool is
