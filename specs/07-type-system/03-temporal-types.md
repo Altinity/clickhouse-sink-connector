@@ -156,15 +156,17 @@ Rule — `DebeziumConverter.RangePolicy`, built per bound column by
 and threaded through `ClickHouseDataTypeMapper.convert` into every converter
 that bounds a value (`TimestampConverter`, `MicroTimestampConverter`,
 `DateConverter`, `ZonedTimestampConverter`, `BigDecimalConverter`):
-1. `clamp.out.of.range=false` (**default**): the converter throws
+1. `clamp.out.of.range=false`: the converter throws
    `DebeziumConverter.ValueOutOfRangeException` naming the column, the source
    value, the ClickHouse type and its bounds, and the setting that would
-   saturate instead. The batch fails and is retried; nothing is written.
-   Remediation is on the ClickHouse side (a wider type — `Date32` for `Date`,
-   `DateTime64` for `DateTime` — or a `String` column) or an explicit
-   operator decision to saturate.
-2. `clamp.out.of.range=true`: the value is saturated to the bound as before,
-   and the saturation is never silent — but it is reported once per column
+   saturate instead. The batch fails and the failure is terminal (spec 10.01
+   §3.1); nothing is written. Remediation is on the ClickHouse side (a wider
+   type — `Date32` for `Date`, `DateTime64` for `DateTime` — or a `String`
+   column) or returning to the default.
+2. `clamp.out.of.range=true` (**default**; a missing configuration means the
+   default, `RangePolicy.of(null, column)` saturates): the value is saturated
+   to the bound as before, and the saturation is never silent — but it is
+   reported once per column
    per minute, never once per row. The first saturation of a
    `(column, ClickHouse type)` logs a WARN naming the column, the source
    value, the stored value and the bounds; every further saturation of that
@@ -178,6 +180,14 @@ that bounds a value (`TimestampConverter`, `MicroTimestampConverter`,
    rotating the 100 MB log every two minutes and the WARN-filtered error log
    every minute, so the deployment's whole log history was gone within a
    quarter of an hour and every other message was buried.
+   Rationale for the default: the `9999-12-31 23:59:59` open-ended sentinel is
+   customary in bitemporal source schemas, and with the strict policy as the
+   default an upgrade stopped replication outright on every deployment holding
+   one — the refusal is terminal for the batch (spec 10.01 §3.1) and for the
+   engine (spec 10.04 §3.5 rule 4) — until an operator found and set the key.
+   A replica that stops by default on a value every earlier release stored is
+   a worse outcome than a reported saturation, so saturation is the default
+   and strictness is the operator's explicit choice.
 3. The pre-existing four-argument converter overloads (no policy) keep the
    saturating behaviour **with** the WARN, for callers that have no
    configuration; every production bind path passes a policy built from the
@@ -187,11 +197,13 @@ that bounds a value (`TimestampConverter`, `MicroTimestampConverter`,
    their documented saturation to the `DateTime64` bounds under either policy
    (ordering is preserved, and there is no source value to lose).
 
-Upgrade note: a deployment whose source holds sentinel dates beyond the
-ClickHouse range will, after upgrading, fail the affected batch instead of
-storing the bound. Set `clamp.out.of.range=true` to restore the previous
-values (now with a WARN per saturated column per minute) until the column type
-is fixed.
+Upgrade note: the default saturates, so a deployment whose source holds
+sentinel dates beyond the ClickHouse range keeps replicating after an upgrade
+and stores the bound as before — now with a WARN per saturated column per
+minute instead of silence. A deployment that would rather stop on such a value
+than store the bound sets `clamp.out.of.range=false` (rule 1); that refusal is
+terminal for the batch and the engine, so set it only once the column types
+are known to hold every source value.
 
 ### 3.4 Years below 100 are not adjusted (`enable.time.adjuster=false`)
 Debezium's `enable.time.adjuster` defaults to `true`: a two-digit year — and,
@@ -270,12 +282,19 @@ default. When `enable.time.adjuster` is absent or blank it is set to `false`
   session zone, set → parsed, garbage → throws) and `columnTimeZone` (parses
   `Nullable(DateTime64(3, 'UTC'))`, `DateTime('Europe/London')`; null for
   `DateTime64(6)` and `String`).
-- `DebeziumConverterRangePolicyTest.defaultPolicyRejectsOutOfRangeDatetimeAtTheMapper()`,
-  `DebeziumConverterRangePolicyTest.defaultPolicyRejectsOutOfRangeDateAtTheMapper()`
-  — §3.3 rule 1 through `ClickHouseDataTypeMapper.convert` with an empty
-  configuration: `DATETIME 9999-12-31 23:59:59` into `DateTime64` and
-  `DATE 9999-12-31` into `Date` throw `ValueOutOfRangeException` (pre-fix
-  code binds `2299-12-31 23:59:59.000` / `2149-06-06`).
+- `DebeziumConverterRangePolicyTest.defaultPolicySaturatesOutOfRangeDatetimeAtTheMapper()`,
+  `DebeziumConverterRangePolicyTest.defaultPolicySaturatesOutOfRangeDateAtTheMapper()`
+  — §3.3 rule 2 as the default, through `ClickHouseDataTypeMapper.convert`
+  with an empty configuration (and `RangePolicy.of(null, column)` with none):
+  `DATETIME 9999-12-31 23:59:59` into `DateTime64` binds
+  `2299-12-31 23:59:59.000` with exactly one WARN, `DATE 9999-12-31` into
+  `Date` binds `2149-06-06` and `DATE 1000-01-01` into `Date32` binds
+  `1900-01-01`. A strict default throws instead, so the tests fail on it.
+- `DebeziumConverterRangePolicyTest.strictSettingRejectsOutOfRangeDatetimeAtTheMapper()`,
+  `DebeziumConverterRangePolicyTest.strictSettingRejectsOutOfRangeDateAtTheMapper()`
+  — §3.3 rule 1 through `ClickHouseDataTypeMapper.convert` with
+  `clamp.out.of.range=false`: the same values throw `ValueOutOfRangeException`
+  naming the setting, and nothing is bound.
 - `DebeziumConverterRangePolicyTest.clampSettingSaturatesAndWarns()` — rule 2:
   `clamp.out.of.range=true` binds the bound and logs a WARN naming the column
   and both values.
@@ -293,9 +312,9 @@ default. When `enable.time.adjuster` is absent or blank it is set to `false`
   WARN).
 - `DebeziumConverterRangePolicyTest.infinityKeepsItsSaturation()` — rule 4.
 - `PreparedStatementFieldMapperOutOfRangeTest.outOfRangeValueNamesDatabaseTableAndColumn()`
-  — end to end through `insertPreparedStatement`: the exception names
-  `db.orders.expires_at`; with `clamp.out.of.range=true` the same row binds
-  the bound.
+  — end to end through `insertPreparedStatement`: by default the row binds
+  the bound; with `clamp.out.of.range=false` the exception names
+  `db.orders.expires_at`.
 - The pre-existing `testTimestampConverterMinRange` / `MaxRange`,
   `testDateConverterMinRange` / `MaxRange`, `testMicroTimestampConverterMin` /
   `Max`, `testZonedTimestampConverter` tests exercise the four-argument
@@ -306,9 +325,10 @@ default. When `enable.time.adjuster` is absent or blank it is set to `false`
   explicit `true` is left alone; `TimeAdjusterDefaultTest.nullIsTolerated()`.
 - The testflows regression suites (`sink-connector-lightweight/tests/integration`,
   `datatypes/datetime`) assert the BOUNDED values on purpose (`9999-12-31` ->
-  `2299-12-31`, `1000-01-01` -> `1900-01-01`); they run the connector with
-  `clamp.out.of.range=true` (`helpers/default_config.py` and the `env/*/config.yml`
-  files). The loud default (rule 2) is pinned by the unit tests above; under the
+  `2299-12-31`, `1000-01-01` -> `1900-01-01`); they run the connector with the
+  default, stated explicitly as `clamp.out.of.range=true` in
+  `helpers/default_config.py` and the `env/*/config.yml` files. The strict
+  setting (rule 1) is pinned by the unit tests above; under the
   previous retriable classification of the refusal (Spec 10.01 before its
   terminal-exception rule) the refused batch parked forever and every later
   suite test failed on a timeout.

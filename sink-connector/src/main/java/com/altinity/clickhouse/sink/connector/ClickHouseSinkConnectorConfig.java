@@ -614,13 +614,14 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE.toString(),
                         Type.BOOLEAN,
-                        false,
+                        true,
                         Importance.HIGH,
-                        "If false (default), a DATE/DATETIME/TIMESTAMP or decimal value outside the "
-                                + "range of the ClickHouse column type fails the batch with an error "
-                                + "naming the column and the value. If true, the value is saturated to "
-                                + "the ClickHouse bound and a WARN naming the column and both values "
-                                + "is logged for every such row.",
+                        "If true (default), a DATE/DATETIME/TIMESTAMP or decimal value outside the "
+                                + "range of the ClickHouse column type is saturated to the ClickHouse "
+                                + "bound and reported at WARN once per column per minute (the rest at "
+                                + "DEBUG, with a count). If false, such a value fails the batch with an "
+                                + "error naming the column and the value; that failure is terminal for "
+                                + "the batch.",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         3,
                         ConfigDef.Width.NONE,

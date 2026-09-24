@@ -38,10 +38,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Spec 07.03 section 3.3: a value outside the ClickHouse type's range is
- * never silently saturated. By default the batch fails with an error naming
- * the column, the value and the bounds; with {@code clamp.out.of.range=true}
- * the value is saturated and a WARN names the column -- once per column per
- * window, the rest counted at DEBUG, never one line per row.
+ * never silently saturated. By default ({@code clamp.out.of.range=true}) the
+ * value is saturated and a WARN names the column -- once per column per
+ * window, the rest counted at DEBUG, never one line per row; with
+ * {@code clamp.out.of.range=false} the batch fails with an error naming the
+ * column, the value and the bounds.
  *
  * <p>Before this, {@code DATETIME '9999-12-31 23:59:59'} -- the customary
  * open-ended sentinel -- was written as {@code 2299-12-31 23:59:59} with no
@@ -63,12 +64,16 @@ public class DebeziumConverterRangePolicyTest {
         return digits.toInstant(ZoneOffset.UTC).toEpochMilli();
     }
 
+    /** A configuration that sets {@code clamp.out.of.range} explicitly. */
     private static ClickHouseSinkConnectorConfig config(boolean clamp) {
         Map<String, String> props = new HashMap<>();
-        if (clamp) {
-            props.put("clamp.out.of.range", "true");
-        }
+        props.put("clamp.out.of.range", Boolean.toString(clamp));
         return new ClickHouseSinkConnectorConfig(props);
+    }
+
+    /** A configuration that leaves {@code clamp.out.of.range} to its default. */
+    private static ClickHouseSinkConnectorConfig defaultConfig() {
+        return new ClickHouseSinkConnectorConfig(new HashMap<>());
     }
 
     /** Records whatever the mapper binds (setString / setDate / setObject). */
@@ -114,12 +119,58 @@ public class DebeziumConverterRangePolicyTest {
 
     /**
      * The production default through the mapper: the MySQL sentinel
-     * 9999-12-31 23:59:59 does not fit DateTime64 and must fail the batch,
-     * not become 2299-12-31 23:59:59.
+     * 9999-12-31 23:59:59 does not fit DateTime64 and is stored as the bound,
+     * 2299-12-31 23:59:59 -- the value every earlier release stored, so an
+     * upgrade never stops replication on it -- with a WARN, never silently.
+     * An absent configuration means the default too.
      */
     @Test
-    @DisplayName("Default: an out-of-range DATETIME fails at the mapper instead of being saturated")
-    public void defaultPolicyRejectsOutOfRangeDatetimeAtTheMapper() throws Exception {
+    @DisplayName("Default: an out-of-range DATETIME is saturated at the mapper and reported at WARN")
+    public void defaultPolicySaturatesOutOfRangeDatetimeAtTheMapper() throws Exception {
+        CapturingAppender appender = capture();
+        try {
+            LocalDateTime sentinel = LocalDateTime.of(9999, 12, 31, 23, 59, 59);
+            assertTrue(DebeziumConverter.RangePolicy.of(defaultConfig(), "db.orders.expires_at").clamps(),
+                    "an empty configuration saturates");
+            assertTrue(DebeziumConverter.RangePolicy.of(null, "db.orders.expires_at").clamps(),
+                    "no configuration at all saturates");
+
+            assertEquals("2299-12-31 23:59:59.000",
+                    bindDatetime(defaultConfig(), sentinel, ClickHouseDataType.DateTime64),
+                    "the default stores the DateTime64 bound");
+            List<String> warnings = appender.warnings();
+            assertEquals(1, warnings.size(), "the saturation is reported: " + warnings);
+            assertTrue(warnings.get(0).contains("9999-12-31T23:59:59Z"), warnings.get(0));
+            assertTrue(warnings.get(0).contains("2299-12-31 23:59:59"), warnings.get(0));
+
+            // In range: unchanged.
+            assertEquals("2024-05-06 07:08:09.000",
+                    bindDatetime(defaultConfig(), LocalDateTime.of(2024, 5, 6, 7, 8, 9), ClickHouseDataType.DateTime64));
+        } finally {
+            release(appender);
+        }
+    }
+
+    @Test
+    @DisplayName("Default: an out-of-range DATE is saturated at the mapper")
+    public void defaultPolicySaturatesOutOfRangeDateAtTheMapper() throws Exception {
+        assertEquals(java.sql.Date.valueOf("2149-06-06"),
+                bindDate(defaultConfig(), LocalDate.of(9999, 12, 31), ClickHouseDataType.Date),
+                "9999-12-31 exceeds Date (max 2149-06-06) and is stored as the bound");
+        assertEquals(java.sql.Date.valueOf("1900-01-01"),
+                bindDate(defaultConfig(), LocalDate.of(1000, 1, 1), ClickHouseDataType.Date32),
+                "1000-01-01 precedes Date32 (min 1900-01-01) and is stored as the bound");
+        assertEquals(java.sql.Date.valueOf("2024-05-06"),
+                bindDate(defaultConfig(), LocalDate.of(2024, 5, 6), ClickHouseDataType.Date));
+    }
+
+    /**
+     * Rule 1, opted into: with clamp.out.of.range=false the sentinel must fail
+     * the batch, not become 2299-12-31 23:59:59.
+     */
+    @Test
+    @DisplayName("clamp.out.of.range=false: an out-of-range DATETIME fails at the mapper instead of being saturated")
+    public void strictSettingRejectsOutOfRangeDatetimeAtTheMapper() throws Exception {
         LocalDateTime sentinel = LocalDateTime.of(9999, 12, 31, 23, 59, 59);
         AtomicReference<Object> bound = new AtomicReference<>();
 
@@ -139,8 +190,8 @@ public class DebeziumConverterRangePolicyTest {
     }
 
     @Test
-    @DisplayName("Default: an out-of-range DATE fails at the mapper instead of being saturated")
-    public void defaultPolicyRejectsOutOfRangeDateAtTheMapper() throws Exception {
+    @DisplayName("clamp.out.of.range=false: an out-of-range DATE fails at the mapper instead of being saturated")
+    public void strictSettingRejectsOutOfRangeDateAtTheMapper() throws Exception {
         assertThrows(RuntimeException.class,
                 () -> bindDate(config(false), LocalDate.of(9999, 12, 31), ClickHouseDataType.Date),
                 "9999-12-31 exceeds Date (max 2149-06-06)");
@@ -232,7 +283,7 @@ public class DebeziumConverterRangePolicyTest {
     @DisplayName("Strict policy names column, value and bounds for every bounded type")
     public void strictPolicyNamesColumnValueAndBounds() {
         DebeziumConverter.RangePolicy strict = DebeziumConverter.RangePolicy.of(config(false), "db.t.c");
-        assertTrue(!strict.clamps(), "the default is strict");
+        assertTrue(!strict.clamps(), "clamp.out.of.range=false is strict");
 
         long farFuture = datetimeMillis(LocalDateTime.of(9999, 12, 31, 23, 59, 59));
         DebeziumConverter.ValueOutOfRangeException dt64 = assertThrows(DebeziumConverter.ValueOutOfRangeException.class,

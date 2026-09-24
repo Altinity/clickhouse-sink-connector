@@ -85,20 +85,20 @@ public class PreparedStatementFieldMapperOutOfRangeTest {
     }
 
     @Test
-    @DisplayName("An out-of-range value fails the batch naming db.table.column; clamp.out.of.range=true saturates")
+    @DisplayName("By default an out-of-range value saturates; clamp.out.of.range=false fails the batch naming db.table.column")
     public void outOfRangeValueNamesDatabaseTableAndColumn() throws Exception {
+        Map<Integer, Object> bound = bind(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        assertEquals("2299-12-31 23:59:59.000", bound.get(2),
+                "the default saturates 9999-12-31 23:59:59 to the DateTime64 bound");
+
+        Map<String, String> props = new HashMap<>();
+        props.put("clamp.out.of.range", "false");
         DebeziumConverter.ValueOutOfRangeException e = assertThrows(
                 DebeziumConverter.ValueOutOfRangeException.class,
-                () -> bind(new ClickHouseSinkConnectorConfig(new HashMap<>())),
-                "the default must reject 9999-12-31 23:59:59 for a DateTime64 column");
+                () -> bind(new ClickHouseSinkConnectorConfig(props)),
+                "with the setting off, the same row must be refused");
         assertTrue(e.getMessage().contains("db.orders.expires_at"),
                 "the operator must be told which column: " + e.getMessage());
         assertTrue(e.getMessage().contains("9999-12-31T23:59:59Z"), e.getMessage());
-
-        Map<String, String> props = new HashMap<>();
-        props.put("clamp.out.of.range", "true");
-        Map<Integer, Object> bound = bind(new ClickHouseSinkConnectorConfig(props));
-        assertEquals("2299-12-31 23:59:59.000", bound.get(2),
-                "with the setting on, the same row saturates to the DateTime64 bound");
     }
 }

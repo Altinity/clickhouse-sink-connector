@@ -87,16 +87,16 @@ public class ClickHouseErrorClassifier {
      *
      * <p>{@link DebeziumConverter.ValueOutOfRangeException}: the value the
      * source holds cannot be stored under the current ClickHouse column type
-     * (the loud-clamp default, {@code clamp.out.of.range=false}, spec 07.03
-     * section 3.3). Retrying the same batch can never succeed -- the value and
+     * (under {@code clamp.out.of.range=false}, spec 07.03 section 3.3).
+     * Retrying the same batch can never succeed -- the value and
      * the column type are both unchanged on every attempt -- so it is FATAL
      * exactly like an unknown table: the worker rethrows with the batch
      * retained (no offset can pass its rows) and the Debezium thread turns the
      * dead worker into a loud engine stop (spec 03.01 section 3.3, spec 10.04).
      * Before this rule the batch was retried with backoff indefinitely: the
      * unit stayed outstanding, every DDL drain waited on it, and nothing was
-     * ever acknowledged again. Remedy: widen the column, or set
-     * {@code clamp.out.of.range=true}.</p>
+     * ever acknowledged again. Remedy: widen the column, or return to the
+     * default {@code clamp.out.of.range=true}.</p>
      *
      * <p>Matched against the exception and every {@code getCause()} down to
      * the root, BEFORE any error code is extracted (spec 10.01 section 3.1).</p>
