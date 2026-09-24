@@ -1070,6 +1070,8 @@ public final class PrimaryKeyBackfill {
             checkpoint(task, step);
             exec(ch, insert, step, task);
             checkpoint(task, step + " row count");
+            // I14-scan-allowed: Spec 06.09 section 3.3.2 count reconciliation of a primary-key rebuild,
+            // run on the backfill thread (never the event thread) and cancellable.
             long rows = count(ch, "SELECT count() FROM (" + select + ")", step + " row count", task);
             total += rows;
             log.info("Primary-key backfill of {}.{}: copied {} live rows{} from {}.{}", db, table, rows,
@@ -1289,6 +1291,8 @@ public final class PrimaryKeyBackfill {
                 rebuiltColumns.add(nullProbe);
             }
         }
+        // I14-scan-allowed: Spec 06.09 section 3.3.2 leftover check of a primary-key rebuild, run on the
+        // backfill thread (never the event thread) and cancellable.
         return "SELECT count() FROM (" + retired + ") AS r LEFT JOIN (SELECT DISTINCT " + qList(rebuiltColumns)
                 + " FROM " + q(db) + "." + q(task.table()) + ") AS t ON " + join + " WHERE t." + q(nullProbe)
                 + " IS NULL SETTINGS join_use_nulls = 1";

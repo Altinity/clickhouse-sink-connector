@@ -26,10 +26,15 @@ upgrade, and the new version's assignments must continue ABOVE the last version
 the old one wrote. An upgrade is a restart, and 2.11.0 establishes the "continue
 above" clause explicitly rather than assuming it from the source clock: at engine
 start the version floor is seeded from a durable high-water mark of the versions
-already handed to the writers (spec 02.02 §3.5), so every post-upgrade first
+already handed to the writers (spec 02.02 §3.5) — so every post-upgrade first
 delivery is versioned strictly above every pre-upgrade row — regardless of
 replication lag, of the clock skew between MySQL and the connector host, and of
-which timestamp the previous release anchored on. Re-delivered events
+which timestamp the previous release anchored on. On the very first start,
+where no mark exists yet, the floor is the connector clock plus a head-room
+(spec 02.02 §3.5 (2)); that seed carries the same guarantee **under one stated
+precondition** — the connector host's clock is not more than the head-room
+behind the clock that stamped the previous release's versions (§6.1) — and no
+target table is read to establish it (Invariant I14). Re-delivered events
 (at-least-once) are versioned above the copies already stored and carry the same
 data (spec 02.04 §3.2). Formalised: `upgrade_safe` proves that a stream whose
 first `n` ordinals use the OLD version scheme and the rest use the NEW scheme
@@ -107,7 +112,7 @@ upgrade-safe.
 - `#print axioms` on the above lists only `[propext, Quot.sound]` (no `sorryAx`).
 - `SequenceSeedOverflowTest` — the unseeded carry arithmetic of §6.1, preserved deliberately.
 - `DebeziumChangeEventCaptureTest.newerEventAfterSeededRestartRanksAboveOlderPreRestartEvent()` — the seeded restart on a lagging source (§6.1, §6.2); `DebeziumChangeEventCaptureTest.newerEventOneMillisecondAfterSeededRestartRanksAboveOlderPreRestartEvent()` — the seeded restart inside the 1 ms carry window (§6.1).
-- `VersionHighWaterMarkTest.scanSeedsFromTheHighestPlausibleTargetVersion()` — the first start after an upgrade, with no mark row, seeds from `max(_version)` of the targets in either version domain (§6.1).
+- `VersionHighWaterMarkTest.seedFloorWithoutAMarkUsesTheClockAndReadsNoTargetTable()` — the first start after an upgrade, with no mark row, seeds from the connector clock plus head-room and reads no target table (§6.1, Invariant I14); `Replication.VersionFloor.clock_restart_boundary` — that seed continues above every pre-upgrade version.
 - `VersionFallbackWithoutGtidTest.bindMustNotWriteUint64Max()`, `VersionFallbackWithoutGtidTest.calculateVersionMustNotFallThroughToSentinel()` — 2.11.0 no longer writes the sentinel of §6.3.
 - `SnowflakeIdSnapshotWarningTest.rawGtidVersioningWithDataSnapshotIsLoud()`, `SnowflakeIdSnapshotWarningTest.noDataSnapshotModesAreSilent()` — §3.2.1: the combination is detected (including the unset default) and logged at ERROR; no-data modes and `snowflake.id=true` are silent.
 - `ClickHouseStructTest.taggedGtidIsParsed()` — §3.2.1, tagged GTIDs take the GTID path.
@@ -124,15 +129,14 @@ seed source, and §6.3 the rows no scheme can continue above.
 
 ### 6.1 The restart carry (inherited 2.8.0 behaviour) and the upgrade / downgrade matrix
 
-> **Compatibility constraint (governing rule).** The emitted `_version` domain — `ts_ms × 1_000_000 + counter` with the 2.8.0 seeds — is the contract shared with 2.8.0, 2.9.1 and 2.10.x. It MUST NOT change: a version written by any of those releases must rank consistently against one written by 2.11.0 in BOTH directions (upgrade and downgrade). The restart carry described here is therefore inherited 2.8.0 behaviour that is preserved deliberately; any improvement is confined to WHERE the restart floor starts (seeding the anchor from the target's `max(_version)` or a persisted last-emitted version) and must ship with an explicit upgrade/downgrade matrix against 2.8.0, 2.9.1 and 2.10.x.
+> **Compatibility constraint (governing rule).** The emitted `_version` domain — `ts_ms × 1_000_000 + counter` with the 2.8.0 seeds — is the contract shared with 2.8.0, 2.9.1 and 2.10.x. It MUST NOT change: a version written by any of those releases must rank consistently against one written by 2.11.0 in BOTH directions (upgrade and downgrade). The restart carry described here is therefore inherited 2.8.0 behaviour that is preserved deliberately; any improvement is confined to WHERE the restart floor starts (a persisted last-emitted version — or, on a start that has none, the connector clock; never a scan of the targets, Invariant I14 / spec 10.06) and must ship with an explicit upgrade/downgrade matrix against 2.8.0, 2.9.1 and 2.10.x.
 
 **What 2.11.0 does and does not change in the `_version` domain.** The formula
 (`effectiveTs * 1_000_000 + counter`), the 2.8.0 seeds (`SEQUENCE_START_INITIAL`
 = 500m, `SEQUENCE_START` = 1e9) and the snowflake bit layout
 (`SnowFlakeId.generate(ts, gtid)`: 41 timestamp bits above a 22-bit transaction
 number) are byte-identical to 2.8.0, 2.9.1 and 2.10.x — `SnowFlakeId` only gained
-public constants (`SNOWFLAKE_EPOCH`, `GTID_FIELD_BITS`) so the startup seed can
-decode stored values. Only what feeds the formula changed: the floor is seeded
+public constants (`SNOWFLAKE_EPOCH`, `GTID_FIELD_BITS`). Only what feeds the formula changed: the floor is seeded
 across a restart (spec 02.02 §3.5), control records no longer move it (spec 02.02
 §3.2), the high-water position resets on a log basename change (spec 01.02
 §3.1.1), and the GTID path feeds the clamped `effectiveTs` instead of the raw
@@ -151,14 +155,19 @@ the ~0.5 s carry, because the previous run's floor had been pinned to the
 connector clock by heartbeats.
 
 **Upgrade (2.8.0 / 2.9.1 / 2.10.x → 2.11.0).** The first 2.11.0 start finds no
-`replica_version_high_water` row and seeds from `max(_version)` over the target
-tables (sequence-domain and snowflake-domain values are both decoded, spec 02.02
-§3.5 (2)); that maximum is, by definition, at or above every version the old
-release wrote — whichever timestamp it anchored on (envelope time in 2.8.0,
-`source.ts_ms` since #1346, or a heartbeat-pinned connector clock). Every
-post-upgrade first delivery therefore ranks above every pre-upgrade row
-(`Replication.VersionFloor.restart_boundary`). From the second start on, the
-table itself supplies the seed.
+`replica_version_high_water` row and seeds from the connector clock plus
+`CLOCK_SEED_HEADROOM_MS` (5 000 ms; spec 02.02 §3.5 (2)). Every version the old
+release wrote carries a past wall-clock instant in its timestamp field — envelope
+time in 2.8.0, `source.ts_ms` since #1346, or a heartbeat-pinned connector clock
+— plus at most one second of counter carry, so the clock seed is at or above all
+of them (`Replication.VersionFloor.below_clock_seed`) and every post-upgrade
+first delivery ranks above every pre-upgrade row
+(`Replication.VersionFloor.clock_restart_boundary`). The one assumption is that
+the connector host's clock is not more than the head-room behind the source
+host's clock at the moment of the upgrade (NTP keeps them within milliseconds).
+No target table is read for this: the seed is bounded by the mark table alone
+(Invariant I14, spec 10.06). From the second start on, the table itself supplies
+the seed.
 
 **Downgrade (2.11.0 → 2.10.x / 2.9.1 / 2.8.0).** The old release ignores the
 table and starts with the floor at `0`; whether its first rows rank above
@@ -182,15 +191,16 @@ table and starts with the floor at `0`; whether its first rows rank above
   source clock — with the same few-seconds caveat after a recent 2.11.0 restart.
 
 ### 6.2 A first start with no seed source
-§3.1's guarantee needs a seed. It is absent only when there is no
-`replica_version_high_water` row **and** the target scan finds nothing usable:
-`database.include.list` is empty or contains a pattern, the targets carry no
-`_version` column, or every candidate is implausible (spec 02.02 §3.5 (2)). The
-engine then logs at WARN and runs unseeded, i.e. with the pre-2.11.0 behaviour
-for that one start: for a connector lagging N seconds at that moment, the first
-N seconds of versions can fall below processing-time-anchored rows of the
-previous release. The mark is written from the first handoff on, so every later
-start is seeded.
+§3.1's guarantee needs a seed, and 2.11.0 always has one: the mark when a
+plausible row exists, the connector clock plus head-room otherwise (spec 02.02
+§3.5 (2)). The only unseeded start is one on which the mark table itself cannot
+be created or read (the offset database is unreachable or read-only): the engine
+then logs at ERROR, runs with the pre-2.11.0 behaviour for that one start — for a
+connector lagging N seconds at that moment, the first N seconds of versions can
+fall below processing-time-anchored rows of the previous release — and the first
+handoff retries the mark before any row is written, so either the mark becomes
+durable or the batch fails loudly (I9). No fallback reads the targets to make up
+for a missing mark (Invariant I14).
 
 ### 6.3 UInt64-max sentinel rows written by older versions
 Before the timestamp+offset fallback in `ClickHouseStruct.calculateVersion`

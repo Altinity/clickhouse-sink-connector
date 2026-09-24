@@ -63,9 +63,9 @@ ORDER BY offset_table
 ```
 - **Key**: the fully qualified offset table name (`offset.storage.jdbc.table.name`), so several connectors sharing one offset database keep separate marks. No new configuration key exists; the database is the one parsed from `offset.storage.jdbc.table.name` by `DebeziumJdbcStorageOperations`.
 - **Write** (`VersionHighWaterMark.cover`, dispatch thread, before handoff): `INSERT INTO ... (offset_table, high_water_version) VALUES (?, ?)` with the new horizon, only when an assigned version exceeds the persisted horizon — at most once per ~5 s of source time under load, never on an idle source. The insert is synchronous and retried; if it cannot succeed the batch fails and the engine stops (spec 02.02 §3.5 (1)).
-- **Read** (`VersionHighWaterMark.load`, engine start): `SELECT max(high_water_version) FROM ... WHERE offset_table = ?` — the maximum, not `FINAL`, so unmerged rows are harmless. An absent row reads as `0` and triggers the target scan of spec 02.02 §3.5 (2).
+- **Read** (`VersionHighWaterMark.load`, engine start): `SELECT max(high_water_version) FROM ... WHERE offset_table = ?` — the maximum, not `FINAL`, so unmerged rows are harmless. An absent row reads as `0` and the start is seeded from the connector clock plus head-room (spec 02.02 §3.5 (2)); no target table is read (Invariant I14).
 - **Meaning of the value**: an upper bound on every `_version` this connector has ever handed to the writers (sequence-domain value, spec 02.01 §3.2), not the last version written. It may legitimately exceed every stored `_version` by up to the horizon head-room.
-- **Not replicated**: the table is created with a plain `ReplacingMergeTree`. If the connector is pointed at another ClickHouse replica the mark is absent there and the first start falls back to the target scan (the targets are replicated); the table is then created on that replica.
+- **Not replicated**: the table is created with a plain `ReplacingMergeTree`. If the connector is pointed at another ClickHouse replica the mark is absent there and the first start is seeded from the connector clock (spec 02.02 §3.5 (2)); the table is then created on that replica.
 - **Downgrade**: older releases neither read nor write the table (spec 02.06 §3.2 item 5).
 
 ---

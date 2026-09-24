@@ -3,7 +3,6 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 import com.altinity.clickhouse.debezium.embedded.ddl.DdlCaptureFilter;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
-import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -14,7 +13,6 @@ import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -52,17 +50,21 @@ import java.util.regex.Pattern;
  * durable fails the batch loudly rather than handing off rows the next start could
  * not order.</p>
  *
- * <p><b>Startup fallback.</b> On the first start after an upgrade (or on a
+ * <p><b>Startup without a mark.</b> On the first start after an upgrade (or on a
  * ClickHouse replica that never saw this connector) there is no mark row.
- * {@link #scanTargets} then reads {@code max(_version)} over every
- * {@code ReplacingMergeTree} table with a {@code _version} column in the databases
- * the connector writes to, and {@link #decodePlausibleFloor} interprets each value
- * in both version domains -- {@code v / 1_000_000} for the sequence domain,
- * {@code (v >>> 22) + snowflakeEpoch} for the GTID/snowflake domain -- accepting a
- * decoding only when it falls between 2015 and 24 h past the connector clock. That
- * excludes UInt64-max sentinel rows, raw-GTID and LSN versions (not
- * timestamp-anchored, so they need no floor) and a snowflake misread as a sequence
- * value (which would pin the floor a decade ahead).</p>
+ * {@link #seedFloor()} then seeds the floor from the <b>connector clock</b> plus
+ * {@value #CLOCK_SEED_HEADROOM_MS} ms (spec 02.02 section 3.5 (2)). Every version
+ * a previous run assigned decodes to an instant of the past -- a source statement
+ * time, an envelope time or a heartbeat-pinned connector clock, each at most one
+ * second of counter carry above its wall-clock instant -- so a floor a few seconds
+ * past the present is at or above all of them; a too-high floor only delays the
+ * source clock catching up, a too-low one is the defect, so the higher choice is
+ * the safe one. The seed is a function of the mark table and the clock ONLY: it
+ * never reads a target table. The previous design read {@code max(_version)} over
+ * every replicated table instead; on a production replica that was thousands of
+ * full-column scans of 30-billion-row tables per hour, re-run by every engine
+ * retry on the event thread, and it stalled replication (Invariant I14, spec
+ * 10.06).</p>
  */
 public final class VersionHighWaterMark {
 
@@ -87,8 +89,13 @@ public final class VersionHighWaterMark {
     static final int DEFAULT_WRITE_ATTEMPTS = 30;
     static final long DEFAULT_WRITE_RETRY_MS = 2_000L;
 
-    /** Bound on one {@code max(_version)} scan per table at startup. */
-    static final int SCAN_MAX_EXECUTION_SECONDS = 60;
+    /**
+     * Head-room (ms) added to the connector clock when a start has no mark row to
+     * seed from: covers the up-to-one-second counter carry of the shipped formula
+     * (spec 02.01 section 3.3) and ordinary clock skew between the source host and
+     * the connector host. Same magnitude as {@link #HORIZON_HEADROOM_MS}.
+     */
+    static final long CLOCK_SEED_HEADROOM_MS = HORIZON_HEADROOM_MS;
 
     private static final Pattern LITERAL_DATABASE_NAME = Pattern.compile("[A-Za-z0-9_$]+");
 
@@ -168,6 +175,8 @@ public final class VersionHighWaterMark {
      * @throws SQLException if the read fails.
      */
     synchronized long load() throws SQLException {
+        // I14-scan-allowed: the connector-owned mark table (spec 09.03 section 3.4),
+        // one row per ~5 s of source time, filtered on its ORDER BY key.
         String sql = "SELECT max(`high_water_version`) FROM " + qualifiedTableName()
                 + " WHERE `offset_table` = ?";
         long persisted = 0L;
@@ -239,84 +248,59 @@ public final class VersionHighWaterMark {
     }
 
     /**
-     * Startup fallback: the highest plausible floor decoded from {@code max(<versionColumn>)}
-     * over every {@code ReplacingMergeTree} table carrying that column in the given
-     * databases (spec 02.02 section 3.5 (2)).
-     *
-     * @param databases     ClickHouse databases the connector writes to.
-     * @param versionColumn the version column name ({@code _version}).
-     * @return the floor in ms, or {@code 0} when nothing usable was found.
-     * @throws SQLException if table discovery fails.
+     * The floor a start is seeded with, and where it came from (spec 02.02 section 3.5 (2)).
      */
-    long scanTargets(Collection<String> databases, String versionColumn) throws SQLException {
-        if (databases == null || databases.isEmpty()) {
-            return 0L;
+    static final class Seed {
+        /** The floor in ms: every first delivery of the run is versioned at least {@code floorMs * 1e6 + 1}. */
+        final long floorMs;
+        /** {@code true} when the floor came from a persisted mark, {@code false} when from the clock. */
+        final boolean fromMark;
+        /** Human-readable origin for the startup log line. */
+        final String source;
+
+        Seed(long floorMs, boolean fromMark, String source) {
+            this.floorMs = floorMs;
+            this.fromMark = fromMark;
+            this.source = source;
         }
-        List<String> targets = new ArrayList<>();
-        for (String db : databases) {
-            if (db != null && LITERAL_DATABASE_NAME.matcher(db).matches()) {
-                targets.add(db);
-            }
-        }
-        if (targets.isEmpty()) {
-            return 0L;
-        }
-        StringBuilder in = new StringBuilder();
-        for (int i = 0; i < targets.size(); i++) {
-            in.append(i == 0 ? "?" : ", ?");
-        }
-        String discovery = "SELECT c.database, c.table FROM system.columns AS c"
-                + " INNER JOIN system.tables AS t ON t.database = c.database AND t.name = c.table"
-                + " WHERE c.name = ? AND t.engine LIKE '%ReplacingMergeTree%'"
-                + " AND c.database IN (" + in + ") ORDER BY c.database, c.table";
-        List<String[]> tables = new ArrayList<>();
-        try (PreparedStatement ps = connection().prepareStatement(discovery)) {
-            ps.setString(1, versionColumn);
-            for (int i = 0; i < targets.size(); i++) {
-                ps.setString(i + 2, targets.get(i));
-            }
-            try (ResultSet rs = ps.executeQuery()) {
-                while (rs.next()) {
-                    tables.add(new String[] {rs.getString(1), rs.getString(2)});
-                }
-            }
-        }
-        long now = clock.getAsLong();
-        long best = 0L;
-        for (String[] table : tables) {
-            String qualified = "`" + table[0] + "`.`" + table[1] + "`";
-            String sql = "SELECT max(`" + versionColumn + "`) FROM " + qualified
-                    + " SETTINGS max_execution_time = " + SCAN_MAX_EXECUTION_SECONDS;
-            try (PreparedStatement ps = connection().prepareStatement(sql);
-                 ResultSet rs = ps.executeQuery()) {
-                if (!rs.next()) {
-                    continue;
-                }
-                String raw = rs.getString(1);
-                long version = readUInt64(raw);
-                long floor = decodePlausibleFloor(version, now);
-                if (floor == 0L) {
-                    log.warn("max({}) of {} is {}, which decodes to no plausible timestamp in either "
-                            + "version domain; not used to seed the version floor", versionColumn,
-                            qualified, raw);
-                    continue;
-                }
-                log.info("max({}) of {} is {} -> candidate version floor {} ms", versionColumn, qualified,
-                        raw, floor);
-                if (floor > best) {
-                    best = floor;
-                }
-            } catch (SQLException e) {
-                log.warn("Could not read max({}) of {} while seeding the version floor; skipping it",
-                        versionColumn, qualified, e);
-            }
-        }
-        return best;
     }
 
     /**
-     * The ClickHouse databases the connector writes to, for the startup scan: the
-     * literal entries of {@code database.include.list}, mapped through
+     * The seed for this start: {@code floorDiv(V_max, 1e6) + 1} when a plausible mark
+     * row exists, otherwise the connector clock plus {@value #CLOCK_SEED_HEADROOM_MS} ms.
+     *
+     * <p>Exactly two statements are issued, both against {@value #TABLE_NAME}:
+     * {@link #ensureTable()} and {@link #load()}. No target table is read -- a
+     * connector's bookkeeping must never depend on a scan of the data it replicates
+     * (Invariant I14, spec 10.06): such a scan is unbounded in the size of the
+     * targets, it ran on the event thread ahead of the first delivery, and an engine
+     * retry re-ran it, so one poison event turned it into a permanent load on the
+     * ClickHouse side while replication stood still.</p>
+     *
+     * @return the seed; never {@code null}.
+     * @throws SQLException if the mark table cannot be created or read.
+     */
+    synchronized Seed seedFloor() throws SQLException {
+        ensureTable();
+        long persisted = load();
+        long now = clock.getAsLong();
+        if (persisted > 0) {
+            long candidate = sequenceFloor(persisted);
+            if (isPlausibleFloor(candidate, now)) {
+                return new Seed(candidate, true, "the persisted high-water version " + persisted);
+            }
+            log.error("The persisted high-water version {} in {} decodes to floor {} ms, which is "
+                    + "not a plausible timestamp; ignoring it and seeding from the connector clock",
+                    persisted, qualifiedTableName(), candidate);
+        }
+        return new Seed(now + CLOCK_SEED_HEADROOM_MS, false, "the connector clock + "
+                + CLOCK_SEED_HEADROOM_MS + " ms (no usable row in " + qualifiedTableName() + ")");
+    }
+
+    /**
+     * The ClickHouse databases the connector writes to, as the primary-key backfill
+     * resume needs them (spec 06.09 section 3.3.2): the literal entries of
+     * {@code database.include.list}, mapped through
      * {@code clickhouse.database.override.map} and the common database prefix. A
      * pattern entry cannot be resolved without guessing and yields an empty list.
      *
@@ -327,8 +311,8 @@ public final class VersionHighWaterMark {
     static List<String> targetDatabases(Properties props, ClickHouseSinkConnectorConfig config) {
         String include = props == null ? null : props.getProperty(DdlCaptureFilter.DATABASE_INCLUDE_LIST);
         if (include == null || include.trim().isEmpty()) {
-            log.warn("database.include.list is not set; the startup version-floor scan has no target "
-                    + "databases");
+            log.warn("database.include.list is not set; the ClickHouse target databases cannot be "
+                    + "resolved from it");
             return Collections.emptyList();
         }
         Map<String, String> overrides = null;
@@ -338,7 +322,7 @@ public final class VersionHighWaterMark {
             try {
                 overrides = Utils.parseSourceToDestinationDatabaseMap(overrideConfig);
             } catch (Exception e) {
-                log.error("Invalid {} while resolving the startup version-floor scan targets",
+                log.error("Invalid {} while resolving the ClickHouse target databases",
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP, e);
             }
         }
@@ -352,8 +336,7 @@ public final class VersionHighWaterMark {
             }
             if (!LITERAL_DATABASE_NAME.matcher(name).matches()) {
                 log.warn("database.include.list entry '{}' is a pattern, not a literal database name; "
-                        + "the startup version-floor scan cannot resolve its ClickHouse targets and is "
-                        + "skipped", name);
+                        + "its ClickHouse target databases cannot be resolved without guessing", name);
                 return Collections.emptyList();
             }
             String target = name;
@@ -385,33 +368,6 @@ public final class VersionHighWaterMark {
      */
     static boolean isPlausibleFloor(long floorMs, long nowMs) {
         return floorMs >= PLAUSIBLE_FLOOR_MIN_MS && floorMs <= nowMs + PLAUSIBLE_FUTURE_MS;
-    }
-
-    /**
-     * Decodes a stored {@code _version} into the floor (ms) that places every future
-     * version above it, trying the sequence domain ({@code v / 1e6 + 1}) and the
-     * snowflake domain ({@code (v >>> 22) + epoch + 1}) and keeping the highest
-     * plausible result. A too-high floor only delays the source clock catching up;
-     * a too-low one is the defect, so the higher decoding is the safe choice.
-     *
-     * @param version the stored version (non-positive values decode to nothing).
-     * @param nowMs   the connector clock.
-     * @return the floor in ms, or {@code 0} when no decoding is plausible.
-     */
-    static long decodePlausibleFloor(long version, long nowMs) {
-        if (version <= 0) {
-            return 0L;
-        }
-        long best = 0L;
-        long sequence = sequenceFloor(version);
-        if (isPlausibleFloor(sequence, nowMs)) {
-            best = sequence;
-        }
-        long snowflake = (version >>> SnowFlakeId.GTID_FIELD_BITS) + SnowFlakeId.SNOWFLAKE_EPOCH + 1;
-        if (isPlausibleFloor(snowflake, nowMs) && snowflake > best) {
-            best = snowflake;
-        }
-        return best;
     }
 
     /** A UInt64 read as text; values above {@code Long.MAX_VALUE} (sentinels) map to it. */

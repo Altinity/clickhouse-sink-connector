@@ -132,7 +132,10 @@ the old version wrote (across the restart the source commit clock only advances)
 Concretely this requires: the `_version` formula precedence and arithmetic are
 preserved; the new version seeds its version floor at start from a durable
 high-water mark of the versions already handed to the writers (or, absent one,
-from `max(_version)` over the targets), so its first deliveries rank above the
+from the connector clock plus a few seconds of head-room — never from a scan of
+the targets, I14 — which holds when the connector host's clock is not more than
+that head-room behind the clock that stamped the old rows), so its first
+deliveries rank above the
 old version's rows whatever timestamp the old version anchored on (spec 02.02
 §3.5); the persisted offset store and schema-history table formats (and the
 Debezium version that serialises them) are compatible so committed positions are
@@ -168,6 +171,29 @@ keeps the source value authoritative (I6); mistaking the expression for the type
 emits malformed DDL and breaks the stream. Formalised as `alter_preserves_type`,
 `type_is_never_expression`, and `generated_has_default` in
 `formal_specs/lean/Replication/GeneratedColumn.lean`.
+
+### Invariant I14: Bounded Bookkeeping (No Scans of the Replicated Data)
+The connector's own bookkeeping — seeding the version floor, reading or writing
+offsets, marks, schema history, metadata caches, and anything else that runs at
+engine start, on the event thread, or inside an engine-retry path — MUST be
+bounded by the bookkeeping tables it owns and by the ClickHouse system catalog,
+never by the size of the data it replicates. It MUST NOT read, aggregate or scan
+a replicated (target) table: no `max(_version)`, `count()`, `min()` or any other
+full-table or full-column read over user data, on any thread, in any retry.
+Such a read is unbounded in the size of the targets, it holds the event thread
+while replication stands still, and an engine retry re-issues it — so a single
+poison event turns it into a permanent load on the ClickHouse side (thousands of
+30-billion-row scans per hour were measured on one replica). MySQL replication
+seeds nothing from a scan of the replica's tables; neither does this connector.
+A read over a replicated table is permitted only as part of a spec'd data
+operation that the source or an operator asked for (a primary-key rebuild's count
+reconciliation, a checksum), off the event thread, cancellable, and marked in the
+source with `I14-scan-allowed: <spec reference>` so the validator can list every
+such site. Enforced by `scripts/validate_specs.py` (pass 8), pinned by
+`VersionHighWaterMarkTest.seedFloorWithoutAMarkUsesTheClockAndReadsNoTargetTable()`,
+and formalised for the version floor as `clock_restart_boundary` in
+`formal_specs/lean/Replication/VersionFloor.lean` (the seed is a function of the
+mark and the clock alone). Spec 10.06.
 
 ---
 
