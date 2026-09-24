@@ -107,6 +107,25 @@ public class DebeziumOffsetManagement {
     private static final AtomicLong handoffCounter = new AtomicLong();
 
     /**
+     * Offsets acknowledged to Debezium ({@code markBatchFinished()} returned)
+     * since the JVM started, on every path -- written units and control
+     * records alike. Monotone; never reset, not even by {@link #reset()}: it
+     * is the engine's proof of PROGRESS, and the engine's completion callback
+     * compares two readings of it to tell a recovery from a restart loop
+     * (spec 10.04 section 3.5).
+     */
+    private static final AtomicLong acknowledgements = new AtomicLong();
+
+    /**
+     * Number of offsets acknowledged to Debezium since the JVM started. A
+     * reading that differs from an earlier one means at least one offset was
+     * committed in between: the pipeline made progress.
+     */
+    public static long acknowledgements() {
+        return acknowledgements.get();
+    }
+
+    /**
      * Sequences handed to the writers and not yet acknowledged, ordered.
      * {@code first()} is the head: the oldest batch whose offset is still
      * unstaged. A sequence is added at handoff -- before the batch is visible
@@ -442,6 +461,7 @@ public class DebeziumOffsetManagement {
 
                     if (record.isLastRecordInBatch()) {
                         record.getCommitter().markBatchFinished();
+                        acknowledgements.incrementAndGet();
                         log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
                                 record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
                                 + " Sequence Number: " + record.getSequenceNumber() + " Debezium Timestamp: " + record.getDebezium_ts_ms());
@@ -473,6 +493,7 @@ public class DebeziumOffsetManagement {
                 recordCommitter.markProcessed(sourceRecord);
                 if (lastRecordInBatch == true) {
                     recordCommitter.markBatchFinished();
+                    acknowledgements.incrementAndGet();
                 }
             }
         }

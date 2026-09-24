@@ -578,13 +578,32 @@ public class DebeziumChangeEventCapture {
     static volatile java.util.function.IntConsumer terminalFailureHook = System::exit;
 
     /**
+     * {@link DebeziumOffsetManagement#acknowledgements()} as read at the
+     * previous engine failure. A later reading that differs proves the engine
+     * committed an offset in between -- it had recovered -- and refills the
+     * retry budget (spec 10.04 §3.5).
+     */
+    private long acknowledgementsAtLastFailure = DebeziumOffsetManagement.acknowledgements();
+
+    /**
      * Called from the engine's {@code connectorStarted} callback: the engine is
-     * up, so the retry budget is whole again. Without the reset a connector
-     * that had recovered from {@code MAX_RETRIES} transient failures over its
-     * lifetime died for good on the next one (spec 10.04 §3.5).
+     * up and replication is reported as running.
+     *
+     * <p>Starting does NOT refill the retry budget. A start is not a recovery:
+     * an engine that dies on a deterministic error -- an unrepresentable value
+     * in the first batch after the committed offset, a target table that no
+     * longer exists -- starts cleanly every time, streams to the same record,
+     * and stops again. Counting each of those starts as a recovery made
+     * {@code numRetries} read {@code 1 of MAX_RETRIES} on every failure, so the
+     * budget was never spent, the terminal path never ran, and the connector
+     * restarted its engine every {@code SLEEP_TIME} forever with replication
+     * stopped and {@code /status} reporting it running. The budget refills on
+     * PROGRESS instead -- an offset acknowledged since the previous failure
+     * (see {@link #handleEngineCompletion}) -- which is what a connector that
+     * recovered from a transient failure demonstrates and a looping one never
+     * does (spec 10.04 §3.5).</p>
      */
     void markEngineStarted() {
-        numRetries = 0;
         ReplicationStatusSingleton.getInstance().setIsReplicationRunning(true);
     }
 
@@ -593,12 +612,17 @@ public class DebeziumChangeEventCapture {
      *
      * <p>A failed engine is recreated up to {@code MAX_RETRIES}
      * ({@code errors.max.retries}) times in a row, {@code SLEEP_TIME} apart.
-     * When that budget is spent the failure is TERMINAL: previously nothing
-     * happened at that point -- the JVM stayed up with replication stopped,
-     * the REST API answering and the metrics port open, and no process-level
-     * signal for a supervisor or a liveness probe to act on. Now replication
-     * is marked not running, the failure is logged at FATAL, and unless
-     * {@code exit.on.terminal.failure=false} the process exits through
+     * "In a row" means without progress in between: when
+     * {@link DebeziumOffsetManagement#acknowledgements()} has advanced since
+     * the previous failure the engine committed an offset -- it had recovered
+     * -- and the count restarts from zero. A start that commits nothing before
+     * failing again is one more failure in the same row, however cleanly it
+     * came up. When the budget is spent the failure is TERMINAL: previously
+     * nothing happened at that point -- the JVM stayed up with replication
+     * stopped, the REST API answering and the metrics port open, and no
+     * process-level signal for a supervisor or a liveness probe to act on. Now
+     * replication is marked not running, the failure is logged at FATAL, and
+     * unless {@code exit.on.terminal.failure=false} the process exits through
      * {@link #terminalFailureHook} with {@link #TERMINAL_FAILURE_EXIT_CODE}.</p>
      *
      * @param success       whether the engine completed normally.
@@ -624,16 +648,28 @@ public class DebeziumChangeEventCapture {
             // A FATAL failure (spec 10.01 section 3.1) is the same on every
             // attempt: the value, the column type, the table, the privilege
             // are unchanged, so a recreated engine redelivers the same batch
-            // to the same outcome. And because connectorStarted() refills the
-            // budget on every start, retrying it is not bounded by
-            // MAX_RETRIES at all -- it is an unbounded restart loop, each turn
-            // re-reading the schema history from the target and re-logging
-            // every skipped row event. Terminal now (spec 10.04 section 3.5).
+            // to the same outcome. Retrying it would be an unbounded restart
+            // loop, each turn re-reading the schema history from the target
+            // and re-logging every skipped row event. Terminal now (spec 10.04
+            // section 3.5 rule 4).
             log.error("Engine stopped with a FATAL (deterministic) failure; not retrying: "
                     + "a recreated engine would redeliver the same batch to the same outcome.");
             onTerminalFailure(throwable, props);
             return;
         }
+        // Every other failure draws on the budget, which refills on PROGRESS
+        // (an offset acknowledged since the previous failure), never on a bare
+        // start -- so a failure the classifier cannot recognise that recurs on
+        // every start is still bounded by MAX_RETRIES (spec 10.04 section 3.5
+        // rule 5).
+        long acknowledged = DebeziumOffsetManagement.acknowledgements();
+        if (numRetries > 0 && acknowledged != acknowledgementsAtLastFailure) {
+            log.info("The engine acknowledged {} offset(s) since its previous failure, so it had "
+                            + "recovered: the retry budget starts whole again (was {} of {})",
+                    acknowledged - acknowledgementsAtLastFailure, numRetries, MAX_RETRIES);
+            numRetries = 0;
+        }
+        acknowledgementsAtLastFailure = acknowledged;
         if (numRetries < MAX_RETRIES) {
             numRetries++;
             log.error("Restarting the engine - retry {} of {}", numRetries, MAX_RETRIES);
