@@ -14,10 +14,6 @@ import java.sql.Date;import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.zone.ZoneOffsetTransition;
 import java.time.temporal.ChronoUnit;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.LongSupplier;
 
 import static java.time.Instant.ofEpochMilli;
 
@@ -41,19 +37,19 @@ public class DebeziumConverter {
 
     /**
      * What to do with a value outside the ClickHouse type's range: saturate to
-     * the bound with a WARN naming the column and both values (default,
-     * {@code clamp.out.of.range=true}) or fail the batch
-     * ({@code clamp.out.of.range=false}). Never silent
-     * (Spec 07.03 section 3.3) -- but never one WARN per row either: a
-     * column is reported once per {@link #WARN_INTERVAL_NANOS}, every
-     * further saturation of it inside that window is counted and logged at
-     * DEBUG, and the next WARN carries the count.
+     * the bound (default, {@code clamp.out.of.range=true}) or fail the batch
+     * ({@code clamp.out.of.range=false}). Under the default a saturation is
+     * the documented mapping of the sentinel, not an event: it is logged at
+     * DEBUG only (Spec 07.03 section 3.3 rule 2). At WARN it flooded the log
+     * -- one line per row was 98% of a connector log, and one line per
+     * column per minute still buried the messages that matter under a
+     * steady stream across hundreds of bitemporal columns.
      */
     public static final class RangePolicy {
 
         /**
-         * Saturate to the bound and WARN. Used by the policy-less converter
-         * overloads, which have no configuration to consult.
+         * Saturate to the bound (logged at DEBUG). Used by the policy-less
+         * converter overloads, which have no configuration to consult.
          */
         public static final RangePolicy CLAMP = new RangePolicy(true, null);
 
@@ -62,32 +58,6 @@ public class DebeziumConverter {
 
         private static final DateTimeFormatter BOUND_FORMAT =
                 DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC);
-
-        /**
-         * How often one saturated column may WARN. A bitemporal table whose
-         * every row carries the {@code 9999-12-31 23:59:59} open-ended
-         * sentinel saturates on every row; one WARN per row was measured at
-         * ~2,300 lines per second, 98% of the connector log, rotating a
-         * 100 MB log every two minutes (Spec 07.03 section 3.3 rule 2).
-         */
-        static final long WARN_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(60);
-
-        /** Clock for the rate limit; replaced by tests to step the window. */
-        static volatile LongSupplier ticker = System::nanoTime;
-
-        /** Per (column, ClickHouse type): saturations since the last WARN and when that WARN was. */
-        private static final ConcurrentHashMap<String, SaturationTally> TALLIES = new ConcurrentHashMap<>();
-
-        private static final class SaturationTally {
-            private static final long NEVER = Long.MIN_VALUE;
-            final AtomicLong sinceLastWarn = new AtomicLong();
-            final AtomicLong lastWarnNanos = new AtomicLong(NEVER);
-        }
-
-        /** Forgets every column's window, so one test cannot silence the next. */
-        static void resetSaturationTallies() {
-            TALLIES.clear();
-        }
 
         private final boolean clamp;
         private final String column;
@@ -179,22 +149,9 @@ public class DebeziumConverter {
         private void report(String provided, String bounded, String type, String bounds) {
             String where = column == null ? "" : " for column " + column;
             if (clamp) {
-                SaturationTally tally = TALLIES.computeIfAbsent(
-                        (column == null ? "" : column) + '|' + type, k -> new SaturationTally());
-                tally.sinceLastWarn.incrementAndGet();
-                long now = ticker.getAsLong();
-                long last = tally.lastWarnNanos.get();
-                boolean windowOpen = last == SaturationTally.NEVER || now - last >= WARN_INTERVAL_NANOS;
-                if (windowOpen && tally.lastWarnNanos.compareAndSet(last, now)) {
-                    long counted = tally.sinceLastWarn.getAndSet(0);
-                    log.warn("Value {}{} is outside the ClickHouse {} range {}; stored as {} ({}=true); "
-                                    + "{} saturation(s) of this column since the previous report, further "
-                                    + "ones are logged at DEBUG for the next {}s",
-                            provided, where, type, bounds, bounded,
-                            ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE,
-                            counted, TimeUnit.NANOSECONDS.toSeconds(WARN_INTERVAL_NANOS));
-                    return;
-                }
+                // The documented mapping, not an event: DEBUG only (spec 07.03
+                // section 3.3 rule 2). Never WARN here -- a bitemporal schema
+                // saturates on every row of every table.
                 log.debug("Value {}{} is outside the ClickHouse {} range {}; stored as {} ({}=true)",
                         provided, where, type, bounds, bounded,
                         ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE);
@@ -204,7 +161,7 @@ public class DebeziumConverter {
                     "Value %s%s is outside the ClickHouse %s range %s. Refusing to store %s in its "
                             + "place: the source never held that value. Widen the ClickHouse column "
                             + "type, or return to the default %s=true to saturate out-of-range values "
-                            + "(reported at WARN, one line per column per minute).",
+                            + "(logged at DEBUG only).",
                     provided, where, type, bounds, bounded,
                     ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE));
         }

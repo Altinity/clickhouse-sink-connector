@@ -11,8 +11,8 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LogEvent;
 import org.apache.logging.log4j.core.Logger;
 import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.logging.log4j.core.config.Property;
-import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -37,12 +37,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Spec 07.03 section 3.3: a value outside the ClickHouse type's range is
- * never silently saturated. By default ({@code clamp.out.of.range=true}) the
- * value is saturated and a WARN names the column -- once per column per
- * window, the rest counted at DEBUG, never one line per row; with
- * {@code clamp.out.of.range=false} the batch fails with an error naming the
- * column, the value and the bounds.
+ * Spec 07.03 section 3.3: by default ({@code clamp.out.of.range=true}) a
+ * value outside the ClickHouse type's range is saturated to the bound and
+ * logged at DEBUG only -- never at WARN, which flooded the log on bitemporal
+ * schemas (one line per row, then one per column per minute, both measured
+ * in production); with {@code clamp.out.of.range=false} the batch fails with
+ * an error naming the column, the value and the bounds.
  *
  * <p>Before this, {@code DATETIME '9999-12-31 23:59:59'} -- the customary
  * open-ended sentinel -- was written as {@code 2299-12-31 23:59:59} with no
@@ -51,13 +51,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 public class DebeziumConverterRangePolicyTest {
 
     private static final ZoneId UTC = ZoneId.of("UTC");
-
-    /** The rate limit is process-wide; every test starts with fresh windows and the real clock. */
-    @BeforeEach
-    public void resetRateLimit() {
-        DebeziumConverter.RangePolicy.resetSaturationTallies();
-        DebeziumConverter.RangePolicy.ticker = System::nanoTime;
-    }
 
     /** Debezium encodes DATETIME digits as a UTC epoch; this is that encoding. */
     private static long datetimeMillis(LocalDateTime digits) {
@@ -121,11 +114,11 @@ public class DebeziumConverterRangePolicyTest {
      * The production default through the mapper: the MySQL sentinel
      * 9999-12-31 23:59:59 does not fit DateTime64 and is stored as the bound,
      * 2299-12-31 23:59:59 -- the value every earlier release stored, so an
-     * upgrade never stops replication on it -- with a WARN, never silently.
+     * upgrade never stops replication on it -- and it is not a WARN.
      * An absent configuration means the default too.
      */
     @Test
-    @DisplayName("Default: an out-of-range DATETIME is saturated at the mapper and reported at WARN")
+    @DisplayName("Default: an out-of-range DATETIME is saturated at the mapper without a WARN")
     public void defaultPolicySaturatesOutOfRangeDatetimeAtTheMapper() throws Exception {
         CapturingAppender appender = capture();
         try {
@@ -139,9 +132,7 @@ public class DebeziumConverterRangePolicyTest {
                     bindDatetime(defaultConfig(), sentinel, ClickHouseDataType.DateTime64),
                     "the default stores the DateTime64 bound");
             List<String> warnings = appender.warnings();
-            assertEquals(1, warnings.size(), "the saturation is reported: " + warnings);
-            assertTrue(warnings.get(0).contains("9999-12-31T23:59:59Z"), warnings.get(0));
-            assertTrue(warnings.get(0).contains("2299-12-31 23:59:59"), warnings.get(0));
+            assertEquals(0, warnings.size(), "a saturation under the default is not a WARN: " + warnings);
 
             // In range: unchanged.
             assertEquals("2024-05-06 07:08:09.000",
@@ -217,9 +208,13 @@ public class DebeziumConverterRangePolicyTest {
         }
 
         List<String> warnings() {
+            return atLevel(Level.WARN);
+        }
+
+        List<String> atLevel(Level level) {
             List<String> out = new ArrayList<>();
             for (LogEvent e : events) {
-                if (e.getLevel() == Level.WARN) {
+                if (e.getLevel() == level) {
                     out.add(e.getMessage().getFormattedMessage());
                 }
             }
@@ -240,41 +235,47 @@ public class DebeziumConverterRangePolicyTest {
     }
 
     /**
-     * Rule 2: an operator who opts into saturation gets the bound AND a WARN
-     * naming the column, the source value and the stored value. The two
-     * saturations below are one column bound as two ClickHouse types, so each
-     * opens its own rate-limit window and each is reported.
+     * Rule 2: saturation is the documented mapping, not an event. A column
+     * whose every row carries the open-ended sentinel (1,000 saturations
+     * here), plus a second column, write ZERO WARN lines; with the logger
+     * opened to DEBUG each saturation is one DEBUG line naming the column and
+     * both values. The rate-limited revision wrote a WARN per column per
+     * minute here and still flooded production logs.
      */
     @Test
-    @DisplayName("clamp.out.of.range=true saturates and logs a WARN naming column and values")
-    public void clampSettingSaturatesAndWarns() throws Exception {
+    @DisplayName("clamp.out.of.range=true saturates with no WARN; the detail is available at DEBUG")
+    public void clampSettingSaturatesSilently() throws Exception {
+        Logger logger = (Logger) LogManager.getLogger(DebeziumConverter.class);
+        Level before = logger.getLevel();
+        Configurator.setLevel(DebeziumConverter.class.getName(), Level.DEBUG);
         CapturingAppender appender = capture();
         try {
-            DebeziumConverter.RangePolicy policy = DebeziumConverter.RangePolicy.of(config(true), "db.orders.expires_at");
+            DebeziumConverter.RangePolicy policy = DebeziumConverter.RangePolicy.of(config(true), "db.trades.valid_to");
             assertTrue(policy.clamps());
-
-            LocalDateTime sentinel = LocalDateTime.of(9999, 12, 31, 23, 59, 59);
-            String bound = DebeziumConverter.TimestampConverter.convert(datetimeMillis(sentinel),
-                    ClickHouseDataType.DateTime64, UTC, UTC, null, policy);
-            assertEquals("2299-12-31 23:59:59.000", bound);
-
+            long sentinel = datetimeMillis(LocalDateTime.of(9999, 12, 31, 23, 59, 59));
+            for (int i = 0; i < 1000; i++) {
+                assertEquals("2299-12-31 23:59:59.000", DebeziumConverter.TimestampConverter.convert(
+                        sentinel, ClickHouseDataType.DateTime64, UTC, UTC, null, policy));
+            }
+            DebeziumConverter.RangePolicy other = DebeziumConverter.RangePolicy.of(config(true), "db.orders.expires_at");
             java.sql.Date date = DebeziumConverter.DateConverter.convert(
-                    (int) LocalDate.of(9999, 12, 31).toEpochDay(), ClickHouseDataType.Date32, policy);
+                    (int) LocalDate.of(9999, 12, 31).toEpochDay(), ClickHouseDataType.Date32, other);
             assertEquals(java.sql.Date.valueOf("2299-12-31"), date);
 
-            List<String> warnings = appender.warnings();
-            assertEquals(2, warnings.size(), "one WARN per saturated value: " + warnings);
-            assertTrue(warnings.get(0).contains("db.orders.expires_at"), warnings.get(0));
-            assertTrue(warnings.get(0).contains("9999-12-31T23:59:59Z"), warnings.get(0));
-            assertTrue(warnings.get(0).contains("2299-12-31 23:59:59"), warnings.get(0));
-            assertTrue(warnings.get(1).contains("9999-12-31"), warnings.get(1));
-            assertTrue(warnings.get(1).contains("2299-12-31"), warnings.get(1));
+            assertEquals(0, appender.warnings().size(), "no WARN for a saturation: " + appender.warnings());
+            List<String> debug = appender.atLevel(Level.DEBUG);
+            assertEquals(1001, debug.size(), "one DEBUG line per saturation: " + debug.size());
+            assertTrue(debug.get(0).contains("db.trades.valid_to"), debug.get(0));
+            assertTrue(debug.get(0).contains("9999-12-31T23:59:59Z"), debug.get(0));
+            assertTrue(debug.get(0).contains("2299-12-31 23:59:59"), debug.get(0));
+            assertTrue(debug.get(1000).contains("db.orders.expires_at"), debug.get(1000));
 
             // The mapper honours the setting too.
             assertEquals("2299-12-31 23:59:59.000",
-                    bindDatetime(config(true), sentinel, ClickHouseDataType.DateTime64));
+                    bindDatetime(config(true), LocalDateTime.of(9999, 12, 31, 23, 59, 59), ClickHouseDataType.DateTime64));
         } finally {
             release(appender);
+            Configurator.setLevel(DebeziumConverter.class.getName(), before);
         }
     }
 
@@ -327,10 +328,10 @@ public class DebeziumConverterRangePolicyTest {
         assertEquals(BigDecimal.TEN, new DebeziumConverter.BigDecimalConverter().truncate(BigDecimal.TEN, strict));
     }
 
-    /** Rule 3: the policy-less overloads still saturate, but never silently. */
+    /** Rule 3: the policy-less overloads still saturate, and write no WARN either. */
     @Test
-    @DisplayName("Legacy overloads saturate with a WARN")
-    public void legacyOverloadsStillSaturateWithAWarn() {
+    @DisplayName("Legacy overloads saturate with no WARN")
+    public void legacyOverloadsSaturateSilently() {
         CapturingAppender appender = capture();
         try {
             long farFuture = datetimeMillis(LocalDateTime.of(9999, 12, 31, 23, 59, 59));
@@ -343,57 +344,8 @@ public class DebeziumConverterRangePolicyTest {
             assertEquals(BinaryStreamUtils.DECIMAL128_MAX,
                     new DebeziumConverter.BigDecimalConverter().truncate(BinaryStreamUtils.DECIMAL128_MAX.add(BigDecimal.ONE)));
 
-            // Four saturations, three WARNs: the policy-less overloads carry no
-            // column, so their rate-limit key is the ClickHouse type alone and the
-            // two DateTime64 saturations share one window (rule 2).
-            assertEquals(3, appender.warnings().size(), "every saturated type is reported: " + appender.warnings());
+            assertEquals(0, appender.warnings().size(), "no WARN for a saturation: " + appender.warnings());
         } finally {
-            release(appender);
-        }
-    }
-
-    /**
-     * Rule 2, the rate limit: a column whose every row is out of range (the
-     * bitemporal open-ended sentinel) must not turn the log into one WARN per
-     * row. One WARN per column per window; the rest counted, at DEBUG; the
-     * next WARN after the window carries the count.
-     */
-    @Test
-    @DisplayName("clamp.out.of.range=true logs one WARN per column per window and counts the rest")
-    public void clampWarnIsRateLimitedPerColumn() {
-        CapturingAppender appender = capture();
-        long[] now = {0L};
-        DebeziumConverter.RangePolicy.ticker = () -> now[0];
-        try {
-            DebeziumConverter.RangePolicy policy = DebeziumConverter.RangePolicy.of(config(true), "db.trades.valid_to");
-            long sentinel = datetimeMillis(LocalDateTime.of(9999, 12, 31, 23, 59, 59));
-            for (int i = 0; i < 1000; i++) {
-                assertEquals("2299-12-31 23:59:59.000", DebeziumConverter.TimestampConverter.convert(
-                        sentinel, ClickHouseDataType.DateTime64, UTC, UTC, null, policy));
-            }
-            List<String> warnings = appender.warnings();
-            assertEquals(1, warnings.size(), "one WARN per column per window: " + warnings);
-            assertTrue(warnings.get(0).contains("db.trades.valid_to"), warnings.get(0));
-            assertTrue(warnings.get(0).contains("9999-12-31T23:59:59Z"), warnings.get(0));
-            assertTrue(warnings.get(0).contains("2299-12-31 23:59:59"), warnings.get(0));
-
-            // Another column has its own window.
-            DebeziumConverter.RangePolicy other = DebeziumConverter.RangePolicy.of(config(true), "db.trades.expires_at");
-            DebeziumConverter.TimestampConverter.convert(sentinel, ClickHouseDataType.DateTime64, UTC, UTC, null, other);
-            warnings = appender.warnings();
-            assertEquals(2, warnings.size(), warnings.toString());
-            assertTrue(warnings.get(1).contains("db.trades.expires_at"), warnings.get(1));
-
-            // Once the window has passed, the next saturation reports again and
-            // says how many it stood in for (the 999 suppressed ones plus itself).
-            now[0] = DebeziumConverter.RangePolicy.WARN_INTERVAL_NANOS;
-            DebeziumConverter.TimestampConverter.convert(sentinel, ClickHouseDataType.DateTime64, UTC, UTC, null, policy);
-            warnings = appender.warnings();
-            assertEquals(3, warnings.size(), warnings.toString());
-            assertTrue(warnings.get(2).contains("db.trades.valid_to"), warnings.get(2));
-            assertTrue(warnings.get(2).contains("1000 saturation(s)"), warnings.get(2));
-        } finally {
-            DebeziumConverter.RangePolicy.ticker = System::nanoTime;
             release(appender);
         }
     }
