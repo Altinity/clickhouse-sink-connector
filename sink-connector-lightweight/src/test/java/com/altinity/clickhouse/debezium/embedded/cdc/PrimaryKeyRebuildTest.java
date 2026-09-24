@@ -1835,4 +1835,145 @@ public class PrimaryKeyRebuildTest {
         assertTrue(loud.getMessage().contains("replication.history.enable"), loud.getMessage());
         assertTrue(ch.executed.isEmpty(), ch.executed.toString());
     }
+
+    // ------------------------------------------------------------------
+    // Replicated mode (Spec 06.09 §3.3.1 step 3, §3.3.2 steps 4 and 7)
+    // ------------------------------------------------------------------
+
+    /** The engine SHOW CREATE TABLE renders for a table the connector created ON CLUSTER with empty engine arguments. */
+    private static final String REPLICATED_ENGINE =
+            "ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', _version, is_deleted)";
+    private static final String REPLICATED_ENGINE_FULL = REPLICATED_ENGINE + " ORDER BY id SETTINGS index_granularity = 8192";
+    private static final String SHOW_CREATE_REPLICATED = SHOW_CREATE.replace(
+            "ENGINE = ReplacingMergeTree(_version, is_deleted)", "ENGINE = " + REPLICATED_ENGINE);
+    private static final String ON_CLUSTER = " ON CLUSTER `{cluster}`";
+    private static final String REPLICATED_SWITCH = "auto.create.tables.replicated";
+
+    private static ClickHouseSinkConnectorConfig replicatedConfig() {
+        Map<String, String> settings = new HashMap<>();
+        settings.put(REPLICATED_SWITCH, "true");
+        return new ClickHouseSinkConnectorConfig(settings);
+    }
+
+    private static Properties replicatedProps() {
+        Properties props = new Properties();
+        props.setProperty(REPLICATED_SWITCH, "true");
+        return props;
+    }
+
+    @Test
+    // DESTRUCTIVE: statement text recorded by fake connections only; nothing is executed against any database in this test.
+    @DisplayName("Replicated mode: every DDL of the swap runs ON CLUSTER and the CREATE keeps the {uuid} default path (Spec 06.09 §3.3.1 step 3)")
+    public void replicatedSwapRunsOnCluster() {
+        assertEquals(ON_CLUSTER, PrimaryKeyRebuild.onCluster(replicatedConfig()));
+        assertEquals(ON_CLUSTER, PrimaryKeyRebuild.onCluster(replicatedProps()));
+        assertEquals("", PrimaryKeyRebuild.onCluster(config()));
+        assertEquals("", PrimaryKeyRebuild.onCluster(new Properties()));
+
+        // A leftover of an earlier attempt, a deferred DROP COLUMN, an Atomic database.
+        String stale = "t__pk_rebuild_1500000000000";
+        FakeDb ch = clickHouse(REPLICATED_ENGINE_FULL, SHOW_CREATE_REPLICATED, false, false)
+                .answer("AND (name LIKE 't", row(stale, ""))
+                .answer("AND table = 't' AND is_in_sorting_key = 1", row("id"));
+        Map<String, Provenance> provenance = new LinkedHashMap<>();
+        provenance.put("tenant", Provenance.EXISTING);
+        // DESTRUCTIVE: the source statement and its deferred clause are plan text handed to a fake connection; nothing is executed against any database.
+        PrimaryKeyRebuildPlan plan = new PrimaryKeyRebuildPlan("employees", "t", Collections.singletonList("id"),
+                Collections.singletonList("tenant"), false, provenance,
+                "ALTER TABLE t DROP PRIMARY KEY, DROP COLUMN name, ADD PRIMARY KEY (tenant)",
+                Collections.singletonList("DROP COLUMN IF EXISTS `name`"), Collections.emptyMap(),
+                Collections.emptyMap());
+        PrimaryKeyBackfill.Task task = PrimaryKeyRebuild.swap(plan, ch.connection(), replicatedProps(),
+                replicatedConfig(), "hr", EPOCH);
+
+        String createS = CREATE_S_TENANT.replace("`" + S + "`\n", "`" + S + "`" + ON_CLUSTER + "\n")
+                .replace("ENGINE = ReplacingMergeTree(_version, is_deleted)", "ENGINE = " + REPLICATED_ENGINE);
+        assertTrue(createS.contains("{uuid}"), "the rendered default path is kept verbatim: " + createS);
+        // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+        assertEquals(Arrays.asList(
+                "DROP TABLE IF EXISTS `employees`.`" + stale + "`" + ON_CLUSTER,
+                createS,
+                "ALTER TABLE `employees`.`" + S + "`" + ON_CLUSTER + " DROP COLUMN IF EXISTS `name`",
+                "EXCHANGE TABLES `employees`.`t` AND `employees`.`" + S + "`" + ON_CLUSTER), actions(ch));
+        List<String> comments = commentStatements(ch);
+        assertEquals(1, comments.size(), comments.toString());
+        assertTrue(comments.get(0).startsWith("ALTER TABLE `employees`.`t`" + ON_CLUSTER + " MODIFY COMMENT '" + COMMENT),
+                comments.get(0));
+        assertEquals(S, task.retired());
+
+        // A non-Atomic database swaps by RENAME, ON CLUSTER as well.
+        FakeDb ordinary = clickHouse(REPLICATED_ENGINE_FULL, SHOW_CREATE_REPLICATED, false, false);
+        ordinary.answers.add(0, new java.util.AbstractMap.SimpleEntry<>(
+                sql -> sql.startsWith("SELECT engine FROM system.databases"),
+                Collections.singletonList(row("Ordinary"))));
+        PrimaryKeyRebuild.swap(existingKeyPlan(), ordinary.connection(), replicatedProps(), replicatedConfig(), "hr",
+                EPOCH);
+        List<String> ordinaryActions = actions(ordinary);
+        assertEquals("RENAME TABLE `employees`.`t` TO `employees`.`t__pk_retired_" + EPOCH + "`, `employees`.`" + S
+                + "` TO `employees`.`t`" + ON_CLUSTER, ordinaryActions.get(ordinaryActions.size() - 1));
+
+        // Without the switch the same table gets the plain statements (the
+        // pre-fix shape: ClickHouse rejects the {uuid} path outside ON CLUSTER).
+        FakeDb plain = clickHouse(REPLICATED_ENGINE_FULL, SHOW_CREATE_REPLICATED, false, false);
+        swapped(existingKeyPlan(), plain);
+        for (String sql : plain.executed) {
+            assertFalse(sql.contains("ON CLUSTER"), sql);
+        }
+    }
+
+    @Test
+    // DESTRUCTIVE: statement text recorded by fake connections only; nothing is executed against any database in this test.
+    @DisplayName("Replicated mode: the backfill drops the retired copy ON CLUSTER and the local key map without it; so does a superseding TRUNCATE (Spec 06.09 §3.3.2 steps 4 and 7)")
+    public void replicatedBackfillDropsRetiredOnCluster() {
+        Properties props = replicatedProps();
+
+        // Completion: the copy and the check are plain statements on the
+        // copying host; the retired copy is dropped on every host.
+        PrimaryKeyBackfill.Task task = PrimaryKeyRebuild.swap(existingKeyPlan(),
+                clickHouse(REPLICATED_ENGINE_FULL, SHOW_CREATE_REPLICATED, false, false).connection(), props,
+                replicatedConfig(), "hr", EPOCH);
+        FakeDb ch = afterSwap(tColumns(false, false), tColumns(false, false), S, 0, "all");
+        Harness h = new Harness(ch, null, props);
+        h.runOnce(task);
+        List<String> done = actions(ch);
+        assertEquals("INSERT INTO `employees`.`t` (`id`, `tenant`, `name`, `_version`, `is_deleted`) " + tenantSelect(null),
+                done.get(0), "the copy is a plain INSERT on the copying host");
+        assertEquals(TENANT_CHECK, done.get(done.size() - 2), "the completeness check is unchanged");
+        // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+        assertEquals("DROP TABLE IF EXISTS `employees`.`" + S + "`" + ON_CLUSTER, done.get(done.size() - 1));
+        assertTrue(h.reporter.steps.isEmpty(), h.reporter.steps.toString());
+        assertEquals(0, h.backfill.pending());
+
+        // disable.drop.truncate=true: the kept copy is marked complete on every host.
+        Properties keep = replicatedProps();
+        // DESTRUCTIVE: a setting name only; nothing is executed against any database in this test.
+        keep.setProperty(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, "true");
+        PrimaryKeyBackfill.Task kept = PrimaryKeyRebuild.swap(existingKeyPlan(),
+                clickHouse(REPLICATED_ENGINE_FULL, SHOW_CREATE_REPLICATED, false, false).connection(), keep,
+                replicatedConfig(), "hr", EPOCH);
+        FakeDb keptDb = afterSwap(tColumns(false, false), tColumns(false, false), S, 0, "all");
+        new Harness(keptDb, null, keep).runOnce(kept);
+        assertNothingDropped(keptDb);
+        assertEquals(Collections.singletonList("ALTER TABLE `employees`.`" + S + "`" + ON_CLUSTER + " MODIFY COMMENT '"
+                + COMMENT + "'"), commentStatements(keptDb));
+
+        // A superseding TRUNCATE of a source-valued rebuild: the retired copy
+        // goes ON CLUSTER, the key map (a local helper) does not, then the truncate.
+        PrimaryKeyBackfill.Task sourceValued = PrimaryKeyRebuild.swap(sourceValuedPlan(),
+                clickHouse(REPLICATED_ENGINE_FULL, SHOW_CREATE_NEW_ID.replace(
+                        "ENGINE = ReplacingMergeTree(_version, is_deleted)", "ENGINE = " + REPLICATED_ENGINE), false,
+                        true).connection(), props, replicatedConfig(), "hr", EPOCH);
+        Harness cancelling = new Harness(afterSwap(tColumns(false, true), tColumns(false, true), S, 0, "all"), null,
+                props);
+        assertTrue(cancelling.backfill.submit(sourceValued));
+        FakeDb writer = writerSeeing(sourceValued);
+        assertEquals(1, cancelling.backfill.cancelFor(writer.connection(), "employees", "t"));
+        // DESTRUCTIVE: the source's own replicated statement, recorded by a fake connection; nothing is executed against any database.
+        execute(writer, "TRUNCATE TABLE `employees`.`t`");
+        // DESTRUCTIVE: expected statement text recorded by a fake connection; nothing is executed against any database.
+        assertEquals(Arrays.asList(
+                "DROP TABLE IF EXISTS `employees`.`" + S + "`" + ON_CLUSTER,
+                "DROP TABLE IF EXISTS `employees`.`" + K + "`",
+                "TRUNCATE TABLE `employees`.`t`"), actions(writer));
+    }
 }

@@ -82,7 +82,37 @@ public final class PrimaryKeyRebuild {
 
     private static final Pattern ALLOW_NULLABLE_KEY = Pattern.compile("allow_nullable_key\\s*=\\s*\\d+");
 
+    /**
+     * The clause every DDL of the rebuild carries on the mirrored table and
+     * its copies when the connector creates Replicated tables -- the literal
+     * the translator appends to its own CREATE/ALTER
+     * ({@code MySqlDDLParserListenerImpl}, {@code ClickHouseAutoCreateTable}).
+     */
+    static final String ON_CLUSTER = " ON CLUSTER `{cluster}`";
+
     private PrimaryKeyRebuild() {
+    }
+
+    /**
+     * {@link #ON_CLUSTER} when {@code auto.create.tables.replicated=true} (the
+     * switch the translator uses), else the empty string (Spec 06.09 §3.3.1
+     * step 3). A table the connector created {@code ON CLUSTER} with empty
+     * engine arguments renders the default path
+     * {@code '/clickhouse/tables/{uuid}/{shard}'} in {@code SHOW CREATE TABLE},
+     * and ClickHouse accepts that {@code {uuid}} macro only in an
+     * {@code ON CLUSTER} query; and the table exists on every host of the
+     * cluster, so the rebuilt definition must replace it everywhere.
+     */
+    static String onCluster(ClickHouseSinkConnectorConfig config) {
+        return config != null && config.getBoolean(
+                ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString()) ? ON_CLUSTER : "";
+    }
+
+    /** As {@link #onCluster(ClickHouseSinkConnectorConfig)}, read from the connector properties the config is built from. */
+    static String onCluster(Properties props) {
+        String value = props == null ? null
+                : props.getProperty(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
+        return value != null && value.trim().equalsIgnoreCase("true") ? ON_CLUSTER : "";
     }
 
     /** One row of {@code system.columns}. */
@@ -126,8 +156,11 @@ public final class PrimaryKeyRebuild {
         final String table = plan.table();
         final String scratch = table + "__pk_rebuild_" + epochMs;
         final String keyMapTable = table + "__pk_rebuild_keys_" + epochMs;
-        log.info("Primary-key rebuild of {}.{} at the DDL barrier (swap phase): {} (Spec 06.09 §3.3.1)", db, table,
-                plan);
+        // Replicated mode: every DDL on T, S and R runs ON CLUSTER, as the
+        // translator's own DDL does (Spec 06.09 §3.3.1 step 3).
+        final String onCluster = onCluster(config);
+        log.info("Primary-key rebuild of {}.{} at the DDL barrier (swap phase): {}{} (Spec 06.09 §3.3.1)", db, table,
+                plan, onCluster.isEmpty() ? "" : " [replicated: DDL runs" + onCluster + "]");
 
         // ---- §3.2 preconditions: nothing has been executed yet. ----
         if (config != null && config.getBoolean(
@@ -212,7 +245,7 @@ public final class PrimaryKeyRebuild {
         String deleteFlag = deleteFlagColumn(engineFull);
 
         // ---- Step 1: clean a previous attempt's scratch tables. ----
-        cleanPreviousAttempt(ch, db, table, plan, oldKey, deleteFlag, props);
+        cleanPreviousAttempt(ch, db, table, plan, oldKey, deleteFlag, props, onCluster);
 
         // ---- Step 2 (the statement's other clauses) was applied by the caller. ----
 
@@ -225,7 +258,7 @@ public final class PrimaryKeyRebuild {
         String createScratch;
         try {
             createScratch = rewriteCreateStatement(showCreate, db, table, scratch, newKeyOldNames,
-                    plan.keylessFallback(), targetTypes, renames, plan.retypedColumns());
+                    plan.keylessFallback(), targetTypes, renames, plan.retypedColumns(), onCluster);
         } catch (RuntimeException e) {
             throw new DDLReplicationException(failure(plan, "step 3 (rewrite CREATE TABLE)",
                     e.getMessage() + " -- statement: [" + showCreate + "]"), e);
@@ -247,7 +280,7 @@ public final class PrimaryKeyRebuild {
                 // DESTRUCTIVE: drops from the EMPTY rebuilt copy of this one
                 // table the column the SOURCE statement dropped; the old table
                 // and its rows are untouched until the swap at step 4.
-                exec(ch, "ALTER TABLE " + q(db) + "." + q(scratch) + " " + clause,
+                exec(ch, "ALTER TABLE " + q(db) + "." + q(scratch) + onCluster + " " + clause,
                         "step 3b (deferred clause on the rebuilt table)", plan);
             } else {
                 log.info("Primary-key rebuild of {}.{} step 3b: deferred clause [{}] is applied through the CREATE "
@@ -273,8 +306,8 @@ public final class PrimaryKeyRebuild {
                     throw new DDLReplicationException(failure(plan, "step 3b (column position on the rebuilt table)",
                             "column " + e.getKey() + " is not declared on " + db + "." + scratch), null);
                 }
-                exec(ch, "ALTER TABLE " + q(db) + "." + q(scratch) + " MODIFY COLUMN " + q(e.getKey()) + " " + type
-                        + " " + e.getValue(), "step 3b (column position on the rebuilt table)", plan);
+                exec(ch, "ALTER TABLE " + q(db) + "." + q(scratch) + onCluster + " MODIFY COLUMN " + q(e.getKey()) + " "
+                        + type + " " + e.getValue(), "step 3b (column position on the rebuilt table)", plan);
             }
         }
 
@@ -290,14 +323,14 @@ public final class PrimaryKeyRebuild {
         // BEFORE the swap, so a restart resumes it from that table alone
         // (PrimaryKeyBackfill.resumePending) and never has to guess renames or
         // source-valued columns from the column sets.
-        exec(ch, "ALTER TABLE " + q(db) + "." + q(table) + " MODIFY COMMENT '"
+        exec(ch, "ALTER TABLE " + q(db) + "." + q(table) + onCluster + " MODIFY COMMENT '"
                         + lit(PrimaryKeyBackfill.withMarker(comment, task.markerJson())) + "'",
                 "step 4 (record the pending backfill on the table to be retired)", plan);
         if (exchange) {
             // DESTRUCTIVE: atomically swaps the mirrored table with its empty
             // rebuilt copy; no rows are lost -- the pre-rebuild table lives on
             // under the scratch name until the backfill has copied and verified it.
-            exec(ch, "EXCHANGE TABLES " + q(db) + "." + q(table) + " AND " + q(db) + "." + q(scratch),
+            exec(ch, "EXCHANGE TABLES " + q(db) + "." + q(table) + " AND " + q(db) + "." + q(scratch) + onCluster,
                     "step 4 (EXCHANGE TABLES)", plan);
         } else {
             // DESTRUCTIVE: renames the mirrored table aside and the empty rebuilt
@@ -305,7 +338,8 @@ public final class PrimaryKeyRebuild {
             // pre-rebuild table lives on under the retired name until the backfill
             // has copied and verified it.
             exec(ch, "RENAME TABLE " + q(db) + "." + q(table) + " TO " + q(db) + "." + q(retired) + ", "
-                    + q(db) + "." + q(scratch) + " TO " + q(db) + "." + q(table), "step 4 (RENAME TABLE)", plan);
+                    + q(db) + "." + q(scratch) + " TO " + q(db) + "." + q(table) + onCluster, "step 4 (RENAME TABLE)",
+                    plan);
         }
         log.info("Primary-key rebuild of {}.{} swapped: {}.{} is now the empty table keyed by ({}); {}.{} holds the "
                         + "pre-DDL rows and is backfilled online (Spec 06.09 §3.3.2). A value-level comparison of "
@@ -323,7 +357,8 @@ public final class PrimaryKeyRebuild {
      * nothing at all when {@code disable.drop.truncate=true}.
      */
     private static void cleanPreviousAttempt(Connection ch, String db, String table, PrimaryKeyRebuildPlan plan,
-                                             List<String> oldKey, String deleteFlag, Properties props) {
+                                             List<String> oldKey, String deleteFlag, Properties props,
+                                             String onCluster) {
         String leftoverQuery = "SELECT name, comment FROM system.tables WHERE database = '" + lit(db)
                 + "' AND (name LIKE '" + likeLit(table + "__pk_rebuild_") + "%' OR name LIKE '"
                 + likeLit(table + "__pk_retired_") + "%') ORDER BY name";
@@ -369,7 +404,8 @@ public final class PrimaryKeyRebuild {
             // rebuild attempt for this same table (<table>__pk_rebuild_% /
             // <table>__pk_retired_% in the destination database) that carries
             // no pending-backfill marker, never a mirrored source table.
-            exec(ch, "DROP TABLE IF EXISTS " + q(db) + "." + q(leftover), "step 1 (clean previous attempt)", plan);
+            exec(ch, "DROP TABLE IF EXISTS " + q(db) + "." + q(leftover) + onCluster, "step 1 (clean previous attempt)",
+                    plan);
         }
     }
 
@@ -490,6 +526,22 @@ public final class PrimaryKeyRebuild {
                                          List<String> newKey, boolean keylessFallback,
                                          Map<String, String> columnTypes, Map<String, String> renames,
                                          Map<String, String> retypes) {
+        return rewriteCreateStatement(showCreate, database, table, newTable, newKey, keylessFallback, columnTypes,
+                renames, retypes, "");
+    }
+
+    /**
+     * As {@link #rewriteCreateStatement(String, String, String, String, List, boolean, Map, Map, Map)},
+     * with {@code onCluster} ({@link #ON_CLUSTER} or empty) placed after the
+     * table name: in replicated mode the rebuilt table is created on every
+     * host of the cluster, and the {@code {uuid}} default path the rendered
+     * engine carries is accepted only there (Spec 06.09 §3.3.1 step 3). The
+     * engine arguments are kept verbatim.
+     */
+    static String rewriteCreateStatement(String showCreate, String database, String table, String newTable,
+                                         List<String> newKey, boolean keylessFallback,
+                                         Map<String, String> columnTypes, Map<String, String> renames,
+                                         Map<String, String> retypes, String onCluster) {
         String create = showCreate.replace("\r\n", "\n");
         Matcher header = CREATE_HEADER.matcher(create);
         if (!header.find()) {
@@ -602,7 +654,8 @@ public final class PrimaryKeyRebuild {
                 out.add(settings);
             }
         }
-        return "CREATE TABLE " + q(database) + "." + q(newTable) + columnBlock + "\n" + String.join("\n", out);
+        return "CREATE TABLE " + q(database) + "." + q(newTable) + onCluster + columnBlock + "\n"
+                + String.join("\n", out);
     }
 
     /**

@@ -160,7 +160,10 @@ message, when:
    sign-based engine;
 3. the target is `Replicated*` with a literal ZooKeeper path that does not use
    the `{table}` or `{uuid}` macro — the rebuilt table would collide with the
-   old one's path;
+   old one's path (a `{uuid}` path — the default ClickHouse writes into the
+   metadata of a table created with empty engine arguments — does not collide,
+   but ClickHouse accepts it only in an `ON CLUSTER` query, which is how the
+   rebuild issues every statement in replicated mode, §3.3.1 step 3);
 4. a `SOURCE_VALUED` column or an old-key column is neither an integer nor a
    string type on both engines — the only types the key map binds (§3.4) without
    a second value-conversion path;
@@ -250,6 +253,45 @@ row twice collapses to one (`PkRebuild.lean`: `backfill_never_shadows_newer`,
    `pk-rebuild-backfill` thread (never a writer thread; its own ClickHouse
    connection) and return.
 
+**Replicated mode.** When the connector creates `ReplicatedReplacingMergeTree`
+tables (`auto.create.tables.replicated=true` — the same switch on which the
+translator appends `ON CLUSTER `{cluster}`` to its own `CREATE`/`ALTER`),
+every DDL the swap and the backfill issue on `T`, `S` and `R` carries
+` ON CLUSTER `{cluster}`` in the same literal form: the `DROP TABLE IF EXISTS`
+of a leftover (step 1), the `CREATE TABLE S` (step 3, after the table name),
+the `ALTER TABLE S` of a deferred `DROP COLUMN` or column position (step 3b),
+the `ALTER TABLE T ... MODIFY COMMENT` marker and the `EXCHANGE TABLES` /
+`RENAME TABLE` (step 4), and the `DROP TABLE IF EXISTS R` /
+`ALTER TABLE R ... MODIFY COMMENT` of §3.3.2 steps 4 and 7. Two reasons, both
+measured in the replicated CI environment (a four-host cluster,
+ClickHouse 23.8):
+1. `SHOW CREATE TABLE T` renders the engine as
+   `ReplicatedReplacingMergeTree('/clickhouse/tables/{uuid}/{shard}', '{replica}', ...)`
+   — ClickHouse writes the default path into the metadata of a table created
+   with empty engine arguments — and re-issuing that `CREATE` as a plain query
+   is rejected with `Code: 36 BAD_ARGUMENTS` "Macro 'uuid' and empty arguments
+   of ReplicatedMergeTree are supported only for ON CLUSTER queries with Atomic
+   database engine" (`registerStorageMergeTree.cpp`: the `{uuid}` macro is
+   allowed only for an `ON CLUSTER` query, a `Replicated` database, or
+   `ATTACH`). Pre-fix code issued the plain `CREATE`, so every keyless or
+   deferred-clause key-column `ALTER` on a replicated target failed at step 3
+   (a `DDLReplicationException` on the barrier) and replication stopped there.
+   The engine arguments are kept verbatim; on cluster the initiator generates
+   the table UUID once, so `{uuid}` resolves to the same path on every host.
+2. `T` exists on every host of the cluster (it was created `ON CLUSTER`), so
+   the rebuilt definition must replace it everywhere; a swap on one host alone
+   would leave the other replicas keyed by the old identity with the pre-DDL
+   rows. The copy (`INSERT ... SELECT`, §3.3.2 step 2) and the completeness
+   check run on the copying host only and reach the other replicas through
+   the engine; the key map `K` is a local helper of that host and never
+   carries the clause.
+On-cluster statements go through the distributed DDL queue
+(`distributed_ddl_task_timeout`) instead of returning in milliseconds; the
+swap is still metadata-only and holds the barrier for that queue round-trip.
+Without the switch nothing changes. Pinned by
+`PrimaryKeyRebuildTest.replicatedSwapRunsOnCluster()` and
+`PrimaryKeyRebuildTest.replicatedBackfillDropsRetiredOnCluster()`.
+
 #### 3.3.2 Backfill phase (online, retried, restart-safe)
 1. **Source key map** (SOURCE_VALUED columns only, §3.4): create `K` and fill
    it from the source — read now, i.e. at a position at or after the DDL,
@@ -290,9 +332,11 @@ row twice collapses to one (`PkRebuild.lean`: `backfill_never_shadows_newer`,
    with the retired table never released. Rows deleted or
    re-keyed on the source between the DDL and the key-map read are absent
    from `K` and excluded from the check, as in §3.4.
-4. **Retire**: `DROP TABLE R` and `K` — unless `disable.drop.truncate=true`,
-   in which case both are kept and named at WARN, and the marker is stripped
-   from the kept copy so it is not copied again at the next start.
+4. **Retire**: `DROP TABLE R` (`ON CLUSTER` in replicated mode, §3.3.1) and
+   `K` (always local) — unless `disable.drop.truncate=true`, in which case
+   both are kept and named at WARN, and the marker is stripped from the kept
+   copy (the same `ON CLUSTER` rule) so it is not copied again at the next
+   start.
 5. **Failure and retry**: any failure in steps 1–3 is logged at ERROR with the
    step and statement, recorded in the error table when `error.logging.enable`
    is set, and the backfill is re-scheduled with exponential backoff
@@ -321,8 +365,8 @@ row twice collapses to one (`PkRebuild.lean`: `backfill_never_shadows_newer`,
    already in `T`, not the retired ones), the connector **cancels** the
    pending or running backfill of `T` (a running copy is interrupted at the
    next statement boundary and its task is not re-scheduled) and drops the
-   retired copy and the key map before the statement's own effect is
-   applied — a TRUNCATE that ran first and a backfill statement that
+   retired copy (`ON CLUSTER` in replicated mode, §3.3.1) and the key map
+   (local) before the statement's own effect is applied — a TRUNCATE that ran first and a backfill statement that
    followed would otherwise resurrect truncated rows. A backfill whose
    retired table has vanished under it (cancelled) logs that and stops. A
    copy statement already executing on ClickHouse cannot be interrupted,
@@ -458,6 +502,8 @@ is unaffected.
 - `PrimaryKeyRebuildTest.columnAddedDuringBackfillIsOmittedFromCopy()` — §3.3.2 step 9: a column present on `T` but absent from the retired table is left out of the copy column list.
 - Integration (`PrimaryKeyChangeIT`, backfill session slowed with `clickhouse.jdbc.settings` `max_execution_speed`/`timeout_before_checking_execution_speed=0` so the online window is seconds long): `dmlDuringBackfillIsShadowedByNewerVersions()` (UPDATE / DELETE / INSERT / relocation on rows the backfill has not copied yet, issued while the retired table still exists; final value-level equality), `truncateDuringBackfillLeavesTableEmpty()` (TRUNCATE while the backfill is pending: the table ends empty, the retired copy is gone, no resurrected rows), `secondKeyChangeWhileBackfillPending()` (two key changes back to back; final equality and the second key), `restartDuringBackfillResumesFromMarker()` (engine stopped while the retired table still exists, restarted: the backfill completes and the retired table is dropped), `columnAddedDuringBackfill()` (ADD COLUMN on the source while the backfill runs; final equality including the new column).
 - `PrimaryKeyRebuildTest.replicatedLiteralPathIsLoud()`, `PrimaryKeyRebuildTest.nullableOldKeyWithSourceMapIsLoud()` — §3.2 preconditions.
+- `PrimaryKeyRebuildTest.replicatedSwapRunsOnCluster()` — §3.3.1 replicated mode: with `auto.create.tables.replicated=true` the leftover `DROP`, the `CREATE TABLE S` (the rendered `'/clickhouse/tables/{uuid}/{shard}'` path kept verbatim), the deferred `ALTER TABLE S DROP COLUMN`, the `MODIFY COMMENT` marker and the `EXCHANGE TABLES` (or the `RENAME TABLE` on a non-Atomic database) all carry ` ON CLUSTER `{cluster}``; without the switch none does. Pre-fix code issued the plain `CREATE`, which ClickHouse rejects for the `{uuid}` path outside `ON CLUSTER`, so every key-column ALTER on a replicated target failed at step 3.
+- `PrimaryKeyRebuildTest.replicatedBackfillDropsRetiredOnCluster()` — §3.3.2 steps 4 and 7 in replicated mode: the copy and the check are plain statements on the copying host, `R` is dropped (or its kept copy re-commented) `ON CLUSTER`, the key map `K` without it — on completion and on a superseding `TRUNCATE`.
 - `MySqlDDLParserListenerImplTest.testModifyKeyColumnWiderPlansRebuild()`, `testChangeKeyColumnRenamePlansRebuild()`, `testKeyColumnChangeIsLoudWhenRebuildDisabled()` — §3.1.1/§3.1.2: a widening `MODIFY` and a `CHANGE`/`RENAME` of a key column plan a same-identity rebuild with the deferred clause and (for a rename) the renamed key; nothing for the key column is emitted against the current table; `ddl.primary.key.rebuild=false` is loud.
 - `MySqlDDLParserListenerImplTest.testDroppedKeyColumnIsDeferredToRebuiltTable()` — the GIPK promotion `DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`: plan with new key `id`, deferred `DROP COLUMN IF EXISTS my_row_id`, and no `DROP COLUMN` in the emitted statement.
 - `MySqlDDLParserListenerImplTest.testRedeliveredPrimaryKeyChangeIsRestatement()` — §3.5: once the target's sorting key equals the declared key, the same statement plans nothing and emits only its idempotent clauses.

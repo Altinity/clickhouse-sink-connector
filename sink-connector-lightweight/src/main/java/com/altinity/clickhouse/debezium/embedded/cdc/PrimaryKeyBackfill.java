@@ -479,6 +479,14 @@ public final class PrimaryKeyBackfill {
     private final Supplier<Connection> clickHouse;
     private final Supplier<Connection> source;
     private final Properties props;
+    /**
+     * {@link PrimaryKeyRebuild#ON_CLUSTER} in replicated mode
+     * ({@code auto.create.tables.replicated=true}), else empty: the retired
+     * table exists on every host of the cluster, so its DDL runs there too
+     * (Spec 06.09 §3.3.2 steps 4 and 7). The key map is a local helper of the
+     * copying host and never carries it.
+     */
+    private final String onCluster;
     private final FailureReporter reporter;
     private final Scheduler scheduler;
     private final ScheduledExecutorService executor;
@@ -510,6 +518,7 @@ public final class PrimaryKeyBackfill {
         this.clickHouse = clickHouse;
         this.source = source;
         this.props = props == null ? new Properties() : props;
+        this.onCluster = PrimaryKeyRebuild.onCluster(this.props);
         this.reporter = reporter;
         if (scheduler != null) {
             this.executor = null;
@@ -676,12 +685,12 @@ public final class PrimaryKeyBackfill {
         }
         Set<String> dropped = new LinkedHashSet<>();
         for (Task task : victims) {
-            dropScratch(ch, database, task.retired(), dropped, "the retired pre-rebuild copy");
+            dropScratch(ch, database, task.retired(), dropped, "the retired pre-rebuild copy", onCluster);
             if (task.needKeyMap()) {
-                dropScratch(ch, database, task.keyMapTable(), dropped, "the source key map");
+                dropScratch(ch, database, task.keyMapTable(), dropped, "the source key map", "");
             }
         }
-        dropMarkedScratchTables(ch, database, table, dropped);
+        dropMarkedScratchTables(ch, database, table, dropped, onCluster);
         // DESTRUCTIVE: nothing more is dropped below; the setting is only named in the log line.
         if (PrimaryKeyRebuild.dropTruncateDisabled(props) && !dropped.isEmpty()) {
             log.warn("Primary-key backfill: {} dropped although {}=true: the superseding statement leaves the operator "
@@ -729,8 +738,13 @@ public final class PrimaryKeyBackfill {
         }
     }
 
-    /** Drops one rebuild scratch table of the cancelled backfill(s), once. */
-    private static void dropScratch(Connection ch, String database, String name, Set<String> dropped, String what) {
+    /**
+     * Drops one rebuild scratch table of the cancelled backfill(s), once;
+     * {@code onCluster} is the retired copy's clause in replicated mode and
+     * empty for the local key map.
+     */
+    private static void dropScratch(Connection ch, String database, String name, Set<String> dropped, String what,
+                                    String onCluster) {
         if (!dropped.add(name)) {
             return;
         }
@@ -739,7 +753,7 @@ public final class PrimaryKeyBackfill {
         // task or by its marker) because the source's replicated
         // TRUNCATE/DROP of the table made its rows obsolete; never a
         // mirrored table. IF EXISTS makes a repeat a no-op.
-        exec(ch, "DROP TABLE IF EXISTS " + q(database) + "." + q(name), "cancel (drop " + what + ")", null);
+        exec(ch, "DROP TABLE IF EXISTS " + q(database) + "." + q(name) + onCluster, "cancel (drop " + what + ")", null);
     }
 
     /**
@@ -748,7 +762,8 @@ public final class PrimaryKeyBackfill {
      * when {@code table} is null) and its key map: a pending copy of a
      * previous run that this process did not resume is superseded too.
      */
-    private static void dropMarkedScratchTables(Connection ch, String database, String table, Set<String> dropped) {
+    private static void dropMarkedScratchTables(Connection ch, String database, String table, Set<String> dropped,
+                                                String onCluster) {
         String prefix = table == null ? "%" : likeLit(table);
         String scan = "SELECT name, comment FROM system.tables WHERE database = '" + lit(database) + "' AND (name LIKE '"
                 + prefix + likeLit("__pk_rebuild_") + "%' OR name LIKE '" + prefix + likeLit("__pk_retired_")
@@ -764,12 +779,12 @@ public final class PrimaryKeyBackfill {
             if (marker == null || (table != null && !marker.table.equalsIgnoreCase(table))) {
                 continue;
             }
-            dropScratch(ch, database, row[0], dropped, "the retired pre-rebuild copy of a previous run");
+            dropScratch(ch, database, row[0], dropped, "the retired pre-rebuild copy of a previous run", onCluster);
             if (!marker.sourceValued.isEmpty()) {
                 // Only a source-valued rebuild ever created its key map.
                 String keyMap = marker.keyMap != null ? marker.keyMap
                         : marker.table + "__pk_rebuild_keys_" + marker.epochMs;
-                dropScratch(ch, database, keyMap, dropped, "the source key map of a previous run");
+                dropScratch(ch, database, keyMap, dropped, "the source key map of a previous run", "");
             }
         }
     }
@@ -1088,14 +1103,15 @@ public final class PrimaryKeyBackfill {
             // kept copy is never copied again at the next start.
             String comment = scalar(ch, "SELECT comment FROM system.tables WHERE database = '" + lit(db)
                     + "' AND name = '" + lit(retired) + "'", "step 4 (comment of the retired table)", task);
-            exec(ch, "ALTER TABLE " + q(db) + "." + q(retired) + " MODIFY COMMENT '" + lit(withoutMarker(comment))
-                    + "'", "step 4 (mark the kept retired table complete)", task);
+            exec(ch, "ALTER TABLE " + q(db) + "." + q(retired) + onCluster + " MODIFY COMMENT '"
+                    + lit(withoutMarker(comment)) + "'", "step 4 (mark the kept retired table complete)", task);
         } else {
             // DESTRUCTIVE: drops the pre-rebuild copy of this one table, whose
             // live rows were copied into the rebuilt table at step 2 and proven
             // present by key at step 3 -- as MySQL drops the original after its
             // rebuild. Bounded to this attempt's retired name; disable.drop.truncate=true keeps it.
-            exec(ch, "DROP TABLE IF EXISTS " + q(db) + "." + q(retired), "step 4 (drop the retired copy)", task);
+            exec(ch, "DROP TABLE IF EXISTS " + q(db) + "." + q(retired) + onCluster, "step 4 (drop the retired copy)",
+                    task);
             if (task.needKeyMap()) {
                 // DESTRUCTIVE: drops the connector-owned source key map of this
                 // attempt (scratch, never source data).
