@@ -37,21 +37,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Spec 03.06 section 3.3: a successful batch reports its progress at DEBUG,
- * never at INFO.
- *
- * <p><b>The defect.</b> Every batch wrote the full INSERT template
- * ("*** INSERT QUERY for Database(db) ***: insert into ...") and an
- * "EXECUTED BATCH Successfully" line at INFO. With ten workers flushing every
- * few milliseconds that was 97% of a busy deployment's log -- ~2,600 lines a
- * minute, the INSERT template (every column of every table) most of the
- * bytes -- and the lines that matter scrolled out of the retained history
- * within hours.</p>
+ * Spec 03.06 section 3.3: a successful batch reports its progress at INFO,
+ * by design -- the INSERT template ("*** INSERT QUERY for Database(db) ***:
+ * insert into ...") and the "EXECUTED BATCH Successfully" line are how an
+ * operator sees from the log that the connector is progressing. A revision
+ * moved them to DEBUG for volume; the operators reversed that.
  *
  * <p>The test drives the real {@code addToPreparedStatementBatch} against a
  * recording JDBC surface (as {@code PreparedStatementExecutorClearParametersTest}
- * does) with the executor's logger opened up to DEBUG, so both lines are
- * still observed -- at DEBUG -- and nothing reaches INFO.</p>
+ * does) at the default logger level and asserts both lines arrive at INFO,
+ * and that a successful batch says nothing at WARN or above.</p>
  */
 public class PreparedStatementExecutorBatchLogLevelTest {
 
@@ -129,8 +124,8 @@ public class PreparedStatementExecutorBatchLogLevelTest {
     }
 
     @Test
-    @DisplayName("A successful batch logs its INSERT template and its EXECUTED line at DEBUG, and nothing at INFO or above")
-    public void successfulBatchLogsItsProgressAtDebugOnly() throws Exception {
+    @DisplayName("A successful batch logs its INSERT template and its EXECUTED line at INFO, and nothing at WARN or above")
+    public void successfulBatchLogsItsProgressAtInfo() throws Exception {
         Map<String, Integer> indexMap = new LinkedHashMap<>();
         indexMap.put("id", 1);
         indexMap.put("name", 2);
@@ -149,7 +144,7 @@ public class PreparedStatementExecutorBatchLogLevelTest {
         CapturingAppender appender = new CapturingAppender();
         appender.start();
         coreLogger.addAppender(appender);
-        Configurator.setLevel(coreLogger.getName(), Level.DEBUG);
+        Configurator.setLevel(coreLogger.getName(), Level.INFO);
         try {
             new PreparedStatementExecutor("is_deleted", true, null, "_version", "db", ZoneId.of("UTC"))
                     .addToPreparedStatementBatch("topic", Collections.singletonList(queryToRecords),
@@ -166,22 +161,22 @@ public class PreparedStatementExecutorBatchLogLevelTest {
         List<String> all = events.stream().map(PreparedStatementExecutorBatchLogLevelTest::describe)
                 .collect(Collectors.toList());
 
-        // The lines still exist, for an operator who turns DEBUG on ...
-        assertTrue(events.stream().anyMatch(e -> e.getLevel() == Level.DEBUG
+        // Both progress lines arrive at INFO, the default level ...
+        assertTrue(events.stream().anyMatch(e -> e.getLevel() == Level.INFO
                         && e.getMessage().getFormattedMessage().contains("INSERT QUERY for Database(db)")
                         && e.getMessage().getFormattedMessage().contains(insertQuery)),
-                "the INSERT template line must be logged at DEBUG: " + all);
-        assertTrue(events.stream().anyMatch(e -> e.getLevel() == Level.DEBUG
+                "the INSERT template line must be logged at INFO: " + all);
+        assertTrue(events.stream().anyMatch(e -> e.getLevel() == Level.INFO
                         && e.getMessage().getFormattedMessage().contains("EXECUTED BATCH Successfully")
                         && e.getMessage().getFormattedMessage().contains("Records: 2")),
-                "the EXECUTED BATCH line must be logged at DEBUG: " + all);
+                "the EXECUTED BATCH line must be logged at INFO: " + all);
 
-        // ... and a successful batch says nothing at INFO or above (pre-fix: both lines at INFO).
-        List<String> infoAndAbove = events.stream()
-                .filter(e -> e.getLevel().isMoreSpecificThan(Level.INFO))
+        // ... and a successful batch says nothing at WARN or above.
+        List<String> warnAndAbove = events.stream()
+                .filter(e -> e.getLevel().isMoreSpecificThan(Level.WARN))
                 .map(PreparedStatementExecutorBatchLogLevelTest::describe)
                 .collect(Collectors.toList());
-        assertEquals(Collections.emptyList(), infoAndAbove,
-                "a successful batch must not log at INFO or above (spec 03.06 section 3.3)");
+        assertEquals(Collections.emptyList(), warnAndAbove,
+                "a successful batch must not log at WARN or above (spec 03.06 section 3.3)");
     }
 }

@@ -586,8 +586,9 @@ public class ClickHouseBatchRunnable implements Runnable {
         // The batch was registered with its handoff sequence by the producer
         // before it was enqueued (spec 09.01 section 3.1); there is nothing to
         // register on pick-up.
-        // Per-batch progress line: DEBUG, not INFO (spec 03.06 section 3.3).
-        log.debug("****** Thread: " +
+        // Per-batch progress line: INFO by design (spec 03.06 section 3.3) --
+        // operators read the connector's progress from the log.
+        log.info("****** Thread: " +
                 Thread.currentThread().getName() +
                 " Batch Size: " + currentBatch.size() +
                 " ******");

@@ -45,13 +45,13 @@ public class DebeziumOffsetManagementTest {
 
     /**
      * Spec 03.06 section 3.3 line 4: the per-unit "BATCH marked as processed"
-     * line is DEBUG. It was INFO -- one line per acknowledged unit, for the
-     * life of the process -- and with ten workers flushing every few
-     * milliseconds it was part of the 97% of a busy log that said nothing.
+     * line is INFO by design -- it is how an operator sees from the log that
+     * offsets are being acknowledged. A revision moved it to DEBUG for volume;
+     * the operators reversed that.
      */
     @Test
-    @DisplayName("Acknowledging a unit logs the 'BATCH marked as processed' line at DEBUG, nothing at INFO or above")
-    public void acknowledgementIsLoggedAtDebug() throws InterruptedException {
+    @DisplayName("Acknowledging a unit logs the 'BATCH marked as processed' line at INFO, nothing at WARN or above")
+    public void acknowledgementIsLoggedAtInfo() throws InterruptedException {
         OffsetTestSupport.RecordingCommitter committer = new OffsetTestSupport.RecordingCommitter();
         List<ClickHouseStruct> unit = OffsetTestSupport.unit(committer, 1L, "orders");
 
@@ -60,7 +60,7 @@ public class DebeziumOffsetManagementTest {
         CapturingAppender appender = new CapturingAppender();
         appender.start();
         coreLogger.addAppender(appender);
-        Configurator.setLevel(coreLogger.getName(), Level.DEBUG);
+        Configurator.setLevel(coreLogger.getName(), Level.INFO);
         try {
             DebeziumOffsetManagement.acknowledgeRecords(unit);
         } finally {
@@ -74,15 +74,15 @@ public class DebeziumOffsetManagementTest {
         List<String> all = events.stream()
                 .map(e -> e.getLevel() + ": " + e.getMessage().getFormattedMessage())
                 .collect(Collectors.toList());
-        Assertions.assertTrue(events.stream().anyMatch(e -> e.getLevel() == Level.DEBUG
+        Assertions.assertTrue(events.stream().anyMatch(e -> e.getLevel() == Level.INFO
                         && e.getMessage().getFormattedMessage().contains("BATCH marked as processed")),
-                "the acknowledgement line must still be logged, at DEBUG: " + all);
-        List<String> infoAndAbove = events.stream()
-                .filter(e -> e.getLevel().isMoreSpecificThan(Level.INFO))
+                "the acknowledgement line must be logged at INFO: " + all);
+        List<String> warnAndAbove = events.stream()
+                .filter(e -> e.getLevel().isMoreSpecificThan(Level.WARN))
                 .map(e -> e.getLevel() + ": " + e.getMessage().getFormattedMessage())
                 .collect(Collectors.toList());
-        Assertions.assertEquals(Collections.emptyList(), infoAndAbove,
-                "an acknowledged unit must not log at INFO or above (spec 03.06 section 3.3)");
+        Assertions.assertEquals(Collections.emptyList(), warnAndAbove,
+                "an acknowledged unit must not log at WARN or above (spec 03.06 section 3.3)");
     }
 
     /**
