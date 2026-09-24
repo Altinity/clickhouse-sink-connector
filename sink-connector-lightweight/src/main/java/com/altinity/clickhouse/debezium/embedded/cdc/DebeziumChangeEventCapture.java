@@ -3271,12 +3271,15 @@ public class DebeziumChangeEventCapture {
     /**
      * Establishes the durable high-water mark for this connector and seeds the
      * version floor from it -- or, when no mark exists yet (first start after an
-     * upgrade, a ClickHouse replica that never saw this connector), from
-     * {@code max(_version)} over the target tables (spec 02.02 section 3.5). Never
-     * throws: a mark that cannot be read leaves this start unseeded, logged at
-     * ERROR, and the mark still guards every handoff through {@link #coverAssignedVersion}.
+     * upgrade, a ClickHouse replica that never saw this connector), from the
+     * connector clock plus a few seconds of head-room (spec 02.02 section 3.5).
+     * The seed reads the mark table only: it never scans a target table, and
+     * a re-setup after an engine retry costs the same two statements again
+     * (Invariant I14, spec 10.06). Never throws: a mark that cannot be read leaves
+     * this start unseeded, logged at ERROR, and the mark still guards every
+     * handoff through {@link #coverAssignedVersion}.
      *
-     * @param props  the Debezium properties (offset table name, database include list)
+     * @param props  the Debezium properties (offset table name)
      * @param config the connector configuration
      */
     private void seedVersionFloorFromDurableMark(Properties props, ClickHouseSinkConnectorConfig config) {
@@ -3291,37 +3294,14 @@ public class DebeziumChangeEventCapture {
         VersionHighWaterMark mark = VersionHighWaterMark.forOffsetTable(this::systemConnection, offsetTable);
         this.versionHighWaterMark = mark;
         try {
-            mark.ensureTable();
-            long persisted = mark.load();
-            long now = System.currentTimeMillis();
-            String source = null;
-            long floor = 0L;
-            if (persisted > 0) {
-                long candidate = VersionHighWaterMark.sequenceFloor(persisted);
-                if (VersionHighWaterMark.isPlausibleFloor(candidate, now)) {
-                    floor = seedVersionFloor(persisted);
-                    source = "the persisted high-water version " + persisted;
-                } else {
-                    log.error("The persisted high-water version {} in {} decodes to floor {} ms, which is "
-                            + "not a plausible timestamp; ignoring it", persisted, mark.qualifiedTableName(),
-                            candidate);
-                }
-            }
-            if (source == null) {
-                long scanned = mark.scanTargets(VersionHighWaterMark.targetDatabases(props, config),
-                        com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.VERSION_COLUMN);
-                if (scanned > 0) {
-                    floor = raiseVersionFloor(scanned);
-                    source = "max(" + com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.VERSION_COLUMN + ") over the target tables";
-                }
-            }
-            if (source == null) {
-                log.warn("The version floor is UNSEEDED for this start: no row in {} and nothing usable in "
-                        + "the target tables. Rows versioned in this run may rank below rows of a "
-                        + "previous run for the lag at start (spec 02.06 section 6.2); the mark is "
-                        + "written from the first handoff on.", mark.qualifiedTableName());
+            VersionHighWaterMark.Seed seed = mark.seedFloor();
+            long floor = raiseVersionFloor(seed.floorMs);
+            if (seed.fromMark) {
+                log.info("Version floor seeded to {} ms from {}", floor, seed.source);
             } else {
-                log.info("Version floor seeded to {} ms from {}", floor, source);
+                log.warn("Version floor seeded to {} ms from {}: the first rows of this run are clamped to "
+                        + "it until the source clock passes it (spec 02.02 section 3.5 (2)); the mark is "
+                        + "written from the first handoff on", floor, seed.source);
             }
         } catch (Exception e) {
             log.error("Could not establish the version high-water mark in {}; this start is unseeded and "
@@ -3467,9 +3447,9 @@ public class DebeziumChangeEventCapture {
     /**
      * Schedules again every primary-key backfill whose retired table is still
      * present in the destination database(s) (Spec 06.09 §3.3.2 step 6). The
-     * databases are those {@code database.include.list} maps to, as the
-     * startup version-floor scan resolves them; when that list is not
-     * knowable, every non-system database is scanned. Never throws.
+     * databases are those {@code database.include.list} maps to, as
+     * {@link VersionHighWaterMark#targetDatabases} resolves them; when that
+     * list is not knowable, every non-system database is scanned. Never throws.
      */
     private void resumePendingPrimaryKeyBackfills(Properties props, ClickHouseSinkConnectorConfig config) {
         try {

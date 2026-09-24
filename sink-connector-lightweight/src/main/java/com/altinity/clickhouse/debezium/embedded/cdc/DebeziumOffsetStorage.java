@@ -125,6 +125,8 @@ public class DebeziumOffsetStorage {
                 JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX +
                         JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name());
 
+        // I14-scan-allowed: the connector-owned offset table (spec 09.03 section 3),
+        // a handful of rows keyed by offset_key; read by the restart monitor.
         String query = String.format(
                 "select max(record_insert_ts) from %s", tableName);
         DBMetadata dbMetadata = new DBMetadata(props);

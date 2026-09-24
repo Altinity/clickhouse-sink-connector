@@ -406,5 +406,50 @@ class CliTests(FixtureCase):
         self.assertEqual(vs.main(["--repo-root", str(self.root)]), 1)
 
 
+
+class BookkeepingScanTests(FixtureCase):
+    """Invariant I14 (spec 10.06): aggregate reads over replicated tables in main code."""
+
+    def write_main(self, body: str) -> None:
+        write(self.root, MAIN_JAVA, "package com.altinity.fixture;\npublic class Foo {\n" + body + "\n}\n")
+
+    def test_unmarked_aggregate_over_target_table_fails(self) -> None:
+        self.write_main('  String q = "SELECT max(`_version`) FROM `db`.`orders`";')
+        self.assertOneErrorContaining(run(self.root), MAIN_JAVA + ":3", "aggregate read", "I14-scan-allowed")
+
+    def test_split_literals_are_read_as_one_run(self) -> None:
+        # The concatenation style a future scan could hide behind: the SELECT and
+        # the aggregate sit in different literals, even on different lines.
+        self.write_main('  String q = "SELECT "\n      + "max(_version) FROM target_db.orders";')
+        self.assertOneErrorContaining(run(self.root), MAIN_JAVA + ":3", "aggregate read")
+
+    def test_dynamic_table_needs_a_marker(self) -> None:
+        self.write_main('  String q = "SELECT max(`_version`) FROM " + table + " SETTINGS max_execution_time = 60";')
+        report = run(self.root)
+        self.assertEqual(len(report.errors), 2, report.errors)
+        self.assertIn("aggregate read", report.errors[0])
+        self.assertIn("per-query execution cap", report.errors[1])
+
+    def test_system_catalog_reads_are_exempt(self) -> None:
+        self.write_main('  String q = "SELECT count(*) FROM system.tables WHERE database = ?";')
+        self.assertEqual(run(self.root).errors, [])
+
+    def test_marker_within_window_waives(self) -> None:
+        self.write_main('  // I14-scan-allowed: Spec 06.09 section 3.3.2 count reconciliation\n'
+                        '  String q = "SELECT count() FROM (" + select + ")";')
+        self.assertEqual(run(self.root).errors, [])
+
+    def test_marker_outside_window_does_not_waive(self) -> None:
+        self.write_main('  // I14-scan-allowed: too far away\n' + '  int a = 0;\n' * 6
+                        + '  String q = "SELECT count() FROM (" + select + ")";')
+        self.assertOneErrorContaining(run(self.root), "aggregate read")
+
+    def test_test_trees_are_not_scanned(self) -> None:
+        write(self.root, TEST_JAVA, "package com.altinity.fixture;\npublic class FooTest {\n"
+              '  String q = "SELECT max(`_version`) FROM `db`.`orders`";\n'
+              "  @Test\n  public void testBar() {}\n}\n")
+        self.assertEqual(run(self.root).errors, [])
+
+
 if __name__ == "__main__":
     unittest.main()

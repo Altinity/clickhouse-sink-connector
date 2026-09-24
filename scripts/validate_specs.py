@@ -4,7 +4,7 @@
 Checks, in order (each pass appends to one error list; exit code 1 if any):
 
 1. Governance documents exist (CONSTITUTION.md, README.md, SMART_RALPH_PROTOCOL.md)
-   and CONSTITUTION.md defines every invariant heading I1..I13.
+   and CONSTITUTION.md defines every invariant heading I1..I14.
 2. Every domain directory exists and every micro-spec carries the required
    sections (Executive Summary, Codebase Mapping, Invariants, Verification).
 3. Formal verification suite:
@@ -30,6 +30,15 @@ Checks, in order (each pass appends to one error list; exit code 1 if any):
    `formal_specs/`, fail -- unless some commit message in `<ref>..HEAD` carries
    `[spec-exempt: <reason>]` (any commit in the range, so a pull_request run
    that checks out the synthetic merge commit still sees the marker).
+8. Invariant I14 (spec 10.06, bounded bookkeeping): every run of Java string
+   literals under `*/src/main/**` (adjacent literals joined by `+`, on one
+   line or across lines, are read as one) that aggregates over a table
+   (`SELECT max|min|count|sum|avg|uniq|any(`) or carries a per-query execution
+   cap (`SETTINGS max_execution_time`) must either read a `system.*` table or
+   be preceded, within six lines, by an `I14-scan-allowed: <spec reference>`
+   comment. A connector's bookkeeping must never depend on a scan of the data
+   it replicates; the marker makes every sanctioned read over a target table
+   visible and reviewable.
 
 Findings in passes 4 and 5 can be waived per spec file (or per spec file and
 token) through scripts/spec_validator_allowlist.txt; waived findings are
@@ -69,7 +78,7 @@ REQUIRED_SPEC_SECTIONS = [
 ]
 
 # Every invariant the Constitution must define (one heading each).
-INVARIANT_COUNT = 13
+INVARIANT_COUNT = 14
 
 # Test source trees searched by the cited-test check.
 TEST_TREES = [
@@ -87,6 +96,24 @@ MAIN_TREES = [
 SKIP_DIRS = {".git", ".lake", "target", "node_modules", "__pycache__", ".idea"}
 
 FORBIDDEN_LEAN_TOKENS = ("sorry", "admit", "native_decide")
+
+# Invariant I14 (spec 10.06): query shapes that read the replicated data rather
+# than the connector's own bookkeeping tables. A `system.*` target is catalog
+# metadata and exempt; anything else needs an `I14-scan-allowed` marker.
+SCAN_SHAPES = [
+    ("aggregate read", re.compile(r"\bSELECT\s+(?:max|min|count|sum|avg|uniq|any)\s*\(", re.IGNORECASE)),
+    ("per-query execution cap", re.compile(r"\bSETTINGS\s+max_execution_time\b", re.IGNORECASE)),
+]
+SCAN_FROM_RE = re.compile(r"\bFROM\s+([^\s,)]+)", re.IGNORECASE)
+SCAN_SYSTEM_TARGET_RE = re.compile(r"^`?system`?\.")
+SCAN_MARKER_RE = re.compile(r"I14-scan-allowed:\s*\S")
+SCAN_MARKER_WINDOW = 6
+# A Java string literal (escapes allowed, no raw newline) and the glue that joins
+# two literals into one run: whitespace and `+` only. `"SELECT " + "max(x)"`,
+# also across lines, is ONE run; `"SELECT max(x) FROM " + table` ends the run
+# at the variable, so the FROM target stays unknown and needs a marker.
+JAVA_STRING_LITERAL_RE = re.compile(r'"((?:[^"\\\n]|\\.)*)"')
+JAVA_LITERAL_GLUE_RE = re.compile(r"\s*\+\s*")
 
 SPEC_GOVERNED_PATTERNS = ("*/src/main/*", "*.g4")
 SPEC_DIRS = ("specs/", "formal_specs/")
@@ -470,6 +497,55 @@ def check_guidance(repo_root: Path) -> list[str]:
     return errors
 
 
+def java_string_literal_runs(text: str) -> list[tuple[int, str]]:
+    """Every run of Java string literals in `text` as (1-based line of its first
+    literal, concatenated content). Adjacent literals joined only by whitespace
+    and `+` -- on one line or across lines -- form one run, so a query split as
+    `"SELECT " + "max(_version) FROM t"` is seen whole. Anything else between two
+    literals (a variable, a method call, a comma) ends the run."""
+    runs: list[list] = []
+    last_end = -1
+    for m in JAVA_STRING_LITERAL_RE.finditer(text):
+        if runs and JAVA_LITERAL_GLUE_RE.fullmatch(text[last_end:m.start()]):
+            runs[-1][1] += m.group(1)
+        else:
+            runs.append([text.count("\n", 0, m.start()) + 1, m.group(1)])
+        last_end = m.end()
+    return [(line, content) for line, content in runs]
+
+
+def check_bookkeeping_scans(repo_root: Path) -> list[str]:
+    """Invariant I14: no unmarked aggregate read over a replicated table in main code."""
+    errors: list[str] = []
+    for tree in MAIN_TREES:
+        base = repo_root / tree
+        if not base.is_dir():
+            continue
+        for path in sorted(base.rglob("*.java")):
+            if any(part in SKIP_DIRS for part in path.parts):
+                continue
+            text = path.read_text(encoding="utf-8", errors="replace")
+            lines = text.splitlines()
+            rel = path.relative_to(repo_root).as_posix()
+            for line_no, content in java_string_literal_runs(text):
+                for shape_name, shape in SCAN_SHAPES:
+                    if not shape.search(content):
+                        continue
+                    if shape_name == "aggregate read":
+                        m = SCAN_FROM_RE.search(content)
+                        if m and SCAN_SYSTEM_TARGET_RE.match(m.group(1)):
+                            continue
+                    context = "\n".join(lines[max(0, line_no - 1 - SCAN_MARKER_WINDOW):line_no - 1])
+                    if SCAN_MARKER_RE.search(context):
+                        continue
+                    errors.append(
+                        f"{rel}:{line_no}: {shape_name} over a non-system table without an "
+                        f"`I14-scan-allowed: <spec reference>` comment within {SCAN_MARKER_WINDOW} preceding lines "
+                        f"(Invariant I14, spec 10.06): {content.strip()[:140]}"
+                    )
+    return errors
+
+
 def _git(repo_root: Path, *args: str) -> str:
     proc = subprocess.run(["git", "-C", str(repo_root), *args], capture_output=True, text=True, check=False)
     if proc.returncode != 0:
@@ -532,23 +608,23 @@ def validate(repo_root: Path, allowlist: Allowlist, changed_base: str | None = N
         if not quiet:
             print(msg)
 
-    say("[1/7] Governance documents and Constitution invariants I1..I%d" % INVARIANT_COUNT)
+    say("[1/8] Governance documents and Constitution invariants I1..I%d" % INVARIANT_COUNT)
     report.errors += check_governance(repo_root)
 
-    say("[2/7] Domain micro-specification schema")
+    say("[2/8] Domain micro-specification schema")
     specs, errs = spec_files(repo_root)
     report.errors += errs
     for spec in specs:
         report.spec_count += 1
         report.errors += check_spec_schema(spec, repo_root)
 
-    say("[3/7] Lean 4 suite: roots, modules, forbidden tokens" + (", lake build" if run_lake else ""))
+    say("[3/8] Lean 4 suite: roots, modules, forbidden tokens" + (", lake build" if run_lake else ""))
     report.errors += check_lean(repo_root)
     if run_lake:
         report.errors += run_lake_build(repo_root)
 
-    say("[4/7] Codebase Mapping paths and classes resolve against the tree")
-    say("[5/7] Verification citations name existing tests / Lean declarations")
+    say("[4/8] Codebase Mapping paths and classes resolve against the tree")
+    say("[5/8] Verification citations name existing tests / Lean declarations")
     for spec in specs:
         findings = check_codebase_mapping(spec, repo_root, index)
         v_findings, refs = check_verification_refs(spec, repo_root, index)
@@ -563,14 +639,17 @@ def validate(repo_root: Path, allowlist: Allowlist, changed_base: str | None = N
         if entry not in allowlist.used:
             report.warnings.append(f"allowlist entry no longer needed: {entry}")
 
-    say("[6/7] Agent guidance files")
+    say("[6/8] Agent guidance files")
     report.errors += check_guidance(repo_root)
 
     if changed_base:
-        say(f"[7/7] Spec-first gate for changes since {changed_base}")
+        say(f"[7/8] Spec-first gate for changes since {changed_base}")
         report.errors += check_changed_base(repo_root, changed_base)
     else:
-        say("[7/7] Spec-first gate skipped (no --changed-base)")
+        say("[7/8] Spec-first gate skipped (no --changed-base)")
+
+    say("[8/8] Invariant I14: aggregate reads over replicated tables carry an I14-scan-allowed marker")
+    report.errors += check_bookkeeping_scans(repo_root)
     return report
 
 

@@ -109,6 +109,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 - **[10.03: Replica Status View & Monitoring Metrics](10-resilience-monitoring/03-replica-status-view.md)**: `<offset database>.show_replica_status` lag view (configured by `replica.status.view`).
 - **[10.04: Loud Failure Guarantee & Anti-Swallowing Protocol](10-resilience-monitoring/04-loud-failure-guarantee.md)**: Invariant I9 (Loud Failure) enforcement.
 - **[10.05: Redelivered-Record De-duplication](10-resilience-monitoring/05-record-deduplication.md)**: `deduplication.policy` keys on event identity `(topic, partition, offset)`, never on the row key.
+- **[10.06: Bounded Bookkeeping — No Scans of the Replicated Data](10-resilience-monitoring/06-bounded-bookkeeping.md)**: Invariant I14; the version-floor seed reads the mark table and the clock only, every aggregate read over a target table carries an `I14-scan-allowed` marker, enforced by the validator.
 
 ---
 

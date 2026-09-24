@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
-import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -30,7 +29,8 @@ import java.util.Properties;
 /**
  * The durable version high-water mark (spec 02.02 §3.5, 09.03 §3.4): the table
  * next to the offset table, the write-ahead horizon, the startup read, and the
- * domain-aware fallback over the targets' {@code max(_version)}.
+ * clock seed of a start that has no mark -- which must never read a target table
+ * (Invariant I14, spec 10.06).
  *
  * <p>JDBC is stood in for by JDK proxies that record every statement and answer
  * scripted result sets (Mockito is not on this module's test classpath; the same
@@ -253,59 +253,68 @@ public class VersionHighWaterMarkTest {
     }
 
     @Test
-    @DisplayName("a sequence-domain version decodes to floorDiv(v, 1e6) + 1")
-    public void decodesSequenceDomainVersions() {
-        long v = T * M + 1_000_000_000L + 5;
-        assertEquals(T + 1001, VersionHighWaterMark.decodePlausibleFloor(v, NOW));
-    }
-
-    @Test
-    @DisplayName("a snowflake-domain version decodes to its timestamp field + 1")
-    public void decodesSnowflakeDomainVersions() {
-        long v = SnowFlakeId.generate(T, 42L, false);
-        assertEquals(T + 1, VersionHighWaterMark.decodePlausibleFloor(v, NOW));
-    }
-
-    @Test
-    @DisplayName("versions with no plausible timestamp decoding are rejected")
-    public void rejectsImplausibleVersions() {
-        assertEquals(0L, VersionHighWaterMark.decodePlausibleFloor(Long.MAX_VALUE, NOW),
-                "a UInt64-max sentinel row decodes to nothing");
-        assertEquals(0L, VersionHighWaterMark.decodePlausibleFloor(12_345L, NOW),
-                "a raw GTID transaction number is not timestamp-anchored");
-        assertEquals(0L, VersionHighWaterMark.decodePlausibleFloor(1_000_000_000_000L, NOW),
-                "a PostgreSQL LSN is not timestamp-anchored");
-        assertEquals(0L, VersionHighWaterMark.decodePlausibleFloor(0L, NOW));
-        assertEquals(0L, VersionHighWaterMark.decodePlausibleFloor(-1L, NOW));
-        long tenYearsAhead = (NOW + 10L * 365 * 24 * 3_600_000L) * M;
-        assertTrue(VersionHighWaterMark.decodePlausibleFloor(tenYearsAhead, NOW) <= NOW,
-                "a value a decade in the future is never taken as a sequence-domain floor");
-    }
-
-    @Test
-    @DisplayName("the target scan seeds from the highest plausible max(_version) across the targets, in either domain")
-    public void scanSeedsFromTheHighestPlausibleTargetVersion() throws Exception {
+    @DisplayName("a persisted mark seeds floorDiv(v, 1e6) + 1 and the seed touches only the mark table")
+    public void seedFloorUsesThePersistedMark() throws Exception {
         FakeClickHouse fake = new FakeClickHouse();
-        fake.answer("system.columns", new Object[] {"target_db1", "orders"}, new Object[] {"target_db1", "events"},
-                new Object[] {"target_db2", "broken"});
-        fake.answer("FROM `target_db1`.`orders`", new Object[] {String.valueOf(T * M + 1_000_000_000L)});
-        fake.answer("FROM `target_db1`.`events`", new Object[] {String.valueOf(SnowFlakeId.generate(T + 60_000, 7L, false))});
-        fake.answer("FROM `target_db2`.`broken`", new Object[] {"18446744073709551615"});
+        fake.answer("SELECT max(`high_water_version`)", new Object[] {String.valueOf(T * M + 1_000_000_000L + 5)});
         VersionHighWaterMark mark = mark(fake);
 
-        long floor = mark.scanTargets(Arrays.asList("target_db1", "target_db2"), "_version");
+        VersionHighWaterMark.Seed seed = mark.seedFloor();
 
-        assertEquals(T + 60_001, floor, "the snowflake-versioned table carries the newest timestamp");
-        List<String> discovery = fake.statementsContaining("system.columns");
-        assertEquals(1, discovery.size());
-        assertTrue(discovery.get(0).contains("ReplacingMergeTree"), discovery.get(0));
-        assertEquals(Arrays.asList("_version", "target_db1", "target_db2"),
-                fake.boundParameters.get(fake.executed.indexOf(discovery.get(0))));
-        assertEquals(3, fake.statementsContaining("SELECT max(`_version`)").size(),
-                "every discovered table is asked once");
+        assertTrue(seed.fromMark, seed.source);
+        assertEquals(T + 1001, seed.floorMs, "floorDiv(v, 1e6) + 1: the slot strictly above the mark");
+        assertOnlyTheMarkTableWasTouched(fake);
+    }
 
-        assertEquals(0L, mark.scanTargets(Collections.emptyList(), "_version"),
-                "no target databases: nothing to scan");
+    /**
+     * Invariant I14 (spec 10.06): a start without a mark row is seeded from the
+     * connector clock, and the seed NEVER reads a target table. The previous
+     * design ran {@code SELECT max(_version)} over every replicated table here --
+     * thousands of full-column scans per hour on a large replica, re-run by every
+     * engine retry on the event thread. This test pins the statement set of the
+     * seed: it goes red the moment any discovery or table read is added back.
+     */
+    @Test
+    @DisplayName("without a mark the floor is the connector clock plus head-room, and no target table is read")
+    public void seedFloorWithoutAMarkUsesTheClockAndReadsNoTargetTable() throws Exception {
+        FakeClickHouse fake = new FakeClickHouse();
+        VersionHighWaterMark mark = mark(fake);
+
+        VersionHighWaterMark.Seed seed = mark.seedFloor();
+
+        assertTrue(!seed.fromMark, seed.source);
+        assertEquals(NOW + VersionHighWaterMark.CLOCK_SEED_HEADROOM_MS, seed.floorMs,
+                "the clock plus head-room; the floor is only ever raised, so higher is the safe side");
+        assertTrue(seed.floorMs * M + 1 > T * M + 1_000_000_000L + 5,
+                "a first delivery at floor * 1e6 + 1 out-ranks a version the previous run wrote at T");
+        assertOnlyTheMarkTableWasTouched(fake);
+    }
+
+    @Test
+    @DisplayName("an implausible persisted mark is ignored and the clock seed is used instead")
+    public void implausiblePersistedMarkFallsBackToTheClock() throws Exception {
+        FakeClickHouse fake = new FakeClickHouse();
+        fake.answer("SELECT max(`high_water_version`)", new Object[] {"18446744073709551615"});
+        VersionHighWaterMark mark = mark(fake);
+
+        VersionHighWaterMark.Seed seed = mark.seedFloor();
+
+        assertTrue(!seed.fromMark, seed.source);
+        assertEquals(NOW + VersionHighWaterMark.CLOCK_SEED_HEADROOM_MS, seed.floorMs);
+        assertOnlyTheMarkTableWasTouched(fake);
+    }
+
+    /** The whole statement set of a seed: CREATE TABLE IF NOT EXISTS + one read, both on the mark table. */
+    private static void assertOnlyTheMarkTableWasTouched(FakeClickHouse fake) {
+        assertEquals(2, fake.executed.size(), "exactly two statements: " + fake.executed);
+        for (String sql : fake.executed) {
+            assertTrue(sql.contains("`offsets_db`.`replica_version_high_water`"),
+                    "every statement of the seed names the mark table: " + sql);
+            assertTrue(!sql.contains("system.columns") && !sql.contains("system.tables"),
+                    "the seed does not discover target tables: " + sql);
+            assertTrue(!sql.contains("SELECT max(`_version`)") && !sql.contains("max_execution_time"),
+                    "the seed does not scan a target table: " + sql);
+        }
     }
 
     @Test

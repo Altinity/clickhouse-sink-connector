@@ -195,7 +195,7 @@ theorem firstDeliveryVersions_gt (v : Nat) :
 /--
 **Restart boundary (Invariant I2 across a restart).** Let `pre` be the versions
 the previous run assigned and `v` a high-water mark at or above all of them (the
-persisted mark, or `max(_version)` over the targets). Seeding the fresh statics
+persisted mark). Seeding the fresh statics
 from `v` makes every first delivery of the new run rank strictly above every
 pre-restart version -- whatever the source timestamps, the lag, the clock skew
 between MySQL and the connector, or the counter seeds.
@@ -214,6 +214,54 @@ theorem restart_boundary (pre : List Nat) (v : Nat) (hpre : ∀ u ∈ pre, u ≤
 theorem first_row_after_restart_is_first (v : Nat) (r : Rec) (p : Nat) (h : r.pos = some p) :
     isFirst (seed initial v) r = true := by
   simp [isFirst, seed, initial, h]
+
+/-! ## A start without a mark: the clock seed (spec 02.02 §3.5 (2), Invariant I14)
+
+`VersionHighWaterMark.seedFloor()` on a start that has no mark row raises the floor
+to the connector clock plus a head-room (`CLOCK_SEED_HEADROOM_MS`, 5 000 ms). The
+seed is a function of the clock alone: no target table is read (Invariant I14 --
+the former `max(_version)` scan over every replicated table is gone). -/
+
+/-- The clock seed: raise the floor to `clock + headroom` (never lower it). -/
+def clockSeed (s : SeqState) (clock headroom : Nat) : SeqState :=
+  { s with floor := max s.floor (clock + headroom) }
+
+/-- Every version a previous run assigned is `ts * M + c` with `ts` a wall-clock
+    instant at or before the restart (`ts ≤ clock`) and a counter below the
+    head-room's worth of slots (`c < headroom * M`; the shipped seeds carry at most
+    one second). Such a version lies strictly below the clock-seeded floor slot. -/
+theorem below_clock_seed (ts c clock headroom : Nat) (hts : ts ≤ clock)
+    (hc : c < headroom * M) : ts * M + c < (clock + headroom) * M := by
+  unfold M at hc ⊢
+  omega
+
+/-- **Restart boundary from the clock (Invariant I2 across a first start).** If
+    every pre-restart version lies below `(clock + headroom) * M` -- which
+    `below_clock_seed` gives for every version built from a past instant -- every
+    first delivery of a run started from `clockSeed initial clock headroom` ranks
+    strictly above every pre-restart version. Nothing about the targets enters the
+    hypothesis: the seed needs the clock, not a scan. -/
+theorem clock_restart_boundary (pre : List Nat) (clock headroom : Nat)
+    (hpre : ∀ u ∈ pre, u < (clock + headroom) * M) (post : List Rec) :
+    ∀ u ∈ pre, ∀ w ∈ firstDeliveryVersions (clockSeed initial clock headroom) post, u < w := by
+  intro u hu w hw
+  have hfloor : clock + headroom ≤ (clockSeed initial clock headroom).floor := by
+    show clock + headroom ≤ max initial.floor (clock + headroom)
+    exact Nat.le_max_right _ _
+  have hv : u < (clockSeed initial clock headroom).floor * M :=
+    Nat.lt_of_lt_of_le (hpre u hu) (Nat.mul_le_mul_right _ hfloor)
+  exact firstDeliveryVersions_gt u post (clockSeed initial clock headroom) hv w hw
+
+/-- The clock seed on a lagging source, executed: a run versions a row at `W-30000`,
+    the process restarts with NO mark row, the floor is seeded from the clock `W`
+    plus 5 000 ms, and a genuinely newer row that is still five hours behind the
+    clock (`W - 18_000_000`) is versioned above the pre-restart row. -/
+theorem clock_seed_example :
+    let W : Nat := 1787635797000
+    let v1 := version (step initial ⟨W - 40000, some 400⟩) ⟨W - 30000, some 500⟩
+    let v2 := version (clockSeed initial W 5000) ⟨W - 18000000, some 600⟩
+    v1 < v2 := by
+  decide
 
 /-! ## Control records -/
 
