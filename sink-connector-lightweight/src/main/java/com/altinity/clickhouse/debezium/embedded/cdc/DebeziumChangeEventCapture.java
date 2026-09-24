@@ -9,6 +9,7 @@ import com.altinity.clickhouse.debezium.embedded.ddl.parser.PrimaryKeyRebuildPla
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
@@ -619,6 +620,20 @@ public class DebeziumChangeEventCapture {
             log.error("Engine stopped with an error: cause: "
                     + throwable.getCause().getLocalizedMessage());
         }
+        if (isDeterministicFailure(throwable)) {
+            // A FATAL failure (spec 10.01 section 3.1) is the same on every
+            // attempt: the value, the column type, the table, the privilege
+            // are unchanged, so a recreated engine redelivers the same batch
+            // to the same outcome. And because connectorStarted() refills the
+            // budget on every start, retrying it is not bounded by
+            // MAX_RETRIES at all -- it is an unbounded restart loop, each turn
+            // re-reading the schema history from the target and re-logging
+            // every skipped row event. Terminal now (spec 10.04 section 3.5).
+            log.error("Engine stopped with a FATAL (deterministic) failure; not retrying: "
+                    + "a recreated engine would redeliver the same batch to the same outcome.");
+            onTerminalFailure(throwable, props);
+            return;
+        }
         if (numRetries < MAX_RETRIES) {
             numRetries++;
             log.error("Restarting the engine - retry {} of {}", numRetries, MAX_RETRIES);
@@ -635,9 +650,28 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
-     * The retry budget is spent: replication is STOPPED for good in this
-     * process. Say so at FATAL, mark it for {@code /status}, and exit unless
-     * the operator chose to keep the process up.
+     * Whether an engine failure is FATAL by the error classifier (spec 10.01
+     * section 3.1): a terminal exception type anywhere in the cause chain
+     * (an unrepresentable value), or a ClickHouse error code in
+     * {@code FATAL_ERROR_CODES} (unknown table or column, type mismatch,
+     * access denied, ...). Such a failure can never succeed on retry without
+     * an external change, so the retry budget -- which exists for transient
+     * failures -- does not apply to it (spec 10.04 section 3.5).
+     *
+     * <p>Only {@link Exception}s are classified; an {@link Error} (OOM,
+     * linkage) is not a replication verdict and keeps the retry path.</p>
+     */
+    static boolean isDeterministicFailure(Throwable throwable) {
+        return throwable instanceof Exception
+                && ClickHouseErrorClassifier.classify((Exception) throwable)
+                        == ClickHouseErrorClassifier.ErrorCategory.FATAL;
+    }
+
+    /**
+     * The retry budget is spent, or the failure is FATAL by classification:
+     * replication is STOPPED for good in this process. Say so at FATAL, mark
+     * it for {@code /status}, and exit unless the operator chose to keep the
+     * process up.
      */
     private void onTerminalFailure(Throwable throwable, Properties props) {
         ReplicationStatusSingleton.getInstance().setIsReplicationRunning(false);

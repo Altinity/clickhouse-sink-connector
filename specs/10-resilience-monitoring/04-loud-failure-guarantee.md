@@ -98,9 +98,30 @@ one before it:
    `DDLReplicationException` → engine restart → the same drain → … → the
    budget spent → stop, for a condition that would have cleared (spec 06.01).
 
+And one that the first three created:
+4. **A deterministic failure was retried forever.** The budget exists for
+   transient failures, but every failure drew on it. A FATAL failure (spec
+   10.01 §3.1 — an unrepresentable value, an unknown table or column, a type
+   mismatch, a denied privilege) is identical on every attempt, so the
+   recreated engine redelivered the same batch to the same outcome; and
+   because the engine did start (rule 2 refilled the budget on
+   `connectorStarted`), `numRetries` never passed 1. The log read
+   `Restarting the engine - retry 1 of 10` every `SLEEP_TIME` (measured:
+   every 12–25 s for hours), each turn re-reading the whole schema history
+   from the target, re-issuing the startup catalog queries, and re-logging
+   every skipped row event with its full row image — an unbounded restart
+   loop that never reached the terminal exit and never signalled a
+   supervisor.
+
 Contract:
 - `markEngineStarted()` (the `connectorStarted` callback) resets `numRetries`
   to 0: a successful start restores the full budget.
+- A failure that is FATAL by `ClickHouseErrorClassifier.classify` (spec 10.01
+  §3.1: a `TERMINAL_EXCEPTION_TYPES` instance anywhere in the cause chain, or a
+  `FATAL_ERROR_CODES` code) does **not** draw on the budget: it is TERMINAL at
+  once (`isDeterministicFailure`), exactly as a spent budget is. Only
+  `Exception`s are classified; an `Error` is not a replication verdict and
+  keeps the retry path. Retriable and unclassifiable failures are unchanged.
 - A failure while `numRetries < MAX_RETRIES` increments the counter, sleeps
   `SLEEP_TIME`, and recreates the engine (exactly `MAX_RETRIES` retries; the
   previous `<=` test allowed one more than configured).

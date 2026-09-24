@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
+import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LogEvent;
@@ -90,6 +91,72 @@ public class TerminalFailureExitTest {
     private static void fail(DebeziumChangeEventCapture capture, Properties props, Runnable restart) {
         capture.handleEngineCompletion(false, "engine stopped", new RuntimeException("source unreachable"),
                 props, restart);
+    }
+
+    /**
+     * The failure shape of an unrepresentable value in production: the sink
+     * worker dies with the batch retained, the Debezium thread reports the
+     * dead worker, and the cause chain ends in
+     * {@link DebeziumConverter.ValueOutOfRangeException} (spec 10.01 §3.1).
+     */
+    private static RuntimeException deadWorkerOnUnrepresentableValue() {
+        return new RuntimeException("Sink worker 7 of 10 is dead: its scheduled task has terminated.",
+                new RuntimeException("Fatal ClickHouse error, stopping task",
+                        new RuntimeException(new DebeziumConverter.ValueOutOfRangeException(
+                                "Value 9999-12-31T23:59:59Z for column db.orders.expires_at is outside "
+                                        + "the ClickHouse DateTime64 range"))));
+    }
+
+    @Test
+    @DisplayName("A FATAL failure (terminal exception type in the cause chain) is terminal at once: no retry, exit")
+    public void fatalTerminalTypeIsNotRetried() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        AtomicInteger restarts = new AtomicInteger();
+
+        capture.handleEngineCompletion(false, "engine stopped", deadWorkerOnUnrepresentableValue(),
+                props(null), restarts::incrementAndGet);
+
+        assertEquals(0, restarts.get(),
+                "a deterministic failure must not consume the retry budget (pre-fix: 'retry 1 of 10', "
+                        + "connectorStarted() reset the counter, and the engine restarted on the same "
+                        + "event every SLEEP_TIME forever)");
+        assertEquals(Collections.singletonList(DebeziumChangeEventCapture.TERMINAL_FAILURE_EXIT_CODE),
+                exitCodes, "the FATAL failure must exit the process like a spent budget does");
+        assertFalse(ReplicationStatusSingleton.getInstance().isReplicationRunning(),
+                "replication must be reported as not running");
+    }
+
+    @Test
+    @DisplayName("A FATAL ClickHouse error code in the cause chain is terminal at once as well")
+    public void fatalErrorCodeIsNotRetried() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        AtomicInteger restarts = new AtomicInteger();
+        RuntimeException unknownTable = new RuntimeException("Sink worker 2 of 10 is dead",
+                new RuntimeException("Fatal ClickHouse error, stopping task",
+                        new java.sql.SQLException("Code: 60. DB::Exception: Table db.orders does not exist. "
+                                + "(UNKNOWN_TABLE)")));
+
+        capture.handleEngineCompletion(false, "engine stopped", unknownTable, props(null),
+                restarts::incrementAndGet);
+
+        assertEquals(0, restarts.get(), "UNKNOWN_TABLE is deterministic: no retry");
+        assertEquals(Collections.singletonList(DebeziumChangeEventCapture.TERMINAL_FAILURE_EXIT_CODE),
+                exitCodes);
+    }
+
+    @Test
+    @DisplayName("A retriable failure still draws on the retry budget (the fix is scoped to FATAL)")
+    public void retriableFailureStillRetries() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        AtomicInteger restarts = new AtomicInteger();
+        RuntimeException tooManyParts = new RuntimeException("Sink worker 1 of 10 is dead",
+                new java.sql.SQLException("Code: 252. DB::Exception: Too many parts (3000). (TOO_MANY_PARTS)"));
+
+        capture.handleEngineCompletion(false, "engine stopped", tooManyParts, props(null),
+                restarts::incrementAndGet);
+
+        assertEquals(1, restarts.get(), "TOO_MANY_PARTS clears on its own: the engine is recreated");
+        assertTrue(exitCodes.isEmpty());
     }
 
     @Test
