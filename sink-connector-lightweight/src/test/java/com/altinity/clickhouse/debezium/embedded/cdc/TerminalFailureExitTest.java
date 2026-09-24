@@ -2,6 +2,10 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
+import com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement;
+import io.debezium.engine.ChangeEvent;
+import io.debezium.engine.DebeziumEngine;
+import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LogEvent;
@@ -35,14 +39,81 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * reset either, so a connector that had recovered from ten transient failures
  * over a month died silently on the eleventh.</p>
  *
- * <p><b>The rule.</b> A successful start resets the budget. When the budget
- * is exhausted the failure is logged at FATAL and, unless
+ * <p><b>The second defect.</b> The first fix reset {@code numRetries} in the
+ * {@code connectorStarted} callback. But an engine that dies on a
+ * deterministic error -- an unrepresentable value in the first batch after
+ * the committed offset -- starts cleanly every time, streams to the same
+ * record and stops again, so every failure was "retry 1 of 10": the budget
+ * was never spent, the terminal path never ran, and the connector restarted
+ * its engine every {@code SLEEP_TIME} forever with replication stopped and
+ * {@code /status} reporting it running.</p>
+ *
+ * <p><b>The rule.</b> The budget refills on PROGRESS -- an offset acknowledged
+ * to Debezium since the previous failure ({@link
+ * DebeziumOffsetManagement#acknowledgements()}) -- never on a bare start.
+ * When the budget is exhausted the failure is logged at FATAL and, unless
  * {@code exit.on.terminal.failure=false}, the process exits through
  * {@code terminalFailureHook} (which is {@code System::exit} in production).
  * With the exit disabled, replication is marked not running so {@code /status}
  * reports {@code Replica_Running=false} -- a liveness failure a probe can see.</p>
  */
 public class TerminalFailureExitTest {
+
+    /** The least a committer must do for {@code acknowledgeRecords} to count an offset. */
+    private static final class NoopCommitter
+            implements DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> {
+        @Override
+        public void markProcessed(ChangeEvent<SourceRecord, SourceRecord> record) {
+        }
+
+        @Override
+        public void markBatchFinished() {
+        }
+
+        @Override
+        public void markProcessed(ChangeEvent<SourceRecord, SourceRecord> record,
+                                  DebeziumEngine.Offsets sourceOffsets) {
+        }
+
+        @Override
+        public DebeziumEngine.Offsets buildOffsets() {
+            return (key, value) -> { };
+        }
+    }
+
+    /** A non-null change event; its content is irrelevant to the acknowledgement count. */
+    private static ChangeEvent<SourceRecord, SourceRecord> anyEvent() {
+        return new ChangeEvent<SourceRecord, SourceRecord>() {
+            @Override
+            public SourceRecord key() {
+                return null;
+            }
+
+            @Override
+            public SourceRecord value() {
+                return null;
+            }
+
+            @Override
+            public String destination() {
+                return "srv.db.orders";
+            }
+
+            @Override
+            public Integer partition() {
+                return null;
+            }
+        };
+    }
+
+    /**
+     * The engine made progress: one offset acknowledged through the real
+     * acknowledgement path, exactly as a written batch or a committed control
+     * record does it.
+     */
+    private static void acknowledgeOneOffset() throws InterruptedException {
+        DebeziumOffsetManagement.acknowledgeRecords(new NoopCommitter(), anyEvent(), true);
+    }
 
     /** Collects everything the class under test logs during one call. */
     private static final class CapturingAppender extends AbstractAppender {
@@ -185,8 +256,8 @@ public class TerminalFailureExitTest {
     }
 
     @Test
-    @DisplayName("A successful start resets the retry budget")
-    public void successfulStartResetsTheBudget() {
+    @DisplayName("Progress -- an acknowledged offset -- resets the retry budget")
+    public void progressResetsTheBudget() throws Exception {
         DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
         AtomicInteger restarts = new AtomicInteger();
         Runnable restart = restarts::incrementAndGet;
@@ -195,19 +266,74 @@ public class TerminalFailureExitTest {
         fail(capture, props(null), restart);
         assertEquals(2, restarts.get());
 
-        // The engine came up: the budget is whole again.
+        // The engine came up AND committed an offset: it had recovered.
         capture.markEngineStarted();
+        acknowledgeOneOffset();
 
         for (int i = 1; i <= DebeziumChangeEventCapture.MAX_RETRIES; i++) {
             fail(capture, props(null), restart);
             assertTrue(exitCodes.isEmpty(),
-                    "after a successful start the full budget applies again (pre-fix: numRetries was "
-                            + "never reset, so old failures counted against new ones)");
+                    "after progress the full budget applies again (pre-fix: numRetries was never "
+                            + "reset, so old failures counted against new ones)");
         }
         assertEquals(2 + DebeziumChangeEventCapture.MAX_RETRIES, restarts.get());
 
         fail(capture, props(null), restart);
         assertEquals(1, exitCodes.size(), "the budget is spent again");
+    }
+
+    /**
+     * The deterministic-error loop: the engine starts cleanly, streams to the
+     * same unrepresentable record, stops, and is restarted -- without a single
+     * offset committed in between. Each start is NOT a recovery.
+     */
+    @Test
+    @DisplayName("A start that commits nothing before failing again does not reset the retry budget")
+    public void startWithoutProgressDoesNotResetTheBudget() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        AtomicInteger restarts = new AtomicInteger();
+        Runnable restart = () -> {
+            restarts.incrementAndGet();
+            // Every retry brings the engine up again before it dies on the same record.
+            capture.markEngineStarted();
+        };
+
+        capture.markEngineStarted();
+        for (int i = 1; i <= DebeziumChangeEventCapture.MAX_RETRIES; i++) {
+            fail(capture, props(null), restart);
+            assertEquals(i, restarts.get(), "failure " + i + " must be retried");
+            assertTrue(exitCodes.isEmpty(), "the process must not exit while retries remain");
+        }
+
+        fail(capture, props(null), restart);
+
+        assertEquals(DebeziumChangeEventCapture.MAX_RETRIES, restarts.get(),
+                "no further restart once the budget is spent");
+        assertEquals(Collections.singletonList(DebeziumChangeEventCapture.TERMINAL_FAILURE_EXIT_CODE),
+                exitCodes,
+                "the terminal failure must exit the process (pre-fix: every clean start reset the "
+                        + "counter, so the engine was restarted forever at 'retry 1 of N')");
+        assertFalse(ReplicationStatusSingleton.getInstance().isReplicationRunning(),
+                "replication must be reported as not running");
+    }
+
+    @Test
+    @DisplayName("Progress made before the first failure is not a recovery from anything")
+    public void progressBeforeAnyFailureDoesNotWidenTheBudget() throws Exception {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        AtomicInteger restarts = new AtomicInteger();
+        Runnable restart = restarts::incrementAndGet;
+
+        capture.markEngineStarted();
+        acknowledgeOneOffset();
+
+        for (int i = 1; i <= DebeziumChangeEventCapture.MAX_RETRIES; i++) {
+            fail(capture, props(null), restart);
+        }
+        fail(capture, props(null), restart);
+
+        assertEquals(DebeziumChangeEventCapture.MAX_RETRIES, restarts.get());
+        assertEquals(1, exitCodes.size(), "exactly MAX_RETRIES retries, then terminal");
     }
 
     @Test

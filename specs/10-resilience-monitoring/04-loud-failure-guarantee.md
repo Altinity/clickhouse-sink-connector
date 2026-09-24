@@ -10,7 +10,7 @@ Specifies the non-negotiable policy that unrecoverable replication errors must t
 - **Error Classifier**: `ClickHouseErrorClassifier`
 - **DDL failure type**: `DDLReplicationException` (`...embedded/cdc/DDLReplicationException.java`), re-thrown ahead of the catch-all in `DebeziumChangeEventCapture#processEveryChangeRecord`
 - **Row failure type**: `RecordReplicationException` (`...embedded/cdc/RecordReplicationException.java`), re-thrown ahead of the same catch-all
-- **Engine retry budget and terminal failure**: `DebeziumChangeEventCapture#handleEngineCompletion`, `#markEngineStarted`, `#terminalFailureHook`, `#TERMINAL_FAILURE_EXIT_CODE`; property `exit.on.terminal.failure` (`SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE`)
+- **Engine retry budget and terminal failure**: `DebeziumChangeEventCapture#handleEngineCompletion`, `#markEngineStarted`, `#terminalFailureHook`, `#TERMINAL_FAILURE_EXIT_CODE`; property `exit.on.terminal.failure` (`SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE`); the progress signal that refills the budget: `DebeziumOffsetManagement#acknowledgements` (`sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/executor/DebeziumOffsetManagement.java`)
 
 ---
 
@@ -97,6 +97,30 @@ one before it:
    60 s; a worker retrying `TOO_MANY_PARTS` for longer than that produced
    `DDLReplicationException` → engine restart → the same drain → … → the
    budget spent → stop, for a condition that would have cleared (spec 06.01).
+And two that the first three created:
+4. **A deterministic failure was retried forever.** The budget exists for
+   transient failures, but every failure drew on it. A FATAL failure (spec
+   10.01 §3.1 — an unrepresentable value, an unknown table or column, a type
+   mismatch, a denied privilege) is identical on every attempt, so the
+   recreated engine redelivered the same batch to the same outcome; and
+   because the engine did start (rule 2 refilled the budget on
+   `connectorStarted`), `numRetries` never passed 1. The log read
+   `Restarting the engine - retry 1 of 10` every `SLEEP_TIME` (measured:
+   every 12–25 s for hours), each turn re-reading the whole schema history
+   from the target, re-issuing the startup catalog queries, and re-logging
+   every skipped row event with its full row image — an unbounded restart
+   loop that never reached the terminal exit and never signalled a
+   supervisor.
+5. **A clean start counted as a recovery — for every failure shape, not only
+   the classified one.** Rule 4 stops the FATAL-classified case at once, but
+   the refill on `connectorStarted` was itself the wrong signal: a failure the
+   classifier cannot recognise (an exception type it does not list, a cause
+   chain carrying no ClickHouse error code, an `Error`) that recurs on every
+   start — the engine comes up cleanly, streams to the same record, stops —
+   still read `retry 1 of 10` on every failure, the budget was never spent
+   and the terminal path never ran. Observed on two deployments after
+   upgrading onto the loud-clamp default: 28 restarts in six minutes, all
+   "retry 1 of 10". A start is not a recovery; committing an offset is.
 
 And one that the first three created:
 4. **A deterministic failure was retried forever.** The budget exists for
@@ -114,14 +138,27 @@ And one that the first three created:
    supervisor.
 
 Contract:
-- `markEngineStarted()` (the `connectorStarted` callback) resets `numRetries`
-  to 0: a successful start restores the full budget.
 - A failure that is FATAL by `ClickHouseErrorClassifier.classify` (spec 10.01
   §3.1: a `TERMINAL_EXCEPTION_TYPES` instance anywhere in the cause chain, or a
   `FATAL_ERROR_CODES` code) does **not** draw on the budget: it is TERMINAL at
   once (`isDeterministicFailure`), exactly as a spent budget is. Only
   `Exception`s are classified; an `Error` is not a replication verdict and
-  keeps the retry path. Retriable and unclassifiable failures are unchanged.
+  keeps the retry path. Retriable and unclassifiable failures draw on the
+  budget as before.
+- The budget refills on **progress**, never on a start.
+  `DebeziumOffsetManagement.acknowledgements()` counts every offset
+  acknowledged to Debezium (`markBatchFinished()` returned) since the JVM
+  started — written units and control records alike; it is monotone and is
+  not touched by `reset()`. `handleEngineCompletion` reads it on every
+  failure: when the reading differs from the one taken at the previous
+  failure, the engine committed an offset in between — it had recovered — and
+  `numRetries` restarts from 0 (an INFO line says so, with the number of
+  offsets and the count it stood at). When the reading is unchanged, the
+  failure is one more in the same row, however cleanly the engine came up.
+  Heartbeats are on by default (`DEFAULT_HEARTBEAT_INTERVAL_MS`, spec 01.06),
+  so an idle source still proves progress through its control-record commits.
+- `markEngineStarted()` (the `connectorStarted` callback) only marks
+  replication running for `/status`; it no longer touches `numRetries`.
 - A failure while `numRetries < MAX_RETRIES` increments the counter, sleeps
   `SLEEP_TIME`, and recreates the engine (exactly `MAX_RETRIES` retries; the
   previous `<=` test allowed one more than configured).
@@ -233,7 +270,9 @@ counterpart for the sink task: spec 03.01 §3.4.
 - `ClickHouseSinkTaskTest.tombstoneIsDroppedQuietly()`, `ClickHouseSinkTaskTest.unconvertibleRecordIsLoud()` — §3.5 Kafka entry point: a null-value tombstone is skipped, a non-converting non-null value fails the task.
 - `ClickHouseSinkTaskTest.deadRunnableFailsPut()`, `ClickHouseSinkTaskTest.deadRunnableFailsPreCommit()` — §3.4 in Kafka Connect mode.
 - `TerminalFailureExitTest.exitHookFiresAfterMaxRetries()` — §3.5: `MAX_RETRIES` restarts, then the exit hook fires exactly once with `TERMINAL_FAILURE_EXIT_CODE` and replication is reported stopped (pre-fix: nothing fired, one extra restart).
-- `TerminalFailureExitTest.successfulStartResetsTheBudget()` — §3.5: `markEngineStarted()` restores the full budget (pre-fix: `numRetries` never reset).
+- `TerminalFailureExitTest.progressResetsTheBudget()` — §3.5: an offset acknowledged through the real `DebeziumOffsetManagement.acknowledgeRecords` path between two failures restores the full budget (pre-fix of point 2: `numRetries` never reset).
+- `TerminalFailureExitTest.startWithoutProgressDoesNotResetTheBudget()` — §3.5 point 5: an unclassified failure (`isDeterministicFailure` false); every retry brings the engine up (`markEngineStarted()`) and it fails again with nothing acknowledged; the exit hook fires after exactly `MAX_RETRIES` restarts (pre-fix: every clean start reset the counter and the engine was restarted forever at "retry 1 of N").
+- `TerminalFailureExitTest.progressBeforeAnyFailureDoesNotWidenTheBudget()` — §3.5: progress made before the first failure is not a recovery; the budget is exactly `MAX_RETRIES`.
 - `TerminalFailureExitTest.exitDisabledIsALoudLivenessFailure()` — §3.5: `exit.on.terminal.failure=false` keeps the process up, logs FATAL naming replication as STOPPED, reports `Replica_Running=false`.
 - `TerminalFailureExitTest.successIsANoOp()`.
 - `DdlDrainDeadlockTest.testUndrainableQueueWithLiveWorkersKeepsWaiting()`, `DdlDrainDeadlockTest.testStuckQueueWithDeadWorkerAborts()` — §3.5 point 3: live workers are waited for; only a dead worker aborts.
