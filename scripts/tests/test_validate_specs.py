@@ -406,9 +406,6 @@ class CliTests(FixtureCase):
         self.assertEqual(vs.main(["--repo-root", str(self.root)]), 1)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class BookkeepingScanTests(FixtureCase):
     """Invariant I14 (spec 10.06): aggregate reads over replicated tables in main code."""
@@ -452,3 +449,7 @@ class BookkeepingScanTests(FixtureCase):
               '  String q = "SELECT max(`_version`) FROM `db`.`orders`";\n'
               "  @Test\n  public void testBar() {}\n}\n")
         self.assertEqual(run(self.root).errors, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
