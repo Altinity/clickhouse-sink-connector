@@ -10,14 +10,80 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.source.SourceRecord;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.Logger;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Configurator;
+import org.apache.logging.log4j.core.config.Property;
 import org.junit.Assert;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.stream.Collectors;
 
 public class DebeziumOffsetManagementTest {
+
+    /** Collects everything the class under test logs during one call. */
+    private static final class CapturingAppender extends AbstractAppender {
+        private final List<LogEvent> events = Collections.synchronizedList(new ArrayList<>());
+
+        CapturingAppender() {
+            super("capture-offset-management", null, null, true, Property.EMPTY_ARRAY);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            events.add(event.toImmutable());
+        }
+    }
+
+    /**
+     * Spec 03.06 section 3.3 line 4: the per-unit "BATCH marked as processed"
+     * line is DEBUG. It was INFO -- one line per acknowledged unit, for the
+     * life of the process -- and with ten workers flushing every few
+     * milliseconds it was part of the 97% of a busy log that said nothing.
+     */
+    @Test
+    @DisplayName("Acknowledging a unit logs the 'BATCH marked as processed' line at DEBUG, nothing at INFO or above")
+    public void acknowledgementIsLoggedAtDebug() throws InterruptedException {
+        OffsetTestSupport.RecordingCommitter committer = new OffsetTestSupport.RecordingCommitter();
+        List<ClickHouseStruct> unit = OffsetTestSupport.unit(committer, 1L, "orders");
+
+        Logger coreLogger = (Logger) LogManager.getLogger(DebeziumOffsetManagement.class);
+        Level savedLevel = coreLogger.getLevel();
+        CapturingAppender appender = new CapturingAppender();
+        appender.start();
+        coreLogger.addAppender(appender);
+        Configurator.setLevel(coreLogger.getName(), Level.DEBUG);
+        try {
+            DebeziumOffsetManagement.acknowledgeRecords(unit);
+        } finally {
+            Configurator.setLevel(coreLogger.getName(), savedLevel);
+            coreLogger.removeAppender(appender);
+            appender.stop();
+        }
+
+        Assert.assertEquals("the unit's offset is still acknowledged", 1, committer.batchesFinished);
+        List<LogEvent> events = new ArrayList<>(appender.events);
+        List<String> all = events.stream()
+                .map(e -> e.getLevel() + ": " + e.getMessage().getFormattedMessage())
+                .collect(Collectors.toList());
+        Assertions.assertTrue(events.stream().anyMatch(e -> e.getLevel() == Level.DEBUG
+                        && e.getMessage().getFormattedMessage().contains("BATCH marked as processed")),
+                "the acknowledgement line must still be logged, at DEBUG: " + all);
+        List<String> infoAndAbove = events.stream()
+                .filter(e -> e.getLevel().isMoreSpecificThan(Level.INFO))
+                .map(e -> e.getLevel() + ": " + e.getMessage().getFormattedMessage())
+                .collect(Collectors.toList());
+        Assertions.assertEquals(Collections.emptyList(), infoAndAbove,
+                "an acknowledged unit must not log at INFO or above (spec 03.06 section 3.3)");
+    }
 
     /**
      * Fake {@link DebeziumEngine.RecordCommitter} that records how many times

@@ -462,7 +462,8 @@ public class DebeziumOffsetManagement {
                     if (record.isLastRecordInBatch()) {
                         record.getCommitter().markBatchFinished();
                         acknowledgements.incrementAndGet();
-                        log.info("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
+                        // Per-batch progress line: DEBUG, not INFO (spec 03.06 section 3.3).
+                        log.debug("***** BATCH marked as processed to debezium ****" + "Binlog file:" +
                                 record.getFile() + " Binlog position: " + record.getPos() + " GTID: " + record.getGtid()
                                 + " Sequence Number: " + record.getSequenceNumber() + " Debezium Timestamp: " + record.getDebezium_ts_ms());
                     }
