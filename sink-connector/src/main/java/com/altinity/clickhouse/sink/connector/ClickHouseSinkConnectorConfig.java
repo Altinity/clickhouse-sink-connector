@@ -618,10 +618,9 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         Importance.HIGH,
                         "If true (default), a DATE/DATETIME/TIMESTAMP or decimal value outside the "
                                 + "range of the ClickHouse column type is saturated to the ClickHouse "
-                                + "bound and reported at WARN once per column per minute (the rest at "
-                                + "DEBUG, with a count). If false, such a value fails the batch with an "
-                                + "error naming the column and the value; that failure is terminal for "
-                                + "the batch.",
+                                + "bound (logged at DEBUG only). If false, such a value fails the batch "
+                                + "with an error naming the column and the value; that failure is "
+                                + "terminal for the batch.",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         3,
                         ConfigDef.Width.NONE,

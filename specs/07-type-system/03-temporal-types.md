@@ -137,7 +137,7 @@ since midnight") while the value path bound the formatted text, so every
 insert into such a reconciled column failed with a parse error — the declared
 type and the bound representation must agree.
 
-### 3.3 Out-of-range values are never silently saturated
+### 3.3 Out-of-range values: saturate quietly by default, or refuse
 ClickHouse temporal types are narrower than MySQL's: `DateTime64` holds
 `1900-01-01 00:00:00 .. 2299-12-31 23:59:59`, `DateTime` holds
 `1970-01-01 00:00:00 .. 2106-02-07 06:28:15`, `Date32` holds
@@ -165,21 +165,21 @@ that bounds a value (`TimestampConverter`, `MicroTimestampConverter`,
    column) or returning to the default.
 2. `clamp.out.of.range=true` (**default**; a missing configuration means the
    default, `RangePolicy.of(null, column)` saturates): the value is saturated
-   to the bound as before, and the saturation is never silent — but it is
-   reported once per column
-   per minute, never once per row. The first saturation of a
-   `(column, ClickHouse type)` logs a WARN naming the column, the source
-   value, the stored value and the bounds; every further saturation of that
-   column inside the next 60 s (`RangePolicy.WARN_INTERVAL_NANOS`) is counted
-   and logged at DEBUG, and the next WARN after the window carries the count
-   of saturations since the previous WARN. Another column has its own
-   window. Rationale: a bitemporal table whose every row carries the
-   `9999-12-31 23:59:59` open-ended sentinel saturates on every row; with one
-   WARN per row a single such table produced 243,576 of the 248,541 lines
-   (98%) of a connector log in a 109 s window — ~2,300 WARN lines per second,
-   rotating the 100 MB log every two minutes and the WARN-filtered error log
-   every minute, so the deployment's whole log history was gone within a
-   quarter of an hour and every other message was buried.
+   to the bound as before, and the saturation is logged at **DEBUG only** —
+   never at WARN, never rate-limited into WARN. Under this setting a
+   saturation is the documented mapping of the sentinel, not an event: the
+   operator chose it (or accepted the default), the mapping is deterministic,
+   and nothing is lost that a log line would recover. The DEBUG line still
+   names the column, the source value, the stored value and the bounds for
+   anyone who opens that level deliberately. History of this rule: the first
+   revision logged one WARN per saturated row — a single bitemporal table
+   whose every row carries the `9999-12-31 23:59:59` open-ended sentinel
+   produced 243,576 of the 248,541 lines (98%) of a connector log in 109 s,
+   ~2,300 lines per second, rotating the 100 MB log every two minutes and the
+   WARN-filtered error log every minute. The second revision rate-limited it
+   to one WARN per column per minute; on a schema with hundreds of bitemporal
+   columns that is still a WARN every few seconds, forever, on a healthy
+   connector, and it kept flooding the logs for no reason. Hence DEBUG only.
    Rationale for the default: the `9999-12-31 23:59:59` open-ended sentinel is
    customary in bitemporal source schemas, and with the strict policy as the
    default an upgrade stopped replication outright on every deployment holding
@@ -189,7 +189,7 @@ that bounds a value (`TimestampConverter`, `MicroTimestampConverter`,
    a worse outcome than a reported saturation, so saturation is the default
    and strictness is the operator's explicit choice.
 3. The pre-existing four-argument converter overloads (no policy) keep the
-   saturating behaviour **with** the WARN, for callers that have no
+   saturating behaviour, logged at DEBUG like rule 2, for callers that have no
    configuration; every production bind path passes a policy built from the
    configuration.
 4. PostgreSQL `timestamptz` `infinity` / `-infinity` (issue #1231) are not
@@ -199,8 +199,8 @@ that bounds a value (`TimestampConverter`, `MicroTimestampConverter`,
 
 Upgrade note: the default saturates, so a deployment whose source holds
 sentinel dates beyond the ClickHouse range keeps replicating after an upgrade
-and stores the bound as before — now with a WARN per saturated column per
-minute instead of silence. A deployment that would rather stop on such a value
+and stores the bound as before, with a DEBUG line per saturation for anyone who
+opens that level. A deployment that would rather stop on such a value
 than store the bound sets `clamp.out.of.range=false` (rule 1); that refusal is
 terminal for the batch and the engine, so set it only once the column types
 are known to hold every source value.
@@ -287,7 +287,7 @@ default. When `enable.time.adjuster` is absent or blank it is set to `false`
   — §3.3 rule 2 as the default, through `ClickHouseDataTypeMapper.convert`
   with an empty configuration (and `RangePolicy.of(null, column)` with none):
   `DATETIME 9999-12-31 23:59:59` into `DateTime64` binds
-  `2299-12-31 23:59:59.000` with exactly one WARN, `DATE 9999-12-31` into
+  `2299-12-31 23:59:59.000` with no WARN at all, `DATE 9999-12-31` into
   `Date` binds `2149-06-06` and `DATE 1000-01-01` into `Date32` binds
   `1900-01-01`. A strict default throws instead, so the tests fail on it.
 - `DebeziumConverterRangePolicyTest.strictSettingRejectsOutOfRangeDatetimeAtTheMapper()`,
@@ -295,21 +295,18 @@ default. When `enable.time.adjuster` is absent or blank it is set to `false`
   — §3.3 rule 1 through `ClickHouseDataTypeMapper.convert` with
   `clamp.out.of.range=false`: the same values throw `ValueOutOfRangeException`
   naming the setting, and nothing is bound.
-- `DebeziumConverterRangePolicyTest.clampSettingSaturatesAndWarns()` — rule 2:
-  `clamp.out.of.range=true` binds the bound and logs a WARN naming the column
-  and both values.
-- `DebeziumConverterRangePolicyTest.clampWarnIsRateLimitedPerColumn()` — rule 2,
-  the rate limit: 1,000 saturations of one column inside one window log exactly
-  one WARN naming the column; a second column logs its own; once the window has
-  passed the next saturation logs a WARN carrying `1000 saturation(s)`. Pre-fix
-  code logs 1,000 WARN lines for the first loop.
+- `DebeziumConverterRangePolicyTest.clampSettingSaturatesSilently()` — rule 2:
+  `clamp.out.of.range=true` binds the bound for 1,000 saturations of one
+  column plus one of another and writes zero WARN lines; with the logger
+  opened to DEBUG each saturation is one DEBUG line naming the column and both
+  values. The rate-limited revision writes WARN lines here, so the test fails
+  on it.
 - `DebeziumConverterRangePolicyTest.strictPolicyNamesColumnValueAndBounds()` —
   the exception text of rule 1 for `DateTime`, `DateTime64`, `Date`, `Date32`,
   `ZonedTimestamp` and decimal.
-- `DebeziumConverterRangePolicyTest.legacyOverloadsStillSaturateWithAWarn()` —
-  rule 3 (the policy-less overloads carry no column, so their rate-limit key is
-  the ClickHouse type alone: two `DateTime64` saturations in one window share one
-  WARN).
+- `DebeziumConverterRangePolicyTest.legacyOverloadsSaturateSilently()` —
+  rule 3: the policy-less overloads saturate every bounded type and write zero
+  WARN lines.
 - `DebeziumConverterRangePolicyTest.infinityKeepsItsSaturation()` — rule 4.
 - `PreparedStatementFieldMapperOutOfRangeTest.outOfRangeValueNamesDatabaseTableAndColumn()`
   — end to end through `insertPreparedStatement`: by default the row binds

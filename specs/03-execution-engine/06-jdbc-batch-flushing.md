@@ -45,7 +45,7 @@ On a deployment with 10 workers and a moderately busy source that was
 ~2,600 lines a minute, 97% of the log: 184,933 of 401,070 lines in one
 rotation were lines 1–3 alone, and the INSERT template — every column of
 every table, repeated per batch — was most of the bytes. The log rotated
-every ~2 h, the messages that matter (an engine restart, a saturated column,
+every ~2 h, the messages that matter (an engine restart, a refused out-of-range value,
 a DDL) scrolled out of the retained history within hours, and the WARN-filtered
 error log was the only place a problem could still be found.
 
