@@ -164,8 +164,20 @@ that bounds a value (`TimestampConverter`, `MicroTimestampConverter`,
    `DateTime64` for `DateTime` — or a `String` column) or an explicit
    operator decision to saturate.
 2. `clamp.out.of.range=true`: the value is saturated to the bound as before,
-   and every saturation logs a WARN naming the column, the source value and
-   the stored value. Never silent.
+   and the saturation is never silent — but it is reported once per column
+   per minute, never once per row. The first saturation of a
+   `(column, ClickHouse type)` logs a WARN naming the column, the source
+   value, the stored value and the bounds; every further saturation of that
+   column inside the next 60 s (`RangePolicy.WARN_INTERVAL_NANOS`) is counted
+   and logged at DEBUG, and the next WARN after the window carries the count
+   of saturations since the previous WARN. Another column has its own
+   window. Rationale: a bitemporal table whose every row carries the
+   `9999-12-31 23:59:59` open-ended sentinel saturates on every row; with one
+   WARN per row a single such table produced 243,576 of the 248,541 lines
+   (98%) of a connector log in a 109 s window — ~2,300 WARN lines per second,
+   rotating the 100 MB log every two minutes and the WARN-filtered error log
+   every minute, so the deployment's whole log history was gone within a
+   quarter of an hour and every other message was buried.
 3. The pre-existing four-argument converter overloads (no policy) keep the
    saturating behaviour **with** the WARN, for callers that have no
    configuration; every production bind path passes a policy built from the
@@ -178,7 +190,8 @@ that bounds a value (`TimestampConverter`, `MicroTimestampConverter`,
 Upgrade note: a deployment whose source holds sentinel dates beyond the
 ClickHouse range will, after upgrading, fail the affected batch instead of
 storing the bound. Set `clamp.out.of.range=true` to restore the previous
-values (now with a WARN per saturated value) until the column type is fixed.
+values (now with a WARN per saturated column per minute) until the column type
+is fixed.
 
 ### 3.4 Years below 100 are not adjusted (`enable.time.adjuster=false`)
 Debezium's `enable.time.adjuster` defaults to `true`: a two-digit year — and,
@@ -266,11 +279,18 @@ default. When `enable.time.adjuster` is absent or blank it is set to `false`
 - `DebeziumConverterRangePolicyTest.clampSettingSaturatesAndWarns()` — rule 2:
   `clamp.out.of.range=true` binds the bound and logs a WARN naming the column
   and both values.
+- `DebeziumConverterRangePolicyTest.clampWarnIsRateLimitedPerColumn()` — rule 2,
+  the rate limit: 1,000 saturations of one column inside one window log exactly
+  one WARN naming the column; a second column logs its own; once the window has
+  passed the next saturation logs a WARN carrying `1000 saturation(s)`. Pre-fix
+  code logs 1,000 WARN lines for the first loop.
 - `DebeziumConverterRangePolicyTest.strictPolicyNamesColumnValueAndBounds()` —
   the exception text of rule 1 for `DateTime`, `DateTime64`, `Date`, `Date32`,
   `ZonedTimestamp` and decimal.
 - `DebeziumConverterRangePolicyTest.legacyOverloadsStillSaturateWithAWarn()` —
-  rule 3.
+  rule 3 (the policy-less overloads carry no column, so their rate-limit key is
+  the ClickHouse type alone: two `DateTime64` saturations in one window share one
+  WARN).
 - `DebeziumConverterRangePolicyTest.infinityKeepsItsSaturation()` — rule 4.
 - `PreparedStatementFieldMapperOutOfRangeTest.outOfRangeValueNamesDatabaseTableAndColumn()`
   — end to end through `insertPreparedStatement`: the exception names
