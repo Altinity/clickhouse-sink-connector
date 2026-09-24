@@ -148,8 +148,12 @@ Theorems (machine-checked, no `sorry`):
 The ignore rules of spec 06.08 §3.3 (`checkIfDDLNeedsToBeIgnored()`:
 `disable.ddl=true`, an `ignore.ddl.regex` or bundled-pattern match, a table
 outside the capture lists, snapshot DDL without `enable.snapshot.ddl`) are
-evaluated BEFORE `drainBeforeDDL()`. A statement they reject is logged and
-recorded in `lastIgnoredDDL`, and the DDL branch ends there: no drain, no
+evaluated BEFORE `drainBeforeDDL()`. A statement they reject is logged once,
+at INFO, by the rule that rejected it — the line names the rule (spec 06.08
+§3.3); the DDL branch itself adds only a DEBUG line, never a second INFO copy
+of the statement — and recorded in `lastIgnoredDDL` (the two rules that reject
+every statement, `disable.ddl=true` and snapshot DDL without
+`enable.snapshot.ddl`, stay silent above DEBUG). The DDL branch ends there: no drain, no
 `pause()`, no `awaitQuiescent()`, no translation. Invariant I5 is about rows
 written under the pre-DDL schema before the schema CHANGES; a statement that is
 never applied changes nothing, so there is nothing for the barrier to protect.

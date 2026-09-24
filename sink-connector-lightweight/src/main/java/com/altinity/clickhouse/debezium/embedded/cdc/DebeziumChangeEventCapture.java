@@ -2573,8 +2573,14 @@ public class DebeziumChangeEventCapture {
                     // the pipeline is quiescent, like any record that produces
                     // no row (spec 09.04).
                     if (checkIfDDLNeedsToBeIgnored(DDL, props, sr, new AtomicBoolean(false))) {
-                        log.info("Ignored Source DB DDL (no drain taken: nothing is applied): "
-                                + DDL + " Snapshot:" + isSnapshotDDL(sr));
+                        // The rule that rejected the statement has already logged
+                        // it once at INFO, naming the rule (spec 06.08 section
+                        // 3.3). A second INFO copy here would repeat the whole
+                        // statement -- a multi-KB view definition, several times
+                        // an hour on a deployment whose application re-creates
+                        // its views -- so this line is DEBUG.
+                        log.debug("Ignored source DDL (no drain taken: nothing is applied): {} Snapshot: {}",
+                                DDL, isSnapshotDDL(sr));
                         return null;
                     }
                     log.info("***** DDL received, Flush all existing records");
@@ -2967,8 +2973,13 @@ public class DebeziumChangeEventCapture {
             }
         }
 
-        // Check DDL against regex patterns from IgnoreDDLRegexLoader
+        // Check DDL against regex patterns from IgnoreDDLRegexLoader. Like every
+        // other rule here, a match is logged once at INFO, naming the rule, and
+        // recorded in lastIgnoredDDL (spec 06.08 section 3.3); the caller adds
+        // nothing above DEBUG.
         if (checkDDLAgainstRegexPatterns(DDL)) {
+            lastIgnoredDDL = DDL;
+            log.info("Ignoring DDL: " + DDL + " as it matches a bundled ignore pattern");
             return true;
         }
 

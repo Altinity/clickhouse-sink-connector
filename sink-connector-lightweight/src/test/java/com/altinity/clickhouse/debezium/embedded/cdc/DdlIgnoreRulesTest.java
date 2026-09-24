@@ -11,6 +11,13 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.Logger;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Configurator;
+import org.apache.logging.log4j.core.config.Property;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -18,6 +25,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -420,6 +428,97 @@ public class DdlIgnoreRulesTest {
                 worker.interrupt();
             }
             executor.shutdownNow();
+        }
+    }
+
+    // ------------------------------------------------------------ 06.08 §3.3: an ignored DDL is logged once
+
+    /** Collects everything DebeziumChangeEventCapture logs during one call. */
+    private static final class CapturingAppender extends AbstractAppender {
+        private final List<LogEvent> events = Collections.synchronizedList(new ArrayList<>());
+
+        CapturingAppender() {
+            super("capture-ddl-ignore-log", null, null, true, Property.EMPTY_ARRAY);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            events.add(event.toImmutable());
+        }
+
+        /** The INFO-or-louder lines that quote the statement. */
+        List<String> infoLinesQuoting(String statement) {
+            List<String> out = new ArrayList<>();
+            for (LogEvent e : events) {
+                String msg = e.getMessage().getFormattedMessage();
+                if (e.getLevel().isMoreSpecificThan(Level.INFO) && msg.contains(statement)) {
+                    out.add(e.getLevel() + " " + msg);
+                }
+            }
+            return out;
+        }
+    }
+
+    private static CapturingAppender captureLog() {
+        Configurator.setLevel(DebeziumChangeEventCapture.class.getName(), Level.INFO);
+        CapturingAppender appender = new CapturingAppender();
+        appender.start();
+        ((Logger) LogManager.getLogger(DebeziumChangeEventCapture.class)).addAppender(appender);
+        return appender;
+    }
+
+    private static void releaseLog(CapturingAppender appender) {
+        ((Logger) LogManager.getLogger(DebeziumChangeEventCapture.class)).removeAppender(appender);
+        appender.stop();
+    }
+
+    @Test
+    @DisplayName("a DDL matched by ignore.ddl.regex is logged once at INFO, by the rule that rejected it")
+    public void ignoredDdlIsLoggedOnce() throws Exception {
+        CapturingAppender log = captureLog();
+        try {
+            DebeziumChangeEventCapture capture = capture();
+            Properties props = mysqlProps(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX,
+                    "(?m).*SQL SECURITY DEFINER VIEW.*");
+            String view = "CREATE OR REPLACE ALGORITHM=UNDEFINED DEFINER=`app`@`%` SQL SECURITY DEFINER "
+                    + "VIEW `v_orders` AS SELECT id FROM orders";
+            assertNull(invokeProcess(capture, ddlRecord("db1", view, "db1.v_orders"), props));
+            assertEquals(view, capture.getLastIgnoredDDL());
+
+            List<String> lines = log.infoLinesQuoting(view);
+            // Pre-fix the DDL branch logged "Ignored Source DB DDL: <statement>" at
+            // INFO on top of the rule's own "Ignoring DDL: <statement> as it matches
+            // the regex", writing every ignored view definition twice.
+            assertEquals(1, lines.size(),
+                    "an ignored statement is written to the log once, by the rule that rejected it: "
+                            + lines);
+            assertTrue(lines.get(0).contains("matches the regex"),
+                    "the one line names the rule: " + lines.get(0));
+        } finally {
+            releaseLog(log);
+        }
+    }
+
+    @Test
+    @DisplayName("a DDL matched by a bundled ignore pattern is logged once at INFO and recorded in lastIgnoredDDL")
+    public void bundledPatternMatchIsLoggedOnceAndRecorded() throws Exception {
+        CapturingAppender log = captureLog();
+        try {
+            DebeziumChangeEventCapture capture = capture();
+            // Matches IgnoreDDLRegexLoader's partition-maintenance patterns; no
+            // ignore.ddl.regex is configured, so only the bundled rule can reject it.
+            // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+            String partition = "ALTER TABLE orders DROP PARTITION p2024";
+            assertNull(invokeProcess(capture, ddlRecord("db1", partition, "db1.orders"), mysqlProps()));
+            assertEquals(partition, capture.getLastIgnoredDDL(),
+                    "pre-fix the bundled-pattern rule returned without recording the statement");
+
+            List<String> lines = log.infoLinesQuoting(partition);
+            assertEquals(1, lines.size(), "logged once, by the rule: " + lines);
+            assertTrue(lines.get(0).contains("bundled ignore pattern"),
+                    "the one line names the rule: " + lines.get(0));
+        } finally {
+            releaseLog(log);
         }
     }
 }
