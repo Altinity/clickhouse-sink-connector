@@ -2,6 +2,7 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
+import com.altinity.clickhouse.debezium.embedded.ddl.DdlCaptureFilter;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.PrimaryKeyRebuildPlan;
@@ -3478,7 +3479,7 @@ public class DebeziumChangeEventCapture {
                         + "the next start");
                 return;
             }
-            String include = props.getProperty("database.include.list");
+            String include = props.getProperty(DdlCaptureFilter.DATABASE_INCLUDE_LIST);
             List<String> databases = include == null || include.trim().isEmpty()
                     ? Collections.emptyList()
                     : VersionHighWaterMark.targetDatabases(props, config);

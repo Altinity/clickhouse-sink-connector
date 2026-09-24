@@ -8,7 +8,7 @@ Specifies the final phase of DDL replication: executing the translated DDL on Cl
 ## 2. Codebase Mapping on 2.11.0
 - **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java`
 - **Methods**: `performDDLOperation()`, `processEveryChangeRecord()` (DDL branch), `drainBeforeDDL()`, `checkIfDDLNeedsToBeIgnored()`, `sourceDatabaseName()`, `isDropOrTruncateDisabled()`
-- **Capture filter**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DdlCaptureFilter.java` (`isCaptured(database, table, props)`)
+- **Capture filter**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/DdlCaptureFilter.java` (`isCaptured(database, table, props)`; the list property names are its `DATABASE_INCLUDE_LIST` / `DATABASE_EXCLUDE_LIST` / `TABLE_INCLUDE_LIST` / `TABLE_EXCLUDE_LIST` constants, read from Debezium's `RelationalDatabaseConnectorConfig`)
 - **Statement kind**: `MySqlDDLParserListenerImpl.isDropOrTruncateStatement()` (set by `enterDropTable`, `enterTruncateTable`, `enterDropDatabase`), `MySQLDDLParserService.isDropOrTruncateStatement(CommonTokenStream)`, `PostgreSQLDDLParserService.isDropOrTruncateStatement(CommonTokenStream)`
 - **Failure type**: `DDLReplicationException` (same package)
 
@@ -106,7 +106,14 @@ this order:
    semantics: `database.include.list` / `database.exclude.list` and
    `table.include.list` / `table.exclude.list` are comma-separated regular
    expressions matched **in full and case-insensitively**; an include list,
-   when set, is the whole rule and the exclude list is ignored. A multi-table
+   when set, is the whole rule and the exclude list is ignored. The four
+   property names are never restated as literals in the sink: every reader
+   (`DdlCaptureFilter`, `KeylessTablePreflight`, `VersionHighWaterMark`, the
+   backfill resumption scan) takes them from Debezium's
+   `RelationalDatabaseConnectorConfig` field definitions through the
+   `DdlCaptureFilter` constants, so a rename on the Debezium side surfaces at
+   the dependency bump instead of silently turning the filter into a no-op
+   (`DdlCaptureFilterTest.propertyNamesComeFromDebezium`). A multi-table
    DDL is kept when ANY of its tables is captured; a table-less DDL
    (`CREATE DATABASE`) is judged by the database lists only; an unknown
    database is never filtered; an uncompilable exclude pattern is ignored

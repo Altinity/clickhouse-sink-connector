@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.ddl.DdlCaptureFilter;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
@@ -324,7 +325,7 @@ public final class VersionHighWaterMark {
      * @return the target database names, possibly empty.
      */
     static List<String> targetDatabases(Properties props, ClickHouseSinkConnectorConfig config) {
-        String include = props == null ? null : props.getProperty("database.include.list");
+        String include = props == null ? null : props.getProperty(DdlCaptureFilter.DATABASE_INCLUDE_LIST);
         if (include == null || include.trim().isEmpty()) {
             log.warn("database.include.list is not set; the startup version-floor scan has no target "
                     + "databases");

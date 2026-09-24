@@ -431,6 +431,18 @@ public class Utils {
     }
 
     /**
+     * A JSON (or any loosely typed) field as a string: numbers are accepted
+     * where callers expect a numeric-looking string (e.g. a binlog position),
+     * and {@code null} stays {@code null} instead of becoming {@code "null"}.
+     *
+     * @param value the raw field value, possibly {@code null}.
+     * @return {@code String.valueOf(value)}, or {@code null} when the value is {@code null}.
+     */
+    public static String stringOrNull(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    /**
      * Extract plain table name, stripping backticks and database prefix.
      * e.g., "`mydb`.`mytable`" returns "mytable", "`mytable`" returns "mytable"
      *

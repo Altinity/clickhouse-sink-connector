@@ -1,10 +1,12 @@
-package com.altinity.clickhouse.debezium.embedded.cdc;
+package com.altinity.clickhouse.debezium.embedded.ddl;
 
+import io.debezium.relational.RelationalDatabaseConnectorConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.Properties;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -101,5 +103,24 @@ public class DdlCaptureFilterTest {
         assertTrue(DdlCaptureFilter.isCaptured("db1", "orders", props("table.exclude.list", "db1\\.(")));
         assertFalse(DdlCaptureFilter.isCaptured("db1", "orders", props("table.include.list", "db1\\.(")),
                 "an include list that matches nothing captures nothing, the same as Debezium");
+    }
+
+    @Test
+    @DisplayName("The list property names are the ones Debezium defines, not restated literals")
+    public void propertyNamesComeFromDebezium() {
+        assertEquals(RelationalDatabaseConnectorConfig.DATABASE_INCLUDE_LIST.name(),
+                DdlCaptureFilter.DATABASE_INCLUDE_LIST);
+        assertEquals(RelationalDatabaseConnectorConfig.DATABASE_EXCLUDE_LIST.name(),
+                DdlCaptureFilter.DATABASE_EXCLUDE_LIST);
+        assertEquals(RelationalDatabaseConnectorConfig.TABLE_INCLUDE_LIST.name(),
+                DdlCaptureFilter.TABLE_INCLUDE_LIST);
+        assertEquals(RelationalDatabaseConnectorConfig.TABLE_EXCLUDE_LIST.name(),
+                DdlCaptureFilter.TABLE_EXCLUDE_LIST);
+        // And the filter really reads through them: a list set under Debezium's
+        // own field name is honoured.
+        assertFalse(DdlCaptureFilter.isCaptured("db1", "audit",
+                props(RelationalDatabaseConnectorConfig.TABLE_INCLUDE_LIST.name(), "db1\\.orders")));
+        assertFalse(DdlCaptureFilter.isCaptured("scratch", "t",
+                props(RelationalDatabaseConnectorConfig.DATABASE_EXCLUDE_LIST.name(), "scratch")));
     }
 }

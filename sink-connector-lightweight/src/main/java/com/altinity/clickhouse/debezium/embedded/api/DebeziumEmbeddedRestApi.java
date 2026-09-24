@@ -9,6 +9,7 @@ import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeight
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Injector;
 import io.javalin.Javalin;
@@ -205,9 +206,9 @@ public class DebeziumEmbeddedRestApi {
             // Accept numbers as well as strings for the position: the edit is
             // validated and stored as a number by DebeziumOffsetStorage
             // (spec 09.03 section 3.4).
-            String binlogFile = stringOrNull(jsonObject.get(BINLOG_FILE));
-            String binlogPosition = stringOrNull(jsonObject.get(BINLOG_POS));
-            String gtid = stringOrNull(jsonObject.get(GTID));
+            String binlogFile = Utils.stringOrNull(jsonObject.get(BINLOG_FILE));
+            String binlogPosition = Utils.stringOrNull(jsonObject.get(BINLOG_POS));
+            String gtid = Utils.stringOrNull(jsonObject.get(GTID));
 
             String sourceHost = (String) jsonObject.get(SOURCE_HOST);
             String sourcePort = (String) jsonObject.get(SOURCE_PORT);
@@ -301,7 +302,7 @@ public class DebeziumEmbeddedRestApi {
             }
             String body = ctx.body();
             JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);
-            String lsn = stringOrNull(jsonObject.get(LSN));
+            String lsn = Utils.stringOrNull(jsonObject.get(LSN));
 
             ClickHouseSinkConnectorConfig config =
                     new ClickHouseSinkConnectorConfig(
@@ -381,11 +382,6 @@ public class DebeziumEmbeddedRestApi {
     /**
      * Stops the Javalin REST API server.
      */
-    /** A JSON field as a string: numbers are accepted for positions, null stays null. */
-    private static String stringOrNull(Object value) {
-        return value == null ? null : String.valueOf(value);
-    }
-
     public static void stop() {
         if (app != null) {
             app.stop();

@@ -24,6 +24,13 @@ public class UtilsTest {
     }
 
     @Test
+    public void testStringOrNull() {
+        Assert.assertNull(Utils.stringOrNull(null));
+        Assert.assertEquals("4", Utils.stringOrNull(4L));
+        Assert.assertEquals("mysql-bin.000001", Utils.stringOrNull("mysql-bin.000001"));
+    }
+
+    @Test
     public void testGetTableNameFromTopic() {
 
         String topicName = "SERVER5432.test.employees";

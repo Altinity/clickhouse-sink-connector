@@ -1,5 +1,6 @@
-package com.altinity.clickhouse.debezium.embedded.cdc;
+package com.altinity.clickhouse.debezium.embedded.ddl;
 
+import io.debezium.relational.RelationalDatabaseConnectorConfig;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -32,10 +33,28 @@ import java.util.regex.PatternSyntaxException;
  * direction of KEEPING a DDL: an unknown database is never filtered, a
  * table-less DDL is judged by the database lists only, and an uncompilable
  * exclude pattern is ignored rather than treated as a match.</p>
+ *
+ * <p><b>Property names come from Debezium.</b> The four list keys are read
+ * through {@link RelationalDatabaseConnectorConfig}'s field definitions, never
+ * restated as literals, so a rename on the Debezium side is picked up by the
+ * dependency bump instead of silently turning the filter into a no-op.</p>
  */
-final class DdlCaptureFilter {
+public final class DdlCaptureFilter {
 
     private static final Logger log = LogManager.getLogger(DdlCaptureFilter.class);
+
+    /** {@code database.include.list}, as Debezium defines it. */
+    public static final String DATABASE_INCLUDE_LIST =
+            RelationalDatabaseConnectorConfig.DATABASE_INCLUDE_LIST.name();
+    /** {@code database.exclude.list}, as Debezium defines it. */
+    public static final String DATABASE_EXCLUDE_LIST =
+            RelationalDatabaseConnectorConfig.DATABASE_EXCLUDE_LIST.name();
+    /** {@code table.include.list}, as Debezium defines it. */
+    public static final String TABLE_INCLUDE_LIST =
+            RelationalDatabaseConnectorConfig.TABLE_INCLUDE_LIST.name();
+    /** {@code table.exclude.list}, as Debezium defines it. */
+    public static final String TABLE_EXCLUDE_LIST =
+            RelationalDatabaseConnectorConfig.TABLE_EXCLUDE_LIST.name();
 
     private DdlCaptureFilter() {
     }
@@ -48,19 +67,19 @@ final class DdlCaptureFilter {
      * @return true when the DDL belongs to a captured table (or, for a
      *         table-less DDL, a captured database).
      */
-    static boolean isCaptured(String database, String table, Properties props) {
+    public static boolean isCaptured(String database, String table, Properties props) {
         if (database == null || database.isEmpty()) {
             return true;
         }
-        if (!passes(database, props.getProperty("database.include.list"),
-                props.getProperty("database.exclude.list"))) {
+        if (!passes(database, props.getProperty(DATABASE_INCLUDE_LIST),
+                props.getProperty(DATABASE_EXCLUDE_LIST))) {
             return false;
         }
         if (table == null || table.isEmpty()) {
             return true;
         }
-        return passes(database + "." + table, props.getProperty("table.include.list"),
-                props.getProperty("table.exclude.list"));
+        return passes(database + "." + table, props.getProperty(TABLE_INCLUDE_LIST),
+                props.getProperty(TABLE_EXCLUDE_LIST));
     }
 
     private static boolean passes(String identifier, String includeCsv, String excludeCsv) {
