@@ -127,7 +127,7 @@ public class ClickHouseErrorClassifierTest {
     /**
      * A value the source holds that cannot be stored under the current
      * ClickHouse column type ({@code DebeziumConverter.ValueOutOfRangeException},
-     * thrown by the loud-clamp default, spec 07.03 section 3.3) is raised by the
+     * thrown under {@code clamp.out.of.range=false}, spec 07.03 section 3.3) is raised by the
      * converter, not by ClickHouse, so it carries no {@code Code: NNN}. Left to
      * code extraction it classified UNKNOWN and the same batch was retried with
      * backoff forever: the unit stayed outstanding, every DDL drain waited on

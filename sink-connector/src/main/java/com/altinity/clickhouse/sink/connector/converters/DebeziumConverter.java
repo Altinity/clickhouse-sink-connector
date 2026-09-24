@@ -40,9 +40,10 @@ public class DebeziumConverter {
     }
 
     /**
-     * What to do with a value outside the ClickHouse type's range: fail the
-     * batch (default, {@code clamp.out.of.range=false}) or saturate to the
-     * bound with a WARN naming the column and both values. Never silent
+     * What to do with a value outside the ClickHouse type's range: saturate to
+     * the bound with a WARN naming the column and both values (default,
+     * {@code clamp.out.of.range=true}) or fail the batch
+     * ({@code clamp.out.of.range=false}). Never silent
      * (Spec 07.03 section 3.3) -- but never one WARN per row either: a
      * column is reported once per {@link #WARN_INTERVAL_NANOS}, every
      * further saturation of it inside that window is counted and logged at
@@ -56,7 +57,7 @@ public class DebeziumConverter {
          */
         public static final RangePolicy CLAMP = new RangePolicy(true, null);
 
-        /** Fail the batch. The production default. */
+        /** Fail the batch ({@code clamp.out.of.range=false}). */
         public static final RangePolicy STRICT = new RangePolicy(false, null);
 
         private static final DateTimeFormatter BOUND_FORMAT =
@@ -99,13 +100,13 @@ public class DebeziumConverter {
         /**
          * The policy for one bound column, from the connector configuration.
          *
-         * @param config the connector configuration (null means strict)
+         * @param config the connector configuration (null means the default, which saturates)
          * @param column the column being bound, e.g. {@code db.orders.expires_at};
          *               may be null when unknown
          * @return the policy
          */
         public static RangePolicy of(ClickHouseSinkConnectorConfig config, String column) {
-            boolean clamp = config != null && config.getBoolean(
+            boolean clamp = config == null || config.getBoolean(
                     ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE.toString());
             return new RangePolicy(clamp, column);
         }
@@ -202,8 +203,8 @@ public class DebeziumConverter {
             throw new ValueOutOfRangeException(String.format(
                     "Value %s%s is outside the ClickHouse %s range %s. Refusing to store %s in its "
                             + "place: the source never held that value. Widen the ClickHouse column "
-                            + "type, or set %s=true to saturate out-of-range values (reported at WARN, "
-                            + "one line per column per minute).",
+                            + "type, or return to the default %s=true to saturate out-of-range values "
+                            + "(reported at WARN, one line per column per minute).",
                     provided, where, type, bounds, bounded,
                     ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE));
         }

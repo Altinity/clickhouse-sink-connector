@@ -34,13 +34,13 @@ hard stop.
   exception and every `getCause()` down to the root and returns `FATAL` when
   any link is an instance of a listed type:
   - `DebeziumConverter.ValueOutOfRangeException` — the value the source holds
-    cannot be stored under the current ClickHouse column type (the loud-clamp
-    default `clamp.out.of.range=false`, spec 07.03 §3.3). The value and the
+    cannot be stored under the current ClickHouse column type (under
+    `clamp.out.of.range=false`, spec 07.03 §3.3). The value and the
     column type are unchanged on every attempt, so retrying can never succeed:
     it is FATAL exactly like an unknown table — the worker rethrows with the
     batch retained and the Debezium thread turns the dead worker into a loud
-    engine stop (spec 03.01 §3.3, spec 10.04). Remedy: widen the column, or set
-    `clamp.out.of.range=true`.
+    engine stop (spec 03.01 §3.3, spec 10.04). Remedy: widen the column, or
+    return to the default `clamp.out.of.range=true`.
 - **`FATAL`** (`FATAL_ERROR_CODES`) — deterministic; the same batch can never
   succeed without external intervention (config, schema, or privilege change),
   so the task is stopped:
