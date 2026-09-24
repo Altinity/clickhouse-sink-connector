@@ -198,8 +198,9 @@ public class PreparedStatementExecutor {
                     continue;
                 }
                 String insertQuery = entry.getKey().getKey();
-                // Per-batch progress line: DEBUG, not INFO (spec 03.06 section 3.3).
-                log.debug(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
+                // Per-batch progress line: INFO by design (spec 03.06 section 3.3) --
+                // operators read the connector's progress from the log.
+                log.info(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
                 // Create Hashmap of PreparedStatement(Query) -> Set of records
                 // because the data will contain a mix of SQL statements(multiple columns)
                 if (!executePreparedStatement(insertQuery, topicName, entry, bmd, config,
@@ -436,8 +437,9 @@ public class PreparedStatementExecutor {
                 int[] batchResult = ps.executeBatch();
 
                 long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
-                // Per-batch progress line: DEBUG, not INFO (spec 03.06 section 3.3).
-                log.debug("*************** EXECUTED BATCH Successfully " + "Records: " + batch.size() + "************** " +
+                // Per-batch progress line: INFO by design (spec 03.06 section 3.3) --
+                // operators read the connector's progress from the log.
+                log.info("*************** EXECUTED BATCH Successfully " + "Records: " + batch.size() + "************** " +
                         "task(" + taskId + ")" + " Thread ID: " +
                         Thread.currentThread().getName() + " Result: " +
                         batchResult.toString() + " Database: "

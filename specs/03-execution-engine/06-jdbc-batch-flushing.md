@@ -27,10 +27,10 @@ For each partition:
 - `int[] batchResult = ps.executeBatch()` sends the partition.
 A failure inside the partition is rethrown as `RuntimeException` from `executePreparedStatement`; the caller (`ClickHouseBatchRunnable`) classifies it via `ClickHouseErrorClassifier` (spec 10.01) — the executor itself does not classify or retry.
 
-### 3.3 Per-batch progress lines are DEBUG
+### 3.3 Per-batch progress lines are INFO, by design
 A successful batch is the steady state of the connector, and the worker pool
-flushes one every `buffer.flush.time.ms` per worker. Four lines used to be
-written at INFO for every one of them:
+flushes one every `buffer.flush.time.ms` per worker. Four lines are written
+at INFO for every one of them:
 1. `****** Thread: <worker> Batch Size: <n> ******` on pick-up
    (`ClickHouseBatchRunnable.processBatch`, and `ClickHouseBatchWriter.persistRecords`
    in single-threaded mode);
@@ -41,22 +41,22 @@ written at INFO for every one of them:
 4. `***** BATCH marked as processed to debezium **** Binlog file: ...` per
    acknowledged unit (`DebeziumOffsetManagement.acknowledgeRecords`).
 
-On a deployment with 10 workers and a moderately busy source that was
-~2,600 lines a minute, 97% of the log: 184,933 of 401,070 lines in one
-rotation were lines 1–3 alone, and the INSERT template — every column of
-every table, repeated per batch — was most of the bytes. The log rotated
-every ~2 h, the messages that matter (an engine restart, a refused out-of-range value,
-a DDL) scrolled out of the retained history within hours, and the WARN-filtered
-error log was the only place a problem could still be found.
-
-Rule: the four lines are logged at **DEBUG**. They keep their text, so an
-operator who needs the per-batch trace enables it with the logger level
-(`com.altinity.clickhouse` at DEBUG) and gets exactly the lines the connector
-always wrote. Nothing about a FAILED batch changes: the retriable WARN, the
-FATAL error, the dead-worker engine stop (spec 03.01 §3.3, spec 10.04) stay
-at their levels. Progress is observable without the lines: the offset table
-(spec 09.03), `/status`, and the metrics endpoint carry the position, the lag
-and the counts.
+Rule: the four lines are logged at **INFO** by design. They are how an
+operator sees, from the log alone, that the connector is progressing — which
+batch was picked up, which INSERT ran, that it executed, and that its offset
+was acknowledged to Debezium — and that is the first thing a person tails
+when a connector is suspected of being stuck. A revision of this spec moved
+them to DEBUG because on a deployment with 10 workers they were ~2,600 lines
+a minute (97% of the log); the operators reversed that: the progress trace
+is wanted at the default level, and the log's retention is sized for it
+(size- and time-based rotation, spec-external). The steady-state noise that
+had to go was elsewhere — the per-row saturation WARN (spec 07.03 §3.3 rule
+2, now DEBUG only) and the first-attempt "Retrying" line of the database
+probe (spec 08.03 §3.3) — not the progress lines. Nothing about a FAILED
+batch changes: the retriable WARN, the FATAL error, the dead-worker engine
+stop (spec 03.01 §3.3, spec 10.04) stay at their levels. The offset table
+(spec 09.03), `/status` and the metrics endpoint carry the same position, lag
+and counts for tooling.
 
 ---
 
@@ -69,7 +69,7 @@ and the counts.
 - `PreparedStatementExecutorSortingKeyTombstoneTest` — the per-record tombstone decision inside the batch loop.
 - `PreparedStatementExecutorClearParametersTest.parametersAreClearedAfterEveryAddBatch()` — through `addToPreparedStatementBatch` with a recording connection: for a two-row batch the statement receives `addBatch` twice and `clearParameters` once after each `addBatch` (pre-fix code never calls `clearParameters`).
 - `PreparedStatementExecutorTruncateTest.truncateIsAppliedAtItsBinlogPositionForBothHashOrders()`, `TruncateTableIT.testRowsInsertedAfterTruncateSurvive()` — TRUNCATE ordering within one batch.
-- `PreparedStatementExecutorBatchLogLevelTest.successfulBatchLogsItsProgressAtDebugOnly()` — §3.3 lines 2 and 3: a successful two-row batch through `addToPreparedStatementBatch` with a recording connection writes the INSERT-template line and the EXECUTED-BATCH line at DEBUG and nothing at INFO or above (pre-fix: both at INFO).
-- `DebeziumOffsetManagementTest.acknowledgementIsLoggedAtDebug()` — §3.3 line 4: acknowledging a unit through `acknowledgeRecords` writes the "BATCH marked as processed" line at DEBUG and nothing at INFO or above (pre-fix: INFO).
+- `PreparedStatementExecutorBatchLogLevelTest.successfulBatchLogsItsProgressAtInfo()` — §3.3 lines 2 and 3: a successful two-row batch through `addToPreparedStatementBatch` with a recording connection, logger at the default INFO level, writes the INSERT-template line and the EXECUTED-BATCH line at INFO and nothing at WARN or above (the DEBUG revision writes neither at INFO, so the test fails on it).
+- `DebeziumOffsetManagementTest.acknowledgementIsLoggedAtInfo()` — §3.3 line 4: acknowledging a unit through `acknowledgeRecords`, logger at INFO, writes the "BATCH marked as processed" line at INFO and nothing at WARN or above (fails on the DEBUG revision).
 - §3.3 line 1 (`ClickHouseBatchRunnable.processBatch`, `ClickHouseBatchWriter.persistRecords`) has no unit harness that reaches the pick-up line without a live ClickHouse (both paths resolve the destination through `DBMetadata` on a real connection); covered by review of the two call sites.
 - Verification: chunking at `buffer.max.records` (e.g. 50,000 rows split into partitions) and the `buffer.flush.time.ms` cadence are not yet covered by an automated test (gap).
