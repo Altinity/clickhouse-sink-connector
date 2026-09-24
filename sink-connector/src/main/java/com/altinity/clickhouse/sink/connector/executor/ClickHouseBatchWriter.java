@@ -196,7 +196,8 @@ public class ClickHouseBatchWriter {
      *         persisted
      */
     public void persistRecords(List<ClickHouseStruct> records) {
-        log.info("****** Thread: " +
+        // Per-batch progress line: DEBUG, not INFO (spec 03.06 section 3.3).
+        log.debug("****** Thread: " +
                 Thread.currentThread().getName() +
                 " Batch Size: " + records.size() +
                 " ******");
