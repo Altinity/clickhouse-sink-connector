@@ -14,6 +14,10 @@ import java.sql.Date;import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.zone.ZoneOffsetTransition;
 import java.time.temporal.ChronoUnit;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 import static java.time.Instant.ofEpochMilli;
 
@@ -39,7 +43,10 @@ public class DebeziumConverter {
      * What to do with a value outside the ClickHouse type's range: fail the
      * batch (default, {@code clamp.out.of.range=false}) or saturate to the
      * bound with a WARN naming the column and both values. Never silent
-     * (Spec 07.03 section 3.3).
+     * (Spec 07.03 section 3.3) -- but never one WARN per row either: a
+     * column is reported once per {@link #WARN_INTERVAL_NANOS}, every
+     * further saturation of it inside that window is counted and logged at
+     * DEBUG, and the next WARN carries the count.
      */
     public static final class RangePolicy {
 
@@ -54,6 +61,32 @@ public class DebeziumConverter {
 
         private static final DateTimeFormatter BOUND_FORMAT =
                 DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC);
+
+        /**
+         * How often one saturated column may WARN. A bitemporal table whose
+         * every row carries the {@code 9999-12-31 23:59:59} open-ended
+         * sentinel saturates on every row; one WARN per row was measured at
+         * ~2,300 lines per second, 98% of the connector log, rotating a
+         * 100 MB log every two minutes (Spec 07.03 section 3.3 rule 2).
+         */
+        static final long WARN_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(60);
+
+        /** Clock for the rate limit; replaced by tests to step the window. */
+        static volatile LongSupplier ticker = System::nanoTime;
+
+        /** Per (column, ClickHouse type): saturations since the last WARN and when that WARN was. */
+        private static final ConcurrentHashMap<String, SaturationTally> TALLIES = new ConcurrentHashMap<>();
+
+        private static final class SaturationTally {
+            private static final long NEVER = Long.MIN_VALUE;
+            final AtomicLong sinceLastWarn = new AtomicLong();
+            final AtomicLong lastWarnNanos = new AtomicLong(NEVER);
+        }
+
+        /** Forgets every column's window, so one test cannot silence the next. */
+        static void resetSaturationTallies() {
+            TALLIES.clear();
+        }
 
         private final boolean clamp;
         private final String column;
@@ -145,7 +178,23 @@ public class DebeziumConverter {
         private void report(String provided, String bounded, String type, String bounds) {
             String where = column == null ? "" : " for column " + column;
             if (clamp) {
-                log.warn("Value {}{} is outside the ClickHouse {} range {}; stored as {} ({}=true)",
+                SaturationTally tally = TALLIES.computeIfAbsent(
+                        (column == null ? "" : column) + '|' + type, k -> new SaturationTally());
+                tally.sinceLastWarn.incrementAndGet();
+                long now = ticker.getAsLong();
+                long last = tally.lastWarnNanos.get();
+                boolean windowOpen = last == SaturationTally.NEVER || now - last >= WARN_INTERVAL_NANOS;
+                if (windowOpen && tally.lastWarnNanos.compareAndSet(last, now)) {
+                    long counted = tally.sinceLastWarn.getAndSet(0);
+                    log.warn("Value {}{} is outside the ClickHouse {} range {}; stored as {} ({}=true); "
+                                    + "{} saturation(s) of this column since the previous report, further "
+                                    + "ones are logged at DEBUG for the next {}s",
+                            provided, where, type, bounds, bounded,
+                            ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE,
+                            counted, TimeUnit.NANOSECONDS.toSeconds(WARN_INTERVAL_NANOS));
+                    return;
+                }
+                log.debug("Value {}{} is outside the ClickHouse {} range {}; stored as {} ({}=true)",
                         provided, where, type, bounds, bounded,
                         ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE);
                 return;
@@ -153,8 +202,8 @@ public class DebeziumConverter {
             throw new ValueOutOfRangeException(String.format(
                     "Value %s%s is outside the ClickHouse %s range %s. Refusing to store %s in its "
                             + "place: the source never held that value. Widen the ClickHouse column "
-                            + "type, or set %s=true to saturate out-of-range values (each one is then "
-                            + "logged at WARN).",
+                            + "type, or set %s=true to saturate out-of-range values (reported at WARN, "
+                            + "one line per column per minute).",
                     provided, where, type, bounds, bounded,
                     ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE));
         }
