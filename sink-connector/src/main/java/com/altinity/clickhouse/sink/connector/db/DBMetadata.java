@@ -162,7 +162,14 @@ public class DBMetadata {
         while (!result && retryCount < MAX_RETRIES) {
             try {
                 retryCount++;
-                log.info("Retrying checkIfDatabaseExists, attempt {}", retryCount);
+                if (retryCount > 1) {
+                    // A "Retrying" line means a retry happened (spec 08.03 section 3.3):
+                    // the first attempt is not a retry and stays silent at INFO. Logged
+                    // before every attempt, this line was 218 lines per 20 minutes of
+                    // steady-state noise on a healthy deployment.
+                    log.info("Retrying checkIfDatabaseExists for database {}, attempt {} of {}",
+                            databaseName, retryCount, MAX_RETRIES);
+                }
                 try (Statement retryStmt = conn.createStatement()) {
                     String showSchemaQuery = String.format(CHECK_DB_EXISTS_SQL, databaseName);
                     ResultSet retryRs = retryStmt.executeQuery(showSchemaQuery);
