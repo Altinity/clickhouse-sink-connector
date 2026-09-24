@@ -12,6 +12,7 @@ Specifies the proven-absent column tracking mechanism that prevents unbounded `s
   - `isColumnProvenAbsent(String tableName, String columnName)`
   - (there is no `clearProvenAbsentColumns`; proofs expire through the version stamp — §3.2 step 5 — and `clearAll()` exists for tests)
 - **Caller**: `GroupInsertQueryWithBatchRecords.refreshIfRecordHasUnknownColumn(...)` in `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/GroupInsertQueryWithBatchRecords.java`
+- **Database probe (§3.3)**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/DBMetadata.java` — `checkIfDatabaseExists(Connection, String)`, the `SHOW DATABASES` probe (`ClickHouseDbConstants.CHECK_DB_EXISTS_SQL`) run for a batch's database before it is written
 
 ---
 
@@ -38,14 +39,36 @@ In high-throughput replication, if an incoming event carries a column that does 
 5. The proof is honoured only while `getVersion(tableKey)` still equals the stored version: a later `invalidateTable(tableKey)` or `invalidateAll()` changes the version, `isColumnProvenAbsent` then discards the stale proof and returns false, and the column is probed once against the new schema.
 6. `null`/empty table or column names are inert for both methods.
 
+### 3.3 A catalog probe reports a retry only when one happened
+`DBMetadata.checkIfDatabaseExists` runs the `SHOW DATABASES` probe
+(`ClickHouseDbConstants.CHECK_DB_EXISTS_SQL`) up to `MAX_RETRIES` times until
+the database is seen, re-opening the pooled connection after a failure. The
+probe is on the write path — it runs for a batch's database before the batch
+is written — so on a ten-worker deployment it executes several times a second.
+
+Defect: the loop logged `Retrying checkIfDatabaseExists, attempt {n}` at INFO
+*before every attempt, including the first*. A healthy connector therefore
+wrote a "Retrying" line for probes that never failed — measured at 218 lines in
+20 minutes on one deployment, with `attempt 2` never appearing once — and an
+operator grepping the log for retries found only noise.
+
+Rule: the "Retrying" line is written only when `retryCount > 1`, i.e. after a
+previous attempt failed, and it names the database and the budget
+(`attempt {n} of {MAX_RETRIES}`). A failed attempt keeps its ERROR line
+(`Retry attempt ({n}/{MAX_RETRIES}) failed`, with the exception). A first
+attempt that succeeds logs nothing at INFO.
+
 ---
 
 ## 4. Invariants Preserved
 - **System Stability**: Protects ClickHouse connection pools from metadata query storms.
 - **No stale absence**: a column that becomes writable after a DDL is re-probed exactly once, so the proof can never hide a real column.
+- **A log line means what it says**: a "Retrying" line is written only when a retry happened, so the retained log history is spent on events, not on the steady state (the same discipline as Spec 03.06 §3.3 for batch progress lines).
 
 ---
 
 ## 5. Verification Criteria
 - `CacheInvalidationProvenAbsentTest.testUnprobedColumnIsNotProvenAbsent()`, `CacheInvalidationProvenAbsentTest.testProvenAbsentColumnIsRemembered()`, `CacheInvalidationProvenAbsentTest.testProvenAbsentIsCaseInsensitive()`, `CacheInvalidationProvenAbsentTest.testProvenAbsentIsScopedToItsTable()`, `CacheInvalidationProvenAbsentTest.testDdlInvalidatesTheProof()`, `CacheInvalidationProvenAbsentTest.testInvalidateAllInvalidatesTheProof()`, `CacheInvalidationProvenAbsentTest.testProofRetakenAfterDdlSticks()`, `CacheInvalidationProvenAbsentTest.testNullAndEmptyInputsAreInert()`.
 - Verification: a benchmark asserting zero additional `system.columns` queries under a sustained stream of records with extra fields is not yet covered by an automated test (gap).
+- `DBMetadataDatabaseExistsLogTest.firstAttemptThatSucceedsLogsNoRetry()` — §3.3: a probe answered on the first attempt returns true and writes no "Retrying" line at any level (pre-fix code writes one INFO line per call).
+- `DBMetadataDatabaseExistsLogTest.retryAfterFailureIsLoggedOnce()` — §3.3: a probe whose first attempt throws and whose second succeeds returns true and writes exactly one "Retrying" INFO line, naming the database and `attempt 2 of` the budget, after the ERROR line for the failure.
