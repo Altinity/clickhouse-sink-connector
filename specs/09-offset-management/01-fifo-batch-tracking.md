@@ -85,6 +85,20 @@ On the Debezium thread, for every list handed to the asynchronous writers
    group before its unit is registered, and a batch reads as unwritten from the
    instant it is handed off — including the window between a worker's `poll()`
    and its write.
+4. **Backlog advisory — edge-triggered, never per handoff, never ERROR.** If
+   the registration has just taken the outstanding count above
+   `BACKLOG_ADVISORY_THRESHOLD` (1000), ONE line is logged at WARN naming the
+   count. The next line about the backlog is ONE INFO, logged by the
+   acknowledgement (§3.3) that brings the count back to or under the
+   threshold, after which the advisory is re-armed for the next crossing. A
+   backlog is the reader ahead of the writers — capacity, not failure: nothing
+   was lost or skipped and every guarantee below still holds, so ERROR is the
+   wrong level and one line per handoff is the wrong rate. (Before this rule
+   every handoff above the threshold logged an ERROR: 4,003 lines in seven
+   minutes on one deployment, in an error log that otherwise held six genuine
+   warnings for the hour.) `reset()` (§3.8) clears the advisory silently along
+   with the set it abandons; its own abandonment WARN is the line for that
+   event.
 
 Sequences are assigned by one thread in handoff order, so
 `seq(A) < seq(B)` iff A was read from the binlog before B. No wall-clock value
@@ -293,6 +307,13 @@ would let a later batch commit an offset past rows that never reached a queue.
   not block itself; acknowledging one leaves the sibling tracked.
 - `HandedOffBatchVisibilityTest` — visible from handoff; per-group counting;
   quiescent only after the whole unit is acknowledged.
+- `HandoffBacklogAdvisoryTest` — §3.1 step 4: crossing the threshold logs
+  exactly one WARN naming the count and nothing at ERROR
+  (`raisedOnceAtWarnWhenCrossingTheThreshold`); draining back to the threshold
+  logs exactly one INFO, further drain and under-threshold handoffs log
+  nothing, and the next crossing is advised again
+  (`clearedOnceWhenTheBacklogDrainsUnderTheThreshold`); `reset()` clears the
+  advisory without a clearing line and re-arms it (`resetClearsTheAdvisory`).
 - `EngineRestartFifoResetTest` — §3.8: `stop()` abandons a never-written unit and
   the next engine's heartbeat commits / first unit is acknowledged with nothing
   parked (`stopThenStartNewInstanceIsNotPoisoned`); nothing outstanding after
