@@ -26,6 +26,8 @@ import java.util.Properties;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicReference;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 /**
@@ -33,6 +35,8 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 
 public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
+
+    private static final Logger log = LoggerFactory.getLogger(ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT.class);
 
     @Container
     public static org.testcontainers.clickhouse.ClickHouseContainer clickHouseContainer = new ClickHouseContainer(DockerImageName.parse(CLICKHOUSE_DOCKER_IMAGE)
@@ -59,12 +63,12 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
         Properties properties = getDefaultProperties(postgreSQLContainer, clickHouseContainer);
         properties.put("plugin.name", "pgoutput" );
         properties.put("plugin.path", "/" );
-        properties.put("table.include.list", "public.tm" );
+        properties.put("table.include.list", "public.tm, public.infinity_test" );
         properties.put("topic.prefix", "test-server" );
         properties.put("slot.max.retries", "6" );
         properties.put("slot.retry.delay.ms", "5000" );
         properties.put("database.allowPublicKeyRetrieval", "true" );
-        properties.put("table.include.list", "public.tm,public.tm2" );
+        properties.put("table.include.list", "public.tm,public.tm2,public.infinity_test" );
         return properties;
     }
 
@@ -114,6 +118,34 @@ public class ClickHouseDebeziumEmbeddedPostgresPgoutputDockerIT {
         }
 
         Assert.assertTrue(tmCount == 2);
+
+        // Validate infinity_test table - check how PostgreSQL infinity timestamps are stored in ClickHouse
+        log.info("=== Validating PostgreSQL infinity timestamps in ClickHouse ===");
+        
+        // Check if the infinity_test table exists and has data
+        ResultSet infinityRs = writer.getConnection().prepareStatement(
+            "SELECT id, name, valid_from, valid_to FROM public.infinity_test ORDER BY id"
+        ).executeQuery();
+        
+        int infinityCount = 0;
+        while (infinityRs.next()) {
+            int id = infinityRs.getInt("id");
+            String name = infinityRs.getString("name");
+            String validFrom = infinityRs.getString("valid_from");
+            String validTo = infinityRs.getString("valid_to");
+            
+            log.info("infinity_test row {}: name='{}', valid_from='{}', valid_to='{}'", 
+                id, name, validFrom, validTo);
+            infinityCount++;
+        }
+        
+        log.info("Total infinity_test rows in ClickHouse: {}", infinityCount);
+        Assert.assertTrue("Expected 4 rows in infinity_test, but found: " + infinityCount, infinityCount == 4);
+        
+        // Also check the column data types in ClickHouse
+        Map<String, String> infinityColumns = dbMetadata.getColumnsDataTypesForTable(
+            writer.getConnection(), "infinity_test", "public");
+        log.info("infinity_test column types in ClickHouse: {}", infinityColumns);
 
         if(engine.get() != null) {
             engine.get().stop();

@@ -177,3 +177,18 @@ CREATE TABLE public2.table_time_with_timezone (
 INSERT INTO public2.table_time_with_timezone (event_name, event_time)
 VALUES
 ('Meeting', '14:30:00-05:00');
+
+-- Test table for PostgreSQL infinity timestamp values
+CREATE TABLE public.infinity_test (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL,
+    valid_from TIMESTAMPTZ NOT NULL,
+    valid_to TIMESTAMPTZ NOT NULL
+);
+
+-- Insert rows with infinity values
+INSERT INTO public.infinity_test (name, valid_from, valid_to) VALUES
+('normal_range', '2024-01-01 00:00:00+00', '2024-12-31 23:59:59+00'),
+('forever_valid', '2024-01-01 00:00:00+00', 'infinity'),
+('always_existed', '-infinity', '2024-12-31 23:59:59+00'),
+('eternal', '-infinity', 'infinity');
