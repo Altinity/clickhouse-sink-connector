@@ -85,12 +85,21 @@ On the Debezium thread, for every list handed to the asynchronous writers
    group before its unit is registered, and a batch reads as unwritten from the
    instant it is handed off — including the window between a worker's `poll()`
    and its write.
-4. **Backlog advisory — edge-triggered, never per handoff, never ERROR.** If
-   the registration has just taken the outstanding count above
-   `BACKLOG_ADVISORY_THRESHOLD` (1000), ONE line is logged at WARN naming the
-   count. The next line about the backlog is ONE INFO, logged by the
-   acknowledgement (§3.3) that brings the count back to or under the
-   threshold, after which the advisory is re-armed for the next crossing. A
+4. **Backlog advisory — edge-triggered with hysteresis, never per handoff,
+   never ERROR.** If the registration has just taken the outstanding count
+   above `BACKLOG_ADVISORY_THRESHOLD` (1000), ONE line is logged at WARN naming
+   the count. The next line about the backlog is ONE INFO, logged by the
+   acknowledgement (§3.3) that brings the count down to or under
+   `BACKLOG_ADVISORY_CLEAR_LEVEL` (900 — the threshold less a tenth of
+   itself), after which the advisory is re-armed for the next crossing.
+   Between the two levels nothing is logged in either direction. The levels
+   differ on purpose: a backlog that HOVERS at the threshold — the writers
+   acknowledging one unit as the reader hands off the next, the normal shape
+   when the writers are exactly saturated — crosses a single level on every
+   flip, and with one level each flip was a WARN/INFO pair (three pairs in
+   555 ms on one deployment, all naming 1001 and 1000, followed by seven
+   minutes above the threshold); with the clear level a tenth below the
+   raise level the same episode is one WARN and one INFO. A
    backlog is the reader ahead of the writers — capacity, not failure: nothing
    was lost or skipped and every guarantee below still holds, so ERROR is the
    wrong level and one line per handoff is the wrong rate. (Before this rule
@@ -310,9 +319,14 @@ would let a later batch commit an offset past rows that never reached a queue.
 - `HandoffBacklogAdvisoryTest` — §3.1 step 4: crossing the threshold logs
   exactly one WARN naming the count and nothing at ERROR
   (`raisedOnceAtWarnWhenCrossingTheThreshold`); draining back to the threshold
-  logs exactly one INFO, further drain and under-threshold handoffs log
-  nothing, and the next crossing is advised again
-  (`clearedOnceWhenTheBacklogDrainsUnderTheThreshold`); `reset()` clears the
+  logs nothing, draining to the clear level logs exactly one INFO naming the
+  count, further drain and under-threshold handoffs log nothing, and the next
+  crossing is advised again
+  (`clearedOnceWhenTheBacklogDrainsUnderTheThreshold`); a backlog flipping
+  between the threshold and one above it — one acknowledgement, one handoff,
+  repeated — is one WARN, not one WARN/INFO pair per flip, and the INFO comes
+  only at the clear level
+  (`hoveringAtTheThresholdIsOneAdvisoryNotOnePerFlip`); `reset()` clears the
   advisory without a clearing line and re-arms it (`resetClearsTheAdvisory`).
 - `EngineRestartFifoResetTest` — §3.8: `stop()` abandons a never-written unit and
   the next engine's heartbeat commits / first unit is acknowledged with nothing
