@@ -23,6 +23,7 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -34,6 +35,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -70,10 +72,18 @@ public class PreparedStatementExecutorBatchLogLevelTest {
     }
 
     private static PreparedStatement recordingStatement() {
+        final int[] staged = {0};
         InvocationHandler h = (proxy, method, args) -> {
             switch (method.getName()) {
-                case "executeBatch":
-                    return new int[0];
+                case "addBatch":
+                    staged[0]++;
+                    return null;
+                case "executeBatch": {
+                    // A JDBC driver answers one update count per staged statement.
+                    int[] counts = new int[staged[0]];
+                    Arrays.fill(counts, 1);
+                    return counts;
+                }
                 case "toString":
                     return "RecordingPreparedStatement";
                 case "hashCode":
@@ -171,6 +181,16 @@ public class PreparedStatementExecutorBatchLogLevelTest {
                         && e.getMessage().getFormattedMessage().contains("Records: 2")),
                 "the EXECUTED BATCH line must be logged at INFO: " + all);
 
+        // ... the EXECUTED line reports the driver's answer as a count -- two rows
+        // staged, two statements acknowledged -- never as the int[]'s object
+        // identity ("[I@6cee4818"), which changes on every line and says nothing ...
+        String executed = events.stream().map(e -> e.getMessage().getFormattedMessage())
+                .filter(m -> m.contains("EXECUTED BATCH Successfully")).findFirst().orElse("");
+        assertTrue(executed.contains("Result: 2 statements acknowledged"),
+                "the EXECUTED BATCH line must report the acknowledged statement count: " + executed);
+        assertFalse(executed.contains("[I@"),
+                "the EXECUTED BATCH line must not print the result array's identity: " + executed);
+
         // ... and a successful batch says nothing at WARN or above.
         List<String> warnAndAbove = events.stream()
                 .filter(e -> e.getLevel().isMoreSpecificThan(Level.WARN))
@@ -178,5 +198,16 @@ public class PreparedStatementExecutorBatchLogLevelTest {
                 .collect(Collectors.toList());
         assertEquals(Collections.emptyList(), warnAndAbove,
                 "a successful batch must not log at WARN or above (spec 03.06 section 3.3)");
+    }
+
+    @Test
+    @DisplayName("The Result field counts the acknowledged statements and names the EXECUTE_FAILED ones, never an array identity")
+    public void batchResultDescriptionCountsAcknowledgedAndFailedStatements() {
+        assertEquals("3 statements acknowledged",
+                PreparedStatementExecutor.describeBatchResult(new int[]{1, 1, Statement.SUCCESS_NO_INFO}));
+        assertEquals("3 statements acknowledged, 1 marked EXECUTE_FAILED",
+                PreparedStatementExecutor.describeBatchResult(new int[]{1, Statement.EXECUTE_FAILED, 1}));
+        assertEquals("0 statements acknowledged", PreparedStatementExecutor.describeBatchResult(new int[0]));
+        assertEquals("no result", PreparedStatementExecutor.describeBatchResult(null));
     }
 }

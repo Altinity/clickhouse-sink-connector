@@ -442,7 +442,7 @@ public class PreparedStatementExecutor {
                 log.info("*************** EXECUTED BATCH Successfully " + "Records: " + batch.size() + "************** " +
                         "task(" + taskId + ")" + " Thread ID: " +
                         Thread.currentThread().getName() + " Result: " +
-                        batchResult.toString() + " Database: "
+                        describeBatchResult(batchResult) + " Database: "
                         + databaseName + " Table: " + tableName);
                 result.set(true);
 
@@ -457,6 +457,31 @@ public class PreparedStatementExecutor {
         });
 
         return result.get();
+    }
+
+    /**
+     * Renders the driver's {@code executeBatch()} answer for the per-batch
+     * progress line (spec 03.06 section 3.3, line 3): how many statements the
+     * driver acknowledged -- one entry per staged statement, so every row plus
+     * one tombstone per sorting-key relocation -- and, only when the driver
+     * flagged any, how many it marked {@link Statement#EXECUTE_FAILED}.
+     *
+     * <p>Never the array itself: {@code int[].toString()} renders as an
+     * identity hash ({@code [I@6cee4818}) that changes on every line and
+     * carries no information, which is what this field printed before.</p>
+     */
+    static String describeBatchResult(int[] batchResult) {
+        if (batchResult == null) {
+            return "no result";
+        }
+        int failed = 0;
+        for (int updateCount : batchResult) {
+            if (updateCount == Statement.EXECUTE_FAILED) {
+                failed++;
+            }
+        }
+        return batchResult.length + " statements acknowledged"
+                + (failed == 0 ? "" : ", " + failed + " marked EXECUTE_FAILED");
     }
 
     /**

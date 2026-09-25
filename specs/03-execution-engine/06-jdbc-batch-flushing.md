@@ -36,8 +36,15 @@ at INFO for every one of them:
    in single-threaded mode);
 2. `*** INSERT QUERY for Database(<db>) ***: <full INSERT template>` per query
    template (`PreparedStatementExecutor.addToPreparedStatementBatch`);
-3. `*************** EXECUTED BATCH Successfully Records: <n> ...` per
-   partition (`PreparedStatementExecutor.executePreparedStatement`);
+3. `*************** EXECUTED BATCH Successfully Records: <n> ... Result: <k> statements acknowledged ...`
+   per partition (`PreparedStatementExecutor.executePreparedStatement`) — `k`
+   is the length of the `int[]` that `executeBatch()` returned, one entry per
+   staged statement (every row, plus one tombstone per sorting-key
+   relocation), followed by `, <f> marked EXECUTE_FAILED` only when the
+   driver flagged any entry (`PreparedStatementExecutor.describeBatchResult`).
+   An earlier revision printed the array itself, which `int[].toString()`
+   renders as an identity hash (`[I@6cee4818`): a field that changed on every
+   line and carried no information;
 4. `***** BATCH marked as processed to debezium **** Binlog file: ...` per
    acknowledged unit (`DebeziumOffsetManagement.acknowledgeRecords`).
 
@@ -69,7 +76,8 @@ and counts for tooling.
 - `PreparedStatementExecutorSortingKeyTombstoneTest` — the per-record tombstone decision inside the batch loop.
 - `PreparedStatementExecutorClearParametersTest.parametersAreClearedAfterEveryAddBatch()` — through `addToPreparedStatementBatch` with a recording connection: for a two-row batch the statement receives `addBatch` twice and `clearParameters` once after each `addBatch` (pre-fix code never calls `clearParameters`).
 - `PreparedStatementExecutorTruncateTest.truncateIsAppliedAtItsBinlogPositionForBothHashOrders()`, `TruncateTableIT.testRowsInsertedAfterTruncateSurvive()` — TRUNCATE ordering within one batch.
-- `PreparedStatementExecutorBatchLogLevelTest.successfulBatchLogsItsProgressAtInfo()` — §3.3 lines 2 and 3: a successful two-row batch through `addToPreparedStatementBatch` with a recording connection, logger at the default INFO level, writes the INSERT-template line and the EXECUTED-BATCH line at INFO and nothing at WARN or above (the DEBUG revision writes neither at INFO, so the test fails on it).
+- `PreparedStatementExecutorBatchLogLevelTest.successfulBatchLogsItsProgressAtInfo()` — §3.3 lines 2 and 3: a successful two-row batch through `addToPreparedStatementBatch` with a recording connection, logger at the default INFO level, writes the INSERT-template line and the EXECUTED-BATCH line at INFO and nothing at WARN or above (the DEBUG revision writes neither at INFO, so the test fails on it); the EXECUTED-BATCH line carries `Result: 2 statements acknowledged` and no `[I@` identity (the `toString()` revision fails here).
+- `PreparedStatementExecutorBatchLogLevelTest.batchResultDescriptionCountsAcknowledgedAndFailedStatements()` — §3.3 line 3 `Result` field: the count of acknowledged statements, the `, <f> marked EXECUTE_FAILED` suffix only when the driver flagged an entry, and `no result` for a null array.
 - `DebeziumOffsetManagementTest.acknowledgementIsLoggedAtInfo()` — §3.3 line 4: acknowledging a unit through `acknowledgeRecords`, logger at INFO, writes the "BATCH marked as processed" line at INFO and nothing at WARN or above (fails on the DEBUG revision).
 - §3.3 line 1 (`ClickHouseBatchRunnable.processBatch`, `ClickHouseBatchWriter.persistRecords`) has no unit harness that reaches the pick-up line without a live ClickHouse (both paths resolve the destination through `DBMetadata` on a real connection); covered by review of the two call sites.
 - Verification: chunking at `buffer.max.records` (e.g. 50,000 rows split into partitions) and the `buffer.flush.time.ms` cadence are not yet covered by an automated test (gap).
