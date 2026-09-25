@@ -798,6 +798,14 @@ public class DebeziumChangeEventCapture {
         // as NULL), and nothing downstream can recover what the source never
         // logged. This call refuses to start (spec 01.01 section 3.2).
         BinlogRowImagePreflight.check(props);
+        // The binlog client's keep-alive auto-reconnect resumes from its own
+        // last-read byte offset -- inside a transaction, past the statement's
+        // TABLE_MAP -- and Debezium then skips the rest of that statement at
+        // DEBUG. Off unless the operator asked for it: a lost connection stops
+        // the engine, and the restart resumes from the durable offset, which is
+        // a transaction boundary (spec 01.07). Same Properties object the
+        // completion-callback restart rebuilds the engine from.
+        BinlogKeepAlivePreflight.apply(props);
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
 

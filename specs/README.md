@@ -23,6 +23,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 - **[01.04: Transaction Boundaries & Timestamp Semantics](01-cdc-engine/04-transaction-boundaries.md)**: Statement vs. commit timestamp handling and floor clamping.
 - **[01.05: Batch Buffering & Worker Handoff Queue](01-cdc-engine/05-batch-buffering-handoff.md)**: `LinkedBlockingQueue` handoff and backpressure propagation.
 - **[01.06: Control Records, Heartbeats & Snapshot Quiescence](01-cdc-engine/06-control-records-heartbeats.md)**: Pipeline quiescence verification before control commits.
+- **[01.07: Binlog Connection Loss, Keep-Alive Reconnect & Transaction Boundaries](01-cdc-engine/07-binlog-keepalive-reconnect.md)**: `connect.keep.alive` defaults to `false`; a lost binlog connection restarts the engine at a transaction boundary instead of the client resuming mid-statement and dropping rows.
 
 ---
 
