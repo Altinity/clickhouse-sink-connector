@@ -191,11 +191,58 @@ public class DebeziumOffsetManagement {
             }
         }
         outstandingSequences.add(sequence);
-        if (outstandingSequences.size() > 1000) {
-            log.error("*********** Batches awaiting acknowledgement is greater than 1000 "
-                    + "***********");
-        }
+        noteBacklog();
         return sequence;
+    }
+
+    /**
+     * Outstanding units above which the handoff backlog advisory is raised
+     * (spec 09.01 §3.1 step 4). The reader has run this far ahead of the
+     * writers; nothing has failed and nothing is lost -- the FIFO below
+     * still acknowledges every unit in binlog order.
+     */
+    static final int BACKLOG_ADVISORY_THRESHOLD = 1000;
+
+    /**
+     * Whether the backlog advisory is currently raised. Guarded by the class
+     * monitor like every other mutation here. The advisory is edge-triggered:
+     * one WARN when the outstanding count first exceeds
+     * {@link #BACKLOG_ADVISORY_THRESHOLD}, one INFO when an acknowledgement
+     * brings it back to or under the threshold, then it is re-armed. Never
+     * one line per handoff, and never at ERROR: every handoff above the
+     * threshold used to log an ERROR, which produced 4,003 lines in seven
+     * minutes on one deployment and buried the six genuine warnings of that
+     * hour in the error log.
+     */
+    private static boolean backlogAdvisoryRaised = false;
+
+    /**
+     * Raises or clears the backlog advisory on the edge only (spec 09.01 §3.1
+     * step 4). Call under the class monitor after every change to
+     * {@link #outstandingSequences}.
+     */
+    private static void noteBacklog() {
+        int outstanding = outstandingSequences.size();
+        if (!backlogAdvisoryRaised && outstanding > BACKLOG_ADVISORY_THRESHOLD) {
+            backlogAdvisoryRaised = true;
+            log.warn("Handoff backlog: {} batch(es) awaiting acknowledgement, above the advisory "
+                    + "threshold of {}. The reader is ahead of the writers; nothing has failed. "
+                    + "Logged once per crossing; the next backlog line is the one reporting it "
+                    + "back under the threshold.", outstanding, BACKLOG_ADVISORY_THRESHOLD);
+        } else if (backlogAdvisoryRaised && outstanding <= BACKLOG_ADVISORY_THRESHOLD) {
+            backlogAdvisoryRaised = false;
+            log.info("Handoff backlog back under the advisory threshold: {} batch(es) awaiting "
+                    + "acknowledgement (threshold {}).", outstanding, BACKLOG_ADVISORY_THRESHOLD);
+        }
+    }
+
+    /**
+     * Whether the backlog advisory is raised right now. For tests.
+     *
+     * @return true between the WARN that raised it and the INFO that cleared it.
+     */
+    static synchronized boolean isBacklogAdvisoryRaised() {
+        return backlogAdvisoryRaised;
     }
 
     /**
@@ -261,6 +308,9 @@ public class DebeziumOffsetManagement {
         outstandingSequences.clear();
         groupToUnit.clear();
         completedUnits.clear();
+        // The set it advised on is gone; clear the advisory with it, silently
+        // (the abandonment WARN above is the line for this event).
+        backlogAdvisoryRaised = false;
         return abandoned;
     }
 
@@ -328,6 +378,7 @@ public class DebeziumOffsetManagement {
             acknowledgeRecords(unit.records);
             completedUnits.remove(head);
             outstandingSequences.remove(head);
+            noteBacklog();
         }
     }
 
