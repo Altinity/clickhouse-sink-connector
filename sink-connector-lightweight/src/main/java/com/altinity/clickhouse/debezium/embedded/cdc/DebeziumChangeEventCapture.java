@@ -2556,6 +2556,33 @@ public class DebeziumChangeEventCapture {
                 log.debug("Source DB DDL: " + DDL);
 
                 if (DDL != null && !DDL.isEmpty()) {
+                    // A DDL the connector will not apply takes no barrier (spec
+                    // 06.01 section 3.5, spec 06.08 section 3.3). The drain below
+                    // exists so that every row read BEFORE the DDL is written
+                    // under the pre-DDL schema before that schema changes; a
+                    // statement that is ignored changes nothing, so there is
+                    // nothing for the barrier to protect. Deciding this FIRST
+                    // matters: the ignore rules cost regexes and list lookups,
+                    // the drain costs the whole queued backlog -- measured at
+                    // 6 min 28 s for one CREATE OR REPLACE ... SQL SECURITY
+                    // DEFINER VIEW that matched ignore.ddl.regex while 1,356
+                    // batches were queued, long enough for the binlog client's
+                    // keepalive to declare the source connection lost and
+                    // reconnect (a re-delivery), all of it spent deciding to do
+                    // nothing. The record's offset is still committed only once
+                    // the pipeline is quiescent, like any record that produces
+                    // no row (spec 09.04).
+                    if (checkIfDDLNeedsToBeIgnored(DDL, props, sr, new AtomicBoolean(false))) {
+                        // The rule that rejected the statement has already logged
+                        // it once at INFO, naming the rule (spec 06.08 section
+                        // 3.3). A second INFO copy here would repeat the whole
+                        // statement -- a multi-KB view definition, several times
+                        // an hour on a deployment whose application re-creates
+                        // its views -- so this line is DEBUG.
+                        log.debug("Ignored source DDL (no drain taken: nothing is applied): {} Snapshot: {}",
+                                DDL, isSnapshotDDL(sr));
+                        return null;
+                    }
                     log.info("***** DDL received, Flush all existing records");
                     // pause() stops NEW batches from starting; it does not drain
                     // what is already queued or already running. Records read
@@ -2946,8 +2973,13 @@ public class DebeziumChangeEventCapture {
             }
         }
 
-        // Check DDL against regex patterns from IgnoreDDLRegexLoader
+        // Check DDL against regex patterns from IgnoreDDLRegexLoader. Like every
+        // other rule here, a match is logged once at INFO, naming the rule, and
+        // recorded in lastIgnoredDDL (spec 06.08 section 3.3); the caller adds
+        // nothing above DEBUG.
         if (checkDDLAgainstRegexPatterns(DDL)) {
+            lastIgnoredDDL = DDL;
+            log.info("Ignoring DDL: " + DDL + " as it matches a bundled ignore pattern");
             return true;
         }
 

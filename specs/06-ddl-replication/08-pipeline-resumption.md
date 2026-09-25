@@ -88,10 +88,13 @@ loop to be left normally after a failure.
 ---
 
 ### 3.3 Which DDL is ignored before execution (`checkIfDDLNeedsToBeIgnored`)
-Before translation, `performDDLOperation` drops a DDL — logging it and setting
-`lastIgnoredDDL`, executing nothing and committing nothing for it (the next
-acknowledged record covers its offset) — when any of the following holds, in
-this order:
+Before the pre-DDL drain and before translation, the DDL branch of
+`processEveryChangeRecord` drops a DDL — logging it once at INFO from the rule
+that rejects it (the line names the rule; the branch itself adds only a DEBUG
+line, so a multi-KB statement is never written twice) and setting
+`lastIgnoredDDL`, draining nothing (spec 06.01 §3.5), executing nothing and
+committing nothing for it (the next acknowledged record covers its offset) —
+when any of the following holds, in this order:
 
 1. `disable.ddl=true` — no DDL is replicated at all.
 2. The statement matches an entry of `ignore.ddl.regex` (a `||`-separated list

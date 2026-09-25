@@ -11,6 +11,13 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.Logger;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Configurator;
+import org.apache.logging.log4j.core.config.Property;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -18,16 +25,24 @@ import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
+import java.time.Duration;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
+import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -313,5 +328,197 @@ public class DdlIgnoreRulesTest {
         assertNull(invokeProcess(capture, ddlRecord("db1", "DROP TABLE t", "db1.t"), props));
         assertEquals("DROP TABLE t", capture.getLastIgnoredDDL(),
                 "a streaming DROP is still frozen by disable.drop.truncate");
+    }
+
+    // ------------------------------------------------------------ 06.01 §3.5: an ignored DDL takes no barrier
+    private static final ThreadFactory FACTORY = r -> {
+        Thread t = new Thread(r, "ddl-ignore-rules-test");
+        t.setDaemon(true);
+        return t;
+    };
+
+    /**
+     * A capture with a live writer pool and one batch still queued -- what the
+     * DDL branch finds when a statement arrives while the writers are behind.
+     * Nothing consumes the queue, so a drain here can only end on interrupt.
+     */
+    private static DebeziumChangeEventCapture captureWithQueuedBatch(
+            ClickHouseBatchExecutor executor, LinkedBlockingQueue<List<ClickHouseStruct>> records)
+            throws Exception {
+        DebeziumChangeEventCapture capture = capture();
+        records.put(new ArrayList<>());
+        Field e = DebeziumChangeEventCapture.class.getDeclaredField("executor");
+        e.setAccessible(true);
+        e.set(capture, executor);
+        Field r = DebeziumChangeEventCapture.class.getDeclaredField("records");
+        r.setAccessible(true);
+        r.set(capture, records);
+        return capture;
+    }
+
+    /** The executor's pause flag is package-private in another package. */
+    private static boolean isPaused(ClickHouseBatchExecutor executor) throws Exception {
+        Field f = ClickHouseBatchExecutor.class.getDeclaredField("isPaused");
+        f.setAccessible(true);
+        return f.getBoolean(executor);
+    }
+
+    @Test
+    @DisplayName("a DDL matched by ignore.ddl.regex is skipped without draining the pipeline")
+    public void ignoredDdlDoesNotDrainThePipeline() throws Exception {
+        ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(1, FACTORY);
+        LinkedBlockingQueue<List<ClickHouseStruct>> records = new LinkedBlockingQueue<>();
+        try {
+            DebeziumChangeEventCapture capture = captureWithQueuedBatch(executor, records);
+            Properties props = mysqlProps(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX,
+                    "(?m).*SQL SECURITY DEFINER VIEW.*");
+            String view = "CREATE OR REPLACE ALGORITHM=UNDEFINED DEFINER=`app`@`%` SQL SECURITY DEFINER "
+                    + "VIEW `v_orders` AS SELECT id FROM orders";
+            // Pre-fix the DDL branch drained BEFORE consulting the ignore rules,
+            // so this call waited on the queued batch until interrupted; the
+            // barrier protects the apply, and nothing is applied.
+            Object result = assertTimeoutPreemptively(Duration.ofSeconds(10),
+                    () -> invokeProcess(capture, ddlRecord("db1", view, "db1.v_orders"), props),
+                    "an ignored DDL must not wait for the writers: nothing is applied, so there is "
+                            + "nothing for the barrier to protect");
+            assertNull(result);
+            assertEquals(view, capture.getLastIgnoredDDL());
+            assertEquals(1, records.size(),
+                    "the queued batch is left for the writers; nothing was drained");
+            assertFalse(isPaused(executor),
+                    "the pool must not be paused for a statement that is not applied");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("a DDL that is applied still takes the barrier: with a queued batch it waits, and does not return")
+    public void appliedDdlStillDrainsThePipeline() throws Exception {
+        ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(1, FACTORY);
+        LinkedBlockingQueue<List<ClickHouseStruct>> records = new LinkedBlockingQueue<>();
+        AtomicReference<Throwable> outcome = new AtomicReference<>();
+        Thread worker = null;
+        try {
+            DebeziumChangeEventCapture capture = captureWithQueuedBatch(executor, records);
+            String alter = "ALTER TABLE orders ADD COLUMN note VARCHAR(20)";
+            worker = new Thread(() -> {
+                try {
+                    invokeProcess(capture, ddlRecord("db1", alter, "db1.orders"), mysqlProps());
+                    outcome.set(new AssertionError("returned"));
+                } catch (Throwable t) {
+                    outcome.set(t);
+                }
+            }, "ddl-ignore-rules-applied");
+            worker.setDaemon(true);
+            worker.start();
+            worker.join(1_000);
+            assertTrue(worker.isAlive(),
+                    "an applied DDL must wait on the barrier while a batch is queued (the control "
+                            + "for ignoredDdlDoesNotDrainThePipeline: the drain is skipped only for a "
+                            + "statement that is ignored)");
+            assertEquals(1, records.size(), "still queued: the drain is waiting, not discarding");
+            worker.interrupt();
+            worker.join(10_000);
+            assertFalse(worker.isAlive(), "the drain ends on interrupt");
+            assertTrue(outcome.get() instanceof DDLReplicationException,
+                    "an interrupted drain is loud (spec 06.01 section 3.2): " + outcome.get());
+        } finally {
+            if (worker != null) {
+                worker.interrupt();
+            }
+            executor.shutdownNow();
+        }
+    }
+
+    // ------------------------------------------------------------ 06.08 §3.3: an ignored DDL is logged once
+
+    /** Collects everything DebeziumChangeEventCapture logs during one call. */
+    private static final class CapturingAppender extends AbstractAppender {
+        private final List<LogEvent> events = Collections.synchronizedList(new ArrayList<>());
+
+        CapturingAppender() {
+            super("capture-ddl-ignore-log", null, null, true, Property.EMPTY_ARRAY);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            events.add(event.toImmutable());
+        }
+
+        /** The INFO-or-louder lines that quote the statement. */
+        List<String> infoLinesQuoting(String statement) {
+            List<String> out = new ArrayList<>();
+            for (LogEvent e : events) {
+                String msg = e.getMessage().getFormattedMessage();
+                if (e.getLevel().isMoreSpecificThan(Level.INFO) && msg.contains(statement)) {
+                    out.add(e.getLevel() + " " + msg);
+                }
+            }
+            return out;
+        }
+    }
+
+    private static CapturingAppender captureLog() {
+        Configurator.setLevel(DebeziumChangeEventCapture.class.getName(), Level.INFO);
+        CapturingAppender appender = new CapturingAppender();
+        appender.start();
+        ((Logger) LogManager.getLogger(DebeziumChangeEventCapture.class)).addAppender(appender);
+        return appender;
+    }
+
+    private static void releaseLog(CapturingAppender appender) {
+        ((Logger) LogManager.getLogger(DebeziumChangeEventCapture.class)).removeAppender(appender);
+        appender.stop();
+    }
+
+    @Test
+    @DisplayName("a DDL matched by ignore.ddl.regex is logged once at INFO, by the rule that rejected it")
+    public void ignoredDdlIsLoggedOnce() throws Exception {
+        CapturingAppender log = captureLog();
+        try {
+            DebeziumChangeEventCapture capture = capture();
+            Properties props = mysqlProps(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX,
+                    "(?m).*SQL SECURITY DEFINER VIEW.*");
+            String view = "CREATE OR REPLACE ALGORITHM=UNDEFINED DEFINER=`app`@`%` SQL SECURITY DEFINER "
+                    + "VIEW `v_orders` AS SELECT id FROM orders";
+            assertNull(invokeProcess(capture, ddlRecord("db1", view, "db1.v_orders"), props));
+            assertEquals(view, capture.getLastIgnoredDDL());
+
+            List<String> lines = log.infoLinesQuoting(view);
+            // Pre-fix the DDL branch logged "Ignored Source DB DDL: <statement>" at
+            // INFO on top of the rule's own "Ignoring DDL: <statement> as it matches
+            // the regex", writing every ignored view definition twice.
+            assertEquals(1, lines.size(),
+                    "an ignored statement is written to the log once, by the rule that rejected it: "
+                            + lines);
+            assertTrue(lines.get(0).contains("matches the regex"),
+                    "the one line names the rule: " + lines.get(0));
+        } finally {
+            releaseLog(log);
+        }
+    }
+
+    @Test
+    @DisplayName("a DDL matched by a bundled ignore pattern is logged once at INFO and recorded in lastIgnoredDDL")
+    public void bundledPatternMatchIsLoggedOnceAndRecorded() throws Exception {
+        CapturingAppender log = captureLog();
+        try {
+            DebeziumChangeEventCapture capture = capture();
+            // Matches IgnoreDDLRegexLoader's partition-maintenance patterns; no
+            // ignore.ddl.regex is configured, so only the bundled rule can reject it.
+            // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+            String partition = "ALTER TABLE orders DROP PARTITION p2024";
+            assertNull(invokeProcess(capture, ddlRecord("db1", partition, "db1.orders"), mysqlProps()));
+            assertEquals(partition, capture.getLastIgnoredDDL(),
+                    "pre-fix the bundled-pattern rule returned without recording the statement");
+
+            List<String> lines = log.infoLinesQuoting(partition);
+            assertEquals(1, lines.size(), "logged once, by the rule: " + lines);
+            assertTrue(lines.get(0).contains("bundled ignore pattern"),
+                    "the one line names the rule: " + lines.get(0));
+        } finally {
+            releaseLog(log);
+        }
     }
 }
