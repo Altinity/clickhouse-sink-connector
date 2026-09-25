@@ -109,6 +109,20 @@ knobs therefore reduce restart churn and avoid the flush-timeout hazard of
 §3.2; they do not provide the guarantee and cannot break it. The correctness of
 a restart never depends on their values.
 
+### 3.5 Enforcement: the commit decision stays parameter-free
+The property above is enforced against the CODE, not only argued: the class that
+decides when an offset may be committed (`DebeziumOffsetManagement` — the whole
+of §3.1's acknowledgement path) must reach that decision without reading any
+tuning parameter. `OffsetCommitDecisionParameterFreeTest` fails the build if that
+class ever declares a method, constructor or field carrying a configuration type
+(`ClickHouseSinkConnectorConfig` or `java.util.Properties`). Batch SHAPING
+(`buffer.flush.time.ms`, `buffer.max.records`) legitimately reads configuration
+in `ClickHouseBatchRunnable`, which is a different class on the WRITE path — the
+guard is scoped to the frontier decision precisely so shaping stays free to tune
+while the guarantee stays parameter-free. Coupling the frontier to a knob is thus
+a compile/test failure that forces a revision of this spec (Constitution, Law of
+Reviewed Immutability), not a silent regression.
+
 ### 3.4 What is NOT claimed
 - This spec does not weaken any per-record loud-failure rule (spec 10.04): a
   configuration that guarantees per-record divergence (`binlog_row_image` other
@@ -158,3 +172,11 @@ a restart never depends on their values.
   `Replication.OffsetFifo.written_batch_not_reexecuted` — the FIFO model carries
   no flush/buffer/retry parameter, so these safety theorems hold for every
   parameterisation the code can take.
+- **Code-level enforcement (§3.5)**: `OffsetCommitDecisionParameterFreeTest.decisionApiExists()`,
+  `OffsetCommitDecisionParameterFreeTest.noMethodTouchesConfiguration()`,
+  `OffsetCommitDecisionParameterFreeTest.noConstructorOrFieldHoldsConfiguration()`
+  — a build-breaking guard that fails if the commit-decision class
+  (`DebeziumOffsetManagement`) ever gains a dependency on a configuration type
+  (`ClickHouseSinkConnectorConfig` or `java.util.Properties`), i.e. on a tuning
+  parameter. It asserts the decision API still exists first, so a rename cannot
+  make it pass vacuously — a rename must revisit this spec.
