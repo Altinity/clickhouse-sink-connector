@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 
+import static com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement.BACKLOG_ADVISORY_CLEAR_LEVEL;
 import static com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement.BACKLOG_ADVISORY_THRESHOLD;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -36,9 +37,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * acknowledging every unit in binlog order the whole time.</p>
  *
  * <p><b>The rule.</b> One WARN when the count first exceeds the threshold,
- * naming the count; one INFO when an acknowledgement brings it back to or
- * under the threshold; then re-armed. Never one line per handoff, never at
- * ERROR. {@code reset()} clears the advisory with the set it abandons.</p>
+ * naming the count; one INFO when an acknowledgement brings it down to or
+ * under the clear level (the threshold less a tenth); then re-armed. Between
+ * the two levels nothing is logged: a backlog hovering at the threshold --
+ * one acknowledgement, one handoff, repeated -- used to log a WARN/INFO pair
+ * per flip (three pairs in 555 ms on one deployment). Never one line per
+ * handoff, never at ERROR. {@code reset()} clears the advisory with the set
+ * it abandons.</p>
  */
 public class HandoffBacklogAdvisoryTest {
 
@@ -134,37 +139,84 @@ public class HandoffBacklogAdvisoryTest {
     }
 
     @Test
-    @DisplayName("draining back under the threshold logs exactly one INFO and re-arms the advisory")
+    @DisplayName("draining to the clear level logs exactly one INFO and re-arms the advisory")
     public void clearedOnceWhenTheBacklogDrainsUnderTheThreshold() throws InterruptedException {
         RecordingCommitter committer = new RecordingCommitter();
         int above = 3;
-        List<List<ClickHouseStruct>> units = handOff(committer, 0, BACKLOG_ADVISORY_THRESHOLD + above);
+        int handedOff = BACKLOG_ADVISORY_THRESHOLD + above;
+        List<List<ClickHouseStruct>> units = handOff(committer, 0, handedOff);
         assertEquals(1, appender.backlogLines().size(), "sanity: raised once");
 
         // Acknowledging the first `above` units brings the count to the
-        // threshold exactly: back under (<=), one INFO.
+        // threshold exactly. That is inside the hysteresis band: still raised,
+        // nothing logged.
         write(units.subList(0, above));
         assertEquals(BACKLOG_ADVISORY_THRESHOLD, DebeziumOffsetManagement.outstandingCount());
+        assertEquals(1, appender.backlogLines().size(),
+                "back AT the threshold is not cleared: the clear level is a tenth lower");
+        assertTrue(DebeziumOffsetManagement.isBacklogAdvisoryRaised());
+
+        // Draining to the clear level: back under, one INFO naming the count.
+        int band = BACKLOG_ADVISORY_THRESHOLD - BACKLOG_ADVISORY_CLEAR_LEVEL;
+        write(units.subList(above, above + band));
+        assertEquals(BACKLOG_ADVISORY_CLEAR_LEVEL, DebeziumOffsetManagement.outstandingCount());
         List<LogEvent> lines = appender.backlogLines();
         assertEquals(2, lines.size(), "raised once, cleared once");
         assertEquals(Level.INFO, lines.get(1).getLevel());
         assertTrue(lines.get(1).getMessage().getFormattedMessage()
-                        .contains(String.valueOf(BACKLOG_ADVISORY_THRESHOLD)),
+                        .contains(String.valueOf(BACKLOG_ADVISORY_CLEAR_LEVEL)),
                 "the clearing line names the count");
         assertFalse(DebeziumOffsetManagement.isBacklogAdvisoryRaised());
 
-        // Further drain below the threshold, and handoffs that stay under it:
-        // silent.
-        write(units.subList(above, above + 40));
-        handOff(committer, BACKLOG_ADVISORY_THRESHOLD + above, 10);
+        // Further drain below the clear level, and handoffs that stay under
+        // the threshold (even inside the band): silent.
+        write(units.subList(above + band, above + band + 40));
+        handOff(committer, handedOff, band + 10);
+        assertEquals(BACKLOG_ADVISORY_THRESHOLD - 30, DebeziumOffsetManagement.outstandingCount());
         assertEquals(2, appender.backlogLines().size(),
                 "under the threshold there is nothing to advise; no line per handoff or per ack");
 
         // Re-armed: the next crossing raises exactly one more WARN.
-        handOff(committer, BACKLOG_ADVISORY_THRESHOLD + above + 10, 40);
+        handOff(committer, handedOff + band + 10, 40);
         lines = appender.backlogLines();
         assertEquals(3, lines.size(), "a second crossing is a second advisory");
         assertEquals(Level.WARN, lines.get(2).getLevel());
+        assertEquals(0, appender.countAt(Level.ERROR));
+    }
+
+    @Test
+    @DisplayName("hovering at the threshold is one advisory, not one WARN/INFO pair per flip")
+    public void hoveringAtTheThresholdIsOneAdvisoryNotOnePerFlip() throws InterruptedException {
+        RecordingCommitter committer = new RecordingCommitter();
+        int handedOff = BACKLOG_ADVISORY_THRESHOLD + 1;
+        List<List<ClickHouseStruct>> units = handOff(committer, 0, handedOff);
+        assertEquals(1, appender.backlogLines().size(), "sanity: raised once at threshold + 1");
+
+        // The writers acknowledge one unit as the reader hands off the next:
+        // the count flips 1001 -> 1000 -> 1001 on every round. With a single
+        // level each round was a WARN/INFO pair (three pairs in 555 ms on one
+        // deployment); with hysteresis the whole episode is one WARN.
+        int flips = 3;
+        for (int i = 0; i < flips; i++) {
+            write(units.subList(i, i + 1));
+            assertEquals(BACKLOG_ADVISORY_THRESHOLD, DebeziumOffsetManagement.outstandingCount());
+            handOff(committer, handedOff + i, 1);
+            assertEquals(BACKLOG_ADVISORY_THRESHOLD + 1, DebeziumOffsetManagement.outstandingCount());
+        }
+        assertEquals(1, appender.backlogLines().size(),
+                "a backlog hovering at the threshold is one advisory; " + flips
+                        + " flips must not produce " + flips + " WARN/INFO pairs");
+        assertTrue(DebeziumOffsetManagement.isBacklogAdvisoryRaised());
+
+        // Only a real drain -- down to the clear level -- clears it, once.
+        int toClear = BACKLOG_ADVISORY_THRESHOLD + 1 - BACKLOG_ADVISORY_CLEAR_LEVEL;
+        write(units.subList(flips, flips + toClear));
+        assertEquals(BACKLOG_ADVISORY_CLEAR_LEVEL, DebeziumOffsetManagement.outstandingCount());
+        List<LogEvent> lines = appender.backlogLines();
+        assertEquals(2, lines.size(), "one WARN for the episode, one INFO when it really drained");
+        assertEquals(Level.WARN, lines.get(0).getLevel());
+        assertEquals(Level.INFO, lines.get(1).getLevel());
+        assertFalse(DebeziumOffsetManagement.isBacklogAdvisoryRaised());
         assertEquals(0, appender.countAt(Level.ERROR));
     }
 

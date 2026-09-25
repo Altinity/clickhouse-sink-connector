@@ -204,22 +204,37 @@ public class DebeziumOffsetManagement {
     static final int BACKLOG_ADVISORY_THRESHOLD = 1000;
 
     /**
+     * Outstanding units at or under which a raised advisory is cleared (spec
+     * 09.01 §3.1 step 4): the threshold less a tenth of itself. The raise and
+     * clear levels differ on purpose. A backlog that hovers at the threshold
+     * -- the writers acknowledging one unit as the reader hands off the next,
+     * the normal shape when the writers are exactly saturated -- crosses a
+     * single level on every flip, and with one level each flip was a WARN/INFO
+     * pair: three pairs in 555 ms on one deployment, all naming 1001 and 1000,
+     * followed by seven minutes above the threshold. With the clear level a
+     * tenth below the raise level that episode is one WARN and one INFO.
+     */
+    static final int BACKLOG_ADVISORY_CLEAR_LEVEL =
+            BACKLOG_ADVISORY_THRESHOLD - BACKLOG_ADVISORY_THRESHOLD / 10;
+
+    /**
      * Whether the backlog advisory is currently raised. Guarded by the class
-     * monitor like every other mutation here. The advisory is edge-triggered:
-     * one WARN when the outstanding count first exceeds
+     * monitor like every other mutation here. The advisory is edge-triggered
+     * with hysteresis: one WARN when the outstanding count first exceeds
      * {@link #BACKLOG_ADVISORY_THRESHOLD}, one INFO when an acknowledgement
-     * brings it back to or under the threshold, then it is re-armed. Never
-     * one line per handoff, and never at ERROR: every handoff above the
-     * threshold used to log an ERROR, which produced 4,003 lines in seven
-     * minutes on one deployment and buried the six genuine warnings of that
-     * hour in the error log.
+     * brings it down to or under {@link #BACKLOG_ADVISORY_CLEAR_LEVEL}, then
+     * it is re-armed; between the two levels nothing is logged in either
+     * direction. Never one line per handoff, and never at ERROR: every handoff
+     * above the threshold used to log an ERROR, which produced 4,003 lines in
+     * seven minutes on one deployment and buried the six genuine warnings of
+     * that hour in the error log.
      */
     private static boolean backlogAdvisoryRaised = false;
 
     /**
-     * Raises or clears the backlog advisory on the edge only (spec 09.01 §3.1
-     * step 4). Call under the class monitor after every change to
-     * {@link #outstandingSequences}.
+     * Raises or clears the backlog advisory on the edge only, with hysteresis
+     * (spec 09.01 §3.1 step 4). Call under the class monitor after every
+     * change to {@link #outstandingSequences}.
      */
     private static void noteBacklog() {
         int outstanding = outstandingSequences.size();
@@ -228,11 +243,13 @@ public class DebeziumOffsetManagement {
             log.warn("Handoff backlog: {} batch(es) awaiting acknowledgement, above the advisory "
                     + "threshold of {}. The reader is ahead of the writers; nothing has failed. "
                     + "Logged once per crossing; the next backlog line is the one reporting it "
-                    + "back under the threshold.", outstanding, BACKLOG_ADVISORY_THRESHOLD);
-        } else if (backlogAdvisoryRaised && outstanding <= BACKLOG_ADVISORY_THRESHOLD) {
+                    + "back at or under {}.", outstanding, BACKLOG_ADVISORY_THRESHOLD,
+                    BACKLOG_ADVISORY_CLEAR_LEVEL);
+        } else if (backlogAdvisoryRaised && outstanding <= BACKLOG_ADVISORY_CLEAR_LEVEL) {
             backlogAdvisoryRaised = false;
-            log.info("Handoff backlog back under the advisory threshold: {} batch(es) awaiting "
-                    + "acknowledgement (threshold {}).", outstanding, BACKLOG_ADVISORY_THRESHOLD);
+            log.info("Handoff backlog back under the advisory clear level: {} batch(es) awaiting "
+                    + "acknowledgement (raised above {}, cleared at or under {}).",
+                    outstanding, BACKLOG_ADVISORY_THRESHOLD, BACKLOG_ADVISORY_CLEAR_LEVEL);
         }
     }
 
