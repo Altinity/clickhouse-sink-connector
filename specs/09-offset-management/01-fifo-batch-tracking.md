@@ -260,7 +260,12 @@ Contract:
    the same instance, spec 10.04 §3.5) does NOT reset: its pool is still alive
    and will finish the outstanding units. (It does not pass through `setup()`
    at all; `activeEngine != this` keeps the same-instance case out of the
-   refusal in any event.)
+   refusal in any event.) That retry exists ONLY while the pool is alive for
+   that purpose: when a worker's scheduled task has terminated (spec 03.01
+   §3.3) the completion callback does not retry at all — the failure is
+   terminal (spec 10.04 §3.5 rule 6), because a recreated engine on a pool
+   with a dead worker stops on its first batch, and the process restart that
+   follows is what supplies a fresh pool and a quiescent FIFO.
 
 Machine-checked as the `restart` event of `OffsetFifo.lean`:
 `restart_quiescent`, `acked_never_rolled_back`, `abandoned_not_acked`, the

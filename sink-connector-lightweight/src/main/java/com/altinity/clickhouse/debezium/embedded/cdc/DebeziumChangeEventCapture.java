@@ -625,6 +625,13 @@ public class DebeziumChangeEventCapture {
      * unless {@code exit.on.terminal.failure=false} the process exits through
      * {@link #terminalFailureHook} with {@link #TERMINAL_FAILURE_EXIT_CODE}.</p>
      *
+     * <p>Two failure shapes never draw on the budget, because a recreated
+     * engine cannot end differently: a FATAL classification
+     * ({@link #isDeterministicFailure}, rule 4), and a dead sink worker
+     * ({@link #hasDeadWorker}, rule 6) -- the retry keeps this instance's
+     * worker pool, so {@link #failIfWorkerDied} stops the recreated engine on
+     * its first batch.</p>
+     *
      * @param success       whether the engine completed normally.
      * @param message       the engine's completion message.
      * @param throwable     the failure, if any.
@@ -654,6 +661,29 @@ public class DebeziumChangeEventCapture {
             // section 3.5 rule 4).
             log.error("Engine stopped with a FATAL (deterministic) failure; not retrying: "
                     + "a recreated engine would redeliver the same batch to the same outcome.");
+            onTerminalFailure(throwable, props);
+            return;
+        }
+        if (hasDeadWorker()) {
+            // The retry recreates the ENGINE on this same instance; it does not
+            // rebuild the sink worker pool (spec 09.01 section 3.8 item 4). A
+            // worker whose scheduled task has terminated stays dead across
+            // every retry, and failIfWorkerDied stops the recreated engine on
+            // its first batch -- before a row is written or an offset
+            // acknowledged, so the budget can never refill either. Each retry
+            // is therefore one more full engine start for nothing: the schema
+            // history re-read from the target, a new binlog dump from the
+            // source, every skipped row event re-logged with its full row
+            // image. Measured: ten identical "Sink worker 1 of 10 is dead"
+            // failures 13-19 s apart, ~0.5 GB of replay log, then the terminal
+            // exit that should have happened at the first one. Terminal now
+            // (spec 10.04 section 3.5 rule 6): the supervisor's restart is the
+            // only thing that gives a fresh pool, and it resumes from the last
+            // committed offset.
+            log.error("Engine stopped while a sink worker is dead; not retrying: a retry recreates "
+                    + "the engine but keeps this worker pool, so the recreated engine would stop on "
+                    + "its first batch the same way, having written and acknowledged nothing. A "
+                    + "process restart (a fresh pool) resumes from the last committed offset.");
             onTerminalFailure(throwable, props);
             return;
         }
@@ -2362,6 +2392,29 @@ public class DebeziumChangeEventCapture {
             log.error(message, cause);
             throw new RuntimeException(message, cause);
         }
+    }
+
+    /**
+     * Whether any sink worker's scheduled task has terminated (spec 03.01
+     * section 3.3) -- the condition under which {@link #failIfWorkerDied}
+     * would throw. Read by the completion callback before it recreates the
+     * engine: the retry keeps this instance's pool, so a dead worker makes
+     * the recreated engine stop on its first batch, and the failure is
+     * terminal instead (spec 10.04 section 3.5 rule 6). Only inspects
+     * {@code isDone()}; the cause is left for {@code failIfWorkerDied} to
+     * report.
+     *
+     * @return true when at least one worker future is done; false when the
+     *         pool is whole or there is no pool (single-threaded mode).
+     */
+    @VisibleForTesting
+    boolean hasDeadWorker() {
+        for (java.util.concurrent.ScheduledFuture<?> future : this.workerFutures) {
+            if (future != null && future.isDone()) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
