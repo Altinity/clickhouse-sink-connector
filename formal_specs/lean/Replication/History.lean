@@ -911,4 +911,86 @@ theorem old_routing_diverged_on_log_only_alone (src hist : String) :
       ∧ oldWriterDatabase ⟨false, true⟩ src hist = hist :=
   ⟨rfl, rfl⟩
 
+/-! ## The history version domain (Spec 12.03 §3.5.1)
+
+Every row of an SCD2 table carries the snowflake encoding of the event's
+ordering key `(ts_ms, d)`: `SnowFlakeId.generate(ts_ms, d, false)`, i.e.
+`(ts_ms - epoch) * 2^22 + d` for a discriminator `d < 2^22`. The encoding is
+strictly monotone, so it orders events exactly as the standard version does,
+and it is the domain releases up to 2.11.0 already used for the UPDATE and
+DELETE rows of a history table -- which is what makes an upgrade and a
+downgrade safe on the same tables. -/
+
+/-- The size of the snowflake discriminator field, `2 ^ SnowFlakeId.GTID_FIELD_BITS = 2^22`. -/
+def snowflakeDiscriminatorSpace : Nat := 4194304
+
+/-- `SnowFlakeId.generate(ts, d, false)` on timestamps already shifted past the
+    snowflake epoch: the timestamp in the high bits, `d` in the low 22 bits. -/
+def snowflakeEncode (ts d : Nat) : Nat := ts * snowflakeDiscriminatorSpace + d
+
+/-- The lightweight sequence version of spec 02.02: `ts * 10^6 + counter`. -/
+def sequenceVersion (ts counter : Nat) : Nat := ts * 1000000 + counter
+
+/-- The 2.11.0 after row / delete marker at the open sorting key:
+    `SnowFlakeId(ts, gtid) + 1`. -/
+def legacyOpenRowVersion (ts gtid : Nat) : Nat := snowflakeEncode ts gtid + 1
+
+/-- The encoding is strictly monotone in the lexicographic order of `(ts, d)`
+    when the discriminator fits its field: a later millisecond wins whatever the
+    discriminators, and within one millisecond the larger discriminator wins.
+    This is why the history version orders events exactly as the standard
+    version does. -/
+theorem snowflake_encode_strict_mono (ts₁ d₁ ts₂ d₂ : Nat)
+    (h₁ : d₁ < snowflakeDiscriminatorSpace) (h₂ : d₂ < snowflakeDiscriminatorSpace)
+    (hlt : ts₁ < ts₂ ∨ (ts₁ = ts₂ ∧ d₁ < d₂)) :
+    snowflakeEncode ts₁ d₁ < snowflakeEncode ts₂ d₂ := by
+  unfold snowflakeEncode snowflakeDiscriminatorSpace at *
+  rcases hlt with hts | ⟨hts, hd⟩
+  · omega
+  · subst hts
+    omega
+
+/-- **Upgrade safety (S10).** An open row or delete marker a 2.11.0 connector
+    left at `(k, S)` carries `SnowFlakeId(ts_old, gtid) + 1`. The fixed
+    connector's next event on that key is a later millisecond and is written as
+    `SnowFlakeId(ts_new, d)`, which is at least as great whatever `gtid` and `d`
+    are (equal only for the all-ones discriminator a GTID-less 2.11.0 wrote,
+    against `d = 0` in the very next millisecond -- and on a tie `FINAL` keeps
+    the later inserted row, `hMaxStep`), so the legacy row is superseded and the
+    key does not freeze: this is exactly the hypothesis "the visible open row
+    has version `<= V`" of `update_supersedes_open_row`. -/
+theorem legacy_open_row_superseded_by_later_event (tsOld gtid tsNew d : Nat)
+    (hg : gtid < snowflakeDiscriminatorSpace) (hts : tsOld < tsNew) :
+    legacyOpenRowVersion tsOld gtid ≤ snowflakeEncode tsNew d := by
+  have hg' : gtid < 4194304 := hg
+  have hmul : (tsOld + 1) * 4194304 ≤ tsNew * 4194304 := Nat.mul_le_mul_right _ hts
+  show tsOld * 4194304 + gtid + 1 ≤ tsNew * 4194304 + d
+  omega
+
+/-- **Downgrade safety (S10).** A row the fixed connector wrote at `(k, S)` is
+    `SnowFlakeId(ts, d)`; a 2.11.0 connector's later event writes
+    `SnowFlakeId(ts_later, gtid) + 1`, which is strictly greater. -/
+theorem fixed_open_row_superseded_by_later_legacy_event (ts d tsLater gtid : Nat)
+    (hd : d < snowflakeDiscriminatorSpace) (hts : ts < tsLater) :
+    snowflakeEncode ts d < legacyOpenRowVersion tsLater gtid := by
+  have hd' : d < 4194304 := hd
+  have hmul : (ts + 1) * 4194304 ≤ tsLater * 4194304 := Nat.mul_le_mul_right _ hts
+  show ts * 4194304 + d < tsLater * 4194304 + gtid + 1
+  omega
+
+/--
+**Resolved gap S10 (old behaviour, the upgrade freeze).** Had the fixed
+connector bound the RAW sequence number as `_version`, a legacy open row of an
+EARLIER millisecond would still have outranked it: on 2026 timestamps the
+sequence `ts * 10^6 + counter` is below the snowflake of any instant after
+mid-2023, so every key a 2.11.0 connector had updated or deleted would have
+frozen at the upgrade. Witness at the epoch-shifted millisecond of the
+end-to-end run (`2026-09-26`): the legacy row is at `ts_old = 500_000_000_000`
+(≈ 15.8 years past the epoch), the new event one full second later.
+-/
+theorem old_raw_sequence_version_loses_to_legacy_open_row :
+    sequenceVersion (1288834974657 + 500000000000 + 1000) 999999
+      < legacyOpenRowVersion 500000000000 4194303 := by
+  decide
+
 end Replication

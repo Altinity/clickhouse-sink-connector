@@ -513,29 +513,32 @@ public class ReplicationHistoryHandlerTest {
     }
 
     /**
-     * Spec 12.03 section 3.5 / Gap G-12.03-4: the history rows carry the record's
-     * standard version -- the value the INSERT path binds -- not a separate
-     * {@code SnowFlakeId.generate(ts_ms, gtid, false)} that ignored the sequence
-     * number and the commit floor.
+     * Spec 12.03 section 3.5 / 3.5.1 (Gap G-12.03-4, S10): every history row of the
+     * event carries ONE version -- the history version, i.e. the snowflake encoding
+     * of the record's ordering key ({@code (versionTs | ts_ms, gtid)} on a GTID
+     * source) -- never {@code V+1}, and never a second domain for the UPDATE and
+     * DELETE rows.
      */
     @Test
-    public void versionComesFromTheRecordNotFromTimestampAndGtid() {
+    public void everyHistoryRowCarriesTheEventsHistoryVersion() {
         ClickHouseStruct record = createTestRecord(1001, "Doe", "John", "john.doe@example.com", "NYC01");
         ReplicationHistoryHandler handler = new ReplicationHistoryHandler(queryFormatter, null);
 
         ReplicationHistoryHandler.UpdateQueryParams params = handler.buildUpdateQueryParams(record);
 
-        Assert.assertEquals("the event's standard version", record.getVersion(), params.getVersion());
-        Assert.assertEquals(STANDARD_VERSION, params.getVersion());
-        Assert.assertNotEquals("not a SnowFlakeId of (ts_ms, gtid)",
-                SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false), params.getVersion());
+        long expected = SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
+        Assert.assertEquals("the history version of the event", expected, params.getVersion());
+        Assert.assertEquals(ReplicationHistoryHandler.historyVersion(record), params.getVersion());
+        Assert.assertEquals("the record's own standard version is untouched", STANDARD_VERSION, record.getVersion());
 
         String update = handler.generateUpdateQuery("test_history.employees", employeeFields, columnToDataTypeMap, params).left;
         String delete = handler.generateDeleteQuery("test_history.employees", columnToDataTypeMap, params).left;
-        Assert.assertEquals("close row and after row carry V: " + update, 2, occurrences(update, STANDARD_VERSION + " as `_version`"));
-        Assert.assertFalse("never V+1: " + update, update.contains(String.valueOf(STANDARD_VERSION + 1)));
-        Assert.assertEquals("close row and marker carry V: " + delete, 2, occurrences(delete, String.valueOf(STANDARD_VERSION)));
-        Assert.assertFalse("never V+1: " + delete, delete.contains(String.valueOf(STANDARD_VERSION + 1)));
+        Assert.assertEquals("close row and after row carry V: " + update, 2, occurrences(update, expected + " as `_version`"));
+        Assert.assertFalse("never V+1: " + update, update.contains(String.valueOf(expected + 1)));
+        Assert.assertEquals("close row and marker carry V: " + delete, 2, occurrences(delete, String.valueOf(expected)));
+        Assert.assertFalse("never V+1: " + delete, delete.contains(String.valueOf(expected + 1)));
+        Assert.assertFalse("the raw standard version is not a history version: " + update,
+                update.contains(STANDARD_VERSION + " as `_version`"));
     }
 
     /**
@@ -543,7 +546,8 @@ public class ReplicationHistoryHandlerTest {
      * statements are built before any binding (and the DELETE binds nothing), so
      * the handler derives it the same way ({@code calculateVersion}) when the
      * record does not carry one yet -- here the raw GTID, as the test constructor
-     * runs with {@code snowflake.id=false}.
+     * runs with {@code snowflake.id=false} -- and then encodes it into the history
+     * version domain (Spec 12.03 section 3.5.1).
      */
     @Test
     public void versionIsDerivedTheStandardWayWhenNotYetCalculated() {
@@ -553,8 +557,10 @@ public class ReplicationHistoryHandlerTest {
 
         ReplicationHistoryHandler.UpdateQueryParams params = handler.buildUpdateQueryParams(record);
 
-        Assert.assertEquals("raw-GTID versioning: the version IS the GTID", 12345L, params.getVersion());
-        Assert.assertEquals("and it is left on the record for the INSERT path to reuse", 12345L, record.getVersion());
+        Assert.assertEquals("raw-GTID versioning: the standard version IS the GTID, left on the record",
+                12345L, record.getVersion());
+        Assert.assertEquals("the history rows carry its snowflake encoding",
+                SnowFlakeId.generate(1709290200000L, 12345L, false), params.getVersion());
     }
 
     /**

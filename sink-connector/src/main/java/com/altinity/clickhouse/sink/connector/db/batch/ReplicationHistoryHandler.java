@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db.batch;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -120,12 +121,11 @@ public class ReplicationHistoryHandler {
     }
 
     /**
-     * The ONE version every history row of this event carries: the record's
-     * standard version (Spec 12.03 section 3.5, Gap G-12.03-4) -- the same
-     * floor-clamped, monotonic value {@code ClickHouseStruct.calculateVersion}
-     * gives the INSERT path -- never a separate {@code SnowFlakeId} of
-     * {@code (ts_ms, gtid)}, which ignored the sequence number and the commit
-     * floor and collided within a millisecond without GTIDs.
+     * The ONE version every history row of this event carries (Spec 12.03
+     * section 3.5, Gap G-12.03-4): the record's standard version -- the same
+     * floor-clamped, monotonic ordering key {@code ClickHouseStruct.calculateVersion}
+     * gives the INSERT path -- re-encoded into the history version domain by
+     * {@link #historyVersion(ClickHouseStruct)}.
      *
      * <p>The standard path derives the version lazily at bind time
      * ({@code PreparedStatementFieldMapper.handleVersionColumn}); the history
@@ -136,7 +136,7 @@ public class ReplicationHistoryHandler {
      * maximum UInt64 and win every merge for the key forever.</p>
      *
      * @param record the change event
-     * @return {@code record.getVersion()}, positive
+     * @return the history version of the event, positive
      * @throws IllegalStateException when no version can be derived for the record
      */
     public long resolveVersion(ClickHouseStruct record) {
@@ -144,7 +144,87 @@ public class ReplicationHistoryHandler {
             record.calculateVersion(useSnowflakeId);
         }
         PreparedStatementFieldMapper.rejectUnderivableVersion(record);
-        return record.getVersion();
+        return historyVersion(record);
+    }
+
+    /** Low 22 bits of a snowflake carry the per-timestamp discriminator ({@code SnowFlakeId.GTID_FIELD_BITS}). */
+    private static final long SNOWFLAKE_DISCRIMINATOR_MASK = (1L << SnowFlakeId.GTID_FIELD_BITS) - 1;
+
+    /**
+     * The history version domain (Spec 12.03 section 3.5.1): every row of an SCD2
+     * table -- the INSERT row of the standard path in history mode, the close row,
+     * the after row, the key-change and delete markers and the bulk-close rows --
+     * carries the SNOWFLAKE encoding {@code SnowFlakeId.generate(ts_ms, d, false)}
+     * of the event's ordering key, where {@code ts_ms} is the floor-clamped source
+     * millisecond of the standard version and {@code d} its per-millisecond
+     * discriminator. The encoding is strictly monotone in {@code (ts_ms, d)} for
+     * {@code d < 2^22}, so it orders events exactly as the standard version of
+     * spec 02.01 / 02.02 does; it only changes the NUMBER, not the order.
+     *
+     * <p>Why one domain for the whole table: {@code FINAL} keeps the row with the
+     * greatest {@code _version} at a sorting key, so a row written at the open
+     * sorting key {@code (k, S)} is superseded only by a greater number. Releases
+     * up to and including 2.11.0 wrote the UPDATE and DELETE rows of a history
+     * table with {@code SnowFlakeId(ts_ms, gtid) [+ 1]} while binding the INSERT
+     * row with the standard version. On a source without GTIDs the standard
+     * version is the lightweight sequence {@code ts_ms * 10^6 + counter}
+     * (about 1.8e18 in 2026) and a snowflake of the same instant is about 2.1e18:
+     * an open row or delete marker such a release left at {@code (k, S)} outranks
+     * every sequence version until the year 2032. Had the fixed connector bound
+     * the sequence number as {@code _version}, every key a 2.11.0 connector had
+     * ever updated or deleted would have FROZEN at the upgrade -- later updates
+     * and deletes written, visible in the history, never current -- and a
+     * re-insert after a 2.11.0 delete stayed hidden behind the marker. Writing
+     * every history row in the snowflake domain keeps the invariant every
+     * convergence proof rests on ("the visible open row has version {@code <= V}")
+     * true across an upgrade AND a downgrade: a later event is a greater
+     * snowflake on both sides, whichever release wrote the earlier row.</p>
+     *
+     * <ul>
+     *   <li>GTID source: {@code (versionTs | ts_ms, gtid)} -- the standard
+     *       snowflake version itself when {@code snowflake.id=true}; with
+     *       {@code snowflake.id=false} the standard version is the raw GTID
+     *       transaction number and is re-encoded here (2.11.0 already wrote
+     *       snowflakes into history tables regardless of that flag).</li>
+     *   <li>Sequence source (no GTIDs): {@code (seq / 10^6, seq mod 10^6)} -- the
+     *       millisecond slot and counter the sequence encodes.</li>
+     *   <li>Any other ordering key (LSN, Kafka-offset fallback): the record's
+     *       source millisecond with the low 22 bits of the standard version as the
+     *       discriminator.</li>
+     * </ul>
+     *
+     * @param record a change event whose standard version has been derived
+     * @return the history version, positive
+     * @throws IllegalStateException when the record carries no derivable version
+     */
+    public static long historyVersion(ClickHouseStruct record) {
+        PreparedStatementFieldMapper.rejectUnderivableVersion(record);
+        long tsMs;
+        long discriminator;
+        if (record.getGtid() != -1L) {
+            tsMs = record.getVersionTs() > 0 ? record.getVersionTs() : record.getTs_ms();
+            discriminator = record.getGtid();
+        } else if (record.getSequenceNumber() != -1L) {
+            tsMs = record.getSequenceNumber() / 1_000_000L;
+            discriminator = record.getSequenceNumber() % 1_000_000L;
+        } else {
+            tsMs = record.getTs_ms();
+            discriminator = record.getVersion() & SNOWFLAKE_DISCRIMINATOR_MASK;
+        }
+        if (tsMs <= SnowFlakeId.SNOWFLAKE_EPOCH) {
+            throw new IllegalStateException(String.format(
+                    "History version for topic '%s' at kafka offset %d cannot be encoded: the event "
+                            + "millisecond %d is not after the snowflake epoch %d, so the timestamp field "
+                            + "would wrap and the row would rank arbitrarily (Spec 12.03 section 3.5.1)",
+                    record.getTopic(), record.getKafkaOffset(), tsMs, SnowFlakeId.SNOWFLAKE_EPOCH));
+        }
+        long version = SnowFlakeId.generate(tsMs, discriminator, false);
+        if (version <= 0) {
+            throw new IllegalStateException(String.format(
+                    "History version for topic '%s' at kafka offset %d is not positive (%d) "
+                            + "(Spec 12.03 section 3.5.1)", record.getTopic(), record.getKafkaOffset(), version));
+        }
+        return version;
     }
 
     /**

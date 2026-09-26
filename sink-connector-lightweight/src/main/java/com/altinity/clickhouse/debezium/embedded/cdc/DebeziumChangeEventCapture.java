@@ -2403,12 +2403,14 @@ public class DebeziumChangeEventCapture {
         if (chStruct.getVersion() == -1) {
             chStruct.calculateVersion(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString()));
         }
-        long version = chStruct.getVersion();
-        if (version <= 0) {
+        if (chStruct.getVersion() <= 0) {
             throw new IllegalStateException(String.format(
                     "History bulk close for [%s] refused: version %d is not a derivable event version "
-                            + "(Spec 02.05 section 3.2)", ddl, version));
+                            + "(Spec 02.05 section 3.2)", ddl, chStruct.getVersion()));
         }
+        // The history version domain (Spec 12.03 section 3.5.1): the bulk-close rows
+        // and markers must outrank the open rows whichever release wrote them.
+        long version = ReplicationHistoryHandler.historyVersion(chStruct);
         ZoneId serverTimeZone = resolveHistoryServerTimeZone(config, configuredServerTimeZone);
 
         DBMetadata dbMetadata = new DBMetadata(config);
