@@ -60,7 +60,12 @@ public class HandoffHardCapBytesTest {
         return unit;
     }
 
-    private static Thread after(long delayMs, Runnable body, AtomicReference<Throwable> failure) {
+    @FunctionalInterface
+    private interface ThrowingRunnable {
+        void run() throws Exception;
+    }
+
+    private static Thread after(long delayMs, ThrowingRunnable body, AtomicReference<Throwable> failure) {
         Thread t = new Thread(() -> {
             try {
                 Thread.sleep(delayMs);
