@@ -554,6 +554,13 @@ def _git(repo_root: Path, *args: str) -> str:
     return proc.stdout
 
 
+def _is_shallow(repo_root: Path) -> bool:
+    try:
+        return _git(repo_root, "rev-parse", "--is-shallow-repository").strip() == "true"
+    except RuntimeError:
+        return False
+
+
 def is_spec_governed(path: str) -> bool:
     return any(fnmatch.fnmatch(path, pat) for pat in SPEC_GOVERNED_PATTERNS)
 
@@ -570,7 +577,14 @@ def check_changed_base(repo_root: Path, base: str) -> list[str]:
         # message never carries the marker even when the PR's own commit does.
         range_messages = _git(repo_root, "log", "--format=%B%x00", f"{base}..HEAD")
     except RuntimeError as exc:
-        return [f"--changed-base: {exc}"]
+        message = f"--changed-base: {exc}"
+        if "no merge base" in str(exc) and _is_shallow(repo_root):
+            message += (
+                " -- the checkout is SHALLOW (git rev-parse --is-shallow-repository = true), so the"
+                f" history joining {base} and HEAD is not present; fetch the base ref with full"
+                " history (no --depth) before running the spec-first gate"
+            )
+        return [message]
     governed = sorted(p for p in changed if is_spec_governed(p))
     if not governed:
         return []
