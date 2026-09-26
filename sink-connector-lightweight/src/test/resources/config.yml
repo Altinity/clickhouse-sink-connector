@@ -39,3 +39,12 @@ database.connectionTimeZone: "America/Chicago"
 # multi-line ERROR banner about a fixture whose keyless-ness is the point.
 # KeylessTablePreflightTest covers the check itself directly.
 keyless.table.check.skip: "true"
+# The datetime.sql / data_types.sql fixtures hold 1000-01-01 and 9999-12-31,
+# and the DateTime*IT / CreateTableDataTypes*IT suites assert the BOUNDED
+# values on purpose (1900-01-01, 2299-12-31). The product default refuses an
+# out-of-range value loudly and terminally (Spec 07.03 / 07.02): the worker
+# stops on the first such row, the engine stops on the next batch, and every
+# later assertion of the class fails with "should have data" / unknown table.
+# Opt the Java integration suites into saturation, exactly as the testflows
+# suites do in tests/integration/helpers/default_config.py.
+clamp.out.of.range: "true"

@@ -11,11 +11,27 @@ def generate_sample_mysql_value(data_type):
         precision, scale = map(
             int, data_type[data_type.index("(") + 1 : data_type.index(")")].split(",")
         )
-        number = round(
-            random.uniform(-(10 ** (precision - scale)), 10 ** (precision - scale)),
-            scale,
-        )
-        return str(number)
+        # DECIMAL(p, s) admits |value| <= (10**p - 1) / 10**s -- e.g. 9.9 for
+        # DECIMAL(2,1), not 10.0. The previous generator drew from
+        # uniform(-10**(p-s), 10**(p-s)) and rounded to `scale`, so any draw
+        # >= max - 0.5*10**-s rounded up to exactly 10**(p-s), one ULP out of
+        # range. Under MySQL strict mode the INSERT then failed at random with
+        # "Out of range value" (~0.5% per run for DECIMAL(2,1)) -- the source
+        # of the is_deleted flakiness. Draw an integer number of units of the
+        # least significant digit over the exact valid range, then place the
+        # decimal point by string, so every value is in range by construction
+        # and no scientific notation (which MySQL rejects) can appear for a
+        # high-precision DECIMAL. Building the string from the int also avoids
+        # the default Decimal context's 28-digit precision limit for e.g.
+        # DECIMAL(30, 10).
+        max_units = 10 ** precision - 1  # |value| <= max_units / 10**scale
+        units = random.randint(-max_units, max_units)
+        sign = "-" if units < 0 else ""
+        digits = str(abs(units))
+        if scale == 0:
+            return f"{sign}{digits}"
+        digits = digits.zfill(scale + 1)
+        return f"{sign}{digits[:-scale]}.{digits[-scale:]}"
     elif data_type.startswith("DOUBLE"):
         # Adjusting the range to avoid overflow, staying within a reasonable limit
         return f"'{str(random.uniform(-1.7e307, 1.7e307))}'"

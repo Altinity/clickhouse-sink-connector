@@ -112,7 +112,8 @@ sink_connector_deployments:
       cli_port: 7000
       metrics_port: 8083
       snapshot_mode: schema_only
-      skip_unparseable_ddl: true
+      # default false; true silently discards DDL Debezium cannot parse (loss)
+      skip_unparseable_ddl: false
       thread_pool_size: 10
       max_batch_size: 10000
 ```

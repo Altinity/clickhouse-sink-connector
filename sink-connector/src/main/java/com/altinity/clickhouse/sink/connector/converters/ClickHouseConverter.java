@@ -11,6 +11,7 @@ import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -494,5 +495,96 @@ public class ClickHouseConverter implements AbstractConverter {
                 break;
         }
         return null;
+    }
+
+    // -----------------------------------------------------------------------
+    // Static helpers for Debezium SourceRecord schema extraction
+    // -----------------------------------------------------------------------
+
+    /**
+     * Extracts the field name → Debezium {@link Schema} mapping from a Debezium
+     * SourceRecord value schema.
+     *
+     * <p>In a Debezium envelope the value schema looks like:
+     * <pre>
+     * Envelope {
+     *   before: Struct { id INT, name STRING, … }
+     *   after:  Struct { id INT, name STRING, new_col FLOAT64, … }   ← preferred
+     *   source: Struct { … }
+     *   op:     STRING
+     * }
+     * </pre>
+     *
+     * <p>For DELETE events {@code after} is {@code null}, so {@code before} is used
+     * as the fallback.  For all other event types {@code after} is used.
+     *
+     * @param record the Debezium {@link SourceRecord}
+     * @return ordered map of field name → field {@link Schema}, or {@code null}
+     *         if the schema cannot be extracted
+     */
+    public static Map<String, Schema> extractDebeziumSchema(SourceRecord record) {
+        try {
+            Schema valueSchema = record.valueSchema();
+            if (valueSchema == null) {
+                return null;
+            }
+
+            // Prefer "after" (INSERT / UPDATE); fall back to "before" (DELETE).
+            Schema rowSchema = null;
+
+            Field afterField = valueSchema.field("after");
+            if (afterField != null && afterField.schema() != null
+                    && afterField.schema().type() == Schema.Type.STRUCT) {
+                // For DELETE, the "after" value in the Struct will be null, so check the value too.
+                Struct valueStruct = record.value() instanceof Struct ? (Struct) record.value() : null;
+                Object afterValue = (valueStruct != null) ? safeGet(valueStruct, "after") : null;
+                if (afterValue != null) {
+                    rowSchema = afterField.schema();
+                }
+            }
+
+            if (rowSchema == null) {
+                Field beforeField = valueSchema.field("before");
+                if (beforeField != null && beforeField.schema() != null
+                        && beforeField.schema().type() == Schema.Type.STRUCT) {
+                    rowSchema = beforeField.schema();
+                }
+            }
+
+            if (rowSchema == null) {
+                return null;
+            }
+
+            List<Field> fields = rowSchema.fields();
+            if (fields == null || fields.isEmpty()) {
+                return null;
+            }
+
+            Map<String, Schema> result = new LinkedHashMap<>(fields.size());
+            for (Field field : fields) {
+                result.put(field.name(), field.schema());
+            }
+            return result;
+
+        } catch (Exception e) {
+            log.debug("Could not extract Debezium schema from SourceRecord: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Safely retrieves a field value from a {@link Struct}, returning {@code null}
+     * if the field does not exist or the access throws.
+     *
+     * @param struct    the Struct to read from
+     * @param fieldName the field name to retrieve
+     * @return the field value, or {@code null} if not available
+     */
+    public static Object safeGet(Struct struct, String fieldName) {
+        try {
+            return struct.get(fieldName);
+        } catch (Exception e) {
+            return null;
+        }
     }
 }

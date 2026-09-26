@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.clickhouse.data.ClickHouseColumn;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.data.value.ClickHouseDoubleValue;
 import com.clickhouse.data.value.ClickHouseGeoPointValue;
@@ -18,6 +19,8 @@ import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Decimal;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Polygon;
@@ -31,6 +34,9 @@ import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * ClickHouseDataTypeMapper provides functions to map Debezium or
@@ -44,6 +50,8 @@ import java.util.*;
  */
 public class ClickHouseDataTypeMapper {
 
+    private static final Logger log = LogManager.getLogger(ClickHouseDataTypeMapper.class);
+
     /**
      * Schema parameter key populated by Debezium (when source-type
      * propagation is enabled) with the original MySQL column type,
@@ -51,6 +59,229 @@ public class ClickHouseDataTypeMapper {
      */
     public static final String DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM =
             "__debezium.source.column.type";
+
+    /**
+     * Schema parameter populated by Debezium (with source-type propagation)
+     * with the declared length of the source column -- for
+     * {@code DATETIME(p)} / {@code TIMESTAMP(p)} the fractional-second
+     * precision {@code p}; absent when the column declares none.
+     */
+    public static final String DEBEZIUM_SOURCE_COLUMN_LENGTH_PARAM =
+            "__debezium.source.column.length";
+
+    /** Kafka Connect {@code Decimal} schema parameter carrying the scale. */
+    public static final String CONNECT_DECIMAL_SCALE_PARAM = "scale";
+
+    /** Debezium's {@code Decimal} schema parameter carrying the precision. */
+    public static final String CONNECT_DECIMAL_PRECISION_PARAM = "connect.decimal.precision";
+
+    /** MySQL's own default precision for a dimensionless {@code DECIMAL}. */
+    public static final int DEFAULT_DECIMAL_PRECISION = 10;
+
+    /** Matches a parenthesised dimension such as the {@code (3)} in {@code datetime(3)}. */
+    private static final Pattern DIMENSION = Pattern.compile("\\((\\d+)\\)");
+
+    /**
+     * The ClickHouse type for a propagated MySQL <em>signed</em> {@code TINYINT}
+     * source type: {@code Int8}, as the DDL path declares. Debezium delivers
+     * {@code TINYINT} as {@code INT16}, so without the source type the record
+     * path can only declare {@code Int16} (Spec 08.05 section 3.1.1).
+     *
+     * @param mysqlSourceColumnType the value of {@link #DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM}, may be null
+     * @return {@code "Int8"} for a signed TINYINT, else null
+     */
+    public static String getSignedTinyIntType(String mysqlSourceColumnType) {
+        if (mysqlSourceColumnType == null) {
+            return null;
+        }
+        String normalized = mysqlSourceColumnType.trim().toLowerCase();
+        if (normalized.contains("unsigned")) {
+            return null;
+        }
+        return normalized.startsWith("tinyint") ? ClickHouseDataType.Int8.name() : null;
+    }
+
+    /**
+     * The ClickHouse {@code Decimal(p, s)} for a Kafka Connect {@code Decimal}
+     * field: {@code p} from {@code connect.decimal.precision}, {@code s} from
+     * {@code scale}; a missing precision is {@code max(10, s)} and a missing
+     * scale is {@code 0}, so a dimensionless MySQL {@code DECIMAL} is
+     * {@code Decimal(10,0)} -- what MySQL defines and what the DDL path
+     * declares (Spec 08.05 section 3.1.1).
+     *
+     * @param params the field schema parameters, may be null
+     * @return the ClickHouse type string
+     */
+    public static String decimalType(Map<String, String> params) {
+        int scale = 0;
+        if (params != null && params.containsKey(CONNECT_DECIMAL_SCALE_PARAM)) {
+            scale = parseIntSafe(params.get(CONNECT_DECIMAL_SCALE_PARAM), 0);
+        }
+        int precision = Math.max(DEFAULT_DECIMAL_PRECISION, scale);
+        if (params != null && params.containsKey(CONNECT_DECIMAL_PRECISION_PARAM)) {
+            precision = parseIntSafe(params.get(CONNECT_DECIMAL_PRECISION_PARAM), precision);
+        }
+        if (precision < scale) {
+            precision = scale;
+        }
+        return "Decimal(" + precision + "," + scale + ")";
+    }
+
+    /**
+     * The fractional-second precision to declare for a {@code DateTime64}
+     * column from the record schema. With a propagated {@code DATETIME} /
+     * {@code TIMESTAMP} source type the precision is the propagated column
+     * length (0..6), or the {@code (p)} in the type text, or {@code 0} when
+     * neither is present (a plain {@code DATETIME}); without a propagated
+     * source type it is {@code defaultPrecision}, the widest the logical type
+     * carries (Spec 08.05 section 3.1.1).
+     *
+     * @param params           the field schema parameters, may be null
+     * @param defaultPrecision the precision to use without a propagated source type
+     * @return the precision, 0..9
+     */
+    public static int temporalPrecision(Map<String, String> params, int defaultPrecision) {
+        if (params == null) {
+            return defaultPrecision;
+        }
+        String sourceType = params.get(DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM);
+        if (sourceType == null) {
+            return defaultPrecision;
+        }
+        String normalized = sourceType.trim().toLowerCase();
+        if (!(normalized.startsWith("datetime") || normalized.startsWith("timestamp"))) {
+            return defaultPrecision;
+        }
+        String length = params.get(DEBEZIUM_SOURCE_COLUMN_LENGTH_PARAM);
+        if (length != null) {
+            int p = parseIntSafe(length, -1);
+            return (p >= 0 && p <= 6) ? p : defaultPrecision;
+        }
+        Matcher dimension = DIMENSION.matcher(normalized);
+        if (dimension.find()) {
+            int p = Integer.parseInt(dimension.group(1));
+            return p <= 6 ? p : defaultPrecision;
+        }
+        return 0;
+    }
+
+    /** Whether the empty-source-zone resolution has been logged (once per JVM). */
+    private static final AtomicBoolean SOURCE_ZONE_DEFAULT_LOGGED = new AtomicBoolean(false);
+
+    /**
+     * Resolves the source (MySQL) zone used to interpret DATETIME digits.
+     *
+     * <p>An empty {@code database.connectionTimeZone} means "the ClickHouse
+     * session zone": the digits MySQL holds are the digits stored (the same-zone
+     * decode of Spec 07.03 section 3.1.1). It previously meant UTC while an
+     * empty {@code clickhouse.datetime.timezone} meant the server zone, so the
+     * default configuration on a non-UTC server shifted every DATETIME by the
+     * server offset (Spec 07.03 section 3.1.2).</p>
+     *
+     * @param config         the connector configuration
+     * @param sessionTimeZone the resolved ClickHouse session zone
+     * @return the source zone; never null
+     * @throws java.time.DateTimeException when the configured zone is not a valid zone id
+     */
+    public static ZoneId resolveSourceTimeZone(ClickHouseSinkConnectorConfig config, ZoneId sessionTimeZone) {
+        String configured = config.getString(
+                ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+        if (configured != null && !configured.isEmpty()) {
+            return ZoneId.of(configured);
+        }
+        if (SOURCE_ZONE_DEFAULT_LOGGED.compareAndSet(false, true)) {
+            log.info("{} is not set; DATETIME values keep the digits MySQL holds (no wall-clock "
+                            + "shift). Effective source zone: {} (the ClickHouse session zone).",
+                    ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE, sessionTimeZone);
+        }
+        return sessionTimeZone;
+    }
+
+    /**
+     * MySQL spatial column types that the Debezium {@code Geometry} logical
+     * type delivers but that ClickHouse's {@code Polygon} cannot hold; they are
+     * typed as {@code String} and stored as WKB hex (Spec 07.06 section 3.1).
+     * {@code POINT} has its own logical type and {@code POLYGON} is the one
+     * shape {@code Polygon} represents, so neither is listed.
+     */
+    private static final Set<String> NON_POLYGON_SPATIAL_TYPES = Collections.unmodifiableSet(
+            new HashSet<>(Arrays.asList("geometry", "linestring", "multipoint", "multilinestring",
+                    "multipolygon", "geometrycollection", "geomcollection")));
+
+    /**
+     * Whether a propagated MySQL source column type names a spatial type that
+     * is not {@code POLYGON} (and not {@code POINT}).
+     *
+     * @param mysqlSourceColumnType the value of {@link #DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM}, may be null
+     * @return true for LINESTRING, MULTI*, GEOMETRYCOLLECTION / GEOMCOLLECTION and GEOMETRY
+     */
+    public static boolean isNonPolygonSpatialType(String mysqlSourceColumnType) {
+        if (mysqlSourceColumnType == null) {
+            return false;
+        }
+        String normalized = mysqlSourceColumnType.trim().toLowerCase().replaceAll("\\(.*\\)", "").trim();
+        return NON_POLYGON_SPATIAL_TYPES.contains(normalized);
+    }
+
+    /**
+     * Whether a ClickHouse type string may be wrapped in {@code Nullable(...)}.
+     * Composite types -- {@code Array}, {@code Map}, {@code Tuple},
+     * {@code Nested} and the geo types ({@code Point}, {@code Ring},
+     * {@code Polygon}, {@code MultiPolygon}, {@code LineString},
+     * {@code MultiLineString}), which are tuples and arrays underneath -- are
+     * rejected by ClickHouse inside {@code Nullable}; an already-wrapped type
+     * must not be wrapped twice.
+     *
+     * @param chType the ClickHouse type string
+     * @return true when {@code Nullable(chType)} is a valid ClickHouse type
+     */
+    public static boolean canBeNullable(String chType) {
+        if (chType == null) {
+            return false;
+        }
+        String t = chType.trim();
+        if (t.startsWith("Nullable(") || t.startsWith("Array(") || t.startsWith("Map(")
+                || t.startsWith("Tuple(") || t.startsWith("Nested(")) {
+            return false;
+        }
+        return !(t.equals(ClickHouseDataType.Point.name()) || t.equals(ClickHouseDataType.Ring.name())
+                || t.equals(ClickHouseDataType.Polygon.name()) || t.equals(ClickHouseDataType.MultiPolygon.name())
+                || t.equals("LineString") || t.equals("MultiLineString"));
+    }
+
+    /**
+     * The zone a ClickHouse column type declares, e.g. {@code UTC} for
+     * {@code Nullable(DateTime64(3, 'UTC'))}, or null when the type declares
+     * none (ClickHouse then parses literals in the session zone).
+     *
+     * @param columnType the ClickHouse column type string, may be null
+     * @return the declared zone, or null
+     */
+    public static ZoneId columnTimeZone(String columnType) {
+        if (columnType == null || columnType.isEmpty()) {
+            return null;
+        }
+        try {
+            return columnTimeZoneOf(ClickHouseColumn.of("c", columnType));
+        } catch (Exception e) {
+            log.debug("Cannot parse column type '{}' for its time zone", columnType, e);
+            return null;
+        }
+    }
+
+    /**
+     * The zone a parsed ClickHouse column declares, or null.
+     *
+     * @param column the parsed column, may be null
+     * @return the declared zone, or null
+     */
+    public static ZoneId columnTimeZoneOf(ClickHouseColumn column) {
+        if (column == null) {
+            return null;
+        }
+        TimeZone tz = column.getTimeZone();
+        return tz == null ? null : tz.toZoneId();
+    }
 
     /**
      * Mapping of MySQL unsigned integer types (lower-cased) to the
@@ -255,8 +486,51 @@ public class ClickHouseDataTypeMapper {
                                   ClickHouseSinkConnectorConfig config,
                                   ClickHouseDataType clickHouseDataType, ZoneId serverTimeZone)
             throws SQLException {
+        return convert(type, schemaName, value, index, ps, config, clickHouseDataType, serverTimeZone, null);
+    }
+
+    /**
+     * As {@link #convert(Schema.Type, String, Object, int, PreparedStatement,
+     * ClickHouseSinkConnectorConfig, ClickHouseDataType, ZoneId)}, rendering
+     * temporal instants in the zone the target column declares.
+     *
+     * @param columnTimeZone the zone declared by the target column type
+     *                       ({@link #columnTimeZone(String)}); null when the
+     *                       column declares none, in which case the session
+     *                       zone ({@code serverTimeZone}) is used (Spec 07.03
+     *                       section 3.1.3)
+     */
+    public static boolean convert(Schema.Type type, String schemaName,
+                                  Object value, int index, PreparedStatement ps,
+                                  ClickHouseSinkConnectorConfig config,
+                                  ClickHouseDataType clickHouseDataType, ZoneId serverTimeZone,
+                                  ZoneId columnTimeZone)
+            throws SQLException {
+        return convert(type, schemaName, value, index, ps, config, clickHouseDataType, serverTimeZone,
+                columnTimeZone, DebeziumConverter.RangePolicy.of(config, null));
+    }
+
+    /**
+     * As {@link #convert(Schema.Type, String, Object, int, PreparedStatement,
+     * ClickHouseSinkConnectorConfig, ClickHouseDataType, ZoneId, ZoneId)}, with
+     * an explicit out-of-range policy carrying the bound column's name.
+     *
+     * @param rangePolicy what to do with a value outside the ClickHouse
+     *                    type's range (Spec 07.03 section 3.3); built per
+     *                    column with {@code RangePolicy.of(config, "db.table.column")}
+     */
+    public static boolean convert(Schema.Type type, String schemaName,
+                                  Object value, int index, PreparedStatement ps,
+                                  ClickHouseSinkConnectorConfig config,
+                                  ClickHouseDataType clickHouseDataType, ZoneId serverTimeZone,
+                                  ZoneId columnTimeZone, DebeziumConverter.RangePolicy rangePolicy)
+            throws SQLException {
 
         boolean result = true;
+        // ClickHouse parses a DateTime literal in the COLUMN's zone, so an
+        // instant must be rendered in that zone; the session zone applies only
+        // when the column declares none.
+        ZoneId instantFormatZone = columnTimeZone == null ? serverTimeZone : columnTimeZone;
         //TinyINT -> INT16 -> TinyInt
         boolean isFieldTinyInt = (type == Schema.INT16_SCHEMA.type());
         boolean isFieldTypeInt = (type == Schema.INT8_SCHEMA.type())
@@ -303,7 +577,7 @@ public class ClickHouseDataTypeMapper {
                 ps.setString(
                         index,
                         DebeziumConverter.ZonedTimestampConverter
-                                .convert(value, serverTimeZone));
+                                .convert(value, instantFormatZone, rangePolicy));
             } else if (schemaName != null
                     && schemaName.equalsIgnoreCase(Json.LOGICAL_NAME)) {
                 // if the column is JSON,
@@ -319,7 +593,7 @@ public class ClickHouseDataTypeMapper {
                 // set to io.debezium.time.Date
                 ps.setDate(index,
                         DebeziumConverter.DateConverter.convert(
-                                value, clickHouseDataType));
+                                value, clickHouseDataType, rangePolicy));
             } else if (schemaName != null
                     && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
                 ps.setTimestamp(index, (java.sql.Timestamp) value);
@@ -349,31 +623,38 @@ public class ClickHouseDataTypeMapper {
         } else if (type == Schema.BOOLEAN_SCHEMA.type()) {
             ps.setBoolean(index, (Boolean) value);
         } else if (isFieldTypeBigInt || isFieldTinyInt) {
-            ps.setObject(index, value);
+            if (isFieldTypeBigInt
+                    && clickHouseDataType == ClickHouseDataType.UInt64
+                    && value instanceof Long
+                    && (Long) value < 0) {
+                // BIGINT UNSIGNED under Debezium's default
+                // bigint.unsigned.handling.mode=long arrives as INT64, so a
+                // MySQL value in [2^63, 2^64) wraps to a negative long
+                // (18446744073709551615 arrives as -1). Restore the unsigned
+                // magnitude so the exact MySQL value is stored in the UInt64
+                // column (Spec 07.01 section 3.1). A negative long bound for a
+                // signed Int64 target is a genuine negative BIGINT and is left
+                // alone.
+                ps.setObject(index, new BigInteger(Long.toUnsignedString((Long) value)));
+            } else {
+                ps.setObject(index, value);
+            }
         } else if (isFieldDateTime || isFieldTime) {
             if (isFieldDateTime) {
-                String sourceTimeZone = "UTC";
-
-                if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
-                    String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-                    if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
-                        sourceTimeZone = configSourceTimeZone;
-                    }
-                }
+                // Empty database.connectionTimeZone means the session zone --
+                // the digits MySQL holds are stored -- never UTC (Spec 07.03
+                // section 3.1.2).
+                ZoneId sourceTimeZone = resolveSourceTimeZone(config, serverTimeZone);
                 if  (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) {
                     // DATETIME(4), DATETIME(5), DATETIME(6)
 
-                    ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value, ZoneId.of(sourceTimeZone),
-                            serverTimeZone, clickHouseDataType));
+                    ps.setString(index, DebeziumConverter.MicroTimestampConverter.convert(value, sourceTimeZone,
+                            serverTimeZone, clickHouseDataType, columnTimeZone, rangePolicy));
                 }
                 else if (value instanceof Long) {
                     // DATETIME(0), DATETIME(1), DATETIME(2), DATETIME(3)
-                    boolean isColumnDateTime64 = false;
-                    if(schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME) && type == Schema.INT64_SCHEMA.type()){
-                        isColumnDateTime64 = true;
-                    }
                     ps.setString(index, DebeziumConverter.TimestampConverter.convert(value, clickHouseDataType,
-                        ZoneId.of(sourceTimeZone), serverTimeZone));
+                        sourceTimeZone, serverTimeZone, columnTimeZone, rangePolicy));
                 }
             } else if (isFieldTime) {
                 ps.setString(index, DebeziumConverter.MicroTimeConverter.convert(value));
@@ -427,34 +708,65 @@ public class ClickHouseDataTypeMapper {
             }
 
         }  else if (type == Schema.Type.STRUCT && schemaName.equalsIgnoreCase(Geometry.LOGICAL_NAME)) {
-            // Handle Geometry type (e.g., Polygon)
-            if (value instanceof Struct) {
-                Struct geometryValue = (Struct) value;
-                Object wkbValue = geometryValue.get("wkb");
+            // A spatial value is stored faithfully or the batch fails. Every
+            // branch below that used to bind an EMPTY polygon in place of a
+            // value it could not represent (non-Struct carrier, missing WKB,
+            // unparseable WKB, non-Polygon geometry) fabricated a value the
+            // source never held, with the batch reported successful
+            // (Spec 07.06 section 3.2).
+            String where = rangePolicy.column() == null ? "" : " for column " + rangePolicy.column();
+            if (!(value instanceof Struct)) {
+                throw new IllegalArgumentException(String.format(
+                        "Geometry value%s is a %s, not a Struct; refusing to store an empty polygon in its place",
+                        where, value.getClass().getName()));
+            }
+            Struct geometryValue = (Struct) value;
+            Object wkbValue = geometryValue.get("wkb");
 
-                byte[] wkbBytes;
-                if (wkbValue instanceof byte[]) {
-                    wkbBytes = (byte[]) wkbValue;
-                } else if (wkbValue instanceof ByteBuffer) {
-                    ByteBuffer byteBuffer = (ByteBuffer) wkbValue;
-                    wkbBytes = new byte[byteBuffer.remaining()];
-                    byteBuffer.get(wkbBytes);
-                    byteBuffer.rewind();
+            byte[] wkbBytes;
+            if (wkbValue instanceof byte[]) {
+                wkbBytes = (byte[]) wkbValue;
+            } else if (wkbValue instanceof ByteBuffer) {
+                ByteBuffer byteBuffer = (ByteBuffer) wkbValue;
+                wkbBytes = new byte[byteBuffer.remaining()];
+                byteBuffer.get(wkbBytes);
+                byteBuffer.rewind();
+            } else {
+                throw new IllegalArgumentException(String.format(
+                        "Geometry value%s carries no WKB payload (wkb is %s); refusing to store an empty polygon in its place",
+                        where, wkbValue == null ? "null" : wkbValue.getClass().getName()));
+            }
+            if (clickHouseDataType == ClickHouseDataType.String) {
+                // A String column holds any spatial type as its exact WKB bytes
+                // (LOWER(HEX(ST_AsWKB(col))) on MySQL), the representation the
+                // record-schema mapping chooses for every non-POLYGON spatial
+                // type (Spec 07.06 section 3.1). Same encoding as BYTES.
+                if (config.getBoolean(
+                        ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())) {
+                    ps.setBytes(index, wkbBytes);
                 } else {
-                    // Set an empty polygon if WKB value is not available
-                    setGeoValue(ps, index, ClickHouseGeoPolygonValue.ofEmpty());
-                    return true;
+                    ps.setString(index, BaseEncoding.base16().lowerCase().encode(wkbBytes));
                 }
-                WKBReader wkbReader = new WKBReader();
-                org.locationtech.jts.geom.Geometry geometry;
-                try {
-                    geometry = wkbReader.read(wkbBytes);
-                } catch (ParseException e) {
-                    setGeoValue(ps, index, ClickHouseGeoPolygonValue.ofEmpty());
-                    return true;
-                }
-                if (geometry instanceof Polygon) {
-                    Polygon polygon = (Polygon) geometry;
+                return true;
+            }
+            WKBReader wkbReader = new WKBReader();
+            org.locationtech.jts.geom.Geometry geometry;
+            try {
+                geometry = wkbReader.read(wkbBytes);
+            } catch (ParseException e) {
+                throw new IllegalArgumentException(String.format(
+                        "WKB payload%s (%d bytes) cannot be parsed; refusing to store an empty polygon in its place",
+                        where, wkbBytes.length), e);
+            }
+            if (!(geometry instanceof Polygon)) {
+                throw new IllegalArgumentException(String.format(
+                        "Geometry%s is a %s, not a Polygon, and the ClickHouse column is %s; refusing to store "
+                                + "an empty polygon in its place. Declare the column as String to store the "
+                                + "WKB (hex) of any spatial type.",
+                        where, geometry.getGeometryType(), clickHouseDataType));
+            }
+            {
+                Polygon polygon = (Polygon) geometry;
                     List<double[][]> rings = new ArrayList<>();
                     org.locationtech.jts.geom.Coordinate[] exteriorCoords =
                             polygon.getExteriorRing().getCoordinates();
@@ -486,25 +798,22 @@ public class ClickHouseDataTypeMapper {
                     ClickHouseGeoPolygonValue geoPolygonValue =
                             ClickHouseGeoPolygonValue.of(polygonCoordinates);
                     setGeoValue(ps, index, geoPolygonValue);
-                } else {
-                    setGeoValue(ps, index, ClickHouseGeoPolygonValue.ofEmpty());
-                }
-            } else {
-                ps.setString(index,
-                        ClickHouseGeoPolygonValue.ofEmpty().asString());
             }
         } else if (type == Schema.Type.STRUCT
                 && schemaName.equalsIgnoreCase(Point.LOGICAL_NAME)) {
             // Handle Point type (ClickHouse expects (longitude, latitude))
-            if (value instanceof Struct) {
-                Struct pointValue = (Struct) value;
-                Object xValue = pointValue.get("x");
-                Object yValue = pointValue.get("y");
-                double[] point = {(Double) xValue, (Double) yValue};
-                setGeoValue(ps, index, ClickHouseGeoPointValue.of(point));
-            } else {
-                setGeoValue(ps, index, ClickHouseGeoPointValue.ofOrigin());
+            if (!(value instanceof Struct)) {
+                // Previously bound as the origin (0,0): a fabricated coordinate.
+                throw new IllegalArgumentException(String.format(
+                        "Point value%s is a %s, not a Struct; refusing to store the origin in its place",
+                        rangePolicy.column() == null ? "" : " for column " + rangePolicy.column(),
+                        value.getClass().getName()));
             }
+            Struct pointValue = (Struct) value;
+            Object xValue = pointValue.get("x");
+            Object yValue = pointValue.get("y");
+            double[] point = {(Double) xValue, (Double) yValue};
+            setGeoValue(ps, index, ClickHouseGeoPointValue.of(point));
         } else if (type == Schema.Type.STRUCT
                 && schemaName.equalsIgnoreCase(
                 VariableScaleDecimal.LOGICAL_NAME)) {
@@ -533,10 +842,14 @@ public class ClickHouseDataTypeMapper {
                         (Integer) scale);
                 BigDecimal truncated =
                         new DebeziumConverter.BigDecimalConverter()
-                                .truncate(bigDecimal);
+                                .truncate(bigDecimal, rangePolicy);
                 ps.setBigDecimal(index, truncated);
             } else {
-                ps.setBigDecimal(index, new BigDecimal(0));
+                // Previously bound as 0: a fabricated value.
+                throw new IllegalArgumentException(String.format(
+                        "Variable-scale decimal value%s is a %s, not a Struct; refusing to store 0 in its place",
+                        rangePolicy.column() == null ? "" : " for column " + rangePolicy.column(),
+                        value.getClass().getName()));
             }
         } else if (type == Schema.Type.ARRAY) {
             ClickHouseDataType dt = getClickHouseDataType(
@@ -671,6 +984,159 @@ public class ClickHouseDataTypeMapper {
             ps.setObject(index, geoValue);
         } else {
             ps.setString(index, geoValue.asString());
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // DDL-string mapping (used by schema reconciliation / ALTER TABLE)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Maps a Debezium {@link Schema} (Kafka Connect type + optional logical name)
+     * to a ClickHouse column DDL type string, always wrapped in {@code Nullable(…)}.
+     *
+     * <p>This is the centralized DDL-type mapping used by both MySQL DDL parsing
+     * (via {@code DataTypeConverter}) and PostgreSQL schema reconciliation
+     * (via {@code PostgresSchemaReconciler}). Unlike {@link #getClickHouseDataType}
+     * which returns a bare {@link ClickHouseDataType} enum for row-level value
+     * conversion, this method returns fully-qualified DDL strings including
+     * {@code Nullable(…)} wrapping, precision/scale parameters, and timezone info.
+     *
+     * <p>Mapping table:
+     * <table border="1">
+     *   <tr><th>Debezium / Kafka Connect type</th><th>ClickHouse DDL type</th></tr>
+     *   <tr><td>INT8</td><td>Nullable(Int8)</td></tr>
+     *   <tr><td>INT16</td><td>Nullable(Int16)</td></tr>
+     *   <tr><td>INT32</td><td>Nullable(Int32)</td></tr>
+     *   <tr><td>INT64</td><td>Nullable(Int64)</td></tr>
+     *   <tr><td>FLOAT32</td><td>Nullable(Float32)</td></tr>
+     *   <tr><td>FLOAT64</td><td>Nullable(Float64)</td></tr>
+     *   <tr><td>BOOLEAN</td><td>Nullable(UInt8)</td></tr>
+     *   <tr><td>STRING</td><td>Nullable(String)</td></tr>
+     *   <tr><td>BYTES</td><td>Nullable(String)</td></tr>
+     *   <tr><td>io.debezium.time.MicroTimestamp</td><td>Nullable(DateTime64(6, 'UTC'))</td></tr>
+     *   <tr><td>io.debezium.time.Timestamp</td><td>Nullable(DateTime64(3, 'UTC'))</td></tr>
+     *   <tr><td>io.debezium.time.NanoTimestamp</td><td>Nullable(DateTime64(9, 'UTC'))</td></tr>
+     *   <tr><td>io.debezium.time.ZonedTimestamp</td><td>Nullable(DateTime64(6, 'UTC'))</td></tr>
+     *   <tr><td>io.debezium.time.Date</td><td>Nullable(Date32)</td></tr>
+     *   <tr><td>io.debezium.time.MicroTime</td><td>Nullable(String)</td></tr>
+     *   <tr><td>org.apache.kafka.connect.data.Decimal</td><td>Nullable(Decimal(p, s))</td></tr>
+     *   <tr><td>io.debezium.data.Uuid</td><td>Nullable(UUID)</td></tr>
+     *   <tr><td>(unknown / default)</td><td>Nullable(String)</td></tr>
+     * </table>
+     *
+     * @param fieldSchema the Debezium/Kafka-Connect field schema (may be null)
+     * @return the ClickHouse column type DDL string (always wrapped in {@code Nullable(…)})
+     */
+    public static String mapDebeziumSchemaToDDL(Schema fieldSchema) {
+        if (fieldSchema == null) {
+            return "Nullable(String)";
+        }
+
+        // Check the logical type (schema name) first – more specific than the base type
+        String logicalType = fieldSchema.name();
+        if (logicalType != null) {
+            switch (logicalType) {
+                case MicroTimestamp.SCHEMA_NAME:       // "io.debezium.time.MicroTimestamp"
+                    return "Nullable(DateTime64(6, 'UTC'))";
+                case Timestamp.SCHEMA_NAME:            // "io.debezium.time.Timestamp"
+                    return "Nullable(DateTime64(3, 'UTC'))";
+                case NanoTimestamp.SCHEMA_NAME:         // "io.debezium.time.NanoTimestamp"
+                    return "Nullable(DateTime64(9, 'UTC'))";
+                case ZonedTimestamp.SCHEMA_NAME:        // "io.debezium.time.ZonedTimestamp"
+                    return "Nullable(DateTime64(6, 'UTC'))";
+                case Date.SCHEMA_NAME:                 // "io.debezium.time.Date"
+                    return "Nullable(Date32)";
+                case MicroTime.SCHEMA_NAME:            // "io.debezium.time.MicroTime"
+                    // Bound as the formatted text [-]HH:mm:ss.ffffff by
+                    // MicroTimeConverter (Spec 07.03 section 3.2), so the
+                    // declared type must be String. Declaring Int64 here made
+                    // every insert into a reconciled TIME column fail to parse.
+                    return "Nullable(String)";
+                case Uuid.LOGICAL_NAME:                // "io.debezium.data.Uuid"
+                    return "Nullable(UUID)";
+                case Json.LOGICAL_NAME:                // "io.debezium.data.Json"
+                    return "Nullable(String)";
+                case Enum.LOGICAL_NAME:                // "io.debezium.data.Enum"
+                    return "Nullable(String)";
+                case Bits.LOGICAL_NAME:                // "io.debezium.data.Bits"
+                    return "Nullable(String)";
+                default:
+                    // Fall through to handle Decimal and other logical types below
+                    break;
+            }
+
+            // Kafka Connect Decimal logical type (used for NUMERIC/DECIMAL columns)
+            if (Decimal.LOGICAL_NAME.equals(logicalType)) {
+                // Extract precision and scale from schema parameters
+                String scaleStr = fieldSchema.parameters() != null
+                        ? fieldSchema.parameters().get("scale") : null;
+                String precisionStr = fieldSchema.parameters() != null
+                        ? fieldSchema.parameters().get("connect.decimal.precision") : null;
+
+                int scale = (scaleStr != null) ? parseIntSafe(scaleStr, 9) : 9;
+                int precision = (precisionStr != null) ? parseIntSafe(precisionStr, 38) : 38;
+
+                // ClickHouse Decimal(p, s): p must be >= s and in [1..76]
+                if (precision < scale) precision = scale + 1;
+                if (precision < 1) precision = 38;
+
+                return String.format("Nullable(Decimal(%d, %d))", precision, scale);
+            }
+        }
+
+        // Fall back to base Kafka Connect Schema.Type
+        Schema.Type baseType = fieldSchema.type();
+        if (baseType == null) {
+            return "Nullable(String)";
+        }
+
+        switch (baseType) {
+            case INT8:
+                return "Nullable(Int8)";
+            case INT16:
+                return "Nullable(Int16)";
+            case INT32:
+                return "Nullable(Int32)";
+            case INT64:
+                return "Nullable(Int64)";
+            case FLOAT32:
+                return "Nullable(Float32)";
+            case FLOAT64:
+                return "Nullable(Float64)";
+            case BOOLEAN:
+                return "Nullable(UInt8)";
+            case STRING:
+                return "Nullable(String)";
+            case BYTES:
+                // BYTES covers BYTEA and Debezium Decimal (already handled above)
+                return "Nullable(String)";
+            case ARRAY:
+                return "Nullable(String)";
+            case MAP:
+                return "Nullable(String)";
+            case STRUCT:
+                // Nested structs → JSON string
+                return "Nullable(String)";
+            default:
+                log.warn("mapDebeziumSchemaToDDL: unknown Schema.Type '{}', defaulting to Nullable(String)",
+                        baseType);
+                return "Nullable(String)";
+        }
+    }
+
+    /**
+     * Parses an integer from a string, returning a default value on failure.
+     *
+     * @param s            the string to parse
+     * @param defaultValue the value to return if parsing fails
+     * @return the parsed integer, or {@code defaultValue} on {@link NumberFormatException}
+     */
+    private static int parseIntSafe(String s, int defaultValue) {
+        try {
+            return Integer.parseInt(s);
+        } catch (NumberFormatException e) {
+            return defaultValue;
         }
     }
 }

@@ -1,10 +1,14 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
+import com.altinity.clickhouse.sink.connector.db.KeylessTableWarning;
 import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
+import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.clickhouse.data.ClickHouseDataType;
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.kafka.connect.data.Field;
@@ -15,6 +19,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -65,7 +70,8 @@ public class ClickHouseAutoCreateTable
                                ClickHouseSinkConnectorConfig config)
             throws SQLException {
         Map<String, String> colNameToDataTypeMap =
-                this.getColumnNameToCHDataTypeMapping(fields,config);
+                this.getColumnNameToCHDataTypeMapping(fields, config,
+                        databaseName, tableName);
         String createTableQuery = this.createTableSyntax(primaryKey, tableName,
                 databaseName, fields, colNameToDataTypeMap,
                 isNewReplacingMergeTree, useReplicatedReplacingMergeTree,
@@ -75,6 +81,26 @@ public class ClickHouseAutoCreateTable
         // TODO: Run this before a session is created.
         DBMetadata metadata = new DBMetadata(config);
         metadata.executeSystemQuery(connection, createTableQuery);
+
+        // Reconcile column type overrides against the (possibly
+        // pre-existing) table.  Direct override mismatches will throw
+        // ColumnTypeOverrideMismatchException; alias drift is auto-fixed.
+        ColumnTypeOverrideConfig overrideConfig =
+                ColumnTypeOverrideConfig.fromProperties(
+                        config.originalsStrings());
+        if (overrideConfig.hasOverrides()) {
+            ColumnTypeOverrideReconciler reconciler =
+                    new ColumnTypeOverrideReconciler();
+            try {
+                reconciler.reconcile(connection, databaseName, tableName,
+                        databaseName, overrideConfig);
+            } catch (ColumnTypeOverrideMismatchException e) {
+                throw e; // propagate — must halt the connector
+            } catch (Exception e) {
+                log.error("Error reconciling column type overrides for "
+                        + "table {}.{}", databaseName, tableName, e);
+            }
+        }
     }
 
     /**
@@ -89,6 +115,11 @@ public class ClickHouseAutoCreateTable
      *   Engine=ReplacingMergeTree(version_column)
      *   PRIMARY KEY(col1) ORDER BY(col1)
      * </pre>
+     *
+     * <p>Without a usable primary key the sorting key is every source column
+     * ({@code ORDER BY(`col1`,`col2`,...)}, plus {@code SETTINGS
+     * allow_nullable_key=1} if any is Nullable); {@code ORDER BY tuple()} is
+     * never emitted for ReplacingMergeTree (Spec 08.05 section 3.2).</p>
      *
      * @param primaryKey a list of primary key columns
      * @param tableName the name of the table to create
@@ -124,7 +155,7 @@ public class ClickHouseAutoCreateTable
         StringBuilder createTableSyntax = new StringBuilder();
 
         createTableSyntax.append(CREATE_TABLE).append(" ")
-                .append(databaseName).append(".")
+                .append("`").append(databaseName).append("`").append(".")
                 .append("`").append(tableName).append("`");
         if (useReplicatedReplacingMergeTree == true) {
             createTableSyntax.append(" ON CLUSTER `{cluster}` ");
@@ -135,45 +166,89 @@ public class ClickHouseAutoCreateTable
         for (Field f : fields) {
             String colName = f.name();
             String dataType = columnToDataTypesMap.get(colName);
-            boolean isNull = false;
-            if (f.schema().isOptional() == true) {
-                isNull = true;
+
+            // Wrap the data type in Nullable() if the source schema marks the
+            // field as optional (i.e. nullable in PostgreSQL) and the type is
+            // not already wrapped.  ClickHouse does NOT support Nullable()
+            // around composite types such as Array, Map, Tuple or the geo
+            // types (Point, Polygon, ...), so those must be left as-is
+            // (ClickHouseDataTypeMapper.canBeNullable, Spec 07.06 section 3.1).
+            // System/engine columns (_version, _sign, is_deleted) must stay
+            // non-nullable because ClickHouse requires them as bare integer
+            // types for ReplacingMergeTree / CollapsingMergeTree engines.
+            // A SOURCE column named is_deleted is an ordinary column here (the
+            // engine column is renamed _is_deleted below), so it is wrapped
+            // like any other.
+            if (f.schema().isOptional()
+                    && ClickHouseDataTypeMapper.canBeNullable(dataType)
+                    && !colName.equals(VERSION_COLUMN)
+                    && !colName.equals(SIGN_COLUMN)) {
+                dataType = "Nullable(" + dataType + ")";
             }
+
             createTableSyntax.append("`").append(colName).append("`")
                     .append(" ").append(dataType);
-
-            // Ignore setting NULL/NOT NULL for JSON and Array types.
-            if (dataType != null
-                    && (dataType.equalsIgnoreCase(ClickHouseDataType.JSON.name())
-                    || dataType.contains(ClickHouseDataType.Array.name()))) {
-                // Do not append null constraints.
-            } else {
-                if (isNull) {
-                    createTableSyntax.append(" ").append(NULL);
-                } else {
-                    createTableSyntax.append(" ").append(NOT_NULL);
-                }
-            }
             createTableSyntax.append(",");
+        }
+
+        // Append ALIAS column definitions from ColumnTypeOverrideConfig.
+        // ALIAS columns are virtual — computed on read, never stored, and
+        // automatically skipped during INSERT by the existing
+        // DBMetadata.getAliasAndMaterializedColumnsForTableAndDatabase()
+        // mechanism which queries system.columns WHERE default_kind='ALIAS'.
+        ColumnTypeOverrideConfig overrideConfig =
+                ColumnTypeOverrideConfig.fromProperties(config.originalsStrings());
+        List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                overrideConfig.getAliasOverrides(databaseName, tableName);
+        for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+            createTableSyntax.append("`").append(entry.getAliasColumnName()).append("` ")
+                    .append(entry.getAliasType())
+                    .append(" ALIAS ")
+                    .append(entry.getExpression());
+            createTableSyntax.append(",");
+            log.info("Adding ALIAS column '{}' ({} ALIAS {}) to table {}.{}",
+                    entry.getAliasColumnName(), entry.getAliasType(),
+                    entry.getExpression(), databaseName, tableName);
         }
 
         String isDeletedColumn = IS_DELETED_COLUMN;
         if (rmtDeleteColumn != null && !rmtDeleteColumn.isEmpty()) {
             isDeletedColumn = rmtDeleteColumn;
         }
-        
+        // A source table with its own column of that name keeps it as a
+        // source column; the engine column is renamed, exactly as the DDL
+        // translator does, instead of declaring the name twice -- which
+        // ClickHouse rejects, after which every batch for the table failed
+        // with "TABLE METADATA not retrieved" (Spec 08.05 section 3.1.1).
+        for (Field f : fields) {
+            if (f.name() != null && f.name().equalsIgnoreCase(isDeletedColumn)) {
+                String renamed = "_" + isDeletedColumn;
+                log.warn("Table {}.{}: the source has a column named `{}`; the ReplacingMergeTree "
+                                + "delete-marker column is declared as `{}` instead",
+                        databaseName, tableName, isDeletedColumn, renamed);
+                isDeletedColumn = renamed;
+                break;
+            }
+        }
+
 
         // If Replication history is enabled, add the temporal columns
         // _valid_from, _valid_to, _operation, and is_deleted
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            // Both validity bounds carry the sentinel DEFAULT and the configured
+            // timezone, exactly as the DDL translator emits them, so a table
+            // gets the same column types whichever path created it
+            // (Spec 12.02 section 3.2, differences D-1 and D-2).
+            String historyDateTimeType = historyDateTimeColumnType(config);
+
             // Add _valid_from column
             createTableSyntax.append("`").append(DELETED_FROM_TIME_COLUMN)
-                    .append("` ").append("DateTime")
+                    .append("` ").append(historyDateTimeType)
                     .append(",");
 
             // Add _valid_to column
             createTableSyntax.append("`").append(DELETED_TIME_COLUMN)
-                    .append("` ").append(DELETED_TIME_COLUMN_DATA_TYPE)
+                    .append("` ").append(historyDateTimeType)
                     .append(",");
 
             // Add operation column
@@ -245,7 +320,12 @@ public class ClickHouseAutoCreateTable
         // Handle ORDER BY clause (primary key is part of ORDER BY in ClickHouse)
         createTableSyntax.append(" ");
 
-        if (primaryKey != null
+        // True only when the keyless fallback key (below) names a Nullable
+        // column, which ClickHouse rejects (Code 44) unless allow_nullable_key
+        // is enabled. The PK path never needs it: a MySQL PRIMARY KEY is NOT NULL.
+        boolean nullableSortingKey = false;
+
+        if (primaryKey != null && !primaryKey.isEmpty()
                 && isPrimaryKeyColumnPresent(primaryKey, columnToDataTypesMap)) {
             createTableSyntax.append(PRIMARY_KEY).append("(");
             createTableSyntax.append(primaryKey.stream()
@@ -261,23 +341,176 @@ public class ClickHouseAutoCreateTable
             }
             createTableSyntax.append(")");
         } else {
-            // TODO: Define a default ORDER BY clause.
-            createTableSyntax.append(ORDER_BY_TUPLE);
+            // No usable primary key: the record carries none (a keyless source
+            // table) or names columns the table does not have.
+            //
+            // ORDER BY tuple() is NEVER emitted here. ReplacingMergeTree
+            // deduplicates on the sorting key, and with an empty key every row
+            // compares equal, so merges and FINAL collapse the whole table to
+            // ONE row -- total, silent data loss (two distinct rows in, one
+            // out, measured with clickhouse local). The sorting key is every
+            // source column instead, which reproduces MySQL's own semantics for
+            // a table without a declared identity: rows are distinguished by
+            // value. The banner tells the operator to give the table a real
+            // identity at the source; the schema-override primary_key is the
+            // escape hatch in the meantime (Spec 08.05 section 3.2).
+            List<String> keyColumns = keylessSortingKey(fields, columnToDataTypesMap, isDeletedColumn);
+            if (keyColumns.isEmpty()) {
+                throw new IllegalStateException(String.format(
+                        "Cannot derive a sorting key for %s.%s: the record carries no primary key "
+                                + "and no source column is present in the ClickHouse column map. "
+                                + "Refusing to create a ReplacingMergeTree table with ORDER BY "
+                                + "tuple(), which would collapse every row into one.",
+                        databaseName, tableName));
+            }
+            for (String keyColumn : keyColumns) {
+                if (isNullableColumn(keyColumn, fields, columnToDataTypesMap)) {
+                    nullableSortingKey = true;
+                }
+            }
+            log.error(KeylessTableWarning.banner(databaseName, tableName));
+            log.warn("Table {}.{} has no usable primary key (record key: {}); using every source "
+                            + "column as the ReplacingMergeTree sorting key so distinct rows stay "
+                            + "distinct: {}. Rows identical in every column will still collapse, "
+                            + "and a column added later is not part of this key.",
+                    databaseName, tableName, primaryKey, keyColumns);
+
+            createTableSyntax.append(ORDER_BY).append("(");
+            createTableSyntax.append(keyColumns.stream()
+                    .map(c -> "`" + c + "`")
+                    .collect(Collectors.joining(",")));
+            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                createTableSyntax.append(",`").append(DELETED_TIME_COLUMN).append("`");
+            }
+            createTableSyntax.append(")");
         }
 
-        // If Replication history is enabled, add the ORDER BY toDate(deleted_time) , Add TTL deleted_time + toIntervalDay(30)
-        // TTL deleted_time + toIntervalDay(30)
-            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-                createTableSyntax.append(" TTL `").append(DELETED_TIME_COLUMN).append("` + toIntervalDay(30)");
-            }
-        
+        // History mode: a closed version expires replication.history.ttl days
+        // after it was superseded; open rows (sentinel _valid_to) never do.
+        // The configured TTL, as the DDL translator emits it -- this path used
+        // to hardcode 30 (Spec 12.02 section 3.4 and 3.5, difference D-3).
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            createTableSyntax.append(" TTL `").append(DELETED_TIME_COLUMN)
+                    .append("` + toIntervalDay(")
+                    .append(config.getInt(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()))
+                    .append(")");
+        }
 
-        // Add SETTINGS if they are provided (SETTINGS should be placed last)
+
+        // Add SETTINGS if they are provided (SETTINGS should be placed last).
+        // The keyless fallback key appends allow_nullable_key=1 when it names a
+        // Nullable column -- added to the user's settings, never replacing
+        // them, and not duplicated if the user already set it.
+        String userSettings = null;
         if (tableConfig != null && tableConfig.getSettings() != null && !tableConfig.getSettings().isEmpty()) {
-            createTableSyntax.append(" SETTINGS ").append(tableConfig.getSettings());
+            userSettings = tableConfig.getSettings();
+        }
+        boolean appendNullableKey = nullableSortingKey
+                && (userSettings == null || !userSettings.toLowerCase().contains(ALLOW_NULLABLE_KEY));
+        if (userSettings != null || appendNullableKey) {
+            createTableSyntax.append(" SETTINGS ");
+            if (userSettings != null) {
+                createTableSyntax.append(userSettings);
+                if (appendNullableKey) {
+                    createTableSyntax.append(",");
+                }
+            }
+            if (appendNullableKey) {
+                createTableSyntax.append(ALLOW_NULLABLE_KEY).append("=1");
+            }
         }
 
         return createTableSyntax.toString();
+    }
+
+    /**
+     * The column type of {@code _valid_from} / {@code _valid_to} on an SCD2
+     * history table: {@code DateTime}, suffixed with
+     * {@code clickhouse.datetime.timezone} when one is configured
+     * ({@code DateTime('America/Chicago')}), with the open-row sentinel as
+     * its DEFAULT (Spec 12.02 section 3.1 and 3.2).
+     *
+     * <p>The same rule as the DDL translator's
+     * {@code DataTypeConverter.addTimeZoneToDateTimeType} -- which lives in
+     * the lightweight module and is not reachable from here -- so a table
+     * gets the same column type whichever path created it (Spec 08.05
+     * section 3.1.1). An unparseable timezone is logged and ignored, as the
+     * translator does.</p>
+     */
+    @VisibleForTesting
+    static String historyDateTimeColumnType(ClickHouseSinkConnectorConfig config) {
+        String type = "DateTime";
+        String userProvidedTimeZone = config.getString(
+                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
+        if (userProvidedTimeZone != null && !userProvidedTimeZone.trim().isEmpty()) {
+            try {
+                type = type + "('" + ZoneId.of(userProvidedTimeZone.trim()) + "')";
+            } catch (Exception e) {
+                log.error("Error parsing user provided timezone: " + userProvidedTimeZone, e);
+            }
+        }
+        return type + " DEFAULT '"
+                + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL) + "'";
+    }
+
+    /**
+     * The sorting key for a table whose record carries no usable primary key:
+     * every source column, in record-schema order, that exists in the column
+     * map, excluding the columns the connector manages itself.
+     *
+     * @param fields the record's schema fields (source columns)
+     * @param columnToDataTypesMap the ClickHouse column map
+     * @param rmtDeleteColumn the configured ReplacingMergeTree delete column
+     * @return the key columns, possibly empty
+     */
+    List<String> keylessSortingKey(Field[] fields, Map<String, String> columnToDataTypesMap,
+                                   String rmtDeleteColumn) {
+        List<String> keyColumns = new ArrayList<>();
+        if (fields == null) {
+            return keyColumns;
+        }
+        for (Field f : fields) {
+            String colName = f.name();
+            if (colName == null || !columnToDataTypesMap.containsKey(colName)) {
+                continue;
+            }
+            if (isConnectorManagedColumn(colName, rmtDeleteColumn)) {
+                continue;
+            }
+            keyColumns.add(colName);
+        }
+        return keyColumns;
+    }
+
+    /** Columns populated by the connector, never part of a source-derived key. */
+    private static boolean isConnectorManagedColumn(String colName, String rmtDeleteColumn) {
+        return colName.equalsIgnoreCase(VERSION_COLUMN)
+                || colName.equalsIgnoreCase(SIGN_COLUMN)
+                || colName.equalsIgnoreCase(IS_DELETED_COLUMN)
+                || colName.equalsIgnoreCase(DELETED_TIME_COLUMN)
+                || colName.equalsIgnoreCase(DELETED_FROM_TIME_COLUMN)
+                || colName.equalsIgnoreCase(OPERATION_COLUMN)
+                || (rmtDeleteColumn != null && colName.equalsIgnoreCase(rmtDeleteColumn));
+    }
+
+    /**
+     * Whether the column is emitted as {@code Nullable(...)}: either the column
+     * map already says so, or the schema field is optional and the column
+     * definition loop above wraps it (same rule, kept in step with it).
+     */
+    private static boolean isNullableColumn(String colName, Field[] fields,
+                                            Map<String, String> columnToDataTypesMap) {
+        String dataType = columnToDataTypesMap.get(colName);
+        if (dataType != null && dataType.startsWith("Nullable(")) {
+            return true;
+        }
+        for (Field f : fields) {
+            if (colName.equals(f.name())) {
+                return f.schema().isOptional()
+                        && ClickHouseDataTypeMapper.canBeNullable(dataType);
+            }
+        }
+        return false;
     }
 
     /**

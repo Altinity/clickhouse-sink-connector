@@ -12,6 +12,7 @@ import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.KafkaMetaData;
 import com.clickhouse.data.ClickHouseColumn;
 import com.clickhouse.data.ClickHouseDataType;
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
@@ -57,6 +58,23 @@ public class PreparedStatementFieldMapper {
                 || IS_DELETED_COLUMN.equalsIgnoreCase(columnName)
                 || OPERATION_COLUMN.equalsIgnoreCase(columnName)
                 || SIGN_COLUMN.equalsIgnoreCase(columnName);
+    }
+
+    /**
+     * The connector's own replication-history columns
+     * ({@code _valid_from}, {@code _valid_to}, {@code _operation}): never in the
+     * source record, bound by {@code handleReplicationHistoryColumns} after the
+     * data columns (Spec 12.03 section 3.1). The engine columns
+     * ({@code _version}, {@code is_deleted}) are recognised by their configured
+     * names, as in standard mode.
+     *
+     * @param columnName the ClickHouse column being bound
+     * @return true when history mode populates the column itself
+     */
+    static boolean isReplicationHistoryColumn(String columnName) {
+        return DELETED_FROM_TIME_COLUMN.equalsIgnoreCase(columnName)
+                || DELETED_TIME_COLUMN.equalsIgnoreCase(columnName)
+                || OPERATION_COLUMN.equalsIgnoreCase(columnName);
     }
 
     /**
@@ -209,14 +227,31 @@ public class PreparedStatementFieldMapper {
                     // NULL -- not a dropped value.
                     log.debug("Column {} absent from this record's schema; ClickHouse DEFAULT applies.", colName);
                 } else {
-                    // A genuine data column with no placeholder is silently
-                    // dropped from the INSERT: nothing binds it here and the
-                    // handlers below are guarded by the same map, so the value
-                    // never reaches ClickHouse.
-                    log.error("***** Column index missing for column ****" + colName
-                            + " -- this column is present in the ClickHouse table but has no"
-                            + " placeholder in the generated INSERT, so its value will NOT be"
-                            + " written. Database(" + databaseName + "), Table(" + tableName + ")");
+                    // A genuine data column with no placeholder is dropped from
+                    // the INSERT: nothing binds it here and the handlers below
+                    // are guarded by the same map, so the value never reaches
+                    // ClickHouse.
+                    //
+                    // This is UNCONDITIONALLY a correctness failure and must
+                    // never be survivable. Logging and continuing is what let
+                    // 65,577 of these writes land in production over two days
+                    // with full row counts and no failed batch -- the daily
+                    // value-level checksum was the only thing that noticed.
+                    //
+                    // The condition means the index map was built from a
+                    // different view of the table than the column map the
+                    // binder is walking now, i.e. the cached schema is stale
+                    // with respect to the source metadata. Failing the batch
+                    // turns a silent divergence into a retry against freshly
+                    // read metadata, which is the only outcome that preserves
+                    // the data.
+                    throw new StaleSchemaCacheException(String.format(
+                            "Column %s is present in the ClickHouse table and carried by the "
+                                    + "record, but has no placeholder in the generated INSERT. "
+                                    + "The cached schema is stale relative to the source "
+                                    + "metadata, so this column's value would be silently "
+                                    + "dropped. Failing the batch instead. Database(%s), Table(%s)",
+                            colName, databaseName, tableName));
                 }
                 continue;
             }
@@ -227,33 +262,75 @@ public class PreparedStatementFieldMapper {
             // will throw an error.
             // If the Received column is not a clickhouse column
             try {
-                Object value = struct.get(colName);
-
-                boolean nonDefault = config.getBoolean(ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString());
-                // if config non.default.value is set, use it.
-                if (nonDefault) {
-                    value = struct.getWithoutDefault(colName);
-                }
+                // Read the STORED value, never the Connect-schema default.
+                // Struct.get() returns schema.defaultValue() for a null field,
+                // and Debezium propagates the MySQL column DEFAULT into that
+                // schema, so a source NULL in any column with a MySQL default
+                // would be bound as the default ('new', 0, 1970-01-01) -- with
+                // matching row counts. This used to be gated behind
+                // non.default.value=true, whose default was false; the source
+                // value is the only value there is to bind (Spec 07.07).
+                //
+                // The field is resolved against the record's schema, exact
+                // name first and then case-insensitively, because membership
+                // was decided case-insensitively: reading the ClickHouse name
+                // verbatim (case-sensitive in Kafka Connect) threw for a table
+                // hand-created as `ID` for source column `id`, and the batch
+                // stalled forever on a "stale cache" that was never stale
+                // (Spec 04.03 section 3.4). A name that matches no field under
+                // either comparison still throws DataException below.
+                Field sourceField = resolveSourceField(struct, colName);
+                Object value = struct.getWithoutDefault(sourceField == null ? colName : sourceField.name());
                 if (value == null) {
                     ps.setNull(index, Types.OTHER);
                     continue;
                 }
             } catch (DataException e) {
-                // Struct .get throws a DataException
-                // if the field is not present.
-                // If the record was not supplied, we need to set it as null.
-                // Ignore version and sign columns.
+                // Struct.get throws a DataException when the field is not
+                // present in the record's schema.
+                //
+                // Reaching here for a genuine data column is the SAME
+                // cache-staleness condition as the missing-index branch above,
+                // arriving from the opposite direction: there, the index map
+                // was behind the column map; here, the record is behind the
+                // column map. Both mean the cached schema and the source
+                // metadata disagree.
+                //
+                // Binding NULL is the dangerous response. The column exists in
+                // the ClickHouse table and already holds a value for this row
+                // on an UPDATE, so writing NULL over it destroys real data --
+                // again with matching row counts and a successful batch. This
+                // is the RENAME half of the NULL-fill defect noted as a known
+                // limitation in #1389.
+                //
+                // Connector-managed columns legitimately never appear in the
+                // source record and keep the previous behaviour.
                 if (colName.equalsIgnoreCase(versionColumn) || colName.equalsIgnoreCase(signColumn) ||
                         colName.equalsIgnoreCase(replacingMergeTreeDeleteColumn)) {
                     // Ignore version and sign columns
-                } else {
-                    if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
-                        log.error(String.format("********** ERROR: Database(%s), Table(%s), ClickHouse column %s not present in source ************", databaseName, tableName, colName));
-                        log.error(String.format("********** ERROR: Database(%s), Table(%s), Setting column %s to NULL might fail for non-nullable columns ************", databaseName, tableName, colName));
-                    }
-                                    }
-                ps.setNull(index, Types.OTHER);
-                continue;
+                    ps.setNull(index, Types.OTHER);
+                    continue;
+                }
+                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())
+                        && isReplicationHistoryColumn(colName)) {
+                    // History mode carries its own bitemporal metadata columns
+                    // (_valid_from, _valid_to, _operation) that are absent from
+                    // the source record by design; handleReplicationHistoryColumns
+                    // binds them below. ONLY those: exempting every unknown column
+                    // in history mode disabled the stale-schema-cache defence of
+                    // Spec 08.03 for SCD2 tables, so a renamed or added source
+                    // column was NULL-filled with a successful batch
+                    // (Spec 12.03 section 3.2, Gap G-12.03-5).
+                    ps.setNull(index, Types.OTHER);
+                    continue;
+                }
+                throw new StaleSchemaCacheException(String.format(
+                        "Column %s is present in the ClickHouse table but absent from the "
+                                + "record's schema, and the INSERT reserved a placeholder for "
+                                + "it. Binding NULL here would overwrite the stored value with "
+                                + "NULL. The cached schema is stale relative to the source "
+                                + "metadata. Failing the batch instead. Database(%s), Table(%s)",
+                        colName, databaseName, tableName));
             }
 
             // If the column is not in the column data type map, log an error.
@@ -263,18 +340,49 @@ public class PreparedStatementFieldMapper {
             }
 
             // Get the field information for the column and handle its data type.
-            Field f = getFieldByColumnName(fields, colName);
+            // Non-null here: a null resolution threw DataException above.
+            Field f = resolveSourceField(struct, colName);
             Schema.Type type = f.schema().type();
             String schemaName = f.schema().name();
-            Object value = struct.get(f);
+            // Same rule as above: the stored value, not the schema default.
+            Object value = struct.getWithoutDefault(f.name());
             if (type == Schema.Type.ARRAY) {
+                // Check if the ClickHouse column is a non-Array type (e.g. String/Nullable(String)).
+                // PG text[] columns may be auto-created as Nullable(String) in ClickHouse,
+                // so we serialize the array as a JSON string instead of using setArray().
+                String chColumnType = columnNameToDataTypeMap.get(colName);
+                if (chColumnType != null && !chColumnType.startsWith("Array")) {
+                    if (value == null) {
+                        ps.setNull(index, Types.VARCHAR);
+                    } else {
+                        ps.setString(index, value.toString());
+                    }
+                    continue;
+                }
                 schemaName = f.schema().valueSchema().type().name();
             }
             // This will throw an exception, unknown data type.
-            ClickHouseDataType chDataType = getClickHouseDataType(colName, columnNameToDataTypeMap);
-            if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType, serverTimeZone)) {
-                log.error(String.format("**** DATA TYPE NOT HANDLED type(%s), name(%s), column name(%s)", type.toString(),
-                        schemaName, colName));
+            ClickHouseColumn column = parseColumn(colName, columnNameToDataTypeMap);
+            ClickHouseDataType chDataType = column == null ? null : column.getDataType();
+            // ClickHouse parses a DateTime literal in the COLUMN's declared
+            // zone, so instants must be rendered in it (Spec 07.03 section 3.1.3).
+            ZoneId columnTimeZone = ClickHouseDataTypeMapper.columnTimeZoneOf(column);
+            // A value outside the ClickHouse type's range fails the batch unless
+            // clamp.out.of.range=true; either way the column is named (Spec
+            // 07.03 section 3.3).
+            DebeziumConverter.RangePolicy rangePolicy = DebeziumConverter.RangePolicy.of(config,
+                    databaseName + "." + tableName + "." + colName);
+            if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType,
+                    serverTimeZone, columnTimeZone, rangePolicy)) {
+                // An unhandled type leaves the parameter unbound. Logging and
+                // continuing (the previous behaviour) let the V2 JDBC driver
+                // -- whose addBatch() does not clear its bound values -- write
+                // the PREVIOUS row's value at this index for every row after
+                // the first, silently (Spec 07.07 section 3.2.2).
+                throw new DataException(String.format(
+                        "No ClickHouse binding for type(%s), name(%s) of column %s in Database(%s), Table(%s); "
+                                + "the parameter would be left unbound. Failing the batch instead.",
+                        type, schemaName, colName, databaseName, tableName));
             }
         }
 
@@ -291,7 +399,7 @@ public class PreparedStatementFieldMapper {
         handleVersionColumn(columnNameToIndexMap, ps, record, config, columnNameToDataTypeMap, engine);
 
         // Handle Sign column to mark deletes in ReplacingMergeTree.
-        handleReplacingMergeTreeDeleteColumn(columnNameToIndexMap, ps, record, config, columnNameToDataTypeMap, beforeSection);
+        handleReplacingMergeTreeDeleteColumn(columnNameToIndexMap, ps, record, config, columnNameToDataTypeMap, engine, tableName, beforeSection);
 
         // Store raw data in JSON form if configured.
         handleRawDataStorage(columnNameToIndexMap, ps, struct, config, columnNameToDataTypeMap);
@@ -307,10 +415,17 @@ public class PreparedStatementFieldMapper {
      * yields {@code is_deleted = 0}, which would insert a second LIVE row at the
      * old key instead of retiring it.</p>
      *
-     * <p>The tombstone deliberately carries the record's own version, one less
-     * than the after-image is written with, so the after-image is unambiguously
-     * newer. Note the two rows normally land on different sorting keys and so
-     * never compete; the ordering matters for the case where they collide.</p>
+     * <p>The tombstone carries the record's own version {@code V}, the same
+     * version the after-image is written with (Spec 05.02). The two rows never
+     * share a sorting key, so they never compete. What the tombstone must beat
+     * is the live row already stored at the OLD key -- and under GTID
+     * versioning that row can carry the very same {@code V}: an
+     * {@code INSERT (k='a')} followed in the same transaction by
+     * {@code UPDATE ... SET k='b'} gives both events one version. A tombstone
+     * at {@code V - 1} is then OLDER than the live row, loses the
+     * ReplacingMergeTree merge, and leaves a ghost row at {@code 'a'} next to
+     * the new row at {@code 'b'}. At {@code V} it ties, and ClickHouse resolves
+     * an equal-version tie to the later-inserted row, which the tombstone is.</p>
      *
      * @param columnNameToIndexMap A map of column names to prepared-statement indices.
      * @param ps The prepared statement to populate.
@@ -333,6 +448,12 @@ public class PreparedStatementFieldMapper {
         insertPreparedStatement(columnNameToIndexMap, ps, fields, record, struct, true, config,
                 columnNameToDataTypeMap, engine, tableName);
 
+        // A tombstone IS a delete marker: a table that cannot carry one would
+        // get the before image back as a LIVE row at the old key (Spec 08.01
+        // section 3.2).
+        requireDeleteColumn(config, columnNameToDataTypeMap, engine, tableName,
+                "The tombstone of an UPDATE that moves the row to another sorting key");
+
         // Force the delete marker on. insertPreparedStatement() derived it from
         // the CDC operation (UPDATE => not deleted); this row is a tombstone.
         if (this.replacingMergeTreeDeleteColumn != null
@@ -343,7 +464,9 @@ public class PreparedStatementFieldMapper {
             ps.setInt(deleteColumnIndex, this.replacingMergeTreeWithIsDeletedColumn ? 1 : -1);
         }
 
-        // Keep the tombstone strictly older than the after-image.
+        // Bind the record's own version, unchanged. Decrementing it made the
+        // tombstone lose to a same-transaction (same-version) live row at the
+        // old key; see the class comment above and Spec 05.02 section 3.2.
         if (this.versionColumn != null
                 && columnNameToDataTypeMap.containsKey(this.versionColumn)
                 && columnNameToIndexMap.containsKey(this.versionColumn)) {
@@ -352,8 +475,7 @@ public class PreparedStatementFieldMapper {
                         ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString()));
             }
             rejectUnderivableVersion(record);
-            long tombstoneVersion = record.getVersion() > 0 ? record.getVersion() - 1 : record.getVersion();
-            ps.setLong(columnNameToIndexMap.get(this.versionColumn), tombstoneVersion);
+            ps.setLong(columnNameToIndexMap.get(this.versionColumn), record.getVersion());
         }
     }
 
@@ -404,6 +526,8 @@ public class PreparedStatementFieldMapper {
                                    DBMetadata.TABLE_ENGINE engine,
                                    boolean beforeSection) throws Exception {
         if (engine == DBMetadata.TABLE_ENGINE.COLLAPSING_MERGE_TREE && signColumn != null) {
+            requireEngineColumnPlaceholder(columnNameToIndexMap, config, columnNameToDataTypeMap,
+                    signColumn, "sign", "CollapsingMergeTree", "0, so no +1/-1 pair ever collapses");
             if (columnNameToDataTypeMap.containsKey(signColumn) && columnNameToIndexMap.containsKey(signColumn)) {
                 int signColumnIndex = columnNameToIndexMap.get(signColumn);
                 if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
@@ -492,22 +616,36 @@ public class PreparedStatementFieldMapper {
      * strictly preferable, since the batch is retried or surfaced to the operator
      * whereas the corrupt row is not recoverable once merged.</p>
      *
-     * <p>After {@code calculateVersion()} this is only reachable when the record
-     * carries no ordering key AND no source commit timestamp, which indicates a
-     * malformed or unsupported change event rather than a normal GTID-less source.</p>
+     * <p>After {@code calculateVersion()} the sentinel is only reachable when the
+     * record carries no ordering key AND no source commit timestamp, which
+     * indicates a malformed or unsupported change event rather than a normal
+     * GTID-less source.</p>
+     *
+     * <p>{@code 0} is rejected as well (Spec 02.05 section 3.2). No branch of
+     * {@code calculateVersion()} produces it from a real source coordinate --
+     * GTID transaction numbers start at 1, the SnowFlakeId forms embed a
+     * positive timestamp, a PostgreSQL LSN of 0 is invalid and the lightweight
+     * sequence counter starts far above 0 -- so a zero is a corrupt or
+     * hand-built record whose ordering against its own history is undefined.
+     * It is refused for the same reason as the sentinel: fail loudly rather
+     * than write an unordered row.</p>
+     *
+     * <p>Package-private: {@code ReplicationHistoryHandler} applies the same rule
+     * to the version its SCD2 statements embed (Spec 12.03 section 3.5).</p>
      *
      * @param record The CDC record whose version is about to be bound.
      */
-    private static void rejectUnderivableVersion(ClickHouseStruct record) {
-        if (record.getVersion() == -1) {
+    static void rejectUnderivableVersion(ClickHouseStruct record) {
+        if (record.getVersion() <= 0) {
             throw new IllegalStateException(
-                    "Cannot derive a _version for record from topic '" + record.getTopic()
-                            + "' at kafka offset " + record.getKafkaOffset()
-                            + ": no GTID, sequence number, LSN or source timestamp is present. "
-                            + "Refusing to write the uninitialized sentinel, which is stored as "
-                            + "UInt64 18446744073709551615 and would win every ReplacingMergeTree "
-                            + "deduplication for this key permanently, silently discarding all "
-                            + "later updates and deletes.");
+                    "Cannot bind _version " + record.getVersion() + " for record from topic '"
+                            + record.getTopic() + "' at kafka offset " + record.getKafkaOffset()
+                            + ": a version must be a positive number derived from the GTID, "
+                            + "sequence number, LSN or source timestamp. The uninitialized "
+                            + "sentinel -1 is stored as UInt64 18446744073709551615 and would win "
+                            + "every ReplacingMergeTree deduplication for this key permanently, "
+                            + "silently discarding all later updates and deletes; 0 is not "
+                            + "producible by any source coordinate. Refusing to write the row.");
         }
     }
 
@@ -525,6 +663,9 @@ public class PreparedStatementFieldMapper {
                 (engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine() ||
                         engine.getEngine() == DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine())
                 && versionColumn != null) {
+            requireEngineColumnPlaceholder(columnNameToIndexMap, config, columnNameToDataTypeMap,
+                    versionColumn, "version", "ReplacingMergeTree",
+                    "0, so a redelivered older row wins every merge");
             if (columnNameToDataTypeMap.containsKey(versionColumn)) {
                 if (columnNameToIndexMap.containsKey(versionColumn)) {
                     // Calculate version if not already set
@@ -533,10 +674,77 @@ public class PreparedStatementFieldMapper {
                         record.calculateVersion(useSnowflakeId);
                     }
                     rejectUnderivableVersion(record);
+                    if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                        // An SCD2 table carries ONE version domain for every row it
+                        // holds, whichever statement or release wrote it: the
+                        // snowflake encoding of the record's ordering key (Spec 12.03
+                        // section 3.5.1). Binding the raw sequence number here while
+                        // the UPDATE/DELETE rows of earlier releases sit at 2.1e18
+                        // froze every previously updated key at the upgrade.
+                        ps.setLong(columnNameToIndexMap.get(versionColumn),
+                                ReplicationHistoryHandler.historyVersion(record));
+                        return;
+                    }
                     ps.setLong(columnNameToIndexMap.get(versionColumn), record.getVersion());
                 }
             }
         }
+    }
+
+
+    /**
+     * A delete marker for a ReplacingMergeTree target that has no delete
+     * column cannot be replicated: the only way a DELETE (or the tombstone of
+     * an UPDATE that moves a row to another sorting key) reaches a
+     * ReplacingMergeTree is a row with the delete marker set, and without the
+     * column that row would be inserted as a LIVE row with a higher version
+     * and resurrect the key (Spec 08.01 §3.2). INSERTs and UPDATEs to such a
+     * table replicate correctly, so the table is not refused up front; the row
+     * that needs the marker is, here, loudly. Replication-history mode retires
+     * rows through its own SCD Type 2 statement and is exempt, like
+     * {@link #requireEngineColumnPlaceholder}.
+     *
+     * @param what the row being refused, for the message ("A DELETE", ...).
+     */
+    @VisibleForTesting
+    void requireDeleteColumn(ClickHouseSinkConnectorConfig config,
+                             Map<String, String> columnNameToDataTypeMap,
+                             DBMetadata.TABLE_ENGINE engine,
+                             String tableName,
+                             String what) {
+        if (engine != DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE
+                && engine != DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE) {
+            return;
+        }
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())
+                || config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            return;
+        }
+        if (this.replacingMergeTreeDeleteColumn != null
+                && columnNameToDataTypeMap.containsKey(this.replacingMergeTreeDeleteColumn)) {
+            return;
+        }
+        throw new IllegalStateException(String.format(
+                "%s for ReplacingMergeTree table %s.%s cannot be replicated: the table has no "
+                        + "delete column '%s' (table columns: %s). Written as is, the before image "
+                        + "would become a LIVE row with a higher version and resurrect the key. "
+                        + "Declare the table as ReplacingMergeTree(<version>, <delete column>) or "
+                        + "point replacingmergetree.delete.column at an existing column, or set "
+                        + "ignore_delete=true if deletes must not be replicated. Refusing the row.",
+                what, databaseName, tableName, this.replacingMergeTreeDeleteColumn,
+                columnNameToDataTypeMap.keySet()));
+    }
+
+    private void requireDeleteColumnForDelete(ClickHouseStruct record,
+                                              ClickHouseSinkConnectorConfig config,
+                                              Map<String, String> columnNameToDataTypeMap,
+                                              DBMetadata.TABLE_ENGINE engine,
+                                              String tableName) {
+        if (record.getCdcOperation() == null || !record.getCdcOperation().getOperation()
+                .equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
+            return;
+        }
+        requireDeleteColumn(config, columnNameToDataTypeMap, engine, tableName, "A DELETE");
     }
 
     /**
@@ -547,8 +755,16 @@ public class PreparedStatementFieldMapper {
                                                        ClickHouseStruct record,
                                                        ClickHouseSinkConnectorConfig config,
                                                        Map<String, String> columnNameToDataTypeMap,
+                                                       DBMetadata.TABLE_ENGINE engine,
+                                                       String tableName,
                                                        boolean beforeSection) throws Exception {
+        requireDeleteColumnForDelete(record, config, columnNameToDataTypeMap, engine, tableName);
         if (this.replacingMergeTreeDeleteColumn != null && columnNameToDataTypeMap.containsKey(replacingMergeTreeDeleteColumn)) {
+            if (!config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())) {
+                requireEngineColumnPlaceholder(columnNameToIndexMap, config, columnNameToDataTypeMap,
+                        replacingMergeTreeDeleteColumn, "delete", "ReplacingMergeTree",
+                        "its default, so a DELETE inserts a LIVE row and the row is resurrected");
+            }
             if (columnNameToIndexMap.containsKey(replacingMergeTreeDeleteColumn) &&
                     !config.getBoolean(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString())) {
                 if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
@@ -583,6 +799,46 @@ public class PreparedStatementFieldMapper {
     }
 
     /**
+     * Refuses to write a row whose engine column exists in the table but has
+     * no placeholder in the generated INSERT.
+     *
+     * <p>Every engine column the table declares (version, sign, delete) is
+     * populated by the connector, never by the source, so it can only reach
+     * ClickHouse through a bind parameter. When the column is in the table
+     * but not in the parameter map, nothing binds it and ClickHouse stores
+     * the type default -- a silent, per-row corruption of the very column
+     * that decides which row survives a merge. That used to be skipped at
+     * DEBUG. It is the same class of defect as a dropped data column
+     * ({@code StaleSchemaCacheException} above) and is refused the same way
+     * (Spec 04.02 §3.1, 05.04 §3).</p>
+     *
+     * <p>Not applied in replication-history mode: there
+     * {@code QueryFormatter.getInsertQueryForUpdate} deliberately emits the
+     * engine columns as SQL literals and records no index for them
+     * ({@link #isUnboundByDesign}).</p>
+     */
+    private void requireEngineColumnPlaceholder(Map<String, Integer> columnNameToIndexMap,
+                                                ClickHouseSinkConnectorConfig config,
+                                                Map<String, String> columnNameToDataTypeMap,
+                                                String column, String role, String engineName,
+                                                String consequence) {
+        if (column == null || !columnNameToDataTypeMap.containsKey(column)
+                || columnNameToIndexMap.containsKey(column)) {
+            return;
+        }
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            return;
+        }
+        throw new IllegalStateException(String.format(
+                "The %s %s column '%s' exists in the ClickHouse table but the generated INSERT has "
+                        + "no placeholder for it, so nothing would bind it and ClickHouse would store "
+                        + "%s. The engine column names resolved from the table must reach query "
+                        + "construction (Spec 04.02 section 3.1). Refusing to write the row. "
+                        + "Database(%s)",
+                engineName, role, column, consequence, databaseName));
+    }
+
+    /**
      * Handles raw data storage if configured.
      */
     private void handleRawDataStorage(Map<String, Integer> columnNameToIndexMap,
@@ -602,24 +858,27 @@ public class PreparedStatementFieldMapper {
     }
 
     /**
-     * Retrieves a field from a list of fields based on the column name. The search
-     * is case-insensitive.
+     * Resolves the record field a ClickHouse column is bound from: an exact
+     * name match against the record's schema first, then a case-insensitive
+     * one. The schema (not the modified-field list, which omits NULL-valued
+     * fields) is consulted so a NULL source value in a case-mismatched column
+     * is still bound as NULL (Spec 04.03 section 3.4).
      *
-     * @param fields The list of fields to search through.
-     * @param colName The column name to search for.
-     * @return The matching field, or null if no field matches the column name.
+     * @param struct  the record image being bound
+     * @param colName the ClickHouse column name
+     * @return the matching field, or null when no field matches under either comparison
      */
-    private Field getFieldByColumnName(List<Field> fields, String colName) {
-        // ToDo: Change it to a map so that multiple loops are avoided
-        Field matchingField = null;
-        for (Field f : fields) {
-            // Case-insensitive comparison of field name with column name
+    static Field resolveSourceField(Struct struct, String colName) {
+        Field exact = struct.schema().field(colName);
+        if (exact != null) {
+            return exact;
+        }
+        for (Field f : struct.schema().fields()) {
             if (f.name().equalsIgnoreCase(colName)) {
-                matchingField = f;
-                break;
+                return f;
             }
         }
-        return matchingField;
+        return null;
     }
 
     /**
@@ -633,24 +892,31 @@ public class PreparedStatementFieldMapper {
      */
     public ClickHouseDataType getClickHouseDataType(String columnName,
                                                     Map<String, String> columnNameToDataTypeMap) {
+        ClickHouseColumn column = parseColumn(columnName, columnNameToDataTypeMap);
+        return column == null ? null : column.getDataType();
+    }
 
-        ClickHouseDataType chDataType = null;
+    /**
+     * Parses the column's declared ClickHouse type from the map into a
+     * {@link ClickHouseColumn}, which carries both the data type and the
+     * declared time zone.
+     *
+     * @param columnName The name of the column.
+     * @param columnNameToDataTypeMap A map of column names to declared types.
+     * @return The parsed column, or null if the type is unknown or unparseable.
+     */
+    private ClickHouseColumn parseColumn(String columnName,
+                                         Map<String, String> columnNameToDataTypeMap) {
         try {
             // Retrieve the column data type from the map
             String columnDataType = columnNameToDataTypeMap.get(columnName);
             // Create a ClickHouse column object based on the column name and type
-            ClickHouseColumn column = ClickHouseColumn.of(columnName, columnDataType);
-
-            // Retrieve the data type from the ClickHouse column if available
-            if (column != null) {
-                chDataType = column.getDataType();
-            }
+            return ClickHouseColumn.of(columnName, columnDataType);
         } catch (Exception e) {
             // Log any error related to unknown data types
             log.debug("Unknown data type for column: " + columnName, e);
+            return null;
         }
-
-        return chDataType;
     }
 }
 

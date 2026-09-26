@@ -48,14 +48,11 @@ public class ClickHouseStruct {
     private static final long UNINITIALIZED_VALUE = -1L;
 
     /**
-     * Expected length of the GTID array.
+     * Minimum number of colon-separated segments of a MySQL GTID: {@code uuid:n}
+     * (classic) or {@code uuid:tag:n} (tagged, MySQL 8.3+). The transaction
+     * number is always the LAST segment (spec 02.01 section 3.1).
      */
-    private static final int EXPECTED_GTID_ARRAY_LENGTH = 2;
-
-    /**
-     * Index to parse the second segment from the GTID array.
-     */
-    private static final int GTID_SEGMENT_INDEX = 1;
+    private static final int MIN_GTID_SEGMENTS = 2;
 
     /**
      * Shared ObjectMapper for JSON serialization. Thread-safe for read/serialization operations.
@@ -182,6 +179,19 @@ public class ClickHouseStruct {
     private long sequenceNumber = UNINITIALIZED_VALUE;
 
     /**
+     * Handoff sequence of the unit this record was handed off in, stamped by
+     * {@code DebeziumOffsetManagement.registerHandoff} on the producer thread;
+     * {@code UNINITIALIZED_VALUE} for a record that was never handed off (the
+     * Kafka Connect sink path). Lets a worker that reports a written batch
+     * after an in-process engine restart tell a RETIRED unit -- handed off by
+     * an engine that has since stopped, whose offset store is closed -- from a
+     * producer bug (spec 09.01 section 3.8 item 5).
+     */
+    @Getter
+    @Setter
+    private long handoffSequence = UNINITIALIZED_VALUE;
+
+    /**
      * Log Sequence Number (LSN) offset for some databases, if applicable.
      */
     @Getter
@@ -202,6 +212,17 @@ public class ClickHouseStruct {
     @Getter
     @Setter
     private long version = UNINITIALIZED_VALUE;
+
+    /**
+     * Timestamp (ms) that feeds the timestamp field of a GTID (snowflake) version:
+     * the commit-order-floored {@code effectiveTs} of the lightweight version
+     * sequence, set by the dispatch loop next to {@link #sequenceNumber} (spec
+     * 02.01 section 3.1). {@code 0} when unset -- the Kafka Connect path never sets
+     * it -- in which case {@link #calculateVersion} uses {@link #ts_ms} as before.
+     */
+    @Getter
+    @Setter
+    private long versionTs = 0L;
 
     // Inheritance doesn't work because of different package
     // error, composition.
@@ -264,6 +285,15 @@ public class ClickHouseStruct {
     @Getter
     @Setter
     boolean lastRecordInBatch;
+
+    /**
+     * Estimated retained heap of this row (spec 01.05 §3.4 item 7), stamped at
+     * handoff by {@code RecordSizeEstimator.estimateGroup}; {@code 0} until
+     * then. Read by the handoff byte cap and by the INSERT chunker.
+     */
+    @Getter
+    @Setter
+    long estimatedBytes;
 
     /**
      * Constructs a ClickHouseStruct with commit info.
@@ -381,7 +411,11 @@ public class ClickHouseStruct {
             for (Field f : schemaFields) {
                 // Identify the list of columns that were modified.
                 // Schema.fields() will give the list of columns in the schema.
-                if (s.get(f) != null) {
+                // getWithoutDefault: Struct.get() answers the Connect-schema
+                // default (the MySQL column DEFAULT, via Debezium) for a null
+                // field, which would classify a source NULL as "modified to
+                // the default" (Spec 07.07 section 3.1).
+                if (s.getWithoutDefault(f.name()) != null) {
                     this.beforeModifiedFields.add(f);
                 }
             }
@@ -402,7 +436,8 @@ public class ClickHouseStruct {
             for (Field f : schemaFields) {
                 // Identify the list of columns that were modified.
                 // Schema.fields() will give the list of columns in the schema.
-                if (s.get(f) != null) {
+                // getWithoutDefault: see setBeforeStruct.
+                if (s.getWithoutDefault(f.name()) != null) {
                     this.afterModifiedFields.add(f);
                 }
             }
@@ -475,9 +510,16 @@ public class ClickHouseStruct {
                     && source.get(GTID) != null
                     && source.get(GTID) instanceof String) {
                 String[] gtidArray = ((String) source.get(GTID)).split(":");
-                if (gtidArray.length == EXPECTED_GTID_ARRAY_LENGTH) {
-                    this.setGtid(Long.parseLong(
-                            gtidArray[GTID_SEGMENT_INDEX]));
+                // uuid:n (classic) or uuid:tag:n (MySQL 8.3+ tagged GTID): the
+                // transaction number is the LAST segment. Parsing only the
+                // two-segment form left every tagged transaction with gtid unset,
+                // which silently dropped it into the sequence-number version
+                // domain while its untagged neighbours stayed in the snowflake
+                // domain, so it lost every merge against them. A value without a
+                // colon (MariaDB domain-server-seq) is not a MySQL GTID and leaves
+                // gtid unset (spec 02.01 section 3.1).
+                if (gtidArray.length >= MIN_GTID_SEGMENTS) {
+                    this.setGtid(Long.parseLong(gtidArray[gtidArray.length - 1].trim()));
                 }
             }
             if (fieldNames.contains(LSN)
@@ -609,6 +651,90 @@ public class ClickHouseStruct {
         // Fall back to the envelope timestamp when the source struct/field is absent.
         Object envelopeTs = kafkaStruct.get(SinkRecordColumns.TS_MS);
         return envelopeTs instanceof Long ? (Long) envelopeTs : 0L;
+    }
+
+    /**
+     * Gets the position of the change event in the source transaction log
+     * ({@code source.file}/{@code source.pos}/{@code source.row} for MySQL and
+     * MariaDB, {@code source.lsn} for PostgreSQL).
+     *
+     * <p>The source timestamp returned by {@link #getSourceTsFromChangeEvent} is NOT
+     * monotonic in commit order on MySQL: a row event carries the timestamp of the
+     * statement that produced it, and a transaction commits - and reaches the binlog -
+     * after every transaction that committed while it was open. The log position IS
+     * commit order, so the version sequence uses it to recognise a first delivery
+     * (position beyond the high-water mark) and enforce commit ordering on it, while a
+     * redelivery (position at or below the mark) keeps its source-timestamp anchored,
+     * redelivery-stable version.</p>
+     *
+     * @param changeEvent The change event.
+     * @return the position, or {@code null} when the record carries no usable position
+     *         (heartbeats, transaction markers, MongoDB, records without a
+     *         {@code source} struct)
+     */
+    public static SourcePosition getSourcePositionFromChangeEvent(ChangeEvent<SourceRecord, SourceRecord> changeEvent) {
+        if (changeEvent == null || changeEvent.value() == null) {
+            return null;
+        }
+        SourceRecord srd = changeEvent.value();
+        Object value = srd.value();
+        if (!(value instanceof Struct)) {
+            return null;
+        }
+        Struct kafkaStruct = (Struct) value;
+        if (kafkaStruct.schema() == null
+                || kafkaStruct.schema().field(SinkRecordColumns.SOURCE) == null) {
+            return null;
+        }
+        Object sourceObj = kafkaStruct.get(SinkRecordColumns.SOURCE);
+        if (!(sourceObj instanceof Struct)) {
+            return null;
+        }
+        return sourcePositionOf((Struct) sourceObj);
+    }
+
+    /**
+     * Reads the log position out of a Debezium {@code source} struct.
+     *
+     * @param source the {@code source} struct of a change event
+     * @return the position, or {@code null} when the struct carries none
+     */
+    static SourcePosition sourcePositionOf(Struct source) {
+        Schema schema = source.schema();
+        if (schema == null) {
+            return null;
+        }
+        if (schema.field(BINLOG_FILE) != null && schema.field(BINLOG_POS) != null) {
+            Object binlogFile = source.get(BINLOG_FILE);
+            Object binlogPos = source.get(BINLOG_POS);
+            Object binlogRow = schema.field(ROW) != null ? source.get(ROW) : null;
+            if (binlogFile instanceof String && binlogPos instanceof Long) {
+                return SourcePosition.ofBinlog((String) binlogFile, (Long) binlogPos,
+                        binlogRow instanceof Integer ? (Integer) binlogRow : null);
+            }
+        }
+        if (schema.field(LSN) != null) {
+            Object walLsn = source.get(LSN);
+            if (walLsn instanceof Long) {
+                return SourcePosition.ofLsn((Long) walLsn);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * The position of this record in the source transaction log, built from the
+     * {@code file}/{@code pos}/{@code row} (MySQL, MariaDB) or {@code lsn} (PostgreSQL)
+     * captured from the record's {@code source} struct.
+     *
+     * @return the position, or {@code null} when the record carries none
+     */
+    public SourcePosition getSourcePosition() {
+        SourcePosition binlogPosition = SourcePosition.ofBinlog(file, pos, row);
+        if (binlogPosition != null) {
+            return binlogPosition;
+        }
+        return SourcePosition.ofLsn(lsn);
     }
 
     /**
@@ -841,12 +967,24 @@ public class ClickHouseStruct {
      * missing, i.e. when nothing at all can be derived. The bind sites reject such a
      * record rather than write it.</p>
      *
+     * <p>On the GTID path the snowflake's timestamp field is {@link #versionTs} when
+     * the lightweight dispatch loop set it -- the {@code effectiveTs} of the version
+     * sequence, clamped up to the run's commit-order floor -- and the raw
+     * {@code source.ts_ms} otherwise. {@code source.ts_ms} is the STATEMENT time on
+     * MySQL: a long transaction that commits after a shorter one carries the older
+     * timestamp, and because the timestamp dominates the snowflake, versioning it on
+     * the raw value ranked the newer commit below the older one and ReplacingMergeTree
+     * kept the stale row. With the floored timestamp the late commit shares (at
+     * least) the earlier commit's timestamp field and wins on its higher GTID
+     * transaction number. The encoding is unchanged (spec 02.01 section 3.1).</p>
+     *
      * @param useSnowflakeId Whether to use SnowFlakeId algorithm for version generation
      */
     public void calculateVersion(boolean useSnowflakeId) {
         if (this.gtid != UNINITIALIZED_VALUE) {
             if (useSnowflakeId) {
-                this.version = SnowFlakeId.generate(this.ts_ms, this.gtid, false);
+                long snowflakeTs = this.versionTs > 0 ? this.versionTs : this.ts_ms;
+                this.version = SnowFlakeId.generate(snowflakeTs, this.gtid, false);
             } else {
                 this.version = this.gtid;
             }

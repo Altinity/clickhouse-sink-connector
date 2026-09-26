@@ -166,12 +166,15 @@ public class QueryFormatterTest {
         Assert.assertTrue("Query should start with INSERT INTO statement", 
                 query.contains(expectedPattern));
         
-        // Query should have TWO UNION ALL clauses (three SELECTs total)
+        // A same-key UPDATE has ONE UNION ALL (close row + after row); the deleted
+        // before copy is gone (Spec 12.03 section 3.2, Gap G-12.03-2)
         int unionAllCount = query.split("UNION ALL").length - 1;
-        Assert.assertEquals("Query should have two UNION ALL clauses for three SELECTs", 2, unionAllCount);
-        
-        Assert.assertTrue("Query should contain WHERE clause with primary key", 
+        Assert.assertEquals("Query should have one UNION ALL clause for two SELECTs", 1, unionAllCount);
+
+        Assert.assertTrue("Query should contain WHERE clause with primary key",
                 query.contains("WHERE `employeeNumber`=1001"));
+        Assert.assertEquals("the before key is selected once: by the close row only", 1,
+                occurrences(query, "WHERE `employeeNumber`=1001 AND `_valid_to`"));
         Assert.assertTrue("Query should contain valid_to condition with toDateTime", 
                 query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC')"));
         Assert.assertTrue("Query should contain is_deleted condition", 
@@ -249,10 +252,12 @@ public class QueryFormatterTest {
         Assert.assertTrue("Query should contain quoted string primary key value",
                 query.contains("`officeCode`='NYC01'"));
         
-        // Query should have TWO UNION ALL clauses (three SELECTs total)
+        // A same-key UPDATE has ONE UNION ALL (close row + after row)
         int unionAllCount = query.split("UNION ALL").length - 1;
-        Assert.assertEquals("Query should have two UNION ALL clauses for three SELECTs", 2, unionAllCount);
-        
+        Assert.assertEquals("Query should have one UNION ALL clause for two SELECTs", 1, unionAllCount);
+        Assert.assertEquals("the before key is selected once: by the close row only", 1,
+                occurrences(query, "WHERE `officeCode`='NYC01' AND `_valid_to`"));
+
         // Verify basic query structure
         Assert.assertTrue("Query should contain valid_to condition with toDateTime", 
                 query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC')"));
@@ -381,5 +386,185 @@ public class QueryFormatterTest {
         Assert.assertEquals("Query should have one UNION ALL for two SELECTs", 1, unionAllCount);
         Assert.assertTrue("Column index map should be empty",
                 columnIndexMap.isEmpty());
+    }
+
+    /**
+     * Spec 02.01 section 3.5 (a): the history UPDATE and DELETE queries take the
+     * whole primary key (column -> value, in key order) and close the previous
+     * row with a conjunction over every column, each value formatted for its type.
+     */
+    @Test
+    public void updateAndDeleteQueriesUseEveryPrimaryKeyColumn() {
+        QueryFormatter qf = new QueryFormatter();
+        Map<String, String> columns = new HashMap<>();
+        columns.put("tenant", "String");
+        columns.put("item_id", "Int32");
+        columns.put("qty", "Int32");
+        columns.put(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN, "DateTime");
+        columns.put(ClickHouseDbConstants.DELETED_TIME_COLUMN, "DateTime");
+        columns.put(ClickHouseDbConstants.OPERATION_COLUMN, "String");
+        columns.put(ClickHouseDbConstants.VERSION_COLUMN, "Int64");
+        columns.put(ClickHouseDbConstants.IS_DELETED_COLUMN, "Int8");
+        java.util.LinkedHashMap<String, Object> primaryKey = new java.util.LinkedHashMap<>();
+        primaryKey.put("tenant", "acme");
+        primaryKey.put("item_id", 99);
+
+        String update = qf.getInsertQueryForUpdate("h.items", columns, primaryKey, "2100-01-01 00:00:00",
+                "2025-03-01 10:30:00", 5L, ClickHouseConverter.CDC_OPERATION.UPDATE, "UTC", false).left;
+        String delete = qf.getInsertQueryForDelete("h.items", columns, primaryKey, "2100-01-01 00:00:00",
+                "2025-03-01 10:30:00", 5L, "UTC").left;
+
+        String predicate = "WHERE `tenant`='acme' AND `item_id`=99 AND `_valid_to`";
+        // Same-key UPDATE: only the close row reads the table (Spec 12.03 section 3.2);
+        // DELETE: close row and marker both do (section 3.3).
+        Assert.assertEquals(1, occurrences(update, predicate));
+        Assert.assertEquals(2, occurrences(delete, predicate));
+        Assert.assertEquals("the single-column form is the one-entry case of the same predicate",
+                qf.getInsertQueryForDelete("h.items", columns, "item_id", 99, "2100-01-01 00:00:00",
+                        "2025-03-01 10:30:00", 5L, "UTC").left,
+                qf.getInsertQueryForDelete("h.items", columns, new java.util.LinkedHashMap<>(
+                        java.util.Collections.singletonMap("item_id", (Object) 99)), "2100-01-01 00:00:00",
+                        "2025-03-01 10:30:00", 5L, "UTC").left);
+    }
+
+    // ---- Spec 12.03 sections 3.2-3.5: the corrected SCD2 statement shapes ----
+
+    private static final String SENTINEL = "2100-01-01 00:00:00";
+    private static final String EVENT_TIME = "2025-03-01 10:30:00";
+    private static final String BEFORE_KEY_OPEN_ROW =
+            "WHERE `employeeNumber`=1001 AND `_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC') AND `is_deleted` = 0";
+
+    private static int occurrences(String haystack, String needle) {
+        int count = 0;
+        for (int i = haystack.indexOf(needle); i >= 0; i = haystack.indexOf(needle, i + needle.length())) {
+            count++;
+        }
+        return count;
+    }
+
+    /** An SCD2 table (Spec 12.02): data columns plus the connector's history and engine columns, in table order. */
+    private static Map<String, String> historyColumns() {
+        Map<String, String> columns = new LinkedHashMap<>();
+        columns.put("employeeNumber", "Int32");
+        columns.put("lastName", "String");
+        columns.put(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN, "DateTime");
+        columns.put(ClickHouseDbConstants.DELETED_TIME_COLUMN, "DateTime");
+        columns.put(ClickHouseDbConstants.OPERATION_COLUMN, "String");
+        columns.put(ClickHouseDbConstants.VERSION_COLUMN, "Int64");
+        columns.put(ClickHouseDbConstants.IS_DELETED_COLUMN, "Int8");
+        return columns;
+    }
+
+    private static Map<String, Object> employeeKey(int employeeNumber) {
+        Map<String, Object> key = new LinkedHashMap<>();
+        key.put("employeeNumber", employeeNumber);
+        return key;
+    }
+
+    /**
+     * Spec 12.03 section 3.2 / Gap G-12.03-2: a same-key UPDATE writes the close
+     * row and the after row, nothing else. The former deleted copy of the before
+     * image shared sorting key AND version with the close row, so FINAL could keep
+     * either one -- the closed history version was visible only by luck.
+     */
+    @Test
+    public void updateEmitsNoDeletedBeforeCopy() {
+        String update = new QueryFormatter().getInsertQueryForUpdate("h.employees", historyColumns(),
+                employeeKey(1001), SENTINEL, EVENT_TIME, 77L, ClickHouseConverter.CDC_OPERATION.UPDATE,
+                "UTC", false).left;
+
+        Assert.assertEquals("close row + after row: one UNION ALL: " + update, 1, occurrences(update, "UNION ALL"));
+        Assert.assertFalse("no deleted copy of the before image: " + update, update.contains("1 as `is_deleted`"));
+        Assert.assertEquals("only the close row reads the table: " + update, 1,
+                occurrences(update, "FROM `h.employees` FINAL"));
+        Assert.assertTrue("the close row ends at the event time",
+                update.contains("toDateTime('2025-03-01 10:30:00', 'UTC')"));
+    }
+
+    /**
+     * Gap G-12.03-3: when the primary key changes, the old key's open row must be
+     * retired, or the table shows two current rows for one source row. The third
+     * SELECT is a delete marker at the OLD key's open sorting key (before key,
+     * sentinel) and exists ONLY for a key change.
+     */
+    @Test
+    public void keyChangingUpdateEmitsDeleteMarkerAtOldKey() {
+        QueryFormatter qf = new QueryFormatter();
+
+        String moved = qf.getInsertQueryForUpdate("h.employees", historyColumns(), employeeKey(1001), SENTINEL,
+                EVENT_TIME, 77L, ClickHouseConverter.CDC_OPERATION.UPDATE, "UTC", true).left;
+        Assert.assertEquals("close row + after row + old-key marker: two UNION ALL: " + moved,
+                2, occurrences(moved, "UNION ALL"));
+        String marker = moved.substring(moved.lastIndexOf("UNION ALL"));
+        Assert.assertTrue("the marker is deleted: " + marker, marker.contains("1 as `is_deleted`"));
+        Assert.assertTrue("the marker records the UPDATE: " + marker, marker.contains("'U' as `_operation`"));
+        Assert.assertTrue("the marker sits at the open sorting key: " + marker,
+                marker.contains("toDateTime('2100-01-01 00:00:00', 'UTC') as `_valid_to`"));
+        Assert.assertTrue("the marker starts where the closed version ends: " + marker,
+                marker.contains("toDateTime('2025-03-01 10:30:00', 'UTC') as `_valid_from`"));
+        Assert.assertTrue("the marker copies the open row at the BEFORE key: " + marker,
+                marker.contains(BEFORE_KEY_OPEN_ROW));
+        Assert.assertEquals("close row and marker both select the before key's open row: " + moved,
+                2, occurrences(moved, BEFORE_KEY_OPEN_ROW));
+
+        String sameKey = qf.getInsertQueryForUpdate("h.employees", historyColumns(), employeeKey(1001), SENTINEL,
+                EVENT_TIME, 77L, ClickHouseConverter.CDC_OPERATION.UPDATE, "UTC", false).left;
+        Assert.assertEquals("no marker for a same-key UPDATE: " + sameKey, 1, occurrences(sameKey, "UNION ALL"));
+    }
+
+    /**
+     * Spec 12.03 section 3.5 / Gap G-12.03-4: every row one event emits carries
+     * the event's ONE version. {@code version + 1} collided with the next event's
+     * version on the lightweight sequence path; the rows never compete with each
+     * other (different sorting keys) and beat the earlier event's open row (I2).
+     */
+    @Test
+    public void allRowsOfOneEventShareOneVersion() {
+        QueryFormatter qf = new QueryFormatter();
+        long version = 4242L;
+
+        String update = qf.getInsertQueryForUpdate("h.employees", historyColumns(), employeeKey(1001), SENTINEL,
+                EVENT_TIME, version, ClickHouseConverter.CDC_OPERATION.UPDATE, "UTC", true).left;
+        Assert.assertEquals("close, after and old-key marker rows all carry V: " + update,
+                3, occurrences(update, "4242 as `_version`"));
+        Assert.assertFalse("never V+1: " + update, update.contains("4243"));
+
+        String delete = qf.getInsertQueryForDelete("h.employees", historyColumns(), employeeKey(1001), SENTINEL,
+                EVENT_TIME, version, "UTC").left;
+        Assert.assertEquals("close row and delete marker both carry V: " + delete, 2, occurrences(delete, "4242"));
+        Assert.assertFalse("never V+1: " + delete, delete.contains("4243"));
+    }
+
+    /**
+     * Spec 12.03 section 3.4 / Gap G-12.03-6: a replicated TRUNCATE closes EVERY
+     * open row at the event time and marks each one deleted at its open sorting
+     * key, in one column-list-agnostic statement, instead of erasing the history.
+     */
+    @Test
+    public void truncateClosesEveryOpenRowAndMarksIt() {
+        QueryFormatter qf = new QueryFormatter();
+        String bulk = qf.getInsertQueryForBulkClose("h.employees", true, SENTINEL, EVENT_TIME, 4242L, "T", "UTC");
+
+        Assert.assertTrue("positional INSERT of a SELECT * REPLACE: " + bulk,
+                bulk.startsWith("INSERT INTO `h`.`employees` SELECT * REPLACE ("));
+        Assert.assertEquals("close rows + markers: one UNION ALL: " + bulk, 1, occurrences(bulk, "UNION ALL"));
+        Assert.assertEquals("both SELECTs are column-list agnostic: " + bulk, 2, occurrences(bulk, "SELECT * REPLACE"));
+        Assert.assertEquals("both SELECTs read every open row under FINAL: " + bulk, 2, occurrences(bulk,
+                "FROM `h`.`employees` FINAL WHERE `_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC') AND `is_deleted` = 0"));
+        Assert.assertFalse("no primary-key predicate: every open row is closed: " + bulk,
+                bulk.contains("`employeeNumber`"));
+        Assert.assertTrue("close rows end at the event time: " + bulk,
+                bulk.contains("toDateTime('2025-03-01 10:30:00', 'UTC') AS `_valid_to`"));
+        Assert.assertTrue("markers start at the event time: " + bulk,
+                bulk.contains("toDateTime('2025-03-01 10:30:00', 'UTC') AS `_valid_from`"));
+        Assert.assertTrue("markers are deleted: " + bulk, bulk.contains("1 AS `is_deleted`"));
+        Assert.assertTrue("markers record the TRUNCATE: " + bulk, bulk.contains("'T' AS `_operation`"));
+        Assert.assertEquals("every row carries the event's version: " + bulk, 2, occurrences(bulk, "4242 AS `_version`"));
+        Assert.assertFalse("nothing destructive: " + bulk, bulk.toUpperCase().contains("TRUNCATE"));
+
+        String withoutIsDeleted = qf.getInsertQueryForBulkClose("h.employees", false, SENTINEL, EVENT_TIME, 4242L, "T", "UTC");
+        Assert.assertFalse("a table without is_deleted gets neither the replacement nor the conjunct: " + withoutIsDeleted,
+                withoutIsDeleted.contains("is_deleted"));
+        Assert.assertEquals(1, occurrences(withoutIsDeleted, "UNION ALL"));
     }
 }

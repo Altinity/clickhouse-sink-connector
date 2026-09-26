@@ -1,8 +1,10 @@
 package com.altinity.clickhouse.sink.connector.common;
 
+import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -51,8 +53,23 @@ public class ClickHouseErrorClassifier {
         FATAL_ERROR_CODES.add(16);   // NO_SUCH_COLUMN_IN_TABLE
 
         // Configuration / resource limits (deterministic for a given batch)
-        FATAL_ERROR_CODES.add(252);  // TOO_MANY_PARTS
-        FATAL_ERROR_CODES.add(241);  // MEMORY_LIMIT_EXCEEDED
+        //
+        // NOTE: 252 TOO_MANY_PARTS is deliberately NOT here. It is ClickHouse's
+        // insert backpressure signal (active parts above parts_to_throw_insert)
+        // and clears on its own as background merges catch up -- the SAME batch
+        // succeeds on retry once the part count falls. Classifying it FATAL
+        // stopped the whole connector (every table) on a transient, self-healing
+        // condition and required a manual restart. It is left to the RETRIABLE
+        // default so the batch is retried with backoff; offsets never advance
+        // past an unwritten batch, so retrying is safe (no divergence).
+        //
+        // 241 MEMORY_LIMIT_EXCEEDED is NOT here either. The limit that trips is
+        // the per-query / per-user / server memory budget under CONCURRENT load
+        // (merges, other inserts, other queries); the same batch succeeds once
+        // that pressure passes, so it is retried with backoff. The genuinely
+        // deterministic case -- one batch larger than the budget -- shows up as
+        // an unbounded, logged retry of one batch (lower buffer.max.records),
+        // never as silence.
         FATAL_ERROR_CODES.add(396);  // TOO_MANY_PARTITIONS
 
         // Data format errors
@@ -61,6 +78,31 @@ public class ClickHouseErrorClassifier {
         FATAL_ERROR_CODES.add(69);   // ARGUMENT_OUT_OF_BOUND
         FATAL_ERROR_CODES.add(349);  // INVALID_PARTITION_VALUE
     }
+
+    /**
+     * Exception types that are terminal for the batch WHATEVER the message
+     * says -- they are raised by the connector itself, not by ClickHouse, so
+     * they carry no {@code Code: NNN} and code extraction alone would file
+     * them under {@link ErrorCategory#UNKNOWN} and retry them forever.
+     *
+     * <p>{@link DebeziumConverter.ValueOutOfRangeException}: the value the
+     * source holds cannot be stored under the current ClickHouse column type
+     * (under {@code clamp.out.of.range=false}, spec 07.03 section 3.3).
+     * Retrying the same batch can never succeed -- the value and
+     * the column type are both unchanged on every attempt -- so it is FATAL
+     * exactly like an unknown table: the worker rethrows with the batch
+     * retained (no offset can pass its rows) and the Debezium thread turns the
+     * dead worker into a loud engine stop (spec 03.01 section 3.3, spec 10.04).
+     * Before this rule the batch was retried with backoff indefinitely: the
+     * unit stayed outstanding, every DDL drain waited on it, and nothing was
+     * ever acknowledged again. Remedy: widen the column, or return to the
+     * default {@code clamp.out.of.range=true}.</p>
+     *
+     * <p>Matched against the exception and every {@code getCause()} down to
+     * the root, BEFORE any error code is extracted (spec 10.01 section 3.1).</p>
+     */
+    static final Set<Class<? extends Throwable>> TERMINAL_EXCEPTION_TYPES = Collections.singleton(
+            DebeziumConverter.ValueOutOfRangeException.class);
 
     public enum ErrorCategory {
         /** Error is transient — retry may succeed (network, timeout, etc.) */
@@ -72,7 +114,9 @@ public class ClickHouseErrorClassifier {
     }
 
     /**
-     * Classify an exception based on the ClickHouse error code in its message.
+     * Classify an exception: a {@link #TERMINAL_EXCEPTION_TYPES terminal
+     * exception type} anywhere in the cause chain is FATAL regardless of any
+     * error code; otherwise by the ClickHouse error code in its message chain.
      *
      * @param e the exception to classify
      * @return the error category
@@ -80,6 +124,10 @@ public class ClickHouseErrorClassifier {
     public static ErrorCategory classify(Exception e) {
         if (e == null) {
             return ErrorCategory.UNKNOWN;
+        }
+
+        if (hasTerminalCause(e)) {
+            return ErrorCategory.FATAL;
         }
 
         int errorCode = extractErrorCode(e);
@@ -94,6 +142,24 @@ public class ClickHouseErrorClassifier {
         }
 
         return ErrorCategory.RETRIABLE;
+    }
+
+    /**
+     * Whether the exception or any of its causes (down to the root) is one of
+     * the {@link #TERMINAL_EXCEPTION_TYPES}.
+     *
+     * @param e the exception
+     * @return true when a terminal exception type is in the cause chain
+     */
+    static boolean hasTerminalCause(Throwable e) {
+        for (Throwable current = e; current != null; current = current.getCause()) {
+            for (Class<? extends Throwable> terminal : TERMINAL_EXCEPTION_TYPES) {
+                if (terminal.isInstance(current)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

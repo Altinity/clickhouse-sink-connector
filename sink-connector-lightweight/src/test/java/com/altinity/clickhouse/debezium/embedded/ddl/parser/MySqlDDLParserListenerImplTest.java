@@ -1,8 +1,10 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.junit.Assert;
@@ -13,11 +15,19 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
+import com.altinity.clickhouse.debezium.embedded.cdc.DDLReplicationException;
+
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 
 public class MySqlDDLParserListenerImplTest {
@@ -39,8 +49,146 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         mySQLDDLParserService.parseSql(createQuery, "test", clickHouseQuery);
-        Assert.assertTrue("CREATE TABLE if not exists employees.example(options Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()".equalsIgnoreCase(clickHouseQuery.toString()));
-        ;
+        // Keyless table: every stored column is the sorting key, never
+        // ORDER BY tuple() (Spec 06.05 §3.6); the nullable key needs the setting.
+        Assert.assertTrue(clickHouseQuery.toString(), "CREATE TABLE if not exists `employees`.example(options Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (options) SETTINGS allow_nullable_key=1".equalsIgnoreCase(clickHouseQuery.toString()));
+    }
+
+    // ------------------------------------------------------------------
+    // Spec 06.05 §3.6: keyless CREATE TABLE gets the all-columns sorting key
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("CREATE TABLE with no PRIMARY KEY and no UNIQUE key orders by every stored column, never tuple()")
+    public void testCreateTableKeylessOrdersByAllColumns() {
+        String q = translate("CREATE TABLE audit (a INT, b VARCHAR(20) NOT NULL, "
+                + "c DATETIME(3), d INT GENERATED ALWAYS AS (a + 1))");
+        String expected = "CREATE TABLE if not exists `employees`.audit("
+                + "a Nullable(Int32),b String NOT NULL ,c Nullable(DateTime64(3, 0)),d Nullable(Int32) DEFAULT a+1,"
+                + "`_version` UInt64,`is_deleted` UInt8) "
+                + "Engine=ReplacingMergeTree(_version,is_deleted) "
+                + "ORDER BY (a,b,c) SETTINGS allow_nullable_key=1";
+        Assert.assertTrue(q, q.equalsIgnoreCase(expected));
+        Assert.assertFalse(q, q.toLowerCase().contains("order by tuple()"));
+
+        // Every key column NOT NULL: no setting is emitted.
+        String nn = translate("CREATE TABLE audit2 (a INT NOT NULL, b VARCHAR(20) NOT NULL)");
+        Assert.assertTrue(nn, nn.toLowerCase().endsWith("order by (a,b)"));
+        Assert.assertFalse(nn, nn.toLowerCase().contains("allow_nullable_key"));
+
+        // Quoted names are kept as written, like the PRIMARY KEY path does.
+        String quoted = translate("CREATE TABLE `audit3` (`a` INT, `b` INT)");
+        Assert.assertTrue(quoted, quoted.toLowerCase().contains("order by (`a`,`b`) settings allow_nullable_key=1"));
+
+        // The schema-override primary_key still wins over the fallback.
+        HashMap<String, String> configMap = new HashMap<>();
+        configMap.put("databases.employees.tables.audit4.primary_key", "(b)");
+        MySQLDDLParserService overridden = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(configMap), "employees");
+        String withOverride = translate(overridden, "CREATE TABLE audit4 (a INT, b INT NOT NULL)");
+        Assert.assertTrue(withOverride, withOverride.toLowerCase().endsWith("order by (b)"));
+    }
+
+    // ------------------------------------------------------------------
+    // Spec 07.01 §3.2 / 07.02 §3.1: DDL-path type spellings
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("Every spelling of an unsigned integer (ZEROFILL, INTn synonyms, display width) maps to UInt")
+    public void testUnsignedSynonymsAndZerofillMapToUInt() {
+        String expected = "ALTER TABLE `employees`.t "
+                + "ADD COLUMN IF NOT EXISTS a Nullable(UInt64), "
+                + "ADD COLUMN IF NOT EXISTS b Nullable(UInt64), "
+                + "ADD COLUMN IF NOT EXISTS c Nullable(UInt32), "
+                + "ADD COLUMN IF NOT EXISTS d Nullable(UInt32), "
+                + "ADD COLUMN IF NOT EXISTS e Nullable(UInt8), "
+                + "ADD COLUMN IF NOT EXISTS f Nullable(UInt32), "
+                + "ADD COLUMN IF NOT EXISTS g Nullable(Int8), "
+                + "ADD COLUMN IF NOT EXISTS h Nullable(UInt16), "
+                + "ADD COLUMN IF NOT EXISTS i Nullable(Int64)";
+        Assert.assertEquals(expected, squash(translate("ALTER TABLE t "
+                + "ADD COLUMN a BIGINT UNSIGNED ZEROFILL, "
+                + "ADD COLUMN b INT8 UNSIGNED, "
+                + "ADD COLUMN c INT(10) UNSIGNED ZEROFILL, "
+                + "ADD COLUMN d INT ZEROFILL, "
+                + "ADD COLUMN e INT1 UNSIGNED, "
+                + "ADD COLUMN f MIDDLEINT UNSIGNED, "
+                + "ADD COLUMN g INT1, "
+                + "ADD COLUMN h SMALLINT(5) ZEROFILL, "
+                + "ADD COLUMN i BIGINT SIGNED")));
+
+        String create = translate("CREATE TABLE u (id INT UNSIGNED ZEROFILL NOT NULL PRIMARY KEY, "
+                + "big BIGINT UNSIGNED ZEROFILL, amt DECIMAL(10,2) UNSIGNED ZEROFILL)");
+        Assert.assertTrue(create, create.equalsIgnoreCase("CREATE TABLE if not exists `employees`.u("
+                + "id UInt32 NOT NULL ,big Nullable(UInt64),amt Nullable(Decimal(10,2)),"
+                + "`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+    }
+
+    @Test
+    @DisplayName("SERIAL is BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE: UInt64, NOT NULL, the identity")
+    public void testSerialIsUnsignedNotNullKey() {
+        String create = translate("CREATE TABLE s (id SERIAL, v INT)");
+        Assert.assertTrue(create, create.equalsIgnoreCase("CREATE TABLE if not exists `employees`.s("
+                + "id UInt64 NOT NULL ,v Nullable(Int32),"
+                + "`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS s UInt64",
+                translate("ALTER TABLE t ADD COLUMN s SERIAL"));
+    }
+
+    @Test
+    @DisplayName("FLOAT(M,D) is Float64; a dimension suffix is emitted only for Decimal and DateTime64")
+    public void testFloatWithDimensionsIsFloat64() {
+        String expected = "ALTER TABLE `employees`.t "
+                + "ADD COLUMN IF NOT EXISTS f Nullable(Float64), "
+                + "ADD COLUMN IF NOT EXISTS g Nullable(Float64), "
+                + "ADD COLUMN IF NOT EXISTS h Nullable(Float64), "
+                + "ADD COLUMN IF NOT EXISTS r Nullable(Float32), "
+                + "ADD COLUMN IF NOT EXISTS d Nullable(Decimal(7,3)), "
+                + "ADD COLUMN IF NOT EXISTS ts Nullable(DateTime64(3, 0))";
+        Assert.assertEquals(expected, squash(translate("ALTER TABLE t "
+                + "ADD COLUMN f FLOAT(7,3), ADD COLUMN g FLOAT, ADD COLUMN h DOUBLE(10,2), "
+                + "ADD COLUMN r REAL, ADD COLUMN d DECIMAL(7,3), ADD COLUMN ts DATETIME(3)")));
+
+        String create = translate("CREATE TABLE fl (id INT PRIMARY KEY, f FLOAT(7,3) NOT NULL)");
+        Assert.assertTrue(create, create.equalsIgnoreCase("CREATE TABLE if not exists `employees`.fl("
+                + "id Int32 NOT NULL ,f Float64 NOT NULL ,"
+                + "`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+    }
+
+    @Test
+    @DisplayName("Spatial types are String (WKB hex) on CREATE and ALTER, nullable when the source is")
+    public void testAlterAddNullableGeometryIsRepresentable() {
+        String expected = "ALTER TABLE `employees`.t "
+                + "ADD COLUMN IF NOT EXISTS g Nullable(String), "
+                + "ADD COLUMN IF NOT EXISTS p String, "
+                + "ADD COLUMN IF NOT EXISTS l Nullable(String), "
+                + "ADD COLUMN IF NOT EXISTS mp Nullable(String), "
+                + "ADD COLUMN IF NOT EXISTS gc Nullable(String), "
+                + "ADD COLUMN IF NOT EXISTS j Nullable(String)";
+        Assert.assertEquals(expected, squash(translate("ALTER TABLE t "
+                + "ADD COLUMN g GEOMETRY, ADD COLUMN p POINT NOT NULL, ADD COLUMN l LINESTRING, "
+                + "ADD COLUMN mp MULTIPOLYGON, ADD COLUMN gc GEOMETRYCOLLECTION, ADD COLUMN j JSON")));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN g Nullable(String)",
+                translate("ALTER TABLE t MODIFY COLUMN g POLYGON"));
+
+        String create = translate("CREATE TABLE geo (id INT PRIMARY KEY, p POINT, poly POLYGON NOT NULL, "
+                + "s POINT SRID 4326 NOT NULL)");
+        Assert.assertTrue(create, create.equalsIgnoreCase("CREATE TABLE if not exists `employees`.geo("
+                + "id Int32 NOT NULL ,p Nullable(String),poly String NOT NULL ,s String NOT NULL ,"
+                + "`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+    }
+
+    @Test
+    @DisplayName("AUTO_INCREMENT implies NOT NULL, so an AUTO_INCREMENT UNIQUE column is the identity")
+    public void testAutoIncrementColumnIsNotNull() {
+        String q = translate("CREATE TABLE seq (id INT AUTO_INCREMENT UNIQUE, v INT)");
+        String expected = "CREATE TABLE if not exists `employees`.seq(id Int32 NOT NULL ,v Nullable(Int32),"
+                + "`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id";
+        Assert.assertTrue(q, q.equalsIgnoreCase(expected));
+
+        // The same rule on ADD COLUMN.
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS id UInt32",
+                translate("ALTER TABLE t ADD COLUMN id INT UNSIGNED AUTO_INCREMENT"));
     }
     @Test
     public void testCreateTableWithEnum() {
@@ -60,7 +208,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         mySQLDDLParserService.parseSql(createQuery, "Persons",  clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.employees_predated(emp_no Int32 NOT NULL ,birth_date Date32 NOT NULL ,first_name String NOT NULL ,last_name String NOT NULL ,gender String NOT NULL ,hire_date Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  emp_no ORDER BY (emp_no)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.employees_predated(emp_no Int32 NOT NULL ,birth_date Date32 NOT NULL ,first_name String NOT NULL ,last_name String NOT NULL ,gender String NOT NULL ,hire_date Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  emp_no ORDER BY (emp_no)"));
         log.info("Create table " + clickHouseQuery);
     }
 
@@ -70,7 +218,8 @@ public class MySqlDDLParserListenerImplTest {
                 "PARTITION p2 VALUES LESS THAN (15,30,'sss'), PARTITION p3 VALUES LESS THAN (MAXVALUE,MAXVALUE,MAXVALUE));";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "Persons",  clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (a,d,c) ORDER BY tuple()"));
+        // Keyless table: all-columns sorting key (Spec 06.05 §3.6), never tuple().
+        Assert.assertTrue(clickHouseQuery.toString(), clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.rcx(a Nullable(Int32),b Nullable(Int32),c Nullable(String),d Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (a,d,c) ORDER BY (a,b,c,d) SETTINGS allow_nullable_key=1"));
         log.info("Create table " + clickHouseQuery);
     }
 
@@ -80,7 +229,7 @@ public class MySqlDDLParserListenerImplTest {
 //         String alterTableQuery = "alter  table  std_txn_agg analyze partition p20231229";
 //         StringBuffer clickHouseQuery = new StringBuffer();
 //         mySQLDDLParserService.parseSql(alterTableQuery, "Persons",  clickHouseQuery);
-//         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.std_txn_agg ANALYZE PARTITION p20231229"));
+//         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.std_txn_agg ANALYZE PARTITION p20231229"));
 //         log.info("Alter table " + clickHouseQuery);
 //     }
 
@@ -101,7 +250,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.t(id Int32 NOT NULL ,dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY id"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.t(id Int32 NOT NULL ,dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY id"));
         log.info("Create table " + clickHouseQuery);
 
         String createQueryWithoutPrimaryKey =  "create table t(\n" +
@@ -118,7 +267,8 @@ public class MySqlDDLParserListenerImplTest {
                 ");";
         StringBuffer clickHouseQueryWOPrimaryKey = new StringBuffer();
         mySQLDDLParserService.parseSql(createQueryWithoutPrimaryKey, "Persons", clickHouseQueryWOPrimaryKey);
-        Assert.assertTrue(clickHouseQueryWOPrimaryKey.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.t(id Nullable(Int32),dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY tuple()"));
+        // Keyless table: all-columns sorting key (Spec 06.05 §3.6), never tuple().
+        Assert.assertTrue(clickHouseQueryWOPrimaryKey.toString(), clickHouseQueryWOPrimaryKey.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.t(id Nullable(Int32),dt Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  (dt) ORDER BY (id,dt) SETTINGS allow_nullable_key=1"));
         log.info("Create table " + clickHouseQueryWOPrimaryKey);
     }
 
@@ -159,7 +309,8 @@ public class MySqlDDLParserListenerImplTest {
                 "PARTITIONS 6;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "Persons", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.members(firstname String NOT NULL ,lastname String NOT NULL ,username String NOT NULL ,email Nullable(String),joined Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  joined ORDER BY tuple()"));
+        // Keyless table: all-columns sorting key (Spec 06.05 §3.6), never tuple().
+        Assert.assertTrue(clickHouseQuery.toString(), clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.members(firstname String NOT NULL ,lastname String NOT NULL ,username String NOT NULL ,email Nullable(String),joined Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  joined ORDER BY (firstname,lastname,username,email,joined) SETTINGS allow_nullable_key=1"));
         log.info("Create table " + clickHouseQuery);
     }
 
@@ -176,7 +327,7 @@ public class MySqlDDLParserListenerImplTest {
                 ") ENGINE=InnoDB DEFAULT CHARSET=latin1;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery6, "Persons", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(6, 0) NOT NULL ,`Mid_Value` DateTime64(6, 0) NOT NULL ,`Maximum_Value` DateTime64(6, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(6, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(6, 0) NOT NULL ,`Mid_Value` DateTime64(6, 0) NOT NULL ,`Maximum_Value` DateTime64(6, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(6, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
 
         String createQuery1 = "CREATE TABLE `temporal_types_DATETIME4` (\n" +
                 "  `Type` varchar(50) NOT NULL,\n" +
@@ -188,7 +339,7 @@ public class MySqlDDLParserListenerImplTest {
                 ") ENGINE=InnoDB DEFAULT CHARSET=latin1;";
         StringBuffer clickHouseQuery1 = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery1, "Persons", clickHouseQuery1);
-        Assert.assertTrue(clickHouseQuery1.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(1, 0) NOT NULL ,`Mid_Value` DateTime64(1, 0) NOT NULL ,`Maximum_Value` DateTime64(1, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(1, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
+        Assert.assertTrue(clickHouseQuery1.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(1, 0) NOT NULL ,`Mid_Value` DateTime64(1, 0) NOT NULL ,`Maximum_Value` DateTime64(1, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(1, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
 
         String createQuery2 = "CREATE TABLE `temporal_types_DATETIME4` (\n" +
                 "  `Type` varchar(50) NOT NULL,\n" +
@@ -200,7 +351,7 @@ public class MySqlDDLParserListenerImplTest {
                 ") ENGINE=InnoDB DEFAULT CHARSET=latin1;";
         StringBuffer clickHouseQuery2 = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery2, "Persons", clickHouseQuery2);
-        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(2, 0) NOT NULL ,`Mid_Value` DateTime64(2, 0) NOT NULL ,`Maximum_Value` DateTime64(2, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(2, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(2, 0) NOT NULL ,`Mid_Value` DateTime64(2, 0) NOT NULL ,`Maximum_Value` DateTime64(2, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(2, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
 
 
     }
@@ -213,13 +364,13 @@ public class MySqlDDLParserListenerImplTest {
         String createQuery3 = "CREATE TABLE table_1 (id INT NOT NULL PRIMARY KEY, data DATETIME(3))";
         StringBuffer clickHouseQuery3 = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery3, "Persons", clickHouseQuery3);
-        Assert.assertTrue(clickHouseQuery3.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.table_1(id Int32 NOT NULL ,data Nullable(DateTime64(3, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+        Assert.assertTrue(clickHouseQuery3.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.table_1(id Int32 NOT NULL ,data Nullable(DateTime64(3, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
 
         // DateTime(4) with Primary Key
         String createQuery4 = "CREATE TABLE table_1 (id INT NOT NULL PRIMARY KEY, data DATETIME(4))";
         StringBuffer clickHouseQuery4 = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery4, "Persons", clickHouseQuery4);
-        Assert.assertTrue(clickHouseQuery4.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.table_1(id Int32 NOT NULL ,data Nullable(DateTime64(4, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+        Assert.assertTrue(clickHouseQuery4.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.table_1(id Int32 NOT NULL ,data Nullable(DateTime64(4, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
     }
 
     @Test
@@ -230,7 +381,7 @@ public class MySqlDDLParserListenerImplTest {
         HashMap<String, String> props = new HashMap<>();
         MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "datatypes");
         mySQLDDLParserService1.parseSql(createQuery, "Persons", clickHouseQuery);
-        String expectedQuery = "CREATE TABLE if not exists datatypes.autocreate_e904bc35_aac8_11f0_9925_e114ebd31e17(id Int32 NOT NULL ,D4 Nullable(Decimal(2,1)),D5 Nullable(Decimal(30,10)),Doublex Nullable(Float64),x_date Nullable(Date32),x_datetime6 Nullable(DateTime64(6, 0)),x_time Nullable(String),x_time6 Nullable(String),Intmin Nullable(Int32),Intmax Nullable(Int32),UIntmin Nullable(UInt32),UIntmax Nullable(UInt32),BIGIntmin Nullable(Int64),BIGIntmax Nullable(Int64),UBIGIntmin Nullable(UInt64),UBIGIntmax Nullable(UInt64),TIntmin Nullable(Int8),TIntmax Nullable(Int8),UTIntmin Nullable(UInt8),UTIntmax Nullable(UInt8),SIntmin Nullable(Int16),SIntmax Nullable(Int16),USIntmin Nullable(UInt16),USIntmax Nullable(UInt16),MIntmin Nullable(Int32),MIntmax Nullable(Int32),UMIntmin Nullable(UInt32),UMIntmax Nullable(UInt32),x_char Nullable(String),x_text Nullable(String),x_varchar Nullable(String),x_Blob Nullable(String),x_Mediumblob Nullable(String),x_Longblob Nullable(String),x_binary Nullable(String),x_varbinary Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
+        String expectedQuery = "CREATE TABLE if not exists `datatypes`.autocreate_e904bc35_aac8_11f0_9925_e114ebd31e17(id Int32 NOT NULL ,D4 Nullable(Decimal(2,1)),D5 Nullable(Decimal(30,10)),Doublex Nullable(Float64),x_date Nullable(Date32),x_datetime6 Nullable(DateTime64(6, 0)),x_time Nullable(String),x_time6 Nullable(String),Intmin Nullable(Int32),Intmax Nullable(Int32),UIntmin Nullable(UInt32),UIntmax Nullable(UInt32),BIGIntmin Nullable(Int64),BIGIntmax Nullable(Int64),UBIGIntmin Nullable(UInt64),UBIGIntmax Nullable(UInt64),TIntmin Nullable(Int8),TIntmax Nullable(Int8),UTIntmin Nullable(UInt8),UTIntmax Nullable(UInt8),SIntmin Nullable(Int16),SIntmax Nullable(Int16),USIntmin Nullable(UInt16),USIntmax Nullable(UInt16),MIntmin Nullable(Int32),MIntmax Nullable(Int32),UMIntmin Nullable(UInt32),UMIntmax Nullable(UInt32),x_char Nullable(String),x_text Nullable(String),x_varchar Nullable(String),x_Blob Nullable(String),x_Mediumblob Nullable(String),x_Longblob Nullable(String),x_binary Nullable(String),x_varbinary Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
         Assert.assertEquals(expectedQuery.toLowerCase(), clickHouseQuery.toString().toLowerCase());
     }
     @Test
@@ -250,7 +401,7 @@ public class MySqlDDLParserListenerImplTest {
 
         MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "datatypes");
         mySQLDDLParserService1.parseSql(createQuery6, "Persons", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists datatypes.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(6,'UTC') NOT NULL ,`Mid_Value` DateTime64(6,'UTC') NOT NULL ,`Maximum_Value` DateTime64(6,'UTC') NOT NULL ,`Null_Value` Nullable(DateTime64(6,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `datatypes`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(6,'UTC') NOT NULL ,`Mid_Value` DateTime64(6,'UTC') NOT NULL ,`Maximum_Value` DateTime64(6,'UTC') NOT NULL ,`Null_Value` Nullable(DateTime64(6,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
         log.info("Create table " + clickHouseQuery);
     }
 
@@ -271,7 +422,7 @@ public class MySqlDDLParserListenerImplTest {
 
         MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "datatypes");
         mySQLDDLParserService1.parseSql(createQuery6, "Persons", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists datatypes.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(1,'UTC') NOT NULL ,`Mid_Value` DateTime64(2,'UTC') NOT NULL ,`Maximum_Value` DateTime64(3,'UTC') NOT NULL ,`Null_Value` Nullable(DateTime64(4,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `datatypes`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(1,'UTC') NOT NULL ,`Mid_Value` DateTime64(2,'UTC') NOT NULL ,`Maximum_Value` DateTime64(3,'UTC') NOT NULL ,`Null_Value` Nullable(DateTime64(4,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
         log.info("Create table " + clickHouseQuery);
     }
 
@@ -303,7 +454,7 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
         log.info("Create table " + clickHouseQuery);
 
-        String expectedQuery = "CREATE TABLE if not exists ch1.`table_7220f7bd_8c8c_11ef_94db_67ff65f7711d` ON CLUSTER `{cluster}`(id Int32 NOT NULL ,col1 Nullable(String),col2 Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplicatedReplacingMergeTree(_version, is_deleted) ORDER BY (id)";
+        String expectedQuery = "CREATE TABLE if not exists `ch1`.`table_7220f7bd_8c8c_11ef_94db_67ff65f7711d` ON CLUSTER `{cluster}`(id Int32 NOT NULL ,col1 Nullable(String),col2 Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplicatedReplacingMergeTree(_version, is_deleted) ORDER BY (id)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
     @Test
@@ -313,7 +464,7 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
         log.info("Create table " + clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.730b595f_d475_11ed_b64a_398b553542b2(id Nullable(Int32),x Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.730b595f_d475_11ed_b64a_398b553542b2(id Int32 NOT NULL ,x Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)"));
     }
 
     @Test
@@ -321,7 +472,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         String createDB = "CREATE TABLE new_tbl LIKE orig_tbl;";
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
-        Assert.assertTrue("CREATE TABLE employees.new_tbl AS employees.orig_tbl".equalsIgnoreCase(clickHouseQuery.toString()));
+        Assert.assertTrue("CREATE TABLE IF NOT EXISTS `employees`.new_tbl AS `employees`.orig_tbl".equalsIgnoreCase(clickHouseQuery.toString()));
         log.info("Create table " + clickHouseQuery);
     }
     @Test
@@ -330,7 +481,8 @@ public class MySqlDDLParserListenerImplTest {
         String createDB = "create table if not exists ship_class(id int, class_name varchar(100), tonange decimal(10,2), max_length decimal(10,2), start_build year, end_build year(4), max_guns_size int)";
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.ship_class(id Nullable(Int32),class_name Nullable(String),tonange Nullable(Decimal(10,2)),max_length Nullable(Decimal(10,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()"));
+        // Keyless table: all-columns sorting key (Spec 06.05 §3.6), never tuple().
+        Assert.assertTrue(clickHouseQuery.toString(), clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.ship_class(id Nullable(Int32),class_name Nullable(String),tonange Nullable(Decimal(10,2)),max_length Nullable(Decimal(10,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id,class_name,tonange,max_length,start_build,end_build,max_guns_size) SETTINGS allow_nullable_key=1"));
         log.info("Create table " + clickHouseQuery);
 
     }
@@ -341,7 +493,8 @@ public class MySqlDDLParserListenerImplTest {
         String createDB = "create table ship_class(id int, class_name varchar(100), tonange decimal(10,2) not null, max_length decimal(65,2), start_build year, end_build year(4), max_guns_size int)";
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.ship_class(id Nullable(Int32),class_name Nullable(String),tonange Decimal(10,2) NOT NULL ,max_length Nullable(Decimal(65,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()"));
+        // Keyless table: all-columns sorting key (Spec 06.05 §3.6), never tuple().
+        Assert.assertTrue(clickHouseQuery.toString(), clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.ship_class(id Nullable(Int32),class_name Nullable(String),tonange Decimal(10,2) NOT NULL ,max_length Nullable(Decimal(65,2)),start_build Nullable(Int32),end_build Nullable(Int32),max_guns_size Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id,class_name,tonange,max_length,start_build,end_build,max_guns_size) SETTINGS allow_nullable_key=1"));
         log.info("Create table " + clickHouseQuery);
 
     }
@@ -352,7 +505,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createDBQuery, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.730b595f_d475_11ed_b64a_398b553542b2(id Nullable(Int32),x Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.730b595f_d475_11ed_b64a_398b553542b2(id Int32 NOT NULL ,x Nullable(Int32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)"));
         log.info("Create table " + clickHouseQuery);
 
     }
@@ -370,14 +523,14 @@ public class MySqlDDLParserListenerImplTest {
                 ") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci";
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.`salaries`(`emp_no` Int32 NOT NULL ,`salary` Int32 NOT NULL ,`from_date` Date32 NOT NULL ,`to_date` Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`emp_no`,`from_date`)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.`salaries`(`emp_no` Int32 NOT NULL ,`salary` Int32 NOT NULL ,`from_date` Date32 NOT NULL ,`to_date` Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`emp_no`,`from_date`)"));
         log.info("Create table query" + clickHouseQuery.toString());
     }
 
     @Test
     public void testAlterDatabaseAddColumn() {
 
-        String clickhouseExpectedQuery = "ALTER TABLE employees.employees ADD COLUMN IF NOT EXISTS ssn_number Nullable(String)";
+        String clickhouseExpectedQuery = "ALTER TABLE `employees`.employees ADD COLUMN IF NOT EXISTS ssn_number Nullable(String)";
         StringBuffer clickHouseQuery = new StringBuffer();
         String alterDBAddColumn = "ALTER TABLE employees ADD COLUMN ssn_number varchar(255)";
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
@@ -392,7 +545,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testAlterAddColumnWithColumnKeyword() {
 
         String alterDBAddColumn = "alter table db1.table1 add entity varchar(255) , ALGORITHM=INPLACE, LOCK=NONE";
-        String clickhouseExpectedQuery = "ALTER TABLE employees.table1 ADD COLUMN IF NOT EXISTS entity Nullable(String)";
+        String clickhouseExpectedQuery = "ALTER TABLE `employees`.table1 ADD COLUMN IF NOT EXISTS entity Nullable(String)";
         StringBuffer clickHouseQuery = new StringBuffer();
 
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
@@ -421,7 +574,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testAlterDatabaseAddColumnDataTypeMapping() {
 
         String addColumnNullable = "ALTER TABLE foo_new9 ADD COLUMN gmt_time3 DATETIME";
-        String clickhouseExpectedQuery = "ALTER TABLE employees.foo_new9 ADD COLUMN IF NOT EXISTS gmt_time3 Nullable(DateTime64)";
+        String clickhouseExpectedQuery = "ALTER TABLE `employees`.foo_new9 ADD COLUMN IF NOT EXISTS gmt_time3 Nullable(DateTime64)";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(addColumnNullable, "foo_new9", clickHouseQuery);
 
@@ -436,7 +589,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testAlterDatabaseRenameColumnDataTypeMapping() {
 
         String addColumnNullable = "ALTER TABLE foo_new9 CHANGE COLUMN gmt_time3 gmt_time5 DATETIME;";
-        // String clickhouseExpectedQuery = "ALTER TABLE employees.foo_new9 ADD COLUMN IF NOT EXISTS gmt_time3 Nullable(String)";
+        // String clickhouseExpectedQuery = "ALTER TABLE `employees`.foo_new9 ADD COLUMN IF NOT EXISTS gmt_time3 Nullable(String)";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(addColumnNullable, "employees", clickHouseQuery);
 
@@ -449,7 +602,7 @@ public class MySqlDDLParserListenerImplTest {
     // Before, After
     @Test
     public void testAlterDatabaseAddMultipleColumns1() {
-        String expectedClickHouseQuery = "ALTER TABLE employees.employees ADD COLUMN IF NOT EXISTS ship_spec Nullable(String)  first, ADD COLUMN IF NOT EXISTS somecol Nullable(Int32)  after start_build";
+        String expectedClickHouseQuery = "ALTER TABLE `employees`.employees ADD COLUMN IF NOT EXISTS ship_spec Nullable(String)  first, ADD COLUMN IF NOT EXISTS somecol Nullable(Int32)  after start_build";
         StringBuffer clickHouseQuery = new StringBuffer();
         String query = "alter table employees.employees add column ship_spec varchar(150) first, add somecol int after start_build, algorithm=instant;";
         mySQLDDLParserService.parseSql(query, "employees", clickHouseQuery);
@@ -469,7 +622,7 @@ public class MySqlDDLParserListenerImplTest {
     @Test
     @DisplayName("ALGORITHM between operations must not discard the operations that follow it")
     public void testAlterAddColumnWithInterleavedAlgorithmClauses() {
-        String expectedClickHouseQuery = "ALTER TABLE employees.test_lot "
+        String expectedClickHouseQuery = "ALTER TABLE `employees`.test_lot "
                 + "ADD COLUMN IF NOT EXISTS event_ref_type_id Nullable(Int32), "
                 + "ADD COLUMN IF NOT EXISTS event_ref_id Nullable(Int64)";
         StringBuffer clickHouseQuery = new StringBuffer();
@@ -490,7 +643,7 @@ public class MySqlDDLParserListenerImplTest {
     @Test
     @DisplayName("LOCK between operations must not discard the operations that follow it")
     public void testAlterAddColumnWithInterleavedLockClause() {
-        String expectedClickHouseQuery = "ALTER TABLE employees.test_lot "
+        String expectedClickHouseQuery = "ALTER TABLE `employees`.test_lot "
                 + "ADD COLUMN IF NOT EXISTS first_col Nullable(Int32), "
                 + "ADD COLUMN IF NOT EXISTS second_col Nullable(String)";
         StringBuffer clickHouseQuery = new StringBuffer();
@@ -511,7 +664,7 @@ public class MySqlDDLParserListenerImplTest {
     @Test
     @DisplayName("Trailing ALGORITHM/LOCK clauses leave no dangling comma")
     public void testAlterAddColumnWithTrailingHintsLeavesNoDanglingComma() {
-        String expectedClickHouseQuery = "ALTER TABLE employees.test_lot "
+        String expectedClickHouseQuery = "ALTER TABLE `employees`.test_lot "
                 + "ADD COLUMN IF NOT EXISTS only_col Nullable(Int32)";
         StringBuffer clickHouseQuery = new StringBuffer();
         String query = "ALTER TABLE test_lot ADD COLUMN only_col INTEGER, ALGORITHM=INPLACE, LOCK=NONE";
@@ -528,9 +681,9 @@ public class MySqlDDLParserListenerImplTest {
     @Test
     public void testAlterDatabaseAddMultipleColumns() {
 
-        String expectedClickHouseQuery = "ALTER TABLE employees.employees ADD COLUMN IF NOT EXISTS ssn_number Nullable(String), ADD COLUMN IF NOT EXISTS home_address Nullable(String)";
+        String expectedClickHouseQuery = "ALTER TABLE `employees`.employees ADD COLUMN IF NOT EXISTS ssn_number Nullable(String), ADD COLUMN IF NOT EXISTS home_address Nullable(String)";
         StringBuffer clickHouseQuery = new StringBuffer();
-        String alterDBAddColumn = "ALTER TABLE employees.employees add column ssn_number varchar(100), add column home_address varchar(20)";
+        String alterDBAddColumn = "ALTER TABLE `employees`.employees add column ssn_number varchar(100), add column home_address varchar(20)";
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
 
 
@@ -540,7 +693,7 @@ public class MySqlDDLParserListenerImplTest {
 
     @Test
     public void testAddColumnWithNull() {
-        String expectedClickHouseQuery = "ALTER TABLE employees.add_test ADD COLUMN IF NOT EXISTS optional Nullable(Bool)  DEFAULT 0";
+        String expectedClickHouseQuery = "ALTER TABLE `employees`.add_test ADD COLUMN IF NOT EXISTS optional Nullable(Bool)  DEFAULT 0";
         String mysqlQuery = "alter table add_test add column optional bool default 0 null;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(mysqlQuery, "employees", clickHouseQuery);
@@ -559,7 +712,7 @@ public class MySqlDDLParserListenerImplTest {
         String mysqlQuery2 = "ALTER TABLE server_team_replicate.test ADD COLUMN coins TINYINT(1) NOT NULL DEFAULT 0 AFTER lglent_group;";
         StringBuffer clickHouseQuery2 = new StringBuffer();
         mySQLDDLParserService.parseSql(mysqlQuery2, "server_team_replicate", clickHouseQuery2);
-        String expectedQuery = "ALTER TABLE employees.test ADD COLUMN IF NOT EXISTS coins Int8 DEFAULT 0 AFTER lglent_group";
+        String expectedQuery = "ALTER TABLE `employees`.test ADD COLUMN IF NOT EXISTS coins Int8 DEFAULT 0 AFTER lglent_group";
         Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(expectedQuery));
         log.info("CLICKHOUSE QUERY: " + clickHouseQuery2);
 
@@ -567,7 +720,7 @@ public class MySqlDDLParserListenerImplTest {
 
     @Test
     public void testAddDefault() {
-        String expectedClickHouseQuery = "ALTER TABLE employees.add_test ADD COLUMN IF NOT EXISTS foo Nullable(Int32)  DEFAULT 2";
+        String expectedClickHouseQuery = "ALTER TABLE `employees`.add_test ADD COLUMN IF NOT EXISTS foo Nullable(Int32)  DEFAULT 2";
         String mysqlQuery = "ALTER TABLE add_test ADD COLUMN foo INT DEFAULT 2;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(mysqlQuery, "add_test", clickHouseQuery);
@@ -579,7 +732,7 @@ public class MySqlDDLParserListenerImplTest {
 
     @Test
     public void testAddColumnWithoutExplicitNull() {
-        String expectedClickHouseQuery = "ALTER TABLE employees.add_test ADD COLUMN IF NOT EXISTS foo Nullable(Int32)";
+        String expectedClickHouseQuery = "ALTER TABLE `employees`.add_test ADD COLUMN IF NOT EXISTS foo Nullable(Int32)";
         String mysqlQuery = "ALTER TABLE add_test ADD COLUMN foo INT;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(mysqlQuery, "add_test", clickHouseQuery);
@@ -592,10 +745,10 @@ public class MySqlDDLParserListenerImplTest {
     @Test
     public void testAlterTableModifyColumn() {
         StringBuffer clickHouseQuery = new StringBuffer();
-        String alterTableModifyColumn = "ALTER TABLE employees.add_test MODIFY COLUMN col1 INT;";
+        String alterTableModifyColumn = "ALTER TABLE `employees`.add_test MODIFY COLUMN col1 INT;";
         mySQLDDLParserService.parseSql(alterTableModifyColumn, "add_test", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.add_test MODIFY COLUMN col1 Nullable(Int32)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.add_test MODIFY COLUMN col1 Nullable(Int32)"));
     }
 
     @Test
@@ -603,7 +756,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery2 = new StringBuffer();
         String alterTableModifyColumn2 = "alter table  test1 add  column `vendor_folder` varchar(128) COLLATE latin1_general_cs NOT NULL after expected_arrival_time";
         mySQLDDLParserService.parseSql(alterTableModifyColumn2, "add_test", clickHouseQuery2);
-        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("ALTER TABLE employees.test1 ADD COLUMN IF NOT EXISTS `vendor_folder` String after expected_arrival_time"));
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("ALTER TABLE `employees`.test1 ADD COLUMN IF NOT EXISTS `vendor_folder` String after expected_arrival_time"));
     }
 
     @Test
@@ -612,18 +765,18 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         String alterDBAddColumn = "ALTER TABLE contacts change column last_name new_name varchar(50) NULL;";
         mySQLDDLParserService.parseSql(alterDBAddColumn, "contacts", clickHouseQuery);
-        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE contacts MODIFY COLUMN last_name Nullable(String)"));
+        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE contacts MODIFY COLUMN IF EXISTS last_name Nullable(String)"));
         log.info("CLICKHOUSE QUERY" + clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.contacts MODIFY COLUMN last_name Nullable(String) \n" +
-                "ALTER TABLE employees.contacts RENAME COLUMN IF EXISTS last_name to new_name"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.contacts MODIFY COLUMN IF EXISTS last_name Nullable(String) \n" +
+                "ALTER TABLE `employees`.contacts RENAME COLUMN IF EXISTS last_name to new_name"));
 
         StringBuffer clickHouseQueryNonNullable = new StringBuffer();
-        String alterDBAddColumnNonNullable = "ALTER TABLE database_1.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` CHANGE COLUMN col1 new_col varchar(255)";
+        String alterDBAddColumnNonNullable = "ALTER TABLE `database_1`.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` CHANGE COLUMN col1 new_col varchar(255)";
         mySQLDDLParserService.parseSql(alterDBAddColumnNonNullable, "contacts", clickHouseQueryNonNullable);
-        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE contacts MODIFY COLUMN last_name Nullable(String)"));
+        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE contacts MODIFY COLUMN IF EXISTS last_name Nullable(String)"));
         log.info("CLICKHOUSE QUERY" + clickHouseQueryNonNullable);
-        Assert.assertTrue(clickHouseQueryNonNullable.toString().equalsIgnoreCase("ALTER TABLE employees.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` MODIFY COLUMN col1 Nullable(String) \n" +
-                "ALTER TABLE database_1.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` RENAME COLUMN IF EXISTS col1 to new_col"));
+        Assert.assertTrue(clickHouseQueryNonNullable.toString().equalsIgnoreCase("ALTER TABLE `employees`.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` MODIFY COLUMN IF EXISTS col1 Nullable(String) \n" +
+                "ALTER TABLE `employees`.`table_fcdd63fd_0c60_11ef_a293_cfcc8bfdbf55` RENAME COLUMN IF EXISTS col1 to new_col"));
     }
 
     @Test
@@ -634,13 +787,13 @@ public class MySqlDDLParserListenerImplTest {
 
         mySQLDDLParserService.parseSql(sql, "products", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.products ADD COLUMN IF NOT EXISTS stocks Int32"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.products ADD COLUMN IF NOT EXISTS stocks Int32"));
         StringBuffer clickHouseQuery2 = new StringBuffer();
 
         String defaultSql = "alter table add_test add column stocks bool null default 1;";
 
         mySQLDDLParserService.parseSql(defaultSql, "add_test", clickHouseQuery2);
-        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("ALTER TABLE employees.add_test ADD COLUMN IF NOT EXISTS stocks Nullable(Bool)  DEFAULT 1"));
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("ALTER TABLE `employees`.add_test ADD COLUMN IF NOT EXISTS stocks Nullable(Bool)  DEFAULT 1"));
 
     }
 
@@ -651,7 +804,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "alter table add_test rename column stocks to options";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("alter table employees.add_test rename column if exists stocks to options"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("alter table `employees`.add_test rename column if exists stocks to options"));
 
         StringBuffer clickHouseQuery2 = new StringBuffer();
         String sql2 = "alter table employees.add_test rename column stocks to options, rename column options to stocks";
@@ -663,7 +816,7 @@ public class MySqlDDLParserListenerImplTest {
         // Code: 10. Both renames in a multi-clause statement must be guarded,
         // not merely the first.
         Assert.assertEquals(
-                "alter table employees.add_test rename column if exists stocks to options, "
+                "alter table `employees`.add_test rename column if exists stocks to options, "
                         + "rename column if exists options to stocks",
                 clickHouseQuery2.toString().toLowerCase());
     }
@@ -679,14 +832,14 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         String sql = "ALTER TABLE mysql1.table_01dacfed_9875_11ef_b2c5_e7434a0f1a60 RENAME COLUMN col1 to new_col";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE ch1.table_01dacfed_9875_11ef_b2c5_e7434a0f1a60 RENAME COLUMN IF EXISTS col1 to new_col"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE `ch1`.table_01dacfed_9875_11ef_b2c5_e7434a0f1a60 RENAME COLUMN IF EXISTS col1 to new_col"));
     }
     @Test
     public void testChangeColumn() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Nullable(Bool) \n" +
-                "ALTER TABLE employees.add_test RENAME COLUMN IF EXISTS stocks to options";
+        String expectedCHQuery = "ALTER TABLE `employees`.add_test MODIFY COLUMN IF EXISTS stocks Nullable(Bool) \n" +
+                "ALTER TABLE `employees`.add_test RENAME COLUMN IF EXISTS stocks to options";
         String sql = "alter table add_test change column stocks options bool";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -697,8 +850,8 @@ public class MySqlDDLParserListenerImplTest {
     public void testChangeColumnFirst() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Nullable(Bool)  first\n" +
-                "ALTER TABLE employees.add_test RENAME COLUMN IF EXISTS stocks to options";
+        String expectedCHQuery = "ALTER TABLE `employees`.add_test MODIFY COLUMN IF EXISTS stocks Nullable(Bool)  first\n" +
+                "ALTER TABLE `employees`.add_test RENAME COLUMN IF EXISTS stocks to options";
         String sql = "alter table add_test change column stocks options bool first";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -709,8 +862,8 @@ public class MySqlDDLParserListenerImplTest {
     public void testChangeColumnAfter() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Nullable(Bool)  after col1\n" +
-                "ALTER TABLE employees.add_test RENAME COLUMN IF EXISTS stocks to options";
+        String expectedCHQuery = "ALTER TABLE `employees`.add_test MODIFY COLUMN IF EXISTS stocks Nullable(Bool)  after col1\n" +
+                "ALTER TABLE `employees`.add_test RENAME COLUMN IF EXISTS stocks to options";
         String sql = "alter table add_test change column stocks options bool after col1";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -723,8 +876,8 @@ public class MySqlDDLParserListenerImplTest {
 
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE employees.ship_class MODIFY COLUMN tonange Nullable(Decimal(10,10)) \n" +
-                "ALTER TABLE employees.ship_class RENAME COLUMN IF EXISTS tonange to tonange_new";
+        String expectedCHQuery = "ALTER TABLE `employees`.ship_class MODIFY COLUMN IF EXISTS tonange Nullable(Decimal(10,10)) \n" +
+                "ALTER TABLE `employees`.ship_class RENAME COLUMN IF EXISTS tonange to tonange_new";
 
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -733,28 +886,39 @@ public class MySqlDDLParserListenerImplTest {
 
     @Test
     public void testModifyColumnWithNotNull() {
+        // A MODIFY that tightens a column to NOT NULL must stay Nullable in
+        // ClickHouse. If the column already exists as Nullable (the common case
+        // after this translator emitted the column via ADD COLUMN), a
+        // non-Nullable MODIFY is rejected with Code: 36 "Please specify DEFAULT
+        // expression" and, retried forever, stalls the whole stream. Nullable(T)
+        // loses no source value and is checksum-safe. This assertion previously
+        // expected the non-Nullable form and encoded that stream-stalling bug.
         StringBuffer clickHouseQuery = new StringBuffer();
-        String sql = "ALTER TABLE employees.add_test MODIFY COLUMN col1 INT NOT NULL;";
+        String sql = "ALTER TABLE `employees`.add_test MODIFY COLUMN col1 INT NOT NULL;";
         mySQLDDLParserService.parseSql(sql, "add_test", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.add_test MODIFY COLUMN col1 Int32"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.add_test MODIFY COLUMN col1 Nullable(Int32)"));
     }
 
     @Test
     public void testModifyColumnWithExplicitNull() {
         StringBuffer clickHouseQuery = new StringBuffer();
-        String sql = "ALTER TABLE employees.add_test MODIFY COLUMN col1 INT NULL;";
+        String sql = "ALTER TABLE `employees`.add_test MODIFY COLUMN col1 INT NULL;";
         mySQLDDLParserService.parseSql(sql, "add_test", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.add_test MODIFY COLUMN col1 Nullable(Int32)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.add_test MODIFY COLUMN col1 Nullable(Int32)"));
     }
 
     @Test
     public void testChangeColumnWithNotNull() {
+        // Same rationale as testModifyColumnWithNotNull: CHANGE COLUMN with
+        // NOT NULL keeps the ClickHouse column Nullable to avoid a Code: 36
+        // Nullable -> non-Nullable conversion that stalls the stream. Previously
+        // this expected "MODIFY COLUMN stocks Bool" (non-Nullable).
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Bool\n" +
-                "ALTER TABLE employees.add_test RENAME COLUMN IF EXISTS stocks to options";
+        String expectedCHQuery = "ALTER TABLE `employees`.add_test MODIFY COLUMN IF EXISTS stocks Nullable(Bool) \n" +
+                "ALTER TABLE `employees`.add_test RENAME COLUMN IF EXISTS stocks to options";
         String sql = "alter table add_test change column stocks options bool not null";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -765,8 +929,8 @@ public class MySqlDDLParserListenerImplTest {
     public void testChangeColumnWithExplicitNull() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String expectedCHQuery = "ALTER TABLE employees.add_test MODIFY COLUMN stocks Nullable(Bool) \n" +
-                "ALTER TABLE employees.add_test RENAME COLUMN IF EXISTS stocks to options";
+        String expectedCHQuery = "ALTER TABLE `employees`.add_test MODIFY COLUMN IF EXISTS stocks Nullable(Bool) \n" +
+                "ALTER TABLE `employees`.add_test RENAME COLUMN IF EXISTS stocks to options";
         String sql = "alter table add_test change column stocks options bool null";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
 
@@ -779,6 +943,11 @@ public class MySqlDDLParserListenerImplTest {
 
         String sql = "alter table t2 add constraint t2_pk_constraint primary key (1c), alter column `_` set default 1;\n";
         mySQLDDLParserService.parseSql(sql, "t2", clickHouseQuery);
+        // Both clauses are unrepresentable in ClickHouse (the sorting key is
+        // fixed at CREATE; a column DEFAULT change is not replicated), so the
+        // statement must translate to nothing -- not to a bare "ALTER TABLE
+        // `employees`.t2", which ClickHouse rejects with Code: 62.
+        Assert.assertEquals("", clickHouseQuery.toString().trim());
 
         StringBuffer clickHouseQuery2 = new StringBuffer();
 
@@ -793,17 +962,35 @@ public class MySqlDDLParserListenerImplTest {
         String dropConstraintsSql = "alter table employees drop CONSTRAINT employees_ibfk_2";
         mySQLDDLParserService.parseSql(dropConstraintsSql, "employees", clickhouseQuery);
 
-        Assert.assertTrue(clickhouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.employees DROP CONSTRAINT IF EXISTS employees_ibfk_2"));
+        // Skip class (Spec 06.04 §3.1): no CHECK constraint is ever created on
+        // the replica, so there is nothing to drop and nothing is emitted.
+        // Previously pinned "DROP CONSTRAINT IF EXISTS employees_ibfk_2".
+        Assert.assertEquals("", clickhouseQuery.toString().trim());
     }
 
     @Test
     public void testAddConstraintsWithAnd() {
         StringBuffer clickHouseQuery = new StringBuffer();
         String checkConstraintSql = "ALTER TABLE orders ADD CONSTRAINT check_revenue_positive CHECK ( (revenue>=0 and revenue<1000) or (revenue>=2000) );";
-        String clickhouseExpectedQuery = "ALTER TABLE employees.orders ADD CONSTRAINT check_revenue_positive CHECK ( ( revenue >=0 and revenue <1000 ) or ( revenue >=2000 ) ) ";
         mySQLDDLParserService.parseSql(checkConstraintSql, " ", clickHouseQuery);
         log.info("CLICKHOUSE QUERY " + clickHouseQuery.toString());
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(clickhouseExpectedQuery));
+        // Skip class (Spec 06.04 §3.1): a CHECK is validated by MySQL already
+        // and, echoed, is either rejected by ClickHouse or re-enforced on
+        // INSERT against the source rows. Previously pinned the verbatim echo.
+        Assert.assertEquals("", clickHouseQuery.toString().trim());
+    }
+
+    @Test
+    @DisplayName("CHECK constraints (ADD/DROP, named, unnamed, NOT ENFORCED) are skipped and never drop a neighbour")
+    public void testAddCheckConstraintIsSkipped() {
+        Assert.assertEquals("", translate("ALTER TABLE t ADD CHECK (a > 0)").trim());
+        Assert.assertEquals("", translate("ALTER TABLE t ADD CONSTRAINT c1 CHECK (a > 0) NOT ENFORCED").trim());
+        Assert.assertEquals("", translate("ALTER TABLE t DROP CHECK c1").trim());
+        Assert.assertEquals("", translate("ALTER TABLE t DROP CONSTRAINT c1").trim());
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS b Nullable(Int32)",
+                translate("ALTER TABLE t ADD CHECK (a > 0), ADD COLUMN b INT, DROP CONSTRAINT c1"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS b Nullable(Int32)",
+                translate("ALTER TABLE t ADD COLUMN b INT, ADD CONSTRAINT c2 CHECK (JSON_VALID(doc))"));
     }
 
     @Test
@@ -822,20 +1009,29 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "truncate table add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("TRUNCATE TABLE employees.add_test"));
+        // DESTRUCTIVE: none -- the DDL translator is a pure string
+        // transformation here; the test asserts on generated text and
+        // never opens a connection, so nothing is truncated.
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("TRUNCATE TABLE `employees`.add_test"));
     }
 
     @Test
     public void truncateTableWithQualifiedName() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String sql = "truncate table mydb.add_test";
+        // DESTRUCTIVE: none -- the DDL translator is a pure string
+        // transformation here; the test asserts on generated text and
+        // never opens a connection, so nothing is truncated.
+        String sql = "truncate table `mydb`.add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
         // When the table name is already qualified (mydb.add_test), the method should
         // strip the source database and use the configured databaseName instead,
         // producing employees.add_test (not employees.mydb.add_test).
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("TRUNCATE TABLE employees.add_test"));
+        // DESTRUCTIVE: none -- the DDL translator is a pure string
+        // transformation here; the test asserts on generated text and
+        // never opens a connection, so nothing is truncated.
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("TRUNCATE TABLE `employees`.add_test"));
     }
 
     @Test
@@ -845,7 +1041,8 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "drop table mydb.add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE employees.add_test"));
+        // DESTRUCTIVE: none -- string assertion on generated DDL text; no database is contacted.
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE IF EXISTS employees.add_test"));
     }
 
     @Test
@@ -855,7 +1052,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "rename table mydb.old_table to new_table";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE employees.old_table to employees.new_table"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE IF EXISTS employees.old_table to employees.new_table"));
     }
 
     @Test
@@ -865,7 +1062,8 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "drop table add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE employees.add_test"));
+        // DESTRUCTIVE: none -- string assertion on generated DDL text; no database is contacted.
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP TABLE IF EXISTS employees.add_test"));
     }
 
     @Test
@@ -873,7 +1071,8 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
 
         String sql = "drop table add_test";
-        String expectedClickHouseQuery = "DROP TABLE employees.add_test";
+        // DESTRUCTIVE: none -- string assertion on generated DDL text; no database is contacted.
+        String expectedClickHouseQuery = "DROP TABLE IF EXISTS employees.add_test";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedClickHouseQuery));
@@ -896,7 +1095,8 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "drop table add_test, add_test2";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("drop table employees.add_test,employees.add_test2"));
+        // DESTRUCTIVE: none -- string assertion on generated DDL text; no database is contacted.
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("drop table if exists employees.add_test,employees.add_test2"));
     }
 
     @Test
@@ -906,7 +1106,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "ALTER TABLE employees.old_table RENAME employees.new_table";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees.old_table to employees.new_table"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table if exists `employees`.old_table to `employees`.new_table"));
     }
 
     @Test
@@ -914,7 +1114,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         String sql = "ALTER TABLE old_table RENAME new_table";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees.old_table to employees.new_table"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table if exists `employees`.old_table to `employees`.new_table"));
     }
 
     @Test
@@ -924,7 +1124,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "rename table add_test to add_test_old";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees.add_test to employees.add_test_old"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table if exists employees.add_test to employees.add_test_old"));
     }
 
     @Test
@@ -939,18 +1139,26 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "rename table employees.add_test to employees.add_test_old";
 
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table employees2.add_test to employees2.add_test_old"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("rename table if exists employees2.add_test to employees2.add_test_old"));
     }
 
-//    @Test
-//    public void testAddIndex() {
-//        StringBuffer clickHouseQuery = new StringBuffer();
-//
-//        String sql = "alter table add_test add index if not exists ix_add_test_col1 using btree (col1) comment 'test index';\n";
-//        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
-//
-//
-//    }
+    @Test
+    @DisplayName("ADD INDEX as the only clause emits nothing, not a bare ALTER TABLE")
+    public void testAlterAddIndexOnlyIsSkipped() {
+        // A MySQL secondary index has no ClickHouse equivalent on the DDL
+        // path (the MySQL shape "ADD INDEX idx (col)" is a syntax error to
+        // ClickHouse, which requires a TYPE). Skipping it loses nothing, but
+        // it must translate to "" rather than to "ALTER TABLE `employees`.t"
+        // (Code: 62, retried forever).
+        StringBuffer clickHouseQuery = new StringBuffer();
+        String sql = "alter table add_test add index ix_add_test_col1 using btree (col1) comment 'test index';\n";
+        mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
+        Assert.assertEquals("", clickHouseQuery.toString().trim());
+
+        StringBuffer plain = new StringBuffer();
+        mySQLDDLParserService.parseSql("ALTER TABLE add_test ADD INDEX idx_a (col1)", "table1", plain);
+        Assert.assertEquals("", plain.toString().trim());
+    }
 
 
     @Test
@@ -997,7 +1205,7 @@ public class MySqlDDLParserListenerImplTest {
 
         // DESTRUCTIVE: none -- string assertion on generated DDL text;
         // no database is contacted and no data is dropped.
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("alter table employees.add_test drop column if exists col1"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("alter table `employees`.add_test drop column if exists col1"));
 
         String multipleDropColumnsSql = "ALTER TABLE fffe3e80f_d197_11ee_836a_19710b02e0b5 DROP COLUMN new_col1, DROP COLUMN new_col2, DROP COLUMN new_col3";
 
@@ -1005,7 +1213,7 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(multipleDropColumnsSql, "", multipleDropColumnCHQuery);
 
         // DESTRUCTIVE: none -- string assertion on generated DDL text; no database is contacted.
-        Assert.assertTrue(multipleDropColumnCHQuery.toString().equalsIgnoreCase("ALTER TABLE employees.fffe3e80f_d197_11ee_836a_19710b02e0b5 DROP COLUMN IF EXISTS new_col1, DROP COLUMN IF EXISTS new_col2, DROP COLUMN IF EXISTS new_col3"));
+        Assert.assertTrue(multipleDropColumnCHQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.fffe3e80f_d197_11ee_836a_19710b02e0b5 DROP COLUMN IF EXISTS new_col1, DROP COLUMN IF EXISTS new_col2, DROP COLUMN IF EXISTS new_col3"));
 
     }
 
@@ -1018,7 +1226,7 @@ public class MySqlDDLParserListenerImplTest {
 
         // DESTRUCTIVE: none -- string assertion on generated DDL text;
         // no database is contacted and no data is dropped.
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("alter table employees.`leads` drop column if exists `country`"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("alter table `employees`.`leads` drop column if exists `country`"));
     }
 
     @Test
@@ -1028,7 +1236,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "rename /* gh-ost */ table `trade_prod`.`enriched_trade` to `trade_prod`.`_enriched_trade_del`, `trade_prod`.`_enriched_trade_gho` to `trade_prod`.`enriched_trade`\n";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE employees.`enriched_trade` to employees.`_enriched_trade_del`,employees.`_enriched_trade_gho` to employees.`enriched_trade`"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE IF EXISTS employees.`enriched_trade` to employees.`_enriched_trade_del`,employees.`_enriched_trade_gho` to employees.`enriched_trade`"));
     }
     @Test
     public void alterTableRenameTable() {
@@ -1037,7 +1245,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "ALTER TABLE test_table rename to test_table_new";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE employees.test_table to employees.test_table_new"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE IF EXISTS `employees`.test_table to `employees`.test_table_new"));
     }
 
     @Test
@@ -1047,7 +1255,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "ALTER TABLE test_table ADD COLUMN col1 varchar(255) COMMENT 'test column';";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.test_table ADD COLUMN IF NOT EXISTS col1 Nullable(String)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.test_table ADD COLUMN IF NOT EXISTS col1 Nullable(String)"));
     }
 
     @Test
@@ -1057,7 +1265,7 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "ALTER TABLE test_table ADD COLUMN col1 decimal(10,2) COMMENT 'test column';";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.test_table ADD COLUMN IF NOT EXISTS col1 Nullable(Decimal(10,2))"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE `employees`.test_table ADD COLUMN IF NOT EXISTS col1 Nullable(Decimal(10,2))"));
     }
 
     @Test
@@ -1067,7 +1275,9 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "CREATE TABLE employees.contacts (fullname varchar(101) GENERATED ALWAYS AS (CONCAT(first_name,' ',last_name)), email VARCHAR(100) NOT NULL);";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.contacts(fullname Nullable(String) MATERIALIZED CONCAT(first_name,' ',last_name),email String NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()"));
+        // Keyless table: the stored column is the sorting key; the generated
+        // column is excluded from it (Spec 06.05 §3.6), never tuple().
+        Assert.assertTrue(clickHouseQuery.toString(), clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.contacts(fullname Nullable(String) DEFAULT CONCAT(first_name,' ',last_name),email String NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (email)"));
     }
 
     /**
@@ -1085,7 +1295,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testGeneratedColumnWithCharsetIntroducer() {
         StringBuffer clickHouseQuery = new StringBuffer();
 
-        String sql = "CREATE TABLE employees.contacts (fullname varchar(101) "
+        String sql = "CREATE TABLE `employees`.contacts (fullname varchar(101) "
                 + "GENERATED ALWAYS AS (concat(`first_name`,_utf8mb4' ',`last_name`)), "
                 + "email VARCHAR(100) NOT NULL);";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
@@ -1138,13 +1348,13 @@ public class MySqlDDLParserListenerImplTest {
         // identity and belong in the all-columns sorting key. The connector's own
         // delete marker is renamed to `_is_deleted` to dodge the collision, and
         // that bookkeeping column stays out of the sorting key.
-        String expectedQuery = "CREATE TABLE if not exists employees.new_table(col1 Nullable(String),col2 Nullable(Int32),is_deleted Nullable(Int32),_sign Nullable(Int32),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,_is_deleted) ORDER BY tuple()";
+        String expectedQuery = "CREATE TABLE if not exists `employees`.new_table(col1 Nullable(String),col2 Nullable(Int32),is_deleted Nullable(Int32),_sign Nullable(Int32),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,_is_deleted) ORDER BY (col1,col2,is_deleted,_sign) SETTINGS allow_nullable_key=1";
 
         String sql = "create table new_table(col1 varchar(255), col2 int, is_deleted int, _sign int);";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
+        Assert.assertTrue(clickHouseQuery.toString(), clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
 
-        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.new_table(col1 Nullable(String),col2 Nullable(Int32),is_deleted Nullable(Int32),_sign Nullable(Int32),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY tuple()"));
+        //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.new_table(col1 Nullable(String),col2 Nullable(Int32),is_deleted Nullable(Int32),_sign Nullable(Int32),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY tuple()"));
     }
 
     @ParameterizedTest
@@ -1178,7 +1388,8 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` timestamp(1) NOT NULL) ENGINE=InnoDB;";
         mySQLDDLParserService.parseSql(sql, "temporal_types_DATETIME4", clickHouseQuery, isDropOrTruncate);
 
-        String expectedResult = "CREATE TABLE if not exists datatypes.temporal_types_TIMESTAMP1 ON CLUSTER `{cluster}`(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplicatedReplacingMergeTree(_version, is_deleted) ORDER BY tuple()";
+        // Keyless table: the stored column is the sorting key (Spec 06.05 §3.6), never tuple().
+        String expectedResult = "CREATE TABLE if not exists `datatypes`.temporal_types_TIMESTAMP1 ON CLUSTER `{cluster}`(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplicatedReplacingMergeTree(_version, is_deleted) ORDER BY (`Mid_Value`)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedResult));
 
 
@@ -1186,12 +1397,12 @@ public class MySqlDDLParserListenerImplTest {
 
     @ParameterizedTest
     @CsvSource(
-            value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` timestamp(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists employees.temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()",
-            "CREATE TABLE temporal_types_TIMESTAMP2(`Mid_Value` timestamp(2) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists employees.temporal_types_TIMESTAMP2(`Mid_Value` DateTime64(2, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()",
-            "CREATE TABLE temporal_types_TIMESTAMP3(`Mid_Value` timestamp(3) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists employees.temporal_types_TIMESTAMP3(`Mid_Value` DateTime64(3, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()",
-            "CREATE TABLE temporal_types_TIMESTAMP4(`Mid_Value` timestamp(4) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists employees.temporal_types_TIMESTAMP4(`Mid_Value` DateTime64(4, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()",
-            "CREATE TABLE temporal_types_TIMESTAMP5(`Mid_Value` timestamp(5) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists employees.temporal_types_TIMESTAMP5(`Mid_Value` DateTime64(5, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()",
-            "CREATE TABLE temporal_types_TIMESTAMP6(`Mid_Value` timestamp(6) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists employees.temporal_types_TIMESTAMP6(`Mid_Value` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()"}
+            value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` timestamp(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+            "CREATE TABLE temporal_types_TIMESTAMP2(`Mid_Value` timestamp(2) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP2(`Mid_Value` DateTime64(2, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+            "CREATE TABLE temporal_types_TIMESTAMP3(`Mid_Value` timestamp(3) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP3(`Mid_Value` DateTime64(3, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+            "CREATE TABLE temporal_types_TIMESTAMP4(`Mid_Value` timestamp(4) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP4(`Mid_Value` DateTime64(4, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+            "CREATE TABLE temporal_types_TIMESTAMP5(`Mid_Value` timestamp(5) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP5(`Mid_Value` DateTime64(5, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+            "CREATE TABLE temporal_types_TIMESTAMP6(`Mid_Value` timestamp(6) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP6(`Mid_Value` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)"}
     ,delimiter = ':')
     @DisplayName("Test to validate if the timestamp data type precision is maintained from MySQL to ClickHouse")
     public void checkIfTimestampDataTypePrecisionIsMaintained(String sql, String expectedResult) {
@@ -1205,12 +1416,12 @@ public class MySqlDDLParserListenerImplTest {
 
     @ParameterizedTest
     @CsvSource(
-            value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` TIMESTAMP(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists employees.temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()",
-                    "CREATE TABLE temporal_types_TIMESTAMP2(`Mid_Value` TIMESTAMP(2) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists employees.temporal_types_TIMESTAMP2(`Mid_Value` DateTime64(2, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()",
-                    "CREATE TABLE temporal_types_TIMESTAMP3(`Mid_Value` TIMESTAMP(3) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists employees.temporal_types_TIMESTAMP3(`Mid_Value` DateTime64(3, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()",
-                    "CREATE TABLE temporal_types_TIMESTAMP4(`Mid_Value` TIMESTAMP(4) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists employees.temporal_types_TIMESTAMP4(`Mid_Value` DateTime64(4, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()",
-                    "CREATE TABLE temporal_types_TIMESTAMP5(`Mid_Value` TIMESTAMP(5) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists employees.temporal_types_TIMESTAMP5(`Mid_Value` DateTime64(5, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()",
-                    "CREATE TABLE temporal_types_TIMESTAMP6(`Mid_Value` TIMESTAMP(6) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists employees.temporal_types_TIMESTAMP6(`Mid_Value` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY tuple()"}
+            value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` TIMESTAMP(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+                    "CREATE TABLE temporal_types_TIMESTAMP2(`Mid_Value` TIMESTAMP(2) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP2(`Mid_Value` DateTime64(2, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+                    "CREATE TABLE temporal_types_TIMESTAMP3(`Mid_Value` TIMESTAMP(3) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP3(`Mid_Value` DateTime64(3, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+                    "CREATE TABLE temporal_types_TIMESTAMP4(`Mid_Value` TIMESTAMP(4) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP4(`Mid_Value` DateTime64(4, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+                    "CREATE TABLE temporal_types_TIMESTAMP5(`Mid_Value` TIMESTAMP(5) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP5(`Mid_Value` DateTime64(5, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+                    "CREATE TABLE temporal_types_TIMESTAMP6(`Mid_Value` TIMESTAMP(6) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP6(`Mid_Value` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)"}
             ,delimiter = ':')
     @DisplayName("Test to validate if the timestamp data type precision(uppercase timestamp is maintained from MySQL to ClickHouse")
     public void checkIfTimestampDataTypeUpperCasePrecisionIsMaintained(String sql, String expectedResult) {
@@ -1223,7 +1434,10 @@ public class MySqlDDLParserListenerImplTest {
     }
     @Test
     public void testAlterDatabaseAddColumnEnum() {
-        String clickhouseExpectedQuery = "ALTER TABLE employees.employees ADD COLUMN IF NOT EXISTS gender String";
+        // ENUM NOT NULL without a DEFAULT: MySQL back-fills the first member
+        // (Spec 06.04 §3.2.2); previously pinned without the DEFAULT, which
+        // left pre-existing rows at '' where MySQL held 'M'.
+        String clickhouseExpectedQuery = "ALTER TABLE `employees`.employees ADD COLUMN IF NOT EXISTS gender String DEFAULT 'M'";
         StringBuffer clickHouseQuery = new StringBuffer();
         String alterDBAddColumn = "ALTER TABLE employees add column gender ENUM ('M','F') NOT NULL";
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
@@ -1236,7 +1450,7 @@ public class MySqlDDLParserListenerImplTest {
 
     @Test
     public void testAlterDatabaseAddColumnJson() {
-        String clickhouseExpectedQuery = "ALTER TABLE employees.employees ADD COLUMN IF NOT EXISTS data String";
+        String clickhouseExpectedQuery = "ALTER TABLE `employees`.employees ADD COLUMN IF NOT EXISTS data String";
         StringBuffer clickHouseQuery = new StringBuffer();
         String alterDBAddColumn = "ALTER TABLE employees add column data JSON NOT NULL";
         mySQLDDLParserService.parseSql(alterDBAddColumn, "employees", clickHouseQuery);
@@ -1263,7 +1477,7 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(
-                "CREATE TABLE if not exists employees.`city`(`ID` Int32 NOT NULL ,`Name` String NOT NULL ,`CountryCode` String NOT NULL ,`District` String NOT NULL ,`Population` Int32 NOT NULL ,`is_deleted` Nullable(Int8),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,_is_deleted) ORDER BY (`ID`)"));
+                "CREATE TABLE if not exists `employees`.`city`(`ID` Int32 NOT NULL ,`Name` String NOT NULL ,`CountryCode` String NOT NULL ,`District` String NOT NULL ,`Population` Int32 NOT NULL ,`is_deleted` Nullable(Int8),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,_is_deleted) ORDER BY (`ID`)"));
 
 
         String sqlWithoutBackticks = "create table city(id int not null auto_increment, Name char(35) , is_deleted tinyint(1) DEFAULT 0, primary key(id))";
@@ -1272,7 +1486,7 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sqlWithoutBackticks, "employees", clickHouseQuery2);
 
         Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase(
-                "CREATE TABLE if not exists employees.city(id Int32 NOT NULL ,Name Nullable(String),is_deleted Nullable(Int8),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,_is_deleted) ORDER BY (id)"));
+                "CREATE TABLE if not exists `employees`.city(id Int32 NOT NULL ,Name Nullable(String),is_deleted Nullable(Int8),`_version` UInt64,`_is_deleted` UInt8) Engine=ReplacingMergeTree(_version,_is_deleted) ORDER BY (id)"));
     }
 
     @Test
@@ -1288,7 +1502,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery2 = new StringBuffer();
         mySQLDDLParserService.parseSql(createTableQuery, "employees", clickHouseQuery2);
 
-        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE if not exists employees.`_j_failed_s_g`(id Int32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.`_j_failed_s_g`(id Int32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
     }
 
     @Test
@@ -1899,8 +2113,8 @@ public class MySqlDDLParserListenerImplTest {
 
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql2, "employees", clickHouseQuery);
-        //String expectedQuery = "CREATE TABLE if not exists employees.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` UInt16 NOT NULL ,`incomplete_lookup_type_id` UInt16 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
-        String expectedQuery = "CREATE TABLE if not exists employees.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` UInt16 NOT NULL ,`incomplete_lookup_type_id` UInt16 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  clearing_date ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
+        //String expectedQuery = "CREATE TABLE if not exists `employees`.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` UInt16 NOT NULL ,`incomplete_lookup_type_id` UInt16 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
+        String expectedQuery = "CREATE TABLE if not exists `employees`.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` UInt16 NOT NULL ,`incomplete_lookup_type_id` UInt16 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  clearing_date ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
         //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
@@ -2499,8 +2713,8 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
 
-        String expectedQuery = "CREATE TABLE if not exists employees.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` UInt16 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` UInt16 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(UInt16),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(UInt32),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(UInt16),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(UInt32),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) MATERIALIZED ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  trade_date ORDER BY (`enriched_trade_id`,`trade_date`)";
-        //String expectedQuery = "CREATE TABLE if not exists employees.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` UInt16 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` UInt16 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(UInt16),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(UInt32),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(UInt16),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(UInt32),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) MATERIALIZED ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`enriched_trade_id`,`trade_date`)";
+        String expectedQuery = "CREATE TABLE if not exists `employees`.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` UInt16 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` UInt16 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(UInt16),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(UInt32),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(UInt16),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(UInt32),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) DEFAULT ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  trade_date ORDER BY (`enriched_trade_id`,`trade_date`)";
+        //String expectedQuery = "CREATE TABLE if not exists `employees`.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` UInt16 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` UInt16 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(UInt16),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(UInt32),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(UInt16),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(UInt32),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) DEFAULT ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`enriched_trade_id`,`trade_date`)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
 
@@ -2513,9 +2727,60 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
 
-        String expectedQuery = "CREATE TABLE if not exists employees.orders2(order_id Int32 NOT NULL ,item_price Decimal(10,2) NOT NULL ,quantity Int32 NOT NULL ,total_price Decimal(12,2) MATERIALIZED item_price*quantity,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY order_id";
+        String expectedQuery = "CREATE TABLE if not exists `employees`.orders2(order_id Int32 NOT NULL ,item_price Decimal(10,2) NOT NULL ,quantity Int32 NOT NULL ,total_price Decimal(12,2) DEFAULT item_price*quantity,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY order_id";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
 
+    }
+
+    /**
+     * A MySQL generated column must be translated to a ClickHouse DEFAULT
+     * column, never MATERIALIZED -- for VIRTUAL and STORED alike.
+     *
+     * <p>MySQL is the source of truth in a replication pipeline, and Debezium
+     * carries generated columns in the row image. A MATERIALIZED column
+     * REJECTS an INSERT that names it -- {@code Code: 44 ... Cannot insert
+     * column, because it is MATERIALIZED column (ILLEGAL_COLUMN)} -- so the
+     * value MySQL computed can never be written, and the replica silently
+     * keeps whatever its own expression produced. That divergence raises no
+     * error and leaves row counts matching, so only a value-level checksum
+     * would ever surface it.</p>
+     *
+     * <p>DEFAULT still evaluates the expression when the column is omitted, so
+     * nothing is lost for clients that do not supply it -- it simply also
+     * accepts the replicated value.</p>
+     *
+     * <p>Asserted on the emitted DDL rather than on a constant, so the
+     * property holds however the emitter is refactored.</p>
+     */
+    @Test
+    public void generatedColumnsAreDefaultNotMaterialized() {
+        String[] statements = {
+                // VIRTUAL (not stored on the source)
+                "CREATE TABLE gen_virtual(id INT PRIMARY KEY, attrs BIGINT UNSIGNED,"
+                        + " is_reversal INT GENERATED ALWAYS AS ((attrs & (1 << 0)) > 0) VIRTUAL);",
+                // STORED (materialised on the source)
+                "CREATE TABLE gen_stored(id INT PRIMARY KEY, price DECIMAL(10,2) NOT NULL,"
+                        + " qty INT NOT NULL,"
+                        + " total DECIMAL(12,2) GENERATED ALWAYS AS (price * qty) STORED);",
+                // shorthand AS (...) with neither keyword; MySQL defaults to VIRTUAL
+                "CREATE TABLE gen_shorthand(id INT PRIMARY KEY, first_name VARCHAR(50),"
+                        + " last_name VARCHAR(50),"
+                        + " fullname VARCHAR(101) AS (CONCAT(first_name, ' ', last_name)));",
+        };
+
+        for (String sql : statements) {
+            StringBuffer clickHouseQuery = new StringBuffer();
+            mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
+            String ddl = clickHouseQuery.toString();
+
+            Assert.assertFalse(
+                    "a generated column must not become MATERIALIZED -- it would reject "
+                            + "the value the binlog carries: " + ddl,
+                    ddl.toUpperCase().contains("MATERIALIZED"));
+            Assert.assertTrue(
+                    "a generated column must be emitted as DEFAULT: " + ddl,
+                    ddl.toUpperCase().contains("DEFAULT "));
+        }
     }
     @Test
     @Disabled
@@ -2544,7 +2809,7 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
 
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(
-                "CREATE TABLE if not exists employees.`city`(`ID` Int32 NOT NULL ,`Name` String NOT NULL ,`CountryCode` String NOT NULL ,`District` String NOT NULL ,`Population` Int32 NOT NULL ,`is_deleted` Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (`ID`) PARTITION BY ID"));
+                "CREATE TABLE if not exists `employees`.`city`(`ID` Int32 NOT NULL ,`Name` String NOT NULL ,`CountryCode` String NOT NULL ,`District` String NOT NULL ,`Population` Int32 NOT NULL ,`is_deleted` Nullable(Int16),`_version` UInt64,`__is_deleted` UInt8) Engine=ReplacingMergeTree(_version,__is_deleted) ORDER BY (`ID`) PARTITION BY ID"));
     }
 
     @Test
@@ -2567,8 +2832,171 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         parserService.parseSql(sql, "test_db", clickHouseQuery);
 
-        String expectedQuery = "CREATE TABLE if not exists employees.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64(0,'America/Chicago') NOT NULL ,`_valid_from` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',`_valid_to` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',`_operation` LowCardinality(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`_valid_to`) ORDER BY (`id`,`_valid_to`) TTL `_valid_to` + toIntervalDay(30)";
+        String expectedQuery = "CREATE TABLE if not exists `employees`.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64(0,'America/Chicago') NOT NULL ,`_valid_from` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',`_valid_to` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',`_operation` LowCardinality(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`_valid_to`) ORDER BY (`id`,`_valid_to`) TTL `_valid_to` + toIntervalDay(30)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
+    }
+
+    private static MySQLDDLParserService historyModeParser(Map<String, String> extra) {
+        HashMap<String, String> config = new HashMap<>();
+        config.put(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString(), "true");
+        config.putAll(extra);
+        return new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config), "employees");
+    }
+
+    /**
+     * Spec 12.03 section 3.4: in history mode a source TRUNCATE TABLE is never
+     * translated to a ClickHouse TRUNCATE (that erased the SCD2 history); the
+     * translator emits NO DDL text and records one bulk-close request
+     * ({@code TRUNCATE}, marker 'T') for the table in the history database,
+     * while the statement stays classified as a truncate for
+     * {@code disable.drop.truncate}. Standard mode is unchanged.
+     */
+    @Test
+    public void testReplicationHistoryTruncateEmitsNoDdlButRecordsBulkClose() {
+        MySQLDDLParserService history = historyModeParser(Collections.emptyMap());
+
+        // DESTRUCTIVE: none -- string/plan assertions on the translator; no database is contacted.
+        StringBuffer historyQuery = new StringBuffer();
+        AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
+        history.parseSql("TRUNCATE TABLE t", "", historyQuery, isDropOrTruncate);
+
+        Assert.assertEquals("", historyQuery.toString());
+        // DESTRUCTIVE: none -- string/flag assertions on the translator; no database is contacted.
+        Assert.assertTrue("still classified as a truncate for disable.drop.truncate", isDropOrTruncate.get());
+        List<MySqlDDLParserListenerImpl.HistoryBulkClose> requests = history.historyBulkCloses();
+        Assert.assertEquals(1, requests.size());
+        Assert.assertEquals("employees", requests.get(0).database());
+        Assert.assertEquals("t", requests.get(0).table());
+        Assert.assertEquals(ClickHouseConverter.CDC_OPERATION.TRUNCATE, requests.get(0).op());
+
+        // A qualified, backticked name resolves like the standard translation:
+        // the listener's (history) database, the bare table.
+        // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
+        Assert.assertEquals("", translate(history, "TRUNCATE TABLE `srcdb`.`t2`"));
+        requests = history.historyBulkCloses();
+        Assert.assertEquals(1, requests.size());
+        Assert.assertEquals("employees", requests.get(0).database());
+        Assert.assertEquals("t2", requests.get(0).table());
+
+        // The requests are per statement: a following non-destructive
+        // statement leaves none behind.
+        translate(history, "ALTER TABLE t ADD COLUMN c INT");
+        Assert.assertTrue(history.historyBulkCloses().isEmpty());
+
+        // Standard mode: byte-identical to before, and no request.
+        // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
+        StringBuffer standardQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql("TRUNCATE TABLE t", "", standardQuery, new AtomicBoolean(false));
+        Assert.assertEquals("TRUNCATE TABLE `employees`.t", standardQuery.toString());
+        Assert.assertTrue(mySQLDDLParserService.historyBulkCloses().isEmpty());
+    }
+
+    /**
+     * Spec 12.03 section 3.4: in history mode a source DROP TABLE never drops
+     * the SCD2 table (its closed versions would go with it); the translator
+     * emits NO DDL text and records one bulk-close request per named table
+     * ({@code DELETE}, marker 'D'). Standard mode is unchanged.
+     */
+    @Test
+    public void testReplicationHistoryDropTableRecordsBulkClosePerTable() {
+        MySQLDDLParserService history = historyModeParser(Collections.emptyMap());
+
+        // DESTRUCTIVE: none -- string/plan assertions on the translator; no database is contacted.
+        StringBuffer historyQuery = new StringBuffer();
+        AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
+        history.parseSql("DROP TABLE a, srcdb.b", "", historyQuery, isDropOrTruncate);
+
+        Assert.assertEquals("", historyQuery.toString());
+        Assert.assertTrue("still classified as a drop for disable.drop.truncate", isDropOrTruncate.get());
+        List<MySqlDDLParserListenerImpl.HistoryBulkClose> requests = history.historyBulkCloses();
+        Assert.assertEquals(2, requests.size());
+        Assert.assertEquals("employees", requests.get(0).database());
+        Assert.assertEquals("a", requests.get(0).table());
+        Assert.assertEquals(ClickHouseConverter.CDC_OPERATION.DELETE, requests.get(0).op());
+        Assert.assertEquals("employees", requests.get(1).database());
+        Assert.assertEquals("b", requests.get(1).table());
+        Assert.assertEquals(ClickHouseConverter.CDC_OPERATION.DELETE, requests.get(1).op());
+
+        // DROP TABLE IF EXISTS is the form Debezium's snapshot replays: same
+        // routing, no text.
+        // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
+        Assert.assertEquals("", translate(history, "DROP TABLE IF EXISTS a"));
+        Assert.assertEquals(1, history.historyBulkCloses().size());
+
+        // Standard mode: byte-identical to before, and no request.
+        // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
+        StringBuffer standardQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql("DROP TABLE a, srcdb.b", "", standardQuery, new AtomicBoolean(false));
+        Assert.assertEquals("DROP TABLE if exists employees.a,employees.b", standardQuery.toString());
+        Assert.assertTrue(mySQLDDLParserService.historyBulkCloses().isEmpty());
+    }
+
+    /**
+     * Spec 12.02 section 3.4, Gap G-12.02-3: with a schema-override
+     * {@code primary_key} the sorting key used to be emitted WITHOUT
+     * {@code _valid_to}, so every version of a key collapsed under
+     * ReplacingMergeTree and the table was not an SCD2 table. History mode
+     * appends {@code _valid_to} on that branch too, as a flat tuple.
+     */
+    @Test
+    public void testReplicationHistoryAppendsValidToWithPrimaryKeyOverride() {
+        MySQLDDLParserService service = historyModeParser(
+                Collections.singletonMap("databases.employees.tables.pk_override.primary_key", "(b)"));
+
+        String q = translate(service, "CREATE TABLE pk_override (a INT NOT NULL, b INT NOT NULL, PRIMARY KEY (a))");
+
+        Assert.assertTrue(q, q.contains("ORDER BY (b,`_valid_to`)"));
+        Assert.assertFalse(q, q.contains("ORDER BY (b)"));
+        Assert.assertTrue(q, q.contains("TTL `_valid_to` + toIntervalDay(30)"));
+    }
+
+    /**
+     * Spec 12.02 section 3.4: a composite PRIMARY KEY reaches the ORDER BY
+     * clause already parenthesised, and wrapping it again produced the nested
+     * tuple {@code ((a,b),`_valid_to`)} -- sorting_key {@code (a,b),_valid_to}
+     * on the server. The emitted key must be the flat tuple
+     * {@code (a,b,`_valid_to`)}.
+     */
+    @Test
+    public void testReplicationHistoryCompositeKeyIsAFlatTuple() {
+        MySQLDDLParserService service = historyModeParser(Collections.emptyMap());
+
+        String q = translate(service, "CREATE TABLE composite (a INT NOT NULL, b INT NOT NULL, c INT, PRIMARY KEY (a, b))");
+
+        Assert.assertTrue(q, q.contains("ORDER BY (a,b,`_valid_to`)"));
+        Assert.assertFalse(q, q.contains("((a,b)"));
+
+        // A single table-level key is a flat tuple as well.
+        String single = translate(service, "CREATE TABLE single_key (a INT NOT NULL, b INT, PRIMARY KEY (a))");
+        Assert.assertTrue(single, single.contains("ORDER BY (a,`_valid_to`)"));
+    }
+
+    /**
+     * Spec 12.01 section 3.3: in history mode every table lives in the
+     * configured history database, which is not derived from the source, so
+     * a source CREATE DATABASE / DROP DATABASE names nothing in ClickHouse.
+     * Debezium's initial snapshot replays {@code DROP DATABASE IF EXISTS} +
+     * {@code CREATE DATABASE} for every captured database; translated
+     * verbatim, that DROP removed a database another connector was
+     * replicating into. Nothing is emitted in history mode; standard mode is
+     * unchanged.
+     */
+    @Test
+    public void testReplicationHistorySkipsDatabaseLevelDdl() {
+        MySQLDDLParserService history = historyModeParser(Collections.emptyMap());
+
+        // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
+        Assert.assertEquals("", translate(history, "CREATE DATABASE test").trim());
+        Assert.assertEquals("", translate(history, "CREATE DATABASE IF NOT EXISTS test").trim());
+        Assert.assertEquals("", translate(history, "DROP DATABASE IF EXISTS test").trim());
+        Assert.assertEquals("", translate(history, "DROP DATABASE test").trim());
+
+        // Standard mode: unchanged.
+        // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
+        String create = translate("CREATE DATABASE test");
+        Assert.assertTrue(create, create.equalsIgnoreCase("CREATE DATABASE IF NOT EXISTS test"));
+        String drop = translate("DROP DATABASE test");
+        Assert.assertTrue(drop, drop.equalsIgnoreCase("DROP DATABASE IF EXISTS test"));
     }
 
     @Test
@@ -2576,7 +3004,8 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "alter table employees drop CONSTRAINT employees_ibfk_2";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql, "employees", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("ALTER TABLE employees.employees DROP CONSTRAINT IF EXISTS employees_ibfk_2"));
+        // Skip class (Spec 06.04 §3.1); previously pinned "DROP CONSTRAINT IF EXISTS".
+        Assert.assertEquals("", clickHouseQuery.toString().trim());
     }
 
     @Test
@@ -2586,25 +3015,25 @@ public class MySqlDDLParserListenerImplTest {
         Map<String, Boolean> ddlTestCases = new HashMap<>();
         
         // Partition operations that SHOULD be ignored
-        ddlTestCases.put("ALTER TABLE employees.sales ANALYZE PARTITION p2023", true);
-        ddlTestCases.put("ALTER TABLE employees.sales ADD PARTITION (p2024)", true);
-        ddlTestCases.put("ALTER TABLE employees.sales DROP PARTITION p2022", true);
-        ddlTestCases.put("ALTER TABLE employees.sales REORGANIZE PARTITION p2023 INTO (p2023q1, p2023q2)", true);
-        ddlTestCases.put("ALTER TABLE employees.sales REMOVE PARTITIONING", true);
-        ddlTestCases.put("ALTER TABLE employees.sales TRUNCATE PARTITION p2022", true);
-        ddlTestCases.put("ALTER TABLE employees.sales CHECK PARTITION p2023", true);
-        ddlTestCases.put("ALTER TABLE employees.sales OPTIMIZE PARTITION p2023", true);
+        ddlTestCases.put("ALTER TABLE `employees`.sales ANALYZE PARTITION p2023", true);
+        ddlTestCases.put("ALTER TABLE `employees`.sales ADD PARTITION (p2024)", true);
+        ddlTestCases.put("ALTER TABLE `employees`.sales DROP PARTITION p2022", true);
+        ddlTestCases.put("ALTER TABLE `employees`.sales REORGANIZE PARTITION p2023 INTO (p2023q1, p2023q2)", true);
+        ddlTestCases.put("ALTER TABLE `employees`.sales REMOVE PARTITIONING", true);
+        ddlTestCases.put("ALTER TABLE `employees`.sales TRUNCATE PARTITION p2022", true);
+        ddlTestCases.put("ALTER TABLE `employees`.sales CHECK PARTITION p2023", true);
+        ddlTestCases.put("ALTER TABLE `employees`.sales OPTIMIZE PARTITION p2023", true);
         
         // AUTO_INCREMENT operations that SHOULD be ignored
-        ddlTestCases.put("ALTER TABLE employees.sales AUTO_INCREMENT = 1000", true);
-        ddlTestCases.put("ALTER TABLE employees.users AUTO_INCREMENT=5000", true);
+        ddlTestCases.put("ALTER TABLE `employees`.sales AUTO_INCREMENT = 1000", true);
+        ddlTestCases.put("ALTER TABLE `employees`.users AUTO_INCREMENT=5000", true);
         ddlTestCases.put("  ALTER TABLE test.mytable AUTO_INCREMENT = 12345  ", true);
         
         // Normal DDL operations that should NOT be ignored
-        ddlTestCases.put("ALTER TABLE employees.sales ADD COLUMN IF NOT EXISTS new_col INT", false);
+        ddlTestCases.put("ALTER TABLE `employees`.sales ADD COLUMN IF NOT EXISTS new_col INT", false);
         // DESTRUCTIVE: none -- string assertion on generated DDL text; no database is contacted.
-        ddlTestCases.put("ALTER TABLE employees.sales DROP COLUMN IF EXISTS old_col", false);
-        ddlTestCases.put("ALTER TABLE employees.sales MODIFY COLUMN price DECIMAL(10,2)", false);
+        ddlTestCases.put("ALTER TABLE `employees`.sales DROP COLUMN IF EXISTS old_col", false);
+        ddlTestCases.put("ALTER TABLE `employees`.sales MODIFY COLUMN price DECIMAL(10,2)", false);
         ddlTestCases.put("CREATE TABLE test (id INT PRIMARY KEY)", false);
         ddlTestCases.put("DROP TABLE employees.old_table", false);
         
@@ -2646,11 +3075,1127 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery, "employees", clickHouseQuery);
 
-        String expectedQuery = "CREATE TABLE if not exists employees.test3(order_id Nullable(Int32),product_name Nullable(String),quantity Nullable(Int32),order_date Nullable(Date32),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  toYear(order_date) ORDER BY (order_id,order_date)";
+        String expectedQuery = "CREATE TABLE if not exists `employees`.test3(order_id Int32 NOT NULL ,product_name Nullable(String),quantity Nullable(Int32),order_date Date32 NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  toYear(order_date) ORDER BY (order_id,order_date)";
 
         // Verify that MySQL's YEAR(order_date) partition is converted to ClickHouse's toYear(order_date)
        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
         log.info("Create table with RANGE PARTITION BY YEAR function: " + clickHouseQuery);
+    }
+
+    // ------------------------------------------------------------------
+    // Regression tests for a bitemporal surrogate-key migration that added a
+    // surrogate AUTO_INCREMENT PRIMARY KEY and tightened just-added columns to
+    // NOT NULL, producing malformed ClickHouse ALTERs (leading/only comma from
+    // the dropped ADD PRIMARY KEY, and a Nullable -> non-Nullable MODIFY the
+    // server rejected with Code: 36).
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("ADD PRIMARY KEY as the only clause emits nothing, not a bare ALTER TABLE")
+    public void testAlterAddPrimaryKeyOnlyIsSkipped() {
+        // A lone ADD PRIMARY KEY has no ClickHouse equivalent (the RMT sorting
+        // key is fixed at CREATE). It must translate to an empty statement so
+        // executeDDL skips it, not to "ALTER TABLE t" which ClickHouse rejects
+        // with Code: 62 and, being retried forever, stalls the stream.
+        String alter = "ALTER TABLE sample_tbl ADD PRIMARY KEY (sample_id)";
+        StringBuffer out = new StringBuffer();
+        mySQLDDLParserService.parseSql(alter, "employees", out);
+        log.info("CLICKHOUSE QUERY[addpk-only]:" + out);
+        Assert.assertEquals("", out.toString().trim());
+    }
+
+    @Test
+    @DisplayName("ADD PRIMARY KEY as the first clause does not leave a leading comma")
+    public void testAlterAddPrimaryKeyFirstNoLeadingComma() {
+        // Order matters: when the no-op ADD PRIMARY KEY is the first clause, the
+        // separator that followed it used to be emitted, producing
+        // "ALTER TABLE t, MODIFY ..." (leading comma, Code: 62).
+        String alter = "ALTER TABLE sample_tbl "
+                + "ADD PRIMARY KEY (ref_id), "
+                + "MODIFY COLUMN legacy_id SMALLINT UNSIGNED NOT NULL, "
+                + "ADD COLUMN ref_id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST";
+        String expected = "ALTER TABLE `employees`.sample_tbl "
+                + "MODIFY COLUMN legacy_id Nullable(UInt16), "
+                + "ADD COLUMN IF NOT EXISTS ref_id UInt32 FIRST";
+        StringBuffer out = new StringBuffer();
+        mySQLDDLParserService.parseSql(alter, "employees", out);
+        log.info("CLICKHOUSE QUERY[addpk-first]:" + out);
+        Assert.assertEquals(expected, out.toString());
+        Assert.assertFalse("leading comma after table name", out.toString().contains("sample_tbl,"));
+    }
+
+    @Test
+    @DisplayName("ADD COLUMN then ADD PRIMARY KEY drops only the key clause")
+    public void testAlterAddColumnThenAddPrimaryKey() {
+        String alter = "ALTER TABLE sample_tbl "
+                + "ADD COLUMN sample_id INT UNSIGNED NOT NULL AUTO_INCREMENT, "
+                + "ADD PRIMARY KEY (sample_id)";
+        String expected = "ALTER TABLE `employees`.sample_tbl "
+                + "ADD COLUMN IF NOT EXISTS sample_id UInt32";
+        StringBuffer out = new StringBuffer();
+        mySQLDDLParserService.parseSql(alter, "employees", out);
+        log.info("CLICKHOUSE QUERY[col-then-addpk]:" + out);
+        Assert.assertEquals(expected, out.toString());
+    }
+
+    @Test
+    @DisplayName("MODIFY COLUMN ... NOT NULL stays Nullable to avoid Code 36 on an existing Nullable column")
+    public void testAlterModifyColumnNotNullStaysNullable() {
+        // MySQL tightens a just-added column to NOT NULL. The column already
+        // exists as Nullable in ClickHouse (this translator emits ADD COLUMN as
+        // Nullable), so a non-Nullable MODIFY would be rejected with Code: 36
+        // "Please specify DEFAULT expression". Keep it Nullable: no source
+        // value is lost and the change is checksum-safe.
+        String alter = "ALTER TABLE sample_tbl MODIFY dt_from DATETIME(6) NOT NULL";
+        String expected = "ALTER TABLE `employees`.sample_tbl "
+                + "MODIFY COLUMN dt_from Nullable(DateTime64(6, 0))";
+        StringBuffer out = new StringBuffer();
+        mySQLDDLParserService.parseSql(alter, "employees", out);
+        log.info("CLICKHOUSE QUERY[modify-notnull]:" + out);
+        Assert.assertEquals(expected, out.toString());
+    }
+
+    @Test
+    @DisplayName("ADD COLUMN ... NOT NULL keeps honoring NOT NULL (non-Nullable)")
+    public void testAlterAddColumnNotNullStaysNonNullable() {
+        // The MODIFY fix must not weaken ADD COLUMN: a brand-new NOT NULL column
+        // has no existing rows to violate the constraint, so it stays non-Nullable.
+        String alter = "ALTER TABLE members ADD COLUMN joined DATE NOT NULL";
+        String expected = "ALTER TABLE `employees`.members "
+                + "ADD COLUMN IF NOT EXISTS joined Date32";
+        StringBuffer out = new StringBuffer();
+        mySQLDDLParserService.parseSql(alter, "employees", out);
+        log.info("CLICKHOUSE QUERY[addcol-notnull]:" + out);
+        Assert.assertEquals(expected, out.toString());
+    }
+
+    // ------------------------------------------------------------------
+    // Helpers for the conformance tests below.
+    // ------------------------------------------------------------------
+
+    /** Translates one statement with the shared (no target schema) parser. */
+    private static String translate(String mysqlDdl) {
+        return translate(mySQLDDLParserService, mysqlDdl);
+    }
+
+    private static String translate(MySQLDDLParserService service, String mysqlDdl) {
+        StringBuffer out = new StringBuffer();
+        service.parseSql(mysqlDdl, "employees", out);
+        return out.toString();
+    }
+
+    /** Collapses runs of whitespace so multi-clause expectations stay readable. */
+    private static String squash(String s) {
+        return s.replaceAll("\\s+", " ").trim();
+    }
+
+    /**
+     * A parser whose target table is known: {@code columnTypes} are the
+     * ClickHouse columns as {@code system.columns} would report them and
+     * {@code sortingKey} names the ORDER BY columns.
+     */
+    private static MySQLDDLParserService parserWithTarget(Map<String, String> columnTypes,
+                                                          List<String> sortingKey) {
+        MySQLDDLParserService service = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees");
+        service.setTargetSchemaLookup(TargetSchemaLookup.fromColumns(columnTypes, sortingKey));
+        return service;
+    }
+
+    private static Map<String, String> columns(String... nameTypePairs) {
+        Map<String, String> m = new LinkedHashMap<>();
+        for (int i = 0; i + 1 < nameTypePairs.length; i += 2) {
+            m.put(nameTypePairs[i], nameTypePairs[i + 1]);
+        }
+        return m;
+    }
+
+    // ------------------------------------------------------------------
+    // T1: no bare ALTER TABLE; skipped clauses never drop their neighbours
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("DROP PRIMARY KEY as the only clause emits nothing")
+    public void testAlterDropPrimaryKeyOnlyIsSkipped() {
+        Assert.assertEquals("", translate("ALTER TABLE t DROP PRIMARY KEY").trim());
+    }
+
+    @Test
+    @DisplayName("ADD COLUMN (a INT, b INT) adds every column of the list")
+    public void testAlterAddColumnsParenthesisedList() {
+        String expected = "ALTER TABLE `employees`.t "
+                + "ADD COLUMN IF NOT EXISTS a Nullable(Int32), "
+                + "ADD COLUMN IF NOT EXISTS b Nullable(Int32)";
+        Assert.assertEquals(expected, translate("ALTER TABLE t ADD COLUMN (a INT, b INT)"));
+        Assert.assertEquals(expected, translate("ALTER TABLE t ADD (a INT, b INT)"));
+    }
+
+    @Test
+    @DisplayName("ADD (a INT, INDEX idx (a)) adds the column and skips the embedded index")
+    public void testAlterAddDefinitionsSkipsEmbeddedIndex() {
+        String expected = "ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS a Nullable(Int32)";
+        Assert.assertEquals(expected, translate("ALTER TABLE t ADD (a INT, INDEX idx_a (a))"));
+    }
+
+    @Test
+    @DisplayName("Skipped clauses between columns leave no dangling or doubled comma")
+    public void testAlterSkippedClausesBetweenColumnsLeaveNoDanglingComma() {
+        String expected = "ALTER TABLE `employees`.t "
+                + "ADD COLUMN IF NOT EXISTS a Nullable(Int32), "
+                + "ADD COLUMN IF NOT EXISTS b Nullable(Int32)";
+        // DESTRUCTIVE: none -- string assertion on generated DDL text; no database is contacted.
+        String q = translate("ALTER TABLE t ADD COLUMN a INT, ADD INDEX idx_a (a), ADD COLUMN b INT, "
+                + "DROP INDEX idx_b, ALTER COLUMN a SET DEFAULT 1, CONVERT TO CHARACTER SET utf8mb4, "
+                + "ADD UNIQUE KEY uk_b (b), DROP FOREIGN KEY fk_x, COMMENT='x'");
+        Assert.assertEquals(expected, q);
+    }
+
+    @Test
+    @DisplayName("DROP PRIMARY KEY, MODIFY key column, ADD COLUMN FIRST, ADD PRIMARY KEY keeps the ADD COLUMN")
+    public void testAlterDropPrimaryKeyModifyKeyAddColumnAddPrimaryKey() {
+        // The production shape that used to produce NO usable ClickHouse DDL.
+        // With the target schema known (id is the sorting key, Int32) the
+        // statement moves the source's identity from id to ref_id. The ADD
+        // COLUMN is emitted (the key-column MODIFY is a loss-free narrowing,
+        // suppressed) and the table is rebuilt under ref_id at the DDL
+        // barrier: ref_id is AUTO_INCREMENT, so its values come from the
+        // source (Spec 06.07 §3.1 rule 3, Spec 06.09 §3.1). Never quietly the
+        // ADD COLUMN alone with the table left keyed by id.
+        String alter = "ALTER TABLE t DROP PRIMARY KEY, "
+                + "MODIFY COLUMN id SMALLINT UNSIGNED NOT NULL, "
+                + "ADD COLUMN ref_id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, "
+                + "ADD PRIMARY KEY (ref_id)";
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "name", "Nullable(String)"), Collections.singletonList("id"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS ref_id UInt32 FIRST",
+                translate(keyed, alter));
+        PrimaryKeyRebuildPlan plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertNotNull("a rebuild must be planned", plan);
+        Assert.assertEquals(Collections.singletonList("id"), plan.oldKey());
+        Assert.assertEquals(Collections.singletonList("ref_id"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.SOURCE_VALUED, plan.provenance().get("ref_id"));
+        Assert.assertTrue(plan.requiresSourceKeyMap());
+        Assert.assertFalse(plan.keylessFallback());
+
+        // Without a target schema the key is unknown, so the key clauses are
+        // skipped and the MODIFY is still emitted (previous behaviour) -- but
+        // never a bare ALTER, and never without the ADD COLUMN.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN id Nullable(UInt16), "
+                        + "ADD COLUMN IF NOT EXISTS ref_id UInt32 FIRST",
+                translate(alter));
+    }
+
+    // ------------------------------------------------------------------
+    // Spec 06.07 §3.1: ADD / DROP PRIMARY KEY against a known sorting key
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("ADD PRIMARY KEY that changes the replica's identity plans a rebuild; a restatement is skipped")
+    public void testAddPrimaryKeyThatChangesIdentityPlansRebuild() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "tenant", "Int32", "name", "Nullable(String)"),
+                Collections.singletonList("id"));
+
+        // Restatement: same column set (case and quoting ignored) -> skipped, nothing planned.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t ADD PRIMARY KEY (id)").trim());
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t ADD CONSTRAINT pk PRIMARY KEY (`ID`)").trim());
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t ADD PRIMARY KEY (id), ADD COLUMN c INT"));
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
+
+        // A different identity over existing columns: the key clause emits
+        // nothing, the other clauses are emitted, a rebuild is planned whose
+        // new-key columns are read from the old table (Spec 06.09 §3.1).
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t ADD PRIMARY KEY (name)").trim());
+        PrimaryKeyRebuildPlan plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertNotNull(plan);
+        Assert.assertEquals("employees", plan.database());
+        Assert.assertEquals("t", plan.table());
+        Assert.assertEquals(Collections.singletonList("id"), plan.oldKey());
+        Assert.assertEquals(Collections.singletonList("name"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("name"));
+        Assert.assertFalse(plan.keylessFallback());
+        Assert.assertFalse(plan.requiresSourceKeyMap());
+
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t ADD PRIMARY KEY (id, tenant)").trim());
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Arrays.asList("id", "tenant"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("id"));
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("tenant"));
+
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t ADD COLUMN c INT, ADD PRIMARY KEY (tenant)"));
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonList("tenant"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("tenant"));
+
+        // A key column added by the statement without AUTO_INCREMENT:
+        // ClickHouse back-fills the ADD COLUMN default, as MySQL did.
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t ADD COLUMN c INT, ADD PRIMARY KEY (c)"));
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonList("c"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.ADDED_DEFAULTED, plan.provenance().get("c"));
+        Assert.assertFalse(plan.requiresSourceKeyMap());
+
+        // A column-level PRIMARY KEY on an AUTO_INCREMENT ADD COLUMN (the fix a
+        // keyless table receives): the values only the source knows.
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS new_id UInt64",
+                translate(keyed, "ALTER TABLE t ADD COLUMN new_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT "
+                        + "INVISIBLE PRIMARY KEY"));
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonList("id"), plan.oldKey());
+        Assert.assertEquals(Collections.singletonList("new_id"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.SOURCE_VALUED, plan.provenance().get("new_id"));
+        Assert.assertTrue(plan.requiresSourceKeyMap());
+        Assert.assertEquals(Collections.singletonList("new_id"), plan.sourceValuedColumns());
+
+        // A column-level PRIMARY KEY on a MODIFY of an existing column.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN tenant Int32",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN tenant INT NOT NULL PRIMARY KEY"));
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonList("tenant"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("tenant"));
+
+        // A new key naming a column the statement does not add and the
+        // replica does not have: the identity cannot be represented -- loud.
+        DDLReplicationException loud = assertThrows(DDLReplicationException.class,
+                () -> translate(keyed, "ALTER TABLE t ADD PRIMARY KEY (ghost)"));
+        Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("(id)"));
+        Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("unknown to the replica"));
+        Assert.assertTrue(loud.getMessage(), loud.getMessage().toLowerCase().contains("rebuild"));
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
+
+        // A composite key restated in another order is the same identity.
+        MySQLDDLParserService composite = parserWithTarget(
+                columns("id", "Int32", "tenant", "Int32"), Arrays.asList("id", "tenant"));
+        Assert.assertEquals("", translate(composite, "ALTER TABLE t DROP PRIMARY KEY, ADD PRIMARY KEY (tenant, id)").trim());
+        Assert.assertNull(composite.primaryKeyRebuildPlan());
+    }
+
+    @Test
+    @DisplayName("DROP PRIMARY KEY without a replacement plans a rebuild under the keyless all-columns identity")
+    public void testDropPrimaryKeyPlansRebuild() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "name", "Nullable(String)"), Collections.singletonList("id"));
+
+        // A lone DROP: the identity a keyless table has on this replica --
+        // every stored non-connector column in position order (Spec 06.05 §3.6).
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t DROP PRIMARY KEY").trim());
+        PrimaryKeyRebuildPlan plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertNotNull(plan);
+        Assert.assertTrue(plan.keylessFallback());
+        Assert.assertEquals(Collections.singletonList("id"), plan.oldKey());
+        Assert.assertEquals(Arrays.asList("id", "name"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("id"));
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("name"));
+        Assert.assertFalse(plan.requiresSourceKeyMap());
+
+        // Columns the statement adds join the identity; columns it drops leave it.
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t DROP PRIMARY KEY, ADD COLUMN c INT"));
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertTrue(plan.keylessFallback());
+        Assert.assertEquals(Arrays.asList("id", "name", "c"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.ADDED_DEFAULTED, plan.provenance().get("c"));
+
+        // DESTRUCTIVE: statement text is only translated and compared here; nothing is executed against any database.
+        Assert.assertEquals("ALTER TABLE `employees`.t DROP COLUMN IF EXISTS name",
+                translate(keyed, "ALTER TABLE t DROP PRIMARY KEY, DROP COLUMN name"));
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertTrue(plan.keylessFallback());
+        Assert.assertEquals(Collections.singletonList("id"), plan.newKey());
+
+        // DROP then ADD of the same key is a restatement: nothing planned.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t DROP PRIMARY KEY, ADD PRIMARY KEY (id)").trim());
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
+        // Unknown key: skipped as before (Spec 06.07 §3.1 rule 1), nothing planned.
+        Assert.assertEquals("", translate("ALTER TABLE t DROP PRIMARY KEY").trim());
+        Assert.assertNull(mySQLDDLParserService.primaryKeyRebuildPlan());
+    }
+
+    @Test
+    @DisplayName("ddl.primary.key.rebuild=false restores the loud refusal of an identity change")
+    public void testPrimaryKeyChangeIsLoudWhenRebuildDisabled() {
+        Map<String, String> config = new HashMap<>();
+        config.put(SinkConnectorLightWeightConfig.DDL_PRIMARY_KEY_REBUILD, "false");
+        MySQLDDLParserService disabled = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config),
+                "employees");
+        disabled.setTargetSchemaLookup(TargetSchemaLookup.fromColumns(
+                columns("id", "Int32", "tenant", "Int32", "name", "Nullable(String)"),
+                Collections.singletonList("id")));
+
+        // Loud, naming table, existing key and the manual rebuild; the
+        // exception leaves parseSql before anything reaches ClickHouse, so
+        // nothing is emitted for the statement (Invariant I9).
+        for (String ddl : new String[] {
+                "ALTER TABLE t ADD PRIMARY KEY (name)",
+                "ALTER TABLE t ADD COLUMN c INT, ADD PRIMARY KEY (tenant)",
+                "ALTER TABLE t DROP PRIMARY KEY",
+                "ALTER TABLE t DROP PRIMARY KEY, ADD COLUMN new_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, "
+                        + "ADD PRIMARY KEY (new_id)"}) {
+            DDLReplicationException loud = assertThrows(DDLReplicationException.class,
+                    () -> translate(disabled, ddl));
+            Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("(id)"));
+            Assert.assertTrue(loud.getMessage(), loud.getMessage().toLowerCase().contains("rebuild"));
+            Assert.assertNull("nothing may be planned when the rebuild is disabled",
+                    disabled.primaryKeyRebuildPlan());
+        }
+
+        // Restatement and unknown key are unaffected by the switch.
+        Assert.assertEquals("", translate(disabled, "ALTER TABLE t ADD PRIMARY KEY (id)").trim());
+        MySQLDDLParserService disabledUnknown = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(config), "employees");
+        Assert.assertEquals("", translate(disabledUnknown, "ALTER TABLE t DROP PRIMARY KEY").trim());
+    }
+
+    // ------------------------------------------------------------------
+    // T2: MODIFY / CHANGE / RENAME of a sorting-key column
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("MODIFY of a sorting-key column to a same-or-narrower type is suppressed, other clauses kept")
+    public void testModifyKeyColumnSameOrNarrowerIsSuppressed() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "name", "Nullable(String)"), Collections.singletonList("id"));
+
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN id SMALLINT UNSIGNED NOT NULL").trim());
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN id INT NOT NULL").trim());
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t CHANGE COLUMN id id INT NOT NULL").trim());
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN id INT NOT NULL, ADD COLUMN c INT"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t ADD COLUMN c INT, MODIFY COLUMN id INT NOT NULL"));
+
+        // Decimal keys compare by precision at equal scale.
+        MySQLDDLParserService decimalKeyed = parserWithTarget(
+                columns("amt", "Decimal(10, 2)"), Collections.singletonList("amt"));
+        Assert.assertEquals("", translate(decimalKeyed, "ALTER TABLE t MODIFY COLUMN amt DECIMAL(8,2) NOT NULL").trim());
+        Assert.assertEquals("", translate(decimalKeyed, "ALTER TABLE t MODIFY COLUMN amt DECIMAL(10,2) NOT NULL").trim());
+    }
+
+    @Test
+    @DisplayName("A same-type MODIFY of a sorting-key column with FIRST/AFTER restates the existing type with the position")
+    public void testModifyKeyColumnSameTypeWithPositionIsRestated() {
+        // Spec 06.05 §3.4 rule 2: the position is what the clause is for. A
+        // MODIFY restating the identical type with FIRST/AFTER is a
+        // metadata-only reorder ClickHouse accepts on a key column (measured
+        // on 24.8.14); the requested type is never emitted (Code: 524).
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "x", "Int32", "name", "Nullable(String)"), Arrays.asList("id", "x"));
+
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN x Int32 FIRST",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN x INT FIRST"));
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN x Int32 AFTER id",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN x INT NOT NULL AFTER id"));
+        // A narrower requested type still restates the EXISTING type.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN x Int32 AFTER name",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN x SMALLINT AFTER name"));
+        // CHANGE c c <same type> FIRST is the same restatement.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN x Int32 FIRST",
+                translate(keyed, "ALTER TABLE t CHANGE COLUMN x x INT FIRST"));
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
+        // Without a position the clause stays suppressed (pre-fix code skipped both).
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN x INT").trim());
+        // Other clauses of the same statement are kept, in order.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN x Int32 FIRST, ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN x INT FIRST, ADD COLUMN c INT"));
+    }
+
+    @Test
+    @DisplayName("A deferred rename/re-type of a sorting-key column carries its FIRST/AFTER position to the rebuilt table")
+    public void testDeferredKeyColumnClauseCarriesPosition() {
+        // Spec 06.09 §3.1.1: the position cannot be applied to the existing
+        // table (the clause itself is deferred), so the plan carries it and
+        // the rebuild restates the column with it on the empty rebuilt table.
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "x", "Int32"), Arrays.asList("id", "x"));
+
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t CHANGE COLUMN x x2 INT FIRST").trim());
+        PrimaryKeyRebuildPlan plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertNotNull(plan);
+        Assert.assertEquals(Arrays.asList("id", "x2"), plan.newKey());
+        Assert.assertEquals(Collections.singletonMap("x", "x2"), plan.renamedColumns());
+        Assert.assertTrue(plan.retypedColumns().isEmpty());
+        Assert.assertEquals(Collections.singletonMap("x2", "FIRST"), plan.positionedColumns());
+
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN x BIGINT NOT NULL AFTER id").trim());
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonMap("x", "Int64"), plan.retypedColumns());
+        Assert.assertEquals(Collections.singletonMap("x", "AFTER id"), plan.positionedColumns());
+
+        // No position: nothing recorded.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t CHANGE COLUMN x x2 INT").trim());
+        Assert.assertTrue(keyed.primaryKeyRebuildPlan().positionedColumns().isEmpty());
+
+        // An explicit NULL on a keyless table's key column re-types it Nullable
+        // (Spec 06.05 §3.2 rule 3); the rebuilt table keeps it (Spec 06.09 §3.3.1 step 3).
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN x VARCHAR(100) NULL").trim());
+        Assert.assertEquals(Collections.singletonMap("x", "Nullable(String)"),
+                keyed.primaryKeyRebuildPlan().retypedColumns());
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t CHANGE COLUMN x x2 VARCHAR(255) NULL").trim());
+        Assert.assertEquals(Collections.singletonMap("x2", "Nullable(String)"),
+                keyed.primaryKeyRebuildPlan().retypedColumns());
+    }
+
+    @Test
+    @DisplayName("A same-identity rebuild of a keyless table is flagged keyless: every key column keeps its nullability")
+    public void testSameIdentityRebuildOfKeylessTableIsFlaggedKeyless() {
+        // Spec 06.09 §3.1.2: ship_class as the DDL path creates it (Spec 06.05
+        // §3.6) -- every stored column is a Nullable key column under
+        // allow_nullable_key = 1. MODIFY class_name INT re-types ONE key
+        // column; the rebuilt table must keep the others Nullable, so the
+        // plan carries the keyless flag. Pre-fix code planned it as a
+        // declared key and rewriteCreateStatement stripped the Nullable from
+        // every other key column: the second key-column ALTER on the table
+        // re-declared class_name's Nullable(Int32) as Int32.
+        MySQLDDLParserService keyless = parserWithTarget(
+                columns("id", "Nullable(Int32)", "class_name", "Nullable(String)",
+                        "tonange", "Nullable(Decimal(10, 2))", "_version", "UInt64", "is_deleted", "UInt8"),
+                Arrays.asList("id", "class_name", "tonange"));
+
+        Assert.assertEquals("", translate(keyless, "ALTER TABLE ship_class MODIFY COLUMN class_name INT").trim());
+        PrimaryKeyRebuildPlan plan = keyless.primaryKeyRebuildPlan();
+        Assert.assertNotNull("a same-identity rebuild must be planned", plan);
+        Assert.assertTrue("the keyless all-columns identity stays keyless", plan.keylessFallback());
+        Assert.assertEquals(Arrays.asList("id", "class_name", "tonange"), plan.newKey());
+        Assert.assertEquals(Collections.singletonMap("class_name", "Nullable(Int32)"), plan.retypedColumns());
+
+        // A rename of a key column on the same table: still keyless, under the new name.
+        Assert.assertEquals("", translate(keyless,
+                "ALTER TABLE ship_class CHANGE COLUMN tonange tonange_new DECIMAL(10,10)").trim());
+        plan = keyless.primaryKeyRebuildPlan();
+        Assert.assertTrue(plan.keylessFallback());
+        Assert.assertEquals(Arrays.asList("id", "class_name", "tonange_new"), plan.newKey());
+        Assert.assertEquals(Collections.singletonMap("tonange_new", "Nullable(Decimal(10,10))"),
+                plan.retypedColumns());
+
+        // A declared key is not keyless: the same shape on a keyed table plans a declared-key rebuild.
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "class_name", "Nullable(String)"), Collections.singletonList("id"));
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE ship_class MODIFY COLUMN id BIGINT NOT NULL").trim());
+        Assert.assertFalse(keyed.primaryKeyRebuildPlan().keylessFallback());
+    }
+
+    @Test
+    @DisplayName("MODIFY of a sorting-key column to a wider type plans a same-identity rebuild with the MODIFY deferred")
+    public void testModifyKeyColumnWiderPlansRebuild() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "name", "Nullable(String)"), Collections.singletonList("id"));
+
+        // Nothing is emitted for the key column against the current table
+        // (Code: 524); the rebuild under the same key applies the widening to
+        // the rebuilt table (Spec 06.05 §3.4 rule 3, Spec 06.09 §3.1.1/§3.1.2).
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN id BIGINT NOT NULL").trim());
+        PrimaryKeyRebuildPlan plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertNotNull("a same-identity rebuild must be planned", plan);
+        Assert.assertEquals(Collections.singletonList("id"), plan.oldKey());
+        Assert.assertEquals(Collections.singletonList("id"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("id"));
+        Assert.assertFalse(plan.keylessFallback());
+        Assert.assertFalse(plan.requiresSourceKeyMap());
+        Assert.assertEquals(Collections.singletonList("MODIFY COLUMN id Int64"), plan.deferredClauses());
+        Assert.assertEquals(Collections.singletonMap("id", "Int64"), plan.retypedColumns());
+        Assert.assertTrue(plan.renamedColumns().isEmpty());
+
+        // Same width but unsigned widens the maximum.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN id INT UNSIGNED NOT NULL").trim());
+        Assert.assertEquals(Collections.singletonList("MODIFY COLUMN id UInt32"),
+                keyed.primaryKeyRebuildPlan().deferredClauses());
+        // Not comparable at all.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN id VARCHAR(20) NOT NULL").trim());
+        Assert.assertEquals(Collections.singletonList("MODIFY COLUMN id String"),
+                keyed.primaryKeyRebuildPlan().deferredClauses());
+        // Other clauses are still emitted against the current table; only the key clause is deferred.
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t ADD COLUMN c INT, MODIFY COLUMN id BIGINT NOT NULL"));
+        Assert.assertEquals(Collections.singletonList("MODIFY COLUMN id Int64"),
+                keyed.primaryKeyRebuildPlan().deferredClauses());
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN id BIGINT NOT NULL, ADD COLUMN c INT"));
+        Assert.assertEquals(Collections.singletonList("id"), keyed.primaryKeyRebuildPlan().newKey());
+        // A restated key with a widened key column is still a rebuild (the widening must land).
+        Assert.assertEquals("", translate(keyed,
+                "ALTER TABLE t DROP PRIMARY KEY, MODIFY COLUMN id BIGINT NOT NULL, ADD PRIMARY KEY (id)").trim());
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertNotNull(plan);
+        Assert.assertEquals(Collections.singletonList("id"), plan.newKey());
+        Assert.assertEquals(Collections.singletonList("MODIFY COLUMN id Int64"), plan.deferredClauses());
+        // Rule 2 stays suppressed and plans nothing.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN id SMALLINT NOT NULL").trim());
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
+
+        MySQLDDLParserService decimalKeyed = parserWithTarget(
+                columns("amt", "Decimal(10, 2)"), Collections.singletonList("amt"));
+        Assert.assertEquals("", translate(decimalKeyed, "ALTER TABLE t MODIFY COLUMN amt DECIMAL(12,2) NOT NULL").trim());
+        Assert.assertEquals(Collections.singletonList("MODIFY COLUMN amt Decimal(12,2)"),
+                decimalKeyed.primaryKeyRebuildPlan().deferredClauses());
+        Assert.assertEquals("", translate(decimalKeyed, "ALTER TABLE t MODIFY COLUMN amt DECIMAL(10,4) NOT NULL").trim());
+        Assert.assertEquals(Collections.singletonList("MODIFY COLUMN amt Decimal(10,4)"),
+                decimalKeyed.primaryKeyRebuildPlan().deferredClauses());
+    }
+
+    @Test
+    @DisplayName("CHANGE / RENAME COLUMN of a sorting-key column plans a rebuild under the renamed key")
+    public void testChangeKeyColumnRenamePlansRebuild() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "name", "Nullable(String)"), Collections.singletonList("id"));
+
+        // Nothing for the key column reaches the current table; the rebuilt
+        // table carries the new name and the copy reads o.id AS ref_id.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t CHANGE COLUMN id ref_id INT NOT NULL").trim());
+        PrimaryKeyRebuildPlan plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertNotNull("a rebuild under the renamed key must be planned", plan);
+        Assert.assertEquals(Collections.singletonList("id"), plan.oldKey());
+        Assert.assertEquals(Collections.singletonList("ref_id"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("ref_id"));
+        Assert.assertEquals(Collections.singletonList("RENAME COLUMN id TO ref_id"), plan.deferredClauses());
+        Assert.assertEquals(Collections.singletonMap("id", "ref_id"), plan.renamedColumns());
+        Assert.assertTrue(plan.retypedColumns().isEmpty());
+        Assert.assertFalse(plan.keylessFallback());
+        Assert.assertFalse(plan.requiresSourceKeyMap());
+
+        // A rename that also widens: RENAME first, then the MODIFY under the new name.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t CHANGE COLUMN id ref_id BIGINT NOT NULL").trim());
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Arrays.asList("RENAME COLUMN id TO ref_id", "MODIFY COLUMN ref_id Int64"),
+                plan.deferredClauses());
+        Assert.assertEquals(Collections.singletonMap("id", "ref_id"), plan.renamedColumns());
+        Assert.assertEquals(Collections.singletonMap("ref_id", "Int64"), plan.retypedColumns());
+
+        // RENAME COLUMN is the same deferral.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t RENAME COLUMN id TO ref_id").trim());
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonList("ref_id"), plan.newKey());
+        Assert.assertEquals(Collections.singletonList("RENAME COLUMN id TO ref_id"), plan.deferredClauses());
+        Assert.assertEquals(Collections.singletonMap("id", "ref_id"), plan.renamedColumns());
+
+        // Other clauses are still emitted; a non-key rename is translated as before.
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t CHANGE COLUMN id ref_id INT NOT NULL, ADD COLUMN c INT"));
+        Assert.assertEquals(Collections.singletonList("ref_id"), keyed.primaryKeyRebuildPlan().newKey());
+        Assert.assertEquals("ALTER TABLE `employees`.t RENAME COLUMN if exists name TO name2",
+                translate(keyed, "ALTER TABLE t RENAME COLUMN name TO name2"));
+        Assert.assertNull(keyed.primaryKeyRebuildPlan());
+
+        // The renamed column may be named by a PRIMARY KEY declared in the same statement.
+        Assert.assertEquals("", translate(keyed,
+                "ALTER TABLE t CHANGE COLUMN id ref_id INT NOT NULL, DROP PRIMARY KEY, ADD PRIMARY KEY (ref_id)").trim());
+        plan = keyed.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonList("ref_id"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("ref_id"));
+        Assert.assertEquals(Collections.singletonList("RENAME COLUMN id TO ref_id"), plan.deferredClauses());
+
+        // A composite key keeps its other columns, renamed where applicable.
+        MySQLDDLParserService composite = parserWithTarget(
+                columns("id", "Int32", "tenant", "Int32"), Arrays.asList("id", "tenant"));
+        Assert.assertEquals("", translate(composite, "ALTER TABLE t RENAME COLUMN tenant TO org").trim());
+        Assert.assertEquals(Arrays.asList("id", "org"), composite.primaryKeyRebuildPlan().newKey());
+    }
+
+    @Test
+    @DisplayName("ddl.primary.key.rebuild=false restores the loud refusal of a key-column widening or rename")
+    public void testKeyColumnChangeIsLoudWhenRebuildDisabled() {
+        Map<String, String> config = new HashMap<>();
+        config.put(SinkConnectorLightWeightConfig.DDL_PRIMARY_KEY_REBUILD, "false");
+        MySQLDDLParserService disabled = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config),
+                "employees");
+        disabled.setTargetSchemaLookup(TargetSchemaLookup.fromColumns(
+                columns("id", "Int32", "name", "Nullable(String)"), Collections.singletonList("id")));
+
+        for (String ddl : new String[] {
+                "ALTER TABLE t MODIFY COLUMN id BIGINT NOT NULL",
+                "ALTER TABLE t MODIFY COLUMN id INT UNSIGNED NOT NULL",
+                "ALTER TABLE t MODIFY COLUMN id VARCHAR(20) NOT NULL",
+                "ALTER TABLE t ADD COLUMN c INT, MODIFY COLUMN id BIGINT NOT NULL",
+                "ALTER TABLE t CHANGE COLUMN id ref_id INT NOT NULL",
+                "ALTER TABLE t RENAME COLUMN id TO ref_id"}) {
+            DDLReplicationException loud = assertThrows(DDLReplicationException.class,
+                    () -> translate(disabled, ddl));
+            Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("id"));
+            Assert.assertTrue("must name the manual rebuild: " + loud.getMessage(),
+                    loud.getMessage().toLowerCase().contains("rebuild"));
+            Assert.assertNull("nothing may be planned when the rebuild is disabled",
+                    disabled.primaryKeyRebuildPlan());
+        }
+        DDLReplicationException wider = assertThrows(DDLReplicationException.class,
+                () -> translate(disabled, "ALTER TABLE t MODIFY COLUMN id BIGINT NOT NULL"));
+        Assert.assertTrue(wider.getMessage(), wider.getMessage().contains("Int64"));
+
+        // Rule 2 is unaffected by the switch; a DROP of a key column is emitted as before.
+        Assert.assertEquals("", translate(disabled, "ALTER TABLE t MODIFY COLUMN id SMALLINT NOT NULL").trim());
+        // DESTRUCTIVE: statement text is only translated and compared here; nothing is executed against any database.
+        Assert.assertEquals("ALTER TABLE `employees`.t DROP COLUMN IF EXISTS id",
+                translate(disabled, "ALTER TABLE t DROP COLUMN id"));
+        Assert.assertNull(disabled.primaryKeyRebuildPlan());
+    }
+
+    @Test
+    // DESTRUCTIVE: statement text used only by this test; nothing outside the test containers/fakes is touched.
+    @DisplayName("DROP COLUMN of an old-key column is deferred to the rebuilt table (the GIPK promotion)")
+    public void testDroppedKeyColumnIsDeferredToRebuiltTable() {
+        MySQLDDLParserService gipk = parserWithTarget(
+                columns("my_row_id", "UInt64", "id", "Int32", "v", "String"),
+                Collections.singletonList("my_row_id"));
+
+        // DESTRUCTIVE: statement text is only translated and compared here; nothing is executed against any database.
+        String emitted = translate(gipk, "ALTER TABLE t DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)");
+        Assert.assertEquals("", emitted.trim());
+        Assert.assertFalse("the key column's DROP must not reach the current table", emitted.contains("DROP COLUMN"));
+        PrimaryKeyRebuildPlan plan = gipk.primaryKeyRebuildPlan();
+        Assert.assertNotNull(plan);
+        Assert.assertEquals(Collections.singletonList("my_row_id"), plan.oldKey());
+        Assert.assertEquals(Collections.singletonList("id"), plan.newKey());
+        Assert.assertEquals(PrimaryKeyRebuildPlan.Provenance.EXISTING, plan.provenance().get("id"));
+        Assert.assertFalse(plan.keylessFallback());
+        Assert.assertFalse(plan.requiresSourceKeyMap());
+        // DESTRUCTIVE: statement text used only by this test; nothing outside the test containers/fakes is touched.
+        Assert.assertEquals(Collections.singletonList("DROP COLUMN IF EXISTS my_row_id"), plan.deferredClauses());
+        Assert.assertTrue(plan.renamedColumns().isEmpty());
+        Assert.assertTrue(plan.retypedColumns().isEmpty());
+
+        // Without the explicit DROP PRIMARY KEY the statement is the same promotion.
+        // DESTRUCTIVE: statement text used only by this test; nothing outside the test containers/fakes is touched.
+        Assert.assertEquals("", translate(gipk, "ALTER TABLE t DROP COLUMN my_row_id, ADD PRIMARY KEY (id)").trim());
+        plan = gipk.primaryKeyRebuildPlan();
+        Assert.assertEquals(Collections.singletonList("id"), plan.newKey());
+        Assert.assertEquals(Collections.singletonList("DROP COLUMN IF EXISTS my_row_id"), plan.deferredClauses());
+
+        // A non-key DROP in the same statement is still emitted against the current table.
+        // DESTRUCTIVE: statement text used only by this test; nothing outside the test containers/fakes is touched.
+        Assert.assertEquals("ALTER TABLE `employees`.t DROP COLUMN IF EXISTS v",
+                translate(gipk, "ALTER TABLE t DROP PRIMARY KEY, DROP COLUMN my_row_id, DROP COLUMN v, ADD PRIMARY KEY (id)"));
+        Assert.assertEquals(Collections.singletonList("DROP COLUMN IF EXISTS my_row_id"),
+                gipk.primaryKeyRebuildPlan().deferredClauses());
+
+        // Dropping one column of a composite key without a new declaration:
+        // the key shrinks, as MySQL's does.
+        MySQLDDLParserService composite = parserWithTarget(
+                columns("a", "Int32", "b", "Int32", "v", "String"), Arrays.asList("a", "b"));
+        // DESTRUCTIVE: statement text used only by this test; nothing outside the test containers/fakes is touched.
+        Assert.assertEquals("", translate(composite, "ALTER TABLE t DROP COLUMN b").trim());
+        plan = composite.primaryKeyRebuildPlan();
+        Assert.assertNotNull(plan);
+        Assert.assertEquals(Arrays.asList("a", "b"), plan.oldKey());
+        Assert.assertEquals(Collections.singletonList("a"), plan.newKey());
+        // DESTRUCTIVE: statement text used only by this test; nothing outside the test containers/fakes is touched.
+        Assert.assertEquals(Collections.singletonList("DROP COLUMN IF EXISTS b"), plan.deferredClauses());
+
+        // Unknown key: the DROP is emitted as before and nothing is planned.
+        Assert.assertEquals("ALTER TABLE `employees`.t DROP COLUMN IF EXISTS my_row_id",
+                translate("ALTER TABLE t DROP COLUMN my_row_id"));
+        Assert.assertNull(mySQLDDLParserService.primaryKeyRebuildPlan());
+    }
+
+    @Test
+    @DisplayName("A redelivered primary-key change finds the target already re-keyed: a restatement, idempotent clauses only")
+    public void testRedeliveredPrimaryKeyChangeIsRestatement() {
+        // The target after the first delivery of the migration statement:
+        // pk_id present and the sorting key (Spec 06.09 §3.5).
+        MySQLDDLParserService rekeyed = parserWithTarget(
+                columns("pk_id", "UInt32", "a", "Int32", "b", "Int32", "v", "Nullable(String)"),
+                Collections.singletonList("pk_id"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS pk_id UInt32 FIRST",
+                translate(rekeyed, "ALTER TABLE t DROP PRIMARY KEY, "
+                        + "ADD COLUMN pk_id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, ADD PRIMARY KEY (pk_id)"));
+        Assert.assertNull("no second rebuild", rekeyed.primaryKeyRebuildPlan());
+
+        // The redelivered GIPK promotion: my_row_id is gone and id is the key.
+        MySQLDDLParserService promoted = parserWithTarget(
+                columns("id", "Int32", "v", "String"), Collections.singletonList("id"));
+        // DESTRUCTIVE: statement text is only translated and compared here; nothing is executed against any database.
+        Assert.assertEquals("ALTER TABLE `employees`.t DROP COLUMN IF EXISTS my_row_id",
+                translate(promoted, "ALTER TABLE t DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)"));
+        Assert.assertNull(promoted.primaryKeyRebuildPlan());
+
+        // The redelivered rename: ref_id is already the key; the guarded
+        // MODIFY/RENAME of the vanished old name are no-ops on replay.
+        MySQLDDLParserService renamed = parserWithTarget(
+                columns("ref_id", "Int32", "v", "String"), Collections.singletonList("ref_id"));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN IF EXISTS id Nullable(Int32) \n"
+                        + "ALTER TABLE `employees`.t RENAME COLUMN IF EXISTS id to ref_id",
+                translate(renamed, "ALTER TABLE t CHANGE COLUMN id ref_id INT NOT NULL"));
+        Assert.assertNull(renamed.primaryKeyRebuildPlan());
+
+        // The redelivered widening: id is already Int64, a restatement (rule 2).
+        MySQLDDLParserService widened = parserWithTarget(
+                columns("id", "Int64", "v", "String"), Collections.singletonList("id"));
+        Assert.assertEquals("", translate(widened, "ALTER TABLE t MODIFY COLUMN id BIGINT NOT NULL").trim());
+        Assert.assertNull(widened.primaryKeyRebuildPlan());
+    }
+
+    @Test
+    @DisplayName("A no-op MODIFY of a DateTime64 key column is suppressed whatever timezone the existing column renders with")
+    public void testModifyDateTimeKeyWithTimezoneIsSuppressed() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("ts", "DateTime64(6, 'UTC')", "d", "DateTime('UTC')", "v", "Nullable(Int32)"),
+                Arrays.asList("ts", "d"));
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN ts DATETIME(6) NOT NULL").trim());
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN ts DATETIME(6) NOT NULL, ADD COLUMN c INT"));
+
+        // With clickhouse.datetime.timezone configured the requested type
+        // renders with that zone; still the same column.
+        HashMap<String, String> zoned = new HashMap<>();
+        zoned.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "America/Chicago");
+        MySQLDDLParserService zonedKeyed = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(zoned), "employees");
+        zonedKeyed.setTargetSchemaLookup(TargetSchemaLookup.fromColumns(
+                columns("ts", "DateTime64(6, 'UTC')", "d", "DateTime('UTC')", "v", "Nullable(Int32)"),
+                Arrays.asList("ts", "d")));
+        Assert.assertEquals("", translate(zonedKeyed, "ALTER TABLE t MODIFY COLUMN ts DATETIME(6) NOT NULL").trim());
+
+        // A different scale is a real change: not comparable, so deferred to a
+        // same-identity rebuild (Spec 06.05 §3.4 rule 3), never emitted here.
+        Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN ts DATETIME(3) NOT NULL").trim());
+        PrimaryKeyRebuildPlan scaleChange = keyed.primaryKeyRebuildPlan();
+        Assert.assertNotNull(scaleChange);
+        Assert.assertEquals(Arrays.asList("ts", "d"), scaleChange.newKey());
+        Assert.assertEquals(1, scaleChange.deferredClauses().size());
+        Assert.assertTrue(scaleChange.deferredClauses().get(0),
+                scaleChange.deferredClauses().get(0).startsWith("MODIFY COLUMN ts DateTime64(3"));
+
+        // The comparison itself, on the rendered strings.
+        Assert.assertEquals(KeyColumnTypeChange.Verdict.SAME_OR_NARROWER,
+                KeyColumnTypeChange.compare("DateTime64(6, 'UTC')", "DateTime64(6, 0)"));
+        Assert.assertEquals(KeyColumnTypeChange.Verdict.SAME_OR_NARROWER,
+                KeyColumnTypeChange.compare("Nullable(DateTime64(6, 'Europe/Berlin'))", "DateTime64(6,'UTC')"));
+        Assert.assertEquals(KeyColumnTypeChange.Verdict.SAME_OR_NARROWER,
+                KeyColumnTypeChange.compare("DateTime('UTC')", "DateTime"));
+        Assert.assertEquals(KeyColumnTypeChange.Verdict.NOT_COMPARABLE,
+                KeyColumnTypeChange.compare("DateTime64(3, 'UTC')", "DateTime64(6, 0)"));
+    }
+
+    @Test
+    @DisplayName("MODIFY/CHANGE ... NOT NULL keeps the existing nullability: non-Nullable stays non-Nullable")
+    public void testModifyNotNullKeepsNonNullableColumn() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "c", "Int32", "n", "Nullable(Int32)"), Collections.singletonList("id"));
+        // Existing non-Nullable: a NOT NULL MODIFY must not widen it to Nullable.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN c Int64",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN c BIGINT NOT NULL"));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN IF EXISTS c Int64\n"
+                        + "ALTER TABLE `employees`.t RENAME COLUMN IF EXISTS c to c2",
+                translate(keyed, "ALTER TABLE t CHANGE COLUMN c c2 BIGINT NOT NULL"));
+        // Existing Nullable: stays Nullable (Code: 36 otherwise).
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN n Nullable(Int64)",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN n BIGINT NOT NULL"));
+        // Explicit NULL widens, which ClickHouse accepts.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN c Nullable(Int64)",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN c BIGINT NULL"));
+        // Unknown schema: Nullable holds every value.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN c Nullable(Int64)",
+                translate("ALTER TABLE t MODIFY COLUMN c BIGINT NOT NULL"));
+    }
+
+    @Test
+    @DisplayName("Data columns are not affected by the sorting-key policy")
+    public void testModifyDataColumnUnaffectedByKeyPolicy() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "name", "Nullable(String)"), Collections.singletonList("id"));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN name Nullable(String)",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN name VARCHAR(100) NOT NULL"));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN IF EXISTS name Nullable(Int64) \n"
+                        + "ALTER TABLE `employees`.t RENAME COLUMN IF EXISTS name to name2",
+                translate(keyed, "ALTER TABLE t CHANGE COLUMN name name2 BIGINT"));
+    }
+
+    // ------------------------------------------------------------------
+    // T3: DEFAULT clauses -- literals kept, functions and expressions dropped
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("MODIFY/CHANGE back-fill nothing, so a non-literal DEFAULT is dropped there")
+    public void testModifyColumnDefaultCurrentTimestampIsDropped() {
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN ts Nullable(DateTime64(6, 0))",
+                translate("ALTER TABLE t MODIFY COLUMN ts DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)"));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN n Nullable(Int32)",
+                translate("ALTER TABLE t MODIFY COLUMN n INT DEFAULT (1 + 2)"));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN IF EXISTS a Nullable(Date32) \n"
+                        + "ALTER TABLE `employees`.t RENAME COLUMN IF EXISTS a to b",
+                translate("ALTER TABLE t CHANGE COLUMN a b DATE DEFAULT (CURRENT_DATE)"));
+    }
+
+    @Test
+    @DisplayName("ADD COLUMN ... DEFAULT CURRENT_TIMESTAMP back-fills the statement instant taken from the DDL event's source.ts_ms")
+    public void testAddColumnCurrentTimestampBackfillsLiteral() {
+        // This test previously pinned the DEFAULT being DROPPED, which left
+        // every pre-existing row at 1970-01-01 while MySQL back-filled the
+        // ALTER's own timestamp (Spec 06.04 §3.2.2).
+        MySQLDDLParserService stamped = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees");
+        stamped.setDdlEventTimestampMs(1700000000123L); // 2023-11-14 22:13:20.123 UTC
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS ts DateTime64(6, 0) "
+                        + "DEFAULT toDateTime64('2023-11-14 22:13:20.123', 6, 'UTC')",
+                squash(translate(stamped, "ALTER TABLE t ADD COLUMN ts DATETIME(6) NOT NULL "
+                        + "DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)")));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS created Nullable(DateTime64) "
+                        + "DEFAULT toDateTime64('2023-11-14 22:13:20.123', 3, 'UTC')",
+                squash(translate(stamped, "ALTER TABLE t ADD COLUMN created DATETIME NULL DEFAULT CURRENT_TIMESTAMP")));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS t1 DateTime64(1, 0) "
+                        + "DEFAULT toDateTime64('2023-11-14 22:13:20.1', 1, 'UTC')",
+                squash(translate(stamped, "ALTER TABLE t ADD COLUMN t1 TIMESTAMP(1) NOT NULL DEFAULT NOW(1)")));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS t2 DateTime64(2, 0) "
+                        + "DEFAULT toDateTime64('2023-11-14 22:13:20.12', 2, 'UTC'), "
+                        + "ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
+                squash(translate(stamped, "ALTER TABLE t ADD COLUMN t2 DATETIME(2) NOT NULL DEFAULT LOCALTIMESTAMP(2), "
+                        + "ADD COLUMN c INT")));
+
+        // Without the event timestamp the back-fill cannot be computed: loud, never a guess.
+        DDLReplicationException noStamp = assertThrows(DDLReplicationException.class,
+                () -> translate("ALTER TABLE t ADD COLUMN ts DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)"));
+        Assert.assertTrue(noStamp.getMessage(), noStamp.getMessage().contains("ts"));
+    }
+
+    @Test
+    @DisplayName("ADD COLUMN with an expression DEFAULT the replica cannot reproduce is loud, not silently zero-filled")
+    public void testAddColumnExpressionDefaultIsLoud() {
+        // Previously pinned as "dropped": the pre-existing rows then held the
+        // type's zero value where MySQL held today's date / 3 / a UUID.
+        for (String ddl : new String[] {
+                "ALTER TABLE t ADD COLUMN d DATE DEFAULT (CURRENT_DATE)",
+                "ALTER TABLE t ADD COLUMN n INT DEFAULT (1 + 2)",
+                "ALTER TABLE t ADD COLUMN u CHAR(36) NOT NULL DEFAULT (UUID())",
+                "ALTER TABLE t ADD COLUMN c INT, ADD COLUMN u CHAR(36) DEFAULT (UUID())"}) {
+            DDLReplicationException loud = assertThrows(DDLReplicationException.class, () -> translate(ddl));
+            Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("ignore.ddl.regex"));
+        }
+    }
+
+    @Test
+    @DisplayName("ADD COLUMN ENUM(...) NOT NULL without a DEFAULT back-fills MySQL's implicit default, the first member")
+    public void testAddEnumNotNullDefaultsToFirstMember() {
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS status String DEFAULT 'new'",
+                translate("ALTER TABLE t ADD COLUMN status ENUM('new','done') NOT NULL"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS s2 String DEFAULT 'done'",
+                translate("ALTER TABLE t ADD COLUMN s2 ENUM('new','done') NOT NULL DEFAULT 'done'"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS s3 Nullable(String)",
+                translate("ALTER TABLE t ADD COLUMN s3 ENUM('new','done')"));
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS s4 String DEFAULT 'a'",
+                translate("ALTER TABLE t ADD COLUMN s4 ENUM(\"a\",\"b\") NOT NULL"));
+        // MODIFY back-fills nothing: no synthesised default.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN status Nullable(String)",
+                translate("ALTER TABLE t MODIFY COLUMN status ENUM('x','y') NOT NULL"));
+    }
+
+    @Test
+    @DisplayName("Bit-string, hexadecimal and double-quoted DEFAULTs are rewritten to ClickHouse literals")
+    public void testBitStringAndHexDefaultsAreTranslated() {
+        String expected = "ALTER TABLE `employees`.t "
+                + "ADD COLUMN IF NOT EXISTS f Nullable(Int32) DEFAULT 5, "
+                + "ADD COLUMN IF NOT EXISTS h Nullable(String) DEFAULT '0a0b', "
+                + "ADD COLUMN IF NOT EXISTS n Nullable(Int32) DEFAULT 10, "
+                + "ADD COLUMN IF NOT EXISTS s Nullable(String) DEFAULT 'dq', "
+                + "ADD COLUMN IF NOT EXISTS s2 Nullable(String) DEFAULT 'it\\'s', "
+                + "ADD COLUMN IF NOT EXISTS bs Nullable(String) DEFAULT '41', "
+                + "ADD COLUMN IF NOT EXISTS b8 Nullable(String) DEFAULT '01', "
+                + "ADD COLUMN IF NOT EXISTS b1 Nullable(Bool) DEFAULT 0, "
+                + "ADD COLUMN IF NOT EXISTS neg Nullable(Int32) DEFAULT -5, "
+                + "ADD COLUMN IF NOT EXISTS nat Nullable(String) DEFAULT 'n'";
+        String ddl = "ALTER TABLE t ADD COLUMN f INT DEFAULT b'101', "
+                + "ADD COLUMN h VARBINARY(4) DEFAULT X'0A0B', "
+                + "ADD COLUMN n INT DEFAULT 0x0A, "
+                + "ADD COLUMN s VARCHAR(10) DEFAULT \"dq\", "
+                + "ADD COLUMN s2 VARCHAR(10) DEFAULT \"it's\", "
+                + "ADD COLUMN bs VARCHAR(2) DEFAULT b'1000001', "
+                + "ADD COLUMN b8 BIT(8) DEFAULT b'1', "
+                + "ADD COLUMN b1 BIT(1) DEFAULT b'0', "
+                + "ADD COLUMN neg INT DEFAULT -b'101', "
+                + "ADD COLUMN nat VARCHAR(10) DEFAULT N'n'";
+        Assert.assertEquals(expected, squash(translate(ddl)));
+
+        // Under persist.raw.bytes=true the writer stores the raw bytes, so the
+        // back-fill must be the raw bytes too.
+        HashMap<String, String> raw = new HashMap<>();
+        raw.put(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString(), "true");
+        MySQLDDLParserService rawBytes = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(raw), "employees");
+        Assert.assertEquals("ALTER TABLE `employees`.t "
+                        + "ADD COLUMN IF NOT EXISTS h Nullable(String) DEFAULT unhex('0A0B'), "
+                        + "ADD COLUMN IF NOT EXISTS bs Nullable(String) DEFAULT unhex('41')",
+                squash(translate(rawBytes, "ALTER TABLE t ADD COLUMN h VARBINARY(4) DEFAULT X'0A0B', "
+                        + "ADD COLUMN bs VARCHAR(2) DEFAULT b'1000001'")));
+    }
+
+    @Test
+    @DisplayName("Literal DEFAULTs (string, number, negative, NULL, TINYINT(1) DEFAULT 0) are kept")
+    public void testAddColumnLiteralDefaultIsKept() {
+        String expected = "ALTER TABLE `employees`.t "
+                + "ADD COLUMN IF NOT EXISTS s String DEFAULT 'x', "
+                + "ADD COLUMN IF NOT EXISTS n Nullable(Int32) DEFAULT -1, "
+                + "ADD COLUMN IF NOT EXISTS z Nullable(Int32) DEFAULT NULL, "
+                + "ADD COLUMN IF NOT EXISTS coins Int8 DEFAULT 0";
+        Assert.assertEquals(expected, squash(translate("ALTER TABLE t "
+                + "ADD COLUMN s VARCHAR(10) NOT NULL DEFAULT 'x', "
+                + "ADD COLUMN n INT DEFAULT -1, "
+                + "ADD COLUMN z INT DEFAULT NULL, "
+                + "ADD COLUMN coins TINYINT(1) NOT NULL DEFAULT 0")));
+    }
+
+    // ------------------------------------------------------------------
+    // T4: CHANGE COLUMN with an unchanged name is a MODIFY, not a self-rename
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("CHANGE COLUMN c c <type> emits only the MODIFY (no self-rename, Code: 15)")
+    public void testChangeColumnSameNameEmitsNoRename() {
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN c Nullable(Int64)",
+                translate("ALTER TABLE t CHANGE COLUMN c c BIGINT"));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN `c` Nullable(Int64)",
+                translate("ALTER TABLE t CHANGE COLUMN `c` c BIGINT"));
+    }
+
+    // ------------------------------------------------------------------
+    // T5 / T9b: table-level PRIMARY KEY -> NOT NULL; ASC/DESC stripped
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("Columns of a table-level PRIMARY KEY are NOT NULL even when not written so")
+    public void testCreateTableTableLevelPrimaryKeyForcesNotNull() {
+        String expected = "CREATE TABLE if not exists `employees`.t("
+                + "id Int32 NOT NULL ,tenant Int32 NOT NULL ,v Nullable(Int32),"
+                + "`_version` UInt64,`is_deleted` UInt8) "
+                + "Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id,tenant)";
+        String q = translate("CREATE TABLE t (id INT, tenant INT, v INT, PRIMARY KEY (id, tenant))");
+        Assert.assertTrue(q, q.equalsIgnoreCase(expected));
+
+        String expectedQuoted = "CREATE TABLE if not exists `employees`.t("
+                + "`id` Int32 NOT NULL ,v Nullable(Int32),"
+                + "`_version` UInt64,`is_deleted` UInt8) "
+                + "Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`id`)";
+        String quoted = translate("CREATE TABLE t (`id` INT, v INT, PRIMARY KEY (`id`))");
+        Assert.assertTrue(quoted, quoted.equalsIgnoreCase(expectedQuoted));
+    }
+
+    @Test
+    @DisplayName("PRIMARY KEY (id ASC, name(5) DESC) yields ORDER BY (id,name)")
+    public void testCreateTablePrimaryKeyWithSortOrder() {
+        String expected = "CREATE TABLE if not exists `employees`.t("
+                + "id Int32 NOT NULL ,name String NOT NULL ,"
+                + "`_version` UInt64,`is_deleted` UInt8) "
+                + "Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id,name)";
+        String q = translate("CREATE TABLE t (id INT NOT NULL, name VARCHAR(10), PRIMARY KEY (id ASC, name(5) DESC))");
+        Assert.assertTrue(q, q.equalsIgnoreCase(expected));
+
+        String expectedUnique = "CREATE TABLE if not exists `employees`.u("
+                + "a Int32 NOT NULL ,b Nullable(Int32),"
+                + "`_version` UInt64,`is_deleted` UInt8) "
+                + "Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (a)";
+        String unique = translate("CREATE TABLE u (a INT NOT NULL, b INT, UNIQUE KEY (a DESC))");
+        Assert.assertTrue(unique, unique.equalsIgnoreCase(expectedUnique));
+    }
+
+    // ------------------------------------------------------------------
+    // T6: DECIMAL(M) keeps its precision
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("DECIMAL(M) without a scale maps to Decimal(M, 0), never a bare Decimal")
+    public void testDecimalPrecisionWithoutScale() {
+        Assert.assertEquals("ALTER TABLE `employees`.t "
+                        + "ADD COLUMN IF NOT EXISTS amt Nullable(Decimal(20, 0)), "
+                        + "ADD COLUMN IF NOT EXISTS amt2 Nullable(Decimal(18, 0)), "
+                        + "ADD COLUMN IF NOT EXISTS amt3 Nullable(Decimal(12, 0))",
+                translate("ALTER TABLE t ADD COLUMN amt DECIMAL(20), ADD COLUMN amt2 DECIMAL(18) UNSIGNED, "
+                        + "ADD COLUMN amt3 NUMERIC(12)"));
+
+        String expectedCreate = "CREATE TABLE if not exists `employees`.d("
+                + "id Int32 NOT NULL ,amt Nullable(Decimal(20, 0)),"
+                + "`_version` UInt64,`is_deleted` UInt8) "
+                + "Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id";
+        String create = translate("CREATE TABLE d (id INT PRIMARY KEY, amt DECIMAL(20))");
+        Assert.assertTrue(create, create.equalsIgnoreCase(expectedCreate));
+    }
+
+    // ------------------------------------------------------------------
+    // T8: clean identifiers and case resolution against the target table
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("MODIFY/CHANGE/DROP/RENAME resolve the column's case against the ClickHouse table")
+    public void testModifyColumnNameIsCaseResolvedAgainstTarget() {
+        MySQLDDLParserService keyed = parserWithTarget(
+                columns("id", "Int32", "CustomerName", "Nullable(String)"), Collections.singletonList("id"));
+
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN CustomerName Nullable(String)",
+                translate(keyed, "ALTER TABLE t MODIFY COLUMN customername VARCHAR(50)"));
+        // DESTRUCTIVE: none -- string assertion on generated DDL text; no database is contacted.
+        Assert.assertEquals("ALTER TABLE `employees`.t DROP COLUMN IF EXISTS CustomerName",
+                translate(keyed, "ALTER TABLE t DROP COLUMN customername"));
+        String rename = translate(keyed, "ALTER TABLE t RENAME COLUMN customername TO cn");
+        Assert.assertTrue(rename, rename.equalsIgnoreCase(
+                "ALTER TABLE `employees`.t RENAME COLUMN IF EXISTS CustomerName TO cn"));
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN IF EXISTS CustomerName Nullable(String) \n"
+                        + "ALTER TABLE `employees`.t RENAME COLUMN IF EXISTS CustomerName to customer_name",
+                translate(keyed, "ALTER TABLE t CHANGE COLUMN customername customer_name VARCHAR(50)"));
+    }
+
+    @Test
+    @DisplayName("Target-schema lookups use clean identifiers and drive the nullability fallback")
+    public void testSchemaLookupUsesCleanIdentifiers() {
+        AtomicReference<String> askedDatabase = new AtomicReference<>();
+        AtomicReference<String> askedTable = new AtomicReference<>();
+        Map<String, String> types = columns("id", "Int32", "c", "Int32");
+        TargetSchemaLookup recording = new TargetSchemaLookup() {
+            @Override
+            public Map<String, Boolean> columnNullability(String database, String table) {
+                askedDatabase.set(database);
+                askedTable.set(table);
+                return TargetSchemaLookup.fromColumns(types, Collections.singletonList("id"))
+                        .columnNullability(database, table);
+            }
+
+            @Override
+            public Map<String, String> sortingKeyTypes(String database, String table) {
+                askedDatabase.set(database);
+                askedTable.set(table);
+                return TargetSchemaLookup.fromColumns(types, Collections.singletonList("id"))
+                        .sortingKeyTypes(database, table);
+            }
+        };
+        MySQLDDLParserService service = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees");
+        service.setTargetSchemaLookup(recording);
+
+        // Quoted and qualified identifiers, no explicit NULL/NOT NULL: the
+        // nullability must come from the target (c is non-Nullable there),
+        // and the lookup must be asked with the clean names.
+        Assert.assertEquals("ALTER TABLE `employees`.`t` MODIFY COLUMN `c` Int64",
+                translate(service, "ALTER TABLE `employees`.`t` MODIFY COLUMN `c` BIGINT"));
+        Assert.assertEquals("employees", askedDatabase.get());
+        Assert.assertEquals("t", askedTable.get());
+    }
+
+    // ------------------------------------------------------------------
+    // T9a / T9c: RENAME TO as a separate statement; CREATE TABLE LIKE operands
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("ADD COLUMN ..., RENAME TO t2 keeps the ADD and emits the rename as its own statement")
+    public void testAlterAddColumnThenRenameToKeepsBothStatements() {
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)\n"
+                        + "RENAME TABLE IF EXISTS `employees`.t TO `employees`.t2",
+                translate("ALTER TABLE t ADD COLUMN c INT, RENAME TO t2"));
+    }
+
+    @Test
+    @DisplayName("RENAME TO db2.t2 is re-qualified with the destination database")
+    public void testAlterRenameToQualifiedTarget() {
+        Assert.assertEquals("RENAME TABLE IF EXISTS `employees`.t TO `employees`.t2",
+                translate("ALTER TABLE t RENAME TO db2.t2"));
+        Assert.assertEquals("RENAME TABLE IF EXISTS `employees`.t TO `employees`.t2",
+                translate("ALTER TABLE db2.t RENAME db2.t2"));
+    }
+
+    @Test
+    @DisplayName("CREATE TABLE n LIKE db2.o re-qualifies both operands and is replay-safe")
+    public void testCreateTableLikeQualifiedSource() {
+        String like = translate("CREATE TABLE n LIKE db2.o");
+        Assert.assertTrue(like, like.equalsIgnoreCase("CREATE TABLE IF NOT EXISTS `employees`.n AS `employees`.o"));
+        String parenthesised = translate("CREATE TABLE db2.n (LIKE db2.o)");
+        Assert.assertTrue(parenthesised, parenthesised.equalsIgnoreCase(
+                "CREATE TABLE IF NOT EXISTS `employees`.n AS `employees`.o"));
     }
 
 }

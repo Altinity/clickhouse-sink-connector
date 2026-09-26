@@ -155,6 +155,15 @@ public class Metrics {
      */
     public static void initialize(String enableFlag, String metricsPort) {
 
+        // An engine restart in the same process initializes again. Release
+        // the previous registry first: its JvmGcMetrics binder installs GC
+        // notification listeners that keep the whole registry -- and every
+        // series ever registered in it -- reachable for the life of the JVM
+        // (spec 10.03 section 3.4).
+        if (meterRegistry != null) {
+            stop();
+        }
+
         connectorStartTimeMs = System.currentTimeMillis();
 
         parseConfiguration(enableFlag, metricsPort);
@@ -165,7 +174,8 @@ public class Metrics {
 
             // Bind JVM system metrics
             new JvmMemoryMetrics().bindTo(meterRegistry);
-            new JvmGcMetrics().bindTo(meterRegistry);
+            jvmGcMetrics = new JvmGcMetrics();
+            jvmGcMetrics.bindTo(meterRegistry);
             new ProcessorMetrics().bindTo(meterRegistry);
             new JvmThreadMetrics().bindTo(meterRegistry);
 
@@ -173,6 +183,16 @@ public class Metrics {
             registerMetrics(collectorRegistry);
         }
     }
+
+    /**
+     * The GC binder of the current registry, kept so {@link #stop()} can close
+     * it: it is an {@code AutoCloseable} whose GC-MXBean listeners otherwise
+     * outlive the registry they report into.
+     */
+    private static JvmGcMetrics jvmGcMetrics;
+
+    /** The binlog file the position gauge currently reports; the previous child is removed on rotation. */
+    private static String currentBinLogFile;
 
     /**
      * Parses the configuration for enabling metrics and setting the metrics port.
@@ -289,8 +309,29 @@ public class Metrics {
     public static void stop() {
         if (server != null) {
             server.stop(0);
+            server = null;
         }
+        // Release the registry with the server (spec 10.03 section 3.4): the
+        // GC binder's listeners are removed, the meter registry is closed, and
+        // nothing keeps the accumulated series reachable across a restart.
+        if (jvmGcMetrics != null) {
+            jvmGcMetrics.close();
+            jvmGcMetrics = null;
+        }
+        if (meterRegistry != null) {
+            meterRegistry.close();
+            meterRegistry = null;
+        }
+        collectorRegistry = null;
+        currentBinLogFile = null;
         connectorStartTimeMs = -1;
+    }
+
+    /**
+     * Whether a registry is currently open. Package-private for the test.
+     */
+    static boolean isRegistryOpen() {
+        return meterRegistry != null && !meterRegistry.isClosed();
     }
 
     /**
@@ -311,7 +352,18 @@ public class Metrics {
         if (!enableMetrics) {
             return;
         }
-        maxBinLogPositionCounter.labels(bmd.getBinLogFile()).set(bmd.getBinLogPosition());
+        // One child per binlog FILE would otherwise accumulate one series per
+        // rotation for the life of the process; the position of a file the
+        // reader has left is not a live metric, so its child is removed when
+        // the file changes (spec 10.03 section 3.4).
+        String binLogFile = bmd.getBinLogFile();
+        if (binLogFile != null) {
+            if (currentBinLogFile != null && !currentBinLogFile.equals(binLogFile)) {
+                maxBinLogPositionCounter.remove(currentBinLogFile);
+            }
+            currentBinLogFile = binLogFile;
+            maxBinLogPositionCounter.labels(binLogFile).set(bmd.getBinLogPosition());
+        }
         gtidCounter.set(bmd.getTransactionId());
 
         HashMap<String, MutablePair<Integer, Long>> partitionToOffsetMap = bmd.getPartitionToOffsetMap();
@@ -396,8 +448,15 @@ public class Metrics {
      */
     public static void updateDdlMetrics(String ddl, long timestamp, long timeTaken, boolean failed) {
         if (enableMetrics) {
+            // Fixed cardinality: two series, fail=true and fail=false. The DDL
+            // text and the wall-clock timestamp used to be tags, which made
+            // every DDL event a new series that was never removed -- a source
+            // refreshing its views thousands of times a day grew the registry
+            // (and every scrape) without bound (spec 10.03 section 3.4). The
+            // statement itself is in the log at INFO; the timestamp is the
+            // scrape's.
             ddlProcessingCounter
-                    .tag("ddl", ddl).tag("fail", String.valueOf(failed)).tag("timestamp", String.valueOf(timestamp)).register(Metrics.meterRegistry()).increment(timeTaken);
+                    .tag("fail", String.valueOf(failed)).register(Metrics.meterRegistry()).increment(timeTaken);
         }
     }
 }

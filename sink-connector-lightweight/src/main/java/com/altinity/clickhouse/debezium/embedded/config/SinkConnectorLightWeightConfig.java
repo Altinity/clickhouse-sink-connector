@@ -85,6 +85,31 @@ public class SinkConnectorLightWeightConfig {
     public static final String REST_API_AUTH_PASSWORD = "rest.api.auth.password";
 
     /**
+     * Whether a terminal engine failure exits the process (spec 10.04 §3.5).
+     * <p>
+     * When the embedded engine has failed {@code errors.max.retries} times in
+     * a row, replication is stopped for good. With this {@code true} (the
+     * default) the process exits with
+     * {@code DebeziumChangeEventCapture.TERMINAL_FAILURE_EXIT_CODE} so a
+     * supervisor (systemd, Kubernetes) restarts or alerts on it. With
+     * {@code false} the process stays up with replication stopped: the REST
+     * {@code /status} endpoint reports {@code Replica_Running=false} and a
+     * FATAL line is logged -- a liveness failure a probe must act on.
+     * </p>
+     */
+    public static final String EXIT_ON_TERMINAL_FAILURE = "exit.on.terminal.failure";
+
+    /**
+     * Whether a source {@code ALTER TABLE} that changes a table's row identity
+     * ({@code ADD PRIMARY KEY} of a different column set, {@code DROP PRIMARY
+     * KEY}) rebuilds the ClickHouse table under the new sorting key at the DDL
+     * barrier (Spec 06.09). Default {@code true}. With {@code false} the
+     * statement is refused loudly, nothing is emitted for it and the manual
+     * rebuild is named (Spec 06.07 §3.1 rule 3).
+     */
+    public static final String DDL_PRIMARY_KEY_REBUILD = "ddl.primary.key.rebuild";
+
+    /**
      * A map that holds all configuration variables and their descriptions.
      * <p>
      * This map is used to provide detailed information about each configuration
@@ -113,6 +138,14 @@ public class SinkConnectorLightWeightConfig {
                 "Username for REST API Basic Auth (required when rest.api.auth.enabled=true).");
         configVariables.put(REST_API_AUTH_PASSWORD,
                 "Password for REST API Basic Auth (required when rest.api.auth.enabled=true).");
+        configVariables.put(EXIT_ON_TERMINAL_FAILURE,
+                "If true (default), the process exits once the engine has failed errors.max.retries "
+                        + "times in a row; if false it stays up with replication stopped and "
+                        + "/status reporting Replica_Running=false.");
+        configVariables.put(DDL_PRIMARY_KEY_REBUILD,
+                "If true (default), a source ALTER TABLE that changes the primary key rebuilds the "
+                        + "ClickHouse table under the new sorting key at the DDL barrier (Spec 06.09); "
+                        + "if false the statement is refused loudly and nothing is emitted for it.");
     }
 
     /**

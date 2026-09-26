@@ -1,7 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
-import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
@@ -90,11 +89,16 @@ public class PostgresInitialDockerIT {
             }
         });
 
-        Thread.sleep(10000);//
-        Thread.sleep(50000);
-
-
+        // Poll until the 'tm' table has the expected 23 columns and at least 2 rows (up to 180s)
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+
+        Assert.assertTrue("Timed out waiting for 'tm' table to have 23 columns in ClickHouse",
+                ITCommon.waitForTableColumns(writer.getConnection(), "public", "tm", 23, 180_000));
+
+        long tmCount = ITCommon.waitForRowCount(writer.getConnection(),
+                "select count(*) from public.tm", 2, 180_000, 5_000);
+        Assert.assertEquals("Expected 2 rows in public.tm", 2, tmCount);
+
         DBMetadata dbMetadata = new DBMetadata(getProperties());
         Map<String, String> tmColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "tm", "public");
         Assert.assertTrue(tmColumns.size() == 23);
@@ -102,30 +106,41 @@ public class PostgresInitialDockerIT {
         Assert.assertTrue(tmColumns.get("id").equalsIgnoreCase("UUID"));
         Assert.assertTrue(tmColumns.get("secid").equalsIgnoreCase("Nullable(UUID)"));
         //Assert.assertTrue(tmColumns.get("am").equalsIgnoreCase("Nullable(Decimal(21,5))"));
-        Assert.assertTrue(tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6))"));
+        // Debezium timestamps are UTC by definition, so the record-schema
+        // auto-create path tags the column with the zone. Verified live on
+        // this branch, PostgreSQL 15 -> ClickHouse 24.8:
+        //   CREATE TABLE `public`.`tm`(... `created`
+        //       Nullable(DateTime64(6, 'UTC')) ...)
+        // The bare-precision expectation predates that change and never
+        // matched what the connector emits.
+        Assert.assertTrue(tmColumns.get("created").equalsIgnoreCase("Nullable(DateTime64(6, 'UTC'))"));
 
+        // Get the columns in re_data — poll until available
+        Assert.assertTrue("Timed out waiting for 'redata' table columns in ClickHouse",
+                ITCommon.waitForTableColumns(writer.getConnection(), "public", "redata", 1, 60_000));
 
-        int tmCount = 0;
-        ResultSet chRs = writer.getConnection().prepareStatement("select count(*) from public.tm").executeQuery();
-        while(chRs.next()) {
-            tmCount =  chRs.getInt(1);
-        }
-
-        // Get the columns in re_data.
         Map<String, String> reDataColumns = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "redata", "public");
 
         Assert.assertTrue(reDataColumns.get("amount").equalsIgnoreCase("Decimal(64, 18)"));
         Assert.assertTrue(reDataColumns.get("total_amount").equalsIgnoreCase("Decimal(21, 5)"));
-        Assert.assertTrue(tmCount == 2);
 
-        String offsetValue = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(getProperties(), writer.getConnection());
+        // The offset is flushed on Debezium's schedule, not together with the
+        // rows, and the end-of-snapshot state of an idle source only travels on
+        // the first heartbeat once streaming has started. Reading it once here
+        // returned null (NPE) on every CI run and locally: poll until the
+        // snapshot is recorded as finished.
+        String offsetValue = ITCommon.waitForOffset(getProperties(), writer.getConnection(),
+                120_000, 2_000, ITCommon::offsetSaysSnapshotFinished);
+        Assert.assertNotNull("no offset was persisted within 120s of the snapshot rows arriving", offsetValue);
+        Assert.assertTrue("the persisted offset must not report an unfinished snapshot, got: " + offsetValue,
+                ITCommon.offsetSaysSnapshotFinished(offsetValue));
 
-        // Parse offsetvalue json and check the keys
-        Assert.assertTrue(offsetValue.contains("last_snapshot_record"));
-        Assert.assertTrue(offsetValue.contains("lsn"));
-        Assert.assertTrue(offsetValue.contains("txId"));
-        Assert.assertTrue(offsetValue.contains("ts_usec"));
-        Assert.assertTrue(offsetValue.contains("snapshot"));
+        // Position fields are present in every form of the PostgreSQL offset.
+        // The snapshot keys (last_snapshot_record, snapshot) exist only while
+        // the snapshot is running, so their presence cannot be asserted here.
+        Assert.assertTrue("offset must carry lsn: " + offsetValue, offsetValue.contains("lsn"));
+        Assert.assertTrue("offset must carry txId: " + offsetValue, offsetValue.contains("txId"));
+        Assert.assertTrue("offset must carry ts_usec: " + offsetValue, offsetValue.contains("ts_usec"));
 
         if(engine.get() != null) {
             engine.get().stop();

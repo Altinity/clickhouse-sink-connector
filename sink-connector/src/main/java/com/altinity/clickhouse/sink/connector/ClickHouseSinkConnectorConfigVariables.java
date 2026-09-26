@@ -65,6 +65,11 @@ public enum ClickHouseSinkConnectorConfigVariables {
     SOURCE_DATETIME_TIMEZONE("database.connectionTimeZone"),
     CLICKHOUSE_DATETIME_TIMEZONE("clickhouse.datetime.timezone"),
 
+    // When false (default) a DATE/DATETIME/TIMESTAMP/decimal value outside the
+    // ClickHouse type's range fails the batch; when true it is saturated to
+    // the bound with a WARN naming the column (spec 07.03 section 3.3).
+    CLAMP_OUT_OF_RANGE("clamp.out.of.range"),
+
     SKIP_REPLICA_START("skip_replica_start"),
 
     RESTART_EVENT_LOOP("restart.event.loop"),
@@ -75,6 +80,24 @@ public enum ClickHouseSinkConnectorConfigVariables {
     JDBC_V1_DRIVER("clickhouse.jdbc.v1"),
     REPLICA_STATUS_VIEW("replica.status.view"),
     MAX_QUEUE_SIZE("sink.connector.max.queue.size"),
+
+    // Hard cap on the reader's lead over the writers, in rows handed off and
+    // not yet acknowledged, and the longest the reader may wait at it before
+    // the engine stops loudly (spec 01.05 section 3.4).
+    HANDOFF_MAX_OUTSTANDING_RECORDS("sink.connector.handoff.max.outstanding.records"),
+    HANDOFF_WAIT_TIMEOUT_MS("sink.connector.handoff.wait.timeout.ms"),
+    // The same cap in estimated BYTES (spec 01.05 section 3.4 item 7): a row
+    // count means something different for every table width, the heap does not.
+    HANDOFF_MAX_OUTSTANDING_BYTES("sink.connector.handoff.max.outstanding.bytes"),
+    // The most estimated bytes one JDBC INSERT chunk may hold (spec 03.06
+    // section 3.1); the driver renders a chunk as SQL text in memory twice.
+    BUFFER_MAX_BYTES("buffer.max.bytes"),
+
+    // Pacing of retries for a batch that failed to write to ClickHouse for a
+    // retriable reason: initial delay, doubling per consecutive failure of the
+    // same batch, capped at the max (spec 10.02).
+    BATCH_RETRY_BACKOFF_INITIAL_MS("batch.retry.backoff.initial.ms"),
+    BATCH_RETRY_BACKOFF_MAX_MS("batch.retry.backoff.max.ms"),
 
     SINGLE_THREADED("single.threaded"),
 
@@ -111,7 +134,50 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS("ddl.schema.change.poll.interval.ms"),
 
-    DATABASE_HOSTNAME("database.hostname");
+    DATABASE_HOSTNAME("database.hostname"),
+    /**
+     * Prefix for direct column type override properties.
+     * Format: column_type_override.direct.<schema>.<table>.<column>=<CHType>
+     */
+    COLUMN_TYPE_OVERRIDE_DIRECT_PREFIX("column_type_override.direct."),
+
+    /**
+     * Prefix for alias column type override properties.
+     * Format: column_type_override.alias.<schema>.<table>.<column>=<CHType>|<expression>
+     */
+    COLUMN_TYPE_OVERRIDE_ALIAS_PREFIX("column_type_override.alias."),
+
+    /**
+     * When true, ClickHouse table names include the PostgreSQL schema as a
+     * prefix: __<schema>__<table>.  Default: false.
+     */
+    CLICKHOUSE_TABLE_SCHEMA_PREFIX("clickhouse.table.schema.prefix"),
+
+    /**
+     * When true, appends the resolved {@code clickhouse.common.schema.template}
+     * to the ClickHouse database name.  Default: false.
+     */
+    CLICKHOUSE_DATABASE_SCHEMA_SUFFIX("clickhouse.database.schema.suffix"),
+
+    /**
+     * Shared template string with a {@code {{ schema }}} placeholder.
+     * Used by both {@code clickhouse.table.schema.prefix} and
+     * {@code clickhouse.database.schema.suffix} when they are enabled.
+     * Example: {@code "__{{ schema }}__"} resolves to {@code "__public__"}.
+     * When non-empty, overrides the hardcoded {@code __<schema>__} format
+     * used by {@code clickhouse.table.schema.prefix}.
+     * Empty string (default) means the hardcoded format is used for table
+     * prefix and no suffix is applied to the database name.
+     */
+    CLICKHOUSE_COMMON_SCHEMA_TEMPLATE("clickhouse.common.schema.template"),
+
+    /**
+     * Static string prefix prepended to the ClickHouse database name.
+     * Only alphanumeric characters and underscores are allowed.
+     * Used to differentiate when multiple sink-connectors write to the
+     * same ClickHouse instance.  Empty string (default) disables this feature.
+     */
+    CLICKHOUSE_COMMON_DATABASE_PREFIX("clickhouse.common.database.prefix");
 
 
 
