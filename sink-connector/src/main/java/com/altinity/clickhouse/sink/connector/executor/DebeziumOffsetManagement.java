@@ -125,6 +125,43 @@ public class DebeziumOffsetManagement {
     static final long CAPACITY_WAIT_SLICE_MS = 50;
 
     /**
+     * A pause that begins within this many milliseconds of the previous
+     * release continues the same PACING PERIOD and is counted, not logged
+     * (spec 01.05 §3.4 item 6). At the cap the reader oscillates by
+     * construction -- one unit acknowledged releases it, the next handoff
+     * meets the cap again -- so "one WARN per wait" was one WARN per batch:
+     * measured on the first deployment, ~300 {@code Handoff hard cap} lines a
+     * minute and 990 WARNs into the error log in seven minutes, while the cap
+     * was doing exactly its job.
+     */
+    static final long CAPACITY_PACING_REARM_MS = 60_000;
+
+    /**
+     * While a pacing period lasts, one summary INFO per this many
+     * milliseconds -- the pauses and the time paused since the previous line
+     * and since the period began, and what is outstanding now.
+     */
+    static final long CAPACITY_PACING_SUMMARY_MS = 60_000;
+
+    /**
+     * Monotone nanosecond clock behind the pacing bookkeeping. Tests
+     * substitute a controllable one; the waits themselves and the wait limit
+     * stay on {@link System#nanoTime()}.
+     */
+    static volatile java.util.function.LongSupplier capacityClock = System::nanoTime;
+
+    // Pacing-period bookkeeping (spec 01.05 §3.4 item 6). Written under the
+    // class monitor by the producer thread; closed and cleared by reset().
+    private static long pacingStartNanos;   // 0 while the reader is not paced
+    private static long pacingCap;
+    private static long lastReleaseNanos;
+    private static long pacingPauses;
+    private static long pacingPausedNanos;
+    private static long lastSummaryNanos;
+    private static long summaryPauses;
+    private static long summaryPausedNanos;
+
+    /**
      * Offsets acknowledged to Debezium ({@code markBatchFinished()} returned)
      * since the JVM started, on every path -- written units and control
      * records alike. Monotone; never reset, not even by {@link #reset()}: it
@@ -262,9 +299,17 @@ public class DebeziumOffsetManagement {
      * binlog client, and the heap stays bounded.
      * </p>
      * <p>
-     * The wait is loud and bounded. ONE WARN is logged when it begins, naming
-     * the counts; ONE INFO when it ends, naming how long it lasted; nothing per
-     * slice. Every {@link #CAPACITY_WAIT_SLICE_MS} the {@code livenessCheck}
+     * The wait is loud, paced and bounded. ONE WARN is logged when a PACING
+     * PERIOD begins -- a wait starting more than
+     * {@link #CAPACITY_PACING_REARM_MS} after the previous release, or with no
+     * previous release -- naming the counts, and ONE INFO when that first wait
+     * ends, naming how long it lasted. Every later wait that begins within the
+     * re-arm window continues the period and is counted, not logged; ONE INFO
+     * summary per {@link #CAPACITY_PACING_SUMMARY_MS} while the period lasts;
+     * ONE INFO "pacing ended" when a wait begins after a longer quiet gap, or
+     * on {@link #reset()}; nothing per slice. (At the cap the reader
+     * oscillates one unit at a time, so a line per wait was a line per batch.)
+     * Every {@link #CAPACITY_WAIT_SLICE_MS} the {@code livenessCheck}
      * runs (the caller passes its dead-worker check, spec 03.01 §3.3: a
      * dead worker can never acknowledge, so waiting on it would be the very
      * stall this method exists to prevent), and after {@code timeoutMs} the
@@ -290,12 +335,7 @@ public class DebeziumOffsetManagement {
             return;
         }
         long startNanos = System.nanoTime();
-        log.warn("Handoff hard cap: {} row(s) in {} unit(s) handed off and not yet acknowledged, "
-                + "at or above the cap of {} (sink.connector.handoff.max.outstanding.records). "
-                + "Pausing the reader until the writers acknowledge the head of the FIFO; nothing "
-                + "has failed. The next line about this wait is the one reporting it released, or "
-                + "the failure if it exceeds {} ms.", outstandingRecords.get(),
-                outstandingSequences.size(), maxOutstandingRecords, timeoutMs);
+        boolean firstPauseOfPeriod = beginPause(maxOutstandingRecords, timeoutMs);
         while (true) {
             synchronized (DebeziumOffsetManagement.class) {
                 if (!isAtCapacity(maxOutstandingRecords)) {
@@ -323,9 +363,105 @@ public class DebeziumOffsetManagement {
                         maxOutstandingRecords));
             }
         }
-        log.info("Handoff hard cap released after {} ms: {} row(s) in {} unit(s) outstanding, "
-                + "under the cap of {}.", (System.nanoTime() - startNanos) / 1_000_000L,
-                outstandingRecords.get(), outstandingSequences.size(), maxOutstandingRecords);
+        endPause(maxOutstandingRecords, firstPauseOfPeriod, System.nanoTime() - startNanos);
+    }
+
+    /**
+     * Opens or continues a pacing period for a wait that is about to begin,
+     * and logs accordingly (spec 01.05 §3.4 item 6): the first wait of a
+     * period is the WARN; a wait beginning within
+     * {@link #CAPACITY_PACING_REARM_MS} of the previous release is counted
+     * silently; a wait after a longer quiet gap first closes the old period
+     * with its "pacing ended" line, then opens a new one.
+     *
+     * @return true when this wait opened a period (its release is logged too).
+     */
+    private static synchronized boolean beginPause(long cap, long timeoutMs) {
+        long now = capacityClock.getAsLong();
+        if (pacingStartNanos != 0 && now - lastReleaseNanos <= CAPACITY_PACING_REARM_MS * 1_000_000L) {
+            return false;
+        }
+        if (pacingStartNanos != 0) {
+            closePacingPeriod("the reader stayed under the cap for more than "
+                    + (CAPACITY_PACING_REARM_MS / 1000) + " s");
+        }
+        pacingStartNanos = now;
+        pacingCap = cap;
+        lastReleaseNanos = now;
+        lastSummaryNanos = now;
+        pacingPauses = 0;
+        pacingPausedNanos = 0;
+        summaryPauses = 0;
+        summaryPausedNanos = 0;
+        log.warn("Handoff hard cap: {} row(s) in {} unit(s) handed off and not yet acknowledged, "
+                + "at or above the cap of {} (sink.connector.handoff.max.outstanding.records). "
+                + "Pausing the reader until the writers acknowledge the head of the FIFO; nothing "
+                + "has failed. The next line about this wait is the one reporting it released, or "
+                + "the failure if it exceeds {} ms. Further pauses that begin within {} s of a "
+                + "release are counted, not logged: expect one 'Handoff hard cap pacing:' summary "
+                + "per {} s while the reader stays paced, and one 'pacing ended' line when it stops.",
+                outstandingRecords.get(), outstandingSequences.size(), cap, timeoutMs,
+                CAPACITY_PACING_REARM_MS / 1000, CAPACITY_PACING_SUMMARY_MS / 1000);
+        return true;
+    }
+
+    /**
+     * Records the end of a wait: the first wait of a period gets its release
+     * INFO; a later one is counted, and the summary INFO is emitted once per
+     * {@link #CAPACITY_PACING_SUMMARY_MS}. A period already closed by
+     * {@link #reset()} while this wait was in progress is not reopened.
+     */
+    private static synchronized void endPause(long cap, boolean firstPauseOfPeriod, long pausedNanos) {
+        long now = capacityClock.getAsLong();
+        if (firstPauseOfPeriod) {
+            log.info("Handoff hard cap released after {} ms: {} row(s) in {} unit(s) outstanding, "
+                    + "under the cap of {}.", pausedNanos / 1_000_000L,
+                    outstandingRecords.get(), outstandingSequences.size(), cap);
+        }
+        if (pacingStartNanos == 0) {
+            return;
+        }
+        lastReleaseNanos = now;
+        pacingPauses++;
+        pacingPausedNanos += pausedNanos;
+        if (firstPauseOfPeriod) {
+            return;
+        }
+        summaryPauses++;
+        summaryPausedNanos += pausedNanos;
+        if (now - lastSummaryNanos >= CAPACITY_PACING_SUMMARY_MS * 1_000_000L) {
+            log.info("Handoff hard cap pacing: {} pause(s) totalling {} ms since the previous line; "
+                    + "{} pause(s), {} ms paused since pacing began {} s ago; {} row(s) in {} unit(s) "
+                    + "outstanding, cap {}. The reader is being paced by the writers; nothing has failed.",
+                    summaryPauses, summaryPausedNanos / 1_000_000L, pacingPauses,
+                    pacingPausedNanos / 1_000_000L, (now - pacingStartNanos) / 1_000_000_000L,
+                    outstandingRecords.get(), outstandingSequences.size(), cap);
+            lastSummaryNanos = now;
+            summaryPauses = 0;
+            summaryPausedNanos = 0;
+        }
+    }
+
+    /**
+     * Closes the pacing period with its one INFO line and clears the
+     * bookkeeping. A no-op while the reader is not paced.
+     */
+    private static synchronized void closePacingPeriod(String why) {
+        if (pacingStartNanos == 0) {
+            return;
+        }
+        log.info("Handoff hard cap pacing ended ({}): {} pause(s) totalling {} ms paused over {} s; "
+                + "{} row(s) in {} unit(s) outstanding, cap {}.", why, pacingPauses,
+                pacingPausedNanos / 1_000_000L, (lastReleaseNanos - pacingStartNanos) / 1_000_000_000L,
+                outstandingRecords.get(), outstandingSequences.size(), pacingCap);
+        pacingStartNanos = 0;
+        pacingCap = 0;
+        lastReleaseNanos = 0;
+        lastSummaryNanos = 0;
+        pacingPauses = 0;
+        pacingPausedNanos = 0;
+        summaryPauses = 0;
+        summaryPausedNanos = 0;
     }
 
     /**
@@ -475,6 +611,9 @@ public class DebeziumOffsetManagement {
         // The set it advised on is gone; clear the advisory with it, silently
         // (the abandonment WARN above is the line for this event).
         backlogAdvisoryRaised = false;
+        // The units the reader was paced on are gone with the engine: close
+        // the pacing period with its one line (spec 01.05 §3.4 item 6).
+        closePacingPeriod("reset");
         // A producer paused at the hard cap is waiting on units that no longer
         // exist; wake it so it re-reads the (now empty) FIFO.
         DebeziumOffsetManagement.class.notifyAll();
