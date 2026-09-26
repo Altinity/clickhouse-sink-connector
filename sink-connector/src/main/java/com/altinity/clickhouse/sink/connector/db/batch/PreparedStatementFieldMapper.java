@@ -674,6 +674,17 @@ public class PreparedStatementFieldMapper {
                         record.calculateVersion(useSnowflakeId);
                     }
                     rejectUnderivableVersion(record);
+                    if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                        // An SCD2 table carries ONE version domain for every row it
+                        // holds, whichever statement or release wrote it: the
+                        // snowflake encoding of the record's ordering key (Spec 12.03
+                        // section 3.5.1). Binding the raw sequence number here while
+                        // the UPDATE/DELETE rows of earlier releases sit at 2.1e18
+                        // froze every previously updated key at the upgrade.
+                        ps.setLong(columnNameToIndexMap.get(versionColumn),
+                                ReplicationHistoryHandler.historyVersion(record));
+                        return;
+                    }
                     ps.setLong(columnNameToIndexMap.get(versionColumn), record.getVersion());
                 }
             }

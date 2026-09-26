@@ -21,11 +21,11 @@ of the new property, so the change can be audited.
 
 ## 2. Codebase Mapping on 2.11.0
 - **Dispatch**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/PreparedStatementExecutor.java` — `executePreparedStatement`: constructs a `ReplicationHistoryHandler` per batch when `replication.history.enable=true`; flushes the staged statement (`executeBatch()`) before **both** the DELETE and the UPDATE history statements; routes the `op = t` record to the bulk close instead of `DBMetadata.truncateTable`; suppresses the relocation tombstone in history mode.
-- **Statement builder**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/ReplicationHistoryHandler.java` — `resolveVersion` (the record's standard version, refused when not derivable), `buildUpdateQueryParams` (sentinel, event time, version, whole primary key from the **before** image, `keyChanged`), `generateUpdateQuery`, `generateDeleteQuery`, `executeHistoryUpdate`, `executeHistoryBulkClose`.
+- **Statement builder**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/ReplicationHistoryHandler.java` — `resolveVersion` (derives the record's standard version, refused when not derivable, and returns its history version) and `historyVersion` (the snowflake encoding of the standard version's ordering key: the history version domain of §3.5.1, shared by the INSERT binding and the DDL-path bulk close), `buildUpdateQueryParams` (sentinel, event time, version, whole primary key from the **before** image, `keyChanged`), `generateUpdateQuery`, `generateDeleteQuery`, `executeHistoryUpdate`, `executeHistoryBulkClose`.
 - **SQL text**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/QueryFormatter.java` — `getInsertQueryForUpdate` (two SELECTs, three when the key changed), `getInsertQueryForDelete` (two SELECTs), `getInsertQueryForBulkClose` (column-agnostic `SELECT * REPLACE`), `formatPrimaryKeyPredicate`, `isTemporalTrackingColumn`, `isConnectorManagedColumn`.
 - **Column binding**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/PreparedStatementFieldMapper.java` — `handleReplicationHistoryColumns` (INSERT path values of `_valid_from`, `_valid_to`, `_operation`), `isReplicationHistoryColumn` (the only columns deferred in history mode), `rejectUnderivableVersion` (shared with the history statements), the history-mode exemptions in `requireEngineColumnPlaceholder` and `requireDeleteColumn`.
 - **Grouping**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/GroupInsertQueryWithBatchRecords.java` — one grouped entry per UPDATE (04.01 §3.2, 04.04 §3.1); `isTruncate` marks the `op = t` group.
-- **Version source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/model/ClickHouseStruct.java` — `getVersion`, `calculateVersion` (the standard version of spec 02.01 / 02.02, shared by the INSERT row and every history row of the event), `getTsSec`, `getPrimaryKey`, `getBeforeStruct`, `getAfterStruct`.
+- **Version source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/model/ClickHouseStruct.java` — `getVersion`, `calculateVersion` (the standard version of spec 02.01 / 02.02 whose ordering key `(ts_ms, d)` every history row of the event carries, re-encoded by `historyVersion`), `getGtid`, `getSequenceNumber`, `getVersionTs`, `getTsSec`, `getPrimaryKey`, `getBeforeStruct`, `getAfterStruct`.
 - **DDL path (lightweight engine)**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/MySqlDDLParserListenerImpl.java` — `enterTruncateTable`, `enterDropTable` (history mode: the bulk close instead of `TRUNCATE TABLE` / `DROP TABLE`), `enterCreateDatabase`, `enterDropDatabase` (history mode: ignored); `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java` — `performDDLOperation`.
 - **Formal model**: `formal_specs/lean/Replication/History.lean` — `insertRow`, `closeRow`, `afterRow`, `deleteMarker`, `keyChangeMarker`, `bulkMarker`, `updateRows`, `deleteRows`, `bulkCloseRows`, `openRows`, `applyInsert`, `applyUpdate`, `applyDelete`, `applyBulkClose`; old behaviour as `oldBeforeRow`, `oldUpdateRows`, `oldApplyUpdate`, `oldApplyUpdateInline`.
 
@@ -37,8 +37,7 @@ Notation: `k` = the source primary key (all its columns); `kb` / `ka` = the
 key of the before / after image of an UPDATE; `ts` = the event's `ts_sec`
 rendered as `DateTime` "without timezone adjustment" from the source
 timezone to the server timezone; `S` = the sentinel `2100-01-01 00:00:00`
-(12.02 §3.1); `V = record.getVersion()` — the event's **standard** version
-(§3.5); `tz` = the resolved server timezone id. All FINAL reads below are
+(12.02 §3.1); `V = historyVersion(record)` — the snowflake encoding of the event's **standard** version (§3.5, §3.5.1); `tz` = the resolved server timezone id. All FINAL reads below are
 `SELECT ... FROM <table> FINAL WHERE <key predicate> AND `_valid_to` =
 toDateTime('S', 'tz') [AND `is_deleted` = 0]` — the **open-row predicate**;
 the `is_deleted` conjunct is present when the table has that column.
@@ -54,8 +53,9 @@ per-table INSERT template. `handleReplicationHistoryColumns` binds:
 - `_valid_from` = `ts`;
 - `_valid_to` = `S`;
 - `_operation` = the single-letter code `'C'` (or `'r'` for a snapshot row);
-- `is_deleted` = 0 and `_version` = `V` (the record's standard version,
-  `ClickHouseStruct.calculateVersion`, spec 02.01).
+- `is_deleted` = 0 and `_version` = `V` (`handleVersionColumn` binds
+  `historyVersion(record)` in history mode — the snowflake encoding of the
+  standard version `ClickHouseStruct.calculateVersion` derives, §3.5.1).
 Exactly one row: `(k, image, ts, S, is_deleted=0, V, 'C')`.
 Formal: `Replication.History.insertRow`.
 
@@ -244,12 +244,13 @@ Formal: `Replication.History.bulkMarker`, `openRows`, `bulkCloseRows`,
 ### 3.5 One version per event — S2
 Every row an event emits — INSERT row, close row, after row, key-change
 marker, delete marker, bulk-close rows — carries the **same** version
-`V = record.getVersion()`: the standard, floor-clamped, monotonic version of
-spec 02.01 / 02.02 (`ReplicationHistoryHandler.resolveVersion`, which
-derives it lazily with the same `snowflake.id` flag the field mapper uses,
+`V = historyVersion(record)`: the snowflake encoding (§3.5.1) of the standard,
+floor-clamped, monotonic version of spec 02.01 / 02.02
+(`ReplicationHistoryHandler.resolveVersion`, which derives the standard version lazily with the same `snowflake.id` flag the field mapper uses,
 because the history statements are built before any binding and the DELETE
-and bulk-close statements bind nothing). There is no separate
-`SnowFlakeId(ts_ms, gtid)` domain and no `V+1`:
+and bulk-close statements bind nothing). There is no second domain for the
+UPDATE/DELETE rows (2.11.0 used `SnowFlakeId(ts_ms, gtid)` there and the standard
+version on the INSERT row) and no `V+1`:
 - rows of one event never compete with each other — the close row lives at
   `(k, ts)`, the open-key rows at `(k, S)` (or at `(kb, S)` vs `(ka, S)` on
   a key change);
@@ -260,7 +261,7 @@ and bulk-close statements bind nothing). There is no separate
   02.01 §3.2, so an INSERT + UPDATE + UPDATE sequence could leave the older
   image current — one version per event removes the collision (resolved
   Gap G-12.03-4).
-A version that cannot be derived (`record.getVersion() <= 0`) is refused
+A version that cannot be derived (`record.getVersion() <= 0`, or an event millisecond not after the snowflake epoch) is refused
 loudly (`rejectUnderivableVersion`, `IllegalStateException`; 02.05 §3.2):
 bound as `-1` it would become the maximum `UInt64` and win every merge for
 the key forever.
@@ -268,6 +269,81 @@ Formal: `Replication.History.update_rows_share_one_version`,
 `Replication.History.delete_rows_share_one_version`; the hypothesis of every
 convergence theorem is exactly "every existing open row of the key has
 version `≤ V`".
+
+#### 3.5.1 The history version domain — S10 (upgrade and downgrade safety)
+`V` is **not the raw number** of the standard version: it is the snowflake
+encoding of the standard version's ordering key,
+`V = SnowFlakeId.generate(ts_ms, d, false)` (`ReplicationHistoryHandler.historyVersion`),
+where
+
+| standard version of 02.01 | `ts_ms` | `d` (low 22 bits) |
+|---|---|---|
+| GTID, `snowflake.id=true` (`SnowFlakeId(versionTs \| ts_ms, gtid)`) | `versionTs`, else `ts_ms` | `gtid` — `V` **is** the standard version |
+| GTID, `snowflake.id=false` (raw transaction number) | `versionTs`, else `ts_ms` | `gtid` |
+| lightweight sequence `effectiveTs · 10^6 + counter` — every row of a GTID-less source and the **snapshot rows of any source** (their Debezium offset carries no GTID) | `effectiveTs − 1` (`versionTs` set by the dispatch loop; without it `seq / 10^6 − 1`) | `counter − seed` (`counter = seq − effectiveTs · 10^6`; `seed` = `SEQUENCE_START_INITIAL` 500 000 000 on the first window of a run, `SEQUENCE_START` 1 000 000 000 after a reset — 02.01 §4 freezes both); refused loudly when `≥ 2^22` |
+| LSN / Kafka-offset fallback | `ts_ms` | low 22 bits of the standard version |
+
+`SnowFlakeId.generate` is `(ts_ms − 1288834974657) · 2^22 + d` for
+`d < 2^22`, so it is **strictly monotone** in `(ts_ms, d)`: the history
+version orders events exactly as the standard version does — the number
+changes, the order does not, and every property of §3.5 (one version per
+event, redelivery ranks `≤` the first delivery via the floor of 02.02) is
+inherited unchanged. Two details of the sequence row make that true across
+the two paths of 02.01 §3.1:
+- the counter is taken **less its seed**, because the ten-digit seeds carry
+  whole milliseconds into `seq / 10^6` (02.01 §3.3) — within a window the
+  counter only increments, a reset moves the window to a later millisecond,
+  and a run starts above the previous high-water mark, so `(effectiveTs,
+  counter − seed)` orders exactly as the sequence does;
+- the millisecond is the one **below** the effective millisecond, because the
+  first GTID rows after a snapshot are floored to the snapshot's last
+  effective millisecond (02.02): in the standard domain they outrank the
+  snapshot rows by *domain* (any snowflake is above any sequence), which one
+  history domain cannot reproduce, so the snapshot rows step one millisecond
+  down and every later GTID row of the same key ranks above them whatever
+  the two discriminators are (`ReplicationHistoryVersionDomainTest.snapshotRowRanksBelowAGtidRowFlooredToTheSameMillisecond()`,
+  `Replication.History.sequence_row_below_gtid_row_of_its_millisecond`). The
+  first iteration of this change encoded `(seq / 10^6, seq mod 10^6)` and
+  the history suite on a GTID source failed on exactly this: the snapshot
+  rows sat 500 ms above their effective millisecond and the first UPDATE of
+  every snapshotted key was merged away. Every row of an SCD2 table is written in this domain:
+the INSERT row bound by `PreparedStatementFieldMapper.handleVersionColumn`
+in history mode, the close/after rows, the key-change and delete markers,
+and the bulk-close rows of §3.4 on both the record path and the DDL path
+(`DebeziumChangeEventCapture.executeHistoryBulkCloses`). An event whose
+millisecond is not after the snowflake epoch is refused loudly (the
+timestamp field would wrap).
+
+**Why (the 2.11.0 upgrade freeze).** Releases up to and including 2.11.0
+bound the INSERT row with the standard version but wrote the UPDATE close
+row with `SnowFlakeId(ts_ms, gtid)` and the after row / delete marker with
+that value `+ 1`. On a source without GTIDs the standard version is the
+sequence, ≈ `1.8·10^18` in 2026, while a snowflake of the same instant is
+≈ `2.1·10^18`; the two domains do not cross until 2032. `FINAL` keeps the
+greatest `_version` at a sorting key, so every open row or delete marker a
+2.11.0 connector left at `(k, S)` outranked every sequence version the
+fixed connector could produce: had `V` been the raw sequence, **every key a
+2.11.0 connector had ever updated or deleted would have frozen at the
+upgrade** — later updates and deletes entered the history and never became
+current (`old_raw_sequence_version_loses_to_legacy_open_row`), and a
+re-insert after a 2.11.0 delete stayed hidden behind the marker. With `V`
+in the snowflake domain a later event is a greater number on both sides of
+an upgrade **and** of a downgrade, whichever release wrote the earlier row:
+
+| written by | row at `(k, S)` | `_version` | superseded by the other release's next event? |
+|---|---|---|---|
+| 2.11.0 | after row / delete marker | `SnowFlakeId(ts_old, gtid) + 1` | yes — `SnowFlakeId(ts_new, d)` with `ts_new > ts_old` |
+| 2.11.0 | INSERT row | sequence ≈ `1.8·10^18` | yes — any snowflake is greater |
+| fixed | any row | `SnowFlakeId(ts_new, d)` | yes — 2.11.0 writes `SnowFlakeId(ts_later, gtid) + 1` |
+
+The only ordering the two releases can disagree on is inside one
+millisecond, which a restart between them cannot produce. No table
+migration is needed in either direction; the end-to-end suite
+`csc_e2e_updown` hops OLD → NEW → OLD → NEW on the same tables with and
+without GTIDs and checks the current state value-by-value after every hop.
+Formal: `Replication.History.snowflake_encode_strict_mono`,
+`Replication.History.legacy_open_row_superseded_by_later_event`,
+`Replication.History.old_raw_sequence_version_loses_to_legacy_open_row`.
 
 ### 3.6 Timezones
 `ts` and `S` are converted with `convertWithoutTimeZoneAdjustment` from the
@@ -369,7 +445,14 @@ G-12.04-2).
 - `QueryFormatterTest.updateAndDeleteQueriesUseEveryPrimaryKeyColumn()`, `ReplicationHistoryHandlerTest.compositePrimaryKeyClosesOnlyTheMatchingRow()` — composite-key predicate in every table-reading SELECT.
 - `ReplicationHistoryHandlerTest.closePredicateUsesBeforeImageKey()` — §3.2: the key values come from the before image.
 - `ReplicationHistoryHandlerTest.keyChangingUpdateClosesAndRetiresTheOldKey()` — §3.2: `keyChanged` is set when a key column differs and the generated statement carries the marker.
-- `ReplicationHistoryHandlerTest.versionComesFromTheRecordNotFromTimestampAndGtid()` — §3.5: `V = record.getVersion()`, not a Snowflake of `(ts_ms, gtid)`.
+- `ReplicationHistoryHandlerTest.everyHistoryRowCarriesTheEventsHistoryVersion()` — §3.5 / §3.5.1: every `_version` literal of the UPDATE and DELETE statements is `historyVersion(record)`; no `V+1`; the raw standard version never appears.
+- `ReplicationHistoryHandlerTest.versionIsDerivedTheStandardWayWhenNotYetCalculated()` — §3.5: the standard version is derived lazily with the configured `snowflake.id` flag, left on the record, and encoded for the history rows.
+- `ReplicationHistoryVersionDomainTest.gtidSourceIsTheStandardSnowflakeVersionItself()`, `ReplicationHistoryVersionDomainTest.gtidSourceUsesTheFlooredVersionTimestampWhenTheDispatchLoopSetOne()`, `ReplicationHistoryVersionDomainTest.rawGtidVersionIsReEncoded()`, `ReplicationHistoryVersionDomainTest.sequenceRowEncodesTheMillisecondBelowItsEffectiveOneAndTheCounterLessItsSeed()`, `ReplicationHistoryVersionDomainTest.sequenceRowWithoutAnEffectiveMillisecondRecoversItFromTheSequence()`, `ReplicationHistoryVersionDomainTest.fallbackSourcesUseTheLowBitsOfTheStandardVersion()` — §3.5.1: the encoding on each source path.
+- `ReplicationHistoryVersionDomainTest.sequenceEncodingIsStrictlyMonotoneLikeTheSequence()` — §3.5.1: the encoding preserves the order of the sequence (same millisecond, next counter; next millisecond, counter reset).
+- `ReplicationHistoryVersionDomainTest.snapshotRowRanksBelowAGtidRowFlooredToTheSameMillisecond()` — §3.5.1: a snapshot (sequence) row ranks below a GTID row floored to the same effective millisecond whatever the discriminators — the case the history suite exposed on a GTID source.
+- `ReplicationHistoryVersionDomainTest.underivableOrUnencodableVersionsAreRefused()` — §3.5.1: the `-1` sentinel and an event millisecond not after the snowflake epoch are refused.
+- `ReplicationHistoryVersionDomainTest.legacyOpenRowIsSupersededOnUpgrade()`, `ReplicationHistoryVersionDomainTest.fixedOpenRowIsSupersededOnDowngrade()` — §3.5.1 (S10): a 2.11.0 open row (`SnowFlakeId(ts, -1) + 1`) ranks `<=` the fixed connector's next event and the raw sequence would have ranked below it; a 2.11.0 connector's next event outranks a fixed open row.
+- `ReplicationHistoryVersionDomainTest.insertPathBindsTheHistoryVersionInHistoryMode()` — §3.1 / §3.5.1: `handleVersionColumn` binds the history version in history mode and the standard version otherwise.
 - `ReplicationHistoryHandlerTest.underivableVersionIsRefused()` — §3.5: a record whose version cannot be derived is refused with `IllegalStateException`.
 - `ReplicationHistoryHandlerTest.bulkCloseUsesEventTimeAndVersion()` — §3.4: the bulk close is built with the event time `ts` and the event version.
 - `PreparedStatementExecutorHistoryFlushTest` — §3.2 step 3: the staged statement is flushed (`executeBatch()`) before the UPDATE history statement runs, as before a DELETE.
@@ -381,8 +464,9 @@ G-12.04-2).
 - `VersionHistoryInitialIT.testValidToValidFromColumnsOnUpdateDeleteWithInitialSnapshot()` — the same protocol read **with** `FINAL`: exactly two rows after the UPDATE (closed original + open new), deterministically, and the delete marker hidden after the DELETE.
 - `VersionHistoryIT.testDecimalPrecisionOnUpdate()` — bound decimal columns in SELECT (2) keep their precision (`CAST(?, 'Decimal(...)')`, 07.02).
 - `BinLogHistoryIT.testBinLogHistory()` — mode 2 end to end including the audit table.
-- The end-to-end history suite (three connectors side by side, kill -9 restart, single-threaded variants, degenerate combination) — INSERT/UPDATE/DELETE/key-change/TRUNCATE sequences compared against the source under `FINAL`, on both execution engines, across a restart.
-- Lean (`formal_specs/lean/Replication/History.lean`): `Replication.History.update_supersedes_open_row`, `Replication.History.update_closes_before_image_key`, `Replication.History.key_change_retires_old_key`, `Replication.History.key_change_opens_new_key`, `Replication.History.closed_row_visible_at_close_key`, `Replication.History.update_rows_share_one_version`, `Replication.History.delete_rows_share_one_version`, `Replication.History.delete_hides_open_row`, `Replication.History.closed_row_continuity`, `Replication.History.no_open_row_after_delete_marker`, `Replication.History.at_most_one_live_row_per_sort_key`, `Replication.History.bulk_close_hides_every_open_row`, `Replication.History.bulk_close_preserves_history`, `Replication.History.database_ddl_ignored_in_history_mode`; old-behaviour witnesses `Replication.History.old_inline_update_writes_no_closed_row`, `Replication.History.old_close_and_before_shared_sort_key_and_version`, `Replication.History.old_closed_history_row_depended_on_insert_order`, `Replication.History.old_update_only_closed_after_image_key`.
+- The end-to-end history suite (three connectors side by side, kill -9 restart, single-threaded variants, degenerate combination) — INSERT/UPDATE/DELETE/key-change/TRUNCATE sequences compared against the source under `FINAL`, on both execution engines, across a restart, with and without GTIDs on the source.
+- The end-to-end upgrade / downgrade suite (`csc_e2e_updown`: the three connectors hop 2.11.0 → fixed → 2.11.0 → fixed on the same tables, offsets and schema history, then a kill -9 restart on the fixed build; after every hop a workload touches the keys the OTHER build last wrote and the current state is compared value-by-value against the source, with and without GTIDs) — §3.5.1 (S10). Against the raw-sequence binding this suite fails at the first hop on a GTID-less source: the upgraded connector's UPDATE of a key the 2.11.0 build had updated is written and never becomes current, and a key change leaves the old key live.
+- Lean (`formal_specs/lean/Replication/History.lean`): `Replication.History.update_supersedes_open_row`, `Replication.History.update_closes_before_image_key`, `Replication.History.key_change_retires_old_key`, `Replication.History.key_change_opens_new_key`, `Replication.History.closed_row_visible_at_close_key`, `Replication.History.update_rows_share_one_version`, `Replication.History.delete_rows_share_one_version`, `Replication.History.delete_hides_open_row`, `Replication.History.closed_row_continuity`, `Replication.History.no_open_row_after_delete_marker`, `Replication.History.at_most_one_live_row_per_sort_key`, `Replication.History.bulk_close_hides_every_open_row`, `Replication.History.bulk_close_preserves_history`, `Replication.History.database_ddl_ignored_in_history_mode`, `Replication.History.snowflake_encode_strict_mono`, `Replication.History.sequence_row_below_gtid_row_of_its_millisecond`, `Replication.History.legacy_open_row_superseded_by_later_event`, `Replication.History.fixed_open_row_superseded_by_later_legacy_event`; old-behaviour witnesses `Replication.History.old_inline_update_writes_no_closed_row`, `Replication.History.old_close_and_before_shared_sort_key_and_version`, `Replication.History.old_closed_history_row_depended_on_insert_order`, `Replication.History.old_update_only_closed_after_image_key`, `Replication.History.old_raw_sequence_version_loses_to_legacy_open_row`.
 - **Coverage gaps**: no automated test exercises the two limitations of §3.9 (two closes of one key within one second; a GTID same-millisecond tie across a batch boundary), or a DROP TABLE followed by CREATE TABLE of the same name in history mode.
 
 ---
@@ -393,6 +477,7 @@ G-12.04-2).
 | G-12.03-1 | `PreparedStatementExecutor` UPDATE branch | history statement ran inline without the `executeBatch()` flush; an INSERT + UPDATE in one batch wrote no closed row | flush before the UPDATE statement, as before a DELETE (§3.2 step 3) | `Replication.History.update_closes_before_image_key` | `Replication.History.old_inline_update_writes_no_closed_row` |
 | G-12.03-2 | `QueryFormatter.getInsertQueryForUpdate` | close row and deleted before copy shared `(k, ts)` and `V`; `FINAL` kept one of them by physical order | the before copy is removed; the close row is the only row at `(k, ts)` (§3.2) | `Replication.History.closed_row_visible_at_close_key` | `Replication.History.old_close_and_before_shared_sort_key_and_version`, `Replication.History.old_closed_history_row_depended_on_insert_order` |
 | G-12.03-3 | `ReplicationHistoryHandler.buildUpdateQueryParams` | close predicate from the after key; a key change left the old key open | before-image key, plus a delete marker at `(kb, S)` on a key change (§3.2) | `Replication.History.key_change_retires_old_key`, `Replication.History.key_change_opens_new_key` | `Replication.History.old_update_only_closed_after_image_key` |
-| G-12.03-4 | `ReplicationHistoryHandler` version | `SnowFlakeId(ts_ms, gtid)` and `V+1`: a second version domain, intra-millisecond collisions, collision with the next event | one standard version per event; underivable version refused (§3.5) | `Replication.History.update_rows_share_one_version`, `Replication.History.delete_rows_share_one_version` | `ReplicationHistoryHandlerTest.versionComesFromTheRecordNotFromTimestampAndGtid()` pins the change; the `V+1` collision was a test-free observation |
+| G-12.03-4 | `ReplicationHistoryHandler` version | `SnowFlakeId(ts_ms, gtid)` on the close row and `V+1` on the after row / marker while the INSERT row carried the standard version: intra-millisecond collisions, collision with the next event | one version per event, `historyVersion(record)`, in every row the event writes; underivable version refused (§3.5) | `Replication.History.update_rows_share_one_version`, `Replication.History.delete_rows_share_one_version` | `ReplicationHistoryHandlerTest.everyHistoryRowCarriesTheEventsHistoryVersion()` pins the change; the `V+1` collision was a test-free observation |
+| S10 | `ReplicationHistoryHandler.historyVersion`, `PreparedStatementFieldMapper.handleVersionColumn`, `DebeziumChangeEventCapture.executeHistoryBulkCloses` | (first iteration of this change) the raw standard version as `V`: on a GTID-less source the 2.11.0 open rows and markers at `(k, S)` (`≈ 2.1·10^18`) outranked every sequence version (`≈ 1.8·10^18`) — every key a 2.11.0 connector had updated or deleted froze at the upgrade, and a re-insert after a 2.11.0 delete stayed hidden | every row of an SCD2 table carries the snowflake encoding of the event's ordering key (§3.5.1); upgrade and downgrade on the same tables without migration | `Replication.History.snowflake_encode_strict_mono`, `Replication.History.legacy_open_row_superseded_by_later_event`, `Replication.History.fixed_open_row_superseded_by_later_legacy_event` | `Replication.History.old_raw_sequence_version_loses_to_legacy_open_row`; `ReplicationHistoryVersionDomainTest.legacyOpenRowIsSupersededOnUpgrade()` (the raw sequence loses); the upgrade / downgrade end-to-end suite fails at the first hop without GTIDs |
 | G-12.03-5 | `PreparedStatementFieldMapper` unknown-column branch | every unknown column bound to NULL in history mode | only `_valid_from` / `_valid_to` / `_operation` deferred; every other unknown column is the loud `StaleSchemaCacheException` of 08.03 (S9) | — (statement-level rule) | — |
 | G-12.03-6 | `PreparedStatementExecutor` TRUNCATE segment; `MySqlDDLParserListenerImpl` TRUNCATE / DROP TABLE | the SCD2 table was truncated / dropped, closed versions included | bulk close on both paths (§3.4): every open row closed, one marker per row, nothing destroyed | `Replication.History.bulk_close_hides_every_open_row`, `Replication.History.bulk_close_preserves_history` | — (the old behaviour was the plain `TRUNCATE TABLE` of 04.05) |

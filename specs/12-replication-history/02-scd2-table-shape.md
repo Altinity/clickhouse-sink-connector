@@ -58,7 +58,7 @@ paths**:
 | `_valid_to` | `DateTime[('<tz>')] DEFAULT '2100-01-01 00:00:00'` |
 | `_operation` | `LowCardinality(String)` |
 | `is_deleted` | `UInt8` (record path: emitted here, then **not** repeated with the engine columns; DDL path: emitted with the engine columns, as in standard mode) |
-| `_version` | `UInt64` |
+| `_version` | `UInt64` — every row of the table, whichever statement or release wrote it, carries the **history version domain** of 12.03 §3.5.1: the snowflake encoding of the event's ordering key (`ReplicationHistoryHandler.historyVersion`) |
 
 Rules:
 1. `is_deleted` is renamed `_is_deleted` when the source table has a column
