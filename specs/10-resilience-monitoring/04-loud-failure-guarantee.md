@@ -10,7 +10,7 @@ Specifies the non-negotiable policy that unrecoverable replication errors must t
 - **Error Classifier**: `ClickHouseErrorClassifier`
 - **DDL failure type**: `DDLReplicationException` (`...embedded/cdc/DDLReplicationException.java`), re-thrown ahead of the catch-all in `DebeziumChangeEventCapture#processEveryChangeRecord`
 - **Row failure type**: `RecordReplicationException` (`...embedded/cdc/RecordReplicationException.java`), re-thrown ahead of the same catch-all
-- **Engine retry budget and terminal failure**: `DebeziumChangeEventCapture#handleEngineCompletion`, `#markEngineStarted`, `#terminalFailureHook`, `#TERMINAL_FAILURE_EXIT_CODE`; property `exit.on.terminal.failure` (`SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE`); the progress signal that refills the budget: `DebeziumOffsetManagement#acknowledgements` (`sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/executor/DebeziumOffsetManagement.java`)
+- **Engine retry budget and terminal failure**: `DebeziumChangeEventCapture#handleEngineCompletion`, `#markEngineStarted`, `#hasDeadWorker` (rule 6: a dead sink worker is terminal without a retry), `#terminalFailureHook`, `#TERMINAL_FAILURE_EXIT_CODE`; property `exit.on.terminal.failure` (`SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE`); the progress signal that refills the budget: `DebeziumOffsetManagement#acknowledgements` (`sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/executor/DebeziumOffsetManagement.java`)
 
 ---
 
@@ -121,6 +121,26 @@ And two that the first three created:
    and the terminal path never ran. Observed on two deployments after
    upgrading onto the loud-clamp default: 28 restarts in six minutes, all
    "retry 1 of 10". A start is not a recovery; committing an offset is.
+6. **A dead sink worker was retried against the same pool.** The retry
+   recreates the *engine* on the same `DebeziumChangeEventCapture` instance;
+   it does not rebuild the worker pool (spec 09.01 §3.8 item 4 relies on that
+   pool still being alive). A worker whose scheduled task has terminated
+   (spec 03.01 §3.3 — a FATAL rethrow, or the poisoned `OffsetStorageWriter`
+   that `isOffsetWriterPoisoned` stops on, spec 10.06) therefore stays dead across every
+   retry, `failIfWorkerDied` stops each recreated engine on its first batch,
+   and nothing is written or acknowledged in between, so rule 5 cannot refill
+   the budget either. Every retry was a full engine start for nothing: the
+   schema history re-read from the target, a fresh binlog dump from the
+   source (the source logged one `Start binlog_dump` per attempt, each
+   aborted seconds later), and every skipped row event re-logged with its
+   full row image. Observed: a source connection dropped mid-transaction,
+   the engine stopped, one worker died on `OffsetStorageWriter is already
+   flushing` 1.5 s later, and the engine was then restarted ten times in
+   160 s — ten identical `Sink worker 1 of 10 is dead` failures 13–19 s
+   apart, ~0.5 GB of replay log (1.76 M lines in four rotated files plus the
+   fifth) — before the terminal exit that should have
+   happened at the first one. A dead worker is deterministic for the life of
+   the process; only a process restart gives a fresh pool.
 
 And one that the first three created:
 4. **A deterministic failure was retried forever.** The budget exists for
@@ -145,6 +165,16 @@ Contract:
   `Exception`s are classified; an `Error` is not a replication verdict and
   keeps the retry path. Retriable and unclassifiable failures draw on the
   budget as before.
+- A failure while **any sink worker is dead** does **not** draw on the budget
+  either: `handleEngineCompletion` asks `hasDeadWorker()` — any future in
+  `workerFutures` with `isDone()`, the same predicate `failIfWorkerDied`
+  throws on — after the FATAL check and before touching the budget, and is
+  TERMINAL at once when it is true, whatever the engine's own failure was (the
+  worker's death, or a source failure that happened to coincide with one). A
+  retry keeps the pool, so the recreated engine would stop on its first batch
+  with nothing written or acknowledged; the supervisor's restart is what gives
+  a fresh pool and resumes from the last committed offset. An empty
+  `workerFutures` (single-threaded mode, no pool) never counts as dead.
 - The budget refills on **progress**, never on a start.
   `DebeziumOffsetManagement.acknowledgements()` counts every offset
   acknowledged to Debezium (`markBatchFinished()` returned) since the JVM
@@ -273,6 +303,9 @@ counterpart for the sink task: spec 03.01 §3.4.
 - `TerminalFailureExitTest.progressResetsTheBudget()` — §3.5: an offset acknowledged through the real `DebeziumOffsetManagement.acknowledgeRecords` path between two failures restores the full budget (pre-fix of point 2: `numRetries` never reset).
 - `TerminalFailureExitTest.startWithoutProgressDoesNotResetTheBudget()` — §3.5 point 5: an unclassified failure (`isDeterministicFailure` false); every retry brings the engine up (`markEngineStarted()`) and it fails again with nothing acknowledged; the exit hook fires after exactly `MAX_RETRIES` restarts (pre-fix: every clean start reset the counter and the engine was restarted forever at "retry 1 of N").
 - `TerminalFailureExitTest.progressBeforeAnyFailureDoesNotWidenTheBudget()` — §3.5: progress made before the first failure is not a recovery; the budget is exactly `MAX_RETRIES`.
+- `DeadWorkerRetryIsTerminalTest.deadWorkerIsTerminalAtOnce()` — §3.5 rule 6: a worker future that has completed exceptionally (a real scheduled task that threw) makes the next engine failure terminal: no restart, the exit hook fires once, replication is reported stopped (pre-fix: `MAX_RETRIES` restarts of an engine that could only fail again).
+- `DeadWorkerRetryIsTerminalTest.engineFailureWhileAWorkerIsDeadIsTerminalToo()` — §3.5 rule 6: the predicate is the pool, not the exception — a source-side engine failure while a worker is dead is terminal as well.
+- `DeadWorkerRetryIsTerminalTest.liveWorkersKeepTheRetryPath()` — §3.5 rule 6 scope: with every worker future still running, the same unclassified failure draws on the budget and the engine is recreated.
 - `TerminalFailureExitTest.exitDisabledIsALoudLivenessFailure()` — §3.5: `exit.on.terminal.failure=false` keeps the process up, logs FATAL naming replication as STOPPED, reports `Replica_Running=false`.
 - `TerminalFailureExitTest.successIsANoOp()`.
 - `DdlDrainDeadlockTest.testUndrainableQueueWithLiveWorkersKeepsWaiting()`, `DdlDrainDeadlockTest.testStuckQueueWithDeadWorkerAborts()` — §3.5 point 3: live workers are waited for; only a dead worker aborts.

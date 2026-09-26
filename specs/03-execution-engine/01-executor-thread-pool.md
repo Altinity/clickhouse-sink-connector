@@ -12,7 +12,8 @@ Specifies the thread scheduling, worker concurrency pool, and thread-safe pause/
   — `setupProcessingThread` (schedules one `ClickHouseBatchRunnable` per thread
   with `scheduleAtFixedRate(…, 0, buffer.flush.time.ms)` and keeps every
   `ScheduledFuture` in `workerFutures`), `failIfWorkerDied()` (called first
-  thing in `handleChangeEventBatch`).
+  thing in `handleChangeEventBatch`), `hasDeadWorker()` (the same predicate,
+  read by `handleEngineCompletion` before a retry — spec 10.04 §3.5 rule 6).
 - **Kafka Connect mode**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/ClickHouseSinkTask.java`
   — `start` keeps the runnable's `ScheduledFuture` in `runnableFuture`;
   `failIfRunnableDied()` is called first thing in `put` and `preCommit`.
@@ -67,6 +68,12 @@ Contract:
    still outstanding), so a restart redelivers from the last committed offset.
 4. The worker does NOT clear `currentBatch` before rethrowing: the batch must
    remain registered so quiescence stays false until the process stops.
+5. The engine's completion callback reads the same futures (`hasDeadWorker()`:
+   any `isDone()`) BEFORE it recreates the engine. The retry keeps this
+   instance's pool, so a dead worker would make the recreated engine stop at
+   step 2 on its first batch, having written and acknowledged nothing; the
+   failure is therefore terminal without a retry (spec 10.04 §3.5 rule 6) and
+   the supervisor's process restart supplies the fresh pool.
 
 ### 3.4 Kafka Connect mode: the sink task checks its runnable too
 In Kafka Connect mode the same runnable is scheduled by `ClickHouseSinkTask`
@@ -106,6 +113,7 @@ Contract:
 - `PauseDrainRaceTest`, `PauseDrainAtomicityTest` — the pause/drain window against concurrent task starts.
 - `WorkerDeathIsLoudTest.deadWorkerFailsTheNextBatchLoudly` — a scheduled task that throws on its first tick makes the next `handleChangeEventBatch` throw with that cause.
 - `WorkerDeathIsLoudTest.liveWorkersDoNotInterfere` — a running periodic task does not.
+- `DeadWorkerRetryIsTerminalTest.deadWorkerIsTerminalAtOnce`, `DeadWorkerRetryIsTerminalTest.liveWorkersKeepTheRetryPath` — §3.3 item 5: a done worker future makes the engine's next failure terminal without a retry; live futures keep the retry path.
 - `ClickHouseSinkTaskTest.deadRunnableFailsPut()`, `ClickHouseSinkTaskTest.deadRunnableFailsPreCommit()` — §3.4: a terminated runnable future makes `put` / `preCommit` throw `ConnectException` carrying the runnable's cause, and nothing is enqueued.
 - `ClickHouseSinkTaskTest.liveRunnableAcceptsRecords()` — a live runnable: records are enqueued and `preCommit` holds at the durable watermark.
 - `ClickHouseBatchRunnableErrorLoggerTest.sourceRecordIsNullForKafkaModeRecord()`, `ClickHouseBatchRunnableErrorLoggerTest.sourceRecordIsUnwrappedWhenPresent()` — §3.4 item 3.
