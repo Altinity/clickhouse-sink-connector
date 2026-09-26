@@ -287,6 +287,15 @@ public class ClickHouseStruct {
     boolean lastRecordInBatch;
 
     /**
+     * Estimated retained heap of this row (spec 01.05 §3.4 item 7), stamped at
+     * handoff by {@code RecordSizeEstimator.estimateGroup}; {@code 0} until
+     * then. Read by the handoff byte cap and by the INSERT chunker.
+     */
+    @Getter
+    @Setter
+    long estimatedBytes;
+
+    /**
      * Constructs a ClickHouseStruct with commit info.
      *
      * @param kafkaOffset  Offset in Kafka.

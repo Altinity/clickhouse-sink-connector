@@ -60,9 +60,33 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     private static final int DEFAULT_THREAD_POOL_SIZE = 10;
 
     /**
-     * Default maximum size of the queue.
+     * Default maximum size of the queue, in batches. Public so the embedded
+     * path applies the same bound to its single-threaded queue when the
+     * property is absent (spec 01.05 section 3.6) instead of an unbounded one.
      */
-    private static final int DEFAULT_MAX_QUEUE_SIZE = 500000;
+    public static final int DEFAULT_MAX_QUEUE_SIZE = 500000;
+
+    /**
+     * Default hard cap on the ESTIMATED BYTES handed to the writers and not yet
+     * acknowledged (spec 01.05 section 3.4 item 7): one quarter of the maximum
+     * heap. The row cap is blind to row width; this one is not.
+     */
+    public static final long DEFAULT_HANDOFF_MAX_OUTSTANDING_BYTES = defaultHandoffBytes(Runtime.getRuntime().maxMemory());
+
+    /**
+     * Default most estimated bytes per JDBC INSERT chunk (spec 03.06 section
+     * 3.1): 256 MiB. The driver holds a chunk as rendered SQL text, twice,
+     * before it is sent, once per worker thread.
+     */
+    public static final long DEFAULT_BUFFER_MAX_BYTES = 256L << 20;
+
+    /** One quarter of the given maximum heap; a floor of 256 MiB when the heap is unknown or unlimited. */
+    static long defaultHandoffBytes(long maxHeapBytes) {
+        if (maxHeapBytes <= 0 || maxHeapBytes == Long.MAX_VALUE) {
+            return 256L << 20;
+        }
+        return Math.max(256L << 20, maxHeapBytes / 4);
+    }
 
     /**
      * Default hard cap on rows handed to the writers and not yet acknowledged
@@ -726,7 +750,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString(),
                         Type.INT,
-                        500000,
+                        DEFAULT_MAX_QUEUE_SIZE,
                         ConfigDef.Range.atLeast(1),
                         Importance.HIGH,
                         "The maximum size of the queue",
@@ -753,6 +777,37 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_RECORDS.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_BYTES.toString(),
+                        Type.LONG,
+                        DEFAULT_HANDOFF_MAX_OUTSTANDING_BYTES,
+                        ConfigDef.Range.atLeast(0),
+                        Importance.HIGH,
+                        "Hard cap on the ESTIMATED BYTES of rows handed to the writers and not yet "
+                                + "acknowledged, applied together with the row cap: the reader pauses "
+                                + "when either is met. The estimate is the Debezium envelope walked "
+                                + "field by field and scaled for retained-heap overhead, sampled once "
+                                + "per table per batch. Default: one quarter of the maximum heap "
+                                + "(-Xmx); 0 disables the byte cap.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_BYTES.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_BYTES.toString(),
+                        Type.LONG,
+                        DEFAULT_BUFFER_MAX_BYTES,
+                        ConfigDef.Range.atLeast(0),
+                        Importance.MEDIUM,
+                        "The most estimated bytes one JDBC INSERT chunk may hold, applied together "
+                                + "with buffer.max.records: a chunk closes when either is reached. The "
+                                + "driver renders a chunk as SQL text in memory before sending it, once "
+                                + "per worker thread, so this bounds that text on wide-row tables. "
+                                + "Default 256 MiB; 0 disables the byte limit.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_BYTES.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.HANDOFF_WAIT_TIMEOUT_MS.toString(),
                         Type.LONG,

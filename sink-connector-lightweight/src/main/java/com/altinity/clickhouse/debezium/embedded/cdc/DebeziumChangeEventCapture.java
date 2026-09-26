@@ -860,12 +860,15 @@ public class DebeziumChangeEventCapture {
                     + "last committed position.", abandoned);
         }
 
-        // Check if max queue size was defined by the user.
+        // The single-threaded queue is bounded either way: by the operator's
+        // value, or by the same default the routed queues get from the
+        // ConfigDef. It used to be unbounded when the property was absent --
+        // the ConfigDef default never reached this line (spec 01.05 §3.6).
         if (props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()) != null) {
             int maxQueueSize = Integer.parseInt(props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()));
             this.records = new LinkedBlockingQueue<>(maxQueueSize);
         } else {
-            this.records = new LinkedBlockingQueue<>();
+            this.records = new LinkedBlockingQueue<>(ClickHouseSinkConnectorConfig.DEFAULT_MAX_QUEUE_SIZE);
         }
 
         try {
@@ -898,6 +901,12 @@ public class DebeziumChangeEventCapture {
         // a transaction boundary (spec 01.07). Same Properties object the
         // completion-callback restart rebuilds the engine from.
         BinlogKeepAlivePreflight.apply(props);
+        // Debezium's own change-event queue is bounded in events only unless
+        // max.queue.size.in.bytes is set; its default is 0 (off). On a
+        // wide-row source that is gigabytes held in front of every bound the
+        // sink applies, on the same fixed heap. Bound it in bytes too, unless
+        // the operator chose a value (spec 01.05 section 3.4 item 8).
+        DebeziumQueueBytesPreflight.apply(props);
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
 
@@ -3272,8 +3281,13 @@ public class DebeziumChangeEventCapture {
         // binlog client. The dead-worker check runs between slices: a dead
         // worker can never acknowledge, so it must stop the engine, not be
         // waited on.
+        // The cap is in rows AND in estimated bytes (spec 01.05 section 3.4
+        // item 7): a row count means something different for every table
+        // width, and a source of megabyte BLOB rows fills the heap long before
+        // the row cap is met. The reader pauses when either bound is met.
         DebeziumOffsetManagement.awaitHandoffCapacity(
                 config.getLong(ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_RECORDS.toString()),
+                config.getLong(ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_BYTES.toString()),
                 config.getLong(ClickHouseSinkConnectorConfigVariables.HANDOFF_WAIT_TIMEOUT_MS.toString()),
                 this::failIfWorkerDied);
 
