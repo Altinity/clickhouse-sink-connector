@@ -137,4 +137,35 @@ public class RecordSizeEstimatorTest {
         assertEquals(0L, RecordSizeEstimator.estimateGroup(Collections.emptyList()));
         assertEquals(0L, RecordSizeEstimator.estimateGroup(null));
     }
+
+    /**
+     * Legacy (single-threaded) mode hands the WHOLE batch off as one group,
+     * so one group can hold several tables. Before this test, the group's
+     * first row alone was sampled: a narrow table at the head of the batch
+     * charged its few hundred bytes to every megabyte row of the wide table
+     * behind it, and the byte cap (spec 01.05 §3.4 item 7) was blind to the
+     * heap those rows pinned. Each table must be sampled on its own first row.
+     */
+    @Test
+    @DisplayName("a multi-table group is sampled once per table: a narrow table at the head cannot hide a wide table behind it")
+    public void multiTableGroupIsSampledPerTable() {
+        ClickHouseStruct narrow = rowWithEnvelope(row(1L, "ab", null), row(1L, "ab", null));
+        narrow.setTopic("srv.db.narrow");
+        ClickHouseStruct wideFirst = rowWithEnvelope(row(2L, "ab", new byte[1 << 20]), row(2L, "ab", new byte[1 << 20]));
+        wideFirst.setTopic("srv.db.wide");
+        ClickHouseStruct wideSecond = rowWithEnvelope(row(3L, "ab", null), row(3L, "ab", null));
+        wideSecond.setTopic("srv.db.wide");
+        long narrowBytes = RecordSizeEstimator.estimate(narrow);
+        long wideBytes = RecordSizeEstimator.estimate(wideFirst);
+        assertTrue(wideBytes > narrowBytes * 100, "the fixture's wide row must dwarf the narrow one: " + wideBytes + " vs " + narrowBytes);
+
+        long total = RecordSizeEstimator.estimateGroup(Arrays.asList(narrow, wideFirst, wideSecond));
+
+        assertEquals(narrowBytes, narrow.getEstimatedBytes(), "the narrow table is stamped with its own sample");
+        assertEquals(wideBytes, wideFirst.getEstimatedBytes(), "the wide table is stamped with ITS first row, not the group's");
+        assertEquals(wideBytes, wideSecond.getEstimatedBytes(), "every row of the wide table carries the wide sample");
+        assertEquals(narrowBytes + 2 * wideBytes, total, "the total is the sum of the per-table stamps");
+        assertTrue(total > 2L * (1 << 20) * RecordSizeEstimator.RETENTION_FACTOR,
+                "the megabyte images are visible in the total: " + total);
+    }
 }
