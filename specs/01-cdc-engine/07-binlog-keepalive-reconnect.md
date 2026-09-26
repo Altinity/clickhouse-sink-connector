@@ -39,6 +39,15 @@ A restart triggered inside a pre-DDL drain does not loop: the drain had already 
 ### 3.4 The operator's override
 `connect.keep.alive=true` in the configuration is kept — the connector never overwrites an explicit operator value — and a WARN banner is logged on every start naming the property, the mechanism (the `TABLE_MAP` cache cleared by the resume's `ROTATE`) and the two conditions under which the reconnect is safe: GTID auto-positioning (the client reconnects at a transaction boundary), or a binlog client carrying the upstream fix. `connect.keep.alive.interval.ms` is only read when the thread is on; it is not touched. Non-binlog connectors (PostgreSQL) have no binlog client and are never touched.
 
+### 3.5 The resume replay is summarized, never dumped
+Every start — the completion-callback restart of §3.3 included — resumes from the durable offset, which Debezium records as the position of the transaction's BEGIN plus the number of events already delivered. The binlog client re-reads the transaction from BEGIN and Debezium skips the events it has already delivered, logging EACH one at INFO from `io.debezium.connector.binlog.BinlogStreamingChangeEventSource` as `Skipping previously processed row event: Event{header=..., data=...{rows=[ ... ]}}` — the complete row image, some seventy lines per event. On one deployment a single start logged 5,227 such events: seven rotated 6 MB files in fourteen seconds, all of it row data, none of it an error. The operator's rule: do not print the row data; print the operation type and the count of that operation.
+
+`ResumeReplayLogSummary` (`sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/ResumeReplayLogSummary.java`) is a log4j filter installed programmatically at `setup()` on that Debezium logger (idempotent per process; no deployment `log4j2.xml` change):
+1. A line from that logger beginning `Skipping previously processed ` is DENIED — it is never written anywhere — and counted under the row operation its binlog event type carries (`WRITE_ROWS`/`EXT_WRITE_ROWS` → INSERT, `UPDATE_ROWS`/`EXT_UPDATE_ROWS` → UPDATE, `DELETE_ROWS`/`EXT_DELETE_ROWS` → DELETE, any other type under its own name); the first and last `nextPosition` are kept.
+2. The replay ends when the next line from that logger is NOT a skip (the reader moved past the resume point): ONE INFO line reports the total, the elapsed time, the position range and the counts per operation, and the counters reset. An engine stop flushes a replay still being counted (`flushInstalled`, `stop()` step 4c).
+3. A replay still running after 60 s logs ONE progress line per 60 s with the same shape — never one per event.
+4. Every other line from that logger passes unchanged; lines from every other logger are never inspected.
+
 ---
 
 ## 4. Invariants Preserved
@@ -57,4 +66,5 @@ A restart triggered inside a pre-DDL drain does not loop: the drain had already 
 - `BinlogKeepAlivePreflightTest.mariaDbIsDefaultedToo` — MariaDB is a binlog connector and gets the default.
 - `BinlogKeepAlivePreflightTest.nonBinlogConnectorsAreUntouched` — PostgreSQL and an empty configuration are left without the key.
 - `BinlogKeepAlivePreflightTest.propertyIsDebeziumsKey` — the key is spelled exactly as Debezium reads it, so the default is not a no-op.
+- `ResumeReplayLogSummaryTest` — §3.5: skip lines are denied and counted by operation and the next non-skip line from the same logger emits exactly one summary naming counts and positions with no row image, after which the counters are reset (`skipLinesAreCountedAndSummarisedOnce`); lines from other loggers are neutral and uncounted (`otherLoggersAreUntouched`); a long replay reports one progress line per interval and a stop flushes the final summary (`longReplayReportsProgress`); `install()` is idempotent and Debezium's real logger is routed through the filter so the row image is never written (`installIsIdempotentAndEffective`); binlog event types map to INSERT/UPDATE/DELETE, others by name (`operationMapping`).
 - Gap (tracked): an end-to-end reproduction (blocked sink, source-side abort, keep-alive resume mid-statement) needs a live MySQL and a controllable sink stall; it is covered upstream by the integration test attached to debezium/dbz#2359 and not duplicated here.
