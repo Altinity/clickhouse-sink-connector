@@ -81,6 +81,12 @@ public enum ClickHouseSinkConnectorConfigVariables {
     REPLICA_STATUS_VIEW("replica.status.view"),
     MAX_QUEUE_SIZE("sink.connector.max.queue.size"),
 
+    // Hard cap on the reader's lead over the writers, in rows handed off and
+    // not yet acknowledged, and the longest the reader may wait at it before
+    // the engine stops loudly (spec 01.05 section 3.4).
+    HANDOFF_MAX_OUTSTANDING_RECORDS("sink.connector.handoff.max.outstanding.records"),
+    HANDOFF_WAIT_TIMEOUT_MS("sink.connector.handoff.wait.timeout.ms"),
+
     // Pacing of retries for a batch that failed to write to ClickHouse for a
     // retriable reason: initial delay, doubling per consecutive failure of the
     // same batch, capped at the max (spec 10.02).
