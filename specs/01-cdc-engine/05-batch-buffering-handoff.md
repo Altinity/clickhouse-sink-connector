@@ -119,10 +119,16 @@ could do nothing about it. Hence, on the Debezium thread, BEFORE
    previous release continues the period and is counted, not logged; ONE INFO
    summary per 60 s while the period lasts (pauses and milliseconds paused
    since the previous line and since the period began, rows and units
-   outstanding); ONE INFO "pacing ended" when the next wait begins after a
-   quiet gap longer than 60 s, or on `reset()`; nothing per slice; nothing at
-   all when the cap is not met. The wait limit (item 5) is per wait and
-   unaffected: pacing changes what is logged, never how long the reader waits.
+   outstanding); ONE INFO "pacing ended" once the reader has stayed under the
+   cap for more than 60 s — written by the first acknowledgement after that
+   quiet gap or by the next wait, whichever comes first, and naming the rows
+   and units outstanding at the LAST release (never the live counters: at the
+   next wait they describe the next crossing, at or above the cap, not the gap
+   that ended the period) — or on `reset()`; an acknowledgement that lands
+   during a wait longer than 60 s continues the period (the head unit was
+   slow) and closes nothing; nothing per slice; nothing at all when the cap
+   is not met. The wait limit (item 5) is per wait and unaffected: pacing
+   changes what is logged, never how long the reader waits.
 7. **The cap is also in ESTIMATED BYTES.** A row count means something
    different for every table width: 500,000 rows of a narrow table is a few
    gigabytes of heap, 500,000 rows of a table with megabyte BLOB or JSON
@@ -239,8 +245,16 @@ the ConfigDef default never reached it.
   line and since the period began (`oneSummaryLinePerIntervalWhilePaced`); a
   pause after a quiet gap longer than the re-arm window closes the period with
   one "pacing ended" INFO and opens a new one with its WARN
-  (`pacingEndedIsReportedWhenTheReaderStopsBeingPaced`); `reset()` closes the
-  period with the same line and the next pause is a new period
+  (`pacingEndedIsReportedWhenTheReaderStopsBeingPaced`); the first
+  acknowledgement after such a gap closes the period by itself, with no new
+  wait, and the next pause is a new period
+  (`theFirstAcknowledgementAfterAQuietGapEndsThePeriod`); the "pacing ended"
+  line names the rows and units outstanding at the last release, not the
+  over-cap state of the wait that closed it
+  (`pacingEndedNamesTheStateAtTheLastRelease`); an acknowledgement during a
+  wait longer than the re-arm window closes nothing
+  (`anAcknowledgementDuringALongWaitDoesNotEndThePeriod`); `reset()` closes
+  the period with the same line and the next pause is a new period
   (`resetClosesThePacingPeriod`).
 - `RecordSizeEstimatorTest` — §3.4 item 7, the estimate: payload bytes follow
   the value (strings by length, byte arrays and buffers by length, structs by
