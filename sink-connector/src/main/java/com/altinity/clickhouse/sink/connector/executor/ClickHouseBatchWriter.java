@@ -232,29 +232,44 @@ public class ClickHouseBatchWriter {
             boolean result = true;
             // For each topic, process the records.
             // topic name syntax is server.database.table
-            for (Map.Entry<String, List<ClickHouseStruct>> entry :
-                    topicToRecordsMap.entrySet()) {
-                result = processRecordsByTopic(entry.getKey(),
-                        entry.getValue());
-                if (result == false) {
-                    // Do NOT break and fall out of this method normally. A
-                    // normal return tells the caller the batch was handled:
-                    // the acknowledgement block below is skipped, so this
-                    // batch is never committed, but the engine goes straight
-                    // on to the NEXT batch and commits ITS offsets -- which
-                    // are higher. The unwritten records are then behind the
-                    // committed offset and are never replayed. That is the
-                    // silent loss in issue #1285.
-                    throw new BatchPersistenceException(String.format(
-                            "Failed to persist %d record(s) for topic %s to "
-                            + "ClickHouse. The most common cause is that the "
-                            + "target table does not exist and "
-                            + "auto.create.tables is disabled (see the "
-                            + "TABLE METADATA not retrieved errors above). "
-                            + "Failing the batch so its offset is not "
-                            + "committed; the records are replayed from the "
-                            + "last committed offset once the table exists.",
-                            entry.getValue().size(), entry.getKey()));
+            boolean replicationHistoryEnabled = config.getBoolean(
+                    ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
+            boolean replicationLogOnly = config.getBoolean(
+                    ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString());
+            if (replicationLogOnly && replicationHistoryEnabled) {
+                // Replication-log-only mode: the audit rows written above ARE
+                // the replica; no data table is written, auto-created or
+                // routed. Mirrors ClickHouseBatchRunnable.processBatch so the
+                // two execution engines behave identically (Spec 12.05
+                // section 3.1 and 3.3, Gap G-12.05-1; Spec 03.02 parity).
+                // result stays true: the batch is acknowledged on the strength
+                // of its audit rows (Spec 12.05 section 3.2).
+                log.debug("Replication log only mode is enabled, skipping the processing of records");
+            } else {
+                for (Map.Entry<String, List<ClickHouseStruct>> entry :
+                        topicToRecordsMap.entrySet()) {
+                    result = processRecordsByTopic(entry.getKey(),
+                            entry.getValue());
+                    if (result == false) {
+                        // Do NOT break and fall out of this method normally. A
+                        // normal return tells the caller the batch was handled:
+                        // the acknowledgement block below is skipped, so this
+                        // batch is never committed, but the engine goes straight
+                        // on to the NEXT batch and commits ITS offsets -- which
+                        // are higher. The unwritten records are then behind the
+                        // committed offset and are never replayed. That is the
+                        // silent loss in issue #1285.
+                        throw new BatchPersistenceException(String.format(
+                                "Failed to persist %d record(s) for topic %s to "
+                                + "ClickHouse. The most common cause is that the "
+                                + "target table does not exist and "
+                                + "auto.create.tables is disabled (see the "
+                                + "TABLE METADATA not retrieved errors above). "
+                                + "Failing the batch so its offset is not "
+                                + "committed; the records are replayed from the "
+                                + "last committed offset once the table exists.",
+                                entry.getValue().size(), entry.getKey()));
+                    }
                 }
             }
             // acknowledge the records.
@@ -583,14 +598,16 @@ public class ClickHouseBatchWriter {
     String resolveDatabaseName(String topicName, ClickHouseStruct firstRecord) {
         String databaseName = firstRecord != null ? firstRecord.getDatabase() : null;
 
-        // If replication history is enabled or replication_log_only is enabled,
-        // use the replication history database name
+        // Replication history routes every data table to the history database
+        // (Spec 12.01 section 3.3). Gated on enable ALONE, exactly as
+        // ClickHouseBatchRunnable.resolveDatabaseName is: log_only without
+        // enable is the degenerate combination of Spec 12.01 section 3.4 and
+        // must resolve like standard mode on both engines (Gap G-12.01-1,
+        // Spec 03.02 parity).
         boolean replicationHistoryEnabled = config.getBoolean(
                 ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
-        boolean replicationLogOnly = config.getBoolean(
-                ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString());
 
-        if (replicationHistoryEnabled || replicationLogOnly) {
+        if (replicationHistoryEnabled) {
             return config.getString(
                     ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
         }

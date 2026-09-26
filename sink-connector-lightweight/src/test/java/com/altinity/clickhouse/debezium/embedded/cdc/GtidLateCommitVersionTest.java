@@ -40,6 +40,7 @@ public class GtidLateCommitVersionTest {
         DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
         DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
         DebeziumChangeEventCapture.sequenceHighWaterPosition = null;
+        DebeziumChangeEventCapture.sequenceHighWaterEffectiveTs = 0L;
         DebeziumChangeEventCapture.sequenceMaxSourceTs = 0L;
     }
 

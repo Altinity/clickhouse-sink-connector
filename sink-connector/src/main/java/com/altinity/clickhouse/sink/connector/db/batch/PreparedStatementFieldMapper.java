@@ -61,6 +61,23 @@ public class PreparedStatementFieldMapper {
     }
 
     /**
+     * The connector's own replication-history columns
+     * ({@code _valid_from}, {@code _valid_to}, {@code _operation}): never in the
+     * source record, bound by {@code handleReplicationHistoryColumns} after the
+     * data columns (Spec 12.03 section 3.1). The engine columns
+     * ({@code _version}, {@code is_deleted}) are recognised by their configured
+     * names, as in standard mode.
+     *
+     * @param columnName the ClickHouse column being bound
+     * @return true when history mode populates the column itself
+     */
+    static boolean isReplicationHistoryColumn(String columnName) {
+        return DELETED_FROM_TIME_COLUMN.equalsIgnoreCase(columnName)
+                || DELETED_TIME_COLUMN.equalsIgnoreCase(columnName)
+                || OPERATION_COLUMN.equalsIgnoreCase(columnName);
+    }
+
+    /**
      * Whether the incoming change event actually carries this column.
      *
      * <p>A column the record does not carry is intentionally absent from the
@@ -294,9 +311,16 @@ public class PreparedStatementFieldMapper {
                     ps.setNull(index, Types.OTHER);
                     continue;
                 }
-                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())
+                        && isReplicationHistoryColumn(colName)) {
                     // History mode carries its own bitemporal metadata columns
-                    // that are absent from the source record by design.
+                    // (_valid_from, _valid_to, _operation) that are absent from
+                    // the source record by design; handleReplicationHistoryColumns
+                    // binds them below. ONLY those: exempting every unknown column
+                    // in history mode disabled the stale-schema-cache defence of
+                    // Spec 08.03 for SCD2 tables, so a renamed or added source
+                    // column was NULL-filled with a successful batch
+                    // (Spec 12.03 section 3.2, Gap G-12.03-5).
                     ps.setNull(index, Types.OTHER);
                     continue;
                 }
@@ -606,9 +630,12 @@ public class PreparedStatementFieldMapper {
      * It is refused for the same reason as the sentinel: fail loudly rather
      * than write an unordered row.</p>
      *
+     * <p>Package-private: {@code ReplicationHistoryHandler} applies the same rule
+     * to the version its SCD2 statements embed (Spec 12.03 section 3.5).</p>
+     *
      * @param record The CDC record whose version is about to be bound.
      */
-    private static void rejectUnderivableVersion(ClickHouseStruct record) {
+    static void rejectUnderivableVersion(ClickHouseStruct record) {
         if (record.getVersion() <= 0) {
             throw new IllegalStateException(
                     "Cannot bind _version " + record.getVersion() + " for record from topic '"

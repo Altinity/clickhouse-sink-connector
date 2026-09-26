@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import java.util.Collections;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -58,5 +60,21 @@ public interface DDLParserService {
      */
     default PrimaryKeyRebuildPlan primaryKeyRebuildPlan() {
         return null;
+    }
+
+    /**
+     * The SCD2 tables the last parsed statement must bulk-close in history
+     * mode ({@code replication.history.enable=true}, Spec 12.03 section 3.4):
+     * a source {@code TRUNCATE-TABLE} / {@code DROP-TABLE} is translated to no
+     * DDL text and one request per named table, which
+     * {@code performDDLOperation} applies with
+     * {@code ReplicationHistoryHandler.executeHistoryBulkClose} in place of
+     * the statement.
+     *
+     * @return the requests, or an empty list when the last statement needs none
+     *         (every statement in standard mode).
+     */
+    default List<MySqlDDLParserListenerImpl.HistoryBulkClose> historyBulkCloses() {
+        return Collections.emptyList();
     }
 }

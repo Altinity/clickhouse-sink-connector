@@ -36,7 +36,7 @@ When `replication.history.enable = true`:
   - `_operation = 'U'` (the single-letter code of `CDC_OPERATION.getOperation()`)
   - `_valid_from`, `_valid_to`
   - `is_deleted`
-- The statement itself (three `SELECT`s in one `INSERT`: close the open row, insert the after image at `V+1`, re-insert the before image deleted), its execution inline without a prior flush, the DELETE counterpart and the recorded gaps are specified in **Spec 12.03**; the table shape in **Spec 12.02**; the mode matrix in **Spec 12.01**.
+- The statement is one `INSERT ... SELECT ... UNION ALL ...` with **two** `SELECT`s — close the visible open row at the **before-image** key (`_valid_to = ts`), then insert the after image at `(key, sentinel)` — and **three** when the UPDATE changes a primary-key column: the third is a delete marker at the old key's open sorting key. Every row of one event carries the record's **one** standard version (no `V+1`, no separate history version). The staged INSERTs of the batch are flushed before the statement runs, as before a DELETE. The deleted copy of the before image that the previous revision re-inserted no longer exists. The statement text, the DELETE and TRUNCATE / DROP TABLE counterparts, the theorems and the resolved gaps are specified in **Spec 12.03**; the table shape in **Spec 12.02**; the mode matrix in **Spec 12.01**.
 
 ---
 

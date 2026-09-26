@@ -35,6 +35,11 @@ nextSequenceNumber(recordTs, position):
       sequenceHighWaterPosition = position        # first delivery
       if effectiveTs < sequenceMaxSourceTs:
           effectiveTs = sequenceMaxSourceTs       # clamp up to the floor
+      sequenceHighWaterEffectiveTs = effectiveTs  # what the transaction's first row got (§3.1.2)
+  elif position != null and position.sameLog(sequenceHighWaterPosition)
+       and position == sequenceHighWaterPosition:   # the rest of that transaction (§3.1.2)
+      if effectiveTs < sequenceHighWaterEffectiveTs:
+          effectiveTs = sequenceHighWaterEffectiveTs
   if effectiveTs > sequenceMaxSourceTs:
       sequenceMaxSourceTs = effectiveTs           # raised by every record that enters
   diff = (int)((effectiveTs - sequenceAnchorTs) / 1000)
@@ -50,6 +55,27 @@ The formula, the seeds and the multiplier are the 2.8.0 contract and are unchang
 
 ### 3.1 Who is clamped
 Only a **first delivery** — a record with a position strictly above `sequenceHighWaterPosition`, or whose position belongs to a differently named binary log than the mark (`!position.sameLog(mark)`: the log basename changed, spec 01.02 §3.1.1, so the two positions are not comparable and the mark is reset to the new log) — has its timestamp clamped up to the floor. A record at or below the mark (redelivery) or a row without a position (a source without log coordinates) keeps `effectiveTs = recordTs`. After a restart the mark is empty, so the first positioned record of the run — and, in log order, every record after it — is a first delivery and is clamped (spec 02.04 §3.2).
+
+#### 3.1.2 The rest of a transaction: same position as the mark
+Debezium stamps **every row event of a MySQL transaction with the transaction's
+binlog position** (`source.pos`), and the row index (`source.row`) restarts at
+0 for every statement, so the rows that follow a transaction's first row compare
+**equal** to the high-water mark — they are neither above it nor a redelivery.
+They are first deliveries of the same transaction and are floored at the
+effective timestamp the transaction's first row received
+(`sequenceHighWaterEffectiveTs`; the floor itself may already be higher, but the
+transaction's own clamp is what keeps its rows together). Before this rule only
+the first row was clamped and the rest kept their older statement time, so a
+late-committing transaction that inserted, updated and deleted one key versioned
+its INSERT **above** its UPDATE and DELETE and the deleted row stayed live on the
+replica (found by the end-to-end history suite; the same defect in standard mode).
+A redelivery of that transaction — engine retry without a restart — lands on the
+same mark and takes the same clamp, so the assignment stays redelivery-stable
+(spec 02.04 §3.3); after a restart the mark is empty and every row is a first
+delivery under the seeded floor (§3.5). Formal: the shipped statics of
+`Replication.VersionFloor` model one first delivery per position; the
+same-position continuation is pinned by
+`CommitOrderVersionClampTest.rowsOfOneTransactionShareTheFirstRowsFloor()`.
 
 ### 3.2 Who enters the sequence, and who raises the floor
 `handleChangeEventBatch` calls `nextSequenceNumber` for **row records and DDL records only**. A **control record** — a heartbeat or a transaction-metadata record, recognised by `isControlRecord` (spec 01.06 §3.1) — produces no ClickHouse row, needs no `_version`, and is **not** run through the sequence: it leaves `sequenceMaxSourceTs`, `sequenceHighWaterPosition`, `sequenceAnchorTs` and `sequenceNumber` exactly as they were.
@@ -100,6 +126,7 @@ The carry itself is unchanged: the ten-digit seeds still add ~1000 ms (`SEQUENCE
 
 ## 6. Verification Criteria
 - `CommitOrderVersionClampTest.lateCommitWithOlderStatementTimestampRanksAboveEarlierWrite()`, `CommitOrderVersionClampTest.lateDeleteRanksAboveEarlierWrite()` — clamping of first deliveries (§3.1).
+- `CommitOrderVersionClampTest.rowsOfOneTransactionShareTheFirstRowsFloor()`, `CommitOrderVersionClampTest.rowsOfOneTransactionKeepANewerTimestamp()` — the rows of one transaction (one binlog position) are floored like its first row and stay strictly increasing; a transaction newer than the floor keeps its own timestamp (§3.1.2).
 - `CommitOrderVersionClampTest.unpositionedCounterResetRaisesTheFloor()` — a positionless **row** that resets the counter raises the floor (§3.2, second paragraph).
 - `DebeziumChangeEventCaptureTest.heartbeatAndTransactionMetadataDoNotTouchTheSequenceState()` — a heartbeat-only and a transaction-metadata-only batch through the real `handleChangeEventBatch` leave all four statics unchanged (§3.2); fails on the pre-fix loop, which raised the floor to the heartbeat's envelope timestamp.
 - `CommitOrderVersionClampTest.redeliveryKeepsRedeliveryStableVersion()`, `CommitOrderVersionClampTest.redeliveryDoesNotDisturbTheFloor()` — redeliveries are not clamped and cannot lower the floor.

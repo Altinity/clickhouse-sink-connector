@@ -4,6 +4,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.junit.Assert;
@@ -2833,6 +2834,169 @@ public class MySqlDDLParserListenerImplTest {
 
         String expectedQuery = "CREATE TABLE if not exists `employees`.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64(0,'America/Chicago') NOT NULL ,`_valid_from` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',`_valid_to` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',`_operation` LowCardinality(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`_valid_to`) ORDER BY (`id`,`_valid_to`) TTL `_valid_to` + toIntervalDay(30)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
+    }
+
+    private static MySQLDDLParserService historyModeParser(Map<String, String> extra) {
+        HashMap<String, String> config = new HashMap<>();
+        config.put(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString(), "true");
+        config.putAll(extra);
+        return new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config), "employees");
+    }
+
+    /**
+     * Spec 12.03 section 3.4: in history mode a source TRUNCATE TABLE is never
+     * translated to a ClickHouse TRUNCATE (that erased the SCD2 history); the
+     * translator emits NO DDL text and records one bulk-close request
+     * ({@code TRUNCATE}, marker 'T') for the table in the history database,
+     * while the statement stays classified as a truncate for
+     * {@code disable.drop.truncate}. Standard mode is unchanged.
+     */
+    @Test
+    public void testReplicationHistoryTruncateEmitsNoDdlButRecordsBulkClose() {
+        MySQLDDLParserService history = historyModeParser(Collections.emptyMap());
+
+        // DESTRUCTIVE: none -- string/plan assertions on the translator; no database is contacted.
+        StringBuffer historyQuery = new StringBuffer();
+        AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
+        history.parseSql("TRUNCATE TABLE t", "", historyQuery, isDropOrTruncate);
+
+        Assert.assertEquals("", historyQuery.toString());
+        // DESTRUCTIVE: none -- string/flag assertions on the translator; no database is contacted.
+        Assert.assertTrue("still classified as a truncate for disable.drop.truncate", isDropOrTruncate.get());
+        List<MySqlDDLParserListenerImpl.HistoryBulkClose> requests = history.historyBulkCloses();
+        Assert.assertEquals(1, requests.size());
+        Assert.assertEquals("employees", requests.get(0).database());
+        Assert.assertEquals("t", requests.get(0).table());
+        Assert.assertEquals(ClickHouseConverter.CDC_OPERATION.TRUNCATE, requests.get(0).op());
+
+        // A qualified, backticked name resolves like the standard translation:
+        // the listener's (history) database, the bare table.
+        // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
+        Assert.assertEquals("", translate(history, "TRUNCATE TABLE `srcdb`.`t2`"));
+        requests = history.historyBulkCloses();
+        Assert.assertEquals(1, requests.size());
+        Assert.assertEquals("employees", requests.get(0).database());
+        Assert.assertEquals("t2", requests.get(0).table());
+
+        // The requests are per statement: a following non-destructive
+        // statement leaves none behind.
+        translate(history, "ALTER TABLE t ADD COLUMN c INT");
+        Assert.assertTrue(history.historyBulkCloses().isEmpty());
+
+        // Standard mode: byte-identical to before, and no request.
+        // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
+        StringBuffer standardQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql("TRUNCATE TABLE t", "", standardQuery, new AtomicBoolean(false));
+        Assert.assertEquals("TRUNCATE TABLE `employees`.t", standardQuery.toString());
+        Assert.assertTrue(mySQLDDLParserService.historyBulkCloses().isEmpty());
+    }
+
+    /**
+     * Spec 12.03 section 3.4: in history mode a source DROP TABLE never drops
+     * the SCD2 table (its closed versions would go with it); the translator
+     * emits NO DDL text and records one bulk-close request per named table
+     * ({@code DELETE}, marker 'D'). Standard mode is unchanged.
+     */
+    @Test
+    public void testReplicationHistoryDropTableRecordsBulkClosePerTable() {
+        MySQLDDLParserService history = historyModeParser(Collections.emptyMap());
+
+        // DESTRUCTIVE: none -- string/plan assertions on the translator; no database is contacted.
+        StringBuffer historyQuery = new StringBuffer();
+        AtomicBoolean isDropOrTruncate = new AtomicBoolean(false);
+        history.parseSql("DROP TABLE a, srcdb.b", "", historyQuery, isDropOrTruncate);
+
+        Assert.assertEquals("", historyQuery.toString());
+        Assert.assertTrue("still classified as a drop for disable.drop.truncate", isDropOrTruncate.get());
+        List<MySqlDDLParserListenerImpl.HistoryBulkClose> requests = history.historyBulkCloses();
+        Assert.assertEquals(2, requests.size());
+        Assert.assertEquals("employees", requests.get(0).database());
+        Assert.assertEquals("a", requests.get(0).table());
+        Assert.assertEquals(ClickHouseConverter.CDC_OPERATION.DELETE, requests.get(0).op());
+        Assert.assertEquals("employees", requests.get(1).database());
+        Assert.assertEquals("b", requests.get(1).table());
+        Assert.assertEquals(ClickHouseConverter.CDC_OPERATION.DELETE, requests.get(1).op());
+
+        // DROP TABLE IF EXISTS is the form Debezium's snapshot replays: same
+        // routing, no text.
+        // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
+        Assert.assertEquals("", translate(history, "DROP TABLE IF EXISTS a"));
+        Assert.assertEquals(1, history.historyBulkCloses().size());
+
+        // Standard mode: byte-identical to before, and no request.
+        // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
+        StringBuffer standardQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql("DROP TABLE a, srcdb.b", "", standardQuery, new AtomicBoolean(false));
+        Assert.assertEquals("DROP TABLE if exists employees.a,employees.b", standardQuery.toString());
+        Assert.assertTrue(mySQLDDLParserService.historyBulkCloses().isEmpty());
+    }
+
+    /**
+     * Spec 12.02 section 3.4, Gap G-12.02-3: with a schema-override
+     * {@code primary_key} the sorting key used to be emitted WITHOUT
+     * {@code _valid_to}, so every version of a key collapsed under
+     * ReplacingMergeTree and the table was not an SCD2 table. History mode
+     * appends {@code _valid_to} on that branch too, as a flat tuple.
+     */
+    @Test
+    public void testReplicationHistoryAppendsValidToWithPrimaryKeyOverride() {
+        MySQLDDLParserService service = historyModeParser(
+                Collections.singletonMap("databases.employees.tables.pk_override.primary_key", "(b)"));
+
+        String q = translate(service, "CREATE TABLE pk_override (a INT NOT NULL, b INT NOT NULL, PRIMARY KEY (a))");
+
+        Assert.assertTrue(q, q.contains("ORDER BY (b,`_valid_to`)"));
+        Assert.assertFalse(q, q.contains("ORDER BY (b)"));
+        Assert.assertTrue(q, q.contains("TTL `_valid_to` + toIntervalDay(30)"));
+    }
+
+    /**
+     * Spec 12.02 section 3.4: a composite PRIMARY KEY reaches the ORDER BY
+     * clause already parenthesised, and wrapping it again produced the nested
+     * tuple {@code ((a,b),`_valid_to`)} -- sorting_key {@code (a,b),_valid_to}
+     * on the server. The emitted key must be the flat tuple
+     * {@code (a,b,`_valid_to`)}.
+     */
+    @Test
+    public void testReplicationHistoryCompositeKeyIsAFlatTuple() {
+        MySQLDDLParserService service = historyModeParser(Collections.emptyMap());
+
+        String q = translate(service, "CREATE TABLE composite (a INT NOT NULL, b INT NOT NULL, c INT, PRIMARY KEY (a, b))");
+
+        Assert.assertTrue(q, q.contains("ORDER BY (a,b,`_valid_to`)"));
+        Assert.assertFalse(q, q.contains("((a,b)"));
+
+        // A single table-level key is a flat tuple as well.
+        String single = translate(service, "CREATE TABLE single_key (a INT NOT NULL, b INT, PRIMARY KEY (a))");
+        Assert.assertTrue(single, single.contains("ORDER BY (a,`_valid_to`)"));
+    }
+
+    /**
+     * Spec 12.01 section 3.3: in history mode every table lives in the
+     * configured history database, which is not derived from the source, so
+     * a source CREATE DATABASE / DROP DATABASE names nothing in ClickHouse.
+     * Debezium's initial snapshot replays {@code DROP DATABASE IF EXISTS} +
+     * {@code CREATE DATABASE} for every captured database; translated
+     * verbatim, that DROP removed a database another connector was
+     * replicating into. Nothing is emitted in history mode; standard mode is
+     * unchanged.
+     */
+    @Test
+    public void testReplicationHistorySkipsDatabaseLevelDdl() {
+        MySQLDDLParserService history = historyModeParser(Collections.emptyMap());
+
+        // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
+        Assert.assertEquals("", translate(history, "CREATE DATABASE test").trim());
+        Assert.assertEquals("", translate(history, "CREATE DATABASE IF NOT EXISTS test").trim());
+        Assert.assertEquals("", translate(history, "DROP DATABASE IF EXISTS test").trim());
+        Assert.assertEquals("", translate(history, "DROP DATABASE test").trim());
+
+        // Standard mode: unchanged.
+        // DESTRUCTIVE: none -- string assertions on the translator; no database is contacted.
+        String create = translate("CREATE DATABASE test");
+        Assert.assertTrue(create, create.equalsIgnoreCase("CREATE DATABASE IF NOT EXISTS test"));
+        String drop = translate("DROP DATABASE test");
+        Assert.assertTrue(drop, drop.equalsIgnoreCase("DROP DATABASE IF EXISTS test"));
     }
 
     @Test

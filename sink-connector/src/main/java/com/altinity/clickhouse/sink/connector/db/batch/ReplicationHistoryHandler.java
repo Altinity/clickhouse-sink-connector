@@ -2,7 +2,6 @@ package com.altinity.clickhouse.sink.connector.db.batch;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
-import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -23,16 +22,22 @@ import java.time.ZoneId;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 /**
- * Handles the execution of replication history (SCD Type 2) updates.
- * This class encapsulates the logic for generating and executing the UNION ALL
- * query pattern used for temporal tracking of record changes.
- * 
- * The query pattern:
- * 1. First SELECT: Closes the existing record by updating _valid_to to current timestamp
+ * Handles the execution of replication history (SCD Type 2) updates
+ * (Spec 12.03). This class encapsulates the logic for generating and executing
+ * the UNION ALL query pattern used for temporal tracking of record changes.
+ *
+ * The UPDATE query pattern (Spec 12.03 section 3.2):
+ * 1. First SELECT: Closes the open row at the BEFORE-image key (_valid_to = event time)
  * 2. Second SELECT: Inserts the new "after" image with open-ended _valid_to
- * 3. Third SELECT: Inserts the "before" image for PK change tracking
+ * 3. Third SELECT, only when the primary key changed: a delete marker at the old key
+ *
+ * The DELETE query pattern closes the open row and appends a delete marker
+ * (section 3.3); a replicated truncation closes every open row the same way
+ * (section 3.4, {@link #executeHistoryBulkClose}). Every row of one event carries
+ * the record's ONE standard version (section 3.5).
  */
 public class ReplicationHistoryHandler {
 
@@ -42,6 +47,13 @@ public class ReplicationHistoryHandler {
     private final DBMetadata dbMetadata;
     private final ZoneId sourceTimeZone;
     private final ZoneId serverTimeZone;
+    /**
+     * {@code snowflake.id}: how {@link ClickHouseStruct#calculateVersion(boolean)}
+     * derives a version that the standard INSERT path has not derived yet. The
+     * same flag the field mapper binds INSERT rows with, so the history rows of
+     * an event and its INSERT row live in one version domain (Spec 12.03 section 3.5).
+     */
+    private final boolean useSnowflakeId;
     /**
      * Creates a new ReplicationHistoryHandler with default dependencies (creates its own {@link DBMetadata}).
      *
@@ -73,10 +85,12 @@ public class ReplicationHistoryHandler {
         }
         this.sourceTimeZone = ZoneId.of(sourceTz);
         this.serverTimeZone = serverTimeZone;
+        this.useSnowflakeId = config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString());
     }
 
     /**
      * Creates a new ReplicationHistoryHandler with injectable dependencies for testing.
+     * Versions not yet derived are derived the raw-GTID way ({@code snowflake.id=false}).
      *
      * @param queryFormatter The query formatter to use
      * @param dbMetadata The database metadata handler to use
@@ -87,24 +101,74 @@ public class ReplicationHistoryHandler {
         this.dbMetadata = dbMetadata;
         this.sourceTimeZone = ZoneId.of("UTC");
         this.serverTimeZone = ZoneId.of("UTC");
+        this.useSnowflakeId = false;
+    }
+
+    /**
+     * Renders an epoch-seconds instant as the {@code DateTime} literal text the
+     * history statements embed: converted "without timezone adjustment" from the
+     * source timezone to the server timezone (Spec 12.03 section 3.6).
+     */
+    private String serverDateTime(long epochSeconds) {
+        return DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(epochSeconds * 1000,
+                ClickHouseDataType.DateTime, sourceTimeZone, serverTimeZone);
+    }
+
+    /** The open-row sentinel {@code 2100-01-01 00:00:00} (Spec 12.02 section 3.1), rendered like {@link #serverDateTime}. */
+    private String openRowSentinel() {
+        return serverDateTime(DataTypeRange.DATETIME32_MAX_TTL);
+    }
+
+    /**
+     * The ONE version every history row of this event carries: the record's
+     * standard version (Spec 12.03 section 3.5, Gap G-12.03-4) -- the same
+     * floor-clamped, monotonic value {@code ClickHouseStruct.calculateVersion}
+     * gives the INSERT path -- never a separate {@code SnowFlakeId} of
+     * {@code (ts_ms, gtid)}, which ignored the sequence number and the commit
+     * floor and collided within a millisecond without GTIDs.
+     *
+     * <p>The standard path derives the version lazily at bind time
+     * ({@code PreparedStatementFieldMapper.handleVersionColumn}); the history
+     * statements are built BEFORE any binding, and the DELETE and TRUNCATE
+     * statements bind nothing, so the same lazy derivation happens here with the
+     * same {@code snowflake.id} flag. A version that cannot be derived is refused
+     * loudly (Spec 02.05 section 3.2): bound as {@code -1} it would become the
+     * maximum UInt64 and win every merge for the key forever.</p>
+     *
+     * @param record the change event
+     * @return {@code record.getVersion()}, positive
+     * @throws IllegalStateException when no version can be derived for the record
+     */
+    public long resolveVersion(ClickHouseStruct record) {
+        if (record.getVersion() == -1) {
+            record.calculateVersion(useSnowflakeId);
+        }
+        PreparedStatementFieldMapper.rejectUnderivableVersion(record);
+        return record.getVersion();
     }
 
     /**
      * Generates the parameters needed for the replication history update query.
      *
+     * <p>The close predicate (and the key-change marker) use the BEFORE-image
+     * primary key: that is the row the event replaces. Taking the key from the
+     * after image closed nothing when an UPDATE changed a primary-key column, so
+     * the old key kept an open row forever next to the new key's open row -- two
+     * current rows for one source row (Gap G-12.03-3). {@code keyChanged} is set
+     * when any key column differs between the two images.</p>
+     *
      * @param record The CDC record containing the change data
      * @return UpdateQueryParams containing all parameters needed for the query
+     * @throws IllegalStateException if the record carries no primary key, no row
+     *         image, or no derivable version
      */
     public UpdateQueryParams buildUpdateQueryParams(ClickHouseStruct record) {
         // Convert epoch seconds to date strings
-        String validToMax = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-                sourceTimeZone, serverTimeZone);
+        String validToMax = openRowSentinel();
+        String binlogRecordTimestamp = serverDateTime(record.getTsSec());
 
-        String binlogRecordTimestamp = DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
-                sourceTimeZone, serverTimeZone);
-
-        // Generate unique version using snowflake algorithm
-        long version = SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false);
+        // The record's standard version, shared by every row this event emits.
+        long version = resolveVersion(record);
 
         // Every primary-key column with its value, in key order: the previous history
         // row is closed by the WHOLE key. Closing on the first column alone closed
@@ -114,10 +178,23 @@ public class ReplicationHistoryHandler {
             throw new IllegalStateException("History mode cannot close the previous row for topic "
                     + record.getTopic() + ": the record carries no primary key (spec 02.01 section 3.5 a)");
         }
-        Struct image = record.getAfterStruct() != null ? record.getAfterStruct() : record.getBeforeStruct();
+        // UPDATE and DELETE carry the before image: the row being closed. A record
+        // with only an after image (never an UPDATE today) can only be keyed by it.
+        Struct closeImage = record.getBeforeStruct() != null ? record.getBeforeStruct() : record.getAfterStruct();
+        if (closeImage == null) {
+            throw new IllegalStateException("History mode cannot close the previous row for topic "
+                    + record.getTopic() + ": the " + record.getCdcOperation()
+                    + " record carries neither a before nor an after image");
+        }
+        Struct afterImage = record.getAfterStruct() != null ? record.getAfterStruct() : closeImage;
         Map<String, Object> primaryKey = new LinkedHashMap<>();
+        boolean keyChanged = false;
         for (String column : primaryKeyColumns) {
-            primaryKey.put(column, image.get(column));
+            Object beforeValue = closeImage.get(column);
+            primaryKey.put(column, beforeValue);
+            if (!Objects.equals(beforeValue, afterImage.get(column))) {
+                keyChanged = true;
+            }
         }
 
         return new UpdateQueryParams(
@@ -125,6 +202,7 @@ public class ReplicationHistoryHandler {
                 binlogRecordTimestamp,
                 version,
                 primaryKey,
+                keyChanged,
                 record.getCdcOperation()
         );
     }
@@ -152,7 +230,8 @@ public class ReplicationHistoryHandler {
                 params.getBinlogRecordTimestamp(),
                 params.getVersion(),
                 params.getCdcOperation(),
-                serverTimeZone.getId()
+                serverTimeZone.getId(),
+                params.isKeyChanged()
         );
     }
 
@@ -261,7 +340,40 @@ public class ReplicationHistoryHandler {
         }
     }
 
+    /**
+     * Applies a replicated truncation to an SCD2 table the history way (Spec 12.03
+     * section 3.4, Gap G-12.03-6): ONE statement closes every visible open row at
+     * the event time and appends a delete marker at each row's open sorting key.
+     * Only INSERTs are issued -- the closed versions survive and the current-state
+     * view becomes empty, exactly as the source table did.
+     *
+     * @param conn               the database connection
+     * @param qualifiedTable     {@code database.table}
+     * @param hasIsDeletedColumn whether the table carries {@code is_deleted}
+     * @param tsSec              the event's source time in epoch seconds
+     * @param version            the event's version (see {@link #resolveVersion}), shared by every row
+     * @param op                 the operation stored in {@code _operation} ({@code TRUNCATE}, letter {@code 'T'})
+     * @throws IllegalStateException when {@code version} is not positive
+     * @throws java.sql.SQLException if ClickHouse refuses the statement
+     */
+    public void executeHistoryBulkClose(Connection conn, String qualifiedTable, boolean hasIsDeletedColumn,
+                                        long tsSec, long version, ClickHouseConverter.CDC_OPERATION op)
+            throws Exception {
+        if (version <= 0) {
+            throw new IllegalStateException(String.format(
+                    "History bulk close of %s refused: version %d is not a derivable event version "
+                            + "(Spec 02.05 section 3.2)", qualifiedTable, version));
+        }
+        String query = queryFormatter.getInsertQueryForBulkClose(qualifiedTable, hasIsDeletedColumn,
+                openRowSentinel(), serverDateTime(tsSec), version, op.getOperation(), serverTimeZone.getId());
 
+        log.debug("Executing replication history bulk close ({}) query: {}", op, query);
+
+        try (PreparedStatement ps = dbMetadata.getPreparedStatement(conn, query)) {
+            ps.execute();
+        }
+        log.debug("Replication history bulk close ({}) executed successfully for table: {}", op, qualifiedTable);
+    }
 
     /**
      * Container class for update query parameters.
@@ -273,6 +385,8 @@ public class ReplicationHistoryHandler {
         private final long version;
         /** Every primary-key column with its value, in key order (spec 02.01 section 3.5 a). */
         private final Map<String, Object> primaryKey;
+        /** Whether the after image carries a different primary key than {@link #primaryKey} (Gap G-12.03-3). */
+        private final boolean keyChanged;
         private final ClickHouseConverter.CDC_OPERATION cdcOperation;
 
         public UpdateQueryParams(
@@ -283,7 +397,7 @@ public class ReplicationHistoryHandler {
                 Object primaryKeyValue,
                 ClickHouseConverter.CDC_OPERATION cdcOperation) {
             this(validToMax, binlogRecordTimestamp, version,
-                    singleColumn(primaryKeyColumnName, primaryKeyValue), cdcOperation);
+                    singleColumn(primaryKeyColumnName, primaryKeyValue), false, cdcOperation);
         }
 
         public UpdateQueryParams(
@@ -292,10 +406,21 @@ public class ReplicationHistoryHandler {
                 long version,
                 Map<String, Object> primaryKey,
                 ClickHouseConverter.CDC_OPERATION cdcOperation) {
+            this(validToMax, binlogRecordTimestamp, version, primaryKey, false, cdcOperation);
+        }
+
+        public UpdateQueryParams(
+                String validToMax,
+                String binlogRecordTimestamp,
+                long version,
+                Map<String, Object> primaryKey,
+                boolean keyChanged,
+                ClickHouseConverter.CDC_OPERATION cdcOperation) {
             this.validToMax = validToMax;
             this.binlogRecordTimestamp = binlogRecordTimestamp;
             this.version = version;
             this.primaryKey = new LinkedHashMap<>(primaryKey);
+            this.keyChanged = keyChanged;
             this.cdcOperation = cdcOperation;
         }
 
@@ -332,6 +457,11 @@ public class ReplicationHistoryHandler {
             return primaryKey.isEmpty() ? null : primaryKey.values().iterator().next();
         }
 
+        /** Whether the UPDATE moved the row to another primary key, so the old key needs a delete marker. */
+        public boolean isKeyChanged() {
+            return keyChanged;
+        }
+
         public ClickHouseConverter.CDC_OPERATION getCdcOperation() {
             return cdcOperation;
         }
@@ -345,6 +475,7 @@ public class ReplicationHistoryHandler {
                     ", primaryKeyColumnName='" + getPrimaryKeyColumnName() + '\'' +
                     ", primaryKeyValue=" + getPrimaryKeyValue() +
                     ", primaryKey=" + primaryKey +
+                    ", keyChanged=" + keyChanged +
                     ", cdcOperation=" + cdcOperation +
                     '}';
         }

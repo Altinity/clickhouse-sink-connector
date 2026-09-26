@@ -12,6 +12,7 @@ import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -64,6 +65,13 @@ public class MySQLDDLParserService implements DDLParserService {
     private PrimaryKeyRebuildPlan primaryKeyRebuildPlan;
 
     /**
+     * The history-mode bulk closes of the last {@code parseSql} (Spec 12.03
+     * section 3.4); empty when that statement was not a TRUNCATE-TABLE / DROP
+     * TABLE in history mode.
+     */
+    private List<MySqlDDLParserListenerImpl.HistoryBulkClose> historyBulkCloses = Collections.emptyList();
+
+    /**
      * Default constructor for MySQLDDLParserService.
      */
     @Inject
@@ -90,6 +98,11 @@ public class MySQLDDLParserService implements DDLParserService {
     @Override
     public PrimaryKeyRebuildPlan primaryKeyRebuildPlan() {
         return primaryKeyRebuildPlan;
+    }
+
+    @Override
+    public List<MySqlDDLParserListenerImpl.HistoryBulkClose> historyBulkCloses() {
+        return historyBulkCloses;
     }
 
     /**
@@ -143,9 +156,11 @@ public class MySQLDDLParserService implements DDLParserService {
         listener.setTargetSchemaLookup(targetSchemaLookup);
         listener.setDdlEventTimestampMs(ddlEventTimestampMs);
         this.primaryKeyRebuildPlan = null;
+        this.historyBulkCloses = Collections.emptyList();
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
         this.primaryKeyRebuildPlan = listener.primaryKeyRebuildPlan();
+        this.historyBulkCloses = listener.historyBulkCloses();
 
         return clickHouseResult;
     }
@@ -177,9 +192,11 @@ public class MySQLDDLParserService implements DDLParserService {
         listener.setTargetSchemaLookup(targetSchemaLookup);
         listener.setDdlEventTimestampMs(ddlEventTimestampMs);
         this.primaryKeyRebuildPlan = null;
+        this.historyBulkCloses = Collections.emptyList();
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
         this.primaryKeyRebuildPlan = listener.primaryKeyRebuildPlan();
+        this.historyBulkCloses = listener.historyBulkCloses();
 
         // Statement KIND, decided by the parse tree: DROP TABLE / TRUNCATE
         // TABLE / DROP DATABASE. The earlier token scan flagged any DROP

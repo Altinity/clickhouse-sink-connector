@@ -19,16 +19,24 @@ changing dimension of type 2. Each physical row carries `_valid_from`,
 *current* row of a key is the live row at sorting key `(key, openEnd)`, where
 `openEnd` is the sentinel `_valid_to` default `'2100-01-01 00:00:00'`.
 
-This module models, faithfully to the connector code and without improving it:
+This module models the CORRECTED protocol (the design every row-writing path
+implements after the fix) and keeps the shipped 2.11.0 behaviour only as
+`old*` definitions with machine-checked counterexamples:
 
 * **Spec 12.03 — SCD2 write protocol.** The row sets emitted by the single
-  `INSERT ... SELECT ... UNION ALL SELECT ... UNION ALL SELECT ...` statements
-  built by `QueryFormatter.getInsertQueryForUpdate` and
-  `QueryFormatter.getInsertQueryForDelete`, and the `PreparedStatementExecutor`
-  paths that run them against the already flushed (visible) table state.
-* **Spec 12.05 — replication-log-only.** The gating of data-table writes,
-  history-table writes and target-database routing on the two mode flags in
-  `ClickHouseBatchRunnable` and `ClickHouseBatchWriter`.
+  `INSERT ... SELECT ... UNION ALL SELECT ...` statements built by
+  `QueryFormatter.getInsertQueryForUpdate` / `getInsertQueryForDelete` and by
+  the column-agnostic bulk close used for `TRUNCATE-TABLE` / `DROP-TABLE`, all
+  executed by `PreparedStatementExecutor` against the flushed (visible) table.
+  Every row one event emits carries the event's ONE standard version `V`
+  (`record.getVersion()`, spec 02.01); an UPDATE closes the open row at the
+  BEFORE-image key and, when the key changes, also writes a delete marker at
+  the old key; the deleted copy of the before image no longer exists.
+-- DESTRUCTIVE: none -- this module MODELS the statements; nothing in it executes against any database.
+* **Spec 12.01 / 12.05 — modes and routing.** The gating of data-table writes,
+  history-table writes, target-database routing and database-level DDL on the
+  two mode flags, now identical on `ClickHouseBatchRunnable` and
+  `ClickHouseBatchWriter`.
 
 Abstractions: a row's payload is an opaque `image` identity; timestamps are UTC
 epoch seconds (`Nat`); a table is an append-only list of physical rows, and
@@ -40,9 +48,11 @@ namespace Replication
 
 /-! ## Rows, tables and the FINAL evaluation at a sorting key -/
 
-/-- The `_operation` column of a history row. -/
+-- DESTRUCTIVE: none -- model constructors only; nothing is truncated or dropped by this file.
+/-- The `_operation` column of a history row (`truncate` is the `'T'` marker
+    written by the bulk close of a replicated `TRUNCATE-TABLE`). -/
 inductive HOp where
-  | create | read | update | delete
+  | create | read | update | delete | truncate
 deriving DecidableEq, Repr
 
 /-- One physical row of an SCD2 history table. -/
@@ -89,39 +99,56 @@ def liveAt (t : HTable) (k : Key) (vt : Nat) : Option HRow :=
 /-- The current (open) row of key `k`: the live row at `(k, openEnd)`. -/
 def openRow (t : HTable) (k : Key) : Option HRow := liveAt t k openEnd
 
-/-! ## The rows each source event writes -/
+/-- Every row of `t` that is the open row of its own key (what the bulk close
+    of `TRUNCATE-TABLE` / `DROP-TABLE` reads with `FINAL WHERE _valid_to = S`). -/
+def openRows (t : HTable) : List HRow :=
+  t.filter (fun r => openRow t r.key == some r)
+
+/-! ## The rows each source event writes (corrected protocol) -/
 
 /-- INSERT: the field mapper binds `_valid_from = ts`, `_valid_to = sentinel`,
-    `is_deleted = 0`, `_operation = 'C'`. -/
+    `is_deleted = 0`, `_operation = 'C'`, `_version = v` (the standard version). -/
 def insertRow (k : Key) (image ts v : Nat) : HRow :=
   ⟨k, image, ts, openEnd, false, v, HOp.create⟩
 
-/-- First SELECT of `getInsertQueryForUpdate` / `getInsertQueryForDelete`: the
+/-- First SELECT of every UPDATE / DELETE statement and of the bulk close: the
     visible open row copied with `_valid_to = ts`, `is_deleted = 0`, `_version = V`. -/
 def closeRow (r : HRow) (ts V : Nat) : HRow :=
   { r with validTo := ts, isDeleted := false, version := V }
 
-/-- Second SELECT of the UPDATE (no FROM clause): the new image, `_valid_from = ts`,
-    `_valid_to = sentinel`, `is_deleted = 0`, `_version = V+1`, `_operation = 'U'`. -/
+/-- Second SELECT of the UPDATE (no FROM clause): the after image at the AFTER key,
+    `_valid_from = ts`, `_valid_to = sentinel`, `is_deleted = 0`, `_operation = 'U'`,
+    `_version = V` — the SAME version as the close row, not `V+1`. -/
 def afterRow (k : Key) (image ts V : Nat) : HRow :=
-  ⟨k, image, ts, openEnd, false, V + 1, HOp.update⟩
+  ⟨k, image, ts, openEnd, false, V, HOp.update⟩
 
-/-- Third SELECT of the UPDATE: the visible open row re-read with `_valid_to = ts`,
-    `is_deleted = 1`, `_version = V`, `_operation = 'U'`. -/
-def beforeRow (r : HRow) (ts V : Nat) : HRow :=
-  { r with validTo := ts, isDeleted := true, version := V, op := HOp.update }
-
-/-- Second SELECT of the DELETE: the open row's tombstone at the sentinel. -/
+/-- Second SELECT of the DELETE: the open row's tombstone at the sentinel,
+    `_version = V`, `_operation = 'D'`. -/
 def deleteMarker (r : HRow) (ts V : Nat) : HRow :=
-  { r with validFrom := ts, validTo := openEnd, isDeleted := true, version := V + 1,
+  { r with validFrom := ts, validTo := openEnd, isDeleted := true, version := V,
            op := HOp.delete }
 
-/-- The row set ONE UPDATE statement emits. The two table-reading SELECTs read the
-    VISIBLE (already flushed) table `visible`; the middle SELECT has no FROM clause. -/
-def updateRows (visible : HTable) (k : Key) (image ts V : Nat) : List HRow :=
-  (match openRow visible k with | some r => [closeRow r ts V] | none => [])
-    ++ [afterRow k image ts V]
-    ++ (match openRow visible k with | some r => [beforeRow r ts V] | none => [])
+/-- Third SELECT of a key-changing UPDATE: a delete marker at the BEFORE key's
+    open sorting key, `_operation = 'U'`, `_version = V`. -/
+def keyChangeMarker (r : HRow) (ts V : Nat) : HRow :=
+  { r with validFrom := ts, validTo := openEnd, isDeleted := true, version := V,
+           op := HOp.update }
+
+/-- The marker the bulk close writes per open row: `_valid_from = ts`,
+    `_valid_to = sentinel`, `is_deleted = 1`, `_version = V`, `_operation = op`
+    (`'T'` for `TRUNCATE-TABLE`, `'D'` for `DROP-TABLE`). -/
+def bulkMarker (r : HRow) (ts V : Nat) (op : HOp) : HRow :=
+  { r with validFrom := ts, validTo := openEnd, isDeleted := true, version := V, op := op }
+
+/-- The row set ONE UPDATE statement emits against the visible (flushed) table:
+    the close row at the BEFORE-image key `kb` (when an open row is visible), the
+    after row at the AFTER-image key `ka`, and — only when the key changed — the
+    delete marker at `(kb, sentinel)`. -/
+def updateRows (visible : HTable) (kb ka : Key) (image ts V : Nat) : List HRow :=
+  match openRow visible kb with
+  | some r => closeRow r ts V :: afterRow ka image ts V ::
+              (if kb = ka then [] else [keyChangeMarker r ts V])
+  | none   => [afterRow ka image ts V]
 
 /-- The row set ONE DELETE statement emits against the visible table. -/
 def deleteRows (visible : HTable) (k : Key) (ts V : Nat) : List HRow :=
@@ -129,25 +156,59 @@ def deleteRows (visible : HTable) (k : Key) (ts V : Nat) : List HRow :=
   | some r => [closeRow r ts V, deleteMarker r ts V]
   | none   => []
 
+/-- Close row plus marker for every row of `rs`, in table order. -/
+def closeEach (rs : List HRow) (ts V : Nat) (op : HOp) : List HRow :=
+  match rs with
+  | []        => []
+  | r :: rest => closeRow r ts V :: bulkMarker r ts V op :: closeEach rest ts V op
+
+/-- The row set the column-agnostic bulk-close statement of `TRUNCATE-TABLE` /
+    `DROP-TABLE` emits: for every visible open row, its close row and its marker. -/
+def bulkCloseRows (visible : HTable) (ts V : Nat) (op : HOp) : List HRow :=
+  closeEach (openRows visible) ts V op
+
 /-- Apply an INSERT. -/
 def applyInsert (t : HTable) (k : Key) (image ts v : Nat) : HTable :=
   t ++ [insertRow k image ts v]
 
-/-- Apply an UPDATE whose SELECTs read the flushed table `t`. -/
-def applyUpdate (t : HTable) (k : Key) (image ts V : Nat) : HTable :=
-  t ++ updateRows t k image ts V
+/-- Apply an UPDATE (before key `kb`, after key `ka`) whose SELECTs read the
+    flushed table `t` — the executor flushes the staged INSERTs first (S6). -/
+def applyUpdate (t : HTable) (kb ka : Key) (image ts V : Nat) : HTable :=
+  t ++ updateRows t kb ka image ts V
 
 /-- Apply a DELETE whose SELECTs read the flushed table `t`. -/
 def applyDelete (t : HTable) (k : Key) (ts V : Nat) : HTable :=
   t ++ deleteRows t k ts V
 
-/-- The UPDATE path in `PreparedStatementExecutor.executePreparedStatement`: the
-    history statement runs INLINE without flushing the rows already staged on the
-    PreparedStatement (`staged`), so its SELECTs read only `t`; the staged rows land
-    at the following `executeBatch()`. (The DELETE path flushes first, i.e. it is
-    `applyDelete` against `t ++ staged`.) -/
-def applyUpdateStaged (t staged : HTable) (k : Key) (image ts V : Nat) : HTable :=
-  t ++ staged ++ updateRows t k image ts V
+/-- Apply the bulk close of `TRUNCATE-TABLE` (`op = truncate`) or `DROP-TABLE`
+    (`op = delete`): the SCD2 table is never truncated or dropped. -/
+def applyBulkClose (t : HTable) (ts V : Nat) (op : HOp) : HTable :=
+  t ++ bulkCloseRows t ts V op
+
+/-! ## The shipped 2.11.0 behaviour, kept only as counterexample material -/
+
+/-- OLD third SELECT of the UPDATE: the open row re-read with `_valid_to = ts`,
+    `is_deleted = 1`, `_version = V`, `_operation = 'U'` — the same sorting key
+    and version as the close row. Removed by the fix. -/
+def oldBeforeRow (r : HRow) (ts V : Nat) : HRow :=
+  { r with validTo := ts, isDeleted := true, version := V, op := HOp.update }
+
+/-- OLD UPDATE row set: close row (`V`) + after row (`V+1`) + deleted before copy
+    (`V`), every predicate built from the AFTER-image key `k` only. -/
+def oldUpdateRows (visible : HTable) (k : Key) (image ts V : Nat) : List HRow :=
+  (match openRow visible k with | some r => [closeRow r ts V] | none => [])
+    ++ [afterRow k image ts (V + 1)]
+    ++ (match openRow visible k with | some r => [oldBeforeRow r ts V] | none => [])
+
+/-- OLD UPDATE against a flushed table. -/
+def oldApplyUpdate (t : HTable) (k : Key) (image ts V : Nat) : HTable :=
+  t ++ oldUpdateRows t k image ts V
+
+/-- OLD executor path: the UPDATE statement ran INLINE while the batch's INSERTs
+    were still staged on the PreparedStatement (`staged`), so its SELECTs read only
+    `t`; the staged rows landed at the following `executeBatch()`. -/
+def oldApplyUpdateInline (t staged : HTable) (k : Key) (image ts V : Nat) : HTable :=
+  t ++ staged ++ oldUpdateRows t k image ts V
 
 /-! ## Helper lemmas on the FINAL evaluation -/
 
@@ -186,6 +247,30 @@ theorem foldl_hMaxStep_mem (xs : List HRow) (init : Option HRow) (m : HRow)
                 simp [hMaxStep, hv] at this
                 exact this
               exact Or.inr (by rw [this])
+
+/-- Folding a non-empty list whose rows are all `m` from an accumulator whose
+    version does not exceed `m.version` yields `m` (ties go to the later row). -/
+theorem foldl_hMaxStep_const (xs : List HRow) (m : HRow) (init : Option HRow)
+    (hall : ∀ x ∈ xs, x = m) (hne : xs ≠ [])
+    (hinit : ∀ m0, init = some m0 → m0.version ≤ m.version) :
+    xs.foldl hMaxStep init = some m := by
+  induction xs generalizing init with
+  | nil => exact absurd rfl hne
+  | cons x rest ih =>
+      have hx : x = m := hall x (List.mem_cons_self _ _)
+      subst hx
+      have hstep : hMaxStep init x = some x := by
+        cases init with
+        | none => rfl
+        | some m0 =>
+            have := hinit m0 rfl
+            simp [hMaxStep, this]
+      rw [List.foldl_cons, hstep]
+      cases rest with
+      | nil => rfl
+      | cons y rest' =>
+          exact ih (some x) (fun z hz => hall z (List.mem_cons_of_mem _ hz)) (List.cons_ne_nil _ _)
+            (fun m0 h => by rw [Option.some.inj h]; exact Nat.le_refl _)
 
 /-- `filterSortKey` distributes over concatenation. -/
 theorem filterSortKey_append (t u : HTable) (k : Key) (vt : Nat) :
@@ -244,25 +329,58 @@ theorem filterSortKey_cons_of_match (r : HRow) (u : HTable) (k : Key) (vt : Nat)
     filterSortKey (r :: u) k vt = r :: filterSortKey u k vt := by
   simp [filterSortKey, List.filter_cons, hk, hv]
 
-/-- At `(k, openEnd)` an UPDATE statement contributes exactly its after-image row. -/
-theorem filterSortKey_updateRows (t : HTable) (k : Key) (image ts V : Nat)
+/-- A table with no row of key `k` closed at `ts` has nothing at `(k, ts)`. -/
+theorem filterSortKey_nil_of_fresh (t : HTable) (k : Key) (ts : Nat)
+    (hfresh : ∀ r ∈ t, r.key = k → r.validTo ≠ ts) :
+    filterSortKey t k ts = [] := by
+  induction t with
+  | nil => rfl
+  | cons r rest ih =>
+      have ih' := ih (fun x hx hk => hfresh x (List.mem_cons_of_mem _ hx) hk)
+      by_cases hk : r.key = k
+      · rw [filterSortKey_cons_of_validTo_ne r rest k ts (hfresh r (List.mem_cons_self _ _) hk), ih']
+      · rw [filterSortKey_cons_of_key_ne r rest k ts hk, ih']
+
+/-- Equation: the UPDATE row set when an open row is visible at the before key. -/
+theorem updateRows_some {t : HTable} {kb : Key} {r : HRow} (ka : Key) (image ts V : Nat)
+    (h : openRow t kb = some r) :
+    updateRows t kb ka image ts V
+      = closeRow r ts V :: afterRow ka image ts V ::
+          (if kb = ka then [] else [keyChangeMarker r ts V]) := by
+  simp [updateRows, h]
+
+/-- Equation: the UPDATE row set when no open row is visible at the before key. -/
+theorem updateRows_none {t : HTable} {kb : Key} (ka : Key) (image ts V : Nat)
+    (h : openRow t kb = none) :
+    updateRows t kb ka image ts V = [afterRow ka image ts V] := by
+  simp [updateRows, h]
+
+/-- At `(ka, openEnd)` an UPDATE statement contributes exactly its after-image row,
+    whatever the before key: the close row sits at `_valid_to = ts` and the
+    key-change marker (if any) sits at the before key. -/
+theorem filterSortKey_updateRows_after (t : HTable) (kb ka : Key) (image ts V : Nat)
     (hts : ts ≠ openEnd) :
-    filterSortKey (updateRows t k image ts V) k openEnd = [afterRow k image ts V] := by
-  unfold updateRows
-  cases openRow t k with
+    filterSortKey (updateRows t kb ka image ts V) ka openEnd = [afterRow ka image ts V] := by
+  cases hopen : openRow t kb with
   | none =>
-      simp only [List.nil_append, List.append_nil]
-      rw [filterSortKey_cons_of_match (afterRow k image ts V) [] k openEnd rfl rfl]
+      rw [updateRows_none ka image ts V hopen,
+          filterSortKey_cons_of_match (afterRow ka image ts V) [] ka openEnd rfl rfl]
       rfl
   | some r =>
-      simp only [List.singleton_append, List.cons_append, List.nil_append]
-      rw [filterSortKey_cons_of_validTo_ne (closeRow r ts V) _ k openEnd hts,
-          filterSortKey_cons_of_match (afterRow k image ts V) _ k openEnd rfl rfl,
-          filterSortKey_cons_of_validTo_ne (beforeRow r ts V) [] k openEnd hts]
-      rfl
+      rcases liveAt_some hopen with ⟨hfin, _⟩
+      rcases finalAt_some_mem hfin with ⟨_, hrk, _⟩
+      rw [updateRows_some ka image ts V hopen,
+          filterSortKey_cons_of_validTo_ne (closeRow r ts V) _ ka openEnd hts,
+          filterSortKey_cons_of_match (afterRow ka image ts V) _ ka openEnd rfl rfl]
+      by_cases hk : kb = ka
+      · rw [if_pos hk]; rfl
+      · rw [if_neg hk,
+            filterSortKey_cons_of_key_ne (keyChangeMarker r ts V) [] ka openEnd
+              (by show r.key ≠ ka; rw [hrk]; exact hk)]
+        rfl
 
 /-- The after-image wins `FINAL` at `(k, openEnd)` against any prefix whose open rows
-    for `k` have `_version ≤ V`. -/
+    for `k` have `_version ≤ V`: strictly by version, or on a tie as the later row. -/
 theorem hMaxStep_afterRow_wins (t : HTable) (k : Key) (image ts V : Nat)
     (hb : ∀ r ∈ t, r.key = k → r.validTo = openEnd → r.version ≤ V) :
     hMaxStep (finalAt t k openEnd) (afterRow k image ts V) = some (afterRow k image ts V) := by
@@ -271,34 +389,247 @@ theorem hMaxStep_afterRow_wins (t : HTable) (k : Key) (image ts V : Nat)
   | some m =>
       rcases finalAt_some_mem hf with ⟨hm, hk, hv⟩
       have hle : m.version ≤ V := hb m hm hk hv
-      have : V + 1 ≥ m.version := Nat.le_succ_of_le hle
-      simp [hMaxStep, afterRow, this]
+      simp [hMaxStep, afterRow, hle]
 
-/-! ## Spec 12.03 — SCD2 write protocol -/
+/-- Membership in the bulk-close row list: a close row or a marker of some listed row. -/
+theorem mem_closeEach {rs : List HRow} {ts V : Nat} {op : HOp} {x : HRow} :
+    x ∈ closeEach rs ts V op ↔
+      ∃ r, r ∈ rs ∧ (x = closeRow r ts V ∨ x = bulkMarker r ts V op) := by
+  induction rs with
+  | nil => simp [closeEach]
+  | cons r rest ih =>
+      simp only [closeEach, List.mem_cons, ih]
+      constructor
+      · intro h
+        rcases h with h | h | ⟨r', hr', h'⟩
+        · exact ⟨r, Or.inl rfl, Or.inl h⟩
+        · exact ⟨r, Or.inl rfl, Or.inr h⟩
+        · exact ⟨r', Or.inr hr', h'⟩
+      · intro h
+        rcases h with ⟨r', hr' | hr', h'⟩
+        · subst hr'
+          rcases h' with h' | h'
+          · exact Or.inl h'
+          · exact Or.inr (Or.inl h')
+        · exact Or.inr (Or.inr ⟨r', hr', h'⟩)
+
+/-- Membership in `openRows`: a row of the table that is its key's open row. -/
+theorem mem_openRows {t : HTable} {r : HRow} :
+    r ∈ openRows t ↔ r ∈ t ∧ openRow t r.key = some r := by
+  unfold openRows
+  rw [List.mem_filter]
+  constructor
+  · intro h; exact ⟨h.1, eq_of_beq h.2⟩
+  · intro h; exact ⟨h.1, by rw [h.2]; exact beq_self_eq_true _⟩
+
+/-- Every row the bulk close leaves at some `(k, openEnd)` is the marker of `k`'s
+    open row. -/
+theorem filterSortKey_bulk_mem {t : HTable} {ts V : Nat} {op : HOp} {k : Key} {x : HRow}
+    (hts : ts ≠ openEnd)
+    (hx : x ∈ filterSortKey (bulkCloseRows t ts V op) k openEnd) :
+    ∃ r, openRow t k = some r ∧ x = bulkMarker r ts V op := by
+  unfold filterSortKey at hx
+  rw [List.mem_filter] at hx
+  rcases hx with ⟨hm, hp⟩
+  rw [Bool.and_eq_true] at hp
+  have hk : x.key = k := eq_of_beq hp.1
+  have hv : x.validTo = openEnd := eq_of_beq hp.2
+  unfold bulkCloseRows at hm
+  rcases mem_closeEach.mp hm with ⟨r, hr, hc | hb⟩
+  · subst hc
+    exact absurd hv hts
+  · rcases mem_openRows.mp hr with ⟨_, hopen⟩
+    refine ⟨r, ?_, hb⟩
+    have hrk : r.key = k := by subst hb; exact hk
+    rw [← hrk]
+    exact hopen
+
+/-- The marker of `k`'s open row is among the bulk-close rows at `(k, openEnd)`. -/
+theorem bulkMarker_mem_filter {t : HTable} {ts V : Nat} {op : HOp} {k : Key} {r : HRow}
+    (hopen : openRow t k = some r) :
+    bulkMarker r ts V op ∈ filterSortKey (bulkCloseRows t ts V op) k openEnd := by
+  rcases liveAt_some hopen with ⟨hfin, _⟩
+  rcases finalAt_some_mem hfin with ⟨hm, hk, _⟩
+  unfold filterSortKey
+  rw [List.mem_filter]
+  refine ⟨?_, ?_⟩
+  · unfold bulkCloseRows
+    exact mem_closeEach.mpr
+      ⟨r, mem_openRows.mpr ⟨hm, by rw [hk]; exact hopen⟩, Or.inr rfl⟩
+  · simp [bulkMarker, hk]
+
+/-! ## Spec 12.03 — SCD2 write protocol (corrected) -/
 
 /--
-After an UPDATE the current row of the key is the new image: it wins `FINAL` at
-`(k, openEnd)` by `_version = V+1`, and even on a tie it is the later row. The
-close and before rows carry `_valid_to = ts ≠ openEnd`, so they never compete at
-the open sorting key.
+After a same-key UPDATE the current row of the key is the new image: it wins `FINAL`
+at `(k, openEnd)` because every earlier open row of `k` carries a version `≤ V`
+(the previous event's version, I2) and a tie goes to the later row. The close row
+carries `_valid_to = ts ≠ openEnd`, so it never competes at the open sorting key.
 -/
 theorem update_supersedes_open_row (t : HTable) (k : Key) (image ts V : Nat)
     (hts : ts < openEnd)
     (hb : ∀ r ∈ t, r.key = k → r.validTo = openEnd → r.version ≤ V) :
-    openRow (applyUpdate t k image ts V) k = some (afterRow k image ts V) := by
+    openRow (applyUpdate t k k image ts V) k = some (afterRow k image ts V) := by
   have hne : ts ≠ openEnd := Nat.ne_of_lt hts
-  have hfin : finalAt (applyUpdate t k image ts V) k openEnd = some (afterRow k image ts V) := by
+  have hfin : finalAt (applyUpdate t k k image ts V) k openEnd = some (afterRow k image ts V) := by
     unfold applyUpdate
-    rw [finalAt_append, filterSortKey_updateRows t k image ts V hne]
-    simp only [List.foldl_cons, List.foldl_nil]
+    rw [finalAt_append, filterSortKey_updateRows_after t k k image ts V hne]
+    rw [List.foldl_cons, List.foldl_nil]
     exact hMaxStep_afterRow_wins t k image ts V hb
   unfold openRow liveAt
   rw [hfin]
   rfl
 
+/-- The close predicate is built from the BEFORE-image key: whenever an open row is
+    visible at `kb`, the statement emits its close row, whatever the after key. -/
+theorem update_closes_before_image_key (t : HTable) (kb ka : Key) (image ts V : Nat) (r : HRow)
+    (h : openRow t kb = some r) :
+    closeRow r ts V ∈ updateRows t kb ka image ts V := by
+  rw [updateRows_some ka image ts V h]
+  exact List.mem_cons_self _ _
+
+/--
+A key-changing UPDATE retires the old key: the delete marker at `(kb, openEnd)`
+wins `FINAL` (version `V ≥` the open row's version, later on a tie) and is deleted,
+so `kb` has no current row. When `kb` had no open row, nothing is added at
+`(kb, openEnd)` and it stays closed.
+-/
+theorem key_change_retires_old_key (t : HTable) (kb ka : Key) (image ts V : Nat)
+    (hkk : kb ≠ ka) (hts : ts < openEnd)
+    (hb : ∀ r ∈ t, r.key = kb → r.validTo = openEnd → r.version ≤ V) :
+    openRow (applyUpdate t kb ka image ts V) kb = none := by
+  have hne : ts ≠ openEnd := Nat.ne_of_lt hts
+  have hka : ka ≠ kb := fun e => hkk e.symm
+  cases hopen : openRow t kb with
+  | none =>
+      have hfilt : filterSortKey (updateRows t kb ka image ts V) kb openEnd = [] := by
+        rw [updateRows_none ka image ts V hopen,
+            filterSortKey_cons_of_key_ne (afterRow ka image ts V) [] kb openEnd hka]
+        rfl
+      unfold applyUpdate openRow liveAt
+      rw [finalAt_append, hfilt]
+      unfold openRow liveAt at hopen
+      exact hopen
+  | some r =>
+      rcases liveAt_some hopen with ⟨hfin, _⟩
+      rcases finalAt_some_mem hfin with ⟨hm, hrk, hv⟩
+      have hle : r.version ≤ V := hb r hm hrk hv
+      have hfilt : filterSortKey (updateRows t kb ka image ts V) kb openEnd
+          = [keyChangeMarker r ts V] := by
+        rw [updateRows_some ka image ts V hopen, if_neg hkk,
+            filterSortKey_cons_of_validTo_ne (closeRow r ts V) _ kb openEnd hne,
+            filterSortKey_cons_of_key_ne (afterRow ka image ts V) _ kb openEnd hka,
+            filterSortKey_cons_of_match (keyChangeMarker r ts V) [] kb openEnd hrk rfl]
+        rfl
+      have hfin' : finalAt (applyUpdate t kb ka image ts V) kb openEnd
+          = some (keyChangeMarker r ts V) := by
+        unfold applyUpdate
+        rw [finalAt_append, hfilt, hfin, List.foldl_cons, List.foldl_nil]
+        simp [hMaxStep, keyChangeMarker, hle]
+      unfold openRow liveAt
+      rw [hfin']
+      rfl
+
+/--
+A key-changing UPDATE opens the new key: at `(ka, openEnd)` the statement
+contributes only the after row (the marker sits at `kb ≠ ka`), which wins `FINAL`
+against every earlier open row of `ka`.
+-/
+theorem key_change_opens_new_key (t : HTable) (kb ka : Key) (image ts V : Nat)
+    (hkk : kb ≠ ka) (hts : ts < openEnd)
+    (hb : ∀ r ∈ t, r.key = ka → r.validTo = openEnd → r.version ≤ V) :
+    openRow (applyUpdate t kb ka image ts V) ka = some (afterRow ka image ts V) := by
+  have hne : ts ≠ openEnd := Nat.ne_of_lt hts
+  have hfilt : filterSortKey (updateRows t kb ka image ts V) ka openEnd
+      = [afterRow ka image ts V] := by
+    cases hopen : openRow t kb with
+    | none =>
+        rw [updateRows_none ka image ts V hopen,
+            filterSortKey_cons_of_match (afterRow ka image ts V) [] ka openEnd rfl rfl]
+        rfl
+    | some r =>
+        rcases liveAt_some hopen with ⟨hfin, _⟩
+        rcases finalAt_some_mem hfin with ⟨_, hrk, _⟩
+        rw [updateRows_some ka image ts V hopen, if_neg hkk,
+            filterSortKey_cons_of_validTo_ne (closeRow r ts V) _ ka openEnd hne,
+            filterSortKey_cons_of_match (afterRow ka image ts V) _ ka openEnd rfl rfl,
+            filterSortKey_cons_of_key_ne (keyChangeMarker r ts V) [] ka openEnd
+              (by show r.key ≠ ka; rw [hrk]; exact hkk)]
+        rfl
+  have hfin : finalAt (applyUpdate t kb ka image ts V) ka openEnd = some (afterRow ka image ts V) := by
+    unfold applyUpdate
+    rw [finalAt_append, hfilt, List.foldl_cons, List.foldl_nil]
+    exact hMaxStep_afterRow_wins t ka image ts V hb
+  unfold openRow liveAt
+  rw [hfin]
+  rfl
+
+/--
+The closed version is visible: with the deleted before copy gone, the close row is
+the ONLY row of `k` at `_valid_to = ts` (no earlier version of `k` was closed at
+that very second — `hfresh`, the second-granularity limitation of 12.03 §3.9), so
+`FINAL` at `(k, ts)` shows it and the as-of history is complete.
+-/
+theorem closed_row_visible_at_close_key (t : HTable) (k : Key) (image ts V : Nat) (r : HRow)
+    (hts : ts < openEnd) (hopen : openRow t k = some r)
+    (hfresh : ∀ r' ∈ t, r'.key = k → r'.validTo ≠ ts) :
+    liveAt (applyUpdate t k k image ts V) k ts = some (closeRow r ts V) := by
+  have hne : openEnd ≠ ts := fun e => Nat.ne_of_lt hts e.symm
+  rcases liveAt_some hopen with ⟨hfin, _⟩
+  rcases finalAt_some_mem hfin with ⟨_, hrk, _⟩
+  have hfilt : filterSortKey (updateRows t k k image ts V) k ts = [closeRow r ts V] := by
+    rw [updateRows_some k image ts V hopen, if_pos rfl,
+        filterSortKey_cons_of_match (closeRow r ts V) _ k ts hrk rfl,
+        filterSortKey_cons_of_validTo_ne (afterRow k image ts V) [] k ts hne]
+    rfl
+  have hfin' : finalAt (applyUpdate t k k image ts V) k ts = some (closeRow r ts V) := by
+    unfold applyUpdate
+    rw [finalAt_append, hfilt]
+    unfold finalAt
+    rw [filterSortKey_nil_of_fresh t k ts hfresh]
+    rfl
+  unfold liveAt
+  rw [hfin']
+  rfl
+
+/-- One version per event: every row an UPDATE emits carries `V`. -/
+theorem update_rows_share_one_version (t : HTable) (kb ka : Key) (image ts V : Nat) :
+    ∀ r ∈ updateRows t kb ka image ts V, r.version = V := by
+  intro r hr
+  cases hopen : openRow t kb with
+  | none =>
+      rw [updateRows_none ka image ts V hopen, List.mem_singleton] at hr
+      rw [hr]; rfl
+  | some r0 =>
+      rw [updateRows_some ka image ts V hopen] at hr
+      rcases List.mem_cons.mp hr with h | hr
+      · rw [h]; rfl
+      rcases List.mem_cons.mp hr with h | hr
+      · rw [h]; rfl
+      by_cases hk : kb = ka
+      · rw [if_pos hk] at hr
+        exact absurd hr (List.not_mem_nil _)
+      · rw [if_neg hk, List.mem_singleton] at hr
+        rw [hr]; rfl
+
+/-- One version per event: both rows a DELETE emits carry `V`. -/
+theorem delete_rows_share_one_version (t : HTable) (k : Key) (ts V : Nat) :
+    ∀ r ∈ deleteRows t k ts V, r.version = V := by
+  intro r hr
+  unfold deleteRows at hr
+  cases hopen : openRow t k with
+  | none => rw [hopen] at hr; exact absurd hr (List.not_mem_nil _)
+  | some r0 =>
+      rw [hopen] at hr
+      rcases List.mem_cons.mp hr with h | hr
+      · rw [h]; rfl
+      · rw [List.mem_singleton] at hr
+        rw [hr]; rfl
+
 /--
 After a DELETE the key has no current row: the delete marker at `(k, openEnd)` wins
-`FINAL` with `_version = V+1` and carries `is_deleted = 1`.
+`FINAL` with `_version = V` (`≥` the open row's version; later on a tie) and carries
+`is_deleted = 1`.
 -/
 theorem delete_hides_open_row (t : HTable) (k : Key) (ts V : Nat) (r : HRow)
     (hts : ts < openEnd) (hopen : openRow t k = some r)
@@ -308,7 +639,6 @@ theorem delete_hides_open_row (t : HTable) (k : Key) (ts V : Nat) (r : HRow)
   rcases liveAt_some hopen with ⟨hfin, _⟩
   rcases finalAt_some_mem hfin with ⟨hm, hk, hv⟩
   have hle : r.version ≤ V := hb r hm hk hv
-  have hge : V + 1 ≥ r.version := Nat.le_succ_of_le hle
   have hfin' : finalAt (applyDelete t k ts V) k openEnd = some (deleteMarker r ts V) := by
     unfold applyDelete deleteRows
     rw [hopen, finalAt_append,
@@ -316,7 +646,7 @@ theorem delete_hides_open_row (t : HTable) (k : Key) (ts V : Nat) (r : HRow)
         filterSortKey_cons_of_match (deleteMarker r ts V) [] k openEnd hk rfl]
     simp only [filterSortKey, List.filter_nil, List.foldl_cons, List.foldl_nil]
     rw [hfin]
-    simp [hMaxStep, deleteMarker, hge]
+    simp [hMaxStep, deleteMarker, hle]
   unfold openRow liveAt
   rw [hfin']
   rfl
@@ -338,92 +668,121 @@ theorem at_most_one_live_row_per_sort_key (t : HTable) (k : Key) (vt : Nat) (a b
     (ha : liveAt t k vt = some a) (hb : liveAt t k vt = some b) : a = b :=
   Option.some.inj (ha.symm.trans hb)
 
-/-! ## Spec 12.03 — gaps (machine-checked counterexamples) -/
+/-! ## Spec 12.03 §3.4 — TRUNCATE-TABLE / DROP-TABLE bulk close -/
 
 /--
-**Gap: the close row and the before row collide.** `getInsertQueryForUpdate` emits,
-in ONE statement, the first SELECT (`_valid_to = ts`, `is_deleted = 0`, `_version = V`)
-and the third SELECT (`_valid_to = ts`, `is_deleted = 1`, `_version = V`) for the
-same open row. They share the sorting key `(pk, ts)` and the same `_version` and
-differ only in `is_deleted`, so `ReplacingMergeTree(_version, is_deleted)` must
-break the tie by physical order.
+The bulk close leaves NO key with a current row: for every key that had an open
+row its marker (version `V ≥` the open row's version, deleted) wins `FINAL` at
+`(k, openEnd)`; a key without an open row receives nothing at `(k, openEnd)`.
 -/
-theorem close_and_before_share_sort_key_and_version (r : HRow) (ts V : Nat) :
-    sameSortKey (closeRow r ts V) (beforeRow r ts V) = true
-      ∧ (closeRow r ts V).version = (beforeRow r ts V).version
-      ∧ (closeRow r ts V).isDeleted ≠ (beforeRow r ts V).isDeleted := by
-  refine ⟨?_, rfl, ?_⟩
-  · simp [sameSortKey, closeRow, beforeRow]
-  · simp [closeRow, beforeRow]
-
-/--
-**Gap: the closed history row depends on insertion order.** Same sorting key, same
-`_version`, opposite `is_deleted`: which row `FINAL` keeps is decided by the
-physical order of the rows inside one `INSERT ... SELECT UNION ALL SELECT`, which
-ClickHouse does not guarantee. In one order the closed history row is hidden; in
-the other it survives.
--/
-theorem closed_history_row_depends_on_insert_order (r : HRow) (ts V : Nat) :
-    liveAt [closeRow r ts V, beforeRow r ts V] r.key ts = none
-      ∧ liveAt [beforeRow r ts V, closeRow r ts V] r.key ts = some (closeRow r ts V) := by
-  constructor
-  · simp [liveAt, finalAt, filterSortKey, List.filter_cons, hMaxStep, closeRow, beforeRow]
-  · simp [liveAt, finalAt, filterSortKey, List.filter_cons, hMaxStep, closeRow, beforeRow]
-
-/--
-**Gap: a staged INSERT is never closed.** In
-`PreparedStatementExecutor.executePreparedStatement` the UPDATE's history statement
-runs inline while the row's INSERT is still staged on the PreparedStatement, so the
-statement's SELECTs see no open row: the UPDATE closes nothing and the pre-update
-image never enters the history.
--/
-theorem staged_insert_writes_no_closed_row (t _staged : HTable) (k : Key) (image ts V : Nat)
-    (h : openRow t k = none) :
-    updateRows t k image ts V = [afterRow k image ts V] := by
-  simp [updateRows, h]
-
-/-- Once the INSERT is flushed, the UPDATE does write the closed history row. -/
-theorem flushed_insert_writes_closed_row (t : HTable) (k : Key) (image ts V : Nat) (r : HRow)
-    (h : openRow t k = some r) :
-    closeRow r ts V ∈ updateRows t k image ts V := by
-  simp [updateRows, h]
-
-/--
-**Gap: the current-state view survives the missing flush.** Even when the UPDATE
-runs against `t` while `staged` is unflushed, the after-image still becomes the
-current row once the staged rows land — only the history row is lost. Row-count
-and current-value checks therefore do not detect the gap.
--/
-theorem staged_update_current_view_still_correct (t staged : HTable) (k : Key)
-    (image ts V : Nat) (hts : ts < openEnd)
-    (hb : ∀ r ∈ t ++ staged, r.key = k → r.validTo = openEnd → r.version ≤ V) :
-    openRow (applyUpdateStaged t staged k image ts V) k = some (afterRow k image ts V) := by
+theorem bulk_close_hides_every_open_row (t : HTable) (ts V : Nat) (op : HOp)
+    (hts : ts < openEnd)
+    (hb : ∀ r ∈ t, r.validTo = openEnd → r.version ≤ V) :
+    ∀ k, openRow (applyBulkClose t ts V op) k = none := by
+  intro k
   have hne : ts ≠ openEnd := Nat.ne_of_lt hts
-  have hfin : finalAt (applyUpdateStaged t staged k image ts V) k openEnd
-      = some (afterRow k image ts V) := by
-    unfold applyUpdateStaged
-    rw [finalAt_append, filterSortKey_updateRows t k image ts V hne]
-    simp only [List.foldl_cons, List.foldl_nil]
-    exact hMaxStep_afterRow_wins (t ++ staged) k image ts V hb
-  unfold openRow liveAt
-  rw [hfin]
-  rfl
+  cases hopen : openRow t k with
+  | none =>
+      have hfilt : filterSortKey (bulkCloseRows t ts V op) k openEnd = [] := by
+        cases hf : filterSortKey (bulkCloseRows t ts V op) k openEnd with
+        | nil => rfl
+        | cons x xs =>
+            have hx : x ∈ filterSortKey (bulkCloseRows t ts V op) k openEnd := by
+              rw [hf]; exact List.mem_cons_self x xs
+            rcases filterSortKey_bulk_mem hne hx with ⟨r, hr, _⟩
+            rw [hopen] at hr
+            exact absurd hr (by simp)
+      unfold applyBulkClose openRow liveAt
+      rw [finalAt_append, hfilt]
+      unfold openRow liveAt at hopen
+      exact hopen
+  | some r =>
+      rcases liveAt_some hopen with ⟨hfin, _⟩
+      rcases finalAt_some_mem hfin with ⟨hm, _, hv⟩
+      have hle : r.version ≤ V := hb r hm hv
+      have hfold : finalAt (applyBulkClose t ts V op) k openEnd = some (bulkMarker r ts V op) := by
+        unfold applyBulkClose
+        rw [finalAt_append, hfin]
+        apply foldl_hMaxStep_const
+        · intro x hx
+          rcases filterSortKey_bulk_mem hne hx with ⟨r', hr', hx'⟩
+          rw [hopen] at hr'
+          rw [hx', Option.some.inj hr']
+        · exact List.ne_nil_of_mem (bulkMarker_mem_filter hopen)
+        · intro m0 h
+          rw [← Option.some.inj h]
+          exact hle
+      unfold openRow liveAt
+      rw [hfold]
+      rfl
+
+/-- The bulk close is append-only: every physical row of the table survives it —
+    no version is truncated or dropped. -/
+theorem bulk_close_preserves_history (t : HTable) (ts V : Nat) (op : HOp) :
+    ∀ r ∈ t, r ∈ applyBulkClose t ts V op := by
+  intro r hr
+  exact List.mem_append_left _ hr
+
+/-! ## Spec 12.03 — the shipped defects, as machine-checked counterexamples -/
 
 /--
-**Gap: a primary-key change leaves the old key open.** The close predicate in
-`getInsertQueryForUpdate` is built from the AFTER image's primary key, so an UPDATE
-that changes the primary key from `k` to `k'` never closes `k`'s open row.
+**Resolved gap G-12.03-1 (old behaviour).** The OLD UPDATE ran inline while the
+row's INSERT was still staged, so its SELECTs saw no open row and wrote only the
+after row: the pre-update version never entered the history. The corrected
+executor flushes first, and the same statement against the flushed table does
+emit the close row.
 -/
-theorem update_only_closes_after_image_key (t : HTable) (k k' : Key) (image ts V : Nat)
+theorem old_inline_update_writes_no_closed_row (t staged : HTable) (k : Key)
+    (image ts V : Nat) (r : HRow)
+    (hvisible : openRow t k = none) (hstaged : openRow (t ++ staged) k = some r) :
+    oldApplyUpdateInline t staged k image ts V = t ++ staged ++ [afterRow k image ts (V + 1)]
+      ∧ closeRow r ts V ∈ updateRows (t ++ staged) k k image ts V := by
+  constructor
+  · simp [oldApplyUpdateInline, oldUpdateRows, hvisible]
+  · rw [updateRows_some k image ts V hstaged]
+    exact List.mem_cons_self _ _
+
+/--
+**Resolved gap G-12.03-2 (old behaviour).** The OLD close row and before copy
+shared the sorting key `(pk, ts)` and the version `V` and differed only in
+`is_deleted`, so `ReplacingMergeTree(_version, is_deleted)` had to break the tie
+by physical order.
+-/
+theorem old_close_and_before_shared_sort_key_and_version (r : HRow) (ts V : Nat) :
+    sameSortKey (closeRow r ts V) (oldBeforeRow r ts V) = true
+      ∧ (closeRow r ts V).version = (oldBeforeRow r ts V).version
+      ∧ (closeRow r ts V).isDeleted ≠ (oldBeforeRow r ts V).isDeleted := by
+  refine ⟨?_, rfl, ?_⟩
+  · simp [sameSortKey, closeRow, oldBeforeRow]
+  · simp [closeRow, oldBeforeRow]
+
+/--
+**Resolved gap G-12.03-2 (old behaviour).** Which of the two rows `FINAL` kept was
+decided by the physical order inside one `INSERT ... SELECT UNION ALL SELECT`: in
+one order the closed history row was hidden, in the other it survived.
+-/
+theorem old_closed_history_row_depended_on_insert_order (r : HRow) (ts V : Nat) :
+    liveAt [closeRow r ts V, oldBeforeRow r ts V] r.key ts = none
+      ∧ liveAt [oldBeforeRow r ts V, closeRow r ts V] r.key ts = some (closeRow r ts V) := by
+  constructor
+  · simp [liveAt, finalAt, filterSortKey, List.filter_cons, hMaxStep, closeRow, oldBeforeRow]
+  · simp [liveAt, finalAt, filterSortKey, List.filter_cons, hMaxStep, closeRow, oldBeforeRow]
+
+/--
+**Resolved gap G-12.03-3 (old behaviour).** The OLD close predicate was built from
+the AFTER image's key, so an UPDATE that moved a row from `k` to `k'` left `k`'s
+open row untouched.
+-/
+theorem old_update_only_closed_after_image_key (t : HTable) (k k' : Key) (image ts V : Nat)
     (hkk : k ≠ k') :
-    openRow (applyUpdate t k' image ts V) k = openRow t k := by
+    openRow (oldApplyUpdate t k' image ts V) k = openRow t k := by
   have hk'k : k' ≠ k := fun e => hkk e.symm
-  have hfilt : filterSortKey (updateRows t k' image ts V) k openEnd = [] := by
-    unfold updateRows
+  have hfilt : filterSortKey (oldUpdateRows t k' image ts V) k openEnd = [] := by
+    unfold oldUpdateRows
     cases hopen : openRow t k' with
     | none =>
         simp only [List.nil_append, List.append_nil]
-        rw [filterSortKey_cons_of_key_ne (afterRow k' image ts V) [] k openEnd hk'k]
+        rw [filterSortKey_cons_of_key_ne (afterRow k' image ts (V + 1)) [] k openEnd hk'k]
         rfl
     | some r =>
         rcases liveAt_some hopen with ⟨hfin, _⟩
@@ -431,14 +790,14 @@ theorem update_only_closes_after_image_key (t : HTable) (k k' : Key) (image ts V
         have hrk' : r.key ≠ k := by rw [hrk]; exact hk'k
         simp only [List.singleton_append, List.cons_append, List.nil_append]
         rw [filterSortKey_cons_of_key_ne (closeRow r ts V) _ k openEnd hrk',
-            filterSortKey_cons_of_key_ne (afterRow k' image ts V) _ k openEnd hk'k,
-            filterSortKey_cons_of_key_ne (beforeRow r ts V) [] k openEnd hrk']
+            filterSortKey_cons_of_key_ne (afterRow k' image ts (V + 1)) _ k openEnd hk'k,
+            filterSortKey_cons_of_key_ne (oldBeforeRow r ts V) [] k openEnd hrk']
         rfl
-  unfold openRow liveAt applyUpdate
+  unfold openRow liveAt oldApplyUpdate
   rw [finalAt_append, hfilt]
   rfl
 
-/-! ## Spec 12.05 — replication-log-only mode and database routing -/
+/-! ## Spec 12.01 / 12.05 — modes, database routing and database-level DDL -/
 
 /-- The two mode flags. -/
 structure ModeFlags where
@@ -451,8 +810,9 @@ deriving DecidableEq, Repr
 def runnableDataWrites (f : ModeFlags) (batch : List Nat) : List Nat :=
   if f.logOnly && f.enable then [] else batch
 
-/-- `ClickHouseBatchWriter.persistRecords` has no such skip (single-threaded path). -/
-def writerDataWrites (_f : ModeFlags) (batch : List Nat) : List Nat := batch
+/-- `ClickHouseBatchWriter.persistRecords` now applies the same skip. -/
+def writerDataWrites (f : ModeFlags) (batch : List Nat) : List Nat :=
+  runnableDataWrites f batch
 
 /-- Both executors call `addRecordsToHistoryTable`, gated on `enable` only. -/
 def historyWrites (f : ModeFlags) (batch : List Nat) : List Nat :=
@@ -462,9 +822,28 @@ def historyWrites (f : ModeFlags) (batch : List Nat) : List Nat :=
 def runnableDatabase (f : ModeFlags) (src hist : String) : String :=
   if f.enable then hist else src
 
-/-- `ClickHouseBatchWriter.resolveDatabaseName`. -/
+/-- `ClickHouseBatchWriter.resolveDatabaseName` now routes on `enable` alone. -/
 def writerDatabase (f : ModeFlags) (src hist : String) : String :=
+  runnableDatabase f src hist
+
+/-- OLD `ClickHouseBatchWriter.persistRecords`: no log-only skip. -/
+def oldWriterDataWrites (_f : ModeFlags) (batch : List Nat) : List Nat := batch
+
+/-- OLD `ClickHouseBatchWriter.resolveDatabaseName`: keyed on `enable || logOnly`. -/
+def oldWriterDatabase (f : ModeFlags) (src hist : String) : String :=
   if f.enable || f.logOnly then hist else src
+
+/-- The level a replayed DDL statement acts on. -/
+inductive DdlKind where
+  | table | database
+deriving DecidableEq, Repr
+
+/-- Whether the DDL translator applies a statement of kind `d`: in history mode
+    (`enable`) the history database is fixed by configuration, so database-level
+    DDL (`CREATE DATABASE`, `DROP-DATABASE`) is ignored and only table-level DDL
+    is applied; outside history mode every kind is applied. -/
+def ddlApplied (f : ModeFlags) (d : DdlKind) : Bool :=
+  if f.enable then (d == DdlKind.table) else true
 
 def standard : ModeFlags := ⟨false, false⟩
 def scd2 : ModeFlags := ⟨true, false⟩
@@ -483,23 +862,19 @@ theorem log_only_flag_alone_is_standard_on_runnable (b : List Nat) :
     runnableDataWrites ⟨false, true⟩ b = b ∧ historyWrites ⟨false, true⟩ b = [] :=
   ⟨rfl, rfl⟩
 
-/--
-**Gap (parity with spec 03.02): the writer path ignores log-only.**
-`ClickHouseBatchWriter.persistRecords` has no log-only skip, so on the
-single-threaded path data-table rows are written even in log-only mode.
--/
-theorem writer_path_ignores_log_only (b : List Nat) :
-    writerDataWrites logOnlyMode b = b := rfl
-
-/--
-**Gap: database routing diverges on `replication_log_only` alone.**
-`ClickHouseBatchRunnable.resolveDatabaseName` keys on `enable` only while
-`ClickHouseBatchWriter.resolveDatabaseName` keys on `enable || logOnly`, so with
-only the log-only flag set the two executors write to different databases.
--/
-theorem routing_diverges_on_log_only_alone (src hist : String) :
-    runnableDatabase ⟨false, true⟩ src hist = src ∧ writerDatabase ⟨false, true⟩ src hist = hist :=
+/-- Parity (spec 03.02): in log-only mode BOTH execution engines skip the data tables. -/
+theorem both_engines_skip_data_in_log_only (b : List Nat) :
+    runnableDataWrites logOnlyMode b = [] ∧ writerDataWrites logOnlyMode b = [] :=
   ⟨rfl, rfl⟩
+
+/-- Parity (spec 03.02): the two engines route and gate identically for every flag
+    combination, and the degenerate `enable=false, log_only=true` is standard
+    routing on both. -/
+theorem both_engines_route_alike (f : ModeFlags) (src hist : String) (b : List Nat) :
+    writerDatabase f src hist = runnableDatabase f src hist
+      ∧ writerDataWrites f b = runnableDataWrites f b
+      ∧ writerDatabase ⟨false, true⟩ src hist = src :=
+  ⟨rfl, rfl, rfl⟩
 
 /-- In SCD2 mode both executors route every table to the history database. -/
 theorem scd2_routes_every_table_to_history_database (src hist : String) :
@@ -509,5 +884,31 @@ theorem scd2_routes_every_table_to_history_database (src hist : String) :
 /-- Standard mode writes no history rows. -/
 theorem standard_mode_writes_no_history (b : List Nat) :
     historyWrites standard b = [] := rfl
+
+/-- Database-level DDL is ignored in both history modes and applied in standard
+    mode; table-level DDL is applied in history mode. -/
+theorem database_ddl_ignored_in_history_mode :
+    ddlApplied scd2 DdlKind.database = false
+      ∧ ddlApplied logOnlyMode DdlKind.database = false
+      ∧ ddlApplied standard DdlKind.database = true
+      ∧ ddlApplied scd2 DdlKind.table = true := by
+  decide
+
+/--
+**Resolved gap G-12.05-1 (old behaviour).** The OLD single-threaded writer had no
+log-only skip, so it wrote data-table rows in log-only mode.
+-/
+theorem old_writer_path_ignored_log_only (b : List Nat) :
+    oldWriterDataWrites logOnlyMode b = b := rfl
+
+/--
+**Resolved gap G-12.01-1 (old behaviour).** The OLD writer keyed routing on
+`enable || logOnly` while the runnable keyed on `enable`, so with only the
+log-only flag set the two engines wrote to different databases.
+-/
+theorem old_routing_diverged_on_log_only_alone (src hist : String) :
+    runnableDatabase ⟨false, true⟩ src hist = src
+      ∧ oldWriterDatabase ⟨false, true⟩ src hist = hist :=
+  ⟨rfl, rfl⟩
 
 end Replication

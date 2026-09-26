@@ -8,6 +8,7 @@ import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMappe
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.KeylessTableWarning;
 import com.altinity.clickhouse.sink.connector.history.BinLogHistory;
+import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.clickhouse.data.ClickHouseDataType;
 import com.google.common.annotations.VisibleForTesting;
 import org.apache.kafka.connect.data.Field;
@@ -234,14 +235,20 @@ public class ClickHouseAutoCreateTable
         // If Replication history is enabled, add the temporal columns
         // _valid_from, _valid_to, _operation, and is_deleted
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            // Both validity bounds carry the sentinel DEFAULT and the configured
+            // timezone, exactly as the DDL translator emits them, so a table
+            // gets the same column types whichever path created it
+            // (Spec 12.02 section 3.2, differences D-1 and D-2).
+            String historyDateTimeType = historyDateTimeColumnType(config);
+
             // Add _valid_from column
             createTableSyntax.append("`").append(DELETED_FROM_TIME_COLUMN)
-                    .append("` ").append("DateTime")
+                    .append("` ").append(historyDateTimeType)
                     .append(",");
 
             // Add _valid_to column
             createTableSyntax.append("`").append(DELETED_TIME_COLUMN)
-                    .append("` ").append(DELETED_TIME_COLUMN_DATA_TYPE)
+                    .append("` ").append(historyDateTimeType)
                     .append(",");
 
             // Add operation column
@@ -378,11 +385,16 @@ public class ClickHouseAutoCreateTable
             createTableSyntax.append(")");
         }
 
-        // If Replication history is enabled, add the ORDER BY toDate(deleted_time) , Add TTL deleted_time + toIntervalDay(30)
-        // TTL deleted_time + toIntervalDay(30)
-            if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-                createTableSyntax.append(" TTL `").append(DELETED_TIME_COLUMN).append("` + toIntervalDay(30)");
-            }
+        // History mode: a closed version expires replication.history.ttl days
+        // after it was superseded; open rows (sentinel _valid_to) never do.
+        // The configured TTL, as the DDL translator emits it -- this path used
+        // to hardcode 30 (Spec 12.02 section 3.4 and 3.5, difference D-3).
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            createTableSyntax.append(" TTL `").append(DELETED_TIME_COLUMN)
+                    .append("` + toIntervalDay(")
+                    .append(config.getInt(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TTL.toString()))
+                    .append(")");
+        }
 
 
         // Add SETTINGS if they are provided (SETTINGS should be placed last).
@@ -409,6 +421,36 @@ public class ClickHouseAutoCreateTable
         }
 
         return createTableSyntax.toString();
+    }
+
+    /**
+     * The column type of {@code _valid_from} / {@code _valid_to} on an SCD2
+     * history table: {@code DateTime}, suffixed with
+     * {@code clickhouse.datetime.timezone} when one is configured
+     * ({@code DateTime('America/Chicago')}), with the open-row sentinel as
+     * its DEFAULT (Spec 12.02 section 3.1 and 3.2).
+     *
+     * <p>The same rule as the DDL translator's
+     * {@code DataTypeConverter.addTimeZoneToDateTimeType} -- which lives in
+     * the lightweight module and is not reachable from here -- so a table
+     * gets the same column type whichever path created it (Spec 08.05
+     * section 3.1.1). An unparseable timezone is logged and ignored, as the
+     * translator does.</p>
+     */
+    @VisibleForTesting
+    static String historyDateTimeColumnType(ClickHouseSinkConnectorConfig config) {
+        String type = "DateTime";
+        String userProvidedTimeZone = config.getString(
+                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
+        if (userProvidedTimeZone != null && !userProvidedTimeZone.trim().isEmpty()) {
+            try {
+                type = type + "('" + ZoneId.of(userProvidedTimeZone.trim()) + "')";
+            } catch (Exception e) {
+                log.error("Error parsing user provided timezone: " + userProvidedTimeZone, e);
+            }
+        }
+        return type + " DEFAULT '"
+                + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL) + "'";
     }
 
     /**
