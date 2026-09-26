@@ -16,7 +16,8 @@ Specifies the asynchronous decoupling boundary between the single-threaded Debez
   - `void appendToRecords(List<ClickHouseStruct> batch, ClickHouseSinkConnectorConfig config) throws InterruptedException`
   - `void appendToRecordsWithHashRouting(List<ClickHouseStruct> batch) throws InterruptedException`
 - **Registration**: `DebeziumOffsetManagement.registerHandoff(unit, groups)` (spec 09.01 §3.1).
-- **Hard cap**: `DebeziumOffsetManagement.awaitHandoffCapacity(maxOutstandingRecords, timeoutMs, livenessCheck)` and `outstandingRecordCount()` (§3.4), called by `appendToRecords` before either enqueue path.
+- **Hard cap**: `DebeziumOffsetManagement.awaitHandoffCapacity(maxOutstandingRecords, maxOutstandingBytes, timeoutMs, livenessCheck)`, `outstandingRecordCount()` and `outstandingByteCount()` (§3.4), called by `appendToRecords` before either enqueue path; the per-row estimate is `RecordSizeEstimator.estimateGroup` (§3.4 item 7), stamped on every row at `registerHandoff`.
+- **Debezium queue byte bound**: `DebeziumQueueBytesPreflight.apply(props)` (§3.4 item 8), run at `setup()` with the other preflights.
 - **Carrier**: `RoutedBatch(batch, assignedThreadId, tableName, handoffSequence)`.
 
 ### Configuration defaults (as shipped in `ClickHouseSinkConnectorConfig`)
@@ -27,7 +28,10 @@ Specifies the asynchronous decoupling boundary between the single-threaded Debez
 | `thread.pool.size` | 10 | number of workers; `> 1` selects routing mode |
 | `sink.connector.max.queue.size` | 500000 | capacity of each handoff queue, in batches |
 | `sink.connector.handoff.max.outstanding.records` | 500000 | hard cap on rows handed off and not yet acknowledged (§3.4); `0` disables it |
+| `sink.connector.handoff.max.outstanding.bytes` | ¼ of the maximum heap (floor 256 MiB) | the same cap in ESTIMATED BYTES (§3.4 item 7); the reader pauses when either cap is met; `0` disables the byte cap |
 | `sink.connector.handoff.wait.timeout.ms` | 600000 | longest one wait at the hard cap may last before the engine stops (§3.4) |
+| `buffer.max.bytes` | 256 MiB | most estimated bytes per JDBC INSERT chunk, applied with `buffer.max.records` (spec 03.06 §3.1); `0` disables the byte limit |
+| `max.queue.size.in.bytes` (Debezium) | 1/16 of the maximum heap (floor 64 MiB) when the operator sets nothing | byte bound on Debezium's own change-event queue (§3.4 item 8); Debezium's own default is `0` = off |
 
 (Earlier revisions of this document stated 10,000 / 1,000 ms; those were never
 the shipped defaults.)
@@ -119,6 +123,49 @@ could do nothing about it. Hence, on the Debezium thread, BEFORE
    quiet gap longer than 60 s, or on `reset()`; nothing per slice; nothing at
    all when the cap is not met. The wait limit (item 5) is per wait and
    unaffected: pacing changes what is logged, never how long the reader waits.
+7. **The cap is also in ESTIMATED BYTES.** A row count means something
+   different for every table width: 500,000 rows of a narrow table is a few
+   gigabytes of heap, 500,000 rows of a table with megabyte BLOB or JSON
+   columns is an order of magnitude more than any heap, and the JVM is lost to
+   garbage collection long before the row cap is met. So at `registerHandoff`
+   every unit is charged an estimate of its retained bytes
+   (`RecordSizeEstimator`): the Debezium envelope of the FIRST row of each
+   TABLE in each group — key and value payload walked field by field:
+   strings, byte arrays, nested structs, collections, boxed scalars — scaled
+   by a retention factor of 3 for boxing, `Object[]`/`Struct` overhead and
+   both row images, plus a fixed 512 bytes per row, charged to every row of
+   that table in that group (the rows of one table in one batch are alike in
+   width; sampling keeps the cost at a few hundred field reads per table per
+   group). A routed group is one table, so it is sampled once; a
+   single-threaded (legacy) group is the WHOLE batch and may hold several
+   tables, each sampled on its own first row — sampling only the group's
+   first row charged a narrow table at the head of the batch to every row of
+   a wide table behind it, and the cap could not see the heap those rows
+   pinned. Every row is stamped with its share
+   (`ClickHouseStruct.estimatedBytes`) for the INSERT chunker (spec 03.06
+   §3.1). `outstandingByteCount()` follows handoff and acknowledgement exactly
+   as the row count does, a parked unit still counted, `reset()` zeroing it.
+   The producer pauses (items 2–6 unchanged) while the outstanding rows are at
+   or above `sink.connector.handoff.max.outstanding.records` OR the
+   outstanding estimated bytes are at or above
+   `sink.connector.handoff.max.outstanding.bytes` (default one quarter of the
+   maximum heap, floor 256 MiB); either may be `0` to disable that dimension.
+   The estimate is deterministic and deliberately high: an under-estimate lets
+   the heap fill, an over-estimate pauses the reader a little early, which
+   costs throughput and nothing else.
+8. **Debezium's own queue is bounded in bytes too.** In front of the handoff,
+   Debezium buffers the events it has read and not yet delivered in a queue
+   bounded by `max.queue.size` (8192 EVENTS by default) and, only if set, by
+   `max.queue.size.in.bytes` — whose Debezium default is `0`, i.e. no byte
+   bound. Nothing in the connector or its deployment templates set it, so on
+   a wide-row source that queue held gigabytes on the same heap, invisible to
+   every bound above. `DebeziumQueueBytesPreflight.apply(props)` runs at
+   `setup()` with the other preflights: when the operator set nothing (or a
+   blank), it sets `max.queue.size.in.bytes` to one sixteenth of the maximum
+   heap, floor 64 MiB, and says so at INFO; an operator's explicit value —
+   including `0` — is kept and logged. Debezium blocks its reader when the
+   bound is met, which is the backpressure the sink wants to reach the binlog
+   client anyway.
 
 While the producer is paused, Debezium's own bounded queue fills and the
 binlog client stops reading; a source whose `net_write_timeout` expires in
@@ -136,8 +183,18 @@ rows never reached a queue, so an offset must never pass them (spec 09.01 §3.7)
 
 ### 3.6 Memory footprint
 Each queued batch holds at most one Debezium batch's rows for one table (routing)
-or one Debezium batch (legacy). Bounding `sink.connector.max.queue.size` bounds
-heap consumption under high source write volume.
+or one Debezium batch (legacy). `sink.connector.max.queue.size` bounds the
+queues in BATCHES, so it is not a memory bound on its own (§3.4); the bounds
+that hold under high source write volume are the handoff cap in rows and in
+estimated bytes (§3.4 items 2 and 7) and Debezium's byte-bounded queue in
+front of it (§3.4 item 8).
+
+The single-threaded (legacy) queue is bounded whether or not the operator set
+`sink.connector.max.queue.size`: by the operator's value, or by the same
+`ClickHouseSinkConnectorConfig.DEFAULT_MAX_QUEUE_SIZE` (500000) the routed
+queues get from the ConfigDef. It used to be constructed unbounded when the
+raw property was absent — `setup()` read the `Properties`, not the config, so
+the ConfigDef default never reached it.
 
 ---
 
@@ -148,8 +205,9 @@ heap consumption under high source write volume.
   no control-record offset can pass it (spec 09.04).
 - **Invariant I9**: a handoff failure throws.
 - **Backpressure Propagation**: a slow ClickHouse slows binlog reading rather
-  than growing memory without bound — enforced in rows by the hard cap (§3.4),
-  not only in batches by the queue capacity.
+  than growing memory without bound — enforced in rows AND in estimated bytes
+  by the hard cap (§3.4 items 2 and 7), with Debezium's own queue bounded in
+  bytes in front of it (item 8), not only in batches by the queue capacity.
 
 ---
 
@@ -184,3 +242,30 @@ heap consumption under high source write volume.
   (`pacingEndedIsReportedWhenTheReaderStopsBeingPaced`); `reset()` closes the
   period with the same line and the next pause is a new period
   (`resetClosesThePacingPeriod`).
+- `RecordSizeEstimatorTest` — §3.4 item 7, the estimate: payload bytes follow
+  the value (strings by length, byte arrays and buffers by length, structs by
+  their fields, a boxed scalar one object) (`payloadBytesFollowTheValue`); a
+  row's estimate is the envelope payload times the retention factor plus the
+  fixed overhead, both images of an UPDATE charged
+  (`estimateScalesTheEnvelope`); a row without an envelope costs its fixed
+  overhead, never zero (`rowWithoutEnvelopeCostsTheOverhead`); a group is
+  sampled once, every row stamped with the per-row share, the total per-row
+  times size (`groupIsSampledOnceAndStamped`); a multi-table (legacy-mode)
+  group is sampled once per table, so a narrow table at the head of the
+  batch cannot hide a wide table behind it and the total is the sum of the
+  per-table stamps (`multiTableGroupIsSampledPerTable`).
+- `HandoffHardCapBytesTest` — §3.4 item 7, the cap: the outstanding byte
+  count is added at handoff, stamped on every row, a parked unit still
+  counted, released only at acknowledgement
+  (`byteCountFollowsHandoffAndAcknowledgement`); at the byte cap the producer
+  waits until the head is acknowledged with the row cap disabled
+  (`atTheByteCapWaitsUntilTheHeadIsAcknowledged`); under the byte cap, or
+  with both caps disabled, it is not delayed (`underTheByteCapReturnsAtOnce`);
+  either cap alone pauses it, the limit failure naming both knobs
+  (`eitherCapPauses`); `reset()` zeroes the bytes (`resetZeroesTheBytes`).
+- `DebeziumQueueBytesPreflightTest` — §3.4 item 8: absent → one sixteenth of
+  the maximum heap, floored at 64 MiB (`absentGetsTheHeapDerivedDefault`); an
+  unknown or unlimited heap gets the floor (`unknownHeapGetsTheFloor`); an
+  operator's value is kept, `0` included, a blank treated as absent
+  (`operatorValueIsKept`); the real entry point yields a positive bound
+  (`realEntryPointIsPositive`).

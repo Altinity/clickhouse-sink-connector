@@ -75,6 +75,64 @@ public class ClickHouseBatchRunnable implements Runnable {
             new HashMap<>();
 
     /**
+     * Closes every connection this worker holds -- the per-database
+     * connections, the system connection, and the connection each cached
+     * table writer holds -- and forgets them. Called by the engine once the
+     * worker pool has terminated (spec 01.01 §3.3 step 4a): a worker is
+     * discarded with its pool on every engine restart, and without this call
+     * its connections were never returned or closed, so each restart leaked
+     * {@code thread.pool.size} x databases of them. Safe to call more than
+     * once; a connection that fails to close is logged and skipped, never
+     * rethrown.
+     *
+     * <p>The writers matter because a writer's connection is not always one
+     * of this worker's per-database connections: a writer is built on the
+     * per-database connection, but {@code BaseDbWriter.getConnection()}
+     * replaces a closed or evicted handle with a fresh checkout from the pool,
+     * and that checkout is known to the writer alone. Closing only the
+     * per-database map returned the stale original (a no-op) and left the
+     * replacement checked out of the pool for the life of the process -- one
+     * pool slot per reconnected writer per restart, until the pool ran dry.</p>
+     */
+    public synchronized void closeConnections() {
+        for (Map.Entry<String, Connection> entry : this.databaseToConnectionMap.entrySet()) {
+            closeQuietly(entry.getValue(), entry.getKey());
+        }
+        if (this.topicToDbWriterMap != null) {
+            for (Map.Entry<String, DbWriter> entry : this.topicToDbWriterMap.entrySet()) {
+                Connection held = entry.getValue().heldConnection();
+                // Already closed above when it is one of the per-database
+                // connections; only a re-acquired handle is new here.
+                if (held != null && !this.databaseToConnectionMap.containsValue(held)) {
+                    closeQuietly(held, entry.getKey());
+                }
+            }
+            this.topicToDbWriterMap.clear();
+        }
+        this.databaseToConnectionMap.clear();
+        closeQuietly(this.systemConnection, BaseDbWriter.SYSTEM_DB);
+        this.systemConnection = null;
+    }
+
+    /** Number of per-database connections currently held. Package-private for the test. */
+    int openDatabaseConnections() {
+        return this.databaseToConnectionMap.size();
+    }
+
+    private void closeQuietly(Connection conn, String databaseName) {
+        if (conn == null) {
+            return;
+        }
+        try {
+            if (!conn.isClosed()) {
+                conn.close();
+            }
+        } catch (SQLException e) {
+            log.warn("Worker {}: could not close the connection to `{}`: {}", this.threadId, databaseName, e.toString());
+        }
+    }
+
+    /**
      * Map of topic names to table names.
      */
     private final Map<String, String> topic2TableMap;
@@ -275,7 +333,8 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @return a Connection to the specified database, or null if none could
      *         be obtained
      */
-    private Connection getClickHouseConnection(String databaseName) {
+    @VisibleForTesting
+    Connection getClickHouseConnection(String databaseName) {
         if (this.databaseToConnectionMap.containsKey(databaseName)) {
             return this.databaseToConnectionMap.get(databaseName);
         }

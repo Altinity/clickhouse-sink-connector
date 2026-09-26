@@ -8,7 +8,6 @@ import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
-import com.google.common.collect.Lists;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -258,9 +257,13 @@ public class PreparedStatementExecutor {
 
         AtomicBoolean result = new AtomicBoolean(false);
         long maxRecordsInBatch = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
+        // Chunks close on rows OR on estimated bytes (spec 03.06 section 3.1):
+        // the driver renders a whole chunk as SQL text in memory before it is
+        // sent, so on a wide-row table the row count alone bounds nothing.
+        long maxBytesInBatch = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_BYTES.toString());
         List<ClickHouseStruct> failedRecords = new ArrayList<>();
 
-        Lists.partition(entry.getValue(), (int)maxRecordsInBatch).forEach(batch -> {
+        BatchChunker.chunk(entry.getValue(), maxRecordsInBatch, maxBytesInBatch).forEach(batch -> {
 
             String databaseName = null;
 

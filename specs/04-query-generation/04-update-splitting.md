@@ -33,9 +33,10 @@ Specifies the handling of MySQL UPDATE operations (`op == 'u'`) across standard 
 When `replication.history.enable = true`:
 - The connector maintains SCD Type 2 bitemporal history in the configured history tables.
 - Both `before` and `after` images are preserved with audit columns:
-  - `_operation = 'u'`
+  - `_operation = 'U'` (the single-letter code of `CDC_OPERATION.getOperation()`)
   - `_valid_from`, `_valid_to`
   - `is_deleted`
+- The statement itself (three `SELECT`s in one `INSERT`: close the open row, insert the after image at `V+1`, re-insert the before image deleted), its execution inline without a prior flush, the DELETE counterpart and the recorded gaps are specified in **Spec 12.03**; the table shape in **Spec 12.02**; the mode matrix in **Spec 12.01**.
 
 ---
 

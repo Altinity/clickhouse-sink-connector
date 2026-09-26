@@ -189,6 +189,15 @@ public class DebeziumChangeEventCapture {
             new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /**
+     * The worker runnables behind {@link #workerFutures}, kept so {@code stop()}
+     * can close the connections each one holds once the pool has terminated
+     * (spec 01.01 §3.3 step 4a). Discarding a pool without this leaked every
+     * worker's per-database connections on every engine restart.
+     */
+    final java.util.List<ClickHouseBatchRunnable> workerRunnables =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
      * Number of threads in the thread pool (for hash-based routing).
      */
 
@@ -860,12 +869,15 @@ public class DebeziumChangeEventCapture {
                     + "last committed position.", abandoned);
         }
 
-        // Check if max queue size was defined by the user.
+        // The single-threaded queue is bounded either way: by the operator's
+        // value, or by the same default the routed queues get from the
+        // ConfigDef. It used to be unbounded when the property was absent --
+        // the ConfigDef default never reached this line (spec 01.05 §3.6).
         if (props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()) != null) {
             int maxQueueSize = Integer.parseInt(props.getProperty(ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString()));
             this.records = new LinkedBlockingQueue<>(maxQueueSize);
         } else {
-            this.records = new LinkedBlockingQueue<>();
+            this.records = new LinkedBlockingQueue<>(ClickHouseSinkConnectorConfig.DEFAULT_MAX_QUEUE_SIZE);
         }
 
         try {
@@ -898,6 +910,12 @@ public class DebeziumChangeEventCapture {
         // a transaction boundary (spec 01.07). Same Properties object the
         // completion-callback restart rebuilds the engine from.
         BinlogKeepAlivePreflight.apply(props);
+        // Debezium's own change-event queue is bounded in events only unless
+        // max.queue.size.in.bytes is set; its default is 0 (off). On a
+        // wide-row source that is gigabytes held in front of every bound the
+        // sink applies, on the same fixed heap. Bound it in bytes too, unless
+        // the operator chose a value (spec 01.05 section 3.4 item 8).
+        DebeziumQueueBytesPreflight.apply(props);
         // Every start resumes from the durable offset and Debezium re-reads the
         // resumed transaction from BEGIN, logging each already-delivered event
         // at INFO with its full row image. The rows are never logged: the
@@ -1011,6 +1029,20 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Error stopping executor", e);
         }
+
+        // 4a. The pool has terminated: no worker can touch its connections
+        //     again, so close them now (spec 01.01 §3.3 step 4a). Every engine
+        //     restart discards this pool and builds a new one; without this
+        //     the discarded workers' per-database connections were never
+        //     closed, thread.pool.size x databases of them per restart.
+        for (ClickHouseBatchRunnable worker : this.workerRunnables) {
+            try {
+                worker.closeConnections();
+            } catch (Exception e) {
+                log.error("Error closing a worker's connections", e);
+            }
+        }
+        this.workerRunnables.clear();
 
         // 4b. The online primary-key backfill thread: interrupted and waited
         //     for a few seconds at most; an interrupted copy re-runs at the
@@ -3217,8 +3249,10 @@ public class DebeziumChangeEventCapture {
                 this.routedQueues.add(new LinkedBlockingQueue<>(maxQueueSize));
             }
             for (int i = 0; i < this.threadPoolSize; i++) {
+                ClickHouseBatchRunnable worker = new ClickHouseBatchRunnable(this.routedQueues.get(i), i, config, new HashMap<>());
+                this.workerRunnables.add(worker);
                 this.workerFutures.add(this.executor.scheduleAtFixedRate(
-                        new ClickHouseBatchRunnable(this.routedQueues.get(i), i, config, new HashMap<>()),
+                        worker,
                         0,
                         config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()),
                         TimeUnit.MILLISECONDS));
@@ -3228,8 +3262,10 @@ public class DebeziumChangeEventCapture {
             // Single thread - use legacy mode
             log.info("********* Using legacy mode with single thread *********");
             for (int i = 0; i < this.threadPoolSize; i++) {
+                ClickHouseBatchRunnable worker = new ClickHouseBatchRunnable(this.records, config, new HashMap<>());
+                this.workerRunnables.add(worker);
                 this.workerFutures.add(this.executor.scheduleAtFixedRate(
-                        new ClickHouseBatchRunnable(this.records, config, new HashMap<>()),
+                        worker,
                         0,
                         config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()),
                         TimeUnit.MILLISECONDS));
@@ -3282,8 +3318,13 @@ public class DebeziumChangeEventCapture {
         // binlog client. The dead-worker check runs between slices: a dead
         // worker can never acknowledge, so it must stop the engine, not be
         // waited on.
+        // The cap is in rows AND in estimated bytes (spec 01.05 section 3.4
+        // item 7): a row count means something different for every table
+        // width, and a source of megabyte BLOB rows fills the heap long before
+        // the row cap is met. The reader pauses when either bound is met.
         DebeziumOffsetManagement.awaitHandoffCapacity(
                 config.getLong(ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_RECORDS.toString()),
+                config.getLong(ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_BYTES.toString()),
                 config.getLong(ClickHouseSinkConnectorConfigVariables.HANDOFF_WAIT_TIMEOUT_MS.toString()),
                 this::failIfWorkerDied);
 

@@ -91,12 +91,15 @@ public class DebeziumOffsetManagement {
     static final class HandoffUnit {
         final long sequence;
         final List<ClickHouseStruct> records;
+        /** Estimated retained bytes of the unit's rows (spec 01.05 §3.4 item 7), fixed at handoff. */
+        final long bytes;
         int remainingGroups;
 
-        HandoffUnit(long sequence, List<ClickHouseStruct> records, int groups) {
+        HandoffUnit(long sequence, List<ClickHouseStruct> records, int groups, long bytes) {
             this.sequence = sequence;
             this.records = records;
             this.remainingGroups = groups;
+            this.bytes = bytes;
         }
     }
 
@@ -117,6 +120,15 @@ public class DebeziumOffsetManagement {
      * {@link #reset()}.
      */
     private static final AtomicLong outstandingRecords = new AtomicLong();
+
+    /**
+     * Estimated retained bytes of the rows handed off and not yet acknowledged:
+     * the sum of {@link HandoffUnit#bytes} over {@link #outstandingSequences}
+     * (spec 01.05 §3.4 item 7). The row count above is blind to row width; on
+     * a fixed heap this is the number that matters. Added at handoff,
+     * subtracted at acknowledgement, zeroed by {@link #reset()}.
+     */
+    private static final AtomicLong outstandingBytes = new AtomicLong();
 
     /**
      * How long {@link #awaitHandoffCapacity} sleeps between re-reads of the
@@ -154,6 +166,7 @@ public class DebeziumOffsetManagement {
     // class monitor by the producer thread; closed and cleared by reset().
     private static long pacingStartNanos;   // 0 while the reader is not paced
     private static long pacingCap;
+    private static long pacingCapBytes;
     private static long lastReleaseNanos;
     private static long pacingPauses;
     private static long pacingPausedNanos;
@@ -248,7 +261,14 @@ public class DebeziumOffsetManagement {
             throw new IllegalArgumentException("a handed-off batch must have at least one group");
         }
         long sequence = handoffCounter.getAndIncrement();
-        HandoffUnit handoffUnit = new HandoffUnit(sequence, unit, groups.size());
+        // Bytes are estimated per group -- the rows of one table in one batch
+        // are alike in width -- and every row is stamped with its share, which
+        // the INSERT chunker reads later (spec 01.05 §3.4 item 7).
+        long bytes = 0L;
+        for (List<ClickHouseStruct> group : groups) {
+            bytes += RecordSizeEstimator.estimateGroup(group);
+        }
+        HandoffUnit handoffUnit = new HandoffUnit(sequence, unit, groups.size(), bytes);
         // Stamp the sequence on the rows themselves: after an in-process engine
         // restart the unit is gone from the maps below, and the stamp is what
         // lets the worker that finally writes the group recognise a RETIRED
@@ -266,6 +286,7 @@ public class DebeziumOffsetManagement {
         }
         outstandingSequences.add(sequence);
         outstandingRecords.addAndGet(unit.size());
+        outstandingBytes.addAndGet(bytes);
         noteBacklog();
         return sequence;
     }
@@ -279,6 +300,16 @@ public class DebeziumOffsetManagement {
      */
     public static long outstandingRecordCount() {
         return outstandingRecords.get();
+    }
+
+    /**
+     * Estimated retained bytes of the rows handed to the writers and not yet
+     * acknowledged (spec 01.05 §3.4 item 7).
+     *
+     * @return the sum of the outstanding units' byte estimates.
+     */
+    public static long outstandingByteCount() {
+        return outstandingBytes.get();
     }
 
     /**
@@ -331,18 +362,43 @@ public class DebeziumOffsetManagement {
      */
     public static void awaitHandoffCapacity(long maxOutstandingRecords, long timeoutMs,
                                             Runnable livenessCheck) throws InterruptedException {
-        if (maxOutstandingRecords <= 0 || !isAtCapacity(maxOutstandingRecords)) {
+        awaitHandoffCapacity(maxOutstandingRecords, 0L, timeoutMs, livenessCheck);
+    }
+
+    /**
+     * As {@link #awaitHandoffCapacity(long, long, Runnable)}, with the cap
+     * also expressed in ESTIMATED BYTES (spec 01.05 §3.4 item 7): the producer
+     * pauses while the outstanding rows are at or above {@code
+     * maxOutstandingRecords} OR the outstanding estimated bytes are at or
+     * above {@code maxOutstandingBytes}. Either bound may be {@code <= 0} to
+     * disable that dimension; both disabled means no wait at all.
+     *
+     * @param maxOutstandingRecords the cap in rows; {@code <= 0} disables it.
+     * @param maxOutstandingBytes   the cap in estimated bytes; {@code <= 0}
+     *                              disables it.
+     * @param timeoutMs             the longest a single wait may last.
+     * @param livenessCheck         run between slices; a throw ends the wait
+     *                              with that exception. May be null.
+     * @throws InterruptedException  if the producer is interrupted while
+     *                               waiting (the engine is stopping).
+     * @throws IllegalStateException if a cap is still met after
+     *                               {@code timeoutMs}.
+     */
+    public static void awaitHandoffCapacity(long maxOutstandingRecords, long maxOutstandingBytes,
+                                            long timeoutMs, Runnable livenessCheck) throws InterruptedException {
+        if ((maxOutstandingRecords <= 0 && maxOutstandingBytes <= 0)
+                || !isAtCapacity(maxOutstandingRecords, maxOutstandingBytes)) {
             return;
         }
         long startNanos = System.nanoTime();
-        boolean firstPauseOfPeriod = beginPause(maxOutstandingRecords, timeoutMs);
+        boolean firstPauseOfPeriod = beginPause(maxOutstandingRecords, maxOutstandingBytes, timeoutMs);
         while (true) {
             synchronized (DebeziumOffsetManagement.class) {
-                if (!isAtCapacity(maxOutstandingRecords)) {
+                if (!isAtCapacity(maxOutstandingRecords, maxOutstandingBytes)) {
                     break;
                 }
                 DebeziumOffsetManagement.class.wait(CAPACITY_WAIT_SLICE_MS);
-                if (!isAtCapacity(maxOutstandingRecords)) {
+                if (!isAtCapacity(maxOutstandingRecords, maxOutstandingBytes)) {
                     break;
                 }
             }
@@ -352,18 +408,24 @@ public class DebeziumOffsetManagement {
             long waitedMs = (System.nanoTime() - startNanos) / 1_000_000L;
             if (waitedMs >= timeoutMs) {
                 throw new IllegalStateException(String.format(
-                        "Handoff hard cap: %d row(s) in %d unit(s) are still unacknowledged after "
-                                + "%d ms at or above the cap of %d "
-                                + "(sink.connector.handoff.max.outstanding.records; the wait limit is "
+                        "Handoff hard cap: %d row(s) in %d unit(s), ~%d MiB estimated, are still "
+                                + "unacknowledged after %d ms at or above the cap of %d row(s) / %d MiB "
+                                + "(sink.connector.handoff.max.outstanding.records / "
+                                + "sink.connector.handoff.max.outstanding.bytes; the wait limit is "
                                 + "sink.connector.handoff.wait.timeout.ms). The writers have not "
                                 + "acknowledged the head of the FIFO in that long: they are stalled, "
                                 + "not slow. Stopping the engine rather than holding the source "
                                 + "connection on a reader that cannot make progress.",
-                        outstandingRecords.get(), outstandingSequences.size(), waitedMs,
-                        maxOutstandingRecords));
+                        outstandingRecords.get(), outstandingSequences.size(), mib(outstandingBytes.get()),
+                        waitedMs, maxOutstandingRecords, mib(maxOutstandingBytes)));
             }
         }
-        endPause(maxOutstandingRecords, firstPauseOfPeriod, System.nanoTime() - startNanos);
+        endPause(maxOutstandingRecords, maxOutstandingBytes, firstPauseOfPeriod, System.nanoTime() - startNanos);
+    }
+
+    /** Bytes as whole MiB, for log lines. */
+    private static long mib(long bytes) {
+        return bytes >> 20;
     }
 
     /**
@@ -376,7 +438,7 @@ public class DebeziumOffsetManagement {
      *
      * @return true when this wait opened a period (its release is logged too).
      */
-    private static synchronized boolean beginPause(long cap, long timeoutMs) {
+    private static synchronized boolean beginPause(long cap, long capBytes, long timeoutMs) {
         long now = capacityClock.getAsLong();
         if (pacingStartNanos != 0 && now - lastReleaseNanos <= CAPACITY_PACING_REARM_MS * 1_000_000L) {
             return false;
@@ -387,20 +449,23 @@ public class DebeziumOffsetManagement {
         }
         pacingStartNanos = now;
         pacingCap = cap;
+        pacingCapBytes = capBytes;
         lastReleaseNanos = now;
         lastSummaryNanos = now;
         pacingPauses = 0;
         pacingPausedNanos = 0;
         summaryPauses = 0;
         summaryPausedNanos = 0;
-        log.warn("Handoff hard cap: {} row(s) in {} unit(s) handed off and not yet acknowledged, "
-                + "at or above the cap of {} (sink.connector.handoff.max.outstanding.records). "
+        log.warn("Handoff hard cap: {} row(s) in {} unit(s) handed off and not yet acknowledged "
+                + "(~{} MiB estimated), at or above the cap of {} row(s) / {} MiB "
+                + "(sink.connector.handoff.max.outstanding.records / .bytes). "
                 + "Pausing the reader until the writers acknowledge the head of the FIFO; nothing "
                 + "has failed. The next line about this wait is the one reporting it released, or "
                 + "the failure if it exceeds {} ms. Further pauses that begin within {} s of a "
                 + "release are counted, not logged: expect one 'Handoff hard cap pacing:' summary "
                 + "per {} s while the reader stays paced, and one 'pacing ended' line when it stops.",
-                outstandingRecords.get(), outstandingSequences.size(), cap, timeoutMs,
+                outstandingRecords.get(), outstandingSequences.size(), mib(outstandingBytes.get()),
+                cap, mib(capBytes), timeoutMs,
                 CAPACITY_PACING_REARM_MS / 1000, CAPACITY_PACING_SUMMARY_MS / 1000);
         return true;
     }
@@ -411,12 +476,14 @@ public class DebeziumOffsetManagement {
      * {@link #CAPACITY_PACING_SUMMARY_MS}. A period already closed by
      * {@link #reset()} while this wait was in progress is not reopened.
      */
-    private static synchronized void endPause(long cap, boolean firstPauseOfPeriod, long pausedNanos) {
+    private static synchronized void endPause(long cap, long capBytes, boolean firstPauseOfPeriod,
+                                              long pausedNanos) {
         long now = capacityClock.getAsLong();
         if (firstPauseOfPeriod) {
-            log.info("Handoff hard cap released after {} ms: {} row(s) in {} unit(s) outstanding, "
-                    + "under the cap of {}.", pausedNanos / 1_000_000L,
-                    outstandingRecords.get(), outstandingSequences.size(), cap);
+            log.info("Handoff hard cap released after {} ms: {} row(s) in {} unit(s) outstanding "
+                    + "(~{} MiB estimated), under the cap of {} row(s) / {} MiB.", pausedNanos / 1_000_000L,
+                    outstandingRecords.get(), outstandingSequences.size(), mib(outstandingBytes.get()),
+                    cap, mib(capBytes));
         }
         if (pacingStartNanos == 0) {
             return;
@@ -432,10 +499,12 @@ public class DebeziumOffsetManagement {
         if (now - lastSummaryNanos >= CAPACITY_PACING_SUMMARY_MS * 1_000_000L) {
             log.info("Handoff hard cap pacing: {} pause(s) totalling {} ms since the previous line; "
                     + "{} pause(s), {} ms paused since pacing began {} s ago; {} row(s) in {} unit(s) "
-                    + "outstanding, cap {}. The reader is being paced by the writers; nothing has failed.",
+                    + "outstanding (~{} MiB estimated), cap {} row(s) / {} MiB. The reader is being "
+                    + "paced by the writers; nothing has failed.",
                     summaryPauses, summaryPausedNanos / 1_000_000L, pacingPauses,
                     pacingPausedNanos / 1_000_000L, (now - pacingStartNanos) / 1_000_000_000L,
-                    outstandingRecords.get(), outstandingSequences.size(), cap);
+                    outstandingRecords.get(), outstandingSequences.size(), mib(outstandingBytes.get()),
+                    cap, mib(capBytes));
             lastSummaryNanos = now;
             summaryPauses = 0;
             summaryPausedNanos = 0;
@@ -451,11 +520,14 @@ public class DebeziumOffsetManagement {
             return;
         }
         log.info("Handoff hard cap pacing ended ({}): {} pause(s) totalling {} ms paused over {} s; "
-                + "{} row(s) in {} unit(s) outstanding, cap {}.", why, pacingPauses,
-                pacingPausedNanos / 1_000_000L, (lastReleaseNanos - pacingStartNanos) / 1_000_000_000L,
-                outstandingRecords.get(), outstandingSequences.size(), pacingCap);
+                + "{} row(s) in {} unit(s) outstanding (~{} MiB estimated), cap {} row(s) / {} MiB.",
+                why, pacingPauses, pacingPausedNanos / 1_000_000L,
+                (lastReleaseNanos - pacingStartNanos) / 1_000_000_000L,
+                outstandingRecords.get(), outstandingSequences.size(), mib(outstandingBytes.get()),
+                pacingCap, mib(pacingCapBytes));
         pacingStartNanos = 0;
         pacingCap = 0;
+        pacingCapBytes = 0;
         lastReleaseNanos = 0;
         lastSummaryNanos = 0;
         pacingPauses = 0;
@@ -469,8 +541,13 @@ public class DebeziumOffsetManagement {
      * capacity: with nothing outstanding there is nothing to wait for, whatever
      * the counter says, so a bookkeeping fault can never wedge the producer.
      */
-    private static boolean isAtCapacity(long maxOutstandingRecords) {
-        return outstandingRecords.get() >= maxOutstandingRecords && !outstandingSequences.isEmpty();
+    private static boolean isAtCapacity(long maxOutstandingRecords, long maxOutstandingBytes) {
+        if (outstandingSequences.isEmpty()) {
+            return false;
+        }
+        boolean rowsMet = maxOutstandingRecords > 0 && outstandingRecords.get() >= maxOutstandingRecords;
+        boolean bytesMet = maxOutstandingBytes > 0 && outstandingBytes.get() >= maxOutstandingBytes;
+        return rowsMet || bytesMet;
     }
 
     /**
@@ -608,6 +685,7 @@ public class DebeziumOffsetManagement {
         groupToUnit.clear();
         completedUnits.clear();
         outstandingRecords.set(0);
+        outstandingBytes.set(0);
         // The set it advised on is gone; clear the advisory with it, silently
         // (the abandonment WARN above is the line for this event).
         backlogAdvisoryRaised = false;
@@ -701,6 +779,7 @@ public class DebeziumOffsetManagement {
             completedUnits.remove(head);
             outstandingSequences.remove(head);
             outstandingRecords.addAndGet(-unit.records.size());
+            outstandingBytes.addAndGet(-unit.bytes);
             noteBacklog();
             // The head moved: a producer paused at the hard cap may proceed.
             DebeziumOffsetManagement.class.notifyAll();

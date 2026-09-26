@@ -49,7 +49,8 @@ formal_specs/lean/
     ├── BatchOrder.lean                # Batch execution order around a replicated TRUNCATE (Spec 04.05): ordered segments reproduce binlog order; hash-map order does not
     ├── VersionFloor.lean              # Version floor across a restart (Invariant I2 at the boundary, specs 02.02/02.04): seeded floor orders the new run above the old; heartbeats never touch the sequence
     ├── CreateTable.lean               # CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2): never ORDER BY tuple(), declared key wins, nullable fallback key needs allow_nullable_key
-    └── PkRebuild.lean                 # Primary-key change rebuild (Spec 06.09 §3.3, §3.6, §4): re-keying the FINAL live set by an injective map keeps every live row exactly once, versions unchanged; the online backfill never shadows a post-DDL row and is idempotent
+    ├── PkRebuild.lean                 # Primary-key change rebuild (Spec 06.09 §3.3, §3.6, §4): re-keying the FINAL live set by an injective map keeps every live row exactly once, versions unchanged; the online backfill never shadows a post-DDL row and is idempotent
+    └── History.lean                   # Replication history modes (Specs 12.01/12.03/12.05): SCD2 UPDATE/DELETE row sets over the FINAL view at (pk, _valid_to) — open-row convergence, validity continuity, gap witnesses (unflushed UPDATE writes no closed row; close/before tie on sort key + version; after-image key never closes the old key); log-only flag gating and routing on both execution engines
 ```
 
 ---
