@@ -103,9 +103,22 @@ could do nothing about it. Hence, on the Debezium thread, BEFORE
    have not acknowledged the head of the FIFO in that long are stalled, not
    slow, and the engine stops (spec 10.04) rather than hold the source
    connection open on a reader that will never read again.
-6. Logging is edge-triggered: ONE WARN when a wait begins, naming the rows,
-   the units and the cap; ONE INFO when it ends, naming how long it lasted;
-   nothing per slice; nothing at all when the cap is not met.
+6. Logging is edge-triggered and paced. At the cap the reader oscillates by
+   construction — one unit acknowledged releases it, the next handoff meets
+   the cap again — so a line per wait is a line per batch (measured on the
+   first deployment that met the cap: ~300 `Handoff hard cap` lines a minute,
+   990 WARNs into the error log in seven minutes, while the cap was doing
+   exactly its job). Hence a PACING PERIOD: ONE WARN when a wait begins more
+   than 60 s after the previous release (or with no previous release), naming
+   the rows, the units and the cap, and ONE INFO when that first wait ends,
+   naming how long it lasted; every later wait that begins within 60 s of the
+   previous release continues the period and is counted, not logged; ONE INFO
+   summary per 60 s while the period lasts (pauses and milliseconds paused
+   since the previous line and since the period began, rows and units
+   outstanding); ONE INFO "pacing ended" when the next wait begins after a
+   quiet gap longer than 60 s, or on `reset()`; nothing per slice; nothing at
+   all when the cap is not met. The wait limit (item 5) is per wait and
+   unaffected: pacing changes what is logged, never how long the reader waits.
 
 While the producer is paused, Debezium's own bounded queue fills and the
 binlog client stops reading; a source whose `net_write_timeout` expires in
@@ -160,3 +173,14 @@ heap consumption under high source write volume.
   writers that never acknowledge end the wait in an `IllegalStateException`
   naming the counts and the knob after the limit, nothing abandoned by the
   failure itself (`theWaitIsBoundedAndLoud`).
+- `HandoffHardCapLogPacingTest` — §3.4 item 6: the first pause of a period is
+  one WARN and one release INFO, and pauses that begin within the re-arm
+  window of the previous release add no line
+  (`pausesWithinTheRearmWindowAreCountedNotLogged`); one summary INFO per
+  interval while the reader stays paced, naming the pauses since the previous
+  line and since the period began (`oneSummaryLinePerIntervalWhilePaced`); a
+  pause after a quiet gap longer than the re-arm window closes the period with
+  one "pacing ended" INFO and opens a new one with its WARN
+  (`pacingEndedIsReportedWhenTheReaderStopsBeingPaced`); `reset()` closes the
+  period with the same line and the next pause is a new period
+  (`resetClosesThePacingPeriod`).

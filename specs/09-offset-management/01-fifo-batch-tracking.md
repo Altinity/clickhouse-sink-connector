@@ -415,6 +415,11 @@ would let a later batch commit an offset past rows that never reached a queue.
   counted; the producer is held at the cap until the head is acknowledged or
   the FIFO is reset, not delayed under it, not at all at `0`; the dead-worker
   check and the wait limit both end the wait loudly.
+- `HandoffHardCapLogPacingTest` — §3.1 step 5 (logging rule in spec 01.05 §3.4
+  item 6): at the cap the reader oscillates one unit at a time, so the lines
+  are paced — one WARN and one release INFO per pacing period, silent pauses
+  inside the re-arm window, one summary INFO per interval, one "pacing ended"
+  INFO after a quiet gap or on `reset()`.
 - `EngineRestartFifoResetTest` — §3.8: `stop()` abandons a never-written unit and
   the next engine's heartbeat commits / first unit is acknowledged with nothing
   parked (`stopThenStartNewInstanceIsNotPoisoned`); nothing outstanding after
