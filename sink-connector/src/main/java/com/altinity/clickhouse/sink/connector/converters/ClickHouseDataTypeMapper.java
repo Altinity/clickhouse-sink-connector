@@ -810,6 +810,40 @@ public class ClickHouseDataTypeMapper {
                         value.getClass().getName()));
             }
             Struct pointValue = (Struct) value;
+            if (clickHouseDataType == ClickHouseDataType.String) {
+                // The DDL path declares every spatial column -- POINT included --
+                // as String holding the exact WKB bytes (Spec 07.06 section 3.1),
+                // and the Geometry branch above writes LINESTRING / POLYGON /
+                // GEOMETRY that way. A POINT arrives as Debezium's Point struct
+                // (x, y AND the same wkb payload); binding it as a geo point
+                // into a String column stored the tuple text "(1.0,2.0)" while
+                // the source holds the WKB -- a value-level divergence on every
+                // POINT column of a DDL-created table. Same encoding as the
+                // Geometry branch and as BYTES.
+                Object wkbValue = pointValue.get("wkb");
+                byte[] wkbBytes;
+                if (wkbValue instanceof byte[]) {
+                    wkbBytes = (byte[]) wkbValue;
+                } else if (wkbValue instanceof ByteBuffer) {
+                    ByteBuffer byteBuffer = (ByteBuffer) wkbValue;
+                    wkbBytes = new byte[byteBuffer.remaining()];
+                    byteBuffer.get(wkbBytes);
+                    byteBuffer.rewind();
+                } else {
+                    throw new IllegalArgumentException(String.format(
+                            "Point value%s carries no WKB payload (wkb is %s) and the ClickHouse column is String; "
+                                    + "refusing to store a fabricated value in its place",
+                            rangePolicy.column() == null ? "" : " for column " + rangePolicy.column(),
+                            wkbValue == null ? "null" : wkbValue.getClass().getName()));
+                }
+                if (config.getBoolean(
+                        ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())) {
+                    ps.setBytes(index, wkbBytes);
+                } else {
+                    ps.setString(index, BaseEncoding.base16().lowerCase().encode(wkbBytes));
+                }
+                return true;
+            }
             Object xValue = pointValue.get("x");
             Object yValue = pointValue.get("y");
             double[] point = {(Double) xValue, (Double) yValue};

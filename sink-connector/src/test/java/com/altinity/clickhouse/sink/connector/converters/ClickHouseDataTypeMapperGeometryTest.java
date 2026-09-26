@@ -170,6 +170,40 @@ public class ClickHouseDataTypeMapperGeometryTest {
         assertEquals("(1.5,-2.25)", bound.get());
     }
 
+    /**
+     * Spec 07.06 sections 3.2 and 3.4: the DDL path declares a POINT column as
+     * String holding the WKB, and the value path must then store the WKB hex --
+     * exactly as it does for every other spatial type -- not the point literal.
+     * Binding the literal wrote the text "(1.0,2.0)" into the String column
+     * while the source holds the WKB: a value-level divergence on every POINT
+     * column of a DDL-created table (the standard-mode suite's t_geo).
+     */
+    @Test
+    @DisplayName("A Point bound for a String column is stored as the exact WKB bytes, hex-encoded")
+    public void pointIntoStringColumnIsWkbHex() throws Exception {
+        Struct point = Point.createValue(Point.builder().build(), 1.0, 2.0);
+        byte[] wkb = (byte[]) point.get("wkb");
+        StringBuilder hex = new StringBuilder();
+        for (byte b : wkb) {
+            hex.append(String.format("%02x", b));
+        }
+        AtomicReference<Object> bound = new AtomicReference<>();
+        ClickHouseDataTypeMapper.convert(Schema.Type.STRUCT, Point.LOGICAL_NAME, point, 1,
+                recording(bound), config(), ClickHouseDataType.String, UTC);
+        assertEquals(hex.toString(), bound.get(),
+                "the WKB must round-trip byte for byte (HEX(ST_AsWKB(col)) on the source)");
+        assertEquals("0101000000000000000000f03f0000000000000040", bound.get(),
+                "little-endian WKB of POINT(1 2)");
+
+        // A Point struct without its WKB payload cannot be stored in a String column: fail, never fabricate.
+        Struct noWkb = new Struct(Point.builder().build()).put("x", 1.0).put("y", 2.0);
+        AtomicReference<Object> nothing = new AtomicReference<>();
+        assertThrows(IllegalArgumentException.class,
+                () -> ClickHouseDataTypeMapper.convert(Schema.Type.STRUCT, Point.LOGICAL_NAME, noWkb, 1,
+                        recording(nothing), config(), ClickHouseDataType.String, UTC));
+        assertNull(nothing.get());
+    }
+
     @Test
     @DisplayName("A variable-scale decimal carried by something other than a Struct fails instead of becoming 0")
     public void nonStructVariableScaleDecimalThrows() {

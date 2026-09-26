@@ -1709,24 +1709,42 @@ public class DebeziumChangeEventCapture {
                 // (ClickHouseBatchRunnable/ClickHouseBatchWriter) apply
                 // clickhouse.database.override.map to the source database name before
                 // building the "database.table" key, so we must apply the same override
-                // here. We intentionally start from the real source-mapped database
-                // (getDatabaseName(sr)), not the replication-history override above.
+                // here. We start from the real source-mapped database
+                // (getDatabaseName(sr)) -- except in replication-history mode, where
+                // the consumers route EVERY table to replication.history.database.name
+                // (ClickHouseBatchRunnable.resolveDatabaseName, Spec 12.01 section 3.2)
+                // and key their cache by it: invalidating the source-named key left the
+                // history table's column map stale after an ADD COLUMN, the first batch
+                // bound the record against the old map, skipped the new column and left
+                // its placeholder unbound, and the driver failed the batch with a
+                // NullPointerException until the retry re-read the schema
+                // (Spec 12.02 section 3.6).
                 try {
                     String invalidationDatabaseName = getDatabaseName(sr);
+                    boolean historyRouting = config.getBoolean(
+                            ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
+                    if (historyRouting) {
+                        // The consumers' key is the history database verbatim: no
+                        // prefix, schema suffix or override map is applied to it
+                        // (ClickHouseBatchRunnable.resolveDatabaseName), so none is
+                        // applied here either.
+                        invalidationDatabaseName = config.getString(
+                                ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+                    }
                     String rawDb = invalidationDatabaseName;
                     String overrideMapConfig = config.getString(
                             ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString());
                     Map<String, String> databaseOverrideMap = null;
-                    if (overrideMapConfig != null) {
+                    if (overrideMapConfig != null && !historyRouting) {
                         databaseOverrideMap =
                                 Utils.parseSourceToDestinationDatabaseMap(overrideMapConfig);
                     }
-                    if (invalidationDatabaseName != null) {
+                    if (invalidationDatabaseName != null && !historyRouting) {
                         String dbPrefix = config.getString(
                                 ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_DATABASE_PREFIX.toString());
                         invalidationDatabaseName = Utils.applyDatabasePrefix(invalidationDatabaseName, dbPrefix);
                     }
-                    if (invalidationDatabaseName != null && config.getBoolean(
+                    if (invalidationDatabaseName != null && !historyRouting && config.getBoolean(
                             ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString())) {
                         String schemaTemplate = config.getString(
                                 ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString());
