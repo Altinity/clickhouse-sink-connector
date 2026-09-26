@@ -199,7 +199,7 @@ mark and the clock alone). Spec 10.06.
 
 ## 4. Architectural Domain Taxonomy
 
-Specifications are modularized into 11 specialized domains with fine-grained micro-encapsulations:
+Specifications are modularized into 12 specialized domains with fine-grained micro-encapsulations:
 
 | Domain | Topic | Path | Scope |
 |---|---|---|---|
@@ -214,6 +214,7 @@ Specifications are modularized into 11 specialized domains with fine-grained mic
 | `09` | Offset Management | `specs/09-offset-management/` | FIFO batch tracking, OFFSET_COMMIT_LOCK, replica_source_info, control commits |
 | `10` | Resilience & Monitoring | `specs/10-resilience-monitoring/` | Error taxonomy, backoff retries, replica status view, loud failure guarantee |
 | `11` | Verification Tooling | `specs/11-verification-tooling/` | Spec validator, db_compare value checksums, Lean 4 formal simulation |
+| `12` | Replication History | `specs/12-replication-history/` | Operating-mode matrix and routing, SCD2 table shape, SCD2 write protocol, binlog audit table, replication-log-only |
 
 ---
 
@@ -234,6 +235,7 @@ To provide mathematical proof of system correctness, the invariants and state tr
 - `Replication.BatchOrder`: Batch execution order around a replicated TRUNCATE (Spec 04.05) — executing the batch as ordered segments split at each TRUNCATE reproduces binlog order (`segments_match_source`), every TRUNCATE stays its own segment, and the pre-fix hash-map order is shown to lose or resurrect rows.
 - `Replication.VersionFloor`: the shipped version-sequence statics (`effectiveTs * 1e6 + counter`, floor, anchor, seeds, high-water position) at the restart boundary (Invariant I2 across a restart, specs 02.02 §3.5 / 02.04 §3.2) — seeding the floor from a high-water mark orders every first delivery of a new run above the previous run, and control records leave the state unchanged, with the pre-fix heartbeat counterexample.
 - `Replication.CreateTable`: CREATE TABLE sorting-key selection for Specs 06.05 §3.6 / 08.05 §3.2 — a table with a storable column never gets `ORDER BY tuple()`, a declared key always wins, and only the value-derived fallback key can require `allow_nullable_key`.
+- `Replication.History`: the replication-history modes of Domain 12 — the SCD2 write protocol of Spec 12.03 (an UPDATE's new image supersedes the open row, a DELETE hides it, closed and successor validity ranges meet exactly), with machine-checked witnesses of the recorded gaps (the unflushed UPDATE writes no closed row, the close row and the before copy tie on sorting key and version, a key-changing UPDATE never closes the old key), and the mode-flag gating and database routing of Specs 12.01 / 12.05 (the multi-threaded engine skips data tables in log-only mode, the single-threaded engine does not).
 
 ### 5.1 Coverage of the thirteen invariants
 Honest status per invariant. "Lean" means a proposition and a machine-checked theorem exist; "model only" means the property holds in the abstract model but the shipped arithmetic is not modelled.
