@@ -130,12 +130,18 @@ could do nothing about it. Hence, on the Debezium thread, BEFORE
    garbage collection long before the row cap is met. So at `registerHandoff`
    every unit is charged an estimate of its retained bytes
    (`RecordSizeEstimator`): the Debezium envelope of the FIRST row of each
-   group — key and value payload walked field by field: strings, byte arrays,
-   nested structs, collections, boxed scalars — scaled by a retention factor
-   of 3 for boxing, `Object[]`/`Struct` overhead and both row images, plus a
-   fixed 512 bytes per row, charged to every row of that group (the rows of
-   one table in one batch are alike in width; sampling keeps the cost at a
-   few hundred field reads per group). Every row is stamped with its share
+   TABLE in each group — key and value payload walked field by field:
+   strings, byte arrays, nested structs, collections, boxed scalars — scaled
+   by a retention factor of 3 for boxing, `Object[]`/`Struct` overhead and
+   both row images, plus a fixed 512 bytes per row, charged to every row of
+   that table in that group (the rows of one table in one batch are alike in
+   width; sampling keeps the cost at a few hundred field reads per table per
+   group). A routed group is one table, so it is sampled once; a
+   single-threaded (legacy) group is the WHOLE batch and may hold several
+   tables, each sampled on its own first row — sampling only the group's
+   first row charged a narrow table at the head of the batch to every row of
+   a wide table behind it, and the cap could not see the heap those rows
+   pinned. Every row is stamped with its share
    (`ClickHouseStruct.estimatedBytes`) for the INSERT chunker (spec 03.06
    §3.1). `outstandingByteCount()` follows handoff and acknowledgement exactly
    as the row count does, a parked unit still counted, `reset()` zeroing it.
@@ -244,7 +250,10 @@ the ConfigDef default never reached it.
   (`estimateScalesTheEnvelope`); a row without an envelope costs its fixed
   overhead, never zero (`rowWithoutEnvelopeCostsTheOverhead`); a group is
   sampled once, every row stamped with the per-row share, the total per-row
-  times size (`groupIsSampledOnceAndStamped`).
+  times size (`groupIsSampledOnceAndStamped`); a multi-table (legacy-mode)
+  group is sampled once per table, so a narrow table at the head of the
+  batch cannot hide a wide table behind it and the total is the sum of the
+  per-table stamps (`multiTableGroupIsSampledPerTable`).
 - `HandoffHardCapBytesTest` — §3.4 item 7, the cap: the outstanding byte
   count is added at handoff, stamped on every row, a parked unit still
   counted, released only at acknowledgement

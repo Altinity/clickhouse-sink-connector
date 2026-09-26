@@ -331,6 +331,25 @@ public class BaseDbWriter {
     }
 
     /**
+     * The connection this writer holds RIGHT NOW, without re-acquiring one:
+     * {@code null} or a closed handle is returned as-is.
+     * <p>
+     * For the owner's cleanup only. {@link #getConnection()} replaces an
+     * unusable handle with a fresh pool checkout, which is the wrong thing to
+     * do while shutting a worker down: it would open a connection in order to
+     * close it, and against a pool that is already gone it would log an error
+     * for nothing. The handle returned here may be one {@link #getConnection()}
+     * re-acquired after the original became unusable, which the worker's
+     * per-database map never saw -- that is exactly the one the owner has to
+     * close (spec 01.01 §3.3 step 4a).
+     *
+     * @return the current connection, possibly null or closed.
+     */
+    public Connection heldConnection() {
+        return this.conn;
+    }
+
+    /**
      * Returns the JDBC URL identifying the server this writer targets, or null
      * when the host and port are unknown.
      *
