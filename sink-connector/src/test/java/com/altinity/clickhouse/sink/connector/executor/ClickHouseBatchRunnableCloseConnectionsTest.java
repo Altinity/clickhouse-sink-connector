@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.DbWriter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -172,5 +174,57 @@ public class ClickHouseBatchRunnableCloseConnectionsTest {
         // Idempotent: nothing left to close, nothing thrown.
         worker.closeConnections();
         assertEquals(0, worker.openDatabaseConnections());
+    }
+
+    /**
+     * A table writer is built on the worker's per-database connection, but
+     * {@code BaseDbWriter.getConnection()} swaps in a fresh pool checkout
+     * when that handle is closed or evicted ({@code this.conn = HikariDbSource
+     * .initiateNewConnectionIfClosed(...)}). That replacement is known to the
+     * writer alone. Before this test, {@code closeConnections()} closed only
+     * the per-database map: the stale original (a no-op) was closed and the
+     * replacement stayed checked out of the pool for the life of the process.
+     * The swap is reproduced by assigning the writer's connection field the
+     * way {@code getConnection()} does, so no pool is needed.
+     */
+    @Test
+    @DisplayName("closeConnections() also closes the connection a writer re-acquired after its original became unusable")
+    public void closeConnectionsClosesAWriterReacquiredConnection() throws Exception {
+        TrackingWorker.OPENED.clear();
+        TrackingWorker.refuseCloseFor = "";
+        TrackingWorker worker = new TrackingWorker(config());
+        String dbA = uniqueDb("db_a");
+        Connection original = worker.getClickHouseConnection(dbA);
+        assertNotNull(original);
+
+        ClickHouseStruct record = new ClickHouseStruct();
+        record.setTopic("srv." + dbA + ".t");
+        DbWriter writer = worker.getDbWriterForTable(record.getTopic(), "t", dbA, record, original);
+        assertNotNull(writer);
+        assertTrue(writer.heldConnection() == original, "the writer starts on the per-database connection");
+
+        // The original goes stale and the writer re-acquires -- the exact
+        // assignment BaseDbWriter.getConnection() performs.
+        Tracked reacquired = new Tracked(dbA + "-reacquired", false);
+        java.lang.reflect.Field conn = BaseDbWriter.class.getDeclaredField("conn");
+        conn.setAccessible(true);
+        conn.set(writer, reacquired.connection);
+        assertTrue(writer.heldConnection() == reacquired.connection);
+
+        worker.closeConnections();
+
+        assertTrue(reacquired.closed.get(), "the re-acquired connection is closed, not leaked");
+        boolean originalClosed = false;
+        for (Tracked t : TrackingWorker.OPENED) {
+            if (t.connection == original) {
+                originalClosed = t.closed.get();
+            }
+        }
+        assertTrue(originalClosed, "the per-database connection is still closed");
+        assertEquals(0, worker.openDatabaseConnections());
+
+        // Idempotent: the writer is forgotten, nothing thrown.
+        worker.closeConnections();
+        assertTrue(reacquired.closed.get());
     }
 }
