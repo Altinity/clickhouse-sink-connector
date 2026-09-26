@@ -116,6 +116,16 @@ On the Debezium thread, for every list handed to the asynchronous writers
    warnings for the hour.) `reset()` (§3.8) clears the advisory silently along
    with the set it abandons; its own abandonment WARN is the line for that
    event.
+5. **Hard cap — the advisory's enforcing counterpart, in rows.** The
+   registration also adds `unit.size()` to `outstandingRecords`, released only
+   when the unit is acknowledged (§3.3) or abandoned (§3.8): the heap the
+   reader's lead is costing. BEFORE registering the next unit the producer
+   calls `awaitHandoffCapacity(cap, timeout, deadWorkerCheck)` and is held
+   while that count is at or above `sink.connector.handoff.max.outstanding.records`
+   (default 500000; `0` disables), released by the acknowledgement or reset
+   that brings it under, failing loudly after
+   `sink.connector.handoff.wait.timeout.ms`. The advisory names a backlog; the
+   cap bounds it. Rules, rationale and logging are in spec 01.05 §3.4.
 
 Sequences are assigned by one thread in handoff order, so
 `seq(A) < seq(B)` iff A was read from the binlog before B. No wall-clock value
@@ -282,6 +292,12 @@ Contract:
    "Sink worker 1 of 10 is dead" until the process exited — twice in one day
    on one deployment, each time after a source connection dropped
    mid-transaction.
+   That retry exists ONLY while the pool is alive for that purpose: when a
+   worker's scheduled task has terminated (spec 03.01 §3.3) the completion
+   callback does not retry at all — the failure is terminal (spec 10.04 §3.5
+   rule 6), because a recreated engine on a pool with a dead worker stops on
+   its first batch, and the process restart that follows is what supplies a
+   fresh pool and a quiescent FIFO.
 5. **Retirement: a stopped engine's units are never acknowledged, and a
    written one is not an error.** `reset()` records
    `retiredBelowSequence = handoffCounter` before it clears the maps: every
@@ -394,6 +410,11 @@ would let a later batch commit an offset past rows that never reached a queue.
   only at the clear level
   (`hoveringAtTheThresholdIsOneAdvisoryNotOnePerFlip`); `reset()` clears the
   advisory without a clearing line and re-arms it (`resetClearsTheAdvisory`).
+- `HandoffHardCapBackpressureTest` — §3.1 step 5 (rules in spec 01.05 §3.4):
+  the row count follows handoff and acknowledgement with a parked unit still
+  counted; the producer is held at the cap until the head is acknowledged or
+  the FIFO is reset, not delayed under it, not at all at `0`; the dead-worker
+  check and the wait limit both end the wait loudly.
 - `EngineRestartFifoResetTest` — §3.8: `stop()` abandons a never-written unit and
   the next engine's heartbeat commits / first unit is acknowledged with nothing
   parked (`stopThenStartNewInstanceIsNotPoisoned`); nothing outstanding after

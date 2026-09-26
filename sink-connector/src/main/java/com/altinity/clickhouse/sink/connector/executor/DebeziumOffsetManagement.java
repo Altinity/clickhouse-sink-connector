@@ -107,6 +107,24 @@ public class DebeziumOffsetManagement {
     private static final AtomicLong handoffCounter = new AtomicLong();
 
     /**
+     * Rows handed to the writers and not yet acknowledged: the sum of
+     * {@code unit.size()} over {@link #outstandingSequences}. Every one of
+     * them is held on the heap (queued, in flight, or written-but-parked)
+     * until its unit is acknowledged, so this -- not the unit count, and not
+     * the per-queue capacity, which is counted in batches of any size -- is
+     * what bounds the reader's memory footprint (spec 01.05 §3.4). Added under
+     * the class monitor at handoff, subtracted at acknowledgement, zeroed by
+     * {@link #reset()}.
+     */
+    private static final AtomicLong outstandingRecords = new AtomicLong();
+
+    /**
+     * How long {@link #awaitHandoffCapacity} sleeps between re-reads of the
+     * outstanding count. An acknowledgement or a reset wakes it early.
+     */
+    static final long CAPACITY_WAIT_SLICE_MS = 50;
+
+    /**
      * Offsets acknowledged to Debezium ({@code markBatchFinished()} returned)
      * since the JVM started, on every path -- written units and control
      * records alike. Monotone; never reset, not even by {@link #reset()}: it
@@ -210,8 +228,113 @@ public class DebeziumOffsetManagement {
             }
         }
         outstandingSequences.add(sequence);
+        outstandingRecords.addAndGet(unit.size());
         noteBacklog();
         return sequence;
+    }
+
+    /**
+     * Number of rows handed to the writers and not yet acknowledged (queued,
+     * in flight, or parked): the heap the reader's lead over the writers is
+     * costing right now.
+     *
+     * @return the sum of the outstanding units' sizes.
+     */
+    public static long outstandingRecordCount() {
+        return outstandingRecords.get();
+    }
+
+    /**
+     * Pauses the producer (Debezium) thread while the rows handed off and not
+     * yet acknowledged are at or above {@code maxOutstandingRecords} -- the
+     * hard cap on the reader's lead over the writers (spec 01.05 §3.4).
+     * <p>
+     * Call on the producer thread BEFORE {@link #registerHandoff} of the next
+     * unit. The unit being handed off is never split, so the count may exceed
+     * the cap by at most one unit. The per-queue capacity
+     * ({@code sink.connector.max.queue.size}) is counted in batches of any
+     * size, so it bounds nothing in bytes; without this cap a reader that
+     * outran stalled writers handed off rows until the heap was full, and the
+     * JVM then spent the rest of its life in back-to-back full garbage
+     * collections -- a stall with no error line, which the source ended by
+     * aborting the binlog dump the reader had stopped draining. Blocking here
+     * instead lets Debezium's own bounded queue apply the backpressure to the
+     * binlog client, and the heap stays bounded.
+     * </p>
+     * <p>
+     * The wait is loud and bounded. ONE WARN is logged when it begins, naming
+     * the counts; ONE INFO when it ends, naming how long it lasted; nothing per
+     * slice. Every {@link #CAPACITY_WAIT_SLICE_MS} the {@code livenessCheck}
+     * runs (the caller passes its dead-worker check, spec 03.01 §3.3: a
+     * dead worker can never acknowledge, so waiting on it would be the very
+     * stall this method exists to prevent), and after {@code timeoutMs} the
+     * wait ends in an {@link IllegalStateException}: writers that have not
+     * acknowledged the head of the FIFO in that long are stalled, not slow,
+     * and the engine must stop loudly (spec 10.04) rather than hold the
+     * source connection open on a reader that will never read again.
+     * </p>
+     *
+     * @param maxOutstandingRecords the cap, in rows; {@code <= 0} disables the
+     *                              wait entirely.
+     * @param timeoutMs             the longest a single wait may last.
+     * @param livenessCheck         run between slices; a throw ends the wait
+     *                              with that exception. May be null.
+     * @throws InterruptedException  if the producer is interrupted while
+     *                               waiting (the engine is stopping).
+     * @throws IllegalStateException if the cap is still met after
+     *                               {@code timeoutMs}.
+     */
+    public static void awaitHandoffCapacity(long maxOutstandingRecords, long timeoutMs,
+                                            Runnable livenessCheck) throws InterruptedException {
+        if (maxOutstandingRecords <= 0 || !isAtCapacity(maxOutstandingRecords)) {
+            return;
+        }
+        long startNanos = System.nanoTime();
+        log.warn("Handoff hard cap: {} row(s) in {} unit(s) handed off and not yet acknowledged, "
+                + "at or above the cap of {} (sink.connector.handoff.max.outstanding.records). "
+                + "Pausing the reader until the writers acknowledge the head of the FIFO; nothing "
+                + "has failed. The next line about this wait is the one reporting it released, or "
+                + "the failure if it exceeds {} ms.", outstandingRecords.get(),
+                outstandingSequences.size(), maxOutstandingRecords, timeoutMs);
+        while (true) {
+            synchronized (DebeziumOffsetManagement.class) {
+                if (!isAtCapacity(maxOutstandingRecords)) {
+                    break;
+                }
+                DebeziumOffsetManagement.class.wait(CAPACITY_WAIT_SLICE_MS);
+                if (!isAtCapacity(maxOutstandingRecords)) {
+                    break;
+                }
+            }
+            if (livenessCheck != null) {
+                livenessCheck.run();
+            }
+            long waitedMs = (System.nanoTime() - startNanos) / 1_000_000L;
+            if (waitedMs >= timeoutMs) {
+                throw new IllegalStateException(String.format(
+                        "Handoff hard cap: %d row(s) in %d unit(s) are still unacknowledged after "
+                                + "%d ms at or above the cap of %d "
+                                + "(sink.connector.handoff.max.outstanding.records; the wait limit is "
+                                + "sink.connector.handoff.wait.timeout.ms). The writers have not "
+                                + "acknowledged the head of the FIFO in that long: they are stalled, "
+                                + "not slow. Stopping the engine rather than holding the source "
+                                + "connection on a reader that cannot make progress.",
+                        outstandingRecords.get(), outstandingSequences.size(), waitedMs,
+                        maxOutstandingRecords));
+            }
+        }
+        log.info("Handoff hard cap released after {} ms: {} row(s) in {} unit(s) outstanding, "
+                + "under the cap of {}.", (System.nanoTime() - startNanos) / 1_000_000L,
+                outstandingRecords.get(), outstandingSequences.size(), maxOutstandingRecords);
+    }
+
+    /**
+     * Whether the outstanding rows meet the cap. An empty FIFO is never at
+     * capacity: with nothing outstanding there is nothing to wait for, whatever
+     * the counter says, so a bookkeeping fault can never wedge the producer.
+     */
+    private static boolean isAtCapacity(long maxOutstandingRecords) {
+        return outstandingRecords.get() >= maxOutstandingRecords && !outstandingSequences.isEmpty();
     }
 
     /**
@@ -348,9 +471,13 @@ public class DebeziumOffsetManagement {
         outstandingSequences.clear();
         groupToUnit.clear();
         completedUnits.clear();
+        outstandingRecords.set(0);
         // The set it advised on is gone; clear the advisory with it, silently
         // (the abandonment WARN above is the line for this event).
         backlogAdvisoryRaised = false;
+        // A producer paused at the hard cap is waiting on units that no longer
+        // exist; wake it so it re-reads the (now empty) FIFO.
+        DebeziumOffsetManagement.class.notifyAll();
         return abandoned;
     }
 
@@ -418,7 +545,7 @@ public class DebeziumOffsetManagement {
      * Acknowledges parked units from the head of the FIFO while the head is
      * written, and stops at the first outstanding sequence that is not.
      */
-    private static void drainCompletedUnits() throws InterruptedException {
+    private static synchronized void drainCompletedUnits() throws InterruptedException {
         while (!completedUnits.isEmpty()) {
             if (outstandingSequences.isEmpty()) {
                 throw new IllegalStateException("a completed unit is not outstanding; "
@@ -434,7 +561,10 @@ public class DebeziumOffsetManagement {
             acknowledgeRecords(unit.records);
             completedUnits.remove(head);
             outstandingSequences.remove(head);
+            outstandingRecords.addAndGet(-unit.records.size());
             noteBacklog();
+            // The head moved: a producer paused at the hard cap may proceed.
+            DebeziumOffsetManagement.class.notifyAll();
         }
     }
 
