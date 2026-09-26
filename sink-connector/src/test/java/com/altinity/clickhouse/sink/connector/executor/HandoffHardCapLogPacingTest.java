@@ -163,7 +163,8 @@ public class HandoffHardCapLogPacingTest {
         assertEquals(2, cycle(0), "the first pause of a period: one WARN, one release INFO");
         assertEquals(0, cycle(1), "a pause one second later is counted, not logged");
         assertEquals(0, cycle(1), "and the next one");
-        assertEquals(0, cycle(59), "and one 59 s after the previous release, still inside the window");
+        assertEquals(0, cycle(50), "and one 50 s after the previous release: inside the re-arm window, "
+                + "and still inside the first summary interval (52 s into the period)");
 
         List<LogEvent> lines = appender.capLines();
         assertEquals(2, lines.size(), "four pauses, two lines: " + lines.size());
