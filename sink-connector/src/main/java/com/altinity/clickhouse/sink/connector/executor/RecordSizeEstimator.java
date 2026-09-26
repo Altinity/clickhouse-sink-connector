@@ -8,6 +8,7 @@ import org.apache.kafka.connect.source.SourceRecord;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -34,11 +35,15 @@ import java.util.Map;
  * over-estimates pauses the reader a little early, which costs throughput
  * and nothing else.</p>
  *
- * <p><b>Cost.</b> A group (the rows of one table in one Debezium batch) is
- * sampled ONCE: its first row is walked and the result is charged to every
- * row of the group. Rows of one table in one batch are alike in width, and
- * the walk is a few hundred field reads, so the estimate costs nothing
- * measurable at any batch rate.</p>
+ * <p><b>Cost.</b> A group is sampled ONCE PER TABLE: the first row of each
+ * table (topic) in the group is walked and the result is charged to every
+ * row of that table in the group. Rows of one table in one batch are alike
+ * in width, and the walk is a few hundred field reads, so the estimate costs
+ * nothing measurable at any batch rate. Sampling per table rather than per
+ * group matters in single-threaded (legacy) mode, where one group is the
+ * WHOLE batch across every table it touches: sampling the group's first row
+ * charged a narrow table's width to every row of a wide table that followed
+ * it, and the byte cap could not see the heap those rows pinned.</p>
  *
  * <p>Deterministic and JVM-independent by design: no reflection over object
  * graphs, no dependence on compressed oops or a HotSpot layout, so a unit
@@ -90,24 +95,43 @@ public final class RecordSizeEstimator {
     }
 
     /**
-     * Estimates a group by sampling its first row, stamps every row of the
-     * group with that per-row estimate ({@link ClickHouseStruct#getEstimatedBytes()}),
-     * and returns the group total.
+     * Estimates a group by sampling the first row of each table in it, stamps
+     * every row with its table's per-row estimate
+     * ({@link ClickHouseStruct#getEstimatedBytes()}), and returns the group
+     * total.
      *
-     * @param group the rows of one table in one Debezium batch, non-null.
-     * @return {@code perRow * group.size()}; {@code 0} for an empty group.
+     * <p>A routed group holds the rows of one table, so it is sampled once. A
+     * legacy-mode group is the whole Debezium batch and may hold several
+     * tables; each is sampled on its own first row, so a narrow table at the
+     * head of the batch cannot hide the bytes of a wide table behind it. The
+     * per-table sample map lives for this call only and has at most one entry
+     * per table in the group.</p>
+     *
+     * @param group the rows of one Debezium batch (one table in routed mode,
+     *              any number of tables in legacy mode), non-null.
+     * @return the sum of every row's stamped estimate; {@code 0} for an empty
+     *         group.
      */
     public static long estimateGroup(List<ClickHouseStruct> group) {
         if (group == null || group.isEmpty()) {
             return 0L;
         }
-        long perRow = estimate(group.get(0));
+        Map<String, Long> perRowByTable = new HashMap<>();
+        long total = 0L;
         for (ClickHouseStruct record : group) {
-            if (record != null) {
-                record.setEstimatedBytes(perRow);
+            if (record == null) {
+                continue;
             }
+            String table = record.getTopic() == null ? "" : record.getTopic();
+            Long perRow = perRowByTable.get(table);
+            if (perRow == null) {
+                perRow = estimate(record);
+                perRowByTable.put(table, perRow);
+            }
+            record.setEstimatedBytes(perRow);
+            total += perRow;
         }
-        return perRow * group.size();
+        return total;
     }
 
     /**
