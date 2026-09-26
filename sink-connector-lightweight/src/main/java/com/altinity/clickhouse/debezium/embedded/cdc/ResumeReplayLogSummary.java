@@ -34,10 +34,26 @@ import java.util.regex.Pattern;
  * <p><b>What this does.</b> A log4j filter installed on Debezium's
  * {@code BinlogStreamingChangeEventSource} logger DENIES those lines and
  * counts them by binlog event type. The count is reported as ONE INFO line
- * when the replay ends -- the next line from that logger that is not a skip,
- * i.e. the reader moved past the resume point -- and, for a long replay, one
- * progress line per minute. Nothing else from that logger is touched, and no
- * row image is ever written by this class.</p>
+ * when the replay ends, and, for a long replay, one progress line per minute.
+ * Nothing else from that logger is touched, and no row image is ever written
+ * by this class.</p>
+ *
+ * <p><b>When the replay ends.</b> Two signals, whichever comes first:</p>
+ * <ol>
+ * <li>The batch handler receives a ROW from Debezium ({@link #rowDelivered()}).
+ * Debezium never delivers the rows it skips, so the first row the sink sees
+ * is past the resume point by construction. This is the signal that fires
+ * in production: after the skip run the streaming source is silent at INFO
+ * for hours (one deployment logged its 120 s progress line and then nothing
+ * -- the total was never reported), so waiting for its next line would
+ * report the replay at the engine stop, with the process lifetime as its
+ * duration. Only a row counts: Debezium's {@code handleEvent} dispatches a
+ * heartbeat after EVERY binlog event, skipped ones included, so a heartbeat
+ * or a transaction marker delivered mid-replay proves nothing.</li>
+ * <li>The next line from that logger that is not a skip -- kept as the
+ * fallback for a resume that delivers no row (the reader moved past the
+ * resume point straight into a quiet source).</li>
+ * </ol>
  *
  * <p>Installed programmatically at {@code setup()} so no deployment's
  * {@code log4j2.xml} needs to change; idempotent per process.</p>
@@ -62,6 +78,14 @@ public final class ResumeReplayLogSummary extends AbstractFilter {
     static volatile LongSupplier clock = System::currentTimeMillis;
 
     private static volatile ResumeReplayLogSummary installed;
+
+    /**
+     * True while a replay is being counted (skipped > 0). Read without the
+     * monitor by {@link #rowDelivered()}, which runs once per delivered row:
+     * the common case -- no replay pending -- must cost one volatile read, not
+     * a lock on the batch handler's hot path.
+     */
+    private volatile boolean pending;
 
     // Guarded by this.
     private final Map<String, Long> countsByOperation = new TreeMap<>();
@@ -120,6 +144,25 @@ public final class ResumeReplayLogSummary extends AbstractFilter {
         }
     }
 
+    /** The reason reported when a delivered row ends the replay. Package-private for tests. */
+    static final String ROW_DELIVERED = "the first row past the resume point was delivered to the sink";
+
+    /**
+     * Called by the batch handler for every ROW it receives from Debezium --
+     * never for a heartbeat or a transaction marker, which Debezium dispatches
+     * while it is still skipping. Debezium does not deliver the rows it skips,
+     * so a delivered row is past the resume point by construction: the first
+     * one after a skip run ends the replay and emits the summary. Costs one
+     * volatile read per row when no replay is pending; a no-op before
+     * {@link #install()}.
+     */
+    public static void rowDelivered() {
+        ResumeReplayLogSummary filter = installed;
+        if (filter != null && filter.pending) {
+            filter.flush(ROW_DELIVERED);
+        }
+    }
+
     @Override
     public Result filter(LogEvent event) {
         if (event == null || !DEBEZIUM_LOGGER.equals(event.getLoggerName()) || event.getMessage() == null) {
@@ -147,6 +190,7 @@ public final class ResumeReplayLogSummary extends AbstractFilter {
             lastPosition = -1L;
         }
         skipped++;
+        pending = true;
         countsByOperation.merge(operationOf(message), 1L, Long::sum);
         Matcher position = NEXT_POSITION.matcher(message);
         if (position.find()) {
@@ -175,6 +219,7 @@ public final class ResumeReplayLogSummary extends AbstractFilter {
                 + "types and counts are logged, never the row images (spec 01.07 section 3.5).",
                 why, skipped, (now - firstMillis) / 1000L, firstPosition, lastPosition, describeCounts());
         skipped = 0;
+        pending = false;
         countsByOperation.clear();
         firstPosition = -1L;
         lastPosition = -1L;
