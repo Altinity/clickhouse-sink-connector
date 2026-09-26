@@ -170,6 +170,15 @@ Contract:
   replaced in tests) with `TERMINAL_FAILURE_EXIT_CODE` (3), so a supervisor
   restarts or alerts on it. With the exit disabled the process stays up as a
   visible liveness failure; it never idles silently.
+- Before anything else — before the sleep, before the retry decision, on a
+  clean completion too — the callback retires every unit the completed engine
+  handed off (`retireHandoffsOfStoppedEngine`, spec 09.01 §3.8 item 5). The
+  engine's offset store closed with it, and the retry keeps the worker pool
+  that still holds its batches: left outstanding, the first one written was
+  acknowledged through the stopped engine's committer, which threw from the
+  closed store and left the `OffsetStorageWriter` "already flushing", and the
+  worker died on its next acknowledgement (spec 03.01 §3.3) — the recreated
+  engine then failed on the dead worker until the budget was spent.
 - The DDL drain waits while the workers are alive (spec 06.01 §3.2); only a
   dead worker or an interrupt aborts it.
 
