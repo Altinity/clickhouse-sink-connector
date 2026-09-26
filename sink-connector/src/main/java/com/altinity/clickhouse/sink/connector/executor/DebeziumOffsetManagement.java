@@ -178,6 +178,16 @@ public class DebeziumOffsetManagement {
     private static final Object OFFSET_COMMIT_LOCK = new Object();
 
     /**
+     * Every handoff sequence below this value is RETIRED (spec 09.01 §3.8
+     * item 5): it was assigned by an engine that has since stopped, whose
+     * offset store closed with it, so nothing in that unit can ever be
+     * acknowledged -- its committer would throw from the closed store. Set
+     * by {@link #reset()} to the counter's current value, so a sequence
+     * assigned after the reset is never retired by it. Monotone.
+     */
+    private static volatile long retiredBelowSequence = 0L;
+
+    /**
      * Registers one handed-off unit and assigns its handoff sequence.
      * <p>
      * Call on the producer thread BEFORE any of the unit's groups becomes
@@ -202,6 +212,15 @@ public class DebeziumOffsetManagement {
         }
         long sequence = handoffCounter.getAndIncrement();
         HandoffUnit handoffUnit = new HandoffUnit(sequence, unit, groups.size());
+        // Stamp the sequence on the rows themselves: after an in-process engine
+        // restart the unit is gone from the maps below, and the stamp is what
+        // lets the worker that finally writes the group recognise a RETIRED
+        // unit instead of a producer bug (spec 09.01 §3.8 item 5).
+        for (ClickHouseStruct record : unit) {
+            if (record != null) {
+                record.setHandoffSequence(sequence);
+            }
+        }
         for (List<ClickHouseStruct> group : groups) {
             if (groupToUnit.putIfAbsent(new BatchKey(group), handoffUnit) != null) {
                 throw new IllegalStateException(
@@ -438,6 +457,10 @@ public class DebeziumOffsetManagement {
      * @return the number of units abandoned.
      */
     public static synchronized int reset() {
+        // Every sequence assigned so far belongs to an engine that is gone:
+        // retire them all, so a worker reporting one of them later is answered
+        // "not acknowledged, redelivered" instead of an error (§3.8 item 5).
+        retiredBelowSequence = handoffCounter.get();
         int abandoned = outstandingSequences.size();
         if (abandoned > 0) {
             log.warn("Offset FIFO reset: abandoning {} handed-off unit(s) that were never "
@@ -481,6 +504,22 @@ public class DebeziumOffsetManagement {
             List<ClickHouseStruct> batch) throws InterruptedException {
         HandoffUnit unit = groupToUnit.remove(new BatchKey(batch));
         if (unit == null) {
+            if (isRetired(batch)) {
+                // The engine that handed this unit off has stopped and its
+                // offset store closed with it (§3.8 item 5): its committer
+                // cannot acknowledge anything -- it throws from the closed
+                // store, and the failed flush leaves the OffsetStorageWriter
+                // "already flushing" for good, which is how a worker used to
+                // die here. The rows are in ClickHouse; the offset was never
+                // committed; the restarted engine redelivers the unit from the
+                // last committed offset (at-least-once, spec 02.04). Not an
+                // error: the worker moves on.
+                log.info("Handoff sequence {} was retired by an engine restart before its rows were "
+                        + "reported written: not acknowledged (the engine that handed it off has "
+                        + "stopped and its offset store is closed); the restarted engine redelivers "
+                        + "it from the last committed offset.", handoffSequenceOf(batch));
+                return false;
+            }
             if (carriesCommitter(batch)) {
                 throw new IllegalStateException("a batch carrying a Debezium committer reached "
                         + "the writer without a handoff sequence; it cannot be ordered against "
@@ -527,6 +566,30 @@ public class DebeziumOffsetManagement {
             // The head moved: a producer paused at the hard cap may proceed.
             DebeziumOffsetManagement.class.notifyAll();
         }
+    }
+
+    /**
+     * Whether the batch belongs to a unit retired by {@link #reset()}: it was
+     * handed off (a record carries a handoff sequence) and that sequence is
+     * below the retirement watermark. A batch that was never handed off (the
+     * Kafka Connect path) is never retired.
+     */
+    static boolean isRetired(List<ClickHouseStruct> batch) {
+        long sequence = handoffSequenceOf(batch);
+        return sequence >= 0 && sequence < retiredBelowSequence;
+    }
+
+    /** The handoff sequence stamped on the batch, or -1 when it was never handed off. */
+    static long handoffSequenceOf(List<ClickHouseStruct> batch) {
+        if (batch == null) {
+            return -1L;
+        }
+        for (ClickHouseStruct record : batch) {
+            if (record != null && record.getHandoffSequence() >= 0) {
+                return record.getHandoffSequence();
+            }
+        }
+        return -1L;
     }
 
     private static boolean carriesCommitter(List<ClickHouseStruct> batch) {

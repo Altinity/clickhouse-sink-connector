@@ -46,11 +46,19 @@ hash routing (spec 03.03) and is deleted, not amended (see §3.5).
     iff the group's unit was acknowledged during this call.
   - `boolean hasUnwrittenBatches()` — `!outstandingSequences.isEmpty()`.
   - `int outstandingCount()` — size of the outstanding set.
-  - `int reset()` — abandons every outstanding unit (§3.8); called from
-    `DebeziumChangeEventCapture.stop()` after the pool has terminated, and from
-    `DebeziumChangeEventCapture.setup()` when the units it finds belong to a
-    previous engine that terminated without `stop()` (`activeEngine` /
-    `isAlive()`).
+  - `int reset()` — abandons every outstanding unit and retires every sequence
+    assigned so far (`retiredBelowSequence`, §3.8 items 1 and 5); called from
+    `DebeziumChangeEventCapture.onConnectorStopped()` (the engine's
+    `connectorStopped` callback), from the top of
+    `DebeziumChangeEventCapture.handleEngineCompletion`
+    (`retireHandoffsOfStoppedEngine`), from `DebeziumChangeEventCapture.stop()`
+    after the pool has terminated, and from `DebeziumChangeEventCapture.setup()`
+    when the units it finds belong to a previous engine that terminated without
+    `stop()` (`activeEngine` / `isAlive()`).
+  - `boolean isRetired(List<ClickHouseStruct> group)` /
+    `long handoffSequenceOf(List<ClickHouseStruct> group)` — the stamp read back
+    from the rows (`ClickHouseStruct.handoffSequence`, set by `registerHandoff`)
+    against the retirement watermark (§3.8 item 5).
   - `acknowledgeRecords(List<ClickHouseStruct>)` — `markProcessed` for every
     record in list order, `markBatchFinished()` at the terminal record, all
     inside `OFFSET_COMMIT_LOCK` (spec 09.02).
@@ -267,15 +275,54 @@ Contract:
      in CI one unrepresentable value (spec 10.01 §3.1) failed one Postgres IT
      and then, through this refusal, 29 unrelated MySQL ITs in the same JVM.
 4. The engine's own completion-callback retry (`setupDebeziumEventCapture` on
-   the same instance, spec 10.04 §3.5) does NOT reset: its pool is still alive
-   and will finish the outstanding units. (It does not pass through `setup()`
-   at all; `activeEngine != this` keeps the same-instance case out of the
-   refusal in any event.) That retry exists ONLY while the pool is alive for
-   that purpose: when a worker's scheduled task has terminated (spec 03.01
-   §3.3) the completion callback does not retry at all — the failure is
-   terminal (spec 10.04 §3.5 rule 6), because a recreated engine on a pool
-   with a dead worker stops on its first batch, and the process restart that
-   follows is what supplies a fresh pool and a quiescent FIFO.
+   the same instance, spec 10.04 §3.5) keeps the pool, and the pool keeps the
+   stopped engine's batches; it does not pass through `setup()` at all
+   (`activeEngine != this` keeps the same-instance case out of the refusal in
+   any event). Those units are RETIRED (item 5) at the very top of the
+   completion callback — before the sleep, before the retry decision — never
+   left for the pool to "finish". They cannot be finished: Debezium closes the
+   engine's offset store when the engine completes, so a stopped engine's
+   committer cannot acknowledge anything. Leaving them outstanding meant that
+   the first batch a worker wrote after the stop was acknowledged through that
+   committer: `JdbcOffsetBackingStore.set` threw `NullPointerException`
+   ("this.executor is null") inside `OffsetStorageWriter.doFlush` 234 ms after
+   the callback had run, the failed flush left the writer "already flushing"
+   for good, the worker's next acknowledgement met that state and the worker
+   died on it (spec 03.01 §3.3), and every recreated engine then failed on
+   "Sink worker 1 of 10 is dead" until the process exited — twice in one day
+   on one deployment, each time after a source connection dropped
+   mid-transaction.
+   That retry exists ONLY while the pool is alive for that purpose: when a
+   worker's scheduled task has terminated (spec 03.01 §3.3) the completion
+   callback does not retry at all — the failure is terminal (spec 10.04 §3.5
+   rule 6), because a recreated engine on a pool with a dead worker stops on
+   its first batch, and the process restart that follows is what supplies a
+   fresh pool and a quiescent FIFO.
+5. **Retirement: a stopped engine's units are never acknowledged, and a
+   written one is not an error.** `reset()` records
+   `retiredBelowSequence = handoffCounter` before it clears the maps: every
+   sequence assigned so far is retired; a sequence assigned afterwards never
+   is. `registerHandoff` stamps the sequence on every row of the unit
+   (`ClickHouseStruct.handoffSequence`; `UNINITIALIZED_VALUE`, -1, for a row
+   that was never handed off), so the stamp survives the clearing. For a group
+   reported written with no unit in the map, `checkIfBatchCanBeCommitted`
+   decides by the stamp (`isRetired`): stamped and below the watermark → RETIRED
+   — one INFO line naming the sequence, return `false`, the committer is NOT
+   invoked (its store is closed; the rows are in ClickHouse; the offset was
+   never committed; the next engine redelivers the unit, item 2); stamped at or
+   above the watermark, or unstamped but carrying a committer → the §3.7
+   `IllegalStateException` as before (a producer bug stays loud); unstamped
+   without a committer → `true` (the Kafka Connect path, unchanged).
+   Retirement is triggered from three places, each idempotent (a call with
+   nothing outstanding retires nothing and logs nothing):
+   `DebeziumChangeEventCapture.onConnectorStopped()` — Debezium's
+   `connectorStopped` callback, which the engine fires before it shuts its
+   offset store, so no worker reaches a closed store through a committer —
+   the top of `handleEngineCompletion` (success or failure,
+   `retireHandoffsOfStoppedEngine`, one WARN naming the count when it is
+   non-zero), and `stop()` step 5 (item 1). A worker may still WRITE a retired
+   batch it already holds (item 1's drain, or a queue it is still emptying);
+   that write is a redelivery in advance and is idempotent (spec 02.04).
 
 Machine-checked as the `restart` event of `OffsetFifo.lean`:
 `restart_quiescent`, `acked_never_rolled_back`, `abandoned_not_acked`, the
@@ -331,6 +378,26 @@ would let a later batch commit an offset past rows that never reached a queue.
   not block itself; acknowledging one leaves the sibling tracked.
 - `HandedOffBatchVisibilityTest` — visible from handoff; per-group counting;
   quiescent only after the whole unit is acknowledged.
+- `RetiredHandoffNotAcknowledgedTest` — §3.8 item 5:
+  `writtenAfterRetirementIsNotAcknowledgedAndNotAnError` — a unit whose
+  committer throws the closed-store `NullPointerException`; `reset()`; the
+  group reported written afterwards returns `false`, the committer is never
+  called, nothing is outstanding (pre-fix: `IllegalStateException`, and in
+  production the NPE that poisoned the `OffsetStorageWriter`);
+  `unitHandedOffAfterRetirementIsAcknowledged` — the watermark is exclusive: a
+  unit registered after the reset is acknowledged at once while the old one,
+  reported later still, is just retired; `neverHandedOffIsStillRejected` — an
+  unstamped committer-bearing batch is still the §3.7 `IllegalStateException`;
+  `kafkaConnectPathIsUnchanged` — unstamped, no committer: `true`.
+- `StoppedEngineRetiresHandoffsTest` — §3.8 items 4 and 5, in the capture:
+  `completionCallbackRetiresTheStoppedEnginesUnitsBeforeRetrying` — a handed-off
+  unit; `handleEngineCompletion` with the production source failure retries
+  once and leaves nothing outstanding; the batch written afterwards is not
+  acknowledged and the closed-store committer is never called;
+  `connectorStoppedRetiresTheEnginesUnits` — `onConnectorStopped()` retires the
+  unit, marks replication not running, and a second retirement retires 0;
+  `cleanCompletionRetiresTheEnginesUnits` — a `success == true` completion
+  retires too.
 - `HandoffBacklogAdvisoryTest` — §3.1 step 4: crossing the threshold logs
   exactly one WARN naming the count and nothing at ERROR
   (`raisedOnceAtWarnWhenCrossingTheThreshold`); draining back to the threshold

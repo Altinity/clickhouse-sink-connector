@@ -179,6 +179,19 @@ public class ClickHouseStruct {
     private long sequenceNumber = UNINITIALIZED_VALUE;
 
     /**
+     * Handoff sequence of the unit this record was handed off in, stamped by
+     * {@code DebeziumOffsetManagement.registerHandoff} on the producer thread;
+     * {@code UNINITIALIZED_VALUE} for a record that was never handed off (the
+     * Kafka Connect sink path). Lets a worker that reports a written batch
+     * after an in-process engine restart tell a RETIRED unit -- handed off by
+     * an engine that has since stopped, whose offset store is closed -- from a
+     * producer bug (spec 09.01 section 3.8 item 5).
+     */
+    @Getter
+    @Setter
+    private long handoffSequence = UNINITIALIZED_VALUE;
+
+    /**
      * Log Sequence Number (LSN) offset for some databases, if applicable.
      */
     @Getter

@@ -545,8 +545,7 @@ public class DebeziumChangeEventCapture {
 
                         @Override
                         public void connectorStopped() {
-                            ReplicationStatusSingleton.getInstance().setIsReplicationRunning(false);
-                            log.debug("Connector stopped");
+                            onConnectorStopped();
                         }
                     })
                     .using(OffsetCommitPolicy.always())
@@ -608,6 +607,63 @@ public class DebeziumChangeEventCapture {
     }
 
     /**
+     * Retires every unit the stopped engine handed off (spec 09.01 §3.8
+     * item 5): {@link DebeziumOffsetManagement#reset()} abandons what is still
+     * outstanding and marks every sequence assigned so far as retired, so a
+     * worker that writes one of those batches later is answered "not
+     * acknowledged, redelivered" instead of calling the stopped engine's
+     * committer.
+     *
+     * <p>Why it cannot be left to the pool. The completion-callback retry keeps
+     * this instance's worker pool, and the pool keeps the stopped engine's
+     * batches. The engine's offset store closes with the engine, so the first
+     * batch a worker finished after the stop was acknowledged through a
+     * committer whose store was gone: {@code JdbcOffsetBackingStore.set} threw
+     * {@code NullPointerException} ("this.executor is null") inside
+     * {@code OffsetStorageWriter.doFlush}, which leaks the writer's
+     * flush-in-progress state for good; the worker's next acknowledgement met
+     * "OffsetStorageWriter is already flushing", the worker died on it (spec
+     * 03.01 §3.3), and every recreated engine then failed on "Sink worker 1
+     * of 10 is dead" until the process exited. Observed twice in one day on
+     * one deployment, each time after a source connection dropped
+     * mid-transaction.</p>
+     *
+     * <p>Called from {@link #onConnectorStopped()} (Debezium's
+     * {@code connectorStopped}, which precedes the store's shutdown in the
+     * engine's completion sequence), again at the top of
+     * {@link #handleEngineCompletion} and again in {@link #stop()} step 5 —
+     * idempotent: a second call with nothing outstanding retires nothing and
+     * logs nothing.</p>
+     *
+     * @param why the caller, for the log line.
+     * @return the number of units retired.
+     */
+    @VisibleForTesting
+    int retireHandoffsOfStoppedEngine(String why) {
+        int retired = DebeziumOffsetManagement.reset();
+        if (retired > 0) {
+            log.warn("{}: {} handed-off batch(es) of the stopped engine were still unacknowledged and "
+                    + "have been retired. Its offset store closed with it, so none of them could be "
+                    + "acknowledged any more (a committer call would throw from the closed store and "
+                    + "poison the OffsetStorageWriter); their offsets were never committed, so the "
+                    + "next engine redelivers them from the last committed position.", why, retired);
+        }
+        return retired;
+    }
+
+    /**
+     * The engine's {@code connectorStopped} callback: replication is no longer
+     * running, and every unit this engine handed off is retired (spec 09.01
+     * §3.8 item 5).
+     */
+    @VisibleForTesting
+    void onConnectorStopped() {
+        ReplicationStatusSingleton.getInstance().setIsReplicationRunning(false);
+        log.debug("Connector stopped");
+        retireHandoffsOfStoppedEngine("connectorStopped()");
+    }
+
+    /**
      * The engine's completion callback body (spec 10.04 §3.5).
      *
      * <p>A failed engine is recreated up to {@code MAX_RETRIES}
@@ -641,6 +697,12 @@ public class DebeziumChangeEventCapture {
     @VisibleForTesting
     void handleEngineCompletion(boolean success, String message, Throwable throwable,
                                 Properties props, Runnable restartEngine) {
+        // The engine has completed, cleanly or not: its offset store closed
+        // with it, so nothing it handed off can be acknowledged any more.
+        // Retire it all FIRST -- before the sleep, before the retry decision --
+        // so no worker that finishes one of its batches in the meantime calls
+        // a committer whose store is closed (spec 09.01 section 3.8 item 5).
+        retireHandoffsOfStoppedEngine("engine completion");
         if (success) {
             log.debug("Completion callback");
             return;
