@@ -92,6 +92,26 @@ public class ClickHouseBatchWriterDatabaseResolutionTest {
         assertEquals("binlog_history", resolved);
     }
 
+    /**
+     * Spec 12.01 section 3.4 (Gap G-12.01-1): replication_log_only WITHOUT
+     * replication.history.enable is not a mode. No history behaviour is
+     * enabled, so the writer must route like standard mode -- exactly as
+     * ClickHouseBatchRunnable does -- instead of diverging to the history
+     * database.
+     */
+    @Test
+    @DisplayName("resolveDatabaseName ignores replication_log_only when replication.history.enable is unset")
+    public void testResolveDatabaseNameLogOnlyAloneIsStandard() {
+        Map<String, String> props = new HashMap<>();
+        props.put("replication.history.replication_log_only", "true");
+        props.put("replication.history.database.name", "binlog_history");
+        ClickHouseBatchWriter writer = new ClickHouseBatchWriter(createConfig(props), new HashMap<>());
+        ClickHouseStruct record = createStructWithDatabase("source_db");
+
+        String resolved = writer.resolveDatabaseName("server.source_db.users", record);
+        assertEquals("source_db", resolved);
+    }
+
     @Test
     @DisplayName("getTableFromTopic formats table name with schema prefix when configured")
     public void testGetTableFromTopicWithSchemaPrefix() {

@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
+import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.CdcRecordState;
@@ -180,17 +181,39 @@ public class PreparedStatementExecutor {
                     }
                     log.info(String.format("*** Applying replicated TRUNCATE to Database(%s), table(%s) "
                             + "at its binlog position ***", databaseName, tableName));
-                    try {
-                        // DESTRUCTIVE: applies a TRUNCATE that MySQL already
-                        // executed (replicated change event op = t) to the
-                        // resolved TARGET database/table of this executor;
-                        // never issued on the connector's own initiative.
-                        metadata.truncateTable(conn, databaseName, tableName);
-                    } catch (SQLException e) {
-                        // DESTRUCTIVE: error text only -- the truncation was NOT
-                        // applied (every retry refused); the batch fails here.
-                        throw new RuntimeException(String.format(
-                                "TRUNCATE failed for %s.%s", databaseName, tableName), e);
+                    if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                        // Replication-history mode (Spec 12.03 section 3.4, Gap
+                        // G-12.03-6): the SCD2 table keeps every version, so the
+                        // source truncation is applied as a BULK CLOSE -- every open
+                        // row is closed at the event time and marked deleted at
+                        // its open sorting key, and the closed history survives.
+                        // This path only INSERTS: nothing is truncated or destroyed.
+                        ReplicationHistoryHandler historyHandler =
+                                new ReplicationHistoryHandler(config, this.serverTimeZone, metadata);
+                        try {
+                            historyHandler.executeHistoryBulkClose(conn, databaseName + "." + tableName,
+                                    columnToDataTypeMap.containsKey(ClickHouseDbConstants.IS_DELETED_COLUMN),
+                                    truncateEvent.getTsSec(), historyHandler.resolveVersion(truncateEvent),
+                                    ClickHouseConverter.CDC_OPERATION.TRUNCATE);
+                        } catch (SQLException e) {
+                            // The bulk close was NOT applied; the batch fails here.
+                            throw new RuntimeException(String.format(
+                                    "Replication-history bulk close for a replicated truncation failed for %s.%s",
+                                    databaseName, tableName), e);
+                        }
+                    } else {
+                        try {
+                            // DESTRUCTIVE: applies a TRUNCATE that MySQL already
+                            // executed (replicated change event op = t) to the
+                            // resolved TARGET database/table of this executor;
+                            // never issued on the connector's own initiative.
+                            metadata.truncateTable(conn, databaseName, tableName);
+                        } catch (SQLException e) {
+                            // DESTRUCTIVE: error text only -- the truncation was NOT
+                            // applied (every retry refused); the batch fails here.
+                            throw new RuntimeException(String.format(
+                                    "Truncation failed for %s.%s", databaseName, tableName), e);
+                        }
                     }
                     result = true;
                     Metrics.updateCounters(topicName, entry.getValue().size());
@@ -320,14 +343,8 @@ public class PreparedStatementExecutor {
                                 // is the same ordering rule the TRUNCATE branch above
                                 // already applies, and it is why the defect looked
                                 // intermittent -- it only bites when the CREATE and the
-                                // DELETE land in one batch.
-                                try {
-                                    ps.executeBatch();
-                                } catch (SQLException e) {
-                                    throw new RuntimeException(String.format(
-                                            "Failed to flush records staged before a replication-history "
-                                                    + "DELETE for %s.%s", databaseName, tableName), e);
-                                }
+                                // DELETE land in one batch (Spec 12.03 section 3.3).
+                                flushStagedRows(ps, databaseName, tableName, "DELETE");
                                 replicationHistoryHandler.executeHistoryUpdate(
                                     conn,
                                     tableName,
@@ -403,6 +420,16 @@ public class PreparedStatementExecutor {
                             ps.clearParameters();
                         }
                         if (replicationHistoryHandler != null) {
+                            // The SCD Type 2 UPDATE reads the open row it closes
+                            // straight back out of the target and runs INLINE,
+                            // exactly like the DELETE above -- so it needs the
+                            // same flush. Without it, a row created and updated
+                            // in one batch had no visible open row: the close
+                            // row was never written and the pre-update version
+                            // vanished from the history, while the current-state
+                            // view stayed correct and no count could detect it
+                            // (Spec 12.03 section 3.2, Gap G-12.03-1).
+                            flushStagedRows(ps, databaseName, tableName, "UPDATE");
                             // Use ReplicationHistoryHandler for SCD Type 2 updates
                             // tableName is already fully-qualified (e.g., binlog_history.employees_temporal_test)
                             replicationHistoryHandler.executeHistoryUpdate(
@@ -460,6 +487,26 @@ public class PreparedStatementExecutor {
         });
 
         return result.get();
+    }
+
+    /**
+     * Flushes the rows staged on the shared INSERT statement before a
+     * replication-history statement runs INLINE against the target, so that
+     * its {@code SELECT ... FROM <table> FINAL} sees every row the batch has
+     * already applied at that binlog position (Spec 12.03 sections 3.2-3.3,
+     * Gap G-12.03-1). Used by the history DELETE and UPDATE branches alike.
+     *
+     * @param why the history operation about to run ({@code "DELETE"}, {@code "UPDATE"}), for the error text
+     * @throws RuntimeException naming the table when the flush fails; the batch fails with it
+     */
+    private static void flushStagedRows(PreparedStatement ps, String databaseName, String tableName, String why) {
+        try {
+            ps.executeBatch();
+        } catch (SQLException e) {
+            throw new RuntimeException(String.format(
+                    "Failed to flush records staged before a replication-history %s for %s.%s",
+                    why, databaseName, tableName), e);
+        }
     }
 
     /**

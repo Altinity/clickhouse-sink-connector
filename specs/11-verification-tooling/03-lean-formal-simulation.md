@@ -23,7 +23,7 @@ Specifies the mathematical formalization of the MySQL-to-ClickHouse replication 
   - `Replication.BatchOrder`: batch execution order around a replicated TRUNCATE (spec 04.05)
   - `Replication.VersionFloor`: the shipped version-sequence statics, the restart-boundary floor seed and control-record exclusion (Invariant I2 across a restart, specs 02.02 §3.5 / 02.04 §3.2)
   - `Replication.CreateTable`: CREATE TABLE sorting-key selection (specs 06.05 §3.6 / 08.05 §3.2)
-  - `Replication.History`: SCD2 write protocol and replication-log-only routing (specs 12.01 / 12.03 / 12.05): open-row convergence, validity continuity, gap witnesses (unflushed UPDATE, sorting-key tie, after-image key), mode-flag gating and engine parity
+  - `Replication.History`: corrected SCD2 write protocol and replication-log-only routing (specs 12.01 / 12.03 / 12.05): one version per event, before-key close and key-change marker, open-row convergence, closed-row visibility, TRUNCATE / DROP TABLE bulk close, `old_*` witnesses of the shipped defects (inline UPDATE, sorting-key tie, after-image key), mode-flag gating, engine parity and database-level DDL ignored in history mode
 - **CI**: `.github/workflows/spec-governance.yml`
 - **Empirical gap registries**: `sink-connector-lightweight/tests/integration/regression_manual.py` (TestFlows `xfails`), `@Disabled` annotations under `sink-connector/src/test` and `sink-connector-lightweight/src/test`
 

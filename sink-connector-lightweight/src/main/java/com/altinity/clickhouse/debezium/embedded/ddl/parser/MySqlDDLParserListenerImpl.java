@@ -14,6 +14,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
+import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.KeylessTableWarning;
@@ -294,11 +295,83 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private boolean dropOrTruncateStatement;
 
     /**
+     * One table a history-mode {@code TRUNCATE-TABLE} / {@code DROP-TABLE}
+     * names (Spec 12.03 section 3.4). In history mode the SCD2 table is never
+     * truncated and never dropped: the engine applies each request as a BULK
+     * CLOSE ({@code ReplicationHistoryHandler.executeHistoryBulkClose}) --
+     * every open row is closed at the event time and a delete marker is
+     * written per open row, and the closed versions survive. The marker's
+     * {@code _operation} is {@code 'T'} for a TRUNCATE-TABLE and {@code 'D'}
+     * for a DROP-TABLE (Spec 12.03 section 3.7).
+     */
+    public static final class HistoryBulkClose {
+        final String database;
+        final String table;
+        final ClickHouseConverter.CDC_OPERATION op;
+
+        HistoryBulkClose(String database, String table, ClickHouseConverter.CDC_OPERATION op) {
+            this.database = database;
+            this.table = table;
+            this.op = op;
+        }
+
+        /** The ClickHouse database of the SCD2 table (the history database). */
+        public String database() {
+            return database;
+        }
+
+        /** The SCD2 table's name, without backticks. */
+        public String table() {
+            return table;
+        }
+
+        /** {@code TRUNCATE} for a TRUNCATE-TABLE, {@code DELETE} for a DROP-TABLE. */
+        public ClickHouseConverter.CDC_OPERATION op() {
+            return op;
+        }
+
+        @Override
+        public String toString() {
+            return op + " `" + database + "`.`" + table + "`";
+        }
+    }
+
+    /**
+     * The bulk closes the walked statement requires in history mode (Spec
+     * 12.03 section 3.4); empty in standard mode and for every other statement.
+     */
+    private final List<HistoryBulkClose> historyBulkCloses = new ArrayList<>();
+
+    /**
      * @return the rebuild the walked ALTER TABLE requires on the replica
      *         (Spec 06.09 §3.1), or null when it changed no row identity.
      */
     public PrimaryKeyRebuildPlan primaryKeyRebuildPlan() {
         return primaryKeyRebuildPlan;
+    }
+
+    /**
+     * @return the SCD2 tables the walked {@code TRUNCATE-TABLE} / {@code DROP
+     *         TABLE} must bulk-close in history mode (Spec 12.03 section 3.4),
+     *         one request per table named; empty in standard mode.
+     */
+    public List<HistoryBulkClose> historyBulkCloses() {
+        return Collections.unmodifiableList(historyBulkCloses);
+    }
+
+    /**
+     * Records the history-mode replacement of a TRUNCATE-TABLE / DROP-TABLE of
+     * one table (Spec 12.03 section 3.4). The database is the listener's
+     * {@link #databaseName} -- the history database in history mode -- exactly
+     * as the standard-mode translation resolves a {@code db.table} reference.
+     */
+    private void recordHistoryBulkClose(String table, ClickHouseConverter.CDC_OPERATION op) {
+        HistoryBulkClose request = new HistoryBulkClose(this.databaseName, stripBackticks(table), op);
+        this.historyBulkCloses.add(request);
+        log.info("replication.history.enable=true: source {} of {} is applied as a bulk close of the SCD2 "
+                        + "table -- every open row is closed and marked, nothing is truncated or dropped "
+                        + "(Spec 12.03 section 3.4)",
+                op == ClickHouseConverter.CDC_OPERATION.TRUNCATE ? "TRUNCATE-TABLE" : "DROP-TABLE", request);
     }
 
     /** @return whether the walked statement drops or truncates a table or database. */
@@ -411,6 +484,17 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         for (ParseTree tree : createDatabaseContext.children) {
             if (tree instanceof MySqlParser.UidContext) {
                 String databaseName = tree.getText();
+                if (isReplicationHistoryEnabled()) {
+                    // History mode: every table lives in the history database,
+                    // which is fixed by configuration and never derived from
+                    // the source (Spec 12.01 section 3.3). A source CREATE
+                    // DATABASE therefore names nothing in ClickHouse; nothing
+                    // is emitted and performDDLOperation executes nothing for
+                    // an empty translation.
+                    log.info("replication.history.enable=true: skipping source CREATE DATABASE {}; the history "
+                            + "database is fixed by configuration (Spec 12.01 section 3.3)", databaseName);
+                    return;
+                }
                 if(!databaseName.isEmpty()) {
                     String overrideDatabaseName = overrideDatabaseName(tree.getText());
                     this.query.append(String.format(Constants.CREATE_DATABASE, overrideDatabaseName));
@@ -434,6 +518,23 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     @Override
     public void enterDropDatabase(MySqlParser.DropDatabaseContext dropDatabaseContext) {
         // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+        if (isReplicationHistoryEnabled()) {
+            // History mode: the history database is fixed by configuration
+            // (Spec 12.01 section 3.3), so a source DROP-DATABASE names
+            // nothing of this connector's in ClickHouse -- and translated
+            // verbatim it is dangerous: Debezium's initial snapshot replays
+            // DROP-DATABASE IF EXISTS <src> + CREATE DATABASE <src> for every
+            // captured database, and that DROP removed a database a standard
+            // connector on the same ClickHouse was replicating into. Nothing
+            // is emitted. The statement is not classified as a drop either:
+            // nothing is applied, so there is nothing for
+            // disable.drop.truncate: nothing to suppress, and no retired rebuild copy
+            // to cancel; the DDL row is still audited (Spec 12.04 section 3.4).
+            log.info("replication.history.enable=true: skipping source DROP-DATABASE {}; the history "
+                    + "database is fixed by configuration and is never dropped by a source statement "
+                    + "(Spec 12.01 section 3.3)", databaseNameOf(dropDatabaseContext));
+            return;
+        }
         this.dropOrTruncateStatement = true;
         for (ParseTree child : dropDatabaseContext.children) {
             if (child instanceof MySqlParser.UidContext) {
@@ -442,6 +543,20 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 this.query.append(String.format(Constants.DROP_DATABASE, overrideDatabaseName));
             }
         }
+    }
+
+    /** The database named by a DROP-DATABASE statement, for logging; empty if none was parsed. */
+    private static String databaseNameOf(MySqlParser.DropDatabaseContext dropDatabaseContext) {
+        for (ParseTree child : dropDatabaseContext.children) {
+            if (child instanceof MySqlParser.UidContext) {
+                return child.getText();
+            }
+        }
+        return "";
+    }
+
+    private boolean isReplicationHistoryEnabled() {
+        return config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
     }
 
     /**
@@ -701,9 +816,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
         }
 
+        // Every branch goes through appendOrderBy, which appends _valid_to in
+        // history mode (Spec 12.02 section 3.4, Gap G-12.02-3).
         if (overridePrimaryKey) {
             // Use the primary_key from tableConfig if it exists
-            this.query.append(Constants.ORDER_BY).append(tableConfig.getPrimaryKey());
+            appendOrderBy(tableConfig.getPrimaryKey());
         } else {
             // orderByColumns is never empty here: a declared PRIMARY KEY, an
             // adopted UNIQUE key or the all-columns fallback filled it above,
@@ -719,21 +836,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 String fixedOrderBy = orderByStr.replaceAll(regex, "$1");
 
                 // Append the sanitized ORDER BY clause to the query
-                this.query.append(Constants.ORDER_BY).append(fixedOrderBy);
+                appendOrderBy(fixedOrderBy);
             } else {
                 // Otherwise, use the orderByColumns for ordering
-
-                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-                    this.query.append(Constants.ORDER_BY);
-                    this.query.append("(");
-                    this.query.append(orderByColumns.toString());
-                    this.query.append(",`").append(DELETED_TIME_COLUMN).append("`");
-
-                    this.query.append(")");
-                }
-                else {
-                    this.query.append(Constants.ORDER_BY).append(orderByStr);
-                }
+                appendOrderBy(orderByStr);
             }
         }
 
@@ -766,6 +872,60 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             // Use the settings from tableConfig if it exists
             this.query.append(Constants.SETTINGS).append(tableSettings);
         }
+    }
+
+    /**
+     * Appends the sorting key of a CREATE TABLE.
+     *
+     * <p>Standard mode emits the column list exactly as it arrived. History
+     * mode appends {@code _valid_to} on EVERY branch -- declared key,
+     * schema-override {@code primary_key} and the {@code name(N)} clean-up
+     * alike (Spec 12.02 section 3.4, Gap G-12.02-3): without it every version
+     * of a key collapses under ReplacingMergeTree and the table is not an SCD2
+     * table. The result is a FLAT tuple: a composite key arrives already
+     * parenthesised ({@code (a,b)}), and wrapping that again produced the
+     * nested tuple {@code ((a,b),`_valid_to`)} -- sorting_key
+     * {@code (a,b),_valid_to} on the server -- so exactly one enclosing pair
+     * is stripped first: {@code ORDER BY (a,b,`_valid_to`)}.</p>
+     *
+     * @param columns the sorting-key column list, with or without enclosing
+     *                parentheses.
+     */
+    private void appendOrderBy(String columns) {
+        if (!isReplicationHistoryEnabled()) {
+            this.query.append(Constants.ORDER_BY).append(columns);
+            return;
+        }
+        this.query.append(Constants.ORDER_BY).append("(")
+                .append(stripEnclosingParentheses(columns))
+                .append(",`").append(DELETED_TIME_COLUMN).append("`)");
+    }
+
+    /**
+     * {@code (a,b)} becomes {@code a,b}. A list that is not enclosed as a
+     * whole -- {@code a}, {@code `id`} or {@code (a),(b)} -- is returned
+     * unchanged (trimmed): only a pair that wraps the ENTIRE list is removed.
+     */
+    static String stripEnclosingParentheses(String columns) {
+        String trimmed = columns == null ? "" : columns.trim();
+        if (trimmed.length() < 2 || trimmed.charAt(0) != '(' || trimmed.charAt(trimmed.length() - 1) != ')') {
+            return trimmed;
+        }
+        int depth = 0;
+        for (int i = 0; i < trimmed.length(); i++) {
+            char c = trimmed.charAt(i);
+            if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+            }
+            if (depth == 0 && i < trimmed.length() - 1) {
+                // The opening parenthesis closes before the end of the list:
+                // it does not enclose the whole list.
+                return trimmed;
+            }
+        }
+        return trimmed.substring(1, trimmed.length() - 1);
     }
 
     /**
@@ -2945,7 +3105,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     public void enterDropTable(MySqlParser.DropTableContext dropTableContext) {
         log.debug("DROP TABLE enter");
         // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+        // The statement is classified as a drop in BOTH modes, so
+        // disable.drop.truncate keeps its meaning (spec 06.08 section 3.3,
+        // Spec 12.03 section 3.4).
         this.dropOrTruncateStatement = true;
+        // History mode (Spec 12.03 section 3.4): the SCD2 table is never
+        // dropped -- dropping it would erase the closed versions with it. No
+        // DDL text is emitted; every named table is recorded as a bulk-close
+        // request (marker 'D') that performDDLOperation applies in place of
+        // the statement: only INSERTs, nothing is destroyed.
+        boolean historyBulkClose = isReplicationHistoryEnabled();
         // Always IF EXISTS, regardless of the source statement: MySQL binlogs a
         // server-generated drop as `DROP TABLE db.t /* generated by server */`
         // WITHOUT the guard the user may have typed, and a replay of the bare
@@ -2956,19 +3125,24 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // performed and Debezium is replicating; the connector never
         // originates a drop. Blast radius is the named mirrored table(s), and
         // IF EXISTS only narrows it by making a repeat a no-op.
-        this.query.append(Constants.DROP_TABLE).append(" ").append(Constants.IF_EXISTS);
+        if (!historyBulkClose) {
+            this.query.append(Constants.DROP_TABLE).append(" ").append(Constants.IF_EXISTS);
+        }
         for (ParseTree child : dropTableContext.children) {
             if (child instanceof MySqlParser.TablesContext) {
                 for (ParseTree tableNameChild : ((MySqlParser.TablesContext) child).children) {
                     if (tableNameChild instanceof MySqlParser.TableNameContext) {
                         String tableName = tableNameChild.getText();
-                        if (tableName.contains(".")) {
-                            String[] parts = tableName.split("\\.");
-                            this.query.append(databaseName).append(".").append(parts[1]);
+                        // A qualified `db.t` keeps only the table: the target
+                        // database is always the listener's databaseName.
+                        String bareTableName = tableName.contains(".")
+                                ? tableName.split("\\.")[1] : tableName;
+                        if (historyBulkClose) {
+                            recordHistoryBulkClose(bareTableName, ClickHouseConverter.CDC_OPERATION.DELETE);
                         } else {
-                            this.query.append(databaseName).append(".").append(tableName);
+                            this.query.append(databaseName).append(".").append(bareTableName);
                         }
-                    } else if (tableNameChild instanceof TerminalNodeImpl) {
+                    } else if (tableNameChild instanceof TerminalNodeImpl && !historyBulkClose) {
                         this.query.append(tableNameChild.getText());
                     }
                 }
@@ -3030,18 +3204,32 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     @Override
     public void enterTruncateTable(MySqlParser.TruncateTableContext truncateTableContext) {
         // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+        // The statement is classified as a truncate in BOTH modes, so
+        // disable.drop.truncate keeps its meaning (spec 06.08 section 3.3,
+        // Spec 12.03 section 3.4).
         this.dropOrTruncateStatement = true;
         for (ParseTree child : truncateTableContext.children) {
             if (child instanceof MySqlParser.TableNameContext) {
                 String tableName = child.getText();
-                if (tableName.contains(".")) {
-                    String[] parts = tableName.split("\\.");
-                    this.query.append(String.format(Constants.TRUNCATE_TABLE,
-                            "`" + databaseName + "`." + parts[1]));
-                } else {
-                    this.query.append(String.format(Constants.TRUNCATE_TABLE,
-                            "`" + databaseName + "`." + tableName));
+                // A qualified `db.t` keeps only the table: the target database
+                // is always the listener's databaseName.
+                String bareTableName = tableName.contains(".")
+                        ? tableName.split("\\.")[1] : tableName;
+                if (isReplicationHistoryEnabled()) {
+                    // History mode (Spec 12.03 section 3.4): the SCD2 table is
+                    // never truncated -- that erased the history (the E2E run
+                    // saw TRUNCATE-TABLE executed against it). No DDL text is
+                    // emitted; the table is recorded as a bulk-close request
+                    // (marker 'T') that performDDLOperation applies in place
+                    // of the statement: only INSERTs, nothing is destroyed.
+                    recordHistoryBulkClose(bareTableName, ClickHouseConverter.CDC_OPERATION.TRUNCATE);
+                    continue;
                 }
+                // DESTRUCTIVE: standard mode only -- the text of a TRUNCATE MySQL
+                // already executed, applied by performDDLOperation to the mirrored
+                // table; the connector never originates a truncation.
+                this.query.append(String.format(Constants.TRUNCATE_TABLE,
+                        "`" + databaseName + "`." + bareTableName));
             }
         }
     }

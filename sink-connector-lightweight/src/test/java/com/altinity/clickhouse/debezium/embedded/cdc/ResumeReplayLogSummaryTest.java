@@ -203,6 +203,49 @@ public class ResumeReplayLogSummaryTest {
         }
     }
 
+    /**
+     * The production ending. On one deployment the streaming source logged
+     * its 120 s progress line and then nothing at INFO for hours, so the
+     * "next non-skip line" trigger never fired and the total was never
+     * reported. The first ROW the batch handler receives is past the resume
+     * point by construction; it must end the replay.
+     */
+    @Test
+    @DisplayName("the first row delivered to the sink ends the replay with exactly one summary; a row with no replay pending is free")
+    public void deliveredRowEndsTheReplay() {
+        ResumeReplayLogSummary filter = ResumeReplayLogSummary.install();
+        filter.flush("test start");
+        summaryAppender.events.clear();
+
+        ResumeReplayLogSummary.rowDelivered();
+        assertTrue(summaryAppender.messages().isEmpty(), "no replay pending: nothing to report");
+
+        for (int i = 0; i < 4; i++) {
+            assertEquals(Filter.Result.DENY, filter.filter(debeziumEvent(String.format(SKIP_INSERT, 500 + i, i))));
+        }
+        assertEquals(Filter.Result.DENY, filter.filter(debeziumEvent(String.format(SKIP_UPDATE, 600))));
+        assertEquals(5, filter.skipped());
+        assertTrue(summaryAppender.messages().isEmpty(), "nothing is written while the replay runs");
+
+        ResumeReplayLogSummary.rowDelivered();
+        List<String> lines = summaryAppender.messages();
+        assertEquals(1, lines.size(), "exactly one summary: " + lines);
+        assertTrue(lines.get(0).contains("Resume replay done (" + ResumeReplayLogSummary.ROW_DELIVERED + ")"), lines.get(0));
+        assertTrue(lines.get(0).contains("skipped 5 previously processed binlog event(s)"), lines.get(0));
+        assertTrue(lines.get(0).contains("INSERT=4"), lines.get(0));
+        assertTrue(lines.get(0).contains("UPDATE=1"), lines.get(0));
+        assertTrue(lines.get(0).contains("positions 500..600"), lines.get(0));
+        assertFalse(lines.get(0).contains("secret-row-payload"), "no row image in the summary");
+        assertEquals(0, filter.skipped(), "counts reset after the summary");
+
+        ResumeReplayLogSummary.rowDelivered();
+        ResumeReplayLogSummary.rowDelivered();
+        assertEquals(1, summaryAppender.messages().size(), "the next rows report nothing: one summary per resume");
+
+        assertEquals(Filter.Result.NEUTRAL, filter.filter(debeziumEvent("Connected to binlog at binary.000042/1234")));
+        assertEquals(1, summaryAppender.messages().size(), "the logger fallback has nothing left to report either");
+    }
+
     @Test
     @DisplayName("binlog event types map to the row operation they carry")
     public void operationMapping() {

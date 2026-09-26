@@ -17,7 +17,7 @@ retention.
 - **Schema and row values**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/history/BinLogHistory.java` — `HISTORY_COLUMNS`, `createHistoryTableSyntax`, `addRecordsToHistoryTable`, `executeInsertWithStructs`, `getValueFromStruct`.
 - **Creation at startup**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/operations/ClickHouseAutoCreateTable.java` — `createHistoryDatabase`, `createHistoryTable` (server timezone resolution); called from `connectorStarted` in `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java`.
 - **DML rows**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/executor/ClickHouseBatchRunnable.java` and `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/executor/ClickHouseBatchWriter.java` — `addRecordsToHistoryTable` (first step of `processBatch` / `persistRecords`).
-- **DDL rows**: `DebeziumChangeEventCapture.performDDLOperation` (after translation, outside the `replication_log_only` gate, through the history connection).
+- **DDL rows**: `DebeziumChangeEventCapture.performDDLOperation` (after translation and execution, before acknowledgement, outside the `replication_log_only` gate, through the history connection; a failure propagates like a failed `executeDDL`).
 - **Insert statement**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/QueryFormatter.java` — `getInsertQueryUsingInputFunction` (the `input()`-function INSERT over `HISTORY_COLUMNS`).
 - **Formal model**: `formal_specs/lean/Replication/History.lean` — `historyWrites` (which batches reach this table per mode).
 
@@ -103,15 +103,21 @@ timezones default to UTC when unset.
   not acknowledged and is retried (10.02), so **an audit-table failure stops
   data replication in mode 2** — by design of the ordering, and the
   correct behaviour for mode 3 where the audit table is the replica.
-- **DDL**: after translation (and in mode 2 after execution), the DDL
-  record is inserted through the dedicated history connection with the raw
-  DDL string. DDL that is **ignored** (`checkIfDDLNeedsToBeIgnored`: not in
-  the capture list, snapshot DDL without `enable.snapshot.ddl`,
-  `disable.drop.truncate`) is **not recorded** — the audit trail contains the
-  DDL the connector acted on, not every DDL in the binlog. A failure of the
-  DDL audit insert is logged (`"Error adding DDL records to history table"`)
-  and **swallowed**, and the DDL's offset is acknowledged (**Gap G-12.04-1**,
-  I9): the audit trail can silently miss a DDL.
+- **DDL**: after translation (and in mode 2 after execution) and **before
+  acknowledgement**, the DDL record is inserted through the dedicated
+  history connection with the raw DDL string. DDL that is **ignored**
+  (`checkIfDDLNeedsToBeIgnored`: not in the capture list, snapshot DDL
+  without `enable.snapshot.ddl`, `disable.drop.truncate`) is **not
+  recorded** — the audit trail contains the DDL the connector acted on, not
+  every DDL in the binlog. Database-level DDL that history mode ignores at
+  translation (12.01 §3.3) **is** recorded: it passed the capture gate and
+  the connector acted on it by deciding to apply nothing. A failure of the
+  DDL audit insert is **not caught**: it propagates exactly as a failed
+  `executeDDL` does — recorded in the error table, retried under
+  `ddl.retry`, terminal (`DDLReplicationException`) when the budget is
+  spent, and the offset is never acknowledged (resolved Gap G-12.04-1, I9).
+  It used to be logged and swallowed with the offset acknowledged, which in
+  mode 3 — where the audit table is the only output — was a silent loss.
 
 ### 3.5 Retention
 `TTL toDate(_time) + toIntervalDay(replication.history.ttl)` — a sliding
@@ -129,12 +135,12 @@ table receives the same coordinates again — collapsed by `FINAL` (§3.2).
 
 ## 4. Invariants Preserved
 - **Invariant I8 (Durable Offset Quiescence)**: DML audit rows are written
-  before the batch can be acknowledged, so in every mode the durable offset
-  never passes an un-audited DML record; the DDL audit row is the exception
-  of Gap G-12.04-1.
+  before the batch can be acknowledged and the DDL audit row before the
+  DDL's offset is acknowledged, so in every mode the durable offset never
+  passes an un-audited record.
 - **Invariant I9 (Loud Failure)**: DML audit failures are loud (batch fails
-  and retries); the DDL audit failure and the startup creation failure
-  (12.01 G-12.01-2) are swallowed — recorded.
+  and retries); the DDL audit failure fails the DDL attempt (§3.4); the
+  startup creation failure fails the engine start (12.01 §3.5).
 - **Invariant I6 (Column Authority)**: `db_time MATERIALIZED now()` is on a
   connector-owned table with no source counterpart.
 - **Spec 10.05 / 02.04 (redelivery)**: identical coordinates collapse under
@@ -150,13 +156,14 @@ table receives the same coordinates again — collapsed by `FINAL` (§3.2).
 - `ReplicationLogOnlyIT.testReplicationLogOnlyWritesToBinlogHistoryOnly()` — §3.4 in mode 3: rows are written to the audit table while the data table stays empty.
 - `DBMetadataRetryClassificationTest.testTableAlreadyExistsIsNotRetryable()` — `TABLE_ALREADY_EXISTS` / `DATABASE_ALREADY_EXISTS` on the history database are permanent, not retried.
 - Lean: `Replication.History.log_only_history_still_written`, `Replication.History.standard_mode_writes_no_history` — §3.4 gating on `enable`.
-- **Coverage gaps**: no test asserts the per-column values of §3.3 (only schema and existence), the DDL-row swallow of Gap G-12.04-1, or the exclusion of ignored DDL.
+- The end-to-end history suite (three connectors side by side, kill -9 restart, single-threaded variants, degenerate combination) — the audit table of a mode-2 and a mode-3 connector holds every DML record and every captured DDL across a restart.
+- **Coverage gaps**: no unit test asserts the per-column values of §3.3 (only schema and existence), provokes a DDL audit insert failure, or checks the exclusion of ignored DDL.
 
 ---
 
-## 6. Gaps recorded (not fixed here)
-| Id | Where | Behaviour | Consequence |
-|---|---|---|---|
-| G-12.04-1 | `DebeziumChangeEventCapture.performDDLOperation` | the DDL audit insert's exception is caught and logged; the offset is acknowledged | the audit trail can silently omit a DDL (I9) |
-| G-12.04-2 | `BinLogHistory.getValueFromStruct` | `_operation` stored as the enum name; SCD2 tables store the letter code | two spellings across the two history tables (02.01 §3.5 c) |
-| G-12.04-3 | `createHistoryTableSyntax` | `ttl_only_drop_parts` commented out | TTL expiry is row-level rewriting inside daily partitions instead of part drops |
+## 6. Gaps
+| Id | Status | Where | Old behaviour | New behaviour / consequence |
+|---|---|---|---|---|
+| G-12.04-1 | **Resolved** | `DebeziumChangeEventCapture.performDDLOperation` | the DDL audit insert's exception was caught and logged; the offset was acknowledged with the audit row missing | the exception propagates into the DDL failure handling; the DDL attempt fails before acknowledgement (§3.4, I9) |
+| G-12.04-2 | Open | `BinLogHistory.getValueFromStruct` | — | `_operation` stored as the enum name; SCD2 tables store the letter code: two spellings across the two history tables (02.01 §3.5 c) |
+| G-12.04-3 | Open | `createHistoryTableSyntax` | — | `ttl_only_drop_parts` commented out: TTL expiry is row-level rewriting inside daily partitions instead of part drops |

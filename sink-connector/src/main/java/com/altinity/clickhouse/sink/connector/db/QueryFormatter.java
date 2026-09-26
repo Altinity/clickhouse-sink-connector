@@ -644,11 +644,20 @@ public class QueryFormatter {
     }
 
     /**
-     * Builds a 2-SELECT UNION ALL query for replication history DELETE (SCD2 delete pattern).
+     * Builds a 2-SELECT UNION ALL query for replication history DELETE (SCD2 delete pattern,
+     * Spec 12.03 section 3.3).
      * 1. First SELECT: Close the current active row (_valid_to = delete_timestamp, is_deleted = 0).
      * 2. Second SELECT: Insert delete marker row (_valid_from = delete_timestamp, _valid_to = open_end,
      *    is_deleted = 1, _operation = 'D').
      * Both SELECTs read from the table; no parameter binding is needed.
+     *
+     * <p>Both rows carry the ONE version {@code version} of the event (Spec 12.03
+     * section 3.5, Gap G-12.03-4): the close row lands at sorting key
+     * {@code (pk, ts)} and the marker at {@code (pk, sentinel)}, so they never
+     * compete with each other; the marker beats the open row it hides because that
+     * row came from an EARLIER event and versions are monotonic (Invariant I2).
+     * {@code version + 1} -- the previous marker version -- collided with the NEXT
+     * event's version on the lightweight sequence path.</p>
      *
      * @return query and empty column index map (no parameter binding)
      */
@@ -718,7 +727,8 @@ public class QueryFormatter {
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                 selectExpr = "1";
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
-                selectExpr = String.format("%d", version + 1);
+                // The event's own version, not version + 1 (see the javadoc above).
+                selectExpr = String.format("%d", version);
             } else {
                 selectExpr = "`" + columnName + "`";
             }
@@ -755,6 +765,11 @@ public class QueryFormatter {
         return response;
     }
 
+    /**
+     * Single-column-key form of
+     * {@link #getInsertQueryForUpdate(String, Map, Map, String, String, long, ClickHouseConverter.CDC_OPERATION, String, boolean)}
+     * for a same-key UPDATE ({@code keyChanged = false}).
+     */
     public MutablePair<String, Map<String, Integer>> getInsertQueryForUpdate(String tableName,
                                                                              Map<String, String> columnNameToDataTypeMap,
                                           String primaryKeyColumnName,
@@ -766,15 +781,54 @@ public class QueryFormatter {
                                           String serverTimeZone) {
         return getInsertQueryForUpdate(tableName, columnNameToDataTypeMap,
                 singlePrimaryKey(primaryKeyColumnName, primaryKeyValue), validToMax, binlogRecordTimestamp,
-                version, cdcOperation, serverTimeZone);
+                version, cdcOperation, serverTimeZone, false);
     }
 
     /**
-     * Composite-key form of {@link #getInsertQueryForUpdate(String, Map, String, Object, String, String, long, ClickHouseConverter.CDC_OPERATION, String)}:
-     * both table-reading {@code SELECT}s (close the current row; re-insert the
-     * before image) select the previous history row by EVERY primary-key column
-     * ({@code primaryKey}: column name to value, in key order). Closing on the first
-     * column alone closed every row that shared it (spec 02.01 section 3.5 a).
+     * Builds the replication history UPDATE statement (SCD2, Spec 12.03 section 3.2):
+     * one {@code INSERT ... SELECT ... UNION ALL ...} that
+     * <ol>
+     *   <li>CLOSES the visible open row at the BEFORE-image key ({@code primaryKey}):
+     *       a copy of that row with {@code _valid_to = binlogRecordTimestamp},
+     *       {@code is_deleted = 0}, {@code _version = version}, read
+     *       {@code FROM t FINAL WHERE <key> AND _valid_to = sentinel [AND is_deleted = 0]};</li>
+     *   <li>inserts the AFTER image at {@code (afterKey, sentinel)} from bound
+     *       parameters ({@code _valid_from = ?}, {@code _valid_to = ?}, data columns),
+     *       with {@code is_deleted = 0}, {@code _operation = '<letter>'} and
+     *       {@code _version = version} as SQL literals;</li>
+     *   <li>ONLY when {@code keyChanged}: a DELETE MARKER at the OLD key's open
+     *       sorting key {@code (primaryKey, sentinel)} -- a copy of the visible open
+     *       row at the before key with {@code _valid_from = binlogRecordTimestamp},
+     *       {@code _valid_to = sentinel}, {@code is_deleted = 1},
+     *       {@code _operation = 'U'}, {@code _version = version}, same WHERE as (1) --
+     *       so an UPDATE that changes a primary-key column retires the old key
+     *       instead of leaving two current rows for one source row (Gap G-12.03-3).</li>
+     * </ol>
+     *
+     * <p>The former third SELECT (a deleted copy of the before image at
+     * {@code (pk, ts)} carrying the close row's version) is REMOVED: it tied with
+     * the close row on {@code (pk, ts, _version)} and, depending on physical
+     * insertion order inside the one INSERT, could hide the closed history version
+     * under {@code FINAL} (Gap G-12.03-2).</p>
+     *
+     * <p>VERSIONS (Spec 12.03 section 3.5, Gap G-12.03-4): every row of one event
+     * carries the ONE version {@code version} -- the record's standard version.
+     * The close row {@code (pk, ts)} and the open-key rows {@code (pk, sentinel)}
+     * are different sorting keys, so they never compete with each other; the after
+     * row beats the previous open row because that row came from an EARLIER event
+     * and versions are monotonic (Invariant I2). {@code version + 1} -- the previous
+     * after-row version -- collided with the next event's version on the
+     * lightweight sequence path.</p>
+     *
+     * <p>Every table-reading SELECT selects the previous history row by EVERY
+     * primary-key column ({@code primaryKey}: column name to value, in key order);
+     * closing on the first column alone closed every row that shared it
+     * (spec 02.01 section 3.5 a).</p>
+     *
+     * @param primaryKey the BEFORE-image primary key: the row being closed
+     * @param keyChanged whether the after image carries a different primary key
+     * @return query and the column-to-parameter-index map of SELECT (2); the
+     *         table-reading SELECTs bind nothing
      */
     public MutablePair<String, Map<String, Integer>> getInsertQueryForUpdate(String tableName,
                                           Map<String, String> columnNameToDataTypeMap,
@@ -783,13 +837,14 @@ public class QueryFormatter {
                                           String binlogRecordTimestamp,
                                           long version,
                                           ClickHouseConverter.CDC_OPERATION cdcOperation,
-                                          String serverTimeZone) {
+                                          String serverTimeZone,
+                                          boolean keyChanged) {
 
         StringBuilder colNamesDelimited = new StringBuilder();
-        StringBuilder colNamesDelimitedForFirstSelect = new StringBuilder();
-        StringBuilder colNamesDelimitedForSecondSelect = new StringBuilder();
-        StringBuilder colNamesDelimitedForThirdSelect = new StringBuilder();
-        
+        StringBuilder colNamesDelimitedForCloseSelect = new StringBuilder();
+        StringBuilder colNamesDelimitedForAfterSelect = new StringBuilder();
+        StringBuilder colNamesDelimitedForOldKeyMarkerSelect = new StringBuilder();
+
         // Map to track which columns need parameter binding
         Map<String, Integer> colNameToIndexMap = new HashMap<>();
         int parameterIndex = 1;
@@ -800,12 +855,12 @@ public class QueryFormatter {
             colNamesDelimited.append(columnName).append(",");
         }
 
-        // First SELECT: Close the existing record (set _valid_to to binlog timestamp)
+        // SELECT (1): Close the existing record (set _valid_to to binlog timestamp)
         // Keep original values from table, only modify _valid_to and _version
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
             String columnName = entry.getKey();
             String selectExpr;
-            
+
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
                 // CLOSE the record by setting _valid_to to binlog timestamp (not now())
                 // Using binlog timestamp ensures _valid_to matches the next record's _valid_from
@@ -814,16 +869,17 @@ public class QueryFormatter {
                 // Keep is_deleted = 0 (this is historical, not deleted)
                 selectExpr = String.format("0 as `%s`", columnName);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
-                // Update version for ReplacingMergeTree to recognize this as newer
+                // The event's version: (pk, ts) is a sorting key of its own, so
+                // nothing else of this event competes with the close row.
                 selectExpr = String.format("%d as `%s`", version, columnName);
             } else {
                 // Keep original value from existing row (including _operation, _valid_from, data columns)
                 selectExpr = "`" + columnName + "`";
             }
-            colNamesDelimitedForFirstSelect.append(selectExpr).append(",");
+            colNamesDelimitedForCloseSelect.append(selectExpr).append(",");
         }
 
-        // Second SELECT: Insert new "after" image (NO FROM clause - uses parameter binding for data columns)
+        // SELECT (2): Insert new "after" image (NO FROM clause - uses parameter binding for data columns)
         // Metadata columns (_version, is_deleted, _operation) are HARDCODED to ensure correct values
         for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
             String columnName = entry.getKey();
@@ -839,8 +895,10 @@ public class QueryFormatter {
                 selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
                 colNameToIndexMap.put(columnName, parameterIndex++);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
-                // HARDCODE version+1 to ensure correct version regardless of fieldMapper
-                selectExpr = String.format("%d as `%s`", version + 1, columnName);
+                // HARDCODE the event's version (NOT version + 1, see the javadoc):
+                // it exceeds the previous open row's version because that row is
+                // from an earlier event (Invariant I2).
+                selectExpr = String.format("%d as `%s`", version, columnName);
                 // NO parameter binding - hardcoded in SQL
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                 // HARDCODE is_deleted = 0 for new active record
@@ -855,84 +913,143 @@ public class QueryFormatter {
                 selectExpr = formatParameterPlaceholder(dataType) + " as `" + columnName + "`";
                 colNameToIndexMap.put(columnName, parameterIndex++);
             }
-            colNamesDelimitedForSecondSelect.append(selectExpr).append(",");
+            colNamesDelimitedForAfterSelect.append(selectExpr).append(",");
         }
 
-        // Third SELECT: Read before-image FROM TABLE with modified temporal columns
-        // This preserves the ORIGINAL _valid_from from the table and sets _valid_to to now()
-        // NO parameter binding - all values come from the table or are hardcoded
-        for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
-            String columnName = entry.getKey();
-            String selectExpr;
+        // SELECT (3), key change only: a DELETE MARKER at the OLD key's open sorting
+        // key (before key, sentinel). Copies the visible open row at the before key
+        // and marks it deleted, so the old key disappears from the current-state
+        // view under FINAL (Gap G-12.03-3). NO parameter binding.
+        if (keyChanged) {
+            for (Map.Entry<String, String> entry : columnNameToDataTypeMap.entrySet()) {
+                String columnName = entry.getKey();
+                String selectExpr;
 
-            if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
-                // Keep the ORIGINAL _valid_from from the table
-                selectExpr = "`" + columnName + "`";
-            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                // Set _valid_to to binlog timestamp - when this record was superseded
-                selectExpr = String.format("toDateTime('%s', '%s') as `%s`", binlogRecordTimestamp, serverTimeZone, columnName);
-            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
-                // Mark as deleted (is_deleted = 1)
-                selectExpr = String.format("1 as `%s`", columnName);
-            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
-                // Set operation type
-                selectExpr = String.format("'%s' as `%s`", cdcOperation.getOperation(), columnName);
-            } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
-                // Use same version as first SELECT
-                selectExpr = String.format("%d as `%s`", version, columnName);
-            } else {
-                // Keep original value from table
-                selectExpr = "`" + columnName + "`";
+                if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
+                    // The marker starts where the closed version ends
+                    selectExpr = String.format("toDateTime('%s', '%s') as `%s`", binlogRecordTimestamp, serverTimeZone, columnName);
+                } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
+                    // Open sorting key of the old primary key
+                    selectExpr = String.format("toDateTime('%s', '%s') as `%s`", validToMax, serverTimeZone, columnName);
+                } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
+                    // Mark as deleted (is_deleted = 1)
+                    selectExpr = String.format("1 as `%s`", columnName);
+                } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
+                    // The UPDATE retired the old key
+                    selectExpr = String.format("'%s' as `%s`", cdcOperation.getOperation(), columnName);
+                } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
+                    // The event's version: beats the previous open row at the old key (I2)
+                    selectExpr = String.format("%d as `%s`", version, columnName);
+                } else {
+                    // Keep original value from table (the primary-key columns keep the OLD key)
+                    selectExpr = "`" + columnName + "`";
+                }
+                colNamesDelimitedForOldKeyMarkerSelect.append(selectExpr).append(",");
             }
-            colNamesDelimitedForThirdSelect.append(selectExpr).append(",");
         }
-        // NO colNameToIndexMap entries for third SELECT - no parameter binding needed
 
         removeTrailingComma(colNamesDelimited);
-        removeTrailingComma(colNamesDelimitedForFirstSelect);
-        removeTrailingComma(colNamesDelimitedForSecondSelect);
-        removeTrailingComma(colNamesDelimitedForThirdSelect);
+        removeTrailingComma(colNamesDelimitedForCloseSelect);
+        removeTrailingComma(colNamesDelimitedForAfterSelect);
+        removeTrailingComma(colNamesDelimitedForOldKeyMarkerSelect);
 
-        // The predicate over the WHOLE primary key, each value formatted for its type.
+        // The predicate over the WHOLE (before-image) primary key, each value formatted for its type.
         String primaryKeyPredicate = formatPrimaryKeyPredicate(tableName, columnNameToDataTypeMap, primaryKey);
 
         String tableWithBackTicks = "`" + tableName + "`";
-        
+
         // Build is_deleted condition only if the column exists in the table
         String isDeletedCondition = columnNameToDataTypeMap.containsKey(
                 ClickHouseDbConstants.IS_DELETED_COLUMN) ? " AND `is_deleted` = 0" : "";
 
-        // Build the query with three SELECTs:
+        // The open-row predicate at the before key, shared by every table-reading SELECT
+        String openRowClause = String.format("FROM %s FINAL WHERE %s AND `_valid_to` = toDateTime('%s', '%s')%s",
+                tableWithBackTicks, primaryKeyPredicate, validToMax, serverTimeZone, isDeletedCondition);
+
+        // Build the query:
         // 1. Close existing record (from table with WHERE) - uses FINAL to get merged view
         // 2. Insert new "after" values (NO FROM clause - uses parameter binding)
-        // 3. Insert "before" image (FROM TABLE - preserves original _valid_from)
-        String query = String.format(
-            "INSERT INTO %s(%s) " +
-            "SELECT %s FROM %s FINAL WHERE %s AND `_valid_to` = toDateTime('%s', '%s')%s " +
-            "UNION ALL " +
-            "SELECT %s " +  // NO FROM clause for second SELECT - uses parameters
-            "UNION ALL " +
-            "SELECT %s FROM %s FINAL WHERE %s AND `_valid_to` = toDateTime('%s', '%s')%s",
-            tableWithBackTicks, 
-            colNamesDelimited, 
-            colNamesDelimitedForFirstSelect, 
-            tableWithBackTicks, 
-            primaryKeyPredicate,
-            validToMax,
-            serverTimeZone,
-            isDeletedCondition,
-            colNamesDelimitedForSecondSelect,
-            colNamesDelimitedForThirdSelect,
-            tableWithBackTicks,
-            primaryKeyPredicate,
-            validToMax,
-            serverTimeZone,
-            isDeletedCondition
-        );
+        // 3. Key change only: delete marker at the old key (FROM table, same WHERE)
+        StringBuilder query = new StringBuilder();
+        query.append(String.format("INSERT INTO %s(%s) ", tableWithBackTicks, colNamesDelimited));
+        query.append(String.format("SELECT %s %s ", colNamesDelimitedForCloseSelect, openRowClause));
+        query.append("UNION ALL ");
+        query.append(String.format("SELECT %s", colNamesDelimitedForAfterSelect));  // NO FROM clause - uses parameters
+        if (keyChanged) {
+            query.append(" UNION ALL ");
+            query.append(String.format("SELECT %s %s", colNamesDelimitedForOldKeyMarkerSelect, openRowClause));
+        }
 
         MutablePair<String, Map<String, Integer>> response = new MutablePair<>();
-        response.left = query;
+        response.left = query.toString();
         response.right = colNameToIndexMap;
         return response;
+    }
+
+    /**
+     * Builds the replication history statement for a replicated truncation (Spec 12.03
+     * section 3.4, Gap G-12.03-6). Instead of erasing the SCD2 table -- closed
+     * versions included -- ONE {@code INSERT ... SELECT} closes EVERY visible open
+     * row at the event time and appends a delete marker at each row's open sorting
+     * key, so the history window survives and the current-state view becomes empty,
+     * exactly as the source table did:
+     *
+     * <pre>
+     * INSERT INTO t
+     * SELECT * REPLACE (toDateTime('ts', 'tz') AS `_valid_to`, V AS `_version`)
+     *   FROM t FINAL WHERE `_valid_to` = toDateTime('S', 'tz') [AND `is_deleted` = 0]
+     * UNION ALL
+     * SELECT * REPLACE (toDateTime('ts', 'tz') AS `_valid_from`, [1 AS `is_deleted`,] 'T' AS `_operation`, V AS `_version`)
+     *   FROM t FINAL WHERE &lt;same predicate&gt;
+     * </pre>
+     *
+     * <p>Column-list agnostic on purpose: {@code SELECT * REPLACE} keeps the table's
+     * column order, so the positional INSERT is safe and the caller needs no column
+     * map. There is no primary-key predicate: every open row is closed. When the
+     * table has no {@code is_deleted} column the {@code 1 AS is_deleted} replacement
+     * and the predicate conjunct are omitted. The statement only INSERTS: nothing is
+     * destroyed. Every row carries the ONE version {@code version} of the event
+     * (Spec 12.03 section 3.5): close rows land at {@code (pk, ts)}, markers at
+     * {@code (pk, sentinel)} where they beat the earlier-event open rows (I2).</p>
+     *
+     * @param qualifiedTable       {@code database.table}
+     * @param hasIsDeletedColumn   whether the table carries {@code is_deleted}
+     * @param validToMax           the open-row sentinel, rendered for the server timezone
+     * @param binlogRecordTimestamp the event time, rendered for the server timezone
+     * @param version              the event's version, shared by every emitted row
+     * @param operationCode        the single-letter operation code stored in {@code _operation} ({@code 'T'})
+     * @param serverTimeZone       the resolved server timezone id
+     * @return the statement; it binds no parameters
+     */
+    public String getInsertQueryForBulkClose(String qualifiedTable, boolean hasIsDeletedColumn,
+                                             String validToMax, String binlogRecordTimestamp,
+                                             long version, String operationCode, String serverTimeZone) {
+        String table = quoteQualifiedTable(qualifiedTable);
+        String eventTime = String.format("toDateTime('%s', '%s')", binlogRecordTimestamp, serverTimeZone);
+        String openRowPredicate = String.format("WHERE `_valid_to` = toDateTime('%s', '%s')%s",
+                validToMax, serverTimeZone, hasIsDeletedColumn ? " AND `is_deleted` = 0" : "");
+
+        // Close row: the open version, ended at the event time
+        String closeReplace = String.format("%s AS `%s`, %d AS `%s`",
+                eventTime, ClickHouseDbConstants.DELETED_TIME_COLUMN, version, ClickHouseDbConstants.VERSION_COLUMN);
+        // Delete marker: at the open sorting key, deleted, starting at the event time
+        String markerReplace = String.format("%s AS `%s`, %s'%s' AS `%s`, %d AS `%s`",
+                eventTime, ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN,
+                hasIsDeletedColumn ? "1 AS `" + ClickHouseDbConstants.IS_DELETED_COLUMN + "`, " : "",
+                operationCode, ClickHouseDbConstants.OPERATION_COLUMN,
+                version, ClickHouseDbConstants.VERSION_COLUMN);
+
+        return String.format(
+                "INSERT INTO %s SELECT * REPLACE (%s) FROM %s FINAL %s UNION ALL SELECT * REPLACE (%s) FROM %s FINAL %s",
+                table, closeReplace, table, openRowPredicate, markerReplace, table, openRowPredicate);
+    }
+
+    /** {@code database.table} as {@code `database`.`table`}; a bare name as {@code `table`}. */
+    private static String quoteQualifiedTable(String qualifiedTable) {
+        int dot = qualifiedTable.indexOf('.');
+        if (dot < 0) {
+            return "`" + qualifiedTable + "`";
+        }
+        return "`" + qualifiedTable.substring(0, dot) + "`.`" + qualifiedTable.substring(dot + 1) + "`";
     }
 }

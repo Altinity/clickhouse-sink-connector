@@ -43,6 +43,7 @@ public class CommitOrderVersionClampTest {
         DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
         DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
         DebeziumChangeEventCapture.sequenceHighWaterPosition = null;
+        DebeziumChangeEventCapture.sequenceHighWaterEffectiveTs = 0L;
         DebeziumChangeEventCapture.sequenceMaxSourceTs = 0L;
     }
 
@@ -101,6 +102,47 @@ public class CommitOrderVersionClampTest {
         assertEquals((TS + 5_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START + 1, lateCommit,
                 "the timestamp component is floored at the newest first-delivery timestamp "
                         + "and the counter continues - the 2.8.0 formula is untouched");
+    }
+
+    /**
+     * Spec 02.02 section 3.1.2. Debezium stamps every row event of a MySQL
+     * transaction with the transaction's binlog position (the row index restarts
+     * at 0 per statement), so the rows after a transaction's first row compare
+     * EQUAL to the high-water mark. They must be floored like the first row:
+     * before the fix only the first row of a late-committing transaction was
+     * clamped and the rest kept their older statement time, so an INSERT ranked
+     * above the UPDATE and DELETE of the same transaction and the deleted row
+     * stayed live on the replica (found by the end-to-end history suite: INSERT +
+     * UPDATE + DELETE of one key in one transaction).
+     */
+    @Test
+    @DisplayName("every row of one transaction (one binlog position) is floored like its first row")
+    public void rowsOfOneTransactionShareTheFirstRowsFloor() {
+        versionOf(at(TS - 10_000, 100));
+        long unrelated = versionOf(at(TS + 5_000, 300)); // a newer commit raises the floor
+        // The long transaction commits now: its three row events were executed in
+        // second T and all carry the transaction's position 400.
+        long insert = versionOf(at(TS, 400));
+        long update = versionOf(at(TS, 400));
+        long delete = versionOf(at(TS, 400));
+
+        assertTrue(insert > unrelated, "the transaction's first row is floored above the newer commit");
+        assertTrue(update > insert, "the UPDATE of the same transaction must out-rank its INSERT; "
+                + "before the fix it was versioned in second T, below the floored INSERT");
+        assertTrue(delete > update, "the DELETE must out-rank the UPDATE");
+        assertEquals(insert + 1, update, "same floored second, counter +1");
+        assertEquals(insert + 2, delete, "same floored second, counter +2");
+    }
+
+    @Test
+    @DisplayName("a transaction whose rows carry a NEWER statement time than the floor keeps it")
+    public void rowsOfOneTransactionKeepANewerTimestamp() {
+        versionOf(at(TS - 10_000, 100));
+        versionOf(at(TS, 300));
+        long first = versionOf(at(TS + 2_000, 400));   // newer than the floor: not clamped
+        long second = versionOf(at(TS + 2_000, 400));  // same transaction, same position
+        assertEquals((TS + 2_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START, first);
+        assertEquals(first + 1, second);
     }
 
     // DESTRUCTIVE: nothing is deleted here. This unit test only versions in-memory
