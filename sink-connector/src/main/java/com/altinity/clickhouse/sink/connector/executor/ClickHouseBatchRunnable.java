@@ -75,6 +75,43 @@ public class ClickHouseBatchRunnable implements Runnable {
             new HashMap<>();
 
     /**
+     * Closes every connection this worker holds -- the per-database
+     * connections and the system connection -- and forgets them. Called by
+     * the engine once the worker pool has terminated (spec 01.01 §3.3 step
+     * 4a): a worker is discarded with its pool on every engine restart, and
+     * without this call its connections were never returned or closed, so
+     * each restart leaked {@code thread.pool.size} x databases of them. Safe
+     * to call more than once; a connection that fails to close is logged and
+     * skipped, never rethrown.
+     */
+    public synchronized void closeConnections() {
+        for (Map.Entry<String, Connection> entry : this.databaseToConnectionMap.entrySet()) {
+            closeQuietly(entry.getValue(), entry.getKey());
+        }
+        this.databaseToConnectionMap.clear();
+        closeQuietly(this.systemConnection, BaseDbWriter.SYSTEM_DB);
+        this.systemConnection = null;
+    }
+
+    /** Number of per-database connections currently held. Package-private for the test. */
+    int openDatabaseConnections() {
+        return this.databaseToConnectionMap.size();
+    }
+
+    private void closeQuietly(Connection conn, String databaseName) {
+        if (conn == null) {
+            return;
+        }
+        try {
+            if (!conn.isClosed()) {
+                conn.close();
+            }
+        } catch (SQLException e) {
+            log.warn("Worker {}: could not close the connection to `{}`: {}", this.threadId, databaseName, e.toString());
+        }
+    }
+
+    /**
      * Map of topic names to table names.
      */
     private final Map<String, String> topic2TableMap;
@@ -275,7 +312,8 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @return a Connection to the specified database, or null if none could
      *         be obtained
      */
-    private Connection getClickHouseConnection(String databaseName) {
+    @VisibleForTesting
+    Connection getClickHouseConnection(String databaseName) {
         if (this.databaseToConnectionMap.containsKey(databaseName)) {
             return this.databaseToConnectionMap.get(databaseName);
         }
