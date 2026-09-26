@@ -42,9 +42,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * <p><b>The rule.</b> A PACING PERIOD opens with the WARN (and that first wait
  * keeps its release INFO). Every later wait that begins within the re-arm
  * window of the previous release is counted, not logged. One summary INFO per
- * interval while the period lasts. One "pacing ended" INFO when a wait begins
- * after a longer quiet gap, or on {@code reset()}. The waits themselves, the
- * dead-worker check and the wait limit are untouched -- only the lines.</p>
+ * interval while the period lasts. One "pacing ended" INFO once the reader has
+ * stayed under the cap for longer than the re-arm window -- from the first
+ * acknowledgement after that gap or from the next wait, whichever comes first,
+ * naming the state at the last release -- or on {@code reset()}. The waits
+ * themselves, the dead-worker check and the wait limit are untouched -- only
+ * the lines.</p>
  *
  * <p>The bookkeeping reads a substitutable clock so the windows can be crossed
  * without sleeping; the waits run on the real clock and are released by a real
@@ -217,6 +220,100 @@ public class HandoffHardCapLogPacingTest {
         assertTrue(text(ended).contains("stayed under the cap for more than 60 s"), text(ended));
         assertEquals(Level.WARN, lines.get(3).getLevel(), "the new period opens at WARN");
         assertTrue(text(lines.get(4)).contains("released"), "and its first wait keeps the release line");
+    }
+
+    @Test
+    @DisplayName("the first acknowledgement after a quiet gap longer than the re-arm window closes the period by itself")
+    public void theFirstAcknowledgementAfterAQuietGapEndsThePeriod() throws InterruptedException {
+        assertEquals(2, cycle(0));
+        assertEquals(0, cycle(1));
+        int before = appender.capLines().size();
+
+        // Under the cap the writers keep acknowledging. An acknowledgement inside
+        // the re-arm window adds nothing ...
+        clock.addAndGet(30 * NANOS_PER_SECOND);
+        DebeziumOffsetManagement.checkIfBatchCanBeCommitted(outstanding.removeFirst());
+        assertEquals(before, appender.capLines().size(),
+                "an acknowledgement 30 s after the last release is inside the re-arm window");
+
+        // ... and the first one past the window closes the period. No wait was
+        // needed: a period the reader never re-enters used to stay open for
+        // hours, and its line came only with the next crossing.
+        clock.addAndGet(31 * NANOS_PER_SECOND);
+        int id = nextUnitId++;
+        List<ClickHouseStruct> unit = OffsetTestSupport.unit(committer, 1_000L + id, "q" + id);
+        DebeziumOffsetManagement.registerHandoff(unit, Collections.singletonList(unit));
+        DebeziumOffsetManagement.checkIfBatchCanBeCommitted(unit);
+
+        List<LogEvent> lines = appender.capLines();
+        assertEquals(before + 1, lines.size(), "the acknowledgement adds exactly the pacing-ended line: " + lines.size());
+        LogEvent ended = lines.get(lines.size() - 1);
+        assertEquals(Level.INFO, ended.getLevel());
+        assertTrue(text(ended).contains("Handoff hard cap pacing ended"), text(ended));
+        assertTrue(text(ended).contains("stayed under the cap for more than 60 s"), text(ended));
+        assertTrue(text(ended).contains("2 pause(s) totalling"), "both pauses of the closed period: " + text(ended));
+        assertTrue(text(ended).contains("2 row(s) in 1 unit(s) outstanding at the last release"),
+                "the state the period ended in: " + text(ended));
+
+        assertEquals(2, cycle(1), "the period is closed: the next pause opens a new one with WARN and release");
+    }
+
+    @Test
+    @DisplayName("the pacing-ended line names the state at the last release, not the over-cap state of the wait that closed it")
+    public void pacingEndedNamesTheStateAtTheLastRelease() throws InterruptedException {
+        assertEquals(2, cycle(0));
+        assertEquals(0, cycle(1));
+        // The period is closed lazily, by the wait that begins after the quiet
+        // gap -- at which moment the FIFO is at the cap again (4 rows in 2
+        // units). The line must describe the quiet gap, not that crossing.
+        assertEquals(3, cycle(120), "pacing ended, then a fresh WARN and its release");
+
+        LogEvent ended = appender.capLines().get(2);
+        assertTrue(text(ended).contains("Handoff hard cap pacing ended"), text(ended));
+        assertTrue(text(ended).contains("2 row(s) in 1 unit(s) outstanding at the last release"),
+                "the state at the last release of the closed period: " + text(ended));
+        assertFalse(text(ended).contains("4 row(s) in 2 unit(s)"),
+                "never the over-cap state of the wait that closed it: " + text(ended));
+    }
+
+    @Test
+    @DisplayName("an acknowledgement during a wait longer than the re-arm window continues the period, it does not end it")
+    public void anAcknowledgementDuringALongWaitDoesNotEndThePeriod() throws InterruptedException {
+        assertEquals(2, cycle(0));
+        assertEquals(0, cycle(1));
+        int before = appender.capLines().size();
+
+        // A wait on a slow head unit: the reader is paced on the real clock while
+        // the pacing clock crosses the re-arm window, and the acknowledgement that
+        // releases it lands 120 s after the previous release.
+        clock.addAndGet(NANOS_PER_SECOND);
+        fillToTheCap();
+        List<ClickHouseStruct> head = outstanding.removeFirst();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        Thread reader = new Thread(() -> {
+            try {
+                DebeziumOffsetManagement.awaitHandoffCapacity(CAP, 10_000, null);
+            } catch (Throwable e) {
+                failure.set(e);
+            }
+        }, "hard-cap-pacing-test-reader");
+        reader.setDaemon(true);
+        reader.start();
+        Thread.sleep(200);
+        clock.addAndGet(120 * NANOS_PER_SECOND);
+        DebeziumOffsetManagement.checkIfBatchCanBeCommitted(head);
+        reader.join(10_000);
+        assertFalse(reader.isAlive(), "the paced reader was released");
+        if (failure.get() != null) {
+            throw new AssertionError("the paced reader failed", failure.get());
+        }
+
+        List<LogEvent> lines = appender.capLines();
+        for (LogEvent e : lines.subList(before, lines.size())) {
+            assertFalse(text(e).contains("pacing ended"),
+                    "the acknowledgement that released a long wait must not close the period: " + text(e));
+        }
+        assertEquals(0, cycle(1), "the period is still open: the next pause is counted, not logged");
     }
 
     @Test
