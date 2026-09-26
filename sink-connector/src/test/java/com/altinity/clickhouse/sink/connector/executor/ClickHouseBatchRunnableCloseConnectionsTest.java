@@ -107,20 +107,24 @@ public class ClickHouseBatchRunnableCloseConnectionsTest {
         return null;
     }
 
-    /** A worker whose every connection is a tracked proxy. */
+    /**
+     * A worker whose every connection is a tracked proxy. The superclass
+     * constructor opens the system connection before this class's field
+     * initializers run, so the recorder and the refusing name are static and
+     * set before construction.
+     */
     private static final class TrackingWorker extends ClickHouseBatchRunnable {
-        final List<Tracked> opened = Collections.synchronizedList(new ArrayList<>());
-        final String refuseCloseFor;
+        static final List<Tracked> OPENED = Collections.synchronizedList(new ArrayList<>());
+        static volatile String refuseCloseFor = "";
 
-        TrackingWorker(ClickHouseSinkConnectorConfig config, String refuseCloseFor) {
+        TrackingWorker(ClickHouseSinkConnectorConfig config) {
             super(new LinkedBlockingQueue<List<ClickHouseStruct>>(), config, new HashMap<>());
-            this.refuseCloseFor = refuseCloseFor;
         }
 
         @Override
         Connection openConnection(String jdbcUrl, String databaseName) {
             Tracked t = new Tracked(databaseName, databaseName.equals(refuseCloseFor));
-            opened.add(t);
+            OPENED.add(t);
             return t.connection;
         }
     }
@@ -138,10 +142,10 @@ public class ClickHouseBatchRunnableCloseConnectionsTest {
     @Test
     @DisplayName("closeConnections() closes the per-database and system connections, forgets them, skips one that refuses, and is idempotent")
     public void closeConnectionsClosesAndForgetsEverything() {
-        // The constructor's openConnection calls happen before refuseCloseFor
-        // is assigned, which is what we want: the system connection closes.
         String stubborn = uniqueDb("stubborn");
-        TrackingWorker worker = new TrackingWorker(config(), stubborn);
+        TrackingWorker.OPENED.clear();
+        TrackingWorker.refuseCloseFor = stubborn;
+        TrackingWorker worker = new TrackingWorker(config());
         String dbA = uniqueDb("db_a");
         String dbB = uniqueDb("db_b");
         assertNotNull(worker.getClickHouseConnection(dbA));
@@ -154,7 +158,7 @@ public class ClickHouseBatchRunnableCloseConnectionsTest {
         assertEquals(0, worker.openDatabaseConnections(), "the map is emptied even when one close fails");
         int closed = 0;
         int refused = 0;
-        for (Tracked t : worker.opened) {
+        for (Tracked t : TrackingWorker.OPENED) {
             if (t.database.equals(stubborn) && !t.database.equals("system")) {
                 refused += t.closed.get() ? 0 : 1;
             } else if (t.database.equals(dbA) || t.database.equals(dbB) || t.database.equals("system")) {
