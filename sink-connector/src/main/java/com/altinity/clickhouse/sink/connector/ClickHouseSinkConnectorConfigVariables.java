@@ -86,6 +86,12 @@ public enum ClickHouseSinkConnectorConfigVariables {
     // the engine stops loudly (spec 01.05 section 3.4).
     HANDOFF_MAX_OUTSTANDING_RECORDS("sink.connector.handoff.max.outstanding.records"),
     HANDOFF_WAIT_TIMEOUT_MS("sink.connector.handoff.wait.timeout.ms"),
+    // The same cap in estimated BYTES (spec 01.05 section 3.4 item 7): a row
+    // count means something different for every table width, the heap does not.
+    HANDOFF_MAX_OUTSTANDING_BYTES("sink.connector.handoff.max.outstanding.bytes"),
+    // The most estimated bytes one JDBC INSERT chunk may hold (spec 03.06
+    // section 3.1); the driver renders a chunk as SQL text in memory twice.
+    BUFFER_MAX_BYTES("buffer.max.bytes"),
 
     // Pacing of retries for a batch that failed to write to ClickHouse for a
     // retriable reason: initial delay, doubling per consecutive failure of the

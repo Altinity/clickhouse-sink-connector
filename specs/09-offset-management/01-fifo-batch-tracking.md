@@ -116,16 +116,21 @@ On the Debezium thread, for every list handed to the asynchronous writers
    warnings for the hour.) `reset()` (§3.8) clears the advisory silently along
    with the set it abandons; its own abandonment WARN is the line for that
    event.
-5. **Hard cap — the advisory's enforcing counterpart, in rows.** The
-   registration also adds `unit.size()` to `outstandingRecords`, released only
-   when the unit is acknowledged (§3.3) or abandoned (§3.8): the heap the
-   reader's lead is costing. BEFORE registering the next unit the producer
-   calls `awaitHandoffCapacity(cap, timeout, deadWorkerCheck)` and is held
-   while that count is at or above `sink.connector.handoff.max.outstanding.records`
-   (default 500000; `0` disables), released by the acknowledgement or reset
-   that brings it under, failing loudly after
-   `sink.connector.handoff.wait.timeout.ms`. The advisory names a backlog; the
-   cap bounds it. Rules, rationale and logging are in spec 01.05 §3.4.
+5. **Hard cap — the advisory's enforcing counterpart, in rows AND in
+   estimated bytes.** The registration also adds `unit.size()` to
+   `outstandingRecords` and the unit's estimate (`RecordSizeEstimator`, one
+   sample per group, every row stamped with its share) to `outstandingBytes`,
+   both released only when the unit is acknowledged (§3.3) or abandoned
+   (§3.8): the heap the reader's lead is costing. BEFORE registering the next
+   unit the producer calls `awaitHandoffCapacity(capRows, capBytes, timeout,
+   deadWorkerCheck)` and is held while the row count is at or above
+   `sink.connector.handoff.max.outstanding.records` (default 500000) OR the
+   byte estimate is at or above `sink.connector.handoff.max.outstanding.bytes`
+   (default one quarter of the maximum heap); `0` disables either dimension.
+   It is released by the acknowledgement or reset that brings both under,
+   failing loudly after `sink.connector.handoff.wait.timeout.ms`. The
+   advisory names a backlog; the cap bounds it. Rules, rationale and logging
+   are in spec 01.05 §3.4.
 
 Sequences are assigned by one thread in handoff order, so
 `seq(A) < seq(B)` iff A was read from the binlog before B. No wall-clock value
@@ -415,6 +420,10 @@ would let a later batch commit an offset past rows that never reached a queue.
   counted; the producer is held at the cap until the head is acknowledged or
   the FIFO is reset, not delayed under it, not at all at `0`; the dead-worker
   check and the wait limit both end the wait loudly.
+- `HandoffHardCapBytesTest`, `RecordSizeEstimatorTest` — §3.1 step 5 (byte
+  rule in spec 01.05 §3.4 item 7): the outstanding estimate follows handoff
+  and acknowledgement like the row count, a parked unit still counted, and
+  the producer pauses on either cap.
 - `HandoffHardCapLogPacingTest` — §3.1 step 5 (logging rule in spec 01.05 §3.4
   item 6): at the cap the reader oscillates one unit at a time, so the lines
   are paced — one WARN and one release INFO per pacing period, silent pauses
