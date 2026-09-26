@@ -3142,6 +3142,26 @@ public class DebeziumChangeEventCapture {
         // registration is what makes the batch read as unwritten from this
         // instant -- including the window between a worker's poll() and its
         // write -- see DebeziumOffsetManagement#hasUnwrittenBatches.
+        //
+        // Before that, the hard cap on the reader's lead over the writers
+        // (spec 01.05 section 3.4). Every handed-off row stays on the heap
+        // until its unit is acknowledged, and the per-queue capacity below is
+        // counted in batches of any size, so a reader that outran stalled
+        // writers used to hand off rows until the heap was full: on one
+        // deployment the writers stopped acknowledging, the reader handed off
+        // 1.4M more rows in the next nineteen minutes, and the JVM spent the
+        // rest of its life in back-to-back full garbage collections -- a stall
+        // with no error line, which the source then ended by aborting the
+        // binlog dump nobody was reading. Pausing here bounds the heap and
+        // lets Debezium's own bounded queue push the backpressure to the
+        // binlog client. The dead-worker check runs between slices: a dead
+        // worker can never acknowledge, so it must stop the engine, not be
+        // waited on.
+        DebeziumOffsetManagement.awaitHandoffCapacity(
+                config.getLong(ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_RECORDS.toString()),
+                config.getLong(ClickHouseSinkConnectorConfigVariables.HANDOFF_WAIT_TIMEOUT_MS.toString()),
+                this::failIfWorkerDied);
+
         if (this.threadPoolSize > 1 && this.routedQueues != null) {
             // Hash-based routing mode: group records by table and route to specific threads
             appendToRecordsWithHashRouting(convertedRecords);

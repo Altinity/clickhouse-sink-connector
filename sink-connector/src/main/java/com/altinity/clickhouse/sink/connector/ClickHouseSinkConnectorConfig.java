@@ -65,6 +65,19 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     private static final int DEFAULT_MAX_QUEUE_SIZE = 500000;
 
     /**
+     * Default hard cap on rows handed to the writers and not yet acknowledged
+     * (spec 01.05 section 3.4). Rows, not batches: a Debezium batch can hold
+     * one row or ten thousand, so a batch count bounds nothing in bytes.
+     */
+    private static final long DEFAULT_HANDOFF_MAX_OUTSTANDING_RECORDS = 500000L;
+
+    /**
+     * Default longest wait at the handoff hard cap before the engine stops
+     * loudly (spec 01.05 section 3.4): ten minutes.
+     */
+    private static final long DEFAULT_HANDOFF_WAIT_TIMEOUT_MS = 600000L;
+
+    /**
      * Default delay before the first retry of a batch that failed to write to
      * ClickHouse for a retriable reason (spec 10.02).
      */
@@ -721,6 +734,40 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_RECORDS.toString(),
+                        Type.LONG,
+                        DEFAULT_HANDOFF_MAX_OUTSTANDING_RECORDS,
+                        ConfigDef.Range.atLeast(0),
+                        Importance.HIGH,
+                        "Hard cap on the rows handed to the writers and not yet acknowledged "
+                                + "(queued, in flight, or written but parked behind an older batch). "
+                                + "At or above it the Debezium thread pauses before the next handoff "
+                                + "until the writers acknowledge the head of the FIFO, so the heap the "
+                                + "reader's lead can occupy is bounded (the per-queue capacity, "
+                                + "sink.connector.max.queue.size, is counted in batches of any size "
+                                + "and bounds nothing in bytes). Size it so this many rows of the "
+                                + "widest replicated tables fit the heap with room for the writers: "
+                                + "0 disables the cap.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_RECORDS.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.HANDOFF_WAIT_TIMEOUT_MS.toString(),
+                        Type.LONG,
+                        DEFAULT_HANDOFF_WAIT_TIMEOUT_MS,
+                        ConfigDef.Range.atLeast(1),
+                        Importance.LOW,
+                        "Longest the Debezium thread waits at the handoff hard cap, in "
+                                + "milliseconds, before the engine stops with an error. Writers that "
+                                + "have not acknowledged the head of the FIFO in this long are "
+                                + "stalled, not slow; stopping loudly beats holding the source "
+                                + "connection open on a reader that cannot make progress.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.HANDOFF_WAIT_TIMEOUT_MS.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.BATCH_RETRY_BACKOFF_INITIAL_MS.toString(),
                         Type.LONG,
