@@ -5,6 +5,7 @@ import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeight
 import com.altinity.clickhouse.debezium.embedded.ddl.DdlCaptureFilter;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySqlDDLParserListenerImpl;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.PrimaryKeyRebuildPlan;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -18,6 +19,7 @@ import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
 import com.altinity.clickhouse.sink.connector.db.DDLSchemaChangeWaiter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
+import com.altinity.clickhouse.sink.connector.db.batch.ReplicationHistoryHandler;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAlterTable;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseAutoCreateTable;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
@@ -48,6 +50,7 @@ import javax.xml.transform.Source;
 import java.io.IOException;
 import java.sql.Connection;
 import java.sql.SQLException;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -370,6 +373,15 @@ public class DebeziumChangeEventCapture {
     public static SourcePosition sequenceHighWaterPosition = null;
 
     /**
+     * The effective (floored) timestamp assigned to the first delivery that set
+     * {@link #sequenceHighWaterPosition}. The remaining rows of that transaction
+     * arrive at the SAME position (Debezium stamps every row event of a MySQL
+     * transaction with the transaction's position) and are floored at this value,
+     * so the rows of one transaction never invert (spec 02.02 section 3.1.2).
+     */
+    public static long sequenceHighWaterEffectiveTs = 0L;
+
+    /**
      * Highest effective timestamp (ms) versioned in this run - the floor applied to the
      * timestamp component of every first delivery.
      *
@@ -540,14 +552,31 @@ public class DebeziumChangeEventCapture {
                             }
                             // If replication history is enabled, create the history table.
                             if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
+                                String binlogHistoryTable = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString(), "history");
+                                String binlogHistoryDatabase = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString(), "binlog_history");
                                 try {
                                     ClickHouseAutoCreateTable clickHouseAutoCreateTable = new ClickHouseAutoCreateTable();
-                                    String binlogHistoryTable = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString(), "history");
-                                    String binlogHistoryDatabase = props.getProperty(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString(), "binlog_history");
                                     clickHouseAutoCreateTable.createHistoryDatabase(binlogHistoryDatabase, systemDbConnection, config);
                                     clickHouseAutoCreateTable.createHistoryTable(binlogHistoryTable, binlogHistoryDatabase, systemDbConnection, config);
                                 } catch (Exception e) {
-                                    log.error("Error creating history table", e);
+                                    // NOT swallowed (Invariant I9; Spec 12.01
+                                    // section 3.5, Gap G-12.01-2). Logged and
+                                    // rethrown with its cause, like the restart
+                                    // path of the CompletionCallback above:
+                                    // thrown out of this callback the failure
+                                    // ends engine.run() and reaches
+                                    // handleEngineCompletion as the engine's
+                                    // error, so the start fails loudly instead
+                                    // of running without the audit table and
+                                    // failing on the first audit insert -- in
+                                    // replication-log-only mode the audit table
+                                    // is the only output.
+                                    log.error("Error creating history database or audit table", e);
+                                    throw new RuntimeException(String.format(
+                                            "replication.history.enable=true: could not create the history database "
+                                                    + "%s or its audit table %s.%s; the engine must not start without "
+                                                    + "the audit table (Invariant I9)",
+                                            binlogHistoryDatabase, binlogHistoryDatabase, binlogHistoryTable), e);
                                 }
                             }
                         }
@@ -929,9 +958,17 @@ public class DebeziumChangeEventCapture {
         this.pgConfig = new PostgresConnectorConfig(props);
 
         // Log if replication history mode is enabled
+        // The second line names the mode (Spec 12.01 section 1): mode 3 writes
+        // only the audit table, mode 2 writes the SCD2 data tables as well.
+        // "only history will be tracked" used to be printed for both and was
+        // wrong for mode 2 (Gap G-12.01-3).
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             log.info("************** HISTORY MODE ENABLED **************");
-            log.info("*************only history will be tracked ***************");
+            if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString())) {
+                log.info("************** replication-log-only: only the audit table will be written **************");
+            } else {
+                log.info("************** SCD2 history: data tables and the audit table will be written **************");
+            }
         }
         
         Metrics.initialize(props.getProperty(ClickHouseSinkConnectorConfigVariables.ENABLE_METRICS.toString()),
@@ -1606,6 +1643,39 @@ public class DebeziumChangeEventCapture {
                     }
                     executeDDL(clickHouseQuery.toString(), writer, config);
 
+                    // History mode (Spec 12.03 section 3.4): a source TRUNCATE
+                    // TABLE / DROP-TABLE is translated to NO DDL text (so the
+                    // executeDDL above ran nothing) and to one bulk-close
+                    // request per named table, applied here in its place:
+                    // every open row of the SCD2 table is closed at the event
+                    // time and a delete marker is written per open row -- only
+                    // INSERTs, the closed versions survive. This is the path a
+                    // MySQL truncation actually arrives on (Debezium skips the
+                    // op=t row event by default), and the E2E run saw the
+                    // history erased by a TRUNCATE-TABLE here. A failure is
+                    // deliberately NOT caught: it propagates exactly as a
+                    // failed executeDDL does (error table, ddl.retry, terminal
+                    // DDLReplicationException, offset never acknowledged).
+                    List<MySqlDDLParserListenerImpl.HistoryBulkClose> historyBulkCloses =
+                            ddlParserService.historyBulkCloses();
+                    if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())
+                            && !historyBulkCloses.isEmpty()) {
+                        if (isSnapshotDDL(sr)) {
+                            // Debezium's schema snapshot replays `DROP-TABLE IF EXISTS`
+                            // before every `CREATE TABLE`. That is a bootstrap
+                            // statement, not a source event: on a re-snapshot into an
+                            // existing history database it would close every open row
+                            // with a 'D' marker only for the snapshot to re-open them
+                            // (Spec 12.03 section 3.4). Snapshot-phase TRUNCATE/DROP
+                            // therefore close nothing; the audit row below still
+                            // records the statement.
+                            log.info("History mode: snapshot-phase {} closes no rows (Spec 12.03 section 3.4): {}",
+                                    historyBulkCloses.get(0).op(), DDL);
+                        } else {
+                            executeHistoryBulkCloses(historyBulkCloses, chStruct, config, serverTimeZone, DDL);
+                        }
+                    }
+
                     // The statement changed the source table's row identity:
                     // swap in the empty table keyed by the new identity, here
                     // inside the DDL barrier and before the cache invalidation
@@ -1717,20 +1787,27 @@ public class DebeziumChangeEventCapture {
                     }
                 }
 
-                try {
-                    // if replication history is enabled, add to the binlog history table.
-                    if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-                        String historyTableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
-                        String replicationHistoryDatabaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
-                        BinLogHistory binLogHistory = new BinLogHistory();
-                        // Add the chStruct to the list
-                        List<ClickHouseStruct> currentBatch = new ArrayList<>();
-                        currentBatch.add(chStruct);
-                        binLogHistory.addRecordsToHistoryTable(config, historyTableName, replicationHistoryDbConnection, DDL, 
-                        currentBatch, sourceTimeZone, serverTimeZone);
-                    }
-                } catch (Exception e) {
-                    log.error("Error adding DDL records to history table", e);
+                // If replication history is enabled, add the DDL row to the
+                // audit table (Spec 12.04 section 3.3): AFTER execution and
+                // BEFORE acknowledgement, and deliberately NOT caught here. A
+                // failed audit insert propagates exactly as a failed
+                // executeDDL does -- into the catch below: recorded in the
+                // error table, retried under ddl.retry, terminal
+                // (DDLReplicationException) when the budget is spent, and the
+                // offset never acknowledged. It used to be logged and
+                // swallowed, and the DDL's offset was acknowledged with the
+                // audit row missing (Gap G-12.04-1, Invariant I9) -- in
+                // replication-log-only mode the audit table is the only
+                // output, so that was a silent loss.
+                if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+                    String historyTableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
+                    String replicationHistoryDatabaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+                    BinLogHistory binLogHistory = new BinLogHistory();
+                    // Add the chStruct to the list
+                    List<ClickHouseStruct> currentBatch = new ArrayList<>();
+                    currentBatch.add(chStruct);
+                    binLogHistory.addRecordsToHistoryTable(config, historyTableName, replicationHistoryDbConnection, DDL,
+                            currentBatch, sourceTimeZone, serverTimeZone);
                 }
 
                 DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
@@ -2267,6 +2344,109 @@ public class DebeziumChangeEventCapture {
                 schemaWaiter.waitForSchemaVisibility(writer.getConnection(), query);
             }
         }
+    }
+
+    /**
+     * Applies the bulk closes a history-mode {@code TRUNCATE-TABLE} / {@code DROP
+     * TABLE} translated to (Spec 12.03 section 3.4) with
+     * {@link ReplicationHistoryHandler#executeHistoryBulkClose}, one per named
+     * table. Every row of the event carries the ONE version of the DDL record
+     * (Spec 12.03 section 3.5) and is closed at its source time; the statement
+     * timezone is the one the record path uses for the same SCD2 table (Spec
+     * 12.03 section 3.6).
+     *
+     * <p>A table that does not exist in ClickHouse has nothing to close and is
+     * skipped -- Debezium's snapshot replays {@code DROP-TABLE IF EXISTS} for
+     * every captured table before its {@code CREATE TABLE}, and a bulk close
+     * of a missing table would otherwise halt the pipeline on the first
+     * snapshot. Anything else that cannot be established -- the event time,
+     * the version, the table's columns -- is refused loudly rather than
+     * guessed: a bulk close at a wrong instant or version silently corrupts
+     * every version of the table.</p>
+     *
+     * <p>Nothing here truncates or drops: the statements only INSERT.</p>
+     *
+     * @param historyBulkCloses the requests of the statement, one per table
+     * @param chStruct          the DDL record (source time, version coordinates)
+     * @param config            the connector configuration
+     * @param configuredServerTimeZone {@code clickhouse.datetime.timezone}; empty when unset
+     * @param ddl               the source statement, for diagnostics
+     * @throws Exception when the event time or version cannot be derived, the
+     *                   table's columns cannot be read, or ClickHouse refuses a statement
+     */
+    private void executeHistoryBulkCloses(List<MySqlDDLParserListenerImpl.HistoryBulkClose> historyBulkCloses,
+                                          ClickHouseStruct chStruct, ClickHouseSinkConnectorConfig config,
+                                          String configuredServerTimeZone, String ddl) throws Exception {
+        // Event time in epoch seconds: the record's ts_sec (source offset) when
+        // present, else source.ts_ms -- the same instant the audit row stores.
+        long tsSec = chStruct.getTsSec() > 0 ? chStruct.getTsSec() : chStruct.getTs_ms() / 1000;
+        if (tsSec <= 0) {
+            throw new IllegalStateException(String.format(
+                    "History bulk close for [%s] refused: the DDL record carries no source time "
+                            + "(ts_sec=%d, ts_ms=%d), so the open rows cannot be closed at the event "
+                            + "instant (Spec 12.03 section 3.4)", ddl, chStruct.getTsSec(), chStruct.getTs_ms()));
+        }
+        // The event's version, derived lazily the way ReplicationHistoryHandler
+        // .resolveVersion and the INSERT path derive it -- same snowflake.id
+        // flag -- and refused when underivable (Spec 12.03 section 3.5, Spec
+        // 02.05 section 3.2): bound as -1 it would win every merge forever.
+        if (chStruct.getVersion() == -1) {
+            chStruct.calculateVersion(config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString()));
+        }
+        long version = chStruct.getVersion();
+        if (version <= 0) {
+            throw new IllegalStateException(String.format(
+                    "History bulk close for [%s] refused: version %d is not a derivable event version "
+                            + "(Spec 02.05 section 3.2)", ddl, version));
+        }
+        ZoneId serverTimeZone = resolveHistoryServerTimeZone(config, configuredServerTimeZone);
+
+        DBMetadata dbMetadata = new DBMetadata(config);
+        ReplicationHistoryHandler historyHandler = new ReplicationHistoryHandler(config, serverTimeZone, dbMetadata);
+        Connection conn = writer.getConnection();
+        for (MySqlDDLParserListenerImpl.HistoryBulkClose request : historyBulkCloses) {
+            // Existence first (throws on a failed read, empty when absent), so
+            // an empty column map below is a failure, never "no table".
+            if (dbMetadata.getTableEngineUsingSystemTables(conn, request.database(), request.table()).getLeft() == null) {
+                log.info("History bulk close ({}) skipped for `{}`.`{}`: the table does not exist in ClickHouse, "
+                                + "so there are no open rows to close. DDL: {}",
+                        request.op(), request.database(), request.table(), ddl);
+                continue;
+            }
+            Map<String, String> columns = dbMetadata.getColumnsDataTypesForTable(conn, request.table(), request.database());
+            if (columns.isEmpty()) {
+                throw new IllegalStateException(String.format(
+                        "History bulk close (%s) for `%s`.`%s` refused: the table's columns could not be read, "
+                                + "so whether it carries `%s` is unknown (Spec 12.03 section 3.4). DDL: %s",
+                        request.op(), request.database(), request.table(), IS_DELETED_COLUMN, ddl));
+            }
+            log.info("Applying history bulk close ({}) to `{}`.`{}` at ts_sec={} version={} in place of the "
+                            + "source statement (Spec 12.03 section 3.4). DDL: {}",
+                    request.op(), request.database(), request.table(), tsSec, version, ddl);
+            // getInsertQueryForBulkClose quotes `database`.`table` itself from
+            // the dotted form, exactly as the op=t record path passes it.
+            historyHandler.executeHistoryBulkClose(conn, request.database() + "." + request.table(),
+                    columns.containsKey(IS_DELETED_COLUMN), tsSec, version, request.op());
+        }
+    }
+
+    /**
+     * The timezone the history statements render their {@code DateTime}
+     * literals in: {@code clickhouse.datetime.timezone} when configured, else
+     * the server's own -- the same resolution the record path applies
+     * ({@code ClickHouseBatchRunnable.getServerTimeZone}), so both paths write
+     * one SCD2 table with one statement timezone (Spec 12.03 section 3.6,
+     * Gap G-12.02-1).
+     */
+    private ZoneId resolveHistoryServerTimeZone(ClickHouseSinkConnectorConfig config, String configuredServerTimeZone) {
+        if (configuredServerTimeZone != null && !configuredServerTimeZone.isEmpty()) {
+            try {
+                return ZoneId.of(configuredServerTimeZone);
+            } catch (Exception e) {
+                log.error("**** Error parsing user provided timezone:" + configuredServerTimeZone + e.toString());
+            }
+        }
+        return new DBMetadata(config).getServerTimeZone(writer.getConnection());
     }
 
 
@@ -3500,6 +3680,25 @@ public class DebeziumChangeEventCapture {
             sequenceHighWaterPosition = position;
             if (effectiveTs < sequenceMaxSourceTs) {
                 effectiveTs = sequenceMaxSourceTs;
+            }
+            sequenceHighWaterEffectiveTs = effectiveTs;
+        } else if (position != null && sequenceHighWaterPosition != null
+                && position.sameLog(sequenceHighWaterPosition)
+                && position.compareTo(sequenceHighWaterPosition) == 0) {
+            // The SAME source position as the mark. Debezium stamps every row
+            // event of a MySQL transaction with the transaction's binlog
+            // position, and the row index restarts at 0 for every statement,
+            // so the rows that follow a transaction's first row compare EQUAL
+            // to the mark. They are first deliveries of that same transaction,
+            // not redeliveries: floor them at the effective timestamp the
+            // transaction's first row received. Without this only the first
+            // row was floored and the rest kept their older statement time,
+            // so an INSERT ranked above its own UPDATE and DELETE and the
+            // deleted row stayed live on the replica (spec 02.02 section
+            // 3.1.2). A redelivery of the transaction takes the same clamp,
+            // so the assignment stays redelivery-stable (spec 02.04).
+            if (effectiveTs < sequenceHighWaterEffectiveTs) {
+                effectiveTs = sequenceHighWaterEffectiveTs;
             }
         }
         // Every record that can move the anchor (and so reset the counter) also

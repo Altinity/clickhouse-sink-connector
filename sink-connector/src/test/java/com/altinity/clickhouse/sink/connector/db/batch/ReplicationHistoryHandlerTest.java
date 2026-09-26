@@ -1,7 +1,11 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants;
+import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -14,6 +18,8 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.*;
+
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Unit tests for ReplicationHistoryHandler.
@@ -94,12 +100,18 @@ public class ReplicationHistoryHandlerTest {
         );
 
         // Set additional fields needed for the test
-        record.setTs_ms(1709290200000L);  // 2025-03-01 10:30:00 UTC in ms
-        record.setTsSec(1709290200L);     // 2025-03-01 10:30:00 UTC in seconds
+        record.setTs_ms(1709290200000L);  // 2024-03-01 10:50:00 UTC in ms
+        record.setTsSec(1709290200L);     // 2024-03-01 10:50:00 UTC in seconds
         record.setGtid(12345L);
+        // The standard version the INSERT path would bind (Spec 12.03 section 3.5):
+        // the history rows must carry THIS, not a SnowFlakeId of (ts_ms, gtid).
+        record.setVersion(STANDARD_VERSION);
 
         return record;
     }
+
+    /** A lightweight sequence-path version ({@code effectiveTs * 10^6 + seq}), unlike any SnowFlakeId. */
+    private static final long STANDARD_VERSION = 1709290200000001L;
 
     @Test
     public void testBuildUpdateQueryParams() {
@@ -162,12 +174,12 @@ public class ReplicationHistoryHandlerTest {
         Assert.assertTrue("Query should contain WHERE clause with primary key", 
                 query.contains("`employeeNumber`=1001"));
 
-        // Verify query has two UNION ALL clauses (three SELECTs)
+        // A same-key UPDATE has one UNION ALL: close row + after row (Spec 12.03 section 3.2)
         int unionAllCount = query.split("UNION ALL").length - 1;
-        Assert.assertEquals("Query should have two UNION ALL clauses", 2, unionAllCount);
+        Assert.assertEquals("Query should have one UNION ALL clause", 1, unionAllCount);
 
-        // Verify column index map has after image columns (third SELECT has no parameter binding)
-        Assert.assertTrue("After image column should be in index map", 
+        // Verify column index map has after image columns (the close row has no parameter binding)
+        Assert.assertTrue("After image column should be in index map",
                 columnIndexMap.containsKey("employeeNumber"));
 
         System.out.println("Generated Query: " + query);
@@ -398,13 +410,212 @@ public class ReplicationHistoryHandlerTest {
 
         String update = handler.generateUpdateQuery("order_lines_history", fields, columns, params).left;
         String fullPredicate = "WHERE `order_id`=42 AND `line_no`=7 AND `_valid_to`";
-        Assert.assertEquals("both table-reading SELECTs of the UPDATE query close exactly the composite key: "
-                + update, 2, occurrences(update, fullPredicate));
+        Assert.assertEquals("the close row of a same-key UPDATE selects exactly the composite key: "
+                + update, 1, occurrences(update, fullPredicate));
         Assert.assertFalse("the first-column-only predicate would close every line of order 42: " + update,
                 update.contains("WHERE `order_id`=42 AND `_valid_to`"));
 
         String delete = handler.generateDeleteQuery("order_lines_history", columns, params).left;
         Assert.assertEquals("both SELECTs of the DELETE query close exactly the composite key: " + delete,
                 2, occurrences(delete, fullPredicate));
+    }
+
+    // ---- Spec 12.03 sections 3.2-3.5: before-image key, one version, bulk close ----
+
+    private static final String OPEN_ROW_AT_1001 =
+            "WHERE `employeeNumber`=1001 AND `_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC') AND `is_deleted` = 0";
+
+    /** An UPDATE record whose before image has key {@code beforeKey} and whose after image has key {@code afterKey}. */
+    private ClickHouseStruct updateRecord(int beforeKey, int afterKey) {
+        Struct before = new Struct(employeeSchema).put("employeeNumber", beforeKey).put("lastName", "Smith")
+                .put("firstName", "John").put("email", "john.smith@example.com").put("officeCode", "NYC01");
+        Struct after = new Struct(employeeSchema).put("employeeNumber", afterKey).put("lastName", "Doe")
+                .put("firstName", "John").put("email", "john.doe@example.com").put("officeCode", "NYC01");
+        Schema pkSchema = SchemaBuilder.struct().field("employeeNumber", Schema.INT32_SCHEMA).build();
+        // Debezium keys an UPDATE by the after image; the before image is where the old key lives.
+        Struct pk = new Struct(pkSchema).put("employeeNumber", afterKey);
+        ClickHouseStruct record = new ClickHouseStruct(7L, "employees-topic", pk, 0, System.currentTimeMillis(),
+                before, after, null, ClickHouseConverter.CDC_OPERATION.UPDATE);
+        record.setTs_ms(1709290200000L);
+        record.setTsSec(1709290200L);
+        record.setGtid(12345L);
+        record.setVersion(STANDARD_VERSION);
+        return record;
+    }
+
+    /**
+     * Gap G-12.03-3: the row an UPDATE or DELETE closes is the one the BEFORE image
+     * describes. Keying the close predicate by the after image closed nothing when
+     * a primary-key column changed.
+     */
+    @Test
+    public void closePredicateUsesBeforeImageKey() {
+        ReplicationHistoryHandler handler = new ReplicationHistoryHandler(queryFormatter, null);
+
+        ReplicationHistoryHandler.UpdateQueryParams moved = handler.buildUpdateQueryParams(updateRecord(1001, 2002));
+        Assert.assertEquals("the close key is the before-image key", 1001, moved.getPrimaryKeyValue());
+        Assert.assertEquals(Collections.singletonMap("employeeNumber", (Object) 1001), moved.getPrimaryKey());
+        Assert.assertTrue("a different after key is a key change", moved.isKeyChanged());
+
+        // A DELETE carries only the before image.
+        Struct before = new Struct(employeeSchema).put("employeeNumber", 1001).put("lastName", "Smith")
+                .put("firstName", "John").put("email", "john.smith@example.com").put("officeCode", "NYC01");
+        Schema pkSchema = SchemaBuilder.struct().field("employeeNumber", Schema.INT32_SCHEMA).build();
+        ClickHouseStruct delete = new ClickHouseStruct(8L, "employees-topic",
+                new Struct(pkSchema).put("employeeNumber", 1001), 0, System.currentTimeMillis(),
+                before, null, null, ClickHouseConverter.CDC_OPERATION.DELETE);
+        delete.setTs_ms(1709290200000L);
+        delete.setTsSec(1709290200L);
+        delete.setGtid(12346L);
+        delete.setVersion(STANDARD_VERSION + 1);
+        ReplicationHistoryHandler.UpdateQueryParams deleted = handler.buildUpdateQueryParams(delete);
+        Assert.assertEquals(1001, deleted.getPrimaryKeyValue());
+        Assert.assertFalse("a DELETE moves no key", deleted.isKeyChanged());
+
+        // Same-key UPDATE: no key change.
+        Assert.assertFalse(handler.buildUpdateQueryParams(updateRecord(1001, 1001)).isKeyChanged());
+    }
+
+    /**
+     * Gap G-12.03-3 end to end through the handler: an UPDATE that moves key 1001
+     * to 2002 closes 1001, marks 1001 deleted at the sentinel, and binds the after
+     * image (2002) as parameters -- so 1001 leaves the current-state view and 2002
+     * enters it. A same-key UPDATE emits no marker.
+     */
+    @Test
+    public void keyChangingUpdateClosesAndRetiresTheOldKey() {
+        ReplicationHistoryHandler handler = new ReplicationHistoryHandler(queryFormatter, null);
+
+        ReplicationHistoryHandler.UpdateQueryParams params = handler.buildUpdateQueryParams(updateRecord(1001, 2002));
+        MutablePair<String, Map<String, Integer>> result = handler.generateUpdateQuery(
+                "test_history.employees", employeeFields, columnToDataTypeMap, params);
+        String query = result.left;
+
+        Assert.assertEquals("close row + after row + old-key marker: " + query, 2, occurrences(query, "UNION ALL"));
+        Assert.assertEquals("the close row and the marker both select 1001's open row: " + query,
+                2, occurrences(query, OPEN_ROW_AT_1001));
+        Assert.assertFalse("nothing is selected by the new key: " + query, query.contains("`employeeNumber`=2002"));
+        String marker = query.substring(query.lastIndexOf("UNION ALL"));
+        Assert.assertTrue("1001 is marked deleted: " + marker, marker.contains("1 as `is_deleted`"));
+        Assert.assertTrue("... by the UPDATE: " + marker, marker.contains("'U' as `_operation`"));
+        Assert.assertTrue("... at its open sorting key: " + marker,
+                marker.contains("toDateTime('2100-01-01 00:00:00', 'UTC') as `_valid_to`"));
+        Assert.assertTrue("the after image (2002) is bound as parameters", result.right.containsKey("employeeNumber"));
+        Assert.assertTrue(params.isKeyChanged());
+        System.out.println("Generated Query for key-changing UPDATE: " + query);
+
+        ReplicationHistoryHandler.UpdateQueryParams sameKey = handler.buildUpdateQueryParams(updateRecord(1001, 1001));
+        String sameKeyQuery = handler.generateUpdateQuery("test_history.employees", employeeFields,
+                columnToDataTypeMap, sameKey).left;
+        Assert.assertFalse(sameKey.isKeyChanged());
+        Assert.assertEquals("no marker for a same-key UPDATE: " + sameKeyQuery, 1, occurrences(sameKeyQuery, "UNION ALL"));
+        Assert.assertFalse(sameKeyQuery.contains("1 as `is_deleted`"));
+    }
+
+    /**
+     * Spec 12.03 section 3.5 / Gap G-12.03-4: the history rows carry the record's
+     * standard version -- the value the INSERT path binds -- not a separate
+     * {@code SnowFlakeId.generate(ts_ms, gtid, false)} that ignored the sequence
+     * number and the commit floor.
+     */
+    @Test
+    public void versionComesFromTheRecordNotFromTimestampAndGtid() {
+        ClickHouseStruct record = createTestRecord(1001, "Doe", "John", "john.doe@example.com", "NYC01");
+        ReplicationHistoryHandler handler = new ReplicationHistoryHandler(queryFormatter, null);
+
+        ReplicationHistoryHandler.UpdateQueryParams params = handler.buildUpdateQueryParams(record);
+
+        Assert.assertEquals("the event's standard version", record.getVersion(), params.getVersion());
+        Assert.assertEquals(STANDARD_VERSION, params.getVersion());
+        Assert.assertNotEquals("not a SnowFlakeId of (ts_ms, gtid)",
+                SnowFlakeId.generate(record.getTs_ms(), record.getGtid(), false), params.getVersion());
+
+        String update = handler.generateUpdateQuery("test_history.employees", employeeFields, columnToDataTypeMap, params).left;
+        String delete = handler.generateDeleteQuery("test_history.employees", columnToDataTypeMap, params).left;
+        Assert.assertEquals("close row and after row carry V: " + update, 2, occurrences(update, STANDARD_VERSION + " as `_version`"));
+        Assert.assertFalse("never V+1: " + update, update.contains(String.valueOf(STANDARD_VERSION + 1)));
+        Assert.assertEquals("close row and marker carry V: " + delete, 2, occurrences(delete, String.valueOf(STANDARD_VERSION)));
+        Assert.assertFalse("never V+1: " + delete, delete.contains(String.valueOf(STANDARD_VERSION + 1)));
+    }
+
+    /**
+     * The standard path derives the version lazily at bind time; the history
+     * statements are built before any binding (and the DELETE binds nothing), so
+     * the handler derives it the same way ({@code calculateVersion}) when the
+     * record does not carry one yet -- here the raw GTID, as the test constructor
+     * runs with {@code snowflake.id=false}.
+     */
+    @Test
+    public void versionIsDerivedTheStandardWayWhenNotYetCalculated() {
+        ClickHouseStruct record = createTestRecord(1001, "Doe", "John", "john.doe@example.com", "NYC01");
+        record.setVersion(-1L);
+        ReplicationHistoryHandler handler = new ReplicationHistoryHandler(queryFormatter, null);
+
+        ReplicationHistoryHandler.UpdateQueryParams params = handler.buildUpdateQueryParams(record);
+
+        Assert.assertEquals("raw-GTID versioning: the version IS the GTID", 12345L, params.getVersion());
+        Assert.assertEquals("and it is left on the record for the INSERT path to reuse", 12345L, record.getVersion());
+    }
+
+    /**
+     * Spec 02.05 section 3.2 applied to history rows: a version that cannot be
+     * derived is refused loudly. Embedded as -1 it would become the maximum UInt64
+     * and win every merge for the key forever.
+     */
+    @Test
+    public void underivableVersionIsRefused() {
+        ReplicationHistoryHandler handler = new ReplicationHistoryHandler(queryFormatter, null);
+
+        // No GTID, no sequence number, no LSN, no source timestamp: nothing to derive from.
+        ClickHouseStruct underivable = createTestRecord(1001, "Doe", "John", "john.doe@example.com", "NYC01");
+        underivable.setVersion(-1L);
+        underivable.setGtid(-1L);
+        underivable.setTs_ms(0L);
+        IllegalStateException refused = assertThrows(IllegalStateException.class,
+                () -> handler.buildUpdateQueryParams(underivable));
+        Assert.assertTrue(refused.getMessage(), refused.getMessage().contains("_version -1"));
+        Assert.assertEquals("still not derived", -1L, underivable.getVersion());
+
+        // A zero version is not producible by any source coordinate either.
+        ClickHouseStruct zero = createTestRecord(1001, "Doe", "John", "john.doe@example.com", "NYC01");
+        zero.setVersion(0L);
+        assertThrows(IllegalStateException.class, () -> handler.buildUpdateQueryParams(zero));
+    }
+
+    /**
+     * Spec 12.03 section 3.4 / Gap G-12.03-6: the bulk close of a replicated
+     * TRUNCATE closes every open row at the EVENT time (not now()) with the
+     * event's version, in one statement that only inserts.
+     */
+    @Test
+    public void bulkCloseUsesEventTimeAndVersion() throws Exception {
+        Map<String, String> props = new HashMap<>();
+        props.put(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString(), "true");
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        ReplicationHistoryHandler handler = new ReplicationHistoryHandler(queryFormatter, new DBMetadata(config));
+        RecordingJdbc jdbc = new RecordingJdbc();
+
+        handler.executeHistoryBulkClose(jdbc.connection(), "test_history.employees", true,
+                1709290200L, 4242L, ClickHouseConverter.CDC_OPERATION.TRUNCATE);
+
+        Assert.assertEquals("one statement prepared and executed: " + jdbc.events,
+                Arrays.asList(RecordingJdbc.PREPARE, RecordingJdbc.EXECUTE), jdbc.kinds());
+        String sql = jdbc.events.get(0).sql;
+        Assert.assertTrue("closes at the event time: " + sql,
+                sql.contains("toDateTime('2024-03-01 10:50:00', 'UTC') AS `_valid_to`"));
+        Assert.assertTrue("markers start at the event time: " + sql,
+                sql.contains("toDateTime('2024-03-01 10:50:00', 'UTC') AS `_valid_from`"));
+        Assert.assertTrue("open rows are selected by the sentinel: " + sql,
+                sql.contains("WHERE `_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC') AND `is_deleted` = 0"));
+        Assert.assertEquals("every row carries the event's version: " + sql, 2, occurrences(sql, "4242 AS `_version`"));
+        Assert.assertTrue("markers record the TRUNCATE: " + sql, sql.contains("'T' AS `_operation`"));
+        Assert.assertTrue("targets the qualified table: " + sql, sql.startsWith("INSERT INTO `test_history`.`employees` "));
+        Assert.assertFalse("nothing destructive: " + sql, sql.toUpperCase().contains("TRUNCATE"));
+
+        RecordingJdbc untouched = new RecordingJdbc();
+        assertThrows(IllegalStateException.class, () -> handler.executeHistoryBulkClose(
+                untouched.connection(), "test_history.employees", true, 1709290200L, 0L,
+                ClickHouseConverter.CDC_OPERATION.TRUNCATE));
+        Assert.assertTrue("an underivable version prepares nothing", untouched.events.isEmpty());
     }
 }
