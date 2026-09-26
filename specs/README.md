@@ -4,7 +4,7 @@ Welcome to the specification-driven development (SDD) repository for the `clickh
 
 This repository operates under a formal, spec-first methodology. The connector is strictly defined as an exact, high-performance, zero-loss replication tool from MySQL to ClickHouse using the MySQL binary log (binlog).
 
-To facilitate fine-grained feature development and rigorous agentic engineering, all specifications are organized into **small, focused, modular encapsulations** across 11 architectural domains.
+To facilitate fine-grained feature development and rigorous agentic engineering, all specifications are organized into **small, focused, modular encapsulations** across 12 architectural domains.
 
 ---
 
@@ -121,6 +121,15 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 
 ---
 
+### Domain 12: Replication History Modes — SCD2 Tables & Binlog Audit (`specs/12-replication-history/`)
+- **[12.01: Replication History Operating Modes — Flag Matrix & Write Routing](12-replication-history/01-operating-modes.md)**: `replication.history.enable` × `replication.history.replication_log_only`; what each mode writes; every table routed to the history database.
+- **[12.02: SCD2 History Table Shape — Both Creation Paths](12-replication-history/02-scd2-table-shape.md)**: `_valid_from` / `_valid_to` (sentinel `2100-01-01`) / `_operation` / `is_deleted`, `ORDER BY (pk, _valid_to)`, `PARTITION BY toDate(_valid_to)`, TTL; record-path vs DDL-path differences.
+- **[12.03: SCD2 Write Protocol — INSERT, UPDATE (3-SELECT) and DELETE (2-SELECT)](12-replication-history/03-scd2-write-protocol.md)**: the `INSERT ... SELECT ... UNION ALL` statements, versions, key predicate, the inline UPDATE vs flushed DELETE, and the recorded gaps.
+- **[12.04: Binlog History Audit Table](12-replication-history/04-binlog-history-audit-table.md)**: the 19-column `<history db>.<history table>` — per-column values, DML and DDL rows, coordinate sorting key, TTL.
+- **[12.05: Replication-Log-Only Mode](12-replication-history/05-replication-log-only.md)**: audit rows only; DDL translated but not executed; what the offset certifies; the single-threaded parity gap.
+
+---
+
 ## Formal Verification in Lean 4
 The mathematical proof assistant files are located in `formal_specs/lean/`:
 - **[Formal Model & Verification Guide](../formal_specs/lean/README.md)**
@@ -130,3 +139,4 @@ The mathematical proof assistant files are located in `formal_specs/lean/`:
 - `Replication.Engine`: Translation semantics and state machine.
 - `Replication.Invariants`: Formal mathematical definitions of invariants.
 - `Replication.Proofs`: Complete machine-checked proofs of convergence and consistency.
+- `Replication.History`: SCD2 write protocol and replication-log-only routing (Domain 12) — open-row convergence, validity continuity, and machine-checked witnesses of the recorded gaps.

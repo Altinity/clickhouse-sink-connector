@@ -68,6 +68,7 @@ EXPECTED_DOMAINS = [
     "09-offset-management",
     "10-resilience-monitoring",
     "11-verification-tooling",
+    "12-replication-history",
 ]
 
 REQUIRED_SPEC_SECTIONS = [
