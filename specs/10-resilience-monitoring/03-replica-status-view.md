@@ -49,6 +49,14 @@ This measures how far the **committed** position trails the source clock; rows a
 
 ---
 
+### 3.4 Process-lifetime memory of the metrics registry
+The Prometheus registry (`Metrics`, `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/common/Metrics.java`) lives for the whole process on a fixed heap, so nothing registered in it may grow with source volume, DDL volume, binlog rotations or engine restarts:
+1. **Fixed label cardinality.** A label value must come from a bounded set (a table, a topic, a partition, `true`/`false`). The DDL counter `clickhouse.sink.ddl` used to carry the DDL text and the wall-clock timestamp as tags, which made every DDL event a new series that was never removed — on a source refreshing its views thousands of times a day the registry, and every `/metrics` scrape, grew without bound. It now carries only `fail`, so it is two series; the statement is in the log at INFO and the timestamp is the scrape's.
+2. **One child per live binlog file.** `clickhouse_sink_binlog_pos` is labelled by binlog file; the child of the file the reader has left is removed when the file changes, so the gauge holds one child, not one per rotation since start.
+3. **The registry is released with the server.** `Metrics.initialize` runs on every engine start in the process (REST `/restart`, `/start`, the restart monitor); it now stops the previous registry first, and `Metrics.stop()` closes the `JvmGcMetrics` binder (whose GC-MXBean listeners otherwise keep the whole old registry — and every series ever registered in it — reachable) and the meter registry itself, then drops the references. Before this, each restart leaked one complete registry.
+
+---
+
 ## 4. Invariants Preserved
 - **Observability**: exposes replication status inside ClickHouse without any connector-side endpoint.
 - **Configuration over code**: deployments may replace the view SQL through `replica.status.view`; the connector only formats, name-parses and executes it.
@@ -58,4 +66,6 @@ This measures how far the **committed** position trails the source clock; rows a
 ## 5. Verification Criteria
 - `DebeziumStorageViewIT.debeziumStorageView()` — the view is created as `altinity_sink_connector.show_replica_status` in the offset database.
 - `DebeziumJdbcStorageOperationsTest` — sibling storage operations of the same class.
+- `MetricsLifecycleTest` — §3.4: three DDL events with distinct statements and timestamps register one `clickhouse.sink.ddl` series per `fail` value, never one per event (`ddlCounterHasFixedCardinality`); the binlog position gauge keeps one child across a file rotation (`binlogPositionKeepsOneChildAcrossRotation`); `stop()` closes the registry and a second `initialize()` closes the previous one before opening a new one (`registryIsReleasedOnStopAndOnReinitialize`).
+- `ClickHouseBatchRunnableCloseConnectionsTest` — spec 01.01 §3.3 step 4a: `closeConnections()` closes the per-database and system connections the worker holds and forgets them; a connection that fails to close is skipped, and a second call is a no-op (`closeConnectionsClosesAndForgetsEverything`).
 - Verification: unit coverage of `createViewForShowReplicaStatus` itself (skip when unconfigured, skip when existing, name parsing) is not yet covered by an automated test (gap).

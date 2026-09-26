@@ -189,6 +189,15 @@ public class DebeziumChangeEventCapture {
             new java.util.concurrent.CopyOnWriteArrayList<>();
 
     /**
+     * The worker runnables behind {@link #workerFutures}, kept so {@code stop()}
+     * can close the connections each one holds once the pool has terminated
+     * (spec 01.01 §3.3 step 4a). Discarding a pool without this leaked every
+     * worker's per-database connections on every engine restart.
+     */
+    final java.util.List<ClickHouseBatchRunnable> workerRunnables =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+
+    /**
      * Number of threads in the thread pool (for hash-based routing).
      */
 
@@ -1005,6 +1014,20 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Error stopping executor", e);
         }
+
+        // 4a. The pool has terminated: no worker can touch its connections
+        //     again, so close them now (spec 01.01 §3.3 step 4a). Every engine
+        //     restart discards this pool and builds a new one; without this
+        //     the discarded workers' per-database connections were never
+        //     closed, thread.pool.size x databases of them per restart.
+        for (ClickHouseBatchRunnable worker : this.workerRunnables) {
+            try {
+                worker.closeConnections();
+            } catch (Exception e) {
+                log.error("Error closing a worker's connections", e);
+            }
+        }
+        this.workerRunnables.clear();
 
         // 4b. The online primary-key backfill thread: interrupted and waited
         //     for a few seconds at most; an interrupted copy re-runs at the
@@ -3207,8 +3230,10 @@ public class DebeziumChangeEventCapture {
                 this.routedQueues.add(new LinkedBlockingQueue<>(maxQueueSize));
             }
             for (int i = 0; i < this.threadPoolSize; i++) {
+                ClickHouseBatchRunnable worker = new ClickHouseBatchRunnable(this.routedQueues.get(i), i, config, new HashMap<>());
+                this.workerRunnables.add(worker);
                 this.workerFutures.add(this.executor.scheduleAtFixedRate(
-                        new ClickHouseBatchRunnable(this.routedQueues.get(i), i, config, new HashMap<>()),
+                        worker,
                         0,
                         config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()),
                         TimeUnit.MILLISECONDS));
@@ -3218,8 +3243,10 @@ public class DebeziumChangeEventCapture {
             // Single thread - use legacy mode
             log.info("********* Using legacy mode with single thread *********");
             for (int i = 0; i < this.threadPoolSize; i++) {
+                ClickHouseBatchRunnable worker = new ClickHouseBatchRunnable(this.records, config, new HashMap<>());
+                this.workerRunnables.add(worker);
                 this.workerFutures.add(this.executor.scheduleAtFixedRate(
-                        new ClickHouseBatchRunnable(this.records, config, new HashMap<>()),
+                        worker,
                         0,
                         config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_FLUSH_TIME.toString()),
                         TimeUnit.MILLISECONDS));
