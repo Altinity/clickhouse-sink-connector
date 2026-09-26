@@ -978,6 +978,24 @@ theorem fixed_open_row_superseded_by_later_legacy_event (ts d tsLater gtid : Nat
   show ts * 4194304 + d < tsLater * 4194304 + gtid + 1
   omega
 
+/-- **Sequence rows step one millisecond down (Spec 12.03 §3.5.1).** A sequence
+    row (a snapshot row on any source, every row on a GTID-less source) is written
+    at `(effectiveTs - 1, counter - seed)`; a GTID row floored to the same
+    effective millisecond is written at `(effectiveTs, gtid)` and ranks above it
+    whatever the two discriminators are -- the ordering the standard domain gets
+    from "any snowflake is above any sequence", reproduced inside one domain. -/
+theorem sequence_row_below_gtid_row_of_its_millisecond (effectiveTs counterLessSeed gtid : Nat)
+    (hts : 1 ≤ effectiveTs) (hc : counterLessSeed < snowflakeDiscriminatorSpace) :
+    snowflakeEncode (effectiveTs - 1) counterLessSeed < snowflakeEncode effectiveTs gtid := by
+  have hc' : counterLessSeed < 4194304 := hc
+  show (effectiveTs - 1) * 4194304 + counterLessSeed < effectiveTs * 4194304 + gtid
+  have hsub : (effectiveTs - 1) * 4194304 + 4194304 = effectiveTs * 4194304 := by
+    have : effectiveTs - 1 + 1 = effectiveTs := Nat.sub_add_cancel hts
+    calc (effectiveTs - 1) * 4194304 + 4194304
+        = (effectiveTs - 1 + 1) * 4194304 := by rw [Nat.succ_mul]
+      _ = effectiveTs * 4194304 := by rw [this]
+  omega
+
 /--
 **Resolved gap S10 (old behaviour, the upgrade freeze).** Had the fixed
 connector bound the RAW sequence number as `_version`, a legacy open row of an

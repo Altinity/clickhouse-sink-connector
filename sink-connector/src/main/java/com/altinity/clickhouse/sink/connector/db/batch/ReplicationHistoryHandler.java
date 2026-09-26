@@ -151,6 +151,15 @@ public class ReplicationHistoryHandler {
     private static final long SNOWFLAKE_DISCRIMINATOR_MASK = (1L << SnowFlakeId.GTID_FIELD_BITS) - 1;
 
     /**
+     * The seeds of the lightweight sequence counter (spec 02.03; the constants of
+     * the same name in the lightweight dispatch loop). Frozen by spec 02.01
+     * section 4 as part of the 2.8.0 version contract, which is why they can be
+     * mirrored here without a dependency on the lightweight module.
+     */
+    static final long SEQUENCE_START_INITIAL = 500_000_000L;
+    static final long SEQUENCE_START = 1_000_000_000L;
+
+    /**
      * The history version domain (Spec 12.03 section 3.5.1): every row of an SCD2
      * table -- the INSERT row of the standard path in history mode, the close row,
      * the after row, the key-change and delete markers and the bulk-close rows --
@@ -181,13 +190,32 @@ public class ReplicationHistoryHandler {
      * snowflake on both sides, whichever release wrote the earlier row.</p>
      *
      * <ul>
-     *   <li>GTID source: {@code (versionTs | ts_ms, gtid)} -- the standard
-     *       snowflake version itself when {@code snowflake.id=true}; with
-     *       {@code snowflake.id=false} the standard version is the raw GTID
+     *   <li>GTID row ({@code source.gtid} present): {@code (versionTs | ts_ms, gtid)}
+     *       -- the standard snowflake version itself when {@code snowflake.id=true};
+     *       with {@code snowflake.id=false} the standard version is the raw GTID
      *       transaction number and is re-encoded here (2.11.0 already wrote
      *       snowflakes into history tables regardless of that flag).</li>
-     *   <li>Sequence source (no GTIDs): {@code (seq / 10^6, seq mod 10^6)} -- the
-     *       millisecond slot and counter the sequence encodes.</li>
+     *   <li>Sequence row (no GTID: every row of a GTID-less source, and the
+     *       snapshot rows of ANY source, whose Debezium offset carries no GTID):
+     *       {@code (effectiveTs - 1, counter - seed)}, where {@code effectiveTs} is
+     *       the floor-clamped millisecond the dispatch loop set as
+     *       {@code versionTs} and {@code counter} is the intra-window counter of
+     *       spec 02.03 recovered as {@code seq - effectiveTs * 10^6}, less its
+     *       ten-digit seed ({@code SEQUENCE_START_INITIAL = 500_000_000} on the
+     *       first window of a run, {@code SEQUENCE_START = 1_000_000_000}
+     *       afterwards; both are frozen by spec 02.01 section 4). Within a window
+     *       the counter only increments, a reset moves the window to a later
+     *       millisecond, and a run starts at least one millisecond above the
+     *       previous high-water mark, so the pair orders exactly as the sequence
+     *       does. The millisecond is the one BELOW the effective millisecond on
+     *       purpose: the first GTID rows after a snapshot are floored to the
+     *       snapshot's last effective millisecond, and in the standard domain they
+     *       outrank the snapshot rows by domain (snowflake above sequence); one
+     *       history domain has no such gap, so the snapshot rows step one
+     *       millisecond down and every later GTID row of the same key ranks above
+     *       them however the tie in the millisecond field would have fallen. A
+     *       counter that does not fit the 22-bit field (more than 4,194,304 rows
+     *       in one window) is refused loudly rather than wrapped.</li>
      *   <li>Any other ordering key (LSN, Kafka-offset fallback): the record's
      *       source millisecond with the low 22 bits of the standard version as the
      *       discriminator.</li>
@@ -205,8 +233,30 @@ public class ReplicationHistoryHandler {
             tsMs = record.getVersionTs() > 0 ? record.getVersionTs() : record.getTs_ms();
             discriminator = record.getGtid();
         } else if (record.getSequenceNumber() != -1L) {
-            tsMs = record.getSequenceNumber() / 1_000_000L;
-            discriminator = record.getSequenceNumber() % 1_000_000L;
+            long seq = record.getSequenceNumber();
+            long effectiveTs;
+            long counter;
+            if (record.getVersionTs() > 0) {
+                effectiveTs = record.getVersionTs();
+                counter = seq - effectiveTs * 1_000_000L;
+            } else {
+                // No effective millisecond on the record (not a lightweight dispatch):
+                // the seeds are exact multiples of 10^6, so the quotient carries the
+                // seed's whole milliseconds and the remainder is the counter's offset.
+                effectiveTs = seq / 1_000_000L;
+                counter = seq % 1_000_000L;
+            }
+            long seed = counter >= SEQUENCE_START ? SEQUENCE_START
+                    : counter >= SEQUENCE_START_INITIAL ? SEQUENCE_START_INITIAL : 0L;
+            discriminator = counter - seed;
+            if (discriminator < 0 || discriminator > SNOWFLAKE_DISCRIMINATOR_MASK) {
+                throw new IllegalStateException(String.format(
+                        "History version for topic '%s' at kafka offset %d cannot be encoded: sequence %d "
+                                + "at effective millisecond %d yields counter %d (seed %d), outside the 22-bit "
+                                + "discriminator field (Spec 12.03 section 3.5.1)",
+                        record.getTopic(), record.getKafkaOffset(), seq, effectiveTs, counter, seed));
+            }
+            tsMs = effectiveTs - 1;
         } else {
             tsMs = record.getTs_ms();
             discriminator = record.getVersion() & SNOWFLAKE_DISCRIMINATOR_MASK;

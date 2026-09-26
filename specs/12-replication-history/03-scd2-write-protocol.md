@@ -280,7 +280,7 @@ where
 |---|---|---|
 | GTID, `snowflake.id=true` (`SnowFlakeId(versionTs \| ts_ms, gtid)`) | `versionTs`, else `ts_ms` | `gtid` — `V` **is** the standard version |
 | GTID, `snowflake.id=false` (raw transaction number) | `versionTs`, else `ts_ms` | `gtid` |
-| lightweight sequence `effectiveTs · 10^6 + counter` (no GTIDs, 02.02) | `effectiveTs` | `counter` (`< 10^6 < 2^22`) |
+| lightweight sequence `effectiveTs · 10^6 + counter` — every row of a GTID-less source and the **snapshot rows of any source** (their Debezium offset carries no GTID) | `effectiveTs − 1` (`versionTs` set by the dispatch loop; without it `seq / 10^6 − 1`) | `counter − seed` (`counter = seq − effectiveTs · 10^6`; `seed` = `SEQUENCE_START_INITIAL` 500 000 000 on the first window of a run, `SEQUENCE_START` 1 000 000 000 after a reset — 02.01 §4 freezes both); refused loudly when `≥ 2^22` |
 | LSN / Kafka-offset fallback | `ts_ms` | low 22 bits of the standard version |
 
 `SnowFlakeId.generate` is `(ts_ms − 1288834974657) · 2^22 + d` for
@@ -288,7 +288,25 @@ where
 version orders events exactly as the standard version does — the number
 changes, the order does not, and every property of §3.5 (one version per
 event, redelivery ranks `≤` the first delivery via the floor of 02.02) is
-inherited unchanged. Every row of an SCD2 table is written in this domain:
+inherited unchanged. Two details of the sequence row make that true across
+the two paths of 02.01 §3.1:
+- the counter is taken **less its seed**, because the ten-digit seeds carry
+  whole milliseconds into `seq / 10^6` (02.01 §3.3) — within a window the
+  counter only increments, a reset moves the window to a later millisecond,
+  and a run starts above the previous high-water mark, so `(effectiveTs,
+  counter − seed)` orders exactly as the sequence does;
+- the millisecond is the one **below** the effective millisecond, because the
+  first GTID rows after a snapshot are floored to the snapshot's last
+  effective millisecond (02.02): in the standard domain they outrank the
+  snapshot rows by *domain* (any snowflake is above any sequence), which one
+  history domain cannot reproduce, so the snapshot rows step one millisecond
+  down and every later GTID row of the same key ranks above them whatever
+  the two discriminators are (`ReplicationHistoryVersionDomainTest.snapshotRowRanksBelowAGtidRowFlooredToTheSameMillisecond()`,
+  `Replication.History.sequence_row_below_gtid_row_of_its_millisecond`). The
+  first iteration of this change encoded `(seq / 10^6, seq mod 10^6)` and
+  the history suite on a GTID source failed on exactly this: the snapshot
+  rows sat 500 ms above their effective millisecond and the first UPDATE of
+  every snapshotted key was merged away. Every row of an SCD2 table is written in this domain:
 the INSERT row bound by `PreparedStatementFieldMapper.handleVersionColumn`
 in history mode, the close/after rows, the key-change and delete markers,
 and the bulk-close rows of §3.4 on both the record path and the DDL path
@@ -429,8 +447,9 @@ G-12.04-2).
 - `ReplicationHistoryHandlerTest.keyChangingUpdateClosesAndRetiresTheOldKey()` — §3.2: `keyChanged` is set when a key column differs and the generated statement carries the marker.
 - `ReplicationHistoryHandlerTest.everyHistoryRowCarriesTheEventsHistoryVersion()` — §3.5 / §3.5.1: every `_version` literal of the UPDATE and DELETE statements is `historyVersion(record)`; no `V+1`; the raw standard version never appears.
 - `ReplicationHistoryHandlerTest.versionIsDerivedTheStandardWayWhenNotYetCalculated()` — §3.5: the standard version is derived lazily with the configured `snowflake.id` flag, left on the record, and encoded for the history rows.
-- `ReplicationHistoryVersionDomainTest.gtidSourceIsTheStandardSnowflakeVersionItself()`, `ReplicationHistoryVersionDomainTest.gtidSourceUsesTheFlooredVersionTimestampWhenTheDispatchLoopSetOne()`, `ReplicationHistoryVersionDomainTest.rawGtidVersionIsReEncoded()`, `ReplicationHistoryVersionDomainTest.sequenceSourceEncodesItsMillisecondSlotAndCounter()`, `ReplicationHistoryVersionDomainTest.fallbackSourcesUseTheLowBitsOfTheStandardVersion()` — §3.5.1: the encoding on each source path.
+- `ReplicationHistoryVersionDomainTest.gtidSourceIsTheStandardSnowflakeVersionItself()`, `ReplicationHistoryVersionDomainTest.gtidSourceUsesTheFlooredVersionTimestampWhenTheDispatchLoopSetOne()`, `ReplicationHistoryVersionDomainTest.rawGtidVersionIsReEncoded()`, `ReplicationHistoryVersionDomainTest.sequenceRowEncodesTheMillisecondBelowItsEffectiveOneAndTheCounterLessItsSeed()`, `ReplicationHistoryVersionDomainTest.sequenceRowWithoutAnEffectiveMillisecondRecoversItFromTheSequence()`, `ReplicationHistoryVersionDomainTest.fallbackSourcesUseTheLowBitsOfTheStandardVersion()` — §3.5.1: the encoding on each source path.
 - `ReplicationHistoryVersionDomainTest.sequenceEncodingIsStrictlyMonotoneLikeTheSequence()` — §3.5.1: the encoding preserves the order of the sequence (same millisecond, next counter; next millisecond, counter reset).
+- `ReplicationHistoryVersionDomainTest.snapshotRowRanksBelowAGtidRowFlooredToTheSameMillisecond()` — §3.5.1: a snapshot (sequence) row ranks below a GTID row floored to the same effective millisecond whatever the discriminators — the case the history suite exposed on a GTID source.
 - `ReplicationHistoryVersionDomainTest.underivableOrUnencodableVersionsAreRefused()` — §3.5.1: the `-1` sentinel and an event millisecond not after the snowflake epoch are refused.
 - `ReplicationHistoryVersionDomainTest.legacyOpenRowIsSupersededOnUpgrade()`, `ReplicationHistoryVersionDomainTest.fixedOpenRowIsSupersededOnDowngrade()` — §3.5.1 (S10): a 2.11.0 open row (`SnowFlakeId(ts, -1) + 1`) ranks `<=` the fixed connector's next event and the raw sequence would have ranked below it; a 2.11.0 connector's next event outranks a fixed open row.
 - `ReplicationHistoryVersionDomainTest.insertPathBindsTheHistoryVersionInHistoryMode()` — §3.1 / §3.5.1: `handleVersionColumn` binds the history version in history mode and the standard version otherwise.
@@ -447,7 +466,7 @@ G-12.04-2).
 - `BinLogHistoryIT.testBinLogHistory()` — mode 2 end to end including the audit table.
 - The end-to-end history suite (three connectors side by side, kill -9 restart, single-threaded variants, degenerate combination) — INSERT/UPDATE/DELETE/key-change/TRUNCATE sequences compared against the source under `FINAL`, on both execution engines, across a restart, with and without GTIDs on the source.
 - The end-to-end upgrade / downgrade suite (`csc_e2e_updown`: the three connectors hop 2.11.0 → fixed → 2.11.0 → fixed on the same tables, offsets and schema history, then a kill -9 restart on the fixed build; after every hop a workload touches the keys the OTHER build last wrote and the current state is compared value-by-value against the source, with and without GTIDs) — §3.5.1 (S10). Against the raw-sequence binding this suite fails at the first hop on a GTID-less source: the upgraded connector's UPDATE of a key the 2.11.0 build had updated is written and never becomes current, and a key change leaves the old key live.
-- Lean (`formal_specs/lean/Replication/History.lean`): `Replication.History.update_supersedes_open_row`, `Replication.History.update_closes_before_image_key`, `Replication.History.key_change_retires_old_key`, `Replication.History.key_change_opens_new_key`, `Replication.History.closed_row_visible_at_close_key`, `Replication.History.update_rows_share_one_version`, `Replication.History.delete_rows_share_one_version`, `Replication.History.delete_hides_open_row`, `Replication.History.closed_row_continuity`, `Replication.History.no_open_row_after_delete_marker`, `Replication.History.at_most_one_live_row_per_sort_key`, `Replication.History.bulk_close_hides_every_open_row`, `Replication.History.bulk_close_preserves_history`, `Replication.History.database_ddl_ignored_in_history_mode`, `Replication.History.snowflake_encode_strict_mono`, `Replication.History.legacy_open_row_superseded_by_later_event`, `Replication.History.fixed_open_row_superseded_by_later_legacy_event`; old-behaviour witnesses `Replication.History.old_inline_update_writes_no_closed_row`, `Replication.History.old_close_and_before_shared_sort_key_and_version`, `Replication.History.old_closed_history_row_depended_on_insert_order`, `Replication.History.old_update_only_closed_after_image_key`, `Replication.History.old_raw_sequence_version_loses_to_legacy_open_row`.
+- Lean (`formal_specs/lean/Replication/History.lean`): `Replication.History.update_supersedes_open_row`, `Replication.History.update_closes_before_image_key`, `Replication.History.key_change_retires_old_key`, `Replication.History.key_change_opens_new_key`, `Replication.History.closed_row_visible_at_close_key`, `Replication.History.update_rows_share_one_version`, `Replication.History.delete_rows_share_one_version`, `Replication.History.delete_hides_open_row`, `Replication.History.closed_row_continuity`, `Replication.History.no_open_row_after_delete_marker`, `Replication.History.at_most_one_live_row_per_sort_key`, `Replication.History.bulk_close_hides_every_open_row`, `Replication.History.bulk_close_preserves_history`, `Replication.History.database_ddl_ignored_in_history_mode`, `Replication.History.snowflake_encode_strict_mono`, `Replication.History.sequence_row_below_gtid_row_of_its_millisecond`, `Replication.History.legacy_open_row_superseded_by_later_event`, `Replication.History.fixed_open_row_superseded_by_later_legacy_event`; old-behaviour witnesses `Replication.History.old_inline_update_writes_no_closed_row`, `Replication.History.old_close_and_before_shared_sort_key_and_version`, `Replication.History.old_closed_history_row_depended_on_insert_order`, `Replication.History.old_update_only_closed_after_image_key`, `Replication.History.old_raw_sequence_version_loses_to_legacy_open_row`.
 - **Coverage gaps**: no automated test exercises the two limitations of §3.9 (two closes of one key within one second; a GTID same-millisecond tie across a batch boundary), or a DROP TABLE followed by CREATE TABLE of the same name in history mode.
 
 ---
