@@ -2388,6 +2388,13 @@ public class DebeziumChangeEventCapture {
                     // can reach the writers: the next start seeds its floor from
                     // that horizon, so no row may be in ClickHouse above it.
                     coverAssignedVersion(assignment.sequenceNumber);
+                    // A row is past the resume point by construction -- Debezium
+                    // never delivers the rows it skips -- so the first one after a
+                    // resume ends the replay and reports its summary (spec 01.07
+                    // section 3.5). Rows only: Debezium dispatches a heartbeat
+                    // after every binlog event, skipped ones included, so the
+                    // control records above prove nothing about the replay.
+                    ResumeReplayLogSummary.rowDelivered();
                 }
             }
 
