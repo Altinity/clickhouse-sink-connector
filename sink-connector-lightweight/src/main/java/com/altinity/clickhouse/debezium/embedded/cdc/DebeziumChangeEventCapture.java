@@ -916,6 +916,12 @@ public class DebeziumChangeEventCapture {
         // sink applies, on the same fixed heap. Bound it in bytes too, unless
         // the operator chose a value (spec 01.05 section 3.4 item 8).
         DebeziumQueueBytesPreflight.apply(props);
+        // Every start resumes from the durable offset and Debezium re-reads the
+        // resumed transaction from BEGIN, logging each already-delivered event
+        // at INFO with its full row image. The rows are never logged: the
+        // filter counts the skipped events by operation and reports one line
+        // per resume (spec 01.07 section 3.5). Idempotent per process.
+        ResumeReplayLogSummary.install();
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
 
@@ -1052,6 +1058,10 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Error stopping the primary-key backfill thread", e);
         }
+
+        // 4c. A resume replay that was still being counted when the engine
+        //     stopped is reported now rather than lost (spec 01.07 section 3.5).
+        ResumeReplayLogSummary.flushInstalled("engine stop");
 
         // 5. Nobody can write or acknowledge anything registered so far: abandon
         //    it so the next engine in this process starts from a quiescent FIFO.
