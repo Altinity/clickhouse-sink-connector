@@ -173,6 +173,9 @@ and the DDL path always uses `String`.
   `c3b` `String` columns are compared with `LOWER(HEX(ST_AsWKB(col)))` read
   from the source for the same row (and `c3a` with the `POINT(1 2)` constant
   above). Before this rule the test asserted the point literal `(1.0,2.0)`.
+  The same test also reads `system.columns` on the replica and requires both
+  DDL-created `POINT` columns to be `String` (§3.4), so the value comparison
+  is made against the column type the spec prescribes.
 - `ClickHouseDataTypeMapperGeometryTest.recordSchemaMapsNonPolygonSpatialTypesToString()`
   — §3.1: `POLYGON` → `Polygon` (also when optional), `LINESTRING` /
   `MULTIPOLYGON` / `GEOMETRY` / `GEOMCOLLECTION` → `String` /

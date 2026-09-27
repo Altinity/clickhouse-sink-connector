@@ -288,6 +288,20 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         Assert.assertEquals("0101000000000000000000f03f0000000000000040", sourcePointC3a);
         Assert.assertNotNull(sourcePointC3b);
 
+        // Section 3.4: the DDL path created both POINT columns as String, so the
+        // WKB comparison below is against the column type the spec prescribes,
+        // not against a Point column that happens to render the same text.
+        ResultSet columnTypes = ITCommon.executeQueryWithResultSet(
+                "select name, type from system.columns where database = 'employees' and table = 'point_table' and name in ('c3a', 'c3b') order by name",
+                writer.getConnection());
+        int spatialColumns = 0;
+        while (columnTypes.next()) {
+            spatialColumns++;
+            Assert.assertTrue("DDL-created POINT column " + columnTypes.getString("name") + " is String, was "
+                    + columnTypes.getString("type"), columnTypes.getString("type").contains("String"));
+        }
+        Assert.assertEquals(2, spatialColumns);
+
         ResultSet rs = ITCommon.executeQueryWithResultSet("select * from employees.point_table", writer.getConnection());
         boolean pointResultValidated = false;
         while(rs.next()) {
