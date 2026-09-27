@@ -271,23 +271,26 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         ITCommon.connectToMySQL(mySqlContainer).createStatement().execute("INSERT INTO employees.point_table (id, c1, c2, c3a, c3b, f1, f2) values (1, 123, 456, POINT(1.0,2.0), POINT(3.0,4.0), 100.20, 100.20)");
 
         Thread.sleep(10000);
-
-        // The DDL path declares a POINT column as String holding the exact WKB
-        // bytes (Spec 07.06 sections 3.1 and 3.4), and the Point Struct is bound
-        // as the lower-case hex of its own wkb payload (section 3.2) -- so the
-        // stored text must equal LOWER(HEX(ST_AsWKB(col))) on MySQL, the source
-        // of truth. Before that rule the point literal "(1.0,2.0)" was written
-        // into the String column, a value the source never held, and this test
-        // asserted the divergence.
-        ResultSet mysqlWkb = ITCommon.connectToMySQL(mySqlContainer).createStatement().executeQuery(
+        // The DDL path declares a POINT column as String holding the WKB, and
+        // the value path stores that WKB hex-encoded in lower case, so the
+        // stored text equals LOWER(HEX(ST_AsWKB(col))) on the source (Spec
+        // 07.06 sections 3.2 and 3.4). Read the source's own rendering of the
+        // two points and require the replica to match it byte for byte; the
+        // POINT(1 2) constant from the spec anchors the encoding itself.
+        String sourcePointC3a = null;
+        String sourcePointC3b = null;
+        ResultSet sourcePoints = ITCommon.connectToMySQL(mySqlContainer).createStatement().executeQuery(
                 "SELECT LOWER(HEX(ST_AsWKB(c3a))) AS c3a, LOWER(HEX(ST_AsWKB(c3b))) AS c3b FROM employees.point_table WHERE id = 1");
-        Assert.assertTrue(mysqlWkb.next());
-        String expectedC3a = mysqlWkb.getString("c3a");
-        String expectedC3b = mysqlWkb.getString("c3b");
-        // The documented encoding of POINT(1 2) (Spec 07.06 section 3.2): little-endian
-        // byte order, type 1, x = 1.0, y = 2.0.
-        Assert.assertEquals("0101000000000000000000f03f0000000000000040", expectedC3a);
+        while (sourcePoints.next()) {
+            sourcePointC3a = sourcePoints.getString("c3a");
+            sourcePointC3b = sourcePoints.getString("c3b");
+        }
+        Assert.assertEquals("0101000000000000000000f03f0000000000000040", sourcePointC3a);
+        Assert.assertNotNull(sourcePointC3b);
 
+        // Section 3.4: the DDL path created both POINT columns as String, so the
+        // WKB comparison below is against the column type the spec prescribes,
+        // not against a Point column that happens to render the same text.
         ResultSet columnTypes = ITCommon.executeQueryWithResultSet(
                 "select name, type from system.columns where database = 'employees' and table = 'point_table' and name in ('c3a', 'c3b') order by name",
                 writer.getConnection());
@@ -303,10 +306,8 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         boolean pointResultValidated = false;
         while(rs.next()) {
             pointResultValidated = true;
-            String c3a = pointAsString(rs.getObject("c3a"));
-            String c3b = pointAsString(rs.getObject("c3b"));
-            Assert.assertEquals("c3a must hold the WKB the source holds", expectedC3a, c3a);
-            Assert.assertEquals("c3b must hold the WKB the source holds", expectedC3b, c3b);
+            Assert.assertEquals(sourcePointC3a, rs.getString("c3a"));
+            Assert.assertEquals(sourcePointC3b, rs.getString("c3b"));
         }
         Assert.assertTrue(pointResultValidated);
         String createTableWithGeometry = "CREATE TABLE employees.locations ( id INT not null AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), location GEOMETRY)";
@@ -418,20 +419,5 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         writer.getConnection().close();
 
         HikariDbSource.close();
-    }
-
-    /**
-     * Renders a read-back spatial value as text regardless of the JDBC driver
-     * generation and the column type: a DDL-created POINT column is String
-     * (Spec 07.06 section 3.4) and comes back as the WKB hex string; a
-     * user-declared Point column comes back as a String from the legacy V1
-     * driver and as double[] from the 0.9.x V2 driver, normalised to "(x,y)".
-     */
-    private static String pointAsString(Object value) {
-        if (value instanceof double[]) {
-            double[] point = (double[]) value;
-            return "(" + point[0] + "," + point[1] + ")";
-        }
-        return String.valueOf(value);
     }
 }
