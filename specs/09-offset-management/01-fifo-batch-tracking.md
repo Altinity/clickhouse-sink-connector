@@ -428,7 +428,8 @@ would let a later batch commit an offset past rows that never reached a queue.
   item 6): at the cap the reader oscillates one unit at a time, so the lines
   are paced — one WARN and one release INFO per pacing period, silent pauses
   inside the re-arm window, one summary INFO per interval, one "pacing ended"
-  INFO after a quiet gap or on `reset()`.
+  INFO from the first acknowledgement or wait after a quiet gap (naming the
+  state at the last release) or on `reset()`.
 - `EngineRestartFifoResetTest` — §3.8: `stop()` abandons a never-written unit and
   the next engine's heartbeat commits / first unit is acknowledged with nothing
   parked (`stopThenStartNewInstanceIsNotPoisoned`); nothing outstanding after
