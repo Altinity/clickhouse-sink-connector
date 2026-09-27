@@ -92,7 +92,11 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$EVENT_NAME" = "pull_request" ]; then
-            git fetch --no-tags --depth=1 origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
+            # Refresh the base branch with FULL history, never --depth=1: a shallow
+            # fetch grafts the (fetch-depth: 0) checkout at the base tip, and the
+            # three-dot diff below then has no merge base for any PR whose branch
+            # point is older than that tip ("fatal: origin/<base>...HEAD: no merge base").
+            git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}" || true
             python3 scripts/validate_specs.py --changed-base "origin/${BASE_REF}"
           elif [ -n "$BEFORE_SHA" ] && ! echo "$BEFORE_SHA" | grep -qE '^0+$' && git cat-file -e "$BEFORE_SHA" 2>/dev/null; then
             python3 scripts/validate_specs.py --changed-base "$BEFORE_SHA"

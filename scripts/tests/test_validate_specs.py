@@ -398,6 +398,27 @@ class ChangedBaseTests(FixtureCase):
         report = run(self.root, changed_base="no-such-ref")
         self.assertOneErrorContaining(report, "--changed-base")
 
+    def test_shallow_checkout_without_merge_base_names_the_cause(self) -> None:
+        # The CI shape that broke a pull request: a full-history checkout of the PR
+        # head, then a `--depth=1` fetch of the base branch. That fetch grafts the
+        # repository at the base tip, so a PR branched from an OLDER base commit
+        # shares no reachable history with it and the three-dot diff has no merge
+        # base. The gate must say that the checkout is shallow, not only that git failed.
+        self.git("checkout", "-q", "-b", "pr", "base")
+        self.commit("test: on the pr", (TEST_JAVA, "package com.altinity.fixture;\npublic class FooTest {\n  @Test\n  public void testBar() {}\n  @Test\n  public void testQux() {}\n}\n"))
+        self.git("checkout", "-q", "main")
+        self.commit("docs: base moved on after the branch point", ("specs/README.md", "# Specs\n\nMoved on.\n"))
+        self.git("branch", "-f", "base", "main")
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        clone = Path(scratch.name) / "clone"
+        source = self.root.resolve().as_uri()
+        subprocess.run(["git", *self.GIT_ID, "clone", "-q", "--branch", "pr", source, str(clone)], check=True, capture_output=True, text=True)
+        subprocess.run(["git", *self.GIT_ID, "-C", str(clone), "fetch", "-q", "--no-tags", "--depth=1", source, "+refs/heads/base:refs/remotes/origin/base"], check=True, capture_output=True, text=True)
+        self.assertEqual(subprocess.run(["git", "-C", str(clone), "rev-parse", "--is-shallow-repository"], check=True, capture_output=True, text=True).stdout.strip(), "true", "precondition: the depth=1 fetch grafted the clone")
+        report = run(clone, changed_base="origin/base")
+        self.assertOneErrorContaining(report, "--changed-base", "no merge base", "SHALLOW", "no --depth")
+
 
 class CliTests(FixtureCase):
     def test_main_exit_codes(self) -> None:
