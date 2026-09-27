@@ -418,10 +418,23 @@ public class Metrics {
      * @param topicName the topic name.
      * @param numRecords the number of records.
      */
+    /**
+     * Whether a counter update has a registry to land in. The meter registry
+     * exists only between {@link #initialize} and {@link #stop()}: since the
+     * registry is released with the server (spec 10.03 section 3.4 item 3),
+     * an update that arrives after {@code stop()} -- a worker draining its
+     * last batch at shutdown, or a unit test running after one that stopped
+     * the metrics -- has nothing to increment. It is dropped, not thrown:
+     * a metrics registry that is closed must never fail a batch.
+     */
+    private static boolean counterRegistryOpen() {
+        return enableMetrics && meterRegistry != null && !meterRegistry.isClosed();
+    }
+
     public static void updateCounters(String topicName, int numRecords) {
-        if (enableMetrics) {
+        if (counterRegistryOpen()) {
             topicsNumRecordsCounter
-                    .tag("topic", topicName).register(Metrics.meterRegistry()).increment(numRecords);
+                    .tag("topic", topicName).register(meterRegistry).increment(numRecords);
         }
     }
 
@@ -432,9 +445,9 @@ public class Metrics {
      * @param numRecords the number of error records.
      */
     public static void updateErrorCounters(String topicName, int numRecords) {
-        if (enableMetrics) {
+        if (counterRegistryOpen()) {
             topicsErrorRecordsCounter
-                    .tag("topic", topicName).register(Metrics.meterRegistry()).increment(numRecords);
+                    .tag("topic", topicName).register(meterRegistry).increment(numRecords);
         }
     }
 
@@ -447,7 +460,7 @@ public class Metrics {
      * @param failed indicates if the operation failed.
      */
     public static void updateDdlMetrics(String ddl, long timestamp, long timeTaken, boolean failed) {
-        if (enableMetrics) {
+        if (counterRegistryOpen()) {
             // Fixed cardinality: two series, fail=true and fail=false. The DDL
             // text and the wall-clock timestamp used to be tags, which made
             // every DDL event a new series that was never removed -- a source
@@ -456,7 +469,7 @@ public class Metrics {
             // statement itself is in the log at INFO; the timestamp is the
             // scrape's.
             ddlProcessingCounter
-                    .tag("fail", String.valueOf(failed)).register(Metrics.meterRegistry()).increment(timeTaken);
+                    .tag("fail", String.valueOf(failed)).register(meterRegistry).increment(timeTaken);
         }
     }
 }

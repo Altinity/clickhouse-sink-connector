@@ -141,4 +141,35 @@ public class MetricsLifecycleTest {
         assertTrue(second.isClosed(), "stop() closes the current registry");
         assertFalse(Metrics.isRegistryOpen());
     }
+
+    /**
+     * Releasing the registry with the server left a window: the counter
+     * updates registered their meters through {@code Metrics.meterRegistry()},
+     * which is {@code null} after {@code stop()}, so an update arriving after
+     * the stop -- a worker draining its last batch at shutdown, or any test
+     * that runs after one which stopped the metrics (the module runs its
+     * whole suite in one JVM, {@code forkCount=0}) -- threw
+     * {@code NullPointerException} out of the write path. Before the release
+     * the stale registry silently absorbed such updates; now they are dropped
+     * without a throw, which is the same observable behaviour with no leak.
+     */
+    @Test
+    @DisplayName("a counter update after stop() is dropped, not thrown, and the next initialize() counts again")
+    public void counterUpdatesAfterStopAreDroppedNotThrown() throws IOException {
+        start();
+        Metrics.stop();
+        assertFalse(Metrics.isRegistryOpen());
+
+        Metrics.updateCounters("topic-a", 5);
+        Metrics.updateErrorCounters("topic-a", 1);
+        Metrics.updateDdlMetrics("ALTER TABLE t ADD COLUMN c Int32", 1_000L, 3, false);
+
+        start();
+        Metrics.updateCounters("topic-a", 7);
+        assertEquals(1, metersNamed(MetricsConstants.CLICKHOUSE_NUM_RECORDS_BY_TOPIC).size(),
+                "the counter registers in the new registry");
+        assertEquals(7.0, Metrics.meterRegistry()
+                .find(MetricsConstants.CLICKHOUSE_NUM_RECORDS_BY_TOPIC).tag("topic", "topic-a").counter().count(),
+                "only the post-initialize increment is counted; the dropped one did not carry over");
+    }
 }
