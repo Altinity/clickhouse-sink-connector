@@ -167,6 +167,14 @@ and the DDL path always uses `String`.
   suite compares `t_geo` (`POINT`, `LINESTRING`, `POLYGON`, `GEOMETRY`
   columns created by the DDL path) hash-for-hash against
   `HEX(ST_AsWKB(col))` on the source.
+- `CreateTableDataTypesIT.testCreateTable()` (POINT section) — §3.2 (Point)
+  and §3.4 end to end through a real MySQL and ClickHouse: a `CREATE TABLE`
+  with two `POINT` columns is replicated by the DDL path as `String`
+  columns, and the replicated row holds exactly `LOWER(HEX(ST_AsWKB(col)))`
+  read from the source in the same test (`0101000000000000000000f03f0000000000000040`
+  for `POINT(1 2)`). Until the rule above landed this test asserted the
+  divergent literal `(1.0,2.0)`, so it went red the moment the mapper was
+  corrected; the expectation now comes from the source, not from a constant.
 - `ClickHouseDataTypeMapperGeometryTest.recordSchemaMapsNonPolygonSpatialTypesToString()`
   — §3.1: `POLYGON` → `Polygon` (also when optional), `LINESTRING` /
   `MULTIPOLYGON` / `GEOMETRY` / `GEOMCOLLECTION` → `String` /
