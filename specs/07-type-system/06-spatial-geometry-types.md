@@ -74,9 +74,20 @@ rejected by ClickHouse); the `String` form of a nullable spatial column is
    Each of these was previously written as an **empty polygon** `[]`, a value
    the source never held, with the batch reported successful.
 
-For a `Point` Struct the `x`/`y` fields are bound as the ClickHouse point
-literal; a non-Struct carrier fails the batch (it was previously written as the
-origin `(0,0)`).
+For a `Point` Struct the target column decides, exactly as for `Geometry`:
+- target `Point`: the `x`/`y` fields are bound as the ClickHouse point
+  literal;
+- target `String` (every DDL-created spatial column, §3.4): the Struct's own
+  `wkb` payload is stored as its hex string, byte for byte — `POINT(1 2)` is
+  `0101000000000000000000f03f0000000000000040`, `LOWER(HEX(ST_AsWKB(col)))`
+  on MySQL. Before this rule the point literal was bound regardless of the
+  target, so a `String` column received the text `(1.0,2.0)` while the source
+  held the WKB — a value-level divergence on every `POINT` column of a
+  DDL-created table, visible in the standard-mode end-to-end suite (`t_geo`)
+  as the one hash mismatch it tolerated. A `Point` Struct without a `wkb`
+  payload bound for a `String` column fails the batch;
+- a non-Struct carrier fails the batch (it was previously written as the
+  origin `(0,0)`).
 
 ### 3.3 Other silent substitutions removed alongside (PostgreSQL-reachable)
 - `VariableScaleDecimal` whose value is not a Struct: fails the batch (was
@@ -148,6 +159,14 @@ and the DDL path always uses `String`.
   `ClickHouseDataTypeMapperGeometryTest.nonStructVariableScaleDecimalThrows()`,
   `ClickHouseDataTypeMapperGeometryTest.unparseableZonedTimestampThrows()` —
   §3.2 (Point) and §3.3.
+- `ClickHouseDataTypeMapperGeometryTest.pointIntoStringColumnIsWkbHex()` —
+  §3.2 (Point into a `String` column): the bound text is the byte-exact hex of
+  the Point Struct's WKB (`0101000000000000000000f03f0000000000000040` for
+  `POINT(1 2)`), and a Point Struct without a WKB payload is refused; the
+  pre-fix code binds the literal `(1.0,2.0)`. The standard-mode end-to-end
+  suite compares `t_geo` (`POINT`, `LINESTRING`, `POLYGON`, `GEOMETRY`
+  columns created by the DDL path) hash-for-hash against
+  `HEX(ST_AsWKB(col))` on the source.
 - `ClickHouseDataTypeMapperGeometryTest.recordSchemaMapsNonPolygonSpatialTypesToString()`
   — §3.1: `POLYGON` → `Polygon` (also when optional), `LINESTRING` /
   `MULTIPOLYGON` / `GEOMETRY` / `GEOMCOLLECTION` → `String` /

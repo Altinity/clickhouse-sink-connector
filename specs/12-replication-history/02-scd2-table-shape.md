@@ -134,6 +134,23 @@ backfilled, exactly as in standard mode. A primary-key-changing ALTER is
 refused in history mode (06.09 §3.2 item 1) because the rebuild copies only
 the FINAL live rows and would drop the closed versions.
 
+**Cache invalidation key (S11).** After a DDL the engine invalidates the
+writers' cached schema under the key the batch consumers use,
+`<database>.<table>` (08.03). In history mode the consumers key EVERY table
+by the history database verbatim
+(`ClickHouseBatchRunnable.resolveDatabaseName`, 12.01 §3.2 — no prefix,
+schema suffix or override map is applied to it), so
+`DebeziumChangeEventCapture.performDDLOperation` invalidates
+`<replication.history.database.name>.<table>` in history mode, and the
+source-mapped database otherwise. Before this rule the source-named key was
+invalidated in every mode, so after an `ADD COLUMN` the SCD2 table's column
+map stayed stale: the first batch that followed was bound against the
+pre-ALTER map, the batch failed in the JDBC driver (`addBatch`,
+`NullPointerException` on an unbound placeholder) and only the retry, which
+re-read the schema, applied it. Observed on every run of the history suite
+(`h_ddl`, both GTID modes) as the one ERROR line the suite tolerated; the
+suite tolerates nothing now.
+
 ### 3.7 Idempotency
 Both paths emit `CREATE TABLE IF NOT EXISTS` in history mode
 (`CreateTableIdempotentTest.testHistoryModeCreateTableIsGuarded()`); a
