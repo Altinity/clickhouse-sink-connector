@@ -48,7 +48,9 @@ import java.util.regex.Pattern;
  * its rows are in ClickHouse before any acknowledgement exists, so an
  * acknowledgement-time mark would not cover them. A horizon that cannot be made
  * durable fails the batch loudly rather than handing off rows the next start could
- * not order.</p>
+ * not order. Moves are reported at INFO once per {@value #HORIZON_LOG_INTERVAL_MS} ms
+ * (the first at once) and at DEBUG individually; the horizon is a monotonic counter
+ * and a line per move said nothing new.</p>
  *
  * <p><b>Startup without a mark.</b> On the first start after an upgrade (or on a
  * ClickHouse replica that never saw this connector) there is no mark row.
@@ -90,6 +92,16 @@ public final class VersionHighWaterMark {
     static final long DEFAULT_WRITE_RETRY_MS = 2_000L;
 
     /**
+     * Wall-clock spacing of the INFO line that reports horizon moves (spec 09.03
+     * section 3.4, "Logging"). The horizon moves once per ~5 s of source time under
+     * load and once per heartbeat on an idle source; one line per move was 9-17
+     * thousand INFO lines a day per connector, each reporting a monotonic counter.
+     * The first move of a run is reported at once; after that one INFO summary per
+     * this interval while the horizon keeps moving, and every move at DEBUG.
+     */
+    static final long HORIZON_LOG_INTERVAL_MS = 300_000L;
+
+    /**
      * Head-room (ms) added to the connector clock when a start has no mark row to
      * seed from: covers the up-to-one-second counter carry of the shipped formula
      * (spec 02.01 section 3.3) and ordinary clock skew between the source host and
@@ -108,6 +120,12 @@ public final class VersionHighWaterMark {
 
     /** The horizon in force: every version handed off so far is {@code <= horizon}. */
     private long horizon = 0L;
+
+    /** Connector-clock instant of the last INFO horizon line; {@code 0} before the first move. */
+    private long lastHorizonLineMs = 0L;
+
+    /** Horizon moves since the last INFO horizon line (reported by the next one). */
+    private long horizonMovesSinceLine = 0L;
 
     VersionHighWaterMark(Supplier<Connection> connections, String offsetTable, LongSupplier clock,
                          int writeAttempts, long writeRetryMs) {
@@ -213,8 +231,7 @@ public final class VersionHighWaterMark {
             try {
                 persist(next);
                 horizon = next;
-                log.info("Version high-water horizon moved to {} (floor slot {} ms) for offset table {}",
-                        next, Math.floorDiv(next, VERSION_MULTIPLIER) + 1, offsetTable);
+                logHorizonMove(next);
                 return;
             } catch (SQLException e) {
                 last = e;
@@ -235,6 +252,42 @@ public final class VersionHighWaterMark {
                 + "persisted to " + qualifiedTableName() + " after " + writeAttempts + " attempts; "
                 + "refusing to hand off rows whose versions the next start could not order above. "
                 + "Restore ClickHouse write access to the offset database and restart.", last);
+    }
+
+    /**
+     * Reports a persisted horizon move: the first move of a run at INFO at once,
+     * then one INFO summary per {@link #HORIZON_LOG_INTERVAL_MS} of the connector
+     * clock carrying the number of moves since the previous line, and every move
+     * at DEBUG (spec 09.03 section 3.4, "Logging"; the paced form of spec 01.05
+     * section 3.4 item 6). Called under the {@link #cover} monitor.
+     *
+     * @param next the horizon just made durable.
+     */
+    private void logHorizonMove(long next) {
+        horizonMovesSinceLine++;
+        long now = clock.getAsLong();
+        if (now < lastHorizonLineMs) {
+            // The connector clock stepped back: measure the next interval from here
+            // rather than waiting for it to pass the old instant again.
+            lastHorizonLineMs = now;
+        }
+        if (lastHorizonLineMs != 0L && now - lastHorizonLineMs < HORIZON_LOG_INTERVAL_MS) {
+            log.debug("Version high-water horizon moved to {} (floor slot {} ms) for offset table {}",
+                    next, sequenceFloor(next), offsetTable);
+            return;
+        }
+        if (lastHorizonLineMs == 0L) {
+            log.info("Version high-water horizon moved to {} (floor slot {} ms) for offset table {}; "
+                    + "further moves are logged at DEBUG, with one INFO summary per {} s while the "
+                    + "horizon keeps moving", next, sequenceFloor(next), offsetTable,
+                    HORIZON_LOG_INTERVAL_MS / 1000);
+        } else {
+            log.info("Version high-water horizon moved to {} (floor slot {} ms) for offset table {}: "
+                    + "{} move(s) in the {} s since the previous line", next, sequenceFloor(next),
+                    offsetTable, horizonMovesSinceLine, (now - lastHorizonLineMs) / 1000);
+        }
+        lastHorizonLineMs = now;
+        horizonMovesSinceLine = 0L;
     }
 
     private void persist(long value) throws SQLException {

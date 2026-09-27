@@ -7,6 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.Logger;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Configurator;
+import org.apache.logging.log4j.core.config.Property;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -25,6 +32,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * The durable version high-water mark (spec 02.02 §3.5, 09.03 §3.4): the table
@@ -335,5 +343,83 @@ public class VersionHighWaterMarkTest {
                 "a pattern entry cannot be resolved to ClickHouse databases without guessing");
 
         assertTrue(VersionHighWaterMark.targetDatabases(new Properties(), config).isEmpty());
+    }
+
+    /** Collects the horizon lines {@link VersionHighWaterMark} logs during one test. */
+    private static final class CapturingAppender extends AbstractAppender {
+        private final List<LogEvent> events = Collections.synchronizedList(new ArrayList<>());
+
+        CapturingAppender() {
+            super("capture-version-high-water", null, null, true, Property.EMPTY_ARRAY);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            events.add(event.toImmutable());
+        }
+
+        List<String> horizonLines(Level level) {
+            List<String> out = new ArrayList<>();
+            synchronized (events) {
+                for (LogEvent e : events) {
+                    String text = e.getMessage().getFormattedMessage();
+                    if (e.getLevel() == level && text.contains("Version high-water horizon moved")) {
+                        out.add(text);
+                    }
+                }
+            }
+            return out;
+        }
+    }
+
+    @Test
+    @DisplayName("horizon moves are reported at INFO once per interval with their count, and at DEBUG individually")
+    public void horizonMovesAreLoggedPacedNotPerMove() throws Exception {
+        FakeClickHouse fake = new FakeClickHouse();
+        AtomicLong clock = new AtomicLong(NOW);
+        VersionHighWaterMark mark = new VersionHighWaterMark(fake::connection,
+                "offsets_db.replica_source_info", clock::get, 2, 0L);
+        Logger logger = (Logger) LogManager.getLogger(VersionHighWaterMark.class);
+        Level savedLevel = logger.getLevel();
+        CapturingAppender appender = new CapturingAppender();
+        appender.start();
+        Configurator.setLevel(VersionHighWaterMark.class.getName(), Level.DEBUG);
+        logger.addAppender(appender);
+        try {
+            // An idle source: one heartbeat row every 10 s, each versioned past the
+            // 5 s head-room of the previous horizon, so every call moves the horizon.
+            long step = (VersionHighWaterMark.HORIZON_HEADROOM_MS + 1) * M;
+            long version = T * M + 1;
+            for (int i = 0; i < 12; i++) {
+                mark.cover(version);
+                version += step;
+                clock.addAndGet(10_000);
+            }
+            assertEquals(12, fake.statementsContaining("INSERT INTO").size(),
+                    "pacing the log never skips a persist: every move is still written ahead of handoff");
+
+            List<String> info = appender.horizonLines(Level.INFO);
+            assertEquals(1, info.size(), "twelve moves inside one interval: one INFO line, for the "
+                    + "first move of the run, not one per move: " + info);
+            assertTrue(info.get(0).contains("further moves are logged at DEBUG"),
+                    "the first line says what follows: " + info.get(0));
+            assertEquals(11, appender.horizonLines(Level.DEBUG).size(),
+                    "the other eleven moves are reported at DEBUG, one each");
+
+            clock.addAndGet(VersionHighWaterMark.HORIZON_LOG_INTERVAL_MS);
+            mark.cover(version);
+            info = appender.horizonLines(Level.INFO);
+            assertEquals(2, info.size(), "the first move after the interval is reported at INFO: " + info);
+            assertTrue(info.get(1).contains("12 move(s) in the 420 s since the previous line"),
+                    "the summary carries the moves since the previous line: " + info.get(1));
+            assertTrue(info.get(1).contains("moved to " + mark.horizon() + " "),
+                    "and names the horizon in force: " + info.get(1));
+            assertEquals(11, appender.horizonLines(Level.DEBUG).size(),
+                    "an INFO summary is not also written at DEBUG");
+        } finally {
+            logger.removeAppender(appender);
+            appender.stop();
+            Configurator.setLevel(VersionHighWaterMark.class.getName(), savedLevel);
+        }
     }
 }
