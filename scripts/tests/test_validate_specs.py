@@ -212,7 +212,7 @@ class CodebaseMappingTests(FixtureCase):
         self.assertOneErrorContaining(run(self.root), "cites class `com.altinity.fixture.injector.Foo` which does not exist")
 
     def test_non_path_backticks_are_ignored(self) -> None:
-        self._set_mapping("offset.storage.jdbc.offset.table.ddl")
+        self._set_mapping("offset.storage.jdbc.table.ddl")
         self._set_mapping("SELECT a / b FROM t", index=1)
         self.assertEqual(run(self.root).errors, [])
 

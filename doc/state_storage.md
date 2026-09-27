@@ -22,7 +22,7 @@ This table is used to store the binlog file, position and gtids.
 | record_insert_ts  |  Monotonically increasing number                                                              |    174      |
 
 # Schema History table(MySQL)
-The schema history table defined by the `schema.history.internal.jdbc.schema.history.table.name`
+The schema history table defined by the `schema.history.internal.jdbc.table.name`
 Default: **"altinity_sink_connector.replicate_schema_history"**
 This table is used by Debezium to store historical DDL statements so the DDL statements can be parsed. 
 | Column Name | Description                                                          | Example |
