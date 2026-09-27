@@ -167,6 +167,12 @@ and the DDL path always uses `String`.
   suite compares `t_geo` (`POINT`, `LINESTRING`, `POLYGON`, `GEOMETRY`
   columns created by the DDL path) hash-for-hash against
   `HEX(ST_AsWKB(col))` on the source.
+- `CreateTableDataTypesIT.testCreateTable()` (lightweight, MySQL) — §3.2
+  (Point) end to end through the DDL path: `employees.point_table` is
+  created and one row inserted on the source, then the replicated `c3a` /
+  `c3b` `String` columns are compared with `LOWER(HEX(ST_AsWKB(col)))` read
+  from the source for the same row (and `c3a` with the `POINT(1 2)` constant
+  above). Before this rule the test asserted the point literal `(1.0,2.0)`.
 - `ClickHouseDataTypeMapperGeometryTest.recordSchemaMapsNonPolygonSpatialTypesToString()`
   — §3.1: `POLYGON` → `Polygon` (also when optional), `LINESTRING` /
   `MULTIPOLYGON` / `GEOMETRY` / `GEOMCOLLECTION` → `String` /

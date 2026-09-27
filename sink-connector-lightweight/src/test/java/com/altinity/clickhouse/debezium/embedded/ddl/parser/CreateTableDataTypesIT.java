@@ -271,18 +271,29 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         ITCommon.connectToMySQL(mySqlContainer).createStatement().execute("INSERT INTO employees.point_table (id, c1, c2, c3a, c3b, f1, f2) values (1, 123, 456, POINT(1.0,2.0), POINT(3.0,4.0), 100.20, 100.20)");
 
         Thread.sleep(10000);
+        // The DDL path declares a POINT column as String holding the WKB, and
+        // the value path stores that WKB hex-encoded in lower case, so the
+        // stored text equals LOWER(HEX(ST_AsWKB(col))) on the source (Spec
+        // 07.06 sections 3.2 and 3.4). Read the source's own rendering of the
+        // two points and require the replica to match it byte for byte; the
+        // POINT(1 2) constant from the spec anchors the encoding itself.
+        String sourcePointC3a = null;
+        String sourcePointC3b = null;
+        ResultSet sourcePoints = ITCommon.connectToMySQL(mySqlContainer).createStatement().executeQuery(
+                "SELECT LOWER(HEX(ST_AsWKB(c3a))) AS c3a, LOWER(HEX(ST_AsWKB(c3b))) AS c3b FROM employees.point_table WHERE id = 1");
+        while (sourcePoints.next()) {
+            sourcePointC3a = sourcePoints.getString("c3a");
+            sourcePointC3b = sourcePoints.getString("c3b");
+        }
+        Assert.assertEquals("0101000000000000000000f03f0000000000000040", sourcePointC3a);
+        Assert.assertNotNull(sourcePointC3b);
+
         ResultSet rs = ITCommon.executeQueryWithResultSet("select * from employees.point_table", writer.getConnection());
         boolean pointResultValidated = false;
         while(rs.next()) {
             pointResultValidated = true;
-            // Driver-agnostic Point read: the legacy V1 jdbc driver renders a
-            // Point as the string "(1.0,2.0)" from getString(), while the
-            // 0.9.x V2 driver returns a double[] from getObject(). Normalize
-            // both to "(x.y,x.y)" before asserting.
-            String c3a = pointAsString(rs.getObject("c3a"));
-            String c3b = pointAsString(rs.getObject("c3b"));
-            Assert.assertTrue(c3a.equalsIgnoreCase("(1.0,2.0)"));
-            Assert.assertTrue(c3b.equalsIgnoreCase("(3.0,4.0)"));
+            Assert.assertEquals(sourcePointC3a, rs.getString("c3a"));
+            Assert.assertEquals(sourcePointC3b, rs.getString("c3b"));
         }
         Assert.assertTrue(pointResultValidated);
         String createTableWithGeometry = "CREATE TABLE employees.locations ( id INT not null AUTO_INCREMENT PRIMARY KEY, name VARCHAR(100), location GEOMETRY)";
@@ -394,17 +405,5 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         writer.getConnection().close();
 
         HikariDbSource.close();
-    }
-
-    /**
-     * Renders a ClickHouse Point column value as "(x,y)" regardless of the
-     * JDBC driver generation: V1 returns a String, V2 returns double[].
-     */
-    private static String pointAsString(Object value) {
-        if (value instanceof double[]) {
-            double[] point = (double[]) value;
-            return "(" + point[0] + "," + point[1] + ")";
-        }
-        return String.valueOf(value);
     }
 }
