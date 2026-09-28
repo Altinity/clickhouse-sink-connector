@@ -251,6 +251,19 @@ class TestCanaryGate(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue(any("REPLACE PARTITION ID 'all'" in w for w in FakeClickHouse.writes), FakeClickHouse.writes)
 
+    def test_apply_fails_when_a_selected_table_is_skipped_for_schema_drift(self):
+        open(os.path.join(self.d, "s_20260928", "s@t.sql"), "w").write(
+            "CREATE TABLE `t` (\n  `id` int NOT NULL,\n  `missing_in_ch` int NOT NULL\n) ENGINE=InnoDB;\n")
+        rc = self._run(self._args(canary_list=None, force=True))
+        self.assertNotEqual(rc, 0, "a selected table left unrepaired (SCHEMA_DRIFT) is a failure in apply mode: no rewind advice")
+        self.assertFalse(any("REPLACE PARTITION" in w for w in FakeClickHouse.writes), FakeClickHouse.writes)
+
+
+class TestDdlLiterals(unittest.TestCase):
+    def test_default_literal_containing_not_null_is_still_nullable(self):
+        cols = mr.parse_mysql_ddl("CREATE TABLE `t` (\n  `c` varchar(20) DEFAULT 'this is NOT NULL',\n  `d` varchar(20) NOT NULL\n) ENGINE=InnoDB;\n")
+        self.assertEqual([(c[0], c[2]) for c in cols], [("c", True), ("d", False)])
+
 
 class TestDumpDirectory(unittest.TestCase):
     def setUp(self):

@@ -80,7 +80,10 @@ credentials come from a clickhouse-client XML config (`<user>`, `<password>`),
 the same file the loader consumes. `patch` is a **dry run unless `--apply`** is
 given: every read runs, every write is printed with a `[DRY-RUN]` prefix.
 Exit code of `patch` is non-zero when any table ended in `LOAD_FAILED`,
-`COUNT_MISMATCH`, `REPLACED_VERIFY_FAIL` or a dump was incomplete.
+`COUNT_MISMATCH`, `CANARY_FAILED`, `REPLACED_VERIFY_FAIL` or a dump was
+incomplete — and, with `--apply`, when any **selected** table was left
+unrepaired (`SCHEMA_DRIFT`, `NOT_IN_CH`, `ENGINE_*`): the rewind advice is
+printed only when every selected table reached `REPLACED_OK`.
 
 ### 3.2 `dump`
 1. If `binlog_position_<stamp>.json` does not exist, run `SHOW MASTER STATUS`
@@ -241,7 +244,10 @@ run by `python3 -m unittest` in `.github/workflows/spec-governance.yml`):
 - `TestCanaryGate` — §3.3 step 5, with the ClickHouse wrapper replaced by an
   offline fake whose canary join returns 0/10: `patch --apply` exits non-zero,
   issues no `REPLACE PARTITION`, and reports the table `CANARY_FAILED`;
-  `--force` proceeds to the `REPLACE`.
+  `--force` proceeds to the `REPLACE`; a selected table skipped for
+  `SCHEMA_DRIFT` makes an apply run fail (§3.1 exit code).
+- `TestDdlLiterals` — §3.3 step 2: a `DEFAULT 'this is NOT NULL'` literal
+  does not make the column non-nullable.
 - `TestDumpDirectory` — §3.3 steps 3–4: table discovery and data-file matching
   do not bleed across prefixes (`t` vs `t_other`); the isolated directory
   holds hard links (never symlinks); the exact row count counts

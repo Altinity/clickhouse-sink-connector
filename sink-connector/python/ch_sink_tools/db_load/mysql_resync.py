@@ -115,7 +115,8 @@ def parse_mysql_ddl(ddl_text: str) -> list[tuple[str, str, bool, bool]]:
         m = re.match(r"`((?:[^`]|``)+)`\s+(\S+(?:\([^)]*\))?(?:\s+unsigned)?(?:\s+zerofill)?)\s*(.*)$", line, re.I)
         if not m:
             continue
-        name, ctype, rest = m.group(1).replace("``", "`"), m.group(2), m.group(3).upper()
+        name, ctype = m.group(1).replace("``", "`"), m.group(2)
+        rest = re.sub(r"'(?:[^'\\]|\\.)*'", "''", m.group(3)).upper()  # a DEFAULT 'NOT NULL' literal is not a constraint
         cols.append((name, ctype, "NOT NULL" not in rest, "GENERATED ALWAYS" in rest))
     return cols
 
@@ -550,9 +551,10 @@ def cmd_patch(args) -> int:
         log(f"   {schema}.{t}: {status} partitions_replaced={len(stmts)} ch_only_partitions={len(ch_only)} before={before} after={after} dump_rows={drows}")
         set_status(schema, t, status, [str(len(stmts)), str(len(ch_only)), str(before), str(after)])
 
+    columns = ["schema", "table", "status", "dump_rows", "restore_rows", "canary", "partitions_replaced", "ch_only_partitions", "live_before", "live_after"]
     with open(report_path, "w") as f:
-        f.write("schema\ttable\tstatus\tdump_rows\trestore_rows\tcanary\tpartitions_replaced\tch_only_partitions\tlive_before\tlive_after\n")
-        f.write("".join("\t".join(r) + "\n" for r in report))
+        f.write("\t".join(columns) + "\n")
+        f.write("".join("\t".join((r + [""] * len(columns))[:len(columns)]) + "\n" for r in report))
     open(drift_path, "w").write("\n".join(drift_sql) + "\n")
     open(drop_path, "w").write("\n".join(drop_sql) + "\n")
     counts = {}
@@ -560,9 +562,13 @@ def cmd_patch(args) -> int:
         counts[r[2]] = counts.get(r[2], 0) + 1
     log(f"== done mode={mode}: {counts}")
     log(f"   report: {report_path}\n   drift (human applies): {drift_path}\n   ch-only (DESTRUCTIVE, human decision): {drop_path}")
-    failed = any(r[2] in FAILED_STATUSES for r in report)
+    # In apply mode every SELECTED table must have been repaired: a table skipped for drift, missing in ClickHouse or
+    # on another engine is NOT repaired, so it is a failure too -- an operator must never be told to rewind on it.
+    unrepaired = {"SCHEMA_DRIFT", "NOT_IN_CH"} if args.apply else set()
+    failed = any(r[2] in FAILED_STATUSES or r[2] in unrepaired or (args.apply and r[2].startswith("ENGINE_")) for r in report)
     if failed:
-        log("== FAILED: at least one table did not reach REPLACED_OK -- do not rewind the connector until every table is repaired.")
+        log("== FAILED: at least one selected table did not reach REPLACED_OK -- do not rewind the connector until every table is repaired "
+            "(apply the drift DDL / exclude the table with --tables and re-run).")
     else:
         log("   next: `ch-mysql-resync rewind-sql` -> stop the connector, run the INSERT, start it, then re-run the checksum job.")
     LOG_FILE.close()
