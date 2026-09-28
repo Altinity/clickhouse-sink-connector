@@ -147,11 +147,109 @@ class TestRewind(unittest.TestCase):
         self.assertEqual(new["server_id"], 0)
         self.assertEqual(new["pos"], 4)
 
-    def test_sql_inserts_a_newer_row_for_the_same_key(self):
-        sql = mr.rewind_offset_sql("db.offsets", '{"file":"f","pos":4}')
+    def test_sql_inserts_a_newer_row_for_the_same_key_only(self):
+        key = '["source--staging",{"server":"embeddedconnector"}]'
+        sql = mr.rewind_offset_sql("db.offsets", key, '{"file":"f","pos":4}')
         self.assertIn("INSERT INTO db.offsets (id, offset_key, offset_val, record_insert_ts, record_insert_seq)", sql)
         self.assertIn("record_insert_seq + 1", sql)
         self.assertIn("FROM db.offsets FINAL", sql)
+        self.assertIn("WHERE offset_key = '[\"source--staging\",{\"server\":\"embeddedconnector\"}]'", sql,
+                      "the offset store is shared by every connector: an unscoped INSERT ... SELECT would rewind all of them")
+
+    def test_sql_refuses_an_unscoped_rewind(self):
+        with self.assertRaises(ValueError):
+            mr.rewind_offset_sql("db.offsets", "", '{"file":"f","pos":4}')
+
+    def test_select_offset_row_requires_an_unambiguous_key(self):
+        rows = [["k1", '{"server_id":1}'], ["k2", '{"server_id":2}']]
+        self.assertEqual(mr.select_offset_row(rows, "k2"), ("k2", '{"server_id":2}'))
+        with self.assertRaises(ValueError):
+            mr.select_offset_row(rows, None)          # two connectors, no key given -> never guess
+        with self.assertRaises(ValueError):
+            mr.select_offset_row(rows, "k3")          # unknown key
+        self.assertEqual(mr.select_offset_row([["only", "{}"]], None), ("only", "{}"))
+
+
+class FakeClickHouse:
+    """Offline stand-in for the clickhouse-client wrapper: one live table `s.t` (unpartitioned, sorting key id) whose
+    scratch copy `s_restore.t` holds 1 row and hash-matches NONE of the live rows (canary 0/10)."""
+    writes = []
+
+    def __init__(self, host, config, apply, port=9000):
+        pass
+
+    def one(self, sql, timeout=3600):
+        if sql == "SELECT version()":
+            return "test"
+        if sql == "SELECT hostName()":
+            return "test-host"
+        if "SELECT count() FROM `s_restore`.`t`" in sql:
+            return "1"
+        if "SELECT count() FROM `s`.`t`" in sql:
+            return "1"  # live count after the REPLACE == dump rows
+        return "0"
+
+    def rows(self, sql, timeout=3600):
+        if "FROM system.tables" in sql:
+            return [["t", "ReplacingMergeTree", "", "id", "10"]]
+        if "SELECT name, default_kind FROM system.columns" in sql:
+            return [["id", ""], ["v", ""], ["_version", "DEFAULT"], ["is_deleted", "DEFAULT"]]
+        if "SELECT name FROM system.columns" in sql:
+            return [["id"], ["v"], ["_version"], ["is_deleted"]]
+        if "countIf(r.h = l.h)" in sql:
+            return [["0", "10"]]
+        if "FROM system.parts" in sql:
+            return [["all", "10"]]
+        return []
+
+    def write(self, sql, timeout=3600):
+        FakeClickHouse.writes.append(sql)
+
+
+class TestCanaryGate(unittest.TestCase):
+    """A failed canary must stop the run before ANY REPLACE, mark the tables CANARY_FAILED and exit non-zero."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        dump_dir = os.path.join(self.d, "s_20260928")
+        os.makedirs(dump_dir)
+        open(os.path.join(dump_dir, "@.done.json"), "w").write("{}")
+        open(os.path.join(dump_dir, "s@t.sql"), "w").write("CREATE TABLE `t` (\n  `id` int NOT NULL,\n  `v` int NOT NULL\n) ENGINE=InnoDB;\n")
+        open(os.path.join(self.d, "client.xml"), "w").write("<config/>")
+        open(os.path.join(self.d, "canary.txt"), "w").write("s.t\n")
+        FakeClickHouse.writes = []
+
+    def tearDown(self):
+        shutil.rmtree(self.d)
+
+    def _args(self, **over):
+        from types import SimpleNamespace
+        base = dict(ch_config=os.path.join(self.d, "client.xml"), dump_base=self.d, stamp="20260928", schemas=["s"],
+                    restore_suffix="_restore", ch_host="ch.example", ch_port=9000, apply=True, canary_list=os.path.join(self.d, "canary.txt"),
+                    tables=".*", skip_load=True, drop_ch_only=False, load_parallel=1, load_threads=1, loader_cmd=None, loader_cwd=None,
+                    canary_threshold=0.99, force=False)
+        base.update(over)
+        return SimpleNamespace(**base)
+
+    def _run(self, args):
+        from unittest.mock import patch
+        with patch.object(mr, "ClickHouse", FakeClickHouse), patch.object(mr, "exact_dump_rows", lambda files: 1), \
+                patch.object(mr, "isolate_table_dir", lambda dump_dir, schema, table: dump_dir), \
+                patch.object(mr, "data_files", lambda dump_dir, schema, table: ["x.tsv.zst"]):
+            return mr.cmd_patch(args)
+
+    def test_failed_canary_is_nonzero_and_replaces_nothing(self):
+        rc = self._run(self._args())
+        self.assertNotEqual(rc, 0)
+        self.assertFalse(any("REPLACE PARTITION" in w for w in FakeClickHouse.writes), FakeClickHouse.writes)
+        outdir = os.path.join(self.d, "patch_20260928")
+        report = open(os.path.join(outdir, sorted(f for f in os.listdir(outdir) if f.startswith("report_"))[-1])).read()
+        self.assertIn("s\tt\tCANARY_FAILED", report, report)
+
+    def test_force_overrides_the_canary_and_replaces(self):
+        rc = self._run(self._args(force=True))
+        self.assertEqual(rc, 0)
+        self.assertTrue(any("REPLACE PARTITION ID 'all'" in w for w in FakeClickHouse.writes), FakeClickHouse.writes)
 
 
 class TestDumpDirectory(unittest.TestCase):

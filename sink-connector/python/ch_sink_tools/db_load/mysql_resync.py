@@ -11,13 +11,15 @@ The procedure is the operator's authoritative-side reinsert, made mechanical and
   dump        capture ``SHOW MASTER STATUS`` (the position to rewind the connector to), then ``util.dumpTables`` every
               BASE TABLE of each schema with MySQL Shell (zstd, chunked) -- the layout ``clickhouse_loader.py
               --mysqlshell`` reads.
-  patch       per table: schema-drift check -> ``<schema><suffix>.<table>`` created ``AS`` the live table and filled
-              from the dump by the loader -> loaded rows == dump rows (exact) -> optional canary hash join on tables
-              known to be unchanged -> one ``ALTER TABLE ... REPLACE PARTITION`` per dump-side partition (the single
-              ``all`` partition for unpartitioned tables) -> partitions that exist only in ClickHouse are LISTED, and
-              dropped only with ``--drop-ch-only`` -> live row count verified against the dump.
-  rewind-sql  emit the offset-table INSERT that rewinds the connector to the position captured by ``dump``, so that
-              every binlogged change made while the dump and the patch ran is replayed on top of the patched tables.
+  patch       phase 1, every schema: schema-drift check -> ``<schema><suffix>.<table>`` created ``AS`` the live table
+              and filled from the dump by the loader -> loaded rows == dump rows (exact) -> optional canary hash join
+              on tables known to be unchanged. Phase 2, only if every canary passed: one ``ALTER TABLE ... REPLACE
+              PARTITION`` per dump-side partition (the single ``all`` partition for unpartitioned tables) ->
+              partitions that exist only in ClickHouse are LISTED, and dropped only with ``--drop-ch-only`` -> live
+              row count verified against the dump.
+  rewind-sql  emit the offset-table INSERT that rewinds ONE connector (one ``offset_key``) to the position captured by
+              ``dump``, so that every binlogged change made while the dump and the patch ran is replayed on top of the
+              patched tables.
 
 Nothing is written to ClickHouse unless ``patch --apply`` is given: the default is a dry run that prints every write
 and executes every read. The tool never issues ``DELETE``, ``TRUNCATE`` or a mutation against a live table, and it
@@ -43,6 +45,7 @@ import sys
 
 VIRTUAL_COLUMNS = {"_version", "is_deleted", "_sign", "_is_deleted", "__is_deleted"}
 DEFAULT_RESTORE_SUFFIX = "_restore"
+FAILED_STATUSES = {"LOAD_FAILED", "COUNT_MISMATCH", "CANARY_FAILED", "REPLACED_VERIFY_FAIL", "DUMP_INCOMPLETE"}
 LOG_FILE = None
 
 
@@ -59,8 +62,13 @@ def q(ident: str) -> str:
     return "`" + ident.replace("`", "``") + "`"
 
 
+def sql_str(value: str) -> str:
+    """Single-quoted ClickHouse string literal."""
+    return "'" + value.replace("\\", "\\\\").replace("'", "\\'") + "'"
+
+
 # --------------------------------------------------------------------------------------------------------------------
-# Pure helpers (unit-tested in sink-connector/python/tests/test_mysql_resync.py)
+# Pure helpers (unit-tested in sink-connector/python/db_load/tests/test_mysql_resync.py)
 # --------------------------------------------------------------------------------------------------------------------
 MYSQL_TYPE_MAP = [
     (r"^tinyint\(1\)", "Int8"), (r"^tinyint.*unsigned", "UInt8"), (r"^tinyint", "Int8"),
@@ -164,11 +172,29 @@ def rewind_offset_json(current_offset_val: str, binlog_file: str, binlog_pos: in
     return json.dumps(new, separators=(",", ":"))
 
 
-def rewind_offset_sql(offset_table: str, new_offset_val: str) -> str:
-    """The offset store is a ReplacingMergeTree keyed by offset_key with a wall-clock ``_version``: a newer row wins."""
+def rewind_offset_sql(offset_table: str, offset_key: str, new_offset_val: str) -> str:
+    """One connector only: the offset store is shared by every connector writing to the cluster (one row per
+    ``offset_key``), so the INSERT is scoped to the given key. ReplacingMergeTree keyed by offset_key with a wall-clock
+    ``_version``: the newer row wins."""
+    if not offset_key:
+        raise ValueError("offset_key is required: an unscoped rewind would move every connector in the offset table")
     return (f"INSERT INTO {offset_table} (id, offset_key, offset_val, record_insert_ts, record_insert_seq)\n"
-            f"SELECT id, offset_key, '{new_offset_val}', now(), record_insert_seq + 1\n"
-            f"FROM {offset_table} FINAL;")
+            f"SELECT id, offset_key, {sql_str(new_offset_val)}, now(), record_insert_seq + 1\n"
+            f"FROM {offset_table} FINAL\n"
+            f"WHERE offset_key = {sql_str(offset_key)};")
+
+
+def select_offset_row(rows: list[list[str]], offset_key: str | None) -> tuple[str, str]:
+    """Pick exactly one (offset_key, offset_val) from the offset table: the given key, or the only row when the table
+    holds a single connector. Zero or several candidates are an error, never a guess."""
+    if offset_key:
+        matches = [r for r in rows if r[0] == offset_key]
+        if len(matches) != 1:
+            raise ValueError(f"offset_key {offset_key!r} matched {len(matches)} rows; keys present: {[r[0] for r in rows]}")
+        return matches[0][0], matches[0][1]
+    if len(rows) == 1:
+        return rows[0][0], rows[0][1]
+    raise ValueError(f"offset table holds {len(rows)} connector rows; pass --offset-key, keys present: {[r[0] for r in rows]}")
 
 
 def isolate_table_dir(dump_dir: str, schema: str, table: str) -> str:
@@ -338,6 +364,25 @@ def run_loader(args, restore_db: str, schema: str, table: str, table_dir: str, l
     return p.returncode, logpath
 
 
+def column_names(ch: ClickHouse, schema: str, table: str) -> set:
+    return {r[0] for r in ch.rows(f"SELECT name FROM system.columns WHERE database='{schema}' AND table='{table}'")}
+
+
+def canary_ratio(ch: ClickHouse, schema: str, restore_db: str, table: str, sorting_key: str):
+    """(identical, joined) rows between the scratch and live copies, or None when the sorting key is not plain columns."""
+    pk = plain_identifiers(sorting_key)
+    if not pk:
+        return None
+    pkl = ", ".join(q(c) for c in pk)
+    has_del = "is_deleted" in column_names(ch, schema, table)
+    exc = "(_version, is_deleted)" if has_del else "(_version)"
+    where = "WHERE is_deleted = 0" if has_del else ""
+    r = ch.rows(f"SELECT countIf(r.h = l.h), count() FROM (SELECT {pkl}, cityHash64(* EXCEPT {exc}) AS h FROM {q(restore_db)}.{q(table)}) AS r "
+                f"INNER JOIN (SELECT {pkl}, cityHash64(* EXCEPT {exc}) AS h FROM {q(schema)}.{q(table)} FINAL {where}) AS l USING ({pkl}) "
+                f"SETTINGS join_algorithm = 'parallel_hash'")
+    return int(r[0][0]), int(r[0][1])
+
+
 def cmd_patch(args) -> int:
     global LOG_FILE
     if not os.path.isfile(args.ch_config):
@@ -358,14 +403,23 @@ def cmd_patch(args) -> int:
         canary = {l.split("\t")[0].strip() for l in open(args.canary_list) if l.strip()}
         log(f"canary list: {args.canary_list} ({len(canary)} tables)")
     table_re = re.compile(args.tables)
-    report = []
+    report: list[list[str]] = []
     drift_sql = [f"-- schema drift found by ch-mysql-resync {ts}: MySQL-only columns. REVIEW the suggested types, apply, re-run for these tables."]
     drop_sql = [f"-- ClickHouse-only partitions/tables found by ch-mysql-resync {ts}.",
                 "-- DESTRUCTIVE: every statement below removes data that exists in ClickHouse but NOT in the MySQL dump",
                 "-- (MySQL is the source of truth). Nothing here is executed unless the tool runs with --drop-ch-only.",
                 "-- Blast radius: exactly the enumerated partition ids / tables, one statement each."]
     canary_hits = canary_total = 0
+    ready: list[tuple[str, str, str, list, int]] = []   # (schema, restore_db, table, live_row, dump_rows) cleared for REPLACE
 
+    def set_status(schema, table, status, extra=()):
+        for row in report:
+            if row[0] == schema and row[1] == table:
+                row[2] = status
+                row.extend(extra)
+                return
+
+    # ---------------------------------------------------------------- phase 1: every schema loaded and reconciled
     for schema in args.schemas:
         restore_db = f"{schema}{args.restore_suffix}"
         dump_dir = os.path.join(args.dump_base, f"{schema}_{args.stamp}")
@@ -429,14 +483,13 @@ def cmd_patch(args) -> int:
                 dump_rows[t], load_rc[t] = n, rc
                 log(f"   {schema}.{t}: dump_rows={n} loader_rc={rc} log={lp}")
 
-        ready = []
         for t in todo:
             if load_rc[t] != 0:
                 report.append([schema, t, "LOAD_FAILED", str(dump_rows[t])])
                 continue
             if not args.apply and not args.skip_load:
                 report.append([schema, t, "DRY_RUN", str(dump_rows[t])])
-                ready.append(t)
+                ready.append((schema, restore_db, t, live[t], dump_rows[t]))
                 continue
             rcount = int(ch.one(f"SELECT count() FROM {q(restore_db)}.{q(t)}") or 0)
             if rcount != dump_rows[t]:
@@ -445,52 +498,57 @@ def cmd_patch(args) -> int:
                 continue
             ratio = ""
             if f"{schema}.{t}" in canary:
-                pk = plain_identifiers(live[t][3])
-                if pk:
-                    pkl = ", ".join(q(c) for c in pk)
-                    has_del = "is_deleted" in ccols_of(ch, schema, t)
-                    exc = "(_version, is_deleted)" if has_del else "(_version)"
-                    where = "WHERE is_deleted = 0" if has_del else ""
-                    r = ch.rows(f"SELECT countIf(r.h = l.h), count() FROM (SELECT {pkl}, cityHash64(* EXCEPT {exc}) AS h FROM {q(restore_db)}.{q(t)}) AS r "
-                                f"INNER JOIN (SELECT {pkl}, cityHash64(* EXCEPT {exc}) AS h FROM {q(schema)}.{q(t)} FINAL {where}) AS l USING ({pkl}) "
-                                f"SETTINGS join_algorithm = 'parallel_hash'")
-                    same, n = int(r[0][0]), int(r[0][1])
+                res = canary_ratio(ch, schema, restore_db, t, live[t][3])
+                if res:
+                    same, n = res
                     canary_hits, canary_total = canary_hits + same, canary_total + n
                     ratio = f"{same}/{n}"
                     log(f"   canary {schema}.{t}: identical rows {same}/{n}")
-            ready.append(t)
+            ready.append((schema, restore_db, t, live[t], dump_rows[t]))
             report.append([schema, t, "LOADED", str(dump_rows[t]), str(rcount), ratio])
-        if canary_total and canary_hits / canary_total < args.canary_threshold and not args.force:
-            log(f"!! canary {canary_hits}/{canary_total} = {canary_hits / canary_total:.5f} < {args.canary_threshold}: the loader renders "
-                f"values differently from the connector. STOP before any REPLACE (re-run with --force only once the difference is understood).")
-            break
 
-        for t in ready:
-            partitioned = live[t][2] != ""
-            rparts = {r[0]: int(r[1]) for r in ch.rows(f"SELECT partition_id, sum(rows) FROM system.parts WHERE database='{restore_db}' AND table='{t}' AND active GROUP BY partition_id")}
-            lparts = {r[0]: int(r[1]) for r in ch.rows(f"SELECT partition_id, sum(rows) FROM system.parts WHERE database='{schema}' AND table='{t}' AND active GROUP BY partition_id")}
-            before = sum(lparts.values())
-            stmts, ch_only = plan_replace(schema, t, restore_db, partitioned, rparts, lparts)
-            for s in stmts:
-                ch.write(s)
-            for pid in ch_only:
-                # DESTRUCTIVE: drops exactly ONE enumerated partition id that exists in ClickHouse but not in the MySQL
-                # dump; written to the drop file always, executed ONLY with --drop-ch-only (default: never executed).
-                drop_sql.append(f"-- DESTRUCTIVE: partition id {pid} (rows={lparts[pid]}) exists only in ClickHouse; the MySQL dump has no rows for it")
-                stmt = f"ALTER TABLE {q(schema)}.{q(t)} DROP PARTITION ID '{pid}'"
-                drop_sql.append(stmt + ";")
-                if args.drop_ch_only:
-                    ch.write(stmt)
-            status, after = ("DRY_RUN", None)
-            if args.apply:
-                after = int(ch.one(f"SELECT count() FROM {q(schema)}.{q(t)}") or 0)
-                expect = dump_rows[t] + (0 if args.drop_ch_only else sum(lparts[p] for p in ch_only))
-                status = "REPLACED_OK" if after == expect else "REPLACED_VERIFY_FAIL"
-            log(f"   {schema}.{t}: {status} partitions_replaced={len(stmts)} ch_only_partitions={len(ch_only)} before={before} after={after} dump_rows={dump_rows[t]}")
-            for row in report:
-                if row[0] == schema and row[1] == t and row[2] in ("LOADED", "DRY_RUN"):
-                    row[2] = status
-                    row += [str(len(stmts)), str(len(ch_only)), str(before), str(after)]
+    # ---------------------------------------------------------------- canary gate: evaluated once, before ANY replace
+    canary_failed = bool(canary_total) and canary_hits / canary_total < args.canary_threshold
+    if canary_total:
+        log(f"== canary overall: {canary_hits}/{canary_total} = {canary_hits / canary_total:.5f} (threshold {args.canary_threshold})")
+    if canary_failed and not args.force:
+        log("!! CANARY FAILED: the loader renders values differently from the connector. No REPLACE was issued for any table; "
+            "the scratch tables are kept for inspection. Do NOT rewind the connector. Re-run with --force only once the difference is understood.")
+        for schema, _, t, _, _ in ready:
+            set_status(schema, t, "CANARY_FAILED")
+        ready = []
+
+    # ---------------------------------------------------------------- phase 2: replace, list replica-only partitions, verify
+    for schema, restore_db, t, live_row, drows in ready:
+        partitioned = live_row[2] != ""
+        lparts = {r[0]: int(r[1]) for r in ch.rows(f"SELECT partition_id, sum(rows) FROM system.parts WHERE database='{schema}' AND table='{t}' AND active GROUP BY partition_id")}
+        before = sum(lparts.values())
+        if not args.apply and not args.skip_load:
+            # The REPLACE plan is derived from the scratch table's partitions, which only exist after a real load:
+            # a dry run without --skip-load cannot enumerate them, so it reports the live side and stops here.
+            log(f"   {schema}.{t}: DRY_RUN live_partitions={len(lparts)} live_rows={before} dump_rows={drows} "
+                f"(REPLACE plan is computed from the scratch table after the load; use --skip-load on a loaded scratch table for the exact plan)")
+            set_status(schema, t, "DRY_RUN", ["n/a", "n/a", str(before), ""])
+            continue
+        rparts = {r[0]: int(r[1]) for r in ch.rows(f"SELECT partition_id, sum(rows) FROM system.parts WHERE database='{restore_db}' AND table='{t}' AND active GROUP BY partition_id")}
+        stmts, ch_only = plan_replace(schema, t, restore_db, partitioned, rparts, lparts)
+        for s in stmts:
+            ch.write(s)
+        for pid in ch_only:
+            # DESTRUCTIVE: drops exactly ONE enumerated partition id that exists in ClickHouse but not in the MySQL
+            # dump; written to the drop file always, executed ONLY with --drop-ch-only (default: never executed).
+            drop_sql.append(f"-- DESTRUCTIVE: partition id {pid} (rows={lparts[pid]}) exists only in ClickHouse; the MySQL dump has no rows for it")
+            stmt = f"ALTER TABLE {q(schema)}.{q(t)} DROP PARTITION ID '{pid}'"
+            drop_sql.append(stmt + ";")
+            if args.drop_ch_only:
+                ch.write(stmt)
+        status, after = ("DRY_RUN_PLANNED", None)
+        if args.apply:
+            after = int(ch.one(f"SELECT count() FROM {q(schema)}.{q(t)}") or 0)
+            expect = drows + (0 if args.drop_ch_only else sum(lparts[p] for p in ch_only))
+            status = "REPLACED_OK" if after == expect else "REPLACED_VERIFY_FAIL"
+        log(f"   {schema}.{t}: {status} partitions_replaced={len(stmts)} ch_only_partitions={len(ch_only)} before={before} after={after} dump_rows={drows}")
+        set_status(schema, t, status, [str(len(stmts)), str(len(ch_only)), str(before), str(after)])
 
     with open(report_path, "w") as f:
         f.write("schema\ttable\tstatus\tdump_rows\trestore_rows\tcanary\tpartitions_replaced\tch_only_partitions\tlive_before\tlive_after\n")
@@ -502,34 +560,38 @@ def cmd_patch(args) -> int:
         counts[r[2]] = counts.get(r[2], 0) + 1
     log(f"== done mode={mode}: {counts}")
     log(f"   report: {report_path}\n   drift (human applies): {drift_path}\n   ch-only (DESTRUCTIVE, human decision): {drop_path}")
-    if canary_total:
-        log(f"   canary overall: {canary_hits}/{canary_total} = {canary_hits / canary_total:.5f}")
-    log("   next: `ch-mysql-resync rewind-sql` -> stop the connector, run the INSERT, start it, then re-run the checksum job.")
-    bad = {"LOAD_FAILED", "COUNT_MISMATCH", "REPLACED_VERIFY_FAIL", "DUMP_INCOMPLETE"}
-    return 1 if any(r[2] in bad for r in report) else 0
-
-
-def ccols_of(ch: ClickHouse, schema: str, table: str) -> set:
-    return {r[0] for r in ch.rows(f"SELECT name FROM system.columns WHERE database='{schema}' AND table='{table}'")}
+    failed = any(r[2] in FAILED_STATUSES for r in report)
+    if failed:
+        log("== FAILED: at least one table did not reach REPLACED_OK -- do not rewind the connector until every table is repaired.")
+    else:
+        log("   next: `ch-mysql-resync rewind-sql` -> stop the connector, run the INSERT, start it, then re-run the checksum job.")
+    LOG_FILE.close()
+    LOG_FILE = None
+    return 1 if failed else 0
 
 
 def cmd_rewind_sql(args) -> int:
     pos = json.load(open(args.position_file or os.path.join(args.dump_base, f"binlog_position_{args.stamp}.json")))
-    current = ""
+    rows = []
     if args.ch_config and os.path.isfile(args.ch_config):
         ch = ClickHouse(args.ch_host, args.ch_config, apply=False, port=args.ch_port)
-        rows = ch.rows(f"SELECT offset_val FROM {args.offset_table} FINAL")
-        current = rows[0][0] if rows else ""
+        rows = ch.rows(f"SELECT offset_key, offset_val FROM {args.offset_table} FINAL ORDER BY offset_key")
+    elif not args.offset_key:
+        sys.exit("--offset-key is required when the current offset table cannot be read (--ch-host/--ch-config not given)")
+    if rows:
+        offset_key, current = select_offset_row(rows, args.offset_key)
+    else:
+        offset_key, current = args.offset_key, ""
     new_val = rewind_offset_json(current, pos["file"], pos["pos"], pos.get("ts_sec") or 0)
-    sql = rewind_offset_sql(args.offset_table, new_val)
-    print(f"-- Rewind the connector that stores its offset in {args.offset_table} to the binlog position captured at dump start:")
+    sql = rewind_offset_sql(args.offset_table, offset_key, new_val)
+    print(f"-- Rewind the connector whose offset_key is {offset_key} in {args.offset_table} to the binlog position captured at dump start:")
     print(f"--   {pos['file']}:{pos['pos']} taken {pos.get('taken_at')} on {pos.get('source_host')} (gtid_executed: {pos.get('gtid_executed') or 'n/a'})")
-    print("-- Procedure: (1) stop the connector service; (2) run the INSERT below; (3) start the connector; (4) watch it")
+    print("-- Procedure: (1) stop THAT connector service; (2) run the INSERT below; (3) start the connector; (4) watch it")
     print("-- replay the binlog from that position (every change binlogged since the dump is re-applied on top of the")
     print("-- patched tables -- idempotent on ReplacingMergeTree); (5) re-run the value-level checksum (spec 11.02).")
     print("-- The source must still hold that binlog file: check `SHOW BINARY LOGS` before starting the connector.")
-    if current:
-        print(f"-- current offset_val: {current}")
+    if rows:
+        print(f"-- offset rows in {args.offset_table}: {len(rows)}; current offset_val of the selected key: {current}")
     print(sql)
     return 0
 
@@ -573,14 +635,15 @@ def main(argv=None) -> int:
     p.add_argument("--loader-cwd", default=None)
     p.set_defaults(func=cmd_patch)
 
-    r = sub.add_parser("rewind-sql", help="print the offset-table INSERT that rewinds the connector to the captured binlog position")
+    r = sub.add_parser("rewind-sql", help="print the offset-table INSERT that rewinds ONE connector to the captured binlog position")
     common(r)
     r.add_argument("--offset-table", required=True, help="e.g. altinity_sink_connector.replica_source_info")
+    r.add_argument("--offset-key", default=None, help="the connector's offset_key row; may be omitted only when the table holds a single row")
     r.add_argument("--position-file", default=None, help="override <dump-base>/binlog_position_<stamp>.json (one dump set = one stamp = one position; "
                                                         "use distinct stamps for distinct connectors)")
     r.add_argument("--ch-host", default=None)
     r.add_argument("--ch-port", type=int, default=9000)
-    r.add_argument("--ch-config", default=None, help="if given, the current offset row is read to keep its server_id")
+    r.add_argument("--ch-config", default=None, help="if given, the current offset rows are read (server_id kept, key checked)")
     r.set_defaults(func=cmd_rewind_sql)
 
     args = ap.parse_args(argv)

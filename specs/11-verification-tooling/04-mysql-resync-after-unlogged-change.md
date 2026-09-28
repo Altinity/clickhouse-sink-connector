@@ -135,11 +135,15 @@ Exit code of `patch` is non-zero when any table ended in `LOAD_FAILED`,
    unchanged (e.g. the ones whose last checksum matched), the scratch rows must
    hash-match the live rows: `countIf(r.h = l.h) / count()` over an `INNER
    JOIN` on the sorting key of `cityHash64(* EXCEPT (_version, is_deleted))`
-   computed on both sides (live side with `FINAL`, `is_deleted = 0`). A ratio
+   computed on both sides (live side with `FINAL`, `is_deleted = 0`). The
+   ratio is accumulated over **every schema of the run** and evaluated
+   **once, after phase 1 and before the first REPLACE of any schema**. A ratio
    below `--canary-threshold` (default 0.99) means the loader renders some type
-   or time zone differently from the connector — the run **stops before any
-   REPLACE** (override only with `--force` once the difference is understood).
-   Tables whose sorting key contains expressions are excluded from the canary.
+   or time zone differently from the connector: no REPLACE is issued for any
+   table, every loaded table is reported `CANARY_FAILED`, the scratch tables
+   are kept for inspection and the exit code is non-zero (override only with
+   `--force` once the difference is understood). Tables whose sorting key
+   contains expressions are excluded from the canary.
 6. **Replace**: for each partition id present in the scratch table's active
    parts, `ALTER TABLE S.t REPLACE PARTITION ID '<id>' FROM S<suffix>.t`. An
    unpartitioned table is the single `all` partition; replacing it from an
@@ -166,15 +170,19 @@ is unsupported by the connector and needs a table rebuild; see `AGENTS.md`);
 it does not stop or start the connector.
 
 ### 3.5 `rewind-sql`
-Prints the statement that moves the connector back to the captured position:
-a new row for the same `offset_key` in the offset store (`ReplacingMergeTree`
-keyed by `offset_key`, wall-clock `_version`, spec 09.03) whose `offset_val`
-is `{"ts_sec": <capture time>, "file": <file>, "pos": <pos>, "row": 0,
-"server_id": <current server_id>, "event": 0}`. Procedure printed with it:
-stop the connector, run the INSERT, start the connector, watch the replay,
-re-run the checksum. The source must still hold the binlog file (`SHOW BINARY
-LOGS`) — binlog retention bounds how long after the dump the rewind is
-possible.
+Prints the statement that moves **one** connector back to the captured
+position: a new row for the same `offset_key` in the offset store
+(`ReplacingMergeTree` keyed by `offset_key`, wall-clock `_version`, spec
+09.03) whose `offset_val` is `{"ts_sec": <capture time>, "file": <file>,
+"pos": <pos>, "row": 0, "server_id": <current server_id>, "event": 0}`. The
+offset store is shared by every connector that writes to the cluster, so the
+`INSERT ... SELECT` carries `WHERE offset_key = <key>`: the key comes from
+`--offset-key`, or from the table itself only when it holds exactly one row;
+zero or several candidates are an error, never a guess. Procedure printed
+with it: stop that connector, run the INSERT, start the connector, watch the
+replay, re-run the checksum. The source must still hold the binlog file
+(`SHOW BINARY LOGS`) — binlog retention bounds how long after the dump the
+rewind is possible.
 
 ### 3.6 Failure modes the design guards against
 | Failure | Guard |
@@ -225,8 +233,15 @@ run by `python3 -m unittest` in `.github/workflows/spec-governance.yml`):
 - `TestSortingKey` — §3.3 step 5: plain columns are join keys; an expression
   key disables the canary join.
 - `TestRewind` — §3.5: the new offset keeps the current `server_id`, points at
-  the captured file/pos with `row`/`event` 0, and the SQL inserts a newer row
-  for the same key (`record_insert_seq + 1`, `FROM ... FINAL`).
+  the captured file/pos with `row`/`event` 0; the SQL inserts a newer row for
+  the same key only (`record_insert_seq + 1`, `FROM ... FINAL`, `WHERE
+  offset_key = <key>`); an unscoped rewind is refused; the offset row is
+  selected unambiguously (given key must match one row; no key is accepted
+  only for a single-row table).
+- `TestCanaryGate` — §3.3 step 5, with the ClickHouse wrapper replaced by an
+  offline fake whose canary join returns 0/10: `patch --apply` exits non-zero,
+  issues no `REPLACE PARTITION`, and reports the table `CANARY_FAILED`;
+  `--force` proceeds to the `REPLACE`.
 - `TestDumpDirectory` — §3.3 steps 3–4: table discovery and data-file matching
   do not bleed across prefixes (`t` vs `t_other`); the isolated directory
   holds hard links (never symlinks); the exact row count counts
