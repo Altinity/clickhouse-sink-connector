@@ -11,6 +11,46 @@ from subprocess import Popen, PIPE
 import subprocess
 import time
 import re
+import traceback
+
+
+class LockAcquisitionError(Exception):
+    """Raised when the source READ lock for a single table cannot be acquired
+    within lock_wait_timeout. Treated as a skippable, non-fatal condition so a
+    continuously-written table (e.g. a hot table on a busy replication target)
+    does not abort the checksum run for every other table."""
+    pass
+
+
+def _mysql_error_code(exc):
+    """Extract the numeric MySQL error code from a driver exception.
+
+    pymysql.err.OperationalError carries it as args[0]; SQLAlchemy wraps the
+    original driver exception under .orig. Returns None if no integer code is
+    present."""
+    for candidate in (exc, getattr(exc, "orig", None)):
+        if candidate is None:
+            continue
+        args = getattr(candidate, "args", None)
+        if args and isinstance(args[0], int):
+            return args[0]
+    return None
+
+
+def _is_lock_wait_timeout(exc):
+    """True only for MySQL 'Lock wait timeout exceeded' (errno 1205).
+
+    Classified from the structured driver error code first (whether raw
+    pymysql.OperationalError or SQLAlchemy-wrapped), falling back to the exact
+    MySQL timeout message. Deliberately does NOT do a loose "1205" substring
+    match: an unrelated error on a table like `trades_1205`, or any message that
+    merely contains those digits, must not be misclassified as a skippable lock
+    timeout and silently swallowed."""
+    if _mysql_error_code(exc) == 1205:
+        return True
+    return "Lock wait timeout exceeded" in str(exc)
+
+
 def parse_config(config_file):
     """Parse the YAML configuration file."""
     try:
@@ -87,7 +127,7 @@ def run_quick_safe_checksum(cmd, host, table):
 
 
 
-def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306, timestamp_columns=(), binary_columns=(), json_columns=()):
+def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306, timestamp_columns=(), binary_columns=(), json_columns=(), lock_wait_timeout=None):
     table_name = f"{mysql_database}.{table}"
     logging.info(f"Checksumming {table_name}")
     if table_name in table_overrides_map and 'where' in table_overrides_map[table_name]:
@@ -127,7 +167,7 @@ def compute_checksum (mysql_database, database_override_map, table_overrides_map
             lock_conn = get_mysql_connection(mysql_host, mysql_user,
                                              mysql_password, mysql_port, mysql_database)
             logging.info(f"Locking table {table} on source {mysql_host}")
-            lock_tables(lock_conn, table)
+            lock_tables(lock_conn, table, lock_wait_timeout=lock_wait_timeout)
             time.sleep(sleep_after_lock)
 
         # Run the MySQL source checksum and all ClickHouse replica checksums
@@ -299,10 +339,25 @@ def quote_mysql_identifier(identifier):
     return "`" + str(identifier).replace("`", "``") + "`"
 
 
-def lock_tables(conn, table):
+def lock_tables(conn, table, lock_wait_timeout=None):
+    # Bound how long we wait for the metadata lock. Without this the session
+    # inherits the server default (often very large), and a table under
+    # continuous writes -- e.g. a hot table applied non-stop by a replica's
+    # SQL thread -- makes the lock starve for the whole timeout before failing,
+    # taking the entire checksum run down with it.
+    if lock_wait_timeout is not None:
+        execute_mysql(conn, f"SET SESSION lock_wait_timeout = {int(lock_wait_timeout)}")
     lock_stmt = f"LOCK TABLES {quote_mysql_identifier(table)} READ"
     logging.info(f"Locking table with statement {lock_stmt}")
-    execute_mysql(conn, lock_stmt)
+    try:
+        execute_mysql(conn, lock_stmt)
+    except Exception as e:
+        if _is_lock_wait_timeout(e):
+            raise LockAcquisitionError(
+                f"Could not acquire READ lock on {table} within "
+                f"{lock_wait_timeout}s -- source has continuous writes: {e}"
+            ) from e
+        raise
 
 
 def unlock_tables(conn, table):
@@ -441,17 +496,39 @@ def run_config(config):
                     # Each future acquires its own lock, runs both MySQL and
                     # ClickHouse checksums under the lock, then releases it.
                     future = executor.submit(
-                        compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns)
+                        compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns, lock_wait_timeout=args.lock_wait_timeout)
                     futures.append(future)
                     future_to_table[future] = table_name
+                skipped_tables = []
                 for future in concurrent.futures.as_completed(futures):
                     table_name = future_to_table[future]
-                    if future.exception() is not None:
+                    exc = future.exception()
+                    if exc is not None:
+                        if isinstance(exc, LockAcquisitionError) and not args.fail_on_lock_timeout:
+                            # Default: a single un-lockable (continuously-written)
+                            # table must not abort the whole run. Skip it and keep
+                            # comparing the rest. The skip is NOT silent -- it is
+                            # logged here and summarized loudly below as an explicit
+                            # coverage gap, so a green run never hides that a table
+                            # went unverified. Pass --fail_on_lock_timeout to make
+                            # any such timeout abort the run instead.
+                            logging.warning(
+                                "COVERAGE GAP -- skipping checksum for " + table_name +
+                                ": source lock could not be acquired: " + str(exc))
+                            skipped_tables.append(table_name)
+                            continue
                         logging.error("Exception in table " + table_name)
-                        logging.error(future.exception())
-                        raise future.exception()
+                        logging.error(exc)
+                        raise exc
                     else:
                         analyze_differences(future.result(), mysql_host, replica_hosts)
+                if skipped_tables:
+                    logging.warning(
+                        "COVERAGE GAP -- checksum finished but " +
+                        str(len(skipped_tables)) +
+                        " table(s) were NOT compared (source lock timeout; pass "
+                        "--fail_on_lock_timeout to fail the run instead): " +
+                        ", ".join(skipped_tables))
 
         except (KeyboardInterrupt, SystemExit):
             logging.info("Received interrupt")
@@ -551,6 +628,10 @@ def main():
                         help='compare floating point columns (text renderings, not guaranteed identical in exponent notation); passed to both sides')
     parser.add_argument('--include_json_columns', action='store_true', default=False,
                         help='compare JSON columns (best-effort text rendering on the MySQL side); passed to both sides')
+    parser.add_argument('--lock_wait_timeout', type=int, default=30,
+                        help='Seconds to wait for the source READ lock on each table before giving up on that table (default 30). Bounds the wait so a continuously-written table fails fast instead of stalling the whole run for the server-default timeout.')
+    parser.add_argument('--fail_on_lock_timeout', action='store_true', default=False,
+                        help='Abort the whole run if any table cannot be locked within --lock_wait_timeout. Default is to log a loud COVERAGE GAP warning, skip that one table, and keep checksumming the rest so a single continuously-written table does not fail the whole job.')
 
     global args
     args = parser.parse_args()
