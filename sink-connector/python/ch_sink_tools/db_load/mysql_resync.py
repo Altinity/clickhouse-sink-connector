@@ -410,7 +410,8 @@ def cmd_patch(args) -> int:
                 "-- DESTRUCTIVE: every statement below removes data that exists in ClickHouse but NOT in the MySQL dump",
                 "-- (MySQL is the source of truth). Nothing here is executed unless the tool runs with --drop-ch-only.",
                 "-- Blast radius: exactly the enumerated partition ids / tables, one statement each."]
-    canary_hits = canary_total = 0
+    canary_hits = canary_total = canary_evaluated = 0
+    canary_no_overlap: list[str] = []
     ready: list[tuple[str, str, str, list, int]] = []   # (schema, restore_db, table, live_row, dump_rows) cleared for REPLACE
 
     def set_status(schema, table, status, extra=()):
@@ -502,16 +503,28 @@ def cmd_patch(args) -> int:
                 res = canary_ratio(ch, schema, restore_db, t, live[t][3])
                 if res:
                     same, n = res
+                    canary_evaluated += 1
                     canary_hits, canary_total = canary_hits + same, canary_total + n
                     ratio = f"{same}/{n}"
                     log(f"   canary {schema}.{t}: identical rows {same}/{n}")
+                    if n == 0 and rcount > 0:
+                        # No sorting-key overlap at all between a loaded scratch table and its live copy on a table
+                        # that is supposed to be unchanged: the loader (or the dump) is not comparable to the
+                        # connector's output. A zero denominator is evidence, not absence of evidence.
+                        canary_no_overlap.append(f"{schema}.{t}")
             ready.append((schema, restore_db, t, live[t], dump_rows[t]))
             report.append([schema, t, "LOADED", str(dump_rows[t]), str(rcount), ratio])
 
     # ---------------------------------------------------------------- canary gate: evaluated once, before ANY replace
-    canary_failed = bool(canary_total) and canary_hits / canary_total < args.canary_threshold
+    canary_failed = (bool(canary_total) and canary_hits / canary_total < args.canary_threshold) or bool(canary_no_overlap)
     if canary_total:
-        log(f"== canary overall: {canary_hits}/{canary_total} = {canary_hits / canary_total:.5f} (threshold {args.canary_threshold})")
+        log(f"== canary overall: {canary_hits}/{canary_total} = {canary_hits / canary_total:.5f} (threshold {args.canary_threshold}) "
+            f"over {canary_evaluated} tables")
+    if canary_no_overlap:
+        log(f"!! canary tables with ZERO joined rows although the scratch table is not empty (no sorting-key overlap): {canary_no_overlap}")
+    if canary and args.apply and canary_evaluated == 0:
+        log("!! WARNING: a canary list was given but none of its tables was loaded in this run (selection/regex does not intersect it): "
+            "the loader rendering is UNVERIFIED for this run.")
     if canary_failed and not args.force:
         log("!! CANARY FAILED: the loader renders values differently from the connector. No REPLACE was issued for any table; "
             "the scratch tables are kept for inspection. Do NOT rewind the connector. Re-run with --force only once the difference is understood.")

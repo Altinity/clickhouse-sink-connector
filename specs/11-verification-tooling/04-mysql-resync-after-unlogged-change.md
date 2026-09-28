@@ -145,8 +145,12 @@ printed only when every selected table reached `REPLACED_OK`.
    or time zone differently from the connector: no REPLACE is issued for any
    table, every loaded table is reported `CANARY_FAILED`, the scratch tables
    are kept for inspection and the exit code is non-zero (override only with
-   `--force` once the difference is understood). Tables whose sorting key
-   contains expressions are excluded from the canary.
+   `--force` once the difference is understood). A canary table whose join
+   returns **zero rows while its scratch copy is not empty** (no sorting-key
+   overlap at all) is a failure in its own right, never "no evidence"; a
+   canary list none of whose tables was loaded in the run is reported as a
+   loud warning (the rendering is unverified for that run). Tables whose
+   sorting key contains expressions are excluded from the canary.
 6. **Replace**: for each partition id present in the scratch table's active
    parts, `ALTER TABLE S.t REPLACE PARTITION ID '<id>' FROM S<suffix>.t`. An
    unpartitioned table is the single `all` partition; replacing it from an
@@ -244,8 +248,9 @@ run by `python3 -m unittest` in `.github/workflows/spec-governance.yml`):
 - `TestCanaryGate` — §3.3 step 5, with the ClickHouse wrapper replaced by an
   offline fake whose canary join returns 0/10: `patch --apply` exits non-zero,
   issues no `REPLACE PARTITION`, and reports the table `CANARY_FAILED`;
-  `--force` proceeds to the `REPLACE`; a selected table skipped for
-  `SCHEMA_DRIFT` makes an apply run fail (§3.1 exit code).
+  `--force` proceeds to the `REPLACE`; a canary join with zero rows on a
+  non-empty scratch table fails closed the same way; a selected table
+  skipped for `SCHEMA_DRIFT` makes an apply run fail (§3.1 exit code).
 - `TestDdlLiterals` — §3.3 step 2: a `DEFAULT 'this is NOT NULL'` literal
   does not make the column non-nullable.
 - `TestDumpDirectory` — §3.3 steps 3–4: table discovery and data-file matching

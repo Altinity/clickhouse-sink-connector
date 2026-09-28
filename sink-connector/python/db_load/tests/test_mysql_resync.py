@@ -251,6 +251,19 @@ class TestCanaryGate(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertTrue(any("REPLACE PARTITION ID 'all'" in w for w in FakeClickHouse.writes), FakeClickHouse.writes)
 
+    def test_zero_joined_canary_rows_fail_closed(self):
+        from unittest.mock import patch
+        rows = FakeClickHouse.rows
+
+        def zero_join(self_, sql, timeout=3600):
+            if "countIf(r.h = l.h)" in sql:
+                return [["0", "0"]]  # scratch has rows (count 1) but no sorting key overlaps the live table
+            return rows(self_, sql, timeout)
+        with patch.object(FakeClickHouse, "rows", zero_join):
+            rc = self._run(self._args())
+        self.assertNotEqual(rc, 0, "a zero canary denominator on a non-empty scratch table is a mismatch, not missing evidence")
+        self.assertFalse(any("REPLACE PARTITION" in w for w in FakeClickHouse.writes), FakeClickHouse.writes)
+
     def test_apply_fails_when_a_selected_table_is_skipped_for_schema_drift(self):
         open(os.path.join(self.d, "s_20260928", "s@t.sql"), "w").write(
             "CREATE TABLE `t` (\n  `id` int NOT NULL,\n  `missing_in_ch` int NOT NULL\n) ENGINE=InnoDB;\n")
