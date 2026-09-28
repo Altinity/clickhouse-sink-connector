@@ -179,6 +179,47 @@ public class HandoffHardCapLogPacingTest {
     }
 
     @Test
+    @DisplayName("the WARN names the counts that met the cap, not what is left once the line is written")
+    public void theWarnNamesTheCountsThatMetTheCap() throws InterruptedException {
+        // The defect, as seen on a live deployment: the wait found the cap met,
+        // a writer acknowledged the head before the WARN was written, and the
+        // line read the live counters -- "465225 row(s) in 10 unit(s) ... at or
+        // above the cap of 500000 row(s)", a line that contradicts itself. The
+        // pacing clock is the first thing the WARN path reads, so an
+        // acknowledgement planted in its first tick lands exactly where the
+        // writer's did: after the check, before the line.
+        fillToTheCap();
+        List<ClickHouseStruct> head = outstanding.removeFirst();
+        AtomicReference<Throwable> failure = new AtomicReference<>();
+        java.util.concurrent.atomic.AtomicBoolean acknowledged = new java.util.concurrent.atomic.AtomicBoolean();
+        DebeziumOffsetManagement.capacityClock = () -> {
+            if (acknowledged.compareAndSet(false, true)) {
+                try {
+                    DebeziumOffsetManagement.checkIfBatchCanBeCommitted(head);
+                } catch (Throwable e) {
+                    failure.set(e);
+                }
+            }
+            return clock.get();
+        };
+
+        DebeziumOffsetManagement.awaitHandoffCapacity(CAP, 10_000, null);
+
+        if (failure.get() != null) {
+            throw new AssertionError("the planted acknowledgement failed", failure.get());
+        }
+        assertTrue(acknowledged.get(), "the acknowledgement landed between the check and the WARN");
+        assertEquals(2, DebeziumOffsetManagement.outstandingRecordCount(), "one unit was acknowledged during the wait");
+        List<LogEvent> lines = appender.capLines();
+        assertEquals(2, lines.size(), "one WARN and its release: " + lines.size());
+        assertEquals(Level.WARN, lines.get(0).getLevel());
+        assertTrue(text(lines.get(0)).contains("4 row(s) in 2 unit(s)"),
+                "the WARN names the rows and units that met the cap: " + text(lines.get(0)));
+        assertFalse(text(lines.get(0)).contains("2 row(s) in 1 unit(s)"),
+                "never the counters as they stand once the line is written: " + text(lines.get(0)));
+    }
+
+    @Test
     @DisplayName("while the reader stays paced, one summary INFO per interval names the pauses since the previous line")
     public void oneSummaryLinePerIntervalWhilePaced() throws InterruptedException {
         assertEquals(2, cycle(0));

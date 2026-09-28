@@ -114,7 +114,12 @@ could do nothing about it. Hence, on the Debezium thread, BEFORE
    990 WARNs into the error log in seven minutes, while the cap was doing
    exactly its job). Hence a PACING PERIOD: ONE WARN when a wait begins more
    than 60 s after the previous release (or with no previous release), naming
-   the rows, the units and the cap, and ONE INFO when that first wait ends,
+   the rows, the units and the cap — the rows and units that MET the cap,
+   read in the same step as the check and under the same monitor the
+   acknowledgements take, never the live counters once the line is written
+   (read apart, an acknowledgement between the check and the line produced a
+   WARN naming 465,225 rows "at or above the cap of 500000", a line that
+   contradicts itself) — and ONE INFO when that first wait ends,
    naming how long it lasted; every later wait that begins within 60 s of the
    previous release continues the period and is counted, not logged; ONE INFO
    summary per 60 s while the period lasts (pauses and milliseconds paused
@@ -240,7 +245,9 @@ the ConfigDef default never reached it.
 - `HandoffHardCapLogPacingTest` — §3.4 item 6: the first pause of a period is
   one WARN and one release INFO, and pauses that begin within the re-arm
   window of the previous release add no line
-  (`pausesWithinTheRearmWindowAreCountedNotLogged`); one summary INFO per
+  (`pausesWithinTheRearmWindowAreCountedNotLogged`); the WARN names the rows
+  and units that met the cap even when an acknowledgement lands between the
+  check and the line (`theWarnNamesTheCountsThatMetTheCap`); one summary INFO per
   interval while the reader stays paced, naming the pauses since the previous
   line and since the period began (`oneSummaryLinePerIntervalWhilePaced`); a
   pause after a quiet gap longer than the re-arm window closes the period with
