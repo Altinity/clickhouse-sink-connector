@@ -40,7 +40,8 @@ enemy"), so it is held to two rules:
 - **Tests** (offline; the database layer is stubbed, no test opens a
   connection): `sink-connector/python/db_compare/tests/test_checksum_fidelity.py`,
   `sink-connector/python/db_compare/tests/mysql_table_checksum_test.py`,
-  `sink-connector/python/db_compare/tests/test_table_locking.py`.
+  `sink-connector/python/db_compare/tests/test_table_locking.py`,
+  `sink-connector/python/db_compare/tests/test_bounded_source_lock.py`.
   Runner: `python3 -m pytest db_compare/tests` from `sink-connector/python`
   (also `python3 -m unittest discover -s db_compare/tests -t .`).
 
@@ -72,10 +73,35 @@ For every table selected by `--tables_regex` (and the optional
    to both side scripts as `--source_timezone`, the column list to the
    replica script as `--timestamp_columns`.
 2. If `--lock_tables_on_source` is set, opens a dedicated MySQL connection,
-   runs `LOCK TABLES <table> READ` and sleeps `--sleep_after_lock` seconds so
-   replication drains. **Only the driver locks.** Neither side script issues
-   a lock; run standalone they compare whatever each engine holds at the
-   moment of the query.
+   runs `SET SESSION lock_wait_timeout = <--lock_wait_timeout>` (default 30
+   seconds) and then `LOCK TABLES <table> READ`, and sleeps
+   `--sleep_after_lock` seconds so replication drains. **Only the driver
+   locks.** Neither side script issues a lock; run standalone they compare
+   whatever each engine holds at the moment of the query.
+   - **The wait for the lock is bounded per table.** `LOCK TABLES ... READ`
+     waits for the table's metadata lock; on a replica whose SQL applier
+     writes the table continuously there is no quiescent moment, and with
+     the server's `lock_wait_timeout` (very large unless the server sets
+     it lower) the acquisition stalls for that whole time and then fails
+     with MySQL errno 1205. Without the bound, one such table stalled a run
+     for the server's full timeout (about an hour on that server) and then
+     aborted it, although every other table had checksummed fine.
+   - Errno 1205 is classified as `LockAcquisitionError` in `lock_tables()`
+     from the **structured driver error code** — `args[0]` of the raw
+     `pymysql` error or of the SQLAlchemy-wrapped `.orig` — with the exact
+     `Lock wait timeout exceeded` message as the fallback. It is
+     deliberately not a `1205` substring match: an unrelated error on a
+     table named `trades_1205`, or any message that merely contains those
+     digits, must never be reclassified as a skippable timeout.
+   - **Default: skip-and-warn.** `run_config()` logs
+     `WARNING COVERAGE GAP -- skipping checksum for <db>.<table>: source
+     lock could not be acquired`, records the table, and keeps
+     checksumming the remaining tables; after the last table it logs one
+     `WARNING COVERAGE GAP -- checksum finished but <n> table(s) were NOT
+     compared` naming every skipped table (§3.9). Both are driver log
+     lines, not side-script output, so step 4's parser never sees them.
+     `--fail_on_lock_timeout` makes any such timeout abort the run instead,
+     as every other exception from a table still does.
 3. Runs `mysql_table_checksum.py` and one `clickhouse_table_checksum.py` per
    replica host **concurrently under the lock** (`compute_checksum()`), each
    restricted to the table with `--tables_regex "^<table>$"` and the same
@@ -384,6 +410,14 @@ skipped columns (`Not compared in table <db>.<table>: floating point columns
 
 (`test_checksum_fidelity.py::TestFloatAndJsonCoverage`)
 
+A **table** the driver could not lock within `--lock_wait_timeout` (§3.2
+step 2) is a coverage gap of the same kind, one level up: it is neither
+confirmed equal nor reported different, only **not compared**. It is named
+twice — once when it is skipped and once in the end-of-run `COVERAGE GAP`
+summary — so a run that exits 0 never hides an unverified table. Operators
+who would rather have the run fail than run with a gap pass
+`--fail_on_lock_timeout`. (`test_bounded_source_lock.py`)
+
 ### 3.10 Removed dead paths
 - The replica script executed `CREATE FUNCTION IF NOT EXISTS format_decimal
   ...` on every run. Nothing called it (decimals render with the built-in
@@ -491,7 +525,22 @@ connect to a database.
     checksum and does not contain the word "checksum".
 - `sink-connector/python/db_compare/tests/test_table_locking.py` — §3.2 lock
   lifecycle (lock before, unlock after both sides, connection closed on
-  failure, no lock when disabled).
+  failure, no lock when disabled; `lock_tables()` is called with the
+  `lock_wait_timeout` keyword).
+- `sink-connector/python/db_compare/tests/test_bounded_source_lock.py` —
+  §3.2 step 2 bounded lock:
+  - `TestIsLockWaitTimeout` — errno 1205 is recognised from the structured
+    code of a raw driver error and of a SQLAlchemy-wrapped `.orig`, and from
+    the exact message; errno 1146 on `prod.trades_1205`, errno 1142 with
+    `orders_1205` in the SQL text, and a bare message mentioning `1205` are
+    **not** classified as a timeout.
+  - `TestLockTables` — `SET SESSION lock_wait_timeout = N` is issued before
+    `LOCK TABLES` and not at all when no timeout is given; a timeout raises
+    `LockAcquisitionError`; any other error propagates unchanged.
+  - `TestCliContract` — `--help` names `--lock_wait_timeout` and
+    `--fail_on_lock_timeout`, and no inverted `--allow_lock_timeout_skip`
+    exists, so the documented default (skip-and-warn) cannot drift from the
+    code.
 - `sink-connector/python/db_compare/tests/mysql_table_checksum_test.py` —
   `{partition_expression}` substitution is literal, never `eval`.
 - `test_checksum_fidelity.py::TestRemovedDeadPaths` — §3.10: no
