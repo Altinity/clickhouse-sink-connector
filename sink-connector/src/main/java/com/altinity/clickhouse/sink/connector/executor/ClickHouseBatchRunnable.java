@@ -30,6 +30,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Runnable object that will be called on a schedule to perform the
@@ -165,6 +166,15 @@ public class ClickHouseBatchRunnable implements Runnable {
      * (spec 09.01 section 3.2).
      */
     private List<List<ClickHouseStruct>> currentGroups = null;
+
+    /**
+     * A batch taken from this worker's queue during the coalescing wait of the
+     * previous write (spec 03.03 section 3.1.1 step 6) that did not fit that
+     * write's bounds. It is older than anything still queued, so it opens the
+     * next write; {@code null} otherwise. Its unit is outstanding in the offset
+     * FIFO from its handoff, exactly like a queued batch.
+     */
+    private RoutedBatch carriedOver = null;
 
     /**
      * Shared watermark (owned by ClickHouseSinkTask): highest Kafka offset per
@@ -592,7 +602,7 @@ public class ClickHouseBatchRunnable implements Runnable {
      */
     private void runWithHashRouting(Long taskId, String sourceTimeZone, String serverTimeZone, String errorTableName) throws Exception {
         // Poll from this thread's own queue until it is empty.
-        while (routedRecords.size() > 0 || currentBatch != null) {
+        while (routedRecords.size() > 0 || currentBatch != null || carriedOver != null) {
             // If the thread is interrupted, exit.
             if (Thread.currentThread().isInterrupted()) {
                 log.info("Thread {} is interrupted, exiting - Java Thread ID: {}",
@@ -601,7 +611,11 @@ public class ClickHouseBatchRunnable implements Runnable {
             }
 
             if (currentBatch == null) {
-                RoutedBatch routedBatch = routedRecords.poll();
+                // A batch taken from the queue during the previous write's wait
+                // that did not fit that write is written first (spec 03.03
+                // section 3.1.1 step 6): it is older than anything still queued.
+                RoutedBatch routedBatch = carriedOver != null ? carriedOver : routedRecords.poll();
+                carriedOver = null;
                 if (routedBatch == null) {
                     // No records in the queue.
                     continue;
@@ -631,9 +645,10 @@ public class ClickHouseBatchRunnable implements Runnable {
      * i.e. binlog) order, and {@code processBatch} still splits it by table
      * with each table's rows in that order.
      */
-    private void coalesceQueuedBatches(RoutedBatch first) {
+    private void coalesceQueuedBatches(RoutedBatch first) throws InterruptedException {
         long maxRows = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
         long maxBytes = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_BYTES.toString());
+        long waitMs = config.getLong(ClickHouseSinkConnectorConfigVariables.COALESCE_MAX_WAIT_MS.toString());
         List<List<ClickHouseStruct>> groups = new ArrayList<>();
         groups.add(first.getBatch());
         long rows = first.getBatch().size();
@@ -653,6 +668,53 @@ public class ClickHouseBatchRunnable implements Runnable {
             groups.add(group);
             rows += groupRows;
             bytes += groupBytes;
+        }
+        // Time-bounded coalescing (spec 03.03 section 3.1.1 step 6): while the
+        // write is still under both bounds and the queue is empty, wait up to
+        // coalesce.max.wait.ms for more batches instead of writing a small one.
+        // Each INSERT is one ClickHouse part per partition it touches, so
+        // writing every poll as it arrives creates parts of a few thousand rows
+        // at the source's poll rate -- ten workers on one hot table multiply
+        // that by ten. A batch taken during the wait that does not fit is kept
+        // as carriedOver and opens the next write; nothing is ever split or
+        // reordered, and every batch is already outstanding in the offset FIFO.
+        if (waitMs > 0 && routedRecords.peek() == null
+                && (maxRows <= 0 || rows < maxRows) && (maxBytes <= 0 || bytes < maxBytes)) {
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(waitMs);
+            while ((maxRows <= 0 || rows < maxRows) && (maxBytes <= 0 || bytes < maxBytes)) {
+                long left = deadline - System.nanoTime();
+                if (left <= 0) {
+                    break;
+                }
+                RoutedBatch more = routedRecords.poll(left, TimeUnit.NANOSECONDS);
+                if (more == null) {
+                    break;
+                }
+                List<ClickHouseStruct> group = more.getBatch();
+                long groupRows = group.size();
+                long groupBytes = estimatedBytes(group);
+                if ((maxRows > 0 && rows + groupRows > maxRows)
+                        || (maxBytes > 0 && bytes + groupBytes > maxBytes)) {
+                    carriedOver = more;
+                    break;
+                }
+                groups.add(group);
+                rows += groupRows;
+                bytes += groupBytes;
+                // Take whatever arrived together with it without waiting again.
+                while ((next = routedRecords.peek()) != null) {
+                    List<ClickHouseStruct> g = next.getBatch();
+                    long gr = g.size();
+                    long gb = estimatedBytes(g);
+                    if ((maxRows > 0 && rows + gr > maxRows) || (maxBytes > 0 && bytes + gb > maxBytes)) {
+                        break;
+                    }
+                    routedRecords.poll();
+                    groups.add(g);
+                    rows += gr;
+                    bytes += gb;
+                }
+            }
         }
         if (groups.size() == 1) {
             currentBatch = first.getBatch();

@@ -88,6 +88,12 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
      */
     public static final long DEFAULT_BUFFER_MAX_BYTES = 256L << 20;
 
+    /**
+     * Default {@code coalesce.max.wait.ms}: a worker writes what is queued at
+     * once and never waits for more (spec 03.03 section 3.1.1 step 6).
+     */
+    public static final long DEFAULT_COALESCE_MAX_WAIT_MS = 0L;
+
     /** One quarter of the given maximum heap; a floor of 256 MiB when the heap is unknown or unlimited. */
     static long defaultHandoffBytes(long maxHeapBytes) {
         if (maxHeapBytes <= 0 || maxHeapBytes == Long.MAX_VALUE) {
@@ -829,6 +835,25 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_BYTES.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.COALESCE_MAX_WAIT_MS.toString(),
+                        Type.LONG,
+                        DEFAULT_COALESCE_MAX_WAIT_MS,
+                        ConfigDef.Range.atLeast(0),
+                        Importance.MEDIUM,
+                        "How long (ms) a routing-mode worker may wait for more queued batches "
+                                + "before writing a coalesced batch that is still under "
+                                + "buffer.max.records / buffer.max.bytes. Every INSERT is one "
+                                + "ClickHouse part per partition it touches, so a worker that writes "
+                                + "each poll as it arrives creates parts of a few thousand rows at "
+                                + "the source's poll rate; waiting up to this long lets a worker "
+                                + "accumulate a full buffer.max.records batch and bounds the parts "
+                                + "it creates to at most one write per wait per partition, at the "
+                                + "cost of that much latency on a trickle. 0 (default) writes at once.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.COALESCE_MAX_WAIT_MS.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.HANDOFF_WAIT_TIMEOUT_MS.toString(),
                         Type.LONG,

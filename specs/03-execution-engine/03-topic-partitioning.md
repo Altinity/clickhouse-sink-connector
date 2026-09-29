@@ -90,6 +90,28 @@ fits, and writes them as ONE batch:
    whole set is retried as one; no group is reported early.
 5. Legacy mode (`thread.pool.size == 1`, the shared `records` queue) is
    unchanged.
+6. **Time-bounded coalescing (`coalesce.max.wait.ms`, default 0).** Steps 1-4
+   only take what is ALREADY queued, so a worker that keeps up writes every
+   poll as it arrives — each write is one ClickHouse part per partition it
+   touches, of a few thousand rows, at the source's poll rate; under key-aware
+   routing (spec 03.07) ten workers on one hot table multiply that by ten
+   (measured on the part-pressure matrix: a 300,000-row stream into a
+   month-partitioned table produced 5,210 parts of 58 rows with ten workers
+   against 194 parts of 1,546 rows with one). When `coalesce.max.wait.ms > 0`,
+   after step 1 leaves the queue empty and the write still under BOTH bounds,
+   the worker waits — a timed `poll` on its own queue — up to that long for
+   more batches, adding each one that fits (and, after each, whatever arrived
+   with it) and stopping early the moment a bound is reached or the deadline
+   passes. A batch taken during the wait that does NOT fit is kept as
+   `carriedOver` and opens the next write, ahead of anything still queued: it
+   is older than all of them, so dequeue (binlog) order is preserved. Nothing
+   is split, nothing is reordered, every batch is already outstanding in the
+   offset FIFO from its handoff (so the DDL barrier and the quiescence
+   predicate see it), and the write that follows reports every group in order
+   exactly as step 4. The cost is up to `coalesce.max.wait.ms` of added latency
+   on a trickle; the gain is parts bounded to at most one write per wait per
+   worker per partition, i.e. parts of `buffer.max.records` rows under load
+   and far fewer merges. `0` keeps steps 1-5 as they are.
 
 ### 3.2 Partitioning by Topic / Table
 The raw batch is grouped into a topic map:
@@ -117,4 +139,6 @@ Each topic bucket is then processed independently against its corresponding Clic
 - `ParkedBatchWrittenOnceTest.parkedBatchIsNotReinserted()` — a written-but-parked batch is executed exactly once.
 - `CoalescedQueuedBatchesTest.queuedBatchesAreWrittenAsOneAndAcknowledgedInOrder()` — §3.1.1: three queued groups (two tables) become one write with one per-table call each, rows in dequeue order, and every unit is acknowledged in handoff order with one `markBatchFinished` per unit.
 - `CoalescedQueuedBatchesTest.coalescingStopsAtBufferMaxRecords()` — §3.1.1 step 1: with `buffer.max.records` below two groups' total, each group is written alone and still acknowledged in order.
+- `CoalescedQueuedBatchesTest.waitCoalescesABatchThatArrivesDuringTheWindow()` — §3.1.1 step 6: with `coalesce.max.wait.ms=400` a batch handed off 80 ms after the worker polled the first one is written with it (one write, both units acknowledged in order); with the default `0` the same sequence is two writes.
+- `CoalescedQueuedBatchesTest.waitStopsAtTheRowBoundAndCarriesTheRestOver()` — §3.1.1 step 6: with `buffer.max.records=3` and a 4-second wait, two 2-row batches become two writes — the second batch is taken during the wait, does not fit, opens the next write — and the worker does not sit out the wait once the bound is reached (both writes done well under the 4 s).
 - `CoalescedQueuedBatchesTest.aFailedCoalescedWriteRetriesTheWholeSetAndReportsNothingEarly()` — §3.1.1 step 4: a retriable failure keeps the whole coalesced set as `currentBatch`, retries it as one, and nothing is acknowledged until the retry succeeds.
