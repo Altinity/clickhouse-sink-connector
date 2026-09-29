@@ -110,23 +110,23 @@ public class PreparedStatementFieldMapperColumnBindingMemoTest {
         assertNotEquals(memoised.get(0), memoised.get(1));
         assertEquals("2022-01-01 00:00:01.00000000", memoised.get(0).get(2),
                 "DATETIME(6) digits are stored as the source holds them (Spec 07.03 section 3.1.2)");
-        assertEquals("2022-01-01 16:00:01.000000", memoised.get(0).get(4),
-                "the TIMESTAMP instant renders in the column's declared UTC zone");
+        assertEquals("1641052801.000000", memoised.get(0).get(4),
+                "the TIMESTAMP instant binds as epoch text into a DateTime64 column (Spec 07.03 section 3.1.4)");
     }
 
     @Test
-    @DisplayName("A second column-map instance re-parses the column: the instant follows its zone")
+    @DisplayName("A second column-map instance re-parses the column: the instant follows its declared type")
     public void bindingIsRebuiltForADifferentColumnMap() throws Exception {
         ClickHouseSinkConnectorConfig config = config();
         PreparedStatementFieldMapper shared = mapper();
-        Map<Integer, Object> utc = bind(shared, record(1), columns("DateTime64(6, 'UTC')"), config);
-        Map<Integer, Object> chicago = bind(shared, record(1), columns("DateTime64(6, 'America/Chicago')"), config);
-        assertEquals("2022-01-01 16:00:01.000000", utc.get(4));
-        assertEquals("2022-01-01 10:00:01.000000", chicago.get(4),
-                "a memo that survived the column-map change would still render the UTC zone");
-        assertEquals(utc.get(1), chicago.get(1));
-        assertEquals(utc.get(2), chicago.get(2));
-        assertEquals(utc.get(3), chicago.get(3));
+        Map<Integer, Object> dateTime64 = bind(shared, record(1), columns("DateTime64(6, 'UTC')"), config);
+        Map<Integer, Object> string = bind(shared, record(1), columns("String"), config);
+        assertEquals("1641052801.000000", dateTime64.get(4));
+        assertEquals("2022-01-01 16:00:01.000000", string.get(4),
+                "a memo that survived the column-map change would still bind the DateTime64 epoch text");
+        assertEquals(dateTime64.get(1), string.get(1));
+        assertEquals(dateTime64.get(2), string.get(2));
+        assertEquals(dateTime64.get(3), string.get(3));
     }
 
     /**
@@ -141,12 +141,12 @@ public class PreparedStatementFieldMapperColumnBindingMemoTest {
         PreparedStatementFieldMapper shared = mapper();
         Map<String, String> sameInstance = columns("DateTime64(6, 'UTC')");
         Map<Integer, Object> before = bind(shared, record(1), sameInstance, config);
-        // A DDL applied to the table changed the column's zone; the cache was
+        // A DDL applied to the table changed the column's type; the cache was
         // refreshed into the SAME map object.
-        sameInstance.put("ts", "DateTime64(6, 'America/Chicago')");
+        sameInstance.put("ts", "String");
         Map<Integer, Object> after = bind(shared, record(1), sameInstance, config);
-        assertEquals("2022-01-01 16:00:01.000000", before.get(4));
-        assertEquals("2022-01-01 10:00:01.000000", after.get(4),
-                "an identity-only memo would still render the pre-DDL zone");
+        assertEquals("1641052801.000000", before.get(4));
+        assertEquals("2022-01-01 16:00:01.000000", after.get(4),
+                "an identity-only memo would still bind the pre-DDL DateTime64 epoch text");
     }
 }

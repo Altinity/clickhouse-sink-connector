@@ -316,6 +316,11 @@ public class DebeziumConverterRangePolicyTest {
         DebeziumConverter.ValueOutOfRangeException zoned = assertThrows(DebeziumConverter.ValueOutOfRangeException.class,
                 () -> DebeziumConverter.ZonedTimestampConverter.convert("2338-01-19T03:14:07.99Z", UTC, strict));
         assertTrue(zoned.getMessage().contains("2338-01-19T03:14:07.990Z"), zoned.getMessage());
+        // The DateTime64 (epoch text) overload bounds the instant the same way.
+        DebeziumConverter.ValueOutOfRangeException zonedEpoch = assertThrows(DebeziumConverter.ValueOutOfRangeException.class,
+                () -> DebeziumConverter.ZonedTimestampConverter.convert("2338-01-19T03:14:07.99Z", UTC,
+                        ClickHouseDataType.DateTime64, strict));
+        assertTrue(zonedEpoch.getMessage().contains("2338-01-19T03:14:07.990Z"), zonedEpoch.getMessage());
 
         DebeziumConverter.ValueOutOfRangeException decimal = assertThrows(DebeziumConverter.ValueOutOfRangeException.class,
                 () -> new DebeziumConverter.BigDecimalConverter().truncate(
