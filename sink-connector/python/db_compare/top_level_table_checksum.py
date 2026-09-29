@@ -213,6 +213,28 @@ def include_flags_clause():
     return " ".join(flags)
 
 
+LEGACY_ESCAPED_QUOTE = "\\'"
+
+
+def normalize_where_override(table, where):
+    """Return a per-table ``where`` override as plain SQL.
+
+    Until fstr() became a literal substitution, the override was pushed through
+    eval() as an f-string, so config authors had to write ``\\' 16:30:00\\'`` to
+    get ``' 16:30:00'`` into the query; eval() consumed the backslashes. The
+    literal fstr() forwards the text unchanged, so the same backslashes now
+    reach MySQL and ClickHouse and both reject the statement (ClickHouse:
+    Code 62 ``Unrecognized token: '\\'``). Configs written for the eval era
+    keep working: the escape is folded here, once, with a note, and plain
+    quotes are the documented form.
+    """
+    if where and LEGACY_ESCAPED_QUOTE in where:
+        logging.warning(f"where override for {table} uses the legacy escaped quote \\' -- "
+                        "write plain single quotes; folding the escape for this run")
+        return where.replace(LEGACY_ESCAPED_QUOTE, "'")
+    return where
+
+
 def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None):
     partition_date = args.partition_date
     where_argument = '--where " 1=1 '
@@ -252,9 +274,13 @@ def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, w
     if where:
         where_argument += f" and {where} "
     if partition_date:
-      where_argument += f""" and {{partition_expression}}="""+f"""toDate(\\\\'{partition_date:%Y-%m-%d}\\\\') """
-
-
+      # Plain single quotes: the value sits inside a double-quoted shell
+      # argument, where a single quote needs no escaping, and fstr() on the
+      # ClickHouse side is a literal substitution. The former backslash
+      # escapes (toDate(\\'...\\')) only existed for the eval()-based fstr,
+      # which interpreted them; with the literal fstr they reached the server
+      # and every partitioned table failed with Code 62 "Unrecognized token: '\\'".
+      where_argument += f""" and {{partition_expression}}=toDate('{partition_date:%Y-%m-%d}') """
     where_argument += '"'
 
     ignored_columns_clause = "--exclude_columns _version,is_deleted,_is_deleted,__is_deleted"
@@ -457,6 +483,7 @@ def run_config(config):
         if 'where' in table_dict[table]:
             if not table in table_overrides_map:
                 table_overrides_map[table] = {}
+            table_dict[table]['where'] = normalize_where_override(table, table_dict[table]['where'])
             table_overrides_map[table]['where'] = table_dict[table]['where']
     logging.info(f"Table overrides : {table_overrides_map}")
     for database in databases:
