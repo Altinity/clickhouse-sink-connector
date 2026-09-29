@@ -177,8 +177,11 @@ public class DateTimeWithTimeZoneIT {
 
         }
 
-        // DATETIME6
-        ResultSet dateTimeResult6 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6", writer.getConnection());
+        // DATETIME6. Two fixture rows ('DATETIME(6)' .123456, 'DATETIME(6_1)'
+        // .100000); this block asserts the first row only. Under key-aware
+        // routing (spec 03.07) the rows land in different parts, so order by
+        // the key to keep the asserted row deterministic.
+        ResultSet dateTimeResult6 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6 order by Type", writer.getConnection());
         while(dateTimeResult6.next()) {
             System.out.println("DATE TIME 6");
 

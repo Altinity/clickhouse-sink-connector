@@ -141,4 +141,29 @@ public class RoutedBatch {
 
         return topicName;
     }
+
+    /** The routing token for one record. When key routing is on and the record
+     *  carries a usable row key, the token is db.table + '\u0001' + rowKey, so the
+     *  same row always maps to the same worker (serialized, in binlog order) while
+     *  different rows of the table spread across workers -- MySQL WRITESET's
+     *  "same key serialized, disjoint keys parallel" rule (spec 03.07). When key
+     *  routing is off, or the record has no usable key (a no-primary-key table, a
+     *  TRUNCATE row event, a tombstone without a key), the token falls back to
+     *  db.table, i.e. the table-level single-worker routing = MySQL's
+     *  has_missing_keys -> COMMIT_ORDER fallback. */
+    public static String createShardKey(ClickHouseStruct record, boolean keyRoutingEnabled) {
+        String tableKey = createRoutingKey(record.getTopic());
+        if (!keyRoutingEnabled) {
+            return tableKey;
+        }
+        if (record.getCdcOperation() == com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.TRUNCATE) {
+            return tableKey;
+        }
+        String rowKey = record.getKey();
+        java.util.List<String> pk = record.getPrimaryKey();
+        if (rowKey == null || rowKey.isEmpty() || pk == null || pk.isEmpty()) {
+            return tableKey;
+        }
+        return tableKey + '\u0001' + rowKey;
+    }
 }

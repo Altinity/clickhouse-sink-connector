@@ -207,6 +207,15 @@ public class DebeziumChangeEventCapture {
     private int threadPoolSize;
 
     /**
+     * Whether records route by (table + primary-key identity) rather than by
+     * table alone (spec 03.07). Captured once from
+     * {@code routing.by.primary.key} in {@link #setupProcessingThread} the same
+     * way {@link #threadPoolSize} is, so the routing path can read it without a
+     * config handle. Default true; the config default is also true.
+     */
+    private volatile boolean keyRoutingEnabled = true;
+
+    /**
      * Flag indicating if a new replacing merge tree engine is used.
      */
     static public boolean isNewReplacingMergeTreeEngine = true;
@@ -1457,60 +1466,12 @@ public class DebeziumChangeEventCapture {
             return;
         }
 
-        long started = System.currentTimeMillis();
-        long warnAt = started + ddlDrainWarnIntervalMs;
+        // Step 1: drain everything already queued before touching the schema.
+        // Extracted as awaitPipelineQuiescent() so a TRUNCATE row-event can
+        // reuse the same cross-shard barrier under key-aware routing (spec 03.07).
+        awaitPipelineQuiescent();
 
-        // Step 1: let the pool consume what is already queued -- on EVERY
-        // handoff path, not just the legacy queue.
-        //
-        // The barrier predicate is isPipelineQuiescent(): the legacy `records`
-        // queue is empty AND every per-thread routed queue is empty AND no
-        // handed-off batch is still unacknowledged. In hash-routing mode
-        // (thread.pool.size > 1, the default) rows never touch `records` at
-        // all; they sit on `routedQueues` until the owning worker's next tick.
-        // Waiting only on `records` therefore observed an always-empty queue,
-        // and step 3's awaitQuiescent() sees only batches inside a task body
-        // RIGHT NOW -- zero between ticks even with every routed queue full.
-        // The DDL was then applied while pre-DDL rows were still queued, and
-        // those rows were written against the altered table: successful
-        // inserts, matching row counts, wrong contents.
-        //
-        // The pool MUST still be running here. Pausing before the queues are
-        // drained is a deadlock, not a safety measure: `pause()` parks every
-        // pool thread in beforeExecute(), so nothing can dequeue, and this
-        // loop then waits out the full timeout on queues that are guaranteed
-        // never to shrink. It always ends in the abort below.
-        //
-        // Pausing first was introduced to close a "the queue never reaches
-        // empty on a busy table" race. That race cannot occur: both producers
-        // -- appendToRecords() and appendToRecordsWithHashRouting() -- are
-        // called only from handleChangeEventBatch(), which runs on the very
-        // Debezium thread that is executing this drain. While we are in here,
-        // no new batch can be appended, so the queued set is already fixed and
-        // the pool is free to consume it to empty. Step 2 then closes the
-        // pause window properly.
-        while (!isPipelineQuiescent()) {
-            // A backlog whose worker is dead can never drain: abort now, with
-            // the worker's cause. Anything else is waited for -- a slow or
-            // retrying batch is not terminal (spec 06.01 section 3.2 step 1).
-            failIfWorkerDiedDuringDrain();
-            long now = System.currentTimeMillis();
-            if (now >= warnAt) {
-                log.warn("DDL drain: {} still pending after {} ms; waiting. The writers are alive, "
-                        + "so the backlog is a slow or retrying batch, not a dead one; the DDL is "
-                        + "applied only once every pre-DDL row is in ClickHouse.",
-                        describePendingHandoff(), now - started);
-                warnAt = now + ddlDrainWarnIntervalMs;
-            }
-            try {
-                Thread.sleep(50);
-            } catch (InterruptedException ie) {
-                Thread.currentThread().interrupt();
-                throw new IllegalStateException(
-                        "DDL drain interrupted before the writer was quiescent; aborting "
-                                + "this DDL attempt rather than applying it over in-flight writes.");
-            }
-        }
+        long started = System.currentTimeMillis();
 
         // Step 2: no new batches may start.
         this.executor.pause();
@@ -1535,6 +1496,130 @@ public class DebeziumChangeEventCapture {
             }
             log.warn("DDL drain: a batch is still inside a worker after {} ms; waiting for it to "
                     + "finish before the DDL is applied.", System.currentTimeMillis() - started);
+        }
+    }
+
+    /**
+     * Blocks until the whole write pipeline is quiescent: the legacy {@code
+     * records} queue is empty, every routed queue is empty, and no handed-off
+     * batch is still unacknowledged ({@link #isPipelineQuiescent()}). This is
+     * step 1 of {@link #drainBeforeDDL()}, extracted so a TRUNCATE row-event
+     * can reuse the same drain as a cross-shard barrier (spec 03.07): under
+     * key-aware routing a table's rows are spread over several worker queues,
+     * so a TRUNCATE (which routes to the table's base shard) must wait for
+     * every one of them to flush before AND after it is applied, or a keyed
+     * row on another queue could be applied out of order around the truncate.
+     * The pool stays RUNNING (no pause), so the queues can drain; a dead
+     * worker or an interrupt aborts rather than waiting forever.
+     */
+    private void awaitPipelineQuiescent() {
+        // Single-threaded mode writes inline on this thread; nothing is ever
+        // queued or outstanding, so the pipeline is quiescent by construction.
+        if (this.executor == null) {
+            return;
+        }
+        long started = System.currentTimeMillis();
+        long warnAt = started + ddlDrainWarnIntervalMs;
+        while (!isPipelineQuiescent()) {
+            // A backlog whose worker is dead can never drain: abort now with the
+            // worker's cause. A slow or retrying batch is not terminal.
+            failIfWorkerDiedDuringDrain();
+            long now = System.currentTimeMillis();
+            if (now >= warnAt) {
+                log.warn("Pipeline drain: {} still pending after {} ms; the writers are alive, "
+                        + "so the backlog is a slow or retrying batch, not a dead one.",
+                        describePendingHandoff(), now - started);
+                warnAt = now + ddlDrainWarnIntervalMs;
+            }
+            try {
+                Thread.sleep(50);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException(
+                        "Pipeline drain interrupted before the writer was quiescent.");
+            }
+        }
+    }
+
+    /**
+     * Whether the converted batch contains a TRUNCATE row-event. Used to
+     * bracket the handoff with {@link #awaitPipelineQuiescent()} under
+     * key-aware routing (spec 03.07 section 3): a single linear pass, no
+     * allocation.
+     */
+    private static boolean containsTruncate(List<ClickHouseStruct> records) {
+        for (ClickHouseStruct r : records) {
+            if (r != null && r.getCdcOperation()
+                    == com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.TRUNCATE) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Splits a poll batch into ordered segments at each TRUNCATE row-event:
+     * every TRUNCATE becomes its own singleton segment, the runs of DML between
+     * truncates are their own segments, and the source order of the whole batch
+     * is preserved across the segments (spec 03.07 section 3.4). Pure and
+     * package-private so the segmentation can be unit-tested without a running
+     * pool. Mirrors the Lean model Replication.KeyRouting.appliedWithBarrier
+     * (pre ++ t :: post).
+     */
+    static List<List<ClickHouseStruct>> splitAtTruncate(List<ClickHouseStruct> records) {
+        List<List<ClickHouseStruct>> segments = new ArrayList<>();
+        List<ClickHouseStruct> current = new ArrayList<>();
+        for (ClickHouseStruct r : records) {
+            boolean isTruncate = r != null && r.getCdcOperation()
+                    == com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.TRUNCATE;
+            if (isTruncate) {
+                if (!current.isEmpty()) {
+                    segments.add(current);
+                    current = new ArrayList<>();
+                }
+                List<ClickHouseStruct> truncateSegment = new ArrayList<>();
+                truncateSegment.add(r);
+                segments.add(truncateSegment);
+            } else {
+                current.add(r);
+            }
+        }
+        if (!current.isEmpty()) {
+            segments.add(current);
+        }
+        return segments;
+    }
+
+    /**
+     * Hands off a poll batch that contains a TRUNCATE row-event under key-aware
+     * routing, one segment at a time (spec 03.07 section 3.4). Each truncate
+     * segment is bracketed by a full pipeline drain: everything before the
+     * truncate is flushed and drained, the truncate is handed off alone (to the
+     * table base shard) and drained, then the records after it continue. This
+     * totally orders the truncate against every shard AND against the DML of the
+     * same poll batch, which a single whole-batch bracket did not (it left the
+     * truncate group and the same-batch DML groups visible to different workers
+     * concurrently). Non-truncate segments are handed off as ordinary units.
+     * The terminal record of the whole batch carries the Debezium committer, so
+     * the offset commits only once every segment has been acknowledged, in
+     * handoff (binlog) order.
+     */
+    private void appendSegmentedAtTruncate(List<ClickHouseStruct> convertedRecords)
+            throws InterruptedException {
+        for (List<ClickHouseStruct> segment : splitAtTruncate(convertedRecords)) {
+            boolean isTruncateSegment = segment.size() == 1
+                    && segment.get(0) != null
+                    && segment.get(0).getCdcOperation()
+                        == com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.TRUNCATE;
+            if (isTruncateSegment) {
+                // Drain everything queued before the truncate, apply the
+                // truncate alone, then drain it before anything after it.
+                awaitPipelineQuiescent();
+                appendToRecordsWithHashRouting(segment);
+                awaitPipelineQuiescent();
+            } else {
+                appendToRecordsWithHashRouting(segment);
+            }
         }
     }
 
@@ -3443,6 +3528,7 @@ public class DebeziumChangeEventCapture {
         
         ThreadFactory namedThreadFactory = new ThreadFactoryBuilder().setNameFormat("Sink Connector thread-pool-%d").build();
         this.threadPoolSize = config.getInt(ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString());
+        this.keyRoutingEnabled = config.getBoolean(ClickHouseSinkConnectorConfigVariables.ROUTING_BY_PRIMARY_KEY.toString());
         this.executor = new ClickHouseBatchExecutor(this.threadPoolSize, namedThreadFactory);
         
         // Use hash-based routing if we have multiple threads
@@ -3536,8 +3622,21 @@ public class DebeziumChangeEventCapture {
                 this::failIfWorkerDied);
 
         if (this.threadPoolSize > 1 && this.routedQueues != null) {
-            // Hash-based routing mode: group records by table and route to specific threads
-            appendToRecordsWithHashRouting(convertedRecords);
+            // Hash-based routing mode: group records by shard key and route to
+            // per-worker queues. Under key-aware routing a table's rows are
+            // spread across queues, so a TRUNCATE row-event (which routes to the
+            // table base shard) must be ordered against the DML of the SAME poll
+            // batch as well as against other batches: split the batch into
+            // ordered segments at each TRUNCATE and drain the pipeline around
+            // every truncate segment (spec 03.07 section 3.4), so no keyed DML
+            // on another shard can be applied on the wrong side of the truncate.
+            // A batch with no TRUNCATE is one handoff unit as before. A TRUNCATE
+            // arriving as a DDL statement is already handled by drainBeforeDDL().
+            if (this.keyRoutingEnabled && containsTruncate(convertedRecords)) {
+                appendSegmentedAtTruncate(convertedRecords);
+            } else {
+                appendToRecordsWithHashRouting(convertedRecords);
+            }
         } else {
             // Legacy mode: single queue; the unit is its own single group.
             synchronized (this.records) {
@@ -3570,13 +3669,33 @@ public class DebeziumChangeEventCapture {
      */
     private void appendToRecordsWithHashRouting(List<ClickHouseStruct> convertedRecords)
             throws InterruptedException {
-        // Group records by routing key (database.table), preserving each
-        // group's binlog order. Insertion-ordered so enqueueing is deterministic.
+        // Group records by (table, target worker), preserving each group's
+        // binlog order. A record's worker is
+        // floorMod(hash(createShardKey(record)), poolSize): under key routing the
+        // shard key is db.table + primary-key identity, else db.table (spec
+        // 03.07). So different rows of one hot table spread across workers while
+        // every occurrence of the same row maps to one worker in FIFO / binlog
+        // order. We group by (table, worker) rather than by the full shard key so
+        // there is ONE batched INSERT per table per worker per poll: grouping by
+        // the full key would emit one tiny group per distinct row (thousands of
+        // single-row INSERTs on a snapshot) and collapse throughput. Each group
+        // is still single-table (the write path and RoutedBatch.tableName rely on
+        // that) and still routed to the row's key-determined worker.
+        // Insertion-ordered so enqueueing is deterministic.
         Map<String, List<ClickHouseStruct>> routingGroups = new java.util.LinkedHashMap<>();
+        Map<String, Integer> groupThreadId = new java.util.HashMap<>();
+        Map<String, String> groupTableName = new java.util.HashMap<>();
 
         for (ClickHouseStruct record : convertedRecords) {
-            String routingKey = RoutedBatch.createRoutingKey(record.getTopic());
-            routingGroups.computeIfAbsent(routingKey, k -> new ArrayList<>()).add(record);
+            String shardKey = RoutedBatch.createShardKey(record, this.keyRoutingEnabled);
+            int threadId = RoutedBatch.calculateThreadId(shardKey, this.threadPoolSize);
+            // Batch by table AND worker: all of a table's rows that route to one
+            // worker share a group (one INSERT), while a table split across
+            // workers by key yields at most poolSize groups for that table.
+            String groupKey = RoutedBatch.createRoutingKey(record.getTopic()) + "#" + threadId;
+            routingGroups.computeIfAbsent(groupKey, k -> new ArrayList<>()).add(record);
+            groupThreadId.putIfAbsent(groupKey, threadId);
+            groupTableName.putIfAbsent(groupKey, RoutedBatch.extractTableName(record.getTopic()));
         }
 
         // Register the unit with ALL its groups BEFORE any group is visible to
@@ -3588,13 +3707,13 @@ public class DebeziumChangeEventCapture {
 
         // Enqueue each group on its OWNING thread's queue.
         for (Map.Entry<String, List<ClickHouseStruct>> entry : routingGroups.entrySet()) {
-            String routingKey = entry.getKey();
+            String groupKey = entry.getKey();
             List<ClickHouseStruct> batch = entry.getValue();
 
-            // Calculate which thread owns this table. The same table always maps
-            // to the same thread, so its batches are drained in FIFO order.
-            int threadId = RoutedBatch.calculateThreadId(routingKey, this.threadPoolSize);
-            String tableName = RoutedBatch.extractTableName(batch.get(0).getTopic());
+            // The worker this (table, worker) group was routed to. Same shard key
+            // -> same worker, so a row's whole history drains in FIFO order.
+            int threadId = groupThreadId.get(groupKey);
+            String tableName = groupTableName.get(groupKey);
             LinkedBlockingQueue<RoutedBatch> queue = this.routedQueues.get(threadId);
 
             synchronized (queue) {

@@ -27,4 +27,5 @@ lean_lib «Replication» where
              `Replication.VersionFloor,
              `Replication.CreateTable,
              `Replication.PkRebuild,
-             `Replication.History]
+             `Replication.History,
+             `Replication.KeyRouting]

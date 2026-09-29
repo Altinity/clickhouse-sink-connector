@@ -243,8 +243,13 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
 
         }
 
-        // DATETIME6
-        ResultSet dateTimeResult6 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6", writer.getConnection());
+        // DATETIME6. The fixture holds two rows ('DATETIME(6)' with .123456
+        // and 'DATETIME(6_1)' with .100000) and this block asserts the FIRST
+        // row only (it breaks after it). Under key-aware routing (spec 03.07)
+        // the two rows are written by different workers into different parts,
+        // so an unordered SELECT no longer returns them in source order; order
+        // by the key so the asserted row is always 'DATETIME(6)'.
+        ResultSet dateTimeResult6 = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME6 order by Type", writer.getConnection());
         while(dateTimeResult6.next()) {
             System.out.println("DATE TIME 6");
 

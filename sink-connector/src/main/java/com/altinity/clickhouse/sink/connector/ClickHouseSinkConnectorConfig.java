@@ -60,6 +60,14 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     private static final int DEFAULT_THREAD_POOL_SIZE = 10;
 
     /**
+     * Default for routing.by.primary.key: route by (table + primary-key
+     * identity) so different rows of one hot table spread across writer threads
+     * while every occurrence of the same row stays on one worker in binlog
+     * order (spec 03.07). Set false to restore exact table-level routing.
+     */
+    private static final boolean DEFAULT_ROUTING_BY_PRIMARY_KEY = true;
+
+    /**
      * Default maximum size of the queue, in batches. Public so the embedded
      * path applies the same bound to its single-threaded queue when the
      * property is absent (spec 01.05 section 3.6) instead of an unbounded one.
@@ -628,6 +636,19 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.ROUTING_BY_PRIMARY_KEY.toString(),
+                        Type.BOOLEAN,
+                        DEFAULT_ROUTING_BY_PRIMARY_KEY,
+                        Importance.HIGH,
+                        "If enabled (default), records route to writer threads by table + primary-key "
+                                + "identity so a hot table's rows spread across workers; the same row "
+                                + "always stays on one worker in binlog order (spec 03.07). "
+                                + "Set false to restore table-level routing.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ROUTING_BY_PRIMARY_KEY.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString(),
                         Type.BOOLEAN,

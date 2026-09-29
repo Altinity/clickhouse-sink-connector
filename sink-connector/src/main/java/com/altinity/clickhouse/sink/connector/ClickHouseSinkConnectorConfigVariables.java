@@ -4,6 +4,7 @@ public enum ClickHouseSinkConnectorConfigVariables {
 
     IGNORE_DELETE("ignore_delete"),
     THREAD_POOL_SIZE("thread.pool.size"),
+    ROUTING_BY_PRIMARY_KEY("routing.by.primary.key"),
     BUFFER_COUNT("buffer.count"),
     DEDUPLICATION_POLICY("deduplication.policy"),
 
