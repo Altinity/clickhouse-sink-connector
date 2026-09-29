@@ -26,6 +26,7 @@ import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 
@@ -139,12 +140,15 @@ public class PreparedStatementFieldMapper {
      * the zone the column declares, and the range policy label for it.
      */
     private static final class ColumnBinding {
+        /** The declared type string the binding was parsed from; re-checked on every use. */
+        final String declaredType;
         final ClickHouseColumn column;
         final ClickHouseDataType dataType;
         final ZoneId columnTimeZone;
         final DebeziumConverter.RangePolicy rangePolicy;
 
-        ColumnBinding(ClickHouseColumn column, DebeziumConverter.RangePolicy rangePolicy) {
+        ColumnBinding(String declaredType, ClickHouseColumn column, DebeziumConverter.RangePolicy rangePolicy) {
+            this.declaredType = declaredType;
             this.column = column;
             this.dataType = column == null ? null : column.getDataType();
             this.columnTimeZone = ClickHouseDataTypeMapper.columnTimeZoneOf(column);
@@ -180,9 +184,16 @@ public class PreparedStatementFieldMapper {
             columnBindingsConfig = config;
             columnBindingsTable = tableName;
         }
+        // The declared type is read from the map on EVERY use (the lookup
+        // parseColumn always did) and compared with the one the binding was
+        // parsed from: a column whose declared type changed under the same map
+        // instance -- a DDL refreshed in place -- is re-parsed, never served
+        // stale (Spec 04.06 section 3.5). The connector replaces the map rather
+        // than mutating it, so this is a guard, not the mechanism.
+        String declaredType = columnNameToDataTypeMap.get(colName);
         ColumnBinding binding = columnBindings.get(colName);
-        if (binding == null) {
-            binding = new ColumnBinding(parseColumn(colName, columnNameToDataTypeMap),
+        if (binding == null || !Objects.equals(binding.declaredType, declaredType)) {
+            binding = new ColumnBinding(declaredType, parseColumn(colName, columnNameToDataTypeMap),
                     DebeziumConverter.RangePolicy.of(config, databaseName + "." + tableName + "." + colName));
             columnBindings.put(colName, binding);
         }

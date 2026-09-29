@@ -161,17 +161,72 @@ as is.
    are identical with and without the memos. This is the acceptance criterion
    of the change; the tests in section 5 compare the memoised path against a
    fresh, unmemoised computation of the same inputs.
-2. **Keying by identity, never by name.** A memo entry is valid only for the
-   exact list / map / configuration objects it was derived from. Keying by
-   table name or by column-map contents would let a stale template or a
-   pre-ALTER type survive a schema refresh — the silent-divergence class of
-   defect specs 04.03 and 08.03 exist to prevent.
+2. **Keying by identity AND content, never by name.** A memo entry is valid
+   only for the exact list / map / configuration objects it was derived from,
+   and — for the column map — only while the map's content fingerprint
+   (`Map.hashCode()` over every name and declared type) is the one it was
+   derived with; a bound column additionally re-reads its declared type on
+   every use and re-parses when it differs. Keying by table name alone would
+   let a stale template or a pre-ALTER type survive a schema refresh — the
+   silent-divergence class of defect specs 04.03 and 08.03 exist to prevent.
+   Section 3.5 spells out the DDL cases.
 3. **Lifetime is one batch.** Both memos live on objects created per
    `processRecordsByTopic` call (the grouper and the executor's mapper). No
    memo survives across batches, across tables or across a DDL barrier.
 4. **Failure paths are untouched.** A record that could not be grouped or a
    column that cannot be bound fails exactly as specified in 04.01 §3.3 and
    04.03; a memo never converts a failure into a skip.
+
+### 3.5 Behaviour around a DDL
+
+A DDL is the one event that changes the inputs the memos are keyed on, so
+every way a DDL can reach a batch is enumerated here with the behaviour the
+memos must (and do) preserve. Throughout, "the same as before" means the
+output of the unmemoised 2.11.0 code path.
+
+1. **The DDL barrier.** A DDL statement replicated through `drainBeforeDDL`
+   (spec 06.01) waits for every queue to empty and every handed-off unit to
+   be acknowledged before the schema changes, then invalidates the caches
+   (spec 08.02). No batch is being grouped or bound while the barrier holds,
+   and both memos live on objects created per batch, so no memo entry built
+   before the DDL can be consulted after it.
+2. **Pre-ALTER and post-ALTER records in one batch** (an `ADD COLUMN` whose
+   earlier rows were buffered before it): the two record shapes are two
+   Connect `Schema` objects, hence two membership lists, hence two template
+   keys. The pre-ALTER template omits the new column (ClickHouse `DEFAULT`
+   applies, spec 04.03 §3.1); the post-ALTER template carries it. Each row is
+   bound through its own template. The same as before, with each template
+   built once instead of once per row.
+3. **Stale cache — the record carries a column the cached map lacks** (an
+   `ADD COLUMN` this writer has not yet observed): the staleness check runs
+   for the first record of that schema, re-reads the metadata ONCE, and
+   returns a fresh map instance. The fresh map is a different identity (and
+   fingerprint), so the template is built against it and the next record of
+   the same schema is verified against it before that verdict is memoised.
+   One metadata read per schema per batch, exactly as before.
+4. **`DROP COLUMN` / `RENAME COLUMN` — the record carries a column the table
+   no longer has** (a pre-ALTER record behind the DDL): the staleness check
+   runs for that schema regardless of what was memoised for other schemas,
+   the re-read does not produce the column, and the batch fails loudly
+   (`MissingTargetColumnException`, spec 08.04) instead of being written with
+   the value dropped. A memo never converts this failure into a skip.
+5. **`MODIFY COLUMN` type or zone**: the refreshed column map is a new
+   instance, so the next batch parses the new declared type. Within a
+   statement the binding memo also re-reads the declared type per use, so even
+   a map mutated in place mid-statement re-parses the column
+   (`bindingIsRebuiltWhenTheDeclaredTypeChangesInPlace`). The rendered value
+   follows the column's new type and zone (spec 07.03 §3.1.3).
+6. **ALIAS / MATERIALIZED columns proven absent** (spec 08.03/08.04): the
+   proven-absent verdict and the resulting fresh map are produced by the first
+   record of the schema; later records of that schema re-verify against the
+   fresh map once and then hit the memo. One column listing and one
+   `default_kind` probe per batch — no query storm.
+7. **A column map refreshed in place** (not something the connector does —
+   `DbWriter` always replaces the map — but the guard the memos carry): the
+   template key and the verified-schema entry both carry the map's content
+   fingerprint, so a changed map under the same reference rebuilds the
+   template and re-runs the staleness check
+   (`templateIsRebuiltWhenTheColumnMapChangesInPlace`).
 
 ## 4. Invariants Preserved
 
@@ -208,6 +263,34 @@ as is.
   different zone for a `DateTime64` column: the rendered instant follows the
   second map's zone. A memo that survived the map change would render the
   first zone.
+- `PreparedStatementFieldMapperColumnBindingMemoTest.bindingIsRebuiltWhenTheDeclaredTypeChangesInPlace`
+  — section 3.5 item 5/7: the same map instance with a column's declared
+  zone changed in place re-parses the column; the next row renders in the new
+  zone.
+- `GroupInsertQueryDdlMemoTest.preAndPostAlterRecordsInOneBatchGetTheirOwnTemplates`
+  — section 3.5 item 2: pre-ALTER rows group under a template without the new
+  column and post-ALTER rows under one with it, interleaved in one batch, with
+  each template built once.
+- `GroupInsertQueryDdlMemoTest.staleCacheIsRefreshedOnceAndTheFreshMapKeysTheMemo`
+  — section 3.5 item 3: a record carrying a column the cached map lacks
+  triggers exactly one metadata re-read; every record of the batch is grouped
+  under the template built from the fresh map.
+- `GroupInsertQueryDdlMemoTest.aliasColumnIsProvenAbsentOnceForTheWholeBatch`
+  — section 3.5 item 6: 100 records carrying an ALIAS column cost one column
+  listing and one `default_kind` probe; all group under one template that
+  omits the ALIAS column.
+- `GroupInsertQueryDdlMemoTest.droppedColumnStillFailsLoudlyAfterACleanSchemaWasMemoised`
+  — section 3.5 item 4: after post-ALTER records verified clean, a pre-ALTER
+  record carrying a dropped column fails the batch with
+  `MissingTargetColumnException`; nothing about it is skipped.
+- `GroupInsertQueryDdlMemoTest.templateIsRebuiltWhenTheColumnMapChangesInPlace`
+  — section 3.5 item 7: the same map instance with a column removed in place
+  yields a template without that column on the next record.
+- `PreparedStatementExecutorDdlMemoTest.mixedPreAndPostAlterBatchBindsEachRowThroughItsOwnTemplate`
+  — end to end through `addToPreparedStatementBatch` with the recording JDBC
+  surface: two statements are prepared, pre-ALTER rows carry no parameter for
+  the new column, post-ALTER rows bind it (including an explicit NULL), and
+  every row's other values are bound as before.
 - Every existing test of domains 04, 05 and 07 (template grouping, field
   membership, NULL binding, tombstone synthesis, sign columns, column zones,
   out-of-range policy, unhandled types, clear-parameters) passes unchanged —

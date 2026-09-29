@@ -45,14 +45,33 @@ public class GroupInsertQueryTemplateMemoTest {
             .field("note", Schema.OPTIONAL_STRING_SCHEMA)
             .build();
 
-    /** Counts how often the grouping path walks the map. */
+    /**
+     * Counts how often the grouping path walks the map. The content
+     * fingerprint the memo keys take ({@code hashCode()}, spec 04.06 section
+     * 3.5 item 7) also walks the entries, once per record by design; it is
+     * excluded from the count so that {@code entrySetCalls} measures template
+     * builds only.
+     */
     private static final class CountingColumnMap extends LinkedHashMap<String, String> {
         int entrySetCalls = 0;
         int keySetCalls = 0;
+        private boolean fingerprinting = false;
+
+        @Override
+        public int hashCode() {
+            fingerprinting = true;
+            try {
+                return super.hashCode();
+            } finally {
+                fingerprinting = false;
+            }
+        }
 
         @Override
         public Set<Map.Entry<String, String>> entrySet() {
-            entrySetCalls++;
+            if (!fingerprinting) {
+                entrySetCalls++;
+            }
             return super.entrySet();
         }
 

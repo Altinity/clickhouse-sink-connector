@@ -69,12 +69,24 @@ public class GroupInsertQueryWithBatchRecords {
     private static final class TemplateKey {
         final List<Field> membershipFields;
         final Map<String, String> columnNameToDataTypeMap;
+        /**
+         * The column map's CONTENT fingerprint ({@code Map.hashCode()}: every
+         * name and declared type), taken when the key is built. The map is
+         * compared by identity AND by fingerprint, so a map that were ever
+         * refreshed in place -- a DDL landing between two records -- reads as a
+         * different key and the template is rebuilt (Spec 04.06 section 3.5).
+         * The connector replaces the map rather than mutating it, so this is a
+         * guard, not the mechanism; it costs one pass over the entries per
+         * record.
+         */
+        final int columnMapFingerprint;
         final String databaseName;
 
         TemplateKey(List<Field> membershipFields, Map<String, String> columnNameToDataTypeMap,
                     String databaseName) {
             this.membershipFields = membershipFields;
             this.columnNameToDataTypeMap = columnNameToDataTypeMap;
+            this.columnMapFingerprint = columnNameToDataTypeMap == null ? 0 : columnNameToDataTypeMap.hashCode();
             this.databaseName = databaseName;
         }
 
@@ -86,14 +98,35 @@ public class GroupInsertQueryWithBatchRecords {
             TemplateKey k = (TemplateKey) o;
             return k.membershipFields == membershipFields
                     && k.columnNameToDataTypeMap == columnNameToDataTypeMap
+                    && k.columnMapFingerprint == columnMapFingerprint
                     && Objects.equals(k.databaseName, databaseName);
         }
 
         @Override
         public int hashCode() {
-            return (System.identityHashCode(membershipFields) * 31
+            return ((System.identityHashCode(membershipFields) * 31
                     + System.identityHashCode(columnNameToDataTypeMap)) * 31
+                    + columnMapFingerprint) * 31
                     + Objects.hashCode(databaseName);
+        }
+    }
+
+    /**
+     * The column map a schema was verified against (Spec 04.06 section 3.1):
+     * its identity and its content fingerprint at the time of the check.
+     */
+    private static final class VerifiedAgainst {
+        final Map<String, String> columnNameToDataTypeMap;
+        final int columnMapFingerprint;
+
+        VerifiedAgainst(Map<String, String> columnNameToDataTypeMap) {
+            this.columnNameToDataTypeMap = columnNameToDataTypeMap;
+            this.columnMapFingerprint = columnNameToDataTypeMap == null ? 0 : columnNameToDataTypeMap.hashCode();
+        }
+
+        boolean covers(Map<String, String> map) {
+            return map == columnNameToDataTypeMap
+                    && (map == null ? 0 : map.hashCode()) == columnMapFingerprint;
         }
     }
 
@@ -114,7 +147,7 @@ public class GroupInsertQueryWithBatchRecords {
      * (Spec 04.06 section 3.1). Keyed by schema identity; the value is the map
      * instance the check ran against, so a refreshed map re-runs the check.
      */
-    private final IdentityHashMap<Schema, Map<String, String>> verifiedSchemas =
+    private final IdentityHashMap<Schema, VerifiedAgainst> verifiedSchemas =
             new IdentityHashMap<>();
 
     /**
@@ -240,15 +273,15 @@ public class GroupInsertQueryWithBatchRecords {
             Struct witness = record.getAfterStruct() != null
                     ? record.getAfterStruct() : record.getBeforeStruct();
             Schema witnessSchema = witness == null ? null : witness.schema();
-            if (witnessSchema == null
-                    || verifiedSchemas.get(witnessSchema) != columnNameToDataTypeMap) {
+            VerifiedAgainst previously = witnessSchema == null ? null : verifiedSchemas.get(witnessSchema);
+            if (previously == null || !previously.covers(columnNameToDataTypeMap)) {
                 Map<String, String> verified = refreshIfRecordHasUnknownColumn(
                         record, columnNameToDataTypeMap, tableName, databaseName,
                         connection, config);
                 if (verified != null) {
                     columnNameToDataTypeMap = verified;
                 } else if (witnessSchema != null) {
-                    verifiedSchemas.put(witnessSchema, columnNameToDataTypeMap);
+                    verifiedSchemas.put(witnessSchema, new VerifiedAgainst(columnNameToDataTypeMap));
                 }
             }
 
