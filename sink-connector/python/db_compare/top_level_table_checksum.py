@@ -229,8 +229,8 @@ def normalize_where_override(table, where):
     quotes are the documented form.
     """
     if where and LEGACY_ESCAPED_QUOTE in where:
-        logging.warning(f"where override for {table} uses the legacy escaped quote \\' -- "
-                        "write plain single quotes; folding the escape for this run")
+        logging.info(f"where override for {table} uses the legacy escaped quote \\' -- "
+                     "write plain single quotes; folding the escape for this run")
         return where.replace(LEGACY_ESCAPED_QUOTE, "'")
     return where
 
