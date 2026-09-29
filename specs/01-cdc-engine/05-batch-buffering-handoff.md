@@ -31,6 +31,7 @@ Specifies the asynchronous decoupling boundary between the single-threaded Debez
 | `sink.connector.handoff.max.outstanding.bytes` | ¼ of the maximum heap (floor 256 MiB) | the same cap in ESTIMATED BYTES (§3.4 item 7); the reader pauses when either cap is met; `0` disables the byte cap |
 | `sink.connector.handoff.wait.timeout.ms` | 600000 | longest one wait at the hard cap may last before the engine stops (§3.4) |
 | `buffer.max.bytes` | 256 MiB | most estimated bytes per JDBC INSERT chunk, applied with `buffer.max.records` (spec 03.06 §3.1); `0` disables the byte limit |
+| `coalesce.max.wait.ms` | **0** | how long a routing-mode worker waits for more queued batches before writing a coalesced batch still under both bounds (spec 03.03 §3.1.1 step 6); `0` writes at once |
 | `max.queue.size.in.bytes` (Debezium) | 1/16 of the maximum heap (floor 64 MiB) when the operator sets nothing | byte bound on Debezium's own change-event queue (§3.4 item 8); Debezium's own default is `0` = off |
 
 (Earlier revisions of this document stated 10,000 / 1,000 ms; those were never

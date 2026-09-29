@@ -93,6 +93,10 @@ public enum ClickHouseSinkConnectorConfigVariables {
     // The most estimated bytes one JDBC INSERT chunk may hold (spec 03.06
     // section 3.1); the driver renders a chunk as SQL text in memory twice.
     BUFFER_MAX_BYTES("buffer.max.bytes"),
+    // How long a routing-mode worker may wait for more queued batches before it
+    // writes a coalesced batch that is still under buffer.max.records /
+    // buffer.max.bytes (spec 03.03 section 3.1.1 step 6). 0 = write at once.
+    COALESCE_MAX_WAIT_MS("coalesce.max.wait.ms"),
 
     // Pacing of retries for a batch that failed to write to ClickHouse for a
     // retriable reason: initial delay, doubling per consecutive failure of the

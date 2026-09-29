@@ -82,6 +82,91 @@ public class CoalescedQueuedBatchesTest {
         return new ClickHouseSinkConnectorConfig(props);
     }
 
+    private static ClickHouseSinkConnectorConfig configWithWait(long bufferMaxRecords, long waitMs) {
+        Map<String, String> props = new HashMap<>();
+        props.put("buffer.flush.time.ms", "1");
+        props.put("batch.retry.backoff.initial.ms", "1");
+        props.put("batch.retry.backoff.max.ms", "2");
+        props.put("buffer.max.records", Long.toString(bufferMaxRecords));
+        props.put("coalesce.max.wait.ms", Long.toString(waitMs));
+        return new ClickHouseSinkConnectorConfig(props);
+    }
+
+    /** Hands off {@code names} on {@code topic} after {@code delayMs}, from another thread. */
+    private static Thread handOffLater(RecordingCommitter committer, LinkedBlockingQueue<RoutedBatch> queue,
+                                       long delayMs, String topic, String... names) {
+        Thread t = new Thread(() -> {
+            try {
+                Thread.sleep(delayMs);
+                handOff(committer, queue, topic, names);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+        });
+        t.setDaemon(true);
+        t.start();
+        return t;
+    }
+
+    @Test
+    @DisplayName("coalesce.max.wait.ms: a batch handed off during the wait joins the write; with 0 it does not")
+    public void waitCoalescesABatchThatArrivesDuringTheWindow() throws Exception {
+        RecordingCommitter committer = new RecordingCommitter();
+        LinkedBlockingQueue<RoutedBatch> queue = new LinkedBlockingQueue<>();
+        handOff(committer, queue, "srv.db.t1", "a1", "a2");
+        Thread later = handOffLater(committer, queue, 80L, "srv.db.t1", "b1");
+
+        RecordingRunnable worker = new RecordingRunnable(queue, configWithWait(100_000L, 400L));
+        worker.run();
+        later.join(2000L);
+
+        assertEquals(1, worker.writes.size(), "the batch that arrived 80 ms into a 400 ms wait is written with the first");
+        assertEquals(Arrays.asList("a1", "a2", "b1"), worker.writes.get(0).names);
+        assertEquals(Arrays.asList("a1", "a2", "b1"), processedNames(committer), "both units acknowledged in order");
+        assertEquals(2, committer.batchesFinished);
+        assertFalse(DebeziumOffsetManagement.hasUnwrittenBatches());
+
+        // The same sequence with the default (0): the worker writes at once, twice.
+        OffsetTestSupport.resetFifo();
+        RecordingCommitter c2 = new RecordingCommitter();
+        LinkedBlockingQueue<RoutedBatch> q2 = new LinkedBlockingQueue<>();
+        handOff(c2, q2, "srv.db.t1", "a1", "a2");
+        Thread later2 = handOffLater(c2, q2, 80L, "srv.db.t1", "b1");
+        RecordingRunnable w2 = new RecordingRunnable(q2, config(100_000L));
+        w2.run();
+        later2.join(2000L);
+        w2.run();
+        assertEquals(2, w2.writes.size(), "without a wait the first tick writes what is queued and returns");
+        assertEquals(Arrays.asList("a1", "a2", "b1"), processedNames(c2));
+    }
+
+    @Test
+    @DisplayName("coalesce.max.wait.ms: the wait stops at the row bound and a batch that does not fit is carried over")
+    public void waitStopsAtTheRowBoundAndCarriesTheRestOver() throws Exception {
+        RecordingCommitter committer = new RecordingCommitter();
+        LinkedBlockingQueue<RoutedBatch> queue = new LinkedBlockingQueue<>();
+        handOff(committer, queue, "srv.db.t1", "a1", "a2");
+        Thread later = handOffLater(committer, queue, 80L, "srv.db.t1", "b1", "b2");
+
+        long t0 = System.nanoTime();
+        RecordingRunnable worker = new RecordingRunnable(queue, configWithWait(3L, 4000L));
+        worker.run();
+        later.join(2000L);
+        long elapsedMs = (System.nanoTime() - t0) / 1_000_000L;
+
+        assertEquals(2, worker.writes.size(), "b does not fit under 3 rows with a: it is carried over and opens the next write");
+        assertEquals(Arrays.asList("a1", "a2"), worker.writes.get(0).names);
+        assertEquals(Arrays.asList("b1", "b2"), worker.writes.get(1).names);
+        // The first write ended the moment b arrived (80 ms in) because b did
+        // not fit; only the second write -- b alone, queue empty, nothing more
+        // coming -- sits out its own 4 s window. Two full windows would be 8 s.
+        assertTrue(elapsedMs < 6000L, "reaching the bound must end the first wait at once; two full 4 s windows "
+                + "would mean the bound was ignored (took " + elapsedMs + " ms)");
+        assertEquals(Arrays.asList("a1", "a2", "b1", "b2"), processedNames(committer), "acknowledged in handoff order");
+        assertEquals(2, committer.batchesFinished);
+        assertFalse(DebeziumOffsetManagement.hasUnwrittenBatches());
+    }
+
     /** A handed-off unit of one group on {@code topic}, registered with the FIFO and queued. */
     private static List<ClickHouseStruct> handOff(RecordingCommitter committer, LinkedBlockingQueue<RoutedBatch> queue,
                                                  String topic, String... names) throws InterruptedException {
