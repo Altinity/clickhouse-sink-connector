@@ -128,4 +128,25 @@ public class PreparedStatementFieldMapperColumnBindingMemoTest {
         assertEquals(utc.get(2), chicago.get(2));
         assertEquals(utc.get(3), chicago.get(3));
     }
+
+    /**
+     * Spec 04.06 section 3.5: the connector replaces the column map after a
+     * DDL, but the memo must not depend on that. A declared type changed IN
+     * PLACE under the same map instance is re-parsed on the next row.
+     */
+    @Test
+    @DisplayName("A declared type changed in place under the same map instance is re-parsed")
+    public void bindingIsRebuiltWhenTheDeclaredTypeChangesInPlace() throws Exception {
+        ClickHouseSinkConnectorConfig config = config();
+        PreparedStatementFieldMapper shared = mapper();
+        Map<String, String> sameInstance = columns("DateTime64(6, 'UTC')");
+        Map<Integer, Object> before = bind(shared, record(1), sameInstance, config);
+        // A DDL applied to the table changed the column's zone; the cache was
+        // refreshed into the SAME map object.
+        sameInstance.put("ts", "DateTime64(6, 'America/Chicago')");
+        Map<Integer, Object> after = bind(shared, record(1), sameInstance, config);
+        assertEquals("2022-01-01 16:00:01.000000", before.get(4));
+        assertEquals("2022-01-01 10:00:01.000000", after.get(4),
+                "an identity-only memo would still render the pre-DDL zone");
+    }
 }
