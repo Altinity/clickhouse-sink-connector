@@ -118,6 +118,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 - **[11.01: Automated Specification Validator Architecture](11-verification-tooling/01-spec-validator.md)**: `scripts/validate_specs.py` verification engine.
 - **[11.02: Value-Level Checksum Verification (`db_compare`)](11-verification-tooling/02-db-compare-checksums.md)**: Bitwise checksumming vs row count fallacies.
 - **[11.03: Lean 4 Formal Verification & Simulation Model](11-verification-tooling/03-lean-formal-simulation.md)**: Mathematical state machine proofs.
+- **[11.04: Re-synchronising a Replica After an Unlogged Source Change (`ch-mysql-resync`)](11-verification-tooling/04-mysql-resync-after-unlogged-change.md)**: Count-reconciled, atomic `REPLACE PARTITION` repair after `sql_log_bin=0` patches / reloads, with connector offset rewind.
 
 ---
 

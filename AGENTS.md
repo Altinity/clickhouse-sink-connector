@@ -184,6 +184,11 @@ loud:
 - `sink-connector/python/db_compare/` — source↔ClickHouse count and checksum
   comparison tooling. This is the ground truth for "are the two sides
   actually equal?".
+- `sink-connector/python/ch_sink_tools/db_load/mysql_resync.py`
+  (`ch-mysql-resync`, spec 11.04) — the repair when the checksum fails because
+  the source was changed outside the binlog (`sql_log_bin=0` patch, schema
+  reload): dump → count-reconciled scratch load → atomic `REPLACE PARTITION`
+  → connector offset rewind. Never `TRUNCATE`/`DELETE` a live table by hand.
 - `doc/` — feature matrix and reference docs.
 
 Build with JDK 17 and Maven; `mvn -o test` works offline once dependencies

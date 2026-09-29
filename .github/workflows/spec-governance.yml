@@ -84,6 +84,9 @@ jobs:
       - name: Validator self-tests
         run: python3 -m unittest discover -s scripts/tests -v
 
+      - name: ch-mysql-resync unit tests (spec 11.04, offline, stdlib only)
+        run: python3 -m unittest sink-connector/python/db_load/tests/test_mysql_resync.py -v
+
       - name: Spec validator with the spec-first gate
         env:
           EVENT_NAME: ${{ github.event_name }}
