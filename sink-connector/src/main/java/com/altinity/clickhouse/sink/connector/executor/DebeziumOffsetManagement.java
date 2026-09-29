@@ -402,12 +402,26 @@ public class DebeziumOffsetManagement {
      */
     public static void awaitHandoffCapacity(long maxOutstandingRecords, long maxOutstandingBytes,
                                             long timeoutMs, Runnable livenessCheck) throws InterruptedException {
-        if ((maxOutstandingRecords <= 0 && maxOutstandingBytes <= 0)
-                || !isAtCapacity(maxOutstandingRecords, maxOutstandingBytes)) {
+        if (maxOutstandingRecords <= 0 && maxOutstandingBytes <= 0) {
             return;
         }
         long startNanos = System.nanoTime();
-        boolean firstPauseOfPeriod = beginPause(maxOutstandingRecords, maxOutstandingBytes, timeoutMs);
+        boolean firstPauseOfPeriod;
+        // The check and the counts the WARN names are read in ONE step under the
+        // class monitor. Acknowledgement (drainCompletedUnits) holds the same
+        // monitor, so nothing can be acknowledged between "the cap is met" and
+        // "these are the rows that met it" (spec 01.05 §3.4 item 6). Read apart
+        // -- the check outside the monitor, the counters inside beginPause -- an
+        // acknowledgement in between produced a WARN naming 465,225 rows in 10
+        // units "at or above the cap of 500000 row(s)" on a live deployment: a
+        // line that contradicts itself, on a wait that was over before it began.
+        synchronized (DebeziumOffsetManagement.class) {
+            if (!isAtCapacity(maxOutstandingRecords, maxOutstandingBytes)) {
+                return;
+            }
+            firstPauseOfPeriod = beginPause(maxOutstandingRecords, maxOutstandingBytes, timeoutMs,
+                    outstandingRecords.get(), outstandingSequences.size(), outstandingBytes.get());
+        }
         while (true) {
             synchronized (DebeziumOffsetManagement.class) {
                 if (!isAtCapacity(maxOutstandingRecords, maxOutstandingBytes)) {
@@ -451,10 +465,20 @@ public class DebeziumOffsetManagement {
      * {@link #CAPACITY_PACING_REARM_MS} of the previous release is counted
      * silently; a wait after a longer quiet gap first closes the old period
      * with its "pacing ended" line, then opens a new one.
+     * <p>
+     * The WARN names {@code records}, {@code units} and {@code bytes} -- the
+     * counts the caller read when it found the cap met, under the monitor it
+     * still holds -- never the live counters: they may already be below the cap
+     * by the time the line is written, and a WARN that says "465225 row(s) ...
+     * at or above the cap of 500000 row(s)" is a line that contradicts itself.
      *
+     * @param records the outstanding rows that met the cap.
+     * @param units   the outstanding units at that moment.
+     * @param bytes   the outstanding estimated bytes at that moment.
      * @return true when this wait opened a period (its release is logged too).
      */
-    private static synchronized boolean beginPause(long cap, long capBytes, long timeoutMs) {
+    private static synchronized boolean beginPause(long cap, long capBytes, long timeoutMs,
+                                                   long records, int units, long bytes) {
         long now = capacityClock.getAsLong();
         pauseInProgress = true;
         if (pacingStartNanos != 0 && now - lastReleaseNanos <= CAPACITY_PACING_REARM_MS * 1_000_000L) {
@@ -481,7 +505,7 @@ public class DebeziumOffsetManagement {
                 + "the failure if it exceeds {} ms. Further pauses that begin within {} s of a "
                 + "release are counted, not logged: expect one 'Handoff hard cap pacing:' summary "
                 + "per {} s while the reader stays paced, and one 'pacing ended' line when it stops.",
-                outstandingRecords.get(), outstandingSequences.size(), mib(outstandingBytes.get()),
+                records, units, mib(bytes),
                 cap, mib(capBytes), timeoutMs,
                 CAPACITY_PACING_REARM_MS / 1000, CAPACITY_PACING_SUMMARY_MS / 1000);
         return true;
