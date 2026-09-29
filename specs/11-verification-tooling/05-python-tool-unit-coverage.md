@@ -26,8 +26,12 @@ the fast, no-container layer that runs on every commit.
   `get_unix_timezone_from_mysql_timezone`, `convert_to_clickhouse_table`.
 - **DDL translator**: `sink-connector/python/db_load/mysql_parser/mysql_parser.py`
   `convert_to_clickhouse_table_antlr` (the antlr path the loader uses).
+- **Postgres mapper/filter**: `sink-connector/python/ch_sink_tools/db_load/postgres_type_mapper.py`
+  `map_pg_type`, `sink-connector/python/ch_sink_tools/db_dump/postgres_dumper.py`
+  `filter_tables_by_regex`.
 - **Tests**: `sink-connector/python/db_dump/tests/test_mysql_dumper_unit.py`,
   `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py`,
+  `sink-connector/python/db_load/tests/test_postgres_type_mapper_unit.py`,
   collected by the same `pytest`/`unittest` invocation that runs the existing
   157 tests.
 
@@ -92,3 +96,10 @@ invocation as the existing suite in `.github/workflows/spec-governance.yml`:
 - `TestDdlConversionAntlr` — §3.4: DATETIME→DateTime64, DECIMAL(30,15)
   preserved, ReplacingMergeTree engine, ORDER BY the primary key, configured
   timezone stamped, and a non-DDL source yields `('', [])`.
+- `TestMapPgType` — §3.4 (Postgres): integer/float/boolean families,
+  `numeric(p,s)`→`Decimal(p,s)` (explicit and embedded), bare numeric→
+  `Decimal(18, 6)`, `timestamp`→`DateTime64(6, 'UTC')`, time/interval/varchar/
+  text/array/uuid→`String`, `Nullable(...)` wrapping, and an unknown type
+  falling back to `String`.
+- `TestFilterTablesByRegex` — the Postgres dumper's include/exclude regex
+  table filter, singly and combined, and the no-pattern passthrough.
