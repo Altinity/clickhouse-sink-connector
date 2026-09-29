@@ -10,6 +10,7 @@ mutates one thing, and asserts the validator reports exactly that.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -319,7 +320,23 @@ class AllowlistTests(FixtureCase):
 class ChangedBaseTests(FixtureCase):
     """The spec-first gate, exercised against a real temporary git repository."""
 
-    GIT_ID = ["-c", "user.name=Spec Validator Test", "-c", "user.email=spec-validator@example.invalid", "-c", "commit.gpgsign=false"]
+    # Identity for the fixture commits, plus: no background maintenance. After a
+    # commit, merge or fetch, git hands the repository to `git maintenance run
+    # --auto` (git < 2.29: `git gc --auto`); since git 2.46 that helper detaches
+    # unconditionally, takes its lock under .git/objects/ and keeps working
+    # after the command that spawned it has returned. The test is over by then
+    # and tearDown is removing the temporary directory, so the detached process
+    # races the removal and cleanup fails with ENOTEMPTY on .git/objects
+    # (observed on git 2.55.0 in CI: four ChangedBaseTests errored in tearDown
+    # in one run and none in the next). maintenance.auto=false stops the helper
+    # from being spawned at all; gc.auto=0 does the same for the pre-2.29 path.
+    GIT_ID = [
+        "-c", "user.name=Spec Validator Test",
+        "-c", "user.email=spec-validator@example.invalid",
+        "-c", "commit.gpgsign=false",
+        "-c", "maintenance.auto=false",
+        "-c", "gc.auto=0",
+    ]
 
     def git(self, *args: str) -> str:
         return subprocess.run(["git", *self.GIT_ID, "-C", str(self.root), *args], check=True, capture_output=True, text=True).stdout
@@ -397,6 +414,27 @@ class ChangedBaseTests(FixtureCase):
     def test_unknown_base_ref_is_an_error(self) -> None:
         report = run(self.root, changed_base="no-such-ref")
         self.assertOneErrorContaining(report, "--changed-base")
+
+    def test_fixture_git_spawns_no_background_maintenance(self) -> None:
+        # Guards the GIT_ID flags above: a fixture commit must not start a
+        # `git maintenance run --auto` / `git gc --auto` child, because that
+        # child can outlive the test and write under .git/objects while
+        # tearDown removes the temporary repository. trace2 records every
+        # child process git starts; without the flags this list names one.
+        scratch = tempfile.TemporaryDirectory()
+        self.addCleanup(scratch.cleanup)
+        trace = Path(scratch.name) / "trace2.jsonl"
+        subprocess.run(
+            ["git", *self.GIT_ID, "-C", str(self.root), "commit", "-q", "--allow-empty", "-m", "traced"],
+            check=True,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "GIT_TRACE2_EVENT": str(trace)},
+        )
+        events = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines() if line.strip()]
+        self.assertTrue(any(event.get("event") == "cmd_name" for event in events), "precondition: trace2 recorded the commit")
+        children = [event.get("argv", []) for event in events if event.get("event") == "child_start"]
+        self.assertEqual(children, [], f"fixture commit started background git process(es): {children}")
 
     def test_shallow_checkout_without_merge_base_names_the_cause(self) -> None:
         # The CI shape that broke a pull request: a full-history checkout of the PR
