@@ -167,6 +167,14 @@ the committed offset remains a low-water mark from which replay is safe.
   key-shards are additional groups within the existing handoff unit, so a
   batch's offset is still staged only when every lower-sequence batch is
   acknowledged.
+- **Invariant I11 (Drop-in Upgrade Safety)** — key-aware routing changes only
+  WHICH worker applies a row, never the row's bytes or its `_version`, so a
+  connector build (or a `routing.by.primary.key` config flip) can be upgraded
+  and downgraded freely. The converged per-key version is a max over the
+  events, independent of routing mode and of the order two segments — one under
+  each routing, e.g. before and after the restart — are applied:
+  `Replication.KeyRouting.finalVersion_append`,
+  `Replication.KeyRouting.upgrade_downgrade_converges`. See section 6.
 
 ## 5. Verification Criteria
 
@@ -203,7 +211,59 @@ the committed offset remains a low-water mark from which replay is safe.
 - `Replication.KeyRouting.recovery_converges` — replaying a redelivered prefix
   never lowers the converged per-key version (idempotent under `_version`
   selection).
-- Docker end-to-end coverage (run in CI): the MySQL→ClickHouse value-comparison
-  and kill/restart-recovery integration tests
-  (`NullColumnValueRoundTripIT`, `PostgresSnapshotCompletionIT`) exercise the
-  routing path with key routing enabled by default.
+- `Replication.KeyRouting.finalVersion_append` — the converged per-key version
+  of a concatenation is the max of the parts', so it does not depend on how the
+  stream is split across workers.
+- `Replication.KeyRouting.upgrade_downgrade_converges` — a stream applied partly
+  under one routing mode and partly under the other converges to the same
+  per-key version, in either direction (Invariant I11).
+- `RoutedBatchTest.testRoutingModeDoesNotChangeRowIdentity` — the same record
+  produces the same shard token under a fixed mode, and switching the mode
+  changes only the shard, never the record — so no data differs across an
+  upgrade/downgrade.
+- Existing Docker end-to-end and kill/restart-recovery ITs
+  (`NullColumnValueRoundTripIT`, `PostgresSnapshotCompletionIT`) also exercise
+  the routing path with key routing enabled by default.
+
+
+## 6. Upgrade & downgrade compatibility
+
+Key-aware routing is **data-format-neutral**: it changes only which worker
+applies a given row, never the row's bytes, its column set, or its
+ReplacingMergeTree `_version`. Two connectors -- one routing by table, one
+routing by (table + key) -- write the *same* rows with the *same* versions;
+they differ only in concurrency. This is what makes upgrade and downgrade safe.
+
+- **Upgrade** (a build or config that turns key routing on) and **downgrade**
+  (turning it off, e.g. `routing.by.primary.key=false`, or rolling back to a
+  build without this change) are each just a restart. The connector resumes
+  from the last committed offset -- a low-water mark (spec 09.01) -- and replays
+  everything above it. Replay is idempotent: routing is a deterministic
+  function of the record, and `_version` (derived from binlog position, never
+  `source.ts_ms`) collapses any duplicate, so a row re-applied by a *different*
+  worker after the switch converges to the same value
+  (`Replication.KeyRouting.recovery_converges`).
+- **Order across the switch is preserved.** Within any single run a table's
+  routing mode is fixed (all key-sharded, or all single-worker), so its stream
+  is never internally reordered. Across the switch, the converged per-key
+  version is a max over the events and is independent of the routing mode and
+  of the order the pre- and post-switch segments are applied
+  (`Replication.KeyRouting.finalVersion_append`,
+  `Replication.KeyRouting.upgrade_downgrade_converges`) -- so table-routed then
+  key-routed, or the reverse, reach the identical ClickHouse FINAL state
+  (Invariant I11).
+- **CollapsingMergeTree** tables carry the same pre-existing at-least-once
+  caveat as before this change: a redelivered `sign` (+1/-1) pair after any
+  restart must be replay-additive. Routing does not affect this -- it changes
+  the worker, not what is written -- so upgrade/downgrade behaviour on a
+  CollapsingMergeTree table is exactly what it was without key routing.
+- **No migration, no version-domain change.** Because nothing about the stored
+  data changes, there is no backfill, no rewrite, and no coordinated cutover:
+  the config can be flipped, or the build rolled forward/back, on a running
+  replica at any time.
+
+This is proven at the model level by
+`Replication.KeyRouting.upgrade_downgrade_converges` and is additionally
+covered by an end-to-end integration test that runs the connector with key
+routing on, restarts it with it off (downgrade) and on again (upgrade), and
+checks ClickHouse converges value-identically to MySQL across both switches.

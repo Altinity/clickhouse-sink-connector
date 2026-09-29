@@ -323,4 +323,30 @@ public class RoutedBatchTest {
                 RoutedBatch.createShardKey(r, false),
                 "with key routing disabled a keyed record must use the table base shard");
     }
+
+    @Test
+    public void testRoutingModeDoesNotChangeRowIdentity() {
+        String topic = "srv.db.orders";
+        ClickHouseStruct r = keyed(topic, "Struct{id=7}", com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.CREATE);
+        String tableToken = RoutedBatch.createRoutingKey(topic);
+
+        // Downgrade (routing off) routes exactly as the prior table-level scheme.
+        String tableModeToken = RoutedBatch.createShardKey(r, false);
+        assertEquals(tableToken, tableModeToken,
+                "with routing off the shard token is the plain table token");
+
+        // Upgrade (routing on) refines the shard by row key but stays within the
+        // same table token -- it never rewrites the record.
+        String keyModeToken = RoutedBatch.createShardKey(r, true);
+        assertTrue(keyModeToken.startsWith(tableToken),
+                "key routing must refine, not replace, the table token");
+        assertNotEquals(tableModeToken, keyModeToken,
+                "flipping the mode changes only the shard token");
+
+        // The record itself is untouched by routing: nothing about the data
+        // differs across an upgrade or downgrade, only which worker applies it.
+        assertEquals(topic, r.getTopic());
+        assertEquals("Struct{id=7}", r.getKey());
+        assertEquals(com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.CREATE, r.getCdcOperation());
+    }
 }

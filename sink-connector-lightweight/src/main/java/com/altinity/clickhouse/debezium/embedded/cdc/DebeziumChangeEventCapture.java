@@ -3669,17 +3669,33 @@ public class DebeziumChangeEventCapture {
      */
     private void appendToRecordsWithHashRouting(List<ClickHouseStruct> convertedRecords)
             throws InterruptedException {
-        // Group records by shard key, preserving each group's binlog order.
-        // The shard key is db.table + primary-key identity when key routing is
-        // on and the record has a usable key, else db.table (spec 03.07): so
-        // different rows of one hot table spread across worker queues while the
-        // same row always maps to one queue, in FIFO / binlog order.
+        // Group records by (table, target worker), preserving each group's
+        // binlog order. A record's worker is
+        // floorMod(hash(createShardKey(record)), poolSize): under key routing the
+        // shard key is db.table + primary-key identity, else db.table (spec
+        // 03.07). So different rows of one hot table spread across workers while
+        // every occurrence of the same row maps to one worker in FIFO / binlog
+        // order. We group by (table, worker) rather than by the full shard key so
+        // there is ONE batched INSERT per table per worker per poll: grouping by
+        // the full key would emit one tiny group per distinct row (thousands of
+        // single-row INSERTs on a snapshot) and collapse throughput. Each group
+        // is still single-table (the write path and RoutedBatch.tableName rely on
+        // that) and still routed to the row's key-determined worker.
         // Insertion-ordered so enqueueing is deterministic.
         Map<String, List<ClickHouseStruct>> routingGroups = new java.util.LinkedHashMap<>();
+        Map<String, Integer> groupThreadId = new java.util.HashMap<>();
+        Map<String, String> groupTableName = new java.util.HashMap<>();
 
         for (ClickHouseStruct record : convertedRecords) {
             String shardKey = RoutedBatch.createShardKey(record, this.keyRoutingEnabled);
-            routingGroups.computeIfAbsent(shardKey, k -> new ArrayList<>()).add(record);
+            int threadId = RoutedBatch.calculateThreadId(shardKey, this.threadPoolSize);
+            // Batch by table AND worker: all of a table's rows that route to one
+            // worker share a group (one INSERT), while a table split across
+            // workers by key yields at most poolSize groups for that table.
+            String groupKey = RoutedBatch.createRoutingKey(record.getTopic()) + "#" + threadId;
+            routingGroups.computeIfAbsent(groupKey, k -> new ArrayList<>()).add(record);
+            groupThreadId.putIfAbsent(groupKey, threadId);
+            groupTableName.putIfAbsent(groupKey, RoutedBatch.extractTableName(record.getTopic()));
         }
 
         // Register the unit with ALL its groups BEFORE any group is visible to
@@ -3691,13 +3707,13 @@ public class DebeziumChangeEventCapture {
 
         // Enqueue each group on its OWNING thread's queue.
         for (Map.Entry<String, List<ClickHouseStruct>> entry : routingGroups.entrySet()) {
-            String routingKey = entry.getKey();
+            String groupKey = entry.getKey();
             List<ClickHouseStruct> batch = entry.getValue();
 
-            // Calculate which thread owns this table. The same table always maps
-            // to the same thread, so its batches are drained in FIFO order.
-            int threadId = RoutedBatch.calculateThreadId(routingKey, this.threadPoolSize);
-            String tableName = RoutedBatch.extractTableName(batch.get(0).getTopic());
+            // The worker this (table, worker) group was routed to. Same shard key
+            // -> same worker, so a row's whole history drains in FIFO order.
+            int threadId = groupThreadId.get(groupKey);
+            String tableName = groupTableName.get(groupKey);
             LinkedBlockingQueue<RoutedBatch> queue = this.routedQueues.get(threadId);
 
             synchronized (queue) {

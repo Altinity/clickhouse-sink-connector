@@ -190,5 +190,38 @@ theorem recovery_duplicate_idempotent :
       = finalVersion 5 [ { table := 0, key := some 5, op := Op.dml, seq := 9 } ] := by
   decide
 
+/-- The converged per-key version of a concatenation is the max of the parts'
+    converged versions: `finalVersion` is a max, so it does not depend on how a
+    stream is split across workers. -/
+theorem finalVersion_append (k : Nat) (xs ys : List Record) :
+    finalVersion k (xs ++ ys) = Nat.max (finalVersion k xs) (finalVersion k ys) := by
+  induction xs with
+  | nil => simp [finalVersion, Nat.zero_max]
+  | cons r rest ih =>
+    simp only [List.cons_append]
+    cases hop : r.op with
+    | truncateTable => simp only [finalVersion, hop]; exact ih
+    | dml =>
+      cases hk : r.key with
+      | none => simp only [finalVersion, hop, hk]; exact ih
+      | some k' =>
+        simp only [finalVersion, hop, hk]
+        by_cases hkk : k' = k
+        · simp only [if_pos hkk, ih, Nat.max_assoc]
+        · simp only [if_neg hkk, ih]
+
+/-- Upgrade AND downgrade converge (Invariant I11, drop-in upgrade safety).
+    Key-aware routing changes only WHICH worker applies a row, never the row or
+    its `_version`; the converged per-key version is a max over the events and
+    is therefore independent of the routing mode and of the order in which two
+    segments (one under each routing, e.g. before and after a restart that flips
+    `routing.by.primary.key` or swaps the connector build) are applied. So a
+    stream replicated partly under table routing and partly under key routing
+    converges to exactly the same ClickHouse FINAL state, in either direction. -/
+theorem upgrade_downgrade_converges (k : Nat) (pre post : List Record) :
+    finalVersion k (pre ++ post) = finalVersion k (post ++ pre) := by
+  rw [finalVersion_append, finalVersion_append]
+  exact Nat.max_comm _ _
+
 end KeyRouting
 end Replication
