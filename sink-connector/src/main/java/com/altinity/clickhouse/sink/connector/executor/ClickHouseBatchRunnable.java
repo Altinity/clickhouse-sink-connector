@@ -24,6 +24,7 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -148,9 +149,22 @@ public class ClickHouseBatchRunnable implements Runnable {
     private DBCredentials dbCredentials;
 
     /**
-     * Current batch of records being processed.
+     * Current batch of records being processed. In routing mode this may be
+     * the concatenation, in dequeue order, of several queued handed-off groups
+     * written as ONE batch (spec 03.03 section 3.1.1); {@link #currentGroups}
+     * then holds the groups themselves for acknowledgement.
      */
     private List<ClickHouseStruct> currentBatch = null;
+
+    /**
+     * The handed-off groups behind {@link #currentBatch}, in the order they
+     * were dequeued, when the worker coalesced more than one queued batch into
+     * the current write; {@code null} when {@code currentBatch} IS the single
+     * group (legacy mode, or a queue that held one batch). Each group is
+     * reported to the offset FIFO exactly once, in this order, after the write
+     * (spec 09.01 section 3.2).
+     */
+    private List<List<ClickHouseStruct>> currentGroups = null;
 
     /**
      * Shared watermark (owned by ClickHouseSinkTask): highest Kafka offset per
@@ -592,8 +606,8 @@ public class ClickHouseBatchRunnable implements Runnable {
                     // No records in the queue.
                     continue;
                 }
-                currentBatch = routedBatch.getBatch();
                 log.debug("Thread {} picked up batch for table: {}", threadId, routedBatch.getTableName());
+                coalesceQueuedBatches(routedBatch);
             } else {
                 log.debug("***** Thread {} RETRYING the same batch again", threadId);
             }
@@ -601,6 +615,69 @@ public class ClickHouseBatchRunnable implements Runnable {
             // Process the batch (rest of the logic stays the same)
             processBatch(sourceTimeZone, serverTimeZone);
         }
+    }
+
+    /**
+     * Makes {@code first} -- and every batch already queued behind it that fits
+     * -- the current write (spec 03.03 section 3.1.1). Groups are taken from the
+     * head of this worker's own queue in FIFO order, never split, and never
+     * taken past {@code buffer.max.records} rows or {@code buffer.max.bytes}
+     * estimated bytes in total (the same bounds one INSERT is chunked to, spec
+     * 03.06); a group larger than either bound on its own is still written,
+     * alone, as before. Every queued batch is a handed-off group whose unit is
+     * already outstanding in the offset FIFO, so writing several of them in one
+     * INSERT changes how many round trips and parts they cost, not what is
+     * written or in which order: the concatenation preserves dequeue (handoff,
+     * i.e. binlog) order, and {@code processBatch} still splits it by table
+     * with each table's rows in that order.
+     */
+    private void coalesceQueuedBatches(RoutedBatch first) {
+        long maxRows = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
+        long maxBytes = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_BYTES.toString());
+        List<List<ClickHouseStruct>> groups = new ArrayList<>();
+        groups.add(first.getBatch());
+        long rows = first.getBatch().size();
+        long bytes = estimatedBytes(first.getBatch());
+        RoutedBatch next;
+        // Only this worker ever dequeues from its queue, so peek-then-poll
+        // cannot lose a batch to another consumer.
+        while ((next = routedRecords.peek()) != null) {
+            List<ClickHouseStruct> group = next.getBatch();
+            long groupRows = group.size();
+            long groupBytes = estimatedBytes(group);
+            if ((maxRows > 0 && rows + groupRows > maxRows)
+                    || (maxBytes > 0 && bytes + groupBytes > maxBytes)) {
+                break;
+            }
+            routedRecords.poll();
+            groups.add(group);
+            rows += groupRows;
+            bytes += groupBytes;
+        }
+        if (groups.size() == 1) {
+            currentBatch = first.getBatch();
+            currentGroups = null;
+            return;
+        }
+        List<ClickHouseStruct> merged = new ArrayList<>((int) Math.min(rows, Integer.MAX_VALUE));
+        for (List<ClickHouseStruct> group : groups) {
+            merged.addAll(group);
+        }
+        currentBatch = merged;
+        currentGroups = groups;
+        log.debug("Thread {} coalesced {} queued batches ({} rows) into one write", threadId,
+                groups.size(), rows);
+    }
+
+    /** The handoff byte estimate of a group (spec 01.05 section 3.4 item 7); 0 when unstamped. */
+    private static long estimatedBytes(List<ClickHouseStruct> group) {
+        long bytes = 0L;
+        for (ClickHouseStruct record : group) {
+            if (record != null) {
+                bytes += Math.max(0L, record.getEstimatedBytes());
+            }
+        }
+        return bytes;
     }
 
     /**
@@ -709,10 +786,17 @@ public class ClickHouseBatchRunnable implements Runnable {
             // Whether the offset is acknowledged now (this is the oldest
             // outstanding unit) or later (parked; drained by whichever call
             // acknowledges the head) is the FIFO's concern, not the worker's.
-            List<ClickHouseStruct> written = currentBatch;
+            // A coalesced write (spec 03.03 section 3.1.1) reports every group
+            // it contained, once each, in dequeue order; a single-group write
+            // reports the group itself.
+            List<List<ClickHouseStruct>> writtenGroups = currentGroups != null
+                    ? currentGroups : Collections.singletonList(currentBatch);
             currentBatch = null;
+            currentGroups = null;
             retryBackoff.reset();
-            DebeziumOffsetManagement.checkIfBatchCanBeCommitted(written);
+            for (List<ClickHouseStruct> written : writtenGroups) {
+                DebeziumOffsetManagement.checkIfBatchCanBeCommitted(written);
+            }
         } else {
             // Not written (e.g. table metadata not yet retrievable): keep the
             // batch and retry it, but not every 30 ms (spec 10.02).

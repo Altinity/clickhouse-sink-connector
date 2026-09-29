@@ -140,7 +140,10 @@ takes part in any commit decision.
 When a worker has durably written a group (`processRecordsByTopic` returned
 `true` for every topic of the group) it calls `checkIfBatchCanBeCommitted(group)`
 EXACTLY ONCE and then drops the group (`currentBatch = null`) **regardless of
-the return value**, proceeding to the next queued batch.
+the return value**, proceeding to the next queued batch. A worker that wrote
+several queued groups as one batch (spec 03.03 §3.1.1) reports each of them
+once, in dequeue order, after that one write; the FIFO sees exactly the calls
+it would have seen from one write per group, in the same order.
 
 Inside, under the class monitor:
 1. `unit = unwrittenGroups.remove(BatchKey(group))`.
