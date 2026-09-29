@@ -52,6 +52,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 - **[04.03: Field Membership Rules: Explicit NULLs vs. Omitted Columns](04-query-generation/03-field-membership-rules.md)**: Preserving explicit `NULL`s vs defaults.
 - **[04.04: UPDATE Event Handling & Before/After Image Processing](04-query-generation/04-update-splitting.md)**: In-place update vs history mode.
 - **[04.05: TRUNCATE Table Event Handling](04-query-generation/05-truncate-handling.md)**: Executing `TRUNCATE TABLE` on ClickHouse.
+- **[04.06: Per-Batch Metadata Memoisation on the Write Path](04-query-generation/06-per-batch-metadata-memoisation.md)**: Templates, column types and formatters derived once per batch, byte-identical output.
 
 ---
 

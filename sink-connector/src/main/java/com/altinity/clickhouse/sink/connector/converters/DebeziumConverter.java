@@ -25,6 +25,19 @@ public class DebeziumConverter {
     private static final Logger log = LogManager.getLogger(DebeziumConverter.class);
 
     /**
+     * The fixed render patterns, built once. {@link DateTimeFormatter} is
+     * immutable and thread-safe; building one from its pattern string parses
+     * the pattern every time, and the converters below used to do that per
+     * VALUE -- it was measured at ~4% of the whole per-row bind cost (Spec
+     * 04.06 section 3.3). The output is byte-identical to the per-call form.
+     */
+    static final DateTimeFormatter SECONDS_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    static final DateTimeFormatter MILLIS_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+    static final DateTimeFormatter MICROS_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
+    static final DateTimeFormatter EIGHT_DIGIT_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSS");
+    static final DateTimeFormatter NANOS_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+
+    /**
      * Raised when a source value does not fit the ClickHouse column type and
      * {@code clamp.out.of.range} is false (Spec 07.03 section 3.3). The batch
      * fails; nothing is written for it.
@@ -261,9 +274,9 @@ public class DebeziumConverter {
             Long epochMicroSeconds = (Long) value;
 
             //DateTime64 has a 8 digit precision.
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSS");
+            DateTimeFormatter destFormatter = EIGHT_DIGIT_FORMAT;
             if(clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
-                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+                destFormatter = SECONDS_FORMAT;
             }
             long epochSeconds = epochMicroSeconds / 1_000_000L;
             long nanoOffset = ( epochMicroSeconds % 1_000_000L ) * 1_000L ;
@@ -345,10 +358,10 @@ public class DebeziumConverter {
          */
         public static String convert(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone,
                                      ZoneId serverTimezone, ZoneId columnTimeZone, RangePolicy policy) {
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+            DateTimeFormatter destFormatter = MILLIS_FORMAT;
 
             if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
-                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+                destFormatter = SECONDS_FORMAT;
             }
 
             ZoneId formatZone = columnTimeZone == null ? serverTimezone : columnTimeZone;
@@ -390,10 +403,10 @@ public class DebeziumConverter {
 
 
         public static String convertWithoutTimeZoneAdjustment(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+            DateTimeFormatter destFormatter = MILLIS_FORMAT;
 
             if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
-                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+                destFormatter = SECONDS_FORMAT;
             }
 
             Long epochMillis = (Long) value;
@@ -426,13 +439,13 @@ public class DebeziumConverter {
         public static String convertWithoutTimeZoneAdjustmentNanos(long epochSeconds, int nanoAdjustment, 
                 ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
             // Use 9-digit nanosecond precision for DateTime64
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+            DateTimeFormatter destFormatter = NANOS_FORMAT;
 
             if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
-                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+                destFormatter = SECONDS_FORMAT;
             } else if (clickHouseDataType == ClickHouseDataType.DateTime64) {
                 // DateTime64 supports up to nanosecond precision
-                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+                destFormatter = NANOS_FORMAT;
             }
 
             Instant i = Instant.ofEpochSecond(epochSeconds, nanoAdjustment);
@@ -447,13 +460,13 @@ public class DebeziumConverter {
 
         public static String convertWithoutTimeZoneAdjustmentNanos(long epochNanoseconds,
                                                                    ClickHouseDataType clickHouseDataType,  ZoneId serverTimezone) {
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+            DateTimeFormatter destFormatter = NANOS_FORMAT;
 
             if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
-                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+                destFormatter = SECONDS_FORMAT;
             } else if (clickHouseDataType == ClickHouseDataType.DateTime64) {
                 // DateTime64 supports up to nanosecond precision
-                destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+                destFormatter = NANOS_FORMAT;
             }
             Instant instant = Instant.ofEpochSecond(
                     epochNanoseconds / 1_000_000_000,
@@ -579,8 +592,7 @@ public class DebeziumConverter {
          */
         public static String convert(Object value, ZoneId serverTimezone, RangePolicy policy) {
 
-            DateTimeFormatter destFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS")
-                    .withZone(serverTimezone);
+            DateTimeFormatter destFormatter = MICROS_FORMAT.withZone(serverTimezone);
 
             // PostgreSQL timestamptz accepts the special values infinity and
             // -infinity, which Debezium delivers verbatim as these literal

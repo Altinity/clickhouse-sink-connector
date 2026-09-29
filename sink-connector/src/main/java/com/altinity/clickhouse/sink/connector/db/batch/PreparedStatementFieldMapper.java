@@ -23,6 +23,7 @@ import org.apache.logging.log4j.Logger;
 import java.sql.PreparedStatement;
 import java.sql.Types;
 import java.time.ZoneId;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -129,6 +130,64 @@ public class PreparedStatementFieldMapper {
      * The name of the version column (ReplacingMergeTree).
      */
     private final String versionColumn;
+
+    /**
+     * What binding one column needs to know about its declared ClickHouse
+     * type, resolved once per column per statement (Spec 04.06 section 3.2):
+     * the parsed column (null when the declared type is unknown or
+     * unparseable, exactly as {@link #parseColumn} answers), its data type,
+     * the zone the column declares, and the range policy label for it.
+     */
+    private static final class ColumnBinding {
+        final ClickHouseColumn column;
+        final ClickHouseDataType dataType;
+        final ZoneId columnTimeZone;
+        final DebeziumConverter.RangePolicy rangePolicy;
+
+        ColumnBinding(ClickHouseColumn column, DebeziumConverter.RangePolicy rangePolicy) {
+            this.column = column;
+            this.dataType = column == null ? null : column.getDataType();
+            this.columnTimeZone = ClickHouseDataTypeMapper.columnTimeZoneOf(column);
+            this.rangePolicy = rangePolicy;
+        }
+    }
+
+    /**
+     * Per-column bindings, valid for exactly one (column map, configuration,
+     * table) triple -- the identity of the map and of the configuration this
+     * mapper last bound with. A different map instance (a refreshed schema
+     * cache) or configuration discards every entry, so a memoised entry can
+     * never outlive the metadata it was parsed from. The mapper is created per
+     * statement execution, so in practice the memo lives for one batch.
+     */
+    private final Map<String, ColumnBinding> columnBindings = new HashMap<>();
+    private Map<String, String> columnBindingsFor;
+    private ClickHouseSinkConnectorConfig columnBindingsConfig;
+    private String columnBindingsTable;
+
+    /**
+     * The binding metadata for one column, parsed on first use and reused for
+     * every following row of the same statement. Byte-identical to parsing per
+     * row: {@link ClickHouseColumn#of} is a pure function of the declared type
+     * string, and {@link DebeziumConverter.RangePolicy} is immutable.
+     */
+    private ColumnBinding columnBinding(String colName, Map<String, String> columnNameToDataTypeMap,
+                                        ClickHouseSinkConnectorConfig config, String tableName) {
+        if (columnBindingsFor != columnNameToDataTypeMap || columnBindingsConfig != config
+                || (columnBindingsTable == null ? tableName != null : !columnBindingsTable.equals(tableName))) {
+            columnBindings.clear();
+            columnBindingsFor = columnNameToDataTypeMap;
+            columnBindingsConfig = config;
+            columnBindingsTable = tableName;
+        }
+        ColumnBinding binding = columnBindings.get(colName);
+        if (binding == null) {
+            binding = new ColumnBinding(parseColumn(colName, columnNameToDataTypeMap),
+                    DebeziumConverter.RangePolicy.of(config, databaseName + "." + tableName + "." + colName));
+            columnBindings.put(colName, binding);
+        }
+        return binding;
+    }
 
     /**
      * The server's time zone used for converting timestamps.
@@ -361,17 +420,17 @@ public class PreparedStatementFieldMapper {
                 }
                 schemaName = f.schema().valueSchema().type().name();
             }
-            // This will throw an exception, unknown data type.
-            ClickHouseColumn column = parseColumn(colName, columnNameToDataTypeMap);
-            ClickHouseDataType chDataType = column == null ? null : column.getDataType();
-            // ClickHouse parses a DateTime literal in the COLUMN's declared
-            // zone, so instants must be rendered in it (Spec 07.03 section 3.1.3).
-            ZoneId columnTimeZone = ClickHouseDataTypeMapper.columnTimeZoneOf(column);
-            // A value outside the ClickHouse type's range fails the batch unless
-            // clamp.out.of.range=true; either way the column is named (Spec
-            // 07.03 section 3.3).
-            DebeziumConverter.RangePolicy rangePolicy = DebeziumConverter.RangePolicy.of(config,
-                    databaseName + "." + tableName + "." + colName);
+            // The declared type is parsed once per column per statement, not
+            // once per column per ROW: parsing it per row was 15% of the whole
+            // bind cost of a 17-column batch (Spec 04.06 section 3.2). What is
+            // bound is unchanged -- the parsed column (null for an unknown
+            // type), the zone the column declares (ClickHouse parses a DateTime
+            // literal in the COLUMN's zone, Spec 07.03 section 3.1.3) and the
+            // range policy that names the column (Spec 07.03 section 3.3).
+            ColumnBinding binding = columnBinding(colName, columnNameToDataTypeMap, config, tableName);
+            ClickHouseDataType chDataType = binding.dataType;
+            ZoneId columnTimeZone = binding.columnTimeZone;
+            DebeziumConverter.RangePolicy rangePolicy = binding.rangePolicy;
             if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType,
                     serverTimeZone, columnTimeZone, rangePolicy)) {
                 // An unhandled type leaves the parameter unbound. Logging and

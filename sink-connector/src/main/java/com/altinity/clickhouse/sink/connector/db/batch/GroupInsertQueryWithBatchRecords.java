@@ -13,6 +13,7 @@ import com.clickhouse.jdbc.ClickHouseConnection;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.data.Field;
+import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -54,6 +55,67 @@ public class GroupInsertQueryWithBatchRecords {
      * back to the configured {@code replacingmergetree.delete.column}.
      */
     private final String deleteColumn;
+
+    /**
+     * The inputs that decide one INSERT template (Spec 04.06 section 3.1): the
+     * record's membership field list, the ClickHouse column map and the source
+     * database name. The list and the map are compared by IDENTITY -- a
+     * refreshed column map or a record built from a different Connect schema
+     * is a different key, so a memoised template can never be reused across
+     * the metadata it was built from. Records of one table within one batch
+     * share their Connect schema object, so the template is built once per
+     * schema per batch instead of once per row.
+     */
+    private static final class TemplateKey {
+        final List<Field> membershipFields;
+        final Map<String, String> columnNameToDataTypeMap;
+        final String databaseName;
+
+        TemplateKey(List<Field> membershipFields, Map<String, String> columnNameToDataTypeMap,
+                    String databaseName) {
+            this.membershipFields = membershipFields;
+            this.columnNameToDataTypeMap = columnNameToDataTypeMap;
+            this.databaseName = databaseName;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (!(o instanceof TemplateKey)) {
+                return false;
+            }
+            TemplateKey k = (TemplateKey) o;
+            return k.membershipFields == membershipFields
+                    && k.columnNameToDataTypeMap == columnNameToDataTypeMap
+                    && Objects.equals(k.databaseName, databaseName);
+        }
+
+        @Override
+        public int hashCode() {
+            return (System.identityHashCode(membershipFields) * 31
+                    + System.identityHashCode(columnNameToDataTypeMap)) * 31
+                    + Objects.hashCode(databaseName);
+        }
+    }
+
+    /**
+     * Templates built during this grouper's life (one batch: a grouper is
+     * created per {@code processRecordsByTopic} call), keyed by
+     * {@link TemplateKey}. Values are exactly what
+     * {@code QueryFormatter.getInsertQueryUsingInputFunction} returned for that
+     * key; a memo hit yields the same SQL text and the same parameter-index
+     * map, so equality-keyed bucketing is unchanged (Spec 04.06 section 3.1).
+     */
+    private final Map<TemplateKey, MutablePair<String, Map<String, Integer>>> templateMemo =
+            new HashMap<>();
+
+    /**
+     * Connect schemas already checked against the column map they are mapped
+     * to by {@code refreshIfRecordHasUnknownColumn} and found consistent
+     * (Spec 04.06 section 3.1). Keyed by schema identity; the value is the map
+     * instance the check ran against, so a refreshed map re-runs the check.
+     */
+    private final IdentityHashMap<Schema, Map<String, String>> verifiedSchemas =
+            new IdentityHashMap<>();
 
     /**
      * A grouper that knows only the connector's default engine-column names.
@@ -168,11 +230,26 @@ public class GroupInsertQueryWithBatchRecords {
             //
             // Re-reading costs one metadata query and only happens on an actual
             // mismatch, so the steady state is unaffected.
-            Map<String, String> verified = refreshIfRecordHasUnknownColumn(
-                    record, columnNameToDataTypeMap, tableName, databaseName,
-                    connection, config);
-            if (verified != null) {
-                columnNameToDataTypeMap = verified;
+            //
+            // The check is a pure function of (record schema, column map) --
+            // within one batch no DDL can land between two records (the DDL
+            // barrier drains the writers first, spec 06.01) -- so it runs once
+            // per Connect schema per column-map instance, not once per row
+            // (Spec 04.06 section 3.1). A refreshed map is a new instance and
+            // is checked again; only a consistent verdict is memoised.
+            Struct witness = record.getAfterStruct() != null
+                    ? record.getAfterStruct() : record.getBeforeStruct();
+            Schema witnessSchema = witness == null ? null : witness.schema();
+            if (witnessSchema == null
+                    || verifiedSchemas.get(witnessSchema) != columnNameToDataTypeMap) {
+                Map<String, String> verified = refreshIfRecordHasUnknownColumn(
+                        record, columnNameToDataTypeMap, tableName, databaseName,
+                        connection, config);
+                if (verified != null) {
+                    columnNameToDataTypeMap = verified;
+                } else if (witnessSchema != null) {
+                    verifiedSchemas.put(witnessSchema, columnNameToDataTypeMap);
+                }
             }
 
             // A replicated truncation (MySQL's own TRUNCATE, delivered as a
@@ -364,8 +441,19 @@ public class GroupInsertQueryWithBatchRecords {
         // and is still omitted.
         List<Field> schemaFields = schemaFieldsFor(record, modifiedFields);
 
-        MutablePair<String, Map<String, Integer>> response =
-                new QueryFormatter().getInsertQueryUsingInputFunction(
+        // The template is a function of the membership field list, the column
+        // map and the database name (everything else is this grouper's own
+        // state or the connector configuration), so it is built once per such
+        // key per batch and reused -- the same SQL text and the same
+        // parameter-index map object -- for every later record with that key
+        // (Spec 04.06 section 3.1). Building it per row was half of the whole
+        // grouping cost of a 10,000-row batch.
+        TemplateKey templateKey = new TemplateKey(
+                schemaFields != null ? schemaFields : modifiedFields,
+                columnNameToDataTypeMap, record.getDatabase());
+        MutablePair<String, Map<String, Integer>> response = templateMemo.get(templateKey);
+        if (response == null) {
+            response = new QueryFormatter().getInsertQueryUsingInputFunction(
                         tableName, modifiedFields, columnNameToDataTypeMap,
                         config.getBoolean(
                                 ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA
@@ -386,6 +474,10 @@ public class GroupInsertQueryWithBatchRecords {
                                         ClickHouseSinkConnectorConfigVariables
                                                 .REPLACING_MERGE_TREE_DELETE_COLUMN.toString()),
                         schemaFields, versionColumn, signColumn);
+            if (response != null && response.getKey() != null && response.getValue() != null) {
+                templateMemo.put(templateKey, response);
+            }
+        }
 
         if (response == null || response.getKey() == null || response.getValue() == null) {
             throw new IllegalStateException(String.format(
