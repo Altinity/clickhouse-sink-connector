@@ -7,6 +7,7 @@ Specifies the translation and timezone adjustment of MySQL date and time types t
 
 ## 2. Codebase Mapping on 2.11.0
 - **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/converters/ClickHouseDataTypeMapper.java`
+- **Converters**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/converters/DebeziumConverter.java` — `TimestampConverter`, `MicroTimestampConverter`, `ZonedTimestampConverter`, `epochText(Instant)`, `bindsAsEpochText(ClickHouseDataType, Instant)` (§3.1.4)
 - **Debezium property defaults (lightweight)**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java` — `ensureTimeAdjusterDisabled(Properties)`, `ENABLE_TIME_ADJUSTER`, called from `setupDebeziumEventCapture` next to the `column.propagate.source.type` default
 
 ---
@@ -17,7 +18,7 @@ Specifies the translation and timezone adjustment of MySQL date and time types t
 |---|---|---|
 | `DATE` | `Date` / `Date32` | Converted from epoch days to `java.time.LocalDate` |
 | `DATETIME` | `DateTime64(p, 'UTC')` (auto-create, §3.1.3) | Zone-less digits; decoded as Debezium encoded them (§3.1.1); shifted only when an explicit source zone differs from the session zone (§3.1.2) |
-| `TIMESTAMP` | `DateTime64(6, 'UTC')` (auto-create) | An instant (Debezium `ZonedTimestamp`, ISO-8601 in UTC); formatted in the **column's declared zone**, else the session zone (§3.1.3) |
+| `TIMESTAMP` | `DateTime64(6, 'UTC')` (auto-create) | An instant (Debezium `ZonedTimestamp`, ISO-8601 in UTC); bound as **epoch text** into a `DateTime64` column (§3.1.4); formatted in the column's declared zone, else the session zone, only for a `DateTime`/`String` column (§3.1.3) |
 | `TIME` | `String` | Signed duration, `-838:59:59.000000` .. `838:59:59.000000` (see §3.2) |
 | `YEAR` | `UInt16` / `Int32` | 4-digit calendar year |
 
@@ -104,6 +105,58 @@ columns in the configured session zone, so under a DST session zone a
 DATETIME gap time replicated through a DDL-created column is still stored
 shifted by ClickHouse itself; declaring `'UTC'` there as well is the
 outstanding fix.
+
+#### 3.1.4 An instant bound into a `DateTime64` column is epoch text, not local digits
+Rendering an instant as wall-clock digits in the column's zone (§3.1.3) is
+exact only where that zone maps every wall time to one instant. In the
+fall-back overlap hour it does not: two instants share the same digits, and
+ClickHouse resolves the digits to the **first** occurrence. Measured with
+`clickhouse local` 24.8.14 into `DateTime64(6, 'America/Chicago')`:
+`'2026-11-01 01:30:00.000000'` reads back as `06:30:00 UTC` (CDT), so the
+instant `07:30:00 UTC` (CST, one hour later, the same digits) cannot be
+stored through digits at all. The same measurement shows epoch text is exact:
+`'1793518200.000000'` reads back as `07:30:00 UTC` and `'1793514600.000000'`
+as `06:30:00 UTC`, for any column zone (`'UTC'`, `'America/Chicago'`, none,
+`Nullable`), any precision (`DateTime64(0)`, `(3)`, `(6)`), and for negative
+epochs (`'-2208988800.000000'` is `1900-01-01 00:00:00`). MySQL binlogs a
+`TIMESTAMP` as the instant, and Debezium delivers that instant exactly
+(`ZonedTimestamp`, ISO-8601 in UTC), so the digits rendering lost fidelity
+that the source never lost: a session with `time_zone=SYSTEM` (glibc
+`mktime`) resolves an overlap wall time to the second occurrence, the
+connector rendered it as the ambiguous digits, and ClickHouse stored the first
+occurrence — one hour early, row counts intact.
+
+Rule — an instant is bound as epoch text whenever the target column is
+`DateTime64`:
+- `DebeziumConverter.epochText(Instant)` renders `<seconds>.<6 fraction digits>`
+  (`java.math.BigDecimal`, scale 6, truncated; sub-microsecond digits are
+  dropped exactly as the `MICROS_FORMAT` digits rendering dropped them).
+- `ZonedTimestampConverter.convert(value, zone, ClickHouseDataType, policy)`
+  parses and bounds the instant as before (§3.3; the PostgreSQL `infinity`
+  literals bound to the `DateTime64` limits) and returns epoch text for a
+  `DateTime64` target. `ClickHouseDataTypeMapper.convert` passes the target
+  column's type, so a `TIMESTAMP` replicated into a `String` or `DateTime`
+  column is still bound as digits (§3.1.3; the policy-less and type-less
+  overloads keep the digits contract).
+- The different-zones branch of `TimestampConverter` / `MicroTimestampConverter`
+  (§3.1.1: `DATETIME` digits converted to an instant because the operator
+  declared a source zone) binds that instant as epoch text for a `DateTime64`
+  target, including a saturated instant (the bound is an instant too). The
+  same-zone branch is unaffected: digits are not an instant, and are bound as
+  digits in any column zone.
+- Exclusions, each measured on 24.8.14: a `DateTime`/`DateTime32` column
+  rejects epoch text (`'1793518200'` fails with `Cannot parse DateTime from
+  String`), so a `DateTime` target keeps the digits rendering of §3.1.3 — the
+  overlap ambiguity remains for that type and is documented here rather than
+  hidden; and ClickHouse drops the sign of an epoch between `-1` and `0`
+  (`'-0.500000'` reads back as `1970-01-01 00:00:00.500000`, while
+  `'-1.500000'` and `'-2208988799.500000'` are exact), so the one second
+  before `1970-01-01 00:00:00 UTC` is bound as digits as well
+  (`DebeziumConverter.bindsAsEpochText`). MySQL `TIMESTAMP` starts at
+  `1970-01-01 00:00:01 UTC` and cannot hold that second.
+- The column zone resolved by §3.1.3 is therefore no longer part of the
+  stored value for a `DateTime64` instant: the same instant binds the same
+  text into a `'UTC'`, an `'America/Chicago'` and an unzoned column.
 
 ### 3.2 `TIME` is a signed duration, not a time of day
 MySQL `TIME` ranges from `-838:59:59` to `838:59:59` (it stores elapsed time and
@@ -261,23 +314,55 @@ default. When `enable.time.adjuster` is absent or blank it is set to `false`
   gap time. With source `America/Chicago` and session `UTC` the gap digits use
   the pre-transition offset (`08:30:00` UTC), matching `MicroTimestampConverter`.
 - `PreparedStatementFieldMapperColumnZoneTest.testTimestampIntoUtcColumnWhenSessionZoneIsChicago()`
-  — §3.1.3 end to end through `insertPreparedStatement`: `ZonedTimestamp`
+  — §3.1.3/§3.1.4 end to end through `insertPreparedStatement`: `ZonedTimestamp`
   `2022-01-01T16:00:00Z` into a `Nullable(DateTime64(6, 'UTC'))` column with
-  session zone `America/Chicago` binds `2022-01-01 16:00:00.000000` (pre-fix:
-  `10:00:00.000000`).
+  session zone `America/Chicago` binds the instant as epoch text
+  `1641052800.000000` (the §3.1.3 revision bound `2022-01-01 16:00:00.000000`;
+  the pre-§3.1.3 code `10:00:00.000000`, an instant six hours early).
 - `PreparedStatementFieldMapperColumnZoneTest.testEmptySourceZoneKeepsDatetimeDigits()`
   — §3.1.2: with `database.connectionTimeZone` empty and session zone
   `America/Chicago`, DATETIME(3) and DATETIME(6) digits `10:00:00` are bound
   unchanged (pre-fix: `04:00:00`).
 - `PreparedStatementFieldMapperColumnZoneTest.testExplicitSourceZoneShiftsIntoTheColumnZone()`
-  — §3.1.2/§3.1.3: `database.connectionTimeZone=UTC`, session
-  `America/Chicago`: digits `10:00:00` into a `'UTC'` column bind `10:00:00`
-  (the instant 10:00Z rendered in the column zone; pre-fix `04:00:00`), and
-  into a column without a declared zone bind `04:00:00` (the session zone —
-  the operator asked for the shift).
+  — §3.1.2/§3.1.4: `database.connectionTimeZone=UTC`, session
+  `America/Chicago`: digits `10:00:00` are the instant 10:00Z and bind the
+  epoch text `1641031200.000000` into a `'UTC'` `DateTime64` column and into a
+  `DateTime64` column without a declared zone alike (the §3.1.3 revision bound
+  `10:00:00` and `04:00:00` respectively; the pre-§3.1.3 code `04:00:00` into
+  the `'UTC'` column, six hours early), while `TIMESTAMP` 16:00Z binds
+  `1641052800.000000`.
 - `DebeziumConverterTest.testTimestampIntoUtcColumnWhenServerZoneIsChicago()`
   — the converter-level contract of §3.1.3 for `TimestampConverter`,
-  `MicroTimestampConverter` and `ZonedTimestampConverter`.
+  `MicroTimestampConverter` and `ZonedTimestampConverter`: the digits
+  overloads render in the column zone; the different-zones `DateTime64`
+  instant is epoch text (§3.1.4) whether or not the column declares a zone.
+- `DebeziumConverterTest.testInstantsBindAsEpochTextIntoDateTime64()` —
+  §3.1.4: the two `America/Chicago` overlap instants `2026-11-01T06:30:00Z`
+  and `2026-11-01T07:30:00Z` render the same digits
+  (`2026-11-01 01:30:00.000000`) but distinct epoch text
+  (`1793514600.000000` / `1793518200.000000`); microseconds are kept and a
+  seventh fraction digit is truncated; the PostgreSQL `infinity` literals and a
+  clamped out-of-range instant bind the `DateTime64` bounds as epoch text
+  (`10413791999.000000` / `-2208988800.000000`); a `DateTime` or `String`
+  target and the type-less overload keep the digits; the second before the
+  epoch (`1969-12-31T23:59:59.5Z`) keeps the digits; the different-zones
+  `TimestampConverter` / `MicroTimestampConverter` instant is epoch text for
+  `DateTime64` and digits for `DateTime`, and a same-zone digits decode is
+  unchanged. Pre-fix every `DateTime64` case returns the digits, so the test
+  fails on it.
+- `DebeziumConverterTest.testTimestampConverterGapTimePreserved()` — the
+  different-zones assertions (`08:30:00 UTC`, `15:00:00 UTC`) are epoch text
+  under §3.1.4 (`1772958600.000000`, `1782918000.000000`).
+- `PreparedStatementFieldMapperColumnZoneTest.testOverlapInstantBindsExactEpochIntoChicagoColumn()`
+  — §3.1.4 end to end through `insertPreparedStatement`: `ZonedTimestamp`
+  `2026-11-01T07:30:00Z` into a `Nullable(DateTime64(6, 'America/Chicago'))`
+  column binds `1793518200.000000`; pre-fix it bound
+  `2026-11-01 01:30:00.000000`, which ClickHouse stores as `06:30:00 UTC`. The
+  same value into a `String` column and into a `DateTime('UTC')` column binds
+  the digits.
+- `DebeziumConverterRangePolicyTest.strictPolicyNamesColumnValueAndBounds()`
+  — the `DateTime64` overload of `ZonedTimestampConverter.convert` throws the
+  same `ValueOutOfRangeException` under the strict policy, so nothing is bound.
 - `ClickHouseDataTypeMapperTimeZoneTest` — `resolveSourceTimeZone` (empty →
   session zone, set → parsed, garbage → throws) and `columnTimeZone` (parses
   `Nullable(DateTime64(3, 'UTC'))`, `DateTime('Europe/London')`; null for

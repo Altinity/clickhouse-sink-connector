@@ -260,13 +260,14 @@ output of the unmemoised 2.11.0 code path.
   sequence that binding each row through a fresh mapper produces.
 - `PreparedStatementFieldMapperColumnBindingMemoTest.bindingIsRebuiltForADifferentColumnMap`
   — the same mapper, the same row, a second column map instance declaring a
-  different zone for a `DateTime64` column: the rendered instant follows the
-  second map's zone. A memo that survived the map change would render the
-  first zone.
+  different type for the `TIMESTAMP` column (`DateTime64(6, 'UTC')`, then
+  `String`): the bound value follows the second map's type (epoch text for
+  `DateTime64`, digits for `String` — Spec 07.03 sections 3.1.3/3.1.4). A memo
+  that survived the map change would bind the first type's rendering.
 - `PreparedStatementFieldMapperColumnBindingMemoTest.bindingIsRebuiltWhenTheDeclaredTypeChangesInPlace`
   — section 3.5 item 5/7: the same map instance with a column's declared
-  zone changed in place re-parses the column; the next row renders in the new
-  zone.
+  type changed in place re-parses the column; the next row binds the new
+  type's rendering.
 - `GroupInsertQueryDdlMemoTest.preAndPostAlterRecordsInOneBatchGetTheirOwnTemplates`
   — section 3.5 item 2: pre-ALTER rows group under a template without the new
   column and post-ALTER rows under one with it, interleaved in one batch, with

@@ -10,6 +10,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.sql.Date;import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.zone.ZoneOffsetTransition;
@@ -36,6 +37,39 @@ public class DebeziumConverter {
     static final DateTimeFormatter MICROS_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS");
     static final DateTimeFormatter EIGHT_DIGIT_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSS");
     static final DateTimeFormatter NANOS_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSSS");
+
+    /**
+     * Renders an instant as epoch text, {@code <seconds>.<6 fraction digits>}
+     * (Spec 07.03 section 3.1.4). ClickHouse parses this into a
+     * {@code DateTime64} column exactly, whatever zone the column declares,
+     * whereas wall-clock digits are ambiguous in a fall-back overlap hour:
+     * {@code '2026-11-01 01:30:00'} in {@code America/Chicago} names two
+     * instants and ClickHouse stores the first, so the second cannot be
+     * stored through digits at all. Sub-microsecond digits are truncated, as
+     * {@link #MICROS_FORMAT} truncates them.
+     */
+    static String epochText(Instant instant) {
+        return BigDecimal.valueOf(instant.getEpochSecond())
+                .add(BigDecimal.valueOf(instant.getNano(), 9))
+                .setScale(6, RoundingMode.DOWN)
+                .toPlainString();
+    }
+
+    /**
+     * Whether an instant bound into a column of {@code targetType} is rendered
+     * as {@link #epochText(Instant)} (Spec 07.03 section 3.1.4). Only a
+     * {@code DateTime64} column parses epoch text ({@code DateTime} rejects
+     * {@code '1793518200'}: "Cannot parse DateTime from String", measured on
+     * 24.8.14), and ClickHouse drops the sign of an epoch between -1 and 0
+     * ({@code '-0.500000'} reads back as +0.5 s), so the second before
+     * 1970-01-01 00:00:00 UTC keeps the digits rendering.
+     */
+    static boolean bindsAsEpochText(ClickHouseDataType targetType, Instant instant) {
+        if (targetType != ClickHouseDataType.DateTime64) {
+            return false;
+        }
+        return !(instant.getEpochSecond() == -1L && instant.getNano() > 0);
+    }
 
     /**
      * Raised when a source value does not fit the ClickHouse column type and
@@ -314,6 +348,12 @@ public class DebeziumConverter {
 
             boolean[] rangeExceeded = new boolean[1];
             Instant modifiedDT = policy.boundDateTime(i, clickHouseDataType, rangeExceeded);
+            // The digits are now an instant; into a DateTime64 column it is
+            // bound as epoch text, which no column zone can misread
+            // (Spec 07.03 section 3.1.4). A saturated instant is an instant too.
+            if (bindsAsEpochText(clickHouseDataType, modifiedDT)) {
+                return epochText(modifiedDT);
+            }
             if(rangeExceeded[0]) {
                 return modifiedDT.atZone(ZoneOffset.UTC).format(destFormatter).toString();
             }
@@ -394,6 +434,12 @@ public class DebeziumConverter {
             Instant i = wallTime.toInstant(sourceOffset);
 
             Instant modifiedDTWithLimits = policy.boundDateTime(i, clickHouseDataType, rangeExceeded);
+            // The digits are now an instant; into a DateTime64 column it is
+            // bound as epoch text, which no column zone can misread
+            // (Spec 07.03 section 3.1.4). A saturated instant is an instant too.
+            if (bindsAsEpochText(clickHouseDataType, modifiedDTWithLimits)) {
+                return epochText(modifiedDTWithLimits);
+            }
             if (rangeExceeded[0]) {
                 // return the modifiedDTWithLimits as a string without timezone conversion
                 return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
@@ -591,8 +637,33 @@ public class DebeziumConverter {
          * numbers but values with no finite representation.
          */
         public static String convert(Object value, ZoneId serverTimezone, RangePolicy policy) {
+            return convert(value, serverTimezone, null, policy);
+        }
 
-            DateTimeFormatter destFormatter = MICROS_FORMAT.withZone(serverTimezone);
+        /**
+         * As {@link #convert(Object, ZoneId, RangePolicy)}, for a target column
+         * of {@code targetType}. Into a {@code DateTime64} column the bounded
+         * instant is rendered as epoch text (Spec 07.03 section 3.1.4), which
+         * ClickHouse parses exactly in any column zone; wall-clock digits in
+         * {@code serverTimezone} name two instants in a fall-back overlap hour
+         * and ClickHouse stores the first. A {@code DateTime} or {@code String}
+         * target (or a null type, the contract of the older overloads) keeps
+         * the digits rendering of section 3.1.3.
+         */
+        public static String convert(Object value, ZoneId serverTimezone, ClickHouseDataType targetType,
+                                     RangePolicy policy) {
+            Instant bounded = boundedInstant(value, serverTimezone, policy);
+            if (bindsAsEpochText(targetType, bounded)) {
+                return epochText(bounded);
+            }
+            return ZonedDateTime.ofInstant(bounded, serverTimezone).format(MICROS_FORMAT.withZone(serverTimezone));
+        }
+
+        /**
+         * Parses the Debezium {@code ZonedTimestamp} text and applies
+         * {@code policy} to an instant outside the DateTime64 range.
+         */
+        static Instant boundedInstant(Object value, ZoneId serverTimezone, RangePolicy policy) {
 
             // PostgreSQL timestamptz accepts the special values infinity and
             // -infinity, which Debezium delivers verbatim as these literal
@@ -607,13 +678,9 @@ public class DebeziumConverter {
             if (value instanceof String) {
                 String literal = ((String) value).trim();
                 if (POSITIVE_INFINITY.equalsIgnoreCase(literal)) {
-                    return ZonedDateTime.ofInstant(
-                            Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX),
-                            serverTimezone).format(destFormatter);
+                    return Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX);
                 } else if (NEGATIVE_INFINITY.equalsIgnoreCase(literal)) {
-                    return ZonedDateTime.ofInstant(
-                            Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN),
-                            serverTimezone).format(destFormatter);
+                    return Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN);
                 }
             }
 
@@ -661,8 +728,7 @@ public class DebeziumConverter {
             }
             // Bounded outside the parse loop: a rejected value must fail the
             // batch, not be mistaken for a format mismatch.
-            Instant bounded = policy.boundZonedTimestamp(parsed.toInstant());
-            return ZonedDateTime.ofInstant(bounded, serverTimezone).format(destFormatter);
+            return policy.boundZonedTimestamp(parsed.toInstant());
         }
     }
 

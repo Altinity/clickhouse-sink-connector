@@ -573,11 +573,13 @@ public class ClickHouseDataTypeMapper {
             if (schemaName != null
                     && schemaName.equalsIgnoreCase(ZonedTimestamp.SCHEMA_NAME)) {
                 // MySQL(Timestamp) -> String, name(ZonedTimestamp) ->
-                // ClickHouse(DateTime)
+                // ClickHouse(DateTime64): the instant is bound as epoch text,
+                // exact in any column zone (Spec 07.03 section 3.1.4); a
+                // DateTime or String target keeps the digits in the column zone.
                 ps.setString(
                         index,
                         DebeziumConverter.ZonedTimestampConverter
-                                .convert(value, instantFormatZone, rangePolicy));
+                                .convert(value, instantFormatZone, clickHouseDataType, rangePolicy));
             } else if (schemaName != null
                     && schemaName.equalsIgnoreCase(Json.LOGICAL_NAME)) {
                 // if the column is JSON,

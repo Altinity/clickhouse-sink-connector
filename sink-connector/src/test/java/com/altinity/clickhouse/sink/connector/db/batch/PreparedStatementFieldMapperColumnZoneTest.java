@@ -109,7 +109,11 @@ public class PreparedStatementFieldMapperColumnZoneTest {
 
     private static Map<Integer, String> bind(ClickHouseSinkConnectorConfig config,
                                              Map<String, String> columns) throws Exception {
-        Struct after = row();
+        return bind(config, row(), columns);
+    }
+
+    private static Map<Integer, String> bind(ClickHouseSinkConnectorConfig config, Struct after,
+                                             Map<String, String> columns) throws Exception {
         ClickHouseStruct record = new ClickHouseStruct(
                 0L, "topic", null, 0, System.currentTimeMillis(),
                 null, after, null, ClickHouseConverter.CDC_OPERATION.CREATE);
@@ -124,19 +128,50 @@ public class PreparedStatementFieldMapperColumnZoneTest {
     }
 
     /**
-     * Spec 07.03 section 3.1.3: a TIMESTAMP is an instant. Written into a
-     * 'UTC' column through an America/Chicago session it must be rendered in
-     * UTC, or ClickHouse stores an instant six hours early.
+     * Spec 07.03 sections 3.1.3 / 3.1.4: a TIMESTAMP is an instant. Written
+     * into a DateTime64 column it is bound as epoch text, which ClickHouse
+     * parses exactly in any column zone; rendered in the session zone
+     * (America/Chicago) the pre-3.1.3 code stored an instant six hours early.
      */
     @Test
-    @DisplayName("TIMESTAMP into a DateTime64(6,'UTC') column is formatted in UTC, not in the session zone")
+    @DisplayName("TIMESTAMP into a DateTime64(6,'UTC') column binds the instant as epoch text")
     public void testTimestampIntoUtcColumnWhenSessionZoneIsChicago() throws Exception {
         Map<Integer, String> bound = bind(new ClickHouseSinkConnectorConfig(new HashMap<>()),
                 columns("Nullable(DateTime64(6, 'UTC'))", "DateTime64(3, 'UTC')", "DateTime64(6, 'UTC')"));
 
-        assertEquals("2022-01-01 16:00:00.000000", bound.get(2),
-                "16:00Z rendered in the column's zone (UTC); the session zone (America/Chicago) "
-                        + "would store 10:00 UTC, an instant six hours early");
+        assertEquals("1641052800.000000", bound.get(2),
+                "16:00Z is the instant 1641052800; digits rendered in the session zone "
+                        + "(America/Chicago) would store 10:00 UTC, an instant six hours early");
+    }
+
+    /**
+     * Spec 07.03 section 3.1.4: in the America/Chicago fall-back hour the
+     * digits '2026-11-01 01:30:00' name two instants, and ClickHouse stores the
+     * first (06:30 UTC; measured with clickhouse local 24.8.14). A TIMESTAMP of
+     * the second occurrence (07:30 UTC) can therefore only be stored as epoch
+     * text. A String or DateTime column keeps the digits.
+     */
+    @Test
+    @DisplayName("Overlap-hour TIMESTAMP into a DateTime64(6,'America/Chicago') column binds the exact epoch")
+    public void testOverlapInstantBindsExactEpochIntoChicagoColumn() throws Exception {
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+        Struct after = row().put("ts", "2026-11-01T07:30:00Z");
+
+        Map<Integer, String> chicagoColumn = bind(config, after,
+                columns("Nullable(DateTime64(6, 'America/Chicago'))", "DateTime64(3, 'UTC')", "DateTime64(6, 'UTC')"));
+        assertEquals("1793518200.000000", chicagoColumn.get(2),
+                "the second occurrence of 01:30 America/Chicago is 07:30Z = 1793518200; the digits "
+                        + "'2026-11-01 01:30:00.000000' would be stored as 06:30Z, an hour early");
+
+        Map<Integer, String> stringColumn = bind(config, after,
+                columns("String", "DateTime64(3, 'UTC')", "DateTime64(6, 'UTC')"));
+        assertEquals("2026-11-01 01:30:00.000000", stringColumn.get(2),
+                "a String column stores the digits rendered in the session zone");
+
+        Map<Integer, String> dateTimeColumn = bind(config, after,
+                columns("DateTime('UTC')", "DateTime64(3, 'UTC')", "DateTime64(6, 'UTC')"));
+        assertEquals("2026-11-01 07:30:00.000000", dateTimeColumn.get(2),
+                "a DateTime column rejects epoch text, so it keeps the digits in the column zone");
     }
 
     /**
@@ -156,13 +191,13 @@ public class PreparedStatementFieldMapperColumnZoneTest {
     }
 
     /**
-     * Spec 07.03 sections 3.1.2 / 3.1.3: an operator who declares a source
+     * Spec 07.03 sections 3.1.2 / 3.1.4: an operator who declares a source
      * zone different from the session zone asks for a wall-clock shift. The
-     * shifted instant is rendered in the column's zone when it declares one,
-     * and in the session zone otherwise.
+     * shifted value is an instant, bound into a DateTime64 column as epoch
+     * text whether or not the column declares a zone.
      */
     @Test
-    @DisplayName("Explicit different source zone shifts DATETIME; the instant is rendered in the column zone")
+    @DisplayName("Explicit different source zone shifts DATETIME; the instant binds as epoch text")
     public void testExplicitSourceZoneShiftsIntoTheColumnZone() throws Exception {
         Map<String, String> props = new HashMap<>();
         props.put("database.connectionTimeZone", "UTC");
@@ -170,17 +205,17 @@ public class PreparedStatementFieldMapperColumnZoneTest {
 
         Map<Integer, String> utcColumns = bind(config,
                 columns("DateTime64(6, 'UTC')", "DateTime64(3, 'UTC')", "DateTime64(6, 'UTC')"));
-        assertEquals("2022-01-01 10:00:00.000", utcColumns.get(3),
-                "10:00 UTC wall time is the instant 10:00Z; rendered in the UTC column it is 10:00");
-        assertEquals("2022-01-01 10:00:00.00000000", utcColumns.get(4));
+        assertEquals("1641031200.000000", utcColumns.get(3),
+                "10:00 UTC wall time is the instant 10:00Z = 1641031200");
+        assertEquals("1641031200.000000", utcColumns.get(4));
 
         Map<Integer, String> sessionColumns = bind(config,
                 columns("DateTime64(6)", "DateTime64(3)", "DateTime64(6)"));
-        assertEquals("2022-01-01 04:00:00.000", sessionColumns.get(3),
-                "a column without a declared zone is parsed by ClickHouse in the session zone, "
-                        + "so the same instant is rendered as 04:00 America/Chicago");
-        assertEquals("2022-01-01 04:00:00.00000000", sessionColumns.get(4));
-        assertEquals("2022-01-01 10:00:00.000000", sessionColumns.get(2),
-                "TIMESTAMP 16:00Z rendered in the session zone (America/Chicago) is 10:00");
+        assertEquals("1641031200.000000", sessionColumns.get(3),
+                "a column without a declared zone is parsed by ClickHouse in the session zone; "
+                        + "epoch text is the same instant there too");
+        assertEquals("1641031200.000000", sessionColumns.get(4));
+        assertEquals("1641052800.000000", sessionColumns.get(2),
+                "TIMESTAMP 16:00Z = 1641052800");
     }
 }
