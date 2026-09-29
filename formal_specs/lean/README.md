@@ -50,7 +50,8 @@ formal_specs/lean/
     ├── VersionFloor.lean              # Version floor across a restart (Invariant I2 at the boundary, specs 02.02/02.04): seeded floor orders the new run above the old; heartbeats never touch the sequence
     ├── CreateTable.lean               # CREATE TABLE sorting-key selection (Specs 06.05 §3.6 / 08.05 §3.2): never ORDER BY tuple(), declared key wins, nullable fallback key needs allow_nullable_key
     ├── PkRebuild.lean                 # Primary-key change rebuild (Spec 06.09 §3.3, §3.6, §4): re-keying the FINAL live set by an injective map keeps every live row exactly once, versions unchanged; the online backfill never shadows a post-DDL row and is idempotent
-    └── History.lean                   # Replication history modes (Specs 12.01/12.03/12.05): corrected SCD2 UPDATE/DELETE/bulk-close row sets over the FINAL view at (pk, _valid_to) — one version per event, before-key close, key-change marker, open-row convergence, closed-row visibility, TRUNCATE/DROP TABLE bulk close hides every key and destroys nothing; old_* witnesses of the shipped defects (inline UPDATE, close/before tie, after-image key); the history version domain (Spec 12.03 §3.5.1): the snowflake encoding is strictly monotone and a row written by 2.11.0 or by the fixed build is superseded by the other build's next event (upgrade/downgrade safety), with the raw-sequence freeze as an old_* witness; log-only gating, routing parity and database-level DDL ignored on both execution engines
+    ├── History.lean                   # Replication history modes (Specs 12.01/12.03/12.05): corrected SCD2 UPDATE/DELETE/bulk-close row sets over the FINAL view at (pk, _valid_to) — one version per event, before-key close, key-change marker, open-row convergence, closed-row visibility, TRUNCATE/DROP TABLE bulk close hides every key and destroys nothing; old_* witnesses of the shipped defects (inline UPDATE, close/before tie, after-image key); the history version domain (Spec 12.03 §3.5.1): the snowflake encoding is strictly monotone and a row written by 2.11.0 or by the fixed build is superseded by the other build's next event (upgrade/downgrade safety), with the raw-sequence freeze as an old_* witness; log-only gating, routing parity and database-level DDL ignored on both execution engines
+    └── KeyRouting.lean                # Key-aware row routing (Spec 03.07): the same row maps to one shard so per-row binlog order is preserved, disjoint rows route independently (parallel), the routed substream is a sublist of the source, the drain barrier totally orders a TRUNCATE against every shard (with an unbarriered-reorder counterexample), and replay after a restart never lowers the converged per-key version
 ```
 
 ---
@@ -336,6 +337,21 @@ pinned in `lean-toolchain` on every pull request and on pushes to `2.11.0`, and
 rejects any `sorry` / `admit` / `native_decide`.
 
 ## 6. Verification & Toolchain Instructions
+
+### Key-aware row routing (Spec 03.07, `KeyRouting.lean`)
+
+The routing token is `(table, key)` for a keyed DML record and the table alone
+otherwise (a TRUNCATE row-event or a record with no primary key). The model
+proves the token is order- and convergence-safe.
+
+| Theorem Name | Statement | Significance |
+|---|---|---|
+| `same_key_same_shard` | same table + same key + DML route to one shard | every change to a row lands on one worker queue, drained in binlog order |
+| `disjoint_keys_independent` | distinct keys of one table can route to different shards | disjoint rows are applied in parallel with no cross-shard order |
+| `per_key_order_preserved` | the routed substream for a shard is a `Sublist` of the source | a shard's queue keeps the source's relative (binlog) order |
+| `barrier_totally_orders_truncate` | under the drain barrier, every record is `< t`, `= t`, or `> t` by sequence | a TRUNCATE is totally ordered against every shard |
+| `truncate_unbarriered_can_reorder` | an unbarriered interleaving can apply a later row before the truncate | why the barrier is required |
+| `recovery_converges` | replaying a redelivered prefix never lowers `finalVersion` | recovery from any offset is idempotent under version selection |
 
 ### Prerequisites
 Install `elan` (the Lean version manager):

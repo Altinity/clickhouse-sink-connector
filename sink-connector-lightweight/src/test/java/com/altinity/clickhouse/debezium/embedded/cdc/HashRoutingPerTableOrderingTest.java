@@ -203,4 +203,100 @@ public class HashRoutingPerTableOrderingTest {
         assertTrue(firstSeq < secondSeq,
                 "a later handoff must receive a strictly greater sequence (binlog order)");
     }
+
+    private static ClickHouseStruct recKeyed(String topic, String key) {
+        ClickHouseStruct s = new ClickHouseStruct();
+        s.setTopic(topic);
+        s.setKey(key);
+        java.util.ArrayList<String> pk = new java.util.ArrayList<>();
+        pk.add("id");
+        s.setPrimaryKey(pk);
+        s.setCdcOperation(com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.CREATE);
+        return s;
+    }
+
+    @Test
+    @DisplayName("Under key routing, distinct rows of one table spread across more than one queue")
+    public void differentRowsOfOneTableCanRouteToDifferentQueues() throws Exception {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        List<LinkedBlockingQueue<RoutedBatch>> queues = wireCapture(capture);
+
+        List<ClickHouseStruct> records = new ArrayList<>();
+        for (int id = 1; id <= 24; id++) {
+            records.add(recKeyed("srv.db.orders", "Struct{id=" + id + "}"));
+        }
+        route(capture, records);
+
+        int nonEmpty = 0;
+        for (LinkedBlockingQueue<RoutedBatch> q : queues) {
+            if (!q.isEmpty()) {
+                nonEmpty++;
+            }
+        }
+        assertTrue(nonEmpty > 1,
+                "distinct rows of one hot table must spread across more than one worker queue "
+                        + "(was " + nonEmpty + ")");
+    }
+
+    @Test
+    @DisplayName("Under key routing, every change to one row stays on a single queue in order")
+    public void sameRowKeyStaysOnOneQueue() throws Exception {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        List<LinkedBlockingQueue<RoutedBatch>> queues = wireCapture(capture);
+
+        // Three changes to the same row in one poll batch: one group, one queue.
+        List<ClickHouseStruct> first = new ArrayList<>();
+        first.add(recKeyed("srv.db.orders", "Struct{id=7}"));
+        first.add(recKeyed("srv.db.orders", "Struct{id=7}"));
+        first.add(recKeyed("srv.db.orders", "Struct{id=7}"));
+        route(capture, first);
+
+        int owner = RoutedBatch.calculateThreadId(
+                RoutedBatch.createShardKey(first.get(0), true), POOL);
+        assertEquals(1, queues.get(owner).size(),
+                "all changes to one row in a batch must be one routed group on one queue");
+        assertEquals(3, queues.get(owner).peek().getBatch().size(),
+                "the group must hold all three changes to the row, in order");
+        for (int i = 0; i < POOL; i++) {
+            if (i != owner) {
+                assertTrue(queues.get(i).isEmpty(),
+                        "no other queue may receive this row (queue " + i + ")");
+            }
+        }
+
+        // A later change to the same row lands on the SAME queue.
+        List<ClickHouseStruct> second = new ArrayList<>();
+        second.add(recKeyed("srv.db.orders", "Struct{id=7}"));
+        route(capture, second);
+        assertEquals(2, queues.get(owner).size(),
+                "a later change to the same row must queue on the same worker, preserving order");
+    }
+
+    @Test
+    @DisplayName("A poll batch with a truncate-table event splits into ordered segments")
+    public void truncateInMixedBatchSplitsIntoOrderedSegments() throws Exception {
+        ClickHouseStruct ins1 = recKeyed("srv.db.orders", "Struct{id=1}");
+        ClickHouseStruct trunc = new ClickHouseStruct();
+        trunc.setTopic("srv.db.orders");
+        trunc.setCdcOperation(com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.TRUNCATE);
+        ClickHouseStruct ins2 = recKeyed("srv.db.orders", "Struct{id=2}");
+
+        List<ClickHouseStruct> batch = new ArrayList<>();
+        batch.add(ins1);
+        batch.add(trunc);
+        batch.add(ins2);
+
+        Method m = DebeziumChangeEventCapture.class.getDeclaredMethod("splitAtTruncate", List.class);
+        m.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        List<List<ClickHouseStruct>> segs = (List<List<ClickHouseStruct>>) m.invoke(null, batch);
+
+        assertEquals(3, segs.size(), "pre-DML | truncate-table | post-DML");
+        assertTrue(segs.get(0).size() == 1 && segs.get(0).get(0) == ins1,
+                "the DML before the truncate-table event is its own segment, in source order");
+        assertTrue(segs.get(1).size() == 1 && segs.get(1).get(0) == trunc,
+                "the truncate-table event is isolated in its own singleton segment");
+        assertTrue(segs.get(2).size() == 1 && segs.get(2).get(0) == ins2,
+                "the DML after the truncate-table event follows it, in source order");
+    }
 }

@@ -43,6 +43,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 - **[03.04: Destination Database & Table Name Resolution](03-execution-engine/04-destination-resolution.md)**: Override maps, prefixes, and schema suffix templates.
 - **[03.05: HikariCP Connection Pooling & Lifecycle Management](03-execution-engine/05-connection-pooling.md)**: Thread-confined JDBC connections and pooling.
 - **[03.06: PreparedStatement Batch Flushing & Limits](03-execution-engine/06-jdbc-batch-flushing.md)**: `buffer.max.records` and `buffer.flush.time` boundaries.
+- **[03.07: Key-Aware Row Routing](03-execution-engine/07-key-aware-routing.md)**: Route by table + primary-key identity so a hot table spreads across workers while the same row stays on one worker in binlog order; no-PK/TRUNCATE fall back to table-level order.
 
 ---
 

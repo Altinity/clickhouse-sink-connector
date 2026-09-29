@@ -240,4 +240,87 @@ public class RoutedBatchTest {
         int threadId = RoutedBatch.calculateThreadId(tableName, threadPoolSize);
         assertEquals(0, threadId);
     }
+
+    private static ClickHouseStruct keyed(String topic, String key,
+            com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION op) {
+        ClickHouseStruct s = new ClickHouseStruct();
+        s.setTopic(topic);
+        s.setKey(key);
+        java.util.ArrayList<String> pk = new java.util.ArrayList<>();
+        pk.add("id");
+        s.setPrimaryKey(pk);
+        s.setCdcOperation(op);
+        return s;
+    }
+
+    @Test
+    public void testKeyedRecordsOfSameTableSplitAcrossShards() {
+        String topic = "srv.db.orders";
+        ClickHouseStruct r1 = keyed(topic, "Struct{id=1}", com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.CREATE);
+        ClickHouseStruct r2 = keyed(topic, "Struct{id=2}", com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.CREATE);
+
+        String k1 = RoutedBatch.createShardKey(r1, true);
+        String k2 = RoutedBatch.createShardKey(r2, true);
+        // Different rows of one table produce different shard tokens.
+        assertNotEquals(k1, k2, "two rows of one table must produce different shard tokens");
+
+        // And for at least one pool size the two rows land on different threads.
+        boolean split = false;
+        for (int pool : new int[] {2, 3, 4, 7, 10, 16}) {
+            if (RoutedBatch.calculateThreadId(k1, pool)
+                    != RoutedBatch.calculateThreadId(k2, pool)) {
+                split = true;
+                break;
+            }
+        }
+        assertTrue(split, "distinct rows of one table must be able to route to different workers");
+    }
+
+    @Test
+    public void testSameRowKeyAlwaysSameShard() {
+        String topic = "srv.db.orders";
+        ClickHouseStruct a = keyed(topic, "Struct{id=42}", com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.CREATE);
+        ClickHouseStruct b = keyed(topic, "Struct{id=42}", com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.UPDATE);
+
+        String ka = RoutedBatch.createShardKey(a, true);
+        String kb = RoutedBatch.createShardKey(b, true);
+        assertEquals(ka, kb, "the same row must always produce the same shard token");
+        for (int pool : new int[] {2, 3, 4, 7, 10, 16}) {
+            assertEquals(RoutedBatch.calculateThreadId(ka, pool),
+                    RoutedBatch.calculateThreadId(kb, pool),
+                    "the same row must always route to the same worker (pool " + pool + ")");
+        }
+    }
+
+    @Test
+    public void testNullKeyFallsBackToTableShard() {
+        String topic = "srv.db.no_pk";
+        ClickHouseStruct r = new ClickHouseStruct();
+        r.setTopic(topic);
+        r.setCdcOperation(com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.CREATE);
+        // No key / no primary key -> table-level base shard (MySQL COMMIT_ORDER fallback).
+        assertEquals(RoutedBatch.createRoutingKey(topic),
+                RoutedBatch.createShardKey(r, true),
+                "a record with no usable key must route to the table base shard");
+    }
+
+    @Test
+    public void testTruncateFallsBackToTableShard() {
+        String topic = "srv.db.orders";
+        // Even with a key present, a truncate-table event routes to the table base shard.
+        ClickHouseStruct r = keyed(topic, "Struct{id=1}", com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.TRUNCATE);
+        assertEquals(RoutedBatch.createRoutingKey(topic),
+                RoutedBatch.createShardKey(r, true),
+                "a truncate-table event must route to the table base shard");
+    }
+
+    @Test
+    public void testKeyRoutingDisabledUsesTableShard() {
+        String topic = "srv.db.orders";
+        ClickHouseStruct r = keyed(topic, "Struct{id=1}", com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter.CDC_OPERATION.CREATE);
+        // Key routing off restores exact table-level routing.
+        assertEquals(RoutedBatch.createRoutingKey(topic),
+                RoutedBatch.createShardKey(r, false),
+                "with key routing disabled a keyed record must use the table base shard");
+    }
 }
