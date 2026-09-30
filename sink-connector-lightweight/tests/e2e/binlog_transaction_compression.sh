@@ -62,9 +62,12 @@ start_connector(){
     >/dev/null 2>&1 && log "connector started ($CC)"
 }
 
+cleanup(){ for c in $CC $MY $CH; do docker rm -f "$c" >/dev/null 2>&1; done; docker pod rm -f $POD >/dev/null 2>&1; }
+# Containers are removed on every exit path; the exit status is the verdict (0 only when FAIL=0).
+trap cleanup EXIT
+
 log "=== $LABEL: JAR=$JAR GTID=$GTID COMP=$COMP CHECK=$CHECK ==="
-for c in $CC $MY $CH; do docker rm -f "$c" >/dev/null 2>&1; done
-docker pod rm -f $POD >/dev/null 2>&1; docker pod create --name $POD >/dev/null 2>&1 && log "pod up"
+cleanup; docker pod create --name $POD >/dev/null 2>&1 && log "pod up"
 
 # MySQL configuration for this run
 {
@@ -225,6 +228,6 @@ log "preflight lines:"; docker logs $CC 2>&1 | grep -i -E 'binlog_transaction_co
 log "connector errors:"; docker logs $CC 2>&1 | grep -iE 'ERROR|Exception|FATAL|refus|terminal' | grep -viE 'DEBUG' | tail -12
 
 log "=== RESULT PASS=$PASS FAIL=$FAIL ($LABEL GTID=$GTID COMP=$COMP) ==="
-for c in $CC $MY $CH; do docker rm -f "$c" >/dev/null 2>&1; done
-docker pod rm -f $POD >/dev/null 2>&1
-log "=== DONE ==="
+status=0; [ "$FAIL" -eq 0 ] && [ "$PASS" -gt 0 ] || status=1
+log "=== DONE (exit $status) ==="
+exit "$status"
