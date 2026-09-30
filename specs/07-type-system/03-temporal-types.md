@@ -7,6 +7,7 @@ Specifies the translation and timezone adjustment of MySQL date and time types t
 
 ## 2. Codebase Mapping on 2.11.0
 - **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/converters/ClickHouseDataTypeMapper.java`
+- **Session-zone preflight (lightweight)**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/ConnectionTimeZonePreflight.java` — `ConnectionTimeZonePreflight.check(Properties)` (§3.1.5): with `database.connectionTimeZone` unset, reads `@@GLOBAL.time_zone` / `@@GLOBAL.system_time_zone` and resolves the effective session zone with the JDBC driver's own `com.mysql.cj.util.TimeUtil.getCanonicalTimeZone`; refuses at start when the driver cannot map it to one zone.
 - **Converters**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/converters/DebeziumConverter.java` — `TimestampConverter`, `MicroTimestampConverter`, `ZonedTimestampConverter`, `epochText(Instant)`, `bindsAsEpochText(ClickHouseDataType, Instant)` (§3.1.4)
 - **Debezium property defaults (lightweight)**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java` — `ensureTimeAdjusterDisabled(Properties)`, `ENABLE_TIME_ADJUSTER`, called from `setupDebeziumEventCapture` next to the `column.propagate.source.type` default
 
@@ -157,6 +158,16 @@ Rule — an instant is bound as epoch text whenever the target column is
 - The column zone resolved by §3.1.3 is therefore no longer part of the
   stored value for a `DateTime64` instant: the same instant binds the same
   text into a `'UTC'`, an `'America/Chicago'` and an unzoned column.
+
+#### 3.1.5 The source's session zone must be one the JDBC driver can name
+§3.1.2's default — an empty `database.connectionTimeZone` — only works when the driver can resolve the source's session zone. Connector/J derives it from `@@time_zone`, or from `@@system_time_zone` when `time_zone = SYSTEM`; that value is whatever the source host's C library reports, and on a host in a DST zone it is an **abbreviation** such as `CDT`, which names more than one zone. The driver then refuses every connection: `The server time zone value 'CDT' is unrecognized or represents more than one time zone. You must configure either the server or JDBC driver (via the 'connectionTimeZone' configuration property)`. Before this rule the embedded engine failed at start with exactly that error and was restarted `errors.max.retries` times (twenty, each with a full stack trace) before `Replication is STOPPED` — minutes of noise for a configuration that could never work, found by the temporal matrix's `default` profile (source host TZ `US/Central`, both zone keys absent).
+
+`ConnectionTimeZonePreflight` runs at start on a MySQL source, after the compression preflight (spec 01.08 §3.4):
+- `database.connectionTimeZone` set to a zone (non-blank, not the driver keyword `SERVER`) → nothing is queried; the driver uses the configured value (an unparseable value still fails per §3.1.2).
+- Unset, blank, or `SERVER` (Connector/J's "derive it from the source", which needs the same guarantee) → one read-only `SELECT @@GLOBAL.time_zone, @@GLOBAL.system_time_zone`; the effective zone is `time_zone` unless it is `SYSTEM`, then `system_time_zone`. It is resolved with the driver's own `TimeUtil.getCanonicalTimeZone`, so the preflight and the driver agree by construction (IANA ids, offsets such as `+00:00`, `UTC` and the driver's unambiguous abbreviations pass; `CDT`/`CST`-style ambiguous abbreviations do not). Resolvable → INFO naming the source's two values and the canonical zone. Not resolvable → **refuses to start**, naming the property to set — the IANA zone of the source host, which is also the zone Debezium uses to interpret `TIMESTAMP` columns — and, second, the alternative of a named global `time_zone` on the source.
+- A probe that cannot run (unreachable, not permitted) is a WARN and the start continues; the driver will report the failure itself. Non-MySQL connectors are never touched.
+
+The production configurations of this repository's operators all set `database.connectionTimeZone`; the rule protects the default path and turns a retry storm into one line with the fix.
 
 ### 3.2 `TIME` is a signed duration, not a time of day
 MySQL `TIME` ranges from `-838:59:59` to `838:59:59` (it stores elapsed time and
@@ -414,3 +425,4 @@ default. When `enable.time.adjuster` is absent or blank it is set to `false`
   previous retriable classification of the refusal (Spec 10.01 before its
   terminal-exception rule) the refused batch parked forever and every later
   suite test failed on a timeout.
+- `ConnectionTimeZonePreflightTest.ambiguousAbbreviationRefuses()` — §3.1.5: `time_zone=SYSTEM`, `system_time_zone=CDT`, property unset → refusal naming `database.connectionTimeZone`; `ConnectionTimeZonePreflightTest.namedZoneResolves()`, `ConnectionTimeZonePreflightTest.systemUtcResolves()`, `ConnectionTimeZonePreflightTest.offsetResolves()` — an IANA id, `SYSTEM`+`UTC` and an offset pass; `ConnectionTimeZonePreflightTest.configuredPropertySkipsTheProbe()` — a configured value issues no query; `ConnectionTimeZonePreflightTest.serverKeywordIsProbed()` — `SERVER` is probed like an unset value (refused on `CDT`, passed on `UTC`); `ConnectionTimeZonePreflightTest.probeFailureWarnsAndContinues()`, `ConnectionTimeZonePreflightTest.nonMySqlConnectorIsUntouched()`; `ConnectionTimeZonePreflightTest.driverAgreesWithThePreflight()` — pins the driver contract the rule relies on (`CDT` throws, `America/Chicago` resolves).

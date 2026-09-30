@@ -947,6 +947,13 @@ public class DebeziumChangeEventCapture {
         // source is ON and the decoder does not work -- every transaction would
         // then fail to deserialize; warn on what cannot be verified (spec 01.08).
         BinlogTransactionCompressionPreflight.check(props);
+        // With database.connectionTimeZone unset the JDBC driver derives the
+        // session zone from the source's time_zone/system_time_zone; a DST host
+        // reports an abbreviation such as CDT, which the driver cannot map to
+        // one zone, so every connection fails and the engine is retried
+        // errors.max.retries times. Resolve it here with the driver's own
+        // resolver and refuse once, naming the fix (spec 07.03 section 3.1.5).
+        ConnectionTimeZonePreflight.check(props);
         // The binlog client's keep-alive auto-reconnect resumes from its own
         // last-read byte offset -- inside a transaction, past the statement's
         // TABLE_MAP -- and Debezium then skips the rest of that statement at
