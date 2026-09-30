@@ -515,3 +515,86 @@ is unaffected.
 - Integration (`PrimaryKeyChangeIT`, MySQL 8.0 → embedded connector → ClickHouse, the `AbstractCDCBaseIT` harness): `compositeKeyToAutoIncrementId()` (the production migration `DROP PRIMARY KEY, ADD COLUMN id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, ADD PRIMARY KEY (id)`, source values joined in), `rekeyOntoExistingColumn()`, `supersetKey()` (`(a)` → `(a, b)`), `addPrimaryKeyOnNullableColumn()` (MySQL makes the column `NOT NULL`; the replica key column is non-Nullable), `dropPrimaryKeyBecomesKeyless()` (`sql_generate_invisible_primary_key=OFF`; all-columns identity), `gipkTablePromotedToExplicitKey()` (`DROP PRIMARY KEY, DROP COLUMN my_row_id, ADD PRIMARY KEY (id)`), `keyColumnWidened()` (`MODIFY id BIGINT`), `keyColumnRenamed()` (`CHANGE id ref_id INT`), each preceded by DML under the old key and followed by INSERT / UPDATE / DELETE and a relocation (`UPDATE ... SET <new key> = ...`) under the new key; every case asserts value-level equality with MySQL (`FINAL`, live rows) once the backfill has completed (the retired table is gone), the replica sorting key, no leftover `__pk_rebuild_` / `__pk_retired_` tables, and an untouched control table. `replicationContinuesWhileBackfillRuns()` — a key change on a table with enough rows for the backfill to take seconds; an INSERT into another table issued right after the ALTER is visible in ClickHouse before the backfill of the first table has finished (the retired table still exists at that moment), and both tables compare equal at the end.
 - End-to-end on a built jar (`csc_e2e_pk.sh`, podman: MySQL 8.0 → connector → ClickHouse 24.8): the same matrix at the value level; `t_pk` → `ORDER BY pk_id`, `t_pk2` → `ORDER BY b`, `t_pk3` → `ORDER BY (id, v)`.
 - Formal: `primary_key_change_rebuilds`, `wider_key_change_rebuilds`, `rebuild_never_bare`, `rebuild_only_when_not_loud` in `DdlTranslation.lean`; `rebuild_preserves_live_rows`, `rebuild_view_eq`, `backfill_never_shadows_newer` (appending the re-keyed live rows of the old table, all versioned below every post-DDL record of the same key, leaves the FINAL view of those keys unchanged and supplies the view of the keys the new table lacked), `backfill_idempotent` (appending the same backfill twice yields the same FINAL view) in `PkRebuild.lean`.
+
+---
+
+## 6. Failure Modes & Recovery
+The rebuild splits recovery in two. The swap phase is inside the DDL barrier and inherits spec 06.08's contract: any failure is a `DDLReplicationException`, the DDL offset is not committed, and the re-delivered statement restarts the swap from step 1. The backfill phase is outside the barrier and never stops replication: it retries forever with backoff and is resumed from the tables' own marker at every start. Its failure modes are therefore about a copy that never finishes, during which the rebuilt table misses its pre-DDL rows.
+
+- **FM-06.09-1 Rebuild precondition not met**
+  - **Trigger**: `replication.history.enable=true`; a non-`ReplacingMergeTree` or sign-based target; a `Replicated*` target with a literal Keeper path; a source-valued or old-key column that is neither integer nor string; a `Nullable` old-key column when a source key map is needed (§3.2).
+  - **Behaviour**: `PrimaryKeyRebuild.swap()` refuses before any rebuild statement (`refuse()`), the statement's own idempotent clauses having already been applied by `executeDDL`; `DDLReplicationException` halts the pipeline; the engine restarts `errors.max.retries` times, then stops terminally.
+  - **Detection**: ERROR `Table <db>.<t>: the source changes its PRIMARY KEY to (...) but the ClickHouse sorting key is (...). ... The automatic rebuild (Spec 06.09) cannot run: <reason>. Manual rebuild required: ...`; exit code 3 after the restarts.
+  - **Blast radius**: all replication stops at the statement; nothing lost.
+  - **Recovery**: the manual rebuild of spec 06.07 §6 FM-06.07-1 (new table with the new `ORDER BY`, load from MySQL with `ch-mysql-resync` (spec 11.04), count-reconcile, `EXCHANGE TABLES`), then `ignore.ddl.regex` for the statement, restart, remove the entry.
+  - **RTO**: proportional to the table size; unmeasured.
+  - **Test**: `PrimaryKeyRebuildTest.replicatedLiteralPathIsLoud()`, `PrimaryKeyRebuildTest.nullableOldKeyWithSourceMapIsLoud()`, `PrimaryKeyRebuildTest.historyTablesAreRefused()`.
+  - **DEFECT**: outside the supported shapes the only recovery is a manual reload of the table, beyond the I15 RTO.
+
+- **FM-06.09-2 Swap-phase failure (ClickHouse down, statement refused)**
+  - **Trigger**: ClickHouse unavailable or refusing `SHOW CREATE TABLE`, `CREATE TABLE S`, the marker `MODIFY COMMENT`, or `EXCHANGE TABLES`/`RENAME TABLE`, or `rewriteCreateStatement` meeting a rendered shape it cannot rewrite.
+  - **Behaviour**: `PrimaryKeyRebuild.exec()` wraps the failure in `DDLReplicationException` (`failure()`); `performDDLOperation()` records it and rethrows it unretried; the offset is not acknowledged. On restart the DDL is re-delivered; `T` is still keyed by the old identity, so the translator plans the rebuild again and step 1 drops the scratch `S` of the failed attempt.
+  - **Detection**: ERROR `Primary-key rebuild of <db>.<t> failed at <step>: [<sql>]: <error>. The pipeline stops here (Invariant I9); the DDL is re-delivered on restart and the rebuild retried from step 1. Source DDL: [...]`; immediate; exit code 3 after the restart budget if it keeps failing.
+  - **Blast radius**: all replication stops at the statement; nothing lost (the old table is untouched until the atomic swap).
+  - **Recovery**: remove the ClickHouse-side cause; the engine restarts (10 s apart, up to `errors.max.retries`) re-deliver the DDL and redo the swap. After a terminal stop, restart the process.
+  - **RTO**: cause removal + engine restart (~15-20 s, spec 10.04) + milliseconds of metadata statements; unmeasured.
+  - **Test**: `PrimaryKeyRebuildTest.swapPhaseIsMetadataOnly()`; GAP: a unit test that fails the swap at each step (after CREATE S, after the marker, at EXCHANGE) and asserts the re-delivered statement's step 1 cleans up and the second swap succeeds.
+
+- **FM-06.09-3 Crash after the swap, before the DDL offset is committed**
+  - **Trigger**: kill -9, OOM or host loss between the `EXCHANGE TABLES` and `acknowledgeRecords()`, or at any time while a backfill is pending.
+  - **Behaviour**: the re-delivered statement is a restatement (spec 06.07 §6 FM-06.07-4), so no second rebuild; at engine start `PrimaryKeyBackfill.resumePending()` finds the marker-bearing retired table whose companion `T` is keyed by the marker's new key and reschedules the copy, which is idempotent (`backfill_idempotent`).
+  - **Detection**: WARN `Primary-key backfill of <db>.<t> from <db>.<retired> is pending from a previous run and is resumed...`; then the usual backfill INFO lines.
+  - **Blast radius**: until the resumed copy completes, `T` misses the pre-DDL rows not copied yet (value comparisons differ, §3.3.3).
+  - **Recovery**: self-heals at restart.
+  - **RTO**: restart + the copy of the table (the rebuild's in-flight unit, proportional to its size); unmeasured (the resume is covered functionally, not timed, by `PrimaryKeyChangeIT.restartDuringBackfillResumesFromMarker()`).
+  - **Test**: `PrimaryKeyRebuildTest.restartResumesPendingBackfill()`, `MySqlDDLParserListenerImplTest.testRedeliveredPrimaryKeyChangeIsRestatement()`, `PrimaryKeyChangeIT.restartDuringBackfillResumesFromMarker()`.
+
+- **FM-06.09-4 Backfill fails transiently (ClickHouse or MySQL briefly unavailable, source failover)**
+  - **Trigger**: the backfill's ClickHouse connection fails, or the source key-map `SELECT` cannot connect (MySQL restart, failover to a new primary).
+  - **Behaviour**: `PrimaryKeyBackfill.attempt()` logs, records the failure, and reschedules with backoff 10 s doubling to 5 min (`INITIAL_BACKOFF_MS`, `MAX_BACKOFF_MS`), indefinitely; replication of every table continues; `R` is never dropped before the completeness check passes. After a failover to a host with another name, `database.hostname` must be changed and the process restarted.
+  - **Detection**: ERROR `Primary-key backfill of <db>.<t> from <db>.<retired> FAILED at <step>...` and `... attempt <n> failed; retrying in <s> s (backoff 10 s doubling to 300 s, indefinitely). Replication continues; the retired table ... holds the pre-DDL rows until the copy completes`; within the attempt.
+  - **Blast radius**: `T` misses the not-yet-copied pre-DDL rows; nothing lost (they are in `R`).
+  - **Recovery**: self-heals once the cause is removed.
+  - **RTO**: at most 5 min (backoff cap) after the cause is removed + the copy time; unmeasured.
+  - **Test**: `PrimaryKeyRebuildTest.backfillRetriesWithBackoff()`, `PrimaryKeyRebuildTest.completenessCheckGuardsDrop()`.
+
+- **FM-06.09-5 Backfill can never finish (disk, memory, deterministic error)**
+  - **Trigger**: the copy needs as much free disk again as the table (`R` and `T` coexist until the check passes) and ClickHouse runs out (`NOT_ENOUGH_SPACE`); `INSERT ... SELECT ... FROM R FINAL` with the key-map JOIN exceeds `max_memory_usage` (`MEMORY_LIMIT_EXCEEDED`) on a large partition; the source key-map `SELECT` scans the whole source table on the primary; a completeness check that never reaches 0.
+  - **Behaviour**: each such failure is treated like FM-06.09-4: retried forever with a 5 min cap, never escalated (only a missing retired or rebuilt table is terminal, `BackfillFailure.terminal`). There is no free-space or size precondition before the swap. A full disk also fails every writer on that ClickHouse server (retried forever, spec 10.02), so all replication to it stalls.
+  - **Detection**: the same ERROR pair every attempt; no metric; no terminal state.
+  - **Blast radius**: `T` stays without its pre-DDL rows indefinitely (value divergence); on disk-full, every table on the server stalls.
+  - **Recovery**: free disk (or add a volume) / raise the backfill session's memory limit through `clickhouse.jdbc.settings` / fix the reported statement; the next attempt (within 5 min) resumes. As a last resort re-synchronise `T` from MySQL with `ch-mysql-resync` (spec 11.04), then drop `R` and `K` by hand; the backfill finds its retired table gone, logs it and stops without rescheduling.
+  - **RTO**: cause removal + at most 5 min + copy time; unbounded while the cause persists; unmeasured.
+  - **Test**: GAP: a unit test that fails the copy with a deterministic error N times and asserts the backfill escalates (ERROR with a distinct message, metric, or terminal state) instead of retrying silently forever; and a swap-time check that refuses (loudly) when free disk is below the table's size.
+  - **DEFECT**: a backfill that cannot succeed retries forever without escalation, and nothing checks free disk before a rebuild that doubles the table's footprint.
+
+- **FM-06.09-6 Replicated target: `ON CLUSTER` swap only partly applied**
+  - **Trigger**: a replica is down or slow while the swap's `ON CLUSTER` statements run; the distributed DDL queue times out (`distributed_ddl_task_timeout`, `TIMEOUT_EXCEEDED`).
+  - **Behaviour**: `exec()` raises `DDLReplicationException` at the failing step; ClickHouse may still complete the queued statement on some hosts later. On re-delivery the translator reads the sorting key on the connector's server only: if the swap completed there it is a restatement (no second rebuild) even when other replicas still have the old table.
+  - **Detection**: ERROR `Primary-key rebuild of <db>.<t> failed at step 4 (EXCHANGE TABLES): ...`; afterwards nothing reports a per-host mismatch.
+  - **Blast radius**: replicas of the cluster may disagree on the sorting key and on which table holds the rows.
+  - **Recovery**: on every host compare `system.tables` (`sorting_key`, `comment` with the `csc-pk-rebuild:` marker) and `system.distributed_ddl_queue`; complete or revert the `EXCHANGE` by hand per host so every replica has the new-key `T` and the marker-bearing retired table; restart the connector (the backfill resumes from the marker).
+  - **RTO**: operator time; unmeasured.
+  - **Test**: `PrimaryKeyRebuildTest.replicatedSwapRunsOnCluster()` (statement shapes only); GAP: an integration test with one replica stopped during the swap.
+  - **DEFECT**: a partly applied `ON CLUSTER` swap is not detected or reconciled; recovery is manual per host.
+
+- **FM-06.09-7 Superseding TRUNCATE/DROP while a copy statement runs**
+  - **Trigger**: a source `TRUNCATE TABLE t` or `DROP TABLE t` arrives while `t`'s backfill copy statement executes.
+  - **Behaviour**: `PrimaryKeyBackfill.cancelFor()` marks the task cancelled and waits, uncapped, on the DDL thread (inside the barrier, every table stopped) for the in-flight copy statement to return, then drops `R` and `K` and lets the TRUNCATE/DROP run (§3.3.2 step 7).
+  - **Detection**: WARN every 30 s `Primary-key backfill of <db>.<t> from <db>.<retired>: the superseding TRUNCATE/DROP has waited <n> s for ...`.
+  - **Blast radius**: all tables wait for one copy statement (one partition of `R`); no resurrected rows.
+  - **Recovery**: none needed; to shorten it, kill the copy query on ClickHouse (`KILL QUERY`), which fails the attempt and releases the wait.
+  - **RTO**: the duration of one partition's copy statement; unmeasured.
+  - **Test**: `PrimaryKeyRebuildTest.cancelWaitsForInFlightCopyStatement()`, `PrimaryKeyRebuildTest.truncateDuringBackfillCancelsAndDropsRetired()`, `PrimaryKeyChangeIT.truncateDuringBackfillLeavesTableEmpty()`.
+
+- **FM-06.09-8 Pending backfill cannot be resumed at start**
+  - **Trigger**: at start the marker-bearing retired table exists but `T` is missing, or `T` is keyed differently from the marker's new key (hand edits, a later identity change applied by hand, a partial swap of FM-06.09-6).
+  - **Behaviour**: `PrimaryKeyBackfill.resumePending()` logs and skips the task; the retired table is left in place; replication continues.
+  - **Detection**: ERROR `Primary-key backfill: <db>.<retired> holds the pre-DDL rows of <db>.<t>, which no longer exists...` or `... is keyed by [...] but the pending backfill from <db>.<retired> expects the new key [...]; not resumed -- inspect both tables before dropping either`; once per start.
+  - **Blast radius**: `T` permanently lacks the pre-DDL rows held by the retired table.
+  - **Recovery**: inspect both tables; re-synchronise `T` from MySQL with `ch-mysql-resync` (spec 11.04); then drop the retired table by hand.
+  - **RTO**: table re-synchronisation; unmeasured.
+  - **Test**: `PrimaryKeyRebuildTest.restartResumesPendingBackfill()` (a companion keyed by the old identity is not resumed).
+  - **DEFECT**: an unresumable backfill is reported once per start and otherwise left as a silent, permanent row gap.
+
+Summary: 8 failure modes, 4 DEFECT, 3 GAP.

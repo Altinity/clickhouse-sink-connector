@@ -1,25 +1,30 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
+import java.lang.reflect.Field;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.util.concurrent.Executors;
-
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Spec 03.01 section 6, FM-03.01-4: a pool thread interrupted while it is
- * parked in {@code beforeExecute} by {@code pause()}.
+ * A pool thread interrupted while it is parked in {@code beforeExecute} by {@code pause()}: spec 03.01
+ * section 6 FM-03.01-4 (the in-flight count goes to -1) and spec 06.02 section 6 FM-06.02-1 (the batch runs
+ * while the DDL barrier holds). Both are the same code path, pinned from the two sides.
  *
- * <p>{@code beforeExecute} returns WITHOUT incrementing the in-flight count
- * when its wait is interrupted, but {@code ThreadPoolExecutor.runWorker} then
- * still runs the task body and calls {@code afterExecute}, which decrements
- * it. The count goes to -1: the task body ran during a pause, and every later
- * {@code awaitQuiescent()} under-counts by one, so a DDL drain can report a
- * quiescent writer while one batch is running (the race Invariant I5 exists
- * to close). The calls are made directly on the caller's thread, which is
- * exactly the sequence a pool worker performs.</p>
+ * <p>{@code beforeExecute} returns WITHOUT incrementing the in-flight count when its wait is interrupted,
+ * but {@code ThreadPoolExecutor.runWorker} then still runs the task body and calls {@code afterExecute},
+ * which decrements it. The count goes to -1: the task body ran during a pause, and every later
+ * {@code awaitQuiescent()} under-counts by one, so a DDL drain can report a quiescent writer while one
+ * batch is running (the race Invariant I5 exists to close).</p>
  */
 public class ClickHouseBatchExecutorInterruptTest {
 
@@ -49,6 +54,61 @@ public class ClickHouseBatchExecutorInterruptTest {
             executor.afterExecute(task, null);
         } finally {
             Thread.interrupted();
+            executor.shutdownNow();
+        }
+    }
+
+
+    /**
+     * (DEFECT) {@code beforeExecute} handles an interrupt while parked with
+     * {@code t.interrupt(); return;}. {@code ThreadPoolExecutor.runWorker}
+     * then runs the task -- while the executor is still paused, i.e. while a
+     * DDL may be executing -- and {@code afterExecute} decrements
+     * {@code activeBatches}, which was never incremented, to -1. From then on
+     * {@code awaitQuiescent()} reports quiescence while one batch is running.
+     */
+    @Test
+    @Disabled("DEFECT FM-06.02-1: an interrupted parked worker runs its batch during the pause and "
+            + "drives activeBatches negative")
+    @DisplayName("FM-06.02-1: an interrupted parked worker does not run during the pause")
+    public void interruptedParkedWorkerDoesNotRunWhilePaused() throws Exception {
+        AtomicReference<Thread> worker = new AtomicReference<>();
+        ClickHouseBatchExecutor executor = new ClickHouseBatchExecutor(1, r -> {
+            Thread t = new Thread(r, "interrupt-test-worker");
+            t.setDaemon(true);
+            worker.set(t);
+            return t;
+        });
+        try {
+            AtomicBoolean ranWhilePaused = new AtomicBoolean(false);
+            CountDownLatch ran = new CountDownLatch(1);
+            executor.pause();
+            executor.submit(() -> {
+                if (executor.isPaused) {
+                    ranWhilePaused.set(true);
+                }
+                ran.countDown();
+            });
+            long deadline = System.currentTimeMillis() + 5_000;
+            while (worker.get() == null && System.currentTimeMillis() < deadline) {
+                Thread.sleep(10);
+            }
+            assertNotNull(worker.get(), "the pool thread was started");
+            // Let the worker reach beforeExecute and park on the gate.
+            Thread.sleep(300);
+            worker.get().interrupt();
+
+            boolean completed = ran.await(1, TimeUnit.SECONDS);
+            assertFalse(completed && ranWhilePaused.get(),
+                    "a batch ran while the executor was paused (the DDL barrier was held)");
+            executor.resume();
+            assertTrue(executor.awaitQuiescent(2_000));
+            Field f = ClickHouseBatchExecutor.class.getDeclaredField("activeBatches");
+            f.setAccessible(true);
+            int active = ((AtomicInteger) f.get(executor)).get();
+            assertTrue(active >= 0, "activeBatches went negative (" + active + "): awaitQuiescent can no "
+                    + "longer see a running batch");
+        } finally {
             executor.shutdownNow();
         }
     }
