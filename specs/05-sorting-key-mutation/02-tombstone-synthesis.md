@@ -74,3 +74,40 @@ versioning and is withdrawn.
 - `PreparedStatementFieldMapperTombstoneVersionTest.testTombstoneStillSetsDeleteMarker()`.
 - `PreparedStatementFieldMapperEngineColumnTest.testRelocationTombstoneForTableWithoutDeleteColumnIsRefused()` — a target with no delete column refuses the tombstone instead of writing a live row at the old key.
 - Lean: `update_pk_relocation_soundness` re-proved with `tombstoneVersion i = liveVersion i`, and `tombstone_wins_version_tie` (equal-version tombstone written after the live row yields `none`) in `formal_specs/lean/Replication/Proofs.lean`.
+
+---
+
+## 6. Failure Modes & Recovery
+
+The tombstone and the after-image of one relocating UPDATE are staged on the same `PreparedStatement` from the same record, so they are always in the same chunk and the same `executeBatch()`: a crash, a failed insert or a redelivery applies both or neither, and a redelivered pair carries the same `_version` and collapses. The failure modes are the configurations in which the tombstone is not a delete marker, and the refusals that are retried instead of stopping.
+
+- **FM-05.02-1 Crash or failed insert between the tombstone and the live row**
+  - **Trigger**: kill -9, OOM, network cut or a ClickHouse error during the INSERT carrying a relocation.
+  - **Behaviour**: `BatchChunker` splits records, never the rows staged for one record, so the pair travels in one `executeBatch()` (one INSERT); the failure fails the batch before its offset is acknowledged, and the retry or the redelivery stages the pair again with the record's same version (`ClickHouseStruct.calculateVersion` is a function of the GTID / position). A server-side split of one INSERT across `max_insert_block_size` blocks could separate them only at a block boundary (ClickHouse behaviour, not verified).
+  - **Detection**: the worker's retry lines (spec 03.03 §6) or the resume summary after a restart; nothing specific to the relocation.
+  - **Blast radius**: none after convergence: both rows are rewritten with the same version and collapse.
+  - **Recovery**: none needed.
+  - **RTO**: that of the retry or restart (spec 03.03 §6, spec 03.01 §6).
+  - **Test**: `PreparedStatementExecutorSortingKeyTombstoneTest.testSortingKeyColumnChangeRequiresTombstone()`, `PreparedStatementFieldMapperTombstoneVersionTest.testTombstoneCarriesRecordVersionUnchanged()`, `Replication.Proofs.tombstone_wins_version_tie`.
+
+- **FM-05.02-2 `ignore_delete=true` turns the tombstone into a live ghost row**
+  - **Trigger**: a ReplacingMergeTree target with a delete column, `ignore_delete=true`, and an UPDATE that moves a row to another sorting key.
+  - **Behaviour**: `PreparedStatementFieldMapper.insertTombstonePreparedStatement` forces the delete marker only when `ignore_delete` is false; otherwise the delete column keeps the `setNull(index, Types.OTHER)` bound for connector-managed columns by `insertPreparedStatement` (observed in the test: parameter = 1111). Stored as the column default 0 — which is how every row written under `ignore_delete=true` is stored — the tombstone is a LIVE row at the old key. `ignore_delete` promises that source removals are not replicated; a relocation is not a source removal.
+  - **Detection**: only the startup WARN `ignore_delete=true: source row removals are NOT replicated. ...`, which does not mention relocations.
+  - **Blast radius**: one extra live row per relocating UPDATE — MySQL one row, ClickHouse two — permanent.
+  - **Recovery**: `ch-mysql-resync` (spec 11.04) of the affected tables; do not combine `ignore_delete=true` with tables whose sorting key can change.
+  - **RTO**: resync time — unmeasured.
+  - **Test**: `PreparedStatementFieldMapperTombstoneIgnoreDeleteTest.relocationTombstoneUnderIgnoreDeleteStillSetsTheDeleteMarker()` (disabled, fails on 2.11.0).
+  - **DEFECT**: the relocation tombstone must set the delete marker whatever `ignore_delete` says.
+
+- **FM-05.02-3 A refused tombstone (or any connector refusal) is retried forever**
+  - **Trigger**: a ReplacingMergeTree target without a delete column (`requireDeleteColumn`), an engine column without a placeholder (`requireEngineColumnPlaceholder`), an underivable version (`rejectUnderivableVersion`), a batch grouped into nothing (`addToPreparedStatementBatch`).
+  - **Behaviour**: each throws `IllegalStateException` with the table and the remediation — deterministic on every attempt — but without a `Code: NNN`, so `ClickHouseErrorClassifier.classify` answers UNKNOWN and `ClickHouseBatchRunnable.run` retries the batch without bound (spec 03.03 §6 FM-03.03-1), although the messages say the row "cannot be replicated" or is failed "instead of retrying it forever".
+  - **Detection**: every attempt: ERROR `ClickHouseBatchRunnable exception - Task(<id>)` with e.g. `The tombstone of an UPDATE that moves the row to another sorting key for ReplacingMergeTree table <db>.<t> cannot be replicated: the table has no delete column ...`, and WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN) ...`.
+  - **Blast radius**: the worker's tables and the connector's committed offset stall; no loss.
+  - **Recovery**: do what the message says (declare `ReplacingMergeTree(<version>, <delete column>)`, point `replacingmergetree.delete.column` at an existing column, or accept `ignore_delete=true`), then restart; a table re-declared with a new engine is reloaded with `ch-mysql-resync` (spec 11.04).
+  - **RTO**: operator-bound; unbounded automatically (≈ 102 min to a terminal exit on a busy source, spec 03.03 §6).
+  - **Test**: `PreparedStatementFieldMapperEngineColumnTest.testRelocationTombstoneForTableWithoutDeleteColumnIsRefused()` pins the refusal; `ConnectorRefusalClassificationTest.aRefusedTombstoneIsFatal()` and `ConnectorRefusalClassificationTest.aBatchGroupedIntoNothingIsFatal()` (disabled, fail on 2.11.0).
+  - **DEFECT**: the connector's deterministic refusals must be FATAL (a terminal exception type, spec 10.01), not UNKNOWN.
+
+Summary: 3 failure modes, 2 DEFECT, 0 GAP.

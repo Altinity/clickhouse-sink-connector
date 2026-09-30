@@ -62,3 +62,41 @@ ReplacingMergeTree tombstone path already do.
 - `PreparedStatementExecutorCollapsingSignTest.testInsertStagesOneLiveRow()`, `PreparedStatementExecutorCollapsingSignTest.testDeleteStagesOneCancelRow()` — an INSERT stages exactly `[+1]`, a DELETE exactly `[-1]`.
 - `PreparedStatementFieldMapperEngineColumnTest.testNonStandardSignColumnIsBoundOrRefused()` — `CollapsingMergeTree(sgn)`: the sign is bound at `sgn`'s placeholder; a table sign column with no placeholder is refused.
 - Verification: an integration test asserting that `-1` rows collapse against their `+1` counterparts on a `CollapsingMergeTree` target is not yet covered by an automated test (gap).
+
+---
+
+## 6. Failure Modes & Recovery
+
+A CollapsingMergeTree target has no recovery by idempotence: sign rows are additive, so every write the connector repeats — a whole-batch retry after a partial write, a redelivery after a restart — is a permanent divergence, and every error in reading the sign column from the engine clause silently disables collapsing. The connector never auto-creates this engine (spec 02.04 §3.3); these failure modes apply to tables an operator created.
+
+- **FM-05.04-1 A repeated write duplicates sign rows**
+  - **Trigger**: a batch retried after one of its tables or chunks was already written (spec 03.03 §6 FM-03.03-2, spec 03.06 §6 FM-03.06-2), or the units above the committed offset redelivered after any restart (spec 03.07 §7 FM-03.07-3).
+  - **Behaviour**: the `-1`/`+1` rows are written again; nothing deduplicates them. ClickHouse's block-level insert deduplication (Replicated* engines, `insert_deduplicate`) could absorb a byte-identical retried block — that the V2 driver renders a retried INSERT identically is not verified — and never absorbs a redelivery, which forms different batches.
+  - **Detection**: none: `sum(sign)` over the key drifts from MySQL; found by the value-level checksum (spec 11.02).
+  - **Blast radius**: every repeated row of that table, permanently (an unmatched extra `+1` or `-1` never collapses).
+  - **Recovery**: `ch-mysql-resync` (spec 11.04) of the table; move the table to ReplacingMergeTree.
+  - **RTO**: resync time, proportional to the table — unmeasured.
+  - **Test**: `ReplaySafetyTest.testAutoCreatedEnginesAreReplaceNotAdditive()`, `WorkerFailureModesTest.aRetryAfterAPartialWriteRewritesTheTablesAlreadyWritten()`.
+  - **DEFECT**: at-least-once delivery is not replay-safe on this engine and nothing detects the resulting divergence.
+
+- **FM-05.04-2 A sign column without a placeholder is refused and retried forever**
+  - **Trigger**: the table has its sign column but the generated INSERT has no placeholder for it (a column-name case mismatch, a stale template).
+  - **Behaviour**: `requireEngineColumnPlaceholder` throws `IllegalStateException` rather than storing `sign = 0` — then the refusal is classified UNKNOWN and retried without bound (spec 05.02 §6 FM-05.02-3).
+  - **Detection**: every attempt: ERROR `ClickHouseBatchRunnable exception - Task(<id>)` with the refusal message, WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN) ...`.
+  - **Blast radius**: the worker's tables and the connector's committed offset stall; no loss.
+  - **Recovery**: fix the table or the writer's schema cache as the message says, restart.
+  - **RTO**: operator-bound (spec 03.03 §6).
+  - **Test**: `PreparedStatementFieldMapperEngineColumnTest.testNonStandardSignColumnIsBoundOrRefused()`.
+  - **DEFECT**: shared with FM-05.02-3 — a deterministic refusal is retried instead of stopping.
+
+- **FM-05.04-3 The sign column is misread from a Replicated or Versioned engine clause**
+  - **Trigger**: a `ReplicatedCollapsingMergeTree('<zk path>', '<replica>', sign)` or a `VersionedCollapsingMergeTree(sign, ver)` target.
+  - **Behaviour**: `DBMetadata.getEngineFromResponse` matches `engine_full.contains("CollapsingMergeTree")`, so both are COLLAPSING_MERGE_TREE (contrary to §3's statement that the Versioned engine is not recognised), and `getSignColumnForCollapsingMergeTree` takes the text between `CollapsingMergeTree(` and the first `)`: `'<zk path>', '<replica>', sign` and `sign, ver`. No column has that name, so `handleSignColumn` binds nothing to the real sign column; what the bind path then writes for it (spec 04.03) was not traced here.
+  - **Detection**: none specific; the effect is a table that never collapses, or a batch that fails in the bind path.
+  - **Blast radius**: every row of such a table is written without the connector's sign — collapsing semantics lost.
+  - **Recovery**: `ch-mysql-resync` (spec 11.04) into a ReplacingMergeTree table; until fixed, do not replicate into these engines.
+  - **RTO**: resync time — unmeasured.
+  - **Test**: `CollapsingEngineParsingTest.plainCollapsingMergeTreeResolvesItsSignColumn()`; `CollapsingEngineParsingTest.replicatedCollapsingMergeTreeResolvesItsSignColumn()` and `CollapsingEngineParsingTest.versionedCollapsingMergeTreeIsNotTreatedAsCollapsing()` (disabled, fail on 2.11.0).
+  - **DEFECT**: the sign column must be parsed as the engine's last (Replicated) or first (Versioned, if supported) argument, and an unsupported engine refused, instead of a substring match.
+
+Summary: 3 failure modes, 3 DEFECT, 0 GAP.
