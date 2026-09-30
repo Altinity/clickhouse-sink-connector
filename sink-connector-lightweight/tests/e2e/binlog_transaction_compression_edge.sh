@@ -223,7 +223,14 @@ SQL
   sleep 15
   mrow=$(MEX -N test -e "SELECT note FROM e_json WHERE id=2" 2>/dev/null | tr -d '[:space:]')
   crow=$(chq "SELECT note FROM test.e_json FINAL WHERE id=2 AND is_deleted=0")
-  if [ "$mrow" = "rep" ] && [ "$crow" = "seed" ]; then
+  if [ "$VIA_REPLICA" = 1 ]; then
+    # the replica re-logs what it applies with its own binlog_row_value_options (''): full row images
+    if [ "$mrow" = "rep" ] && [ "$crow" = "rep" ]; then
+      ok "E2 through the replica hop the partial updates arrived: the replica re-logs them with full row images (doc/limitations.md)"
+    else
+      bad "E2 through the replica hop: source note=[$mrow], replica note=[$crow] -- the replica was expected to re-log the update in full"
+    fi
+  elif [ "$mrow" = "rep" ] && [ "$crow" = "seed" ]; then
     ok "E2 documented limitation reproduced (doc/limitations.md, spec 01.10 section 3.1): the partial updates did not reach ClickHouse, including a plain column changed by the same UPDATE (source note=$mrow, replica note=$crow)"
   else
     bad "E2 behaviour differs from the documented limitation (source note=[$mrow], replica note=[$crow]) -- update doc/limitations.md and spec 01.10"

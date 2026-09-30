@@ -68,10 +68,13 @@ public final class BinlogEventAudit implements BinaryLogClient.EventListener {
      * @param client the task's binlog client.
      */
     public static void install(BinaryLogClient client) {
-        if (client != null) {
-            reset();
-            client.registerEventListener(new BinlogEventAudit(client));
+        if (client == null) {
+            log.warn("XA audit NOT installed: the task context has no binlog client yet; an XA ROLLBACK after "
+                    + "XA PREPARE would go unreported (spec 01.10).");
+            return;
         }
+        reset();
+        client.registerEventListener(new BinlogEventAudit(client));
     }
 
     /** Forgets the XA state (a new task re-reads the stream from its offset). */
@@ -150,14 +153,22 @@ public final class BinlogEventAudit implements BinaryLogClient.EventListener {
             String xid = xid(s, "XA ROLLBACK");
             TreeSet<String> tables = PREPARED.remove(xid);
             Metrics.incrementBinlogXaRollbackAfterPrepare();
-            log.error("XA ROLLBACK {} at {}: the source rolled back an XA transaction AFTER its XA PREPARE, whose "
-                            + "rows were already replicated (Debezium dispatches an XA transaction's rows at PREPARE and "
-                            + "ignores its outcome). ClickHouse now holds rows the source does not. Tables written by its "
-                            + "PREPARE: {}. Recovery: re-synchronise those tables from MySQL (ch-mysql-resync, spec 11.04). "
-                            + "Replication of everything else continues (spec 01.10).",
-                    xid, where(header), tables == null
-                            ? "UNKNOWN (its PREPARE was read before this process started; find it with mysqlbinlog "
-                            + "before this position)" : (tables.isEmpty() ? "none (no row events)" : tables));
+            if (tables != null) {
+                log.error("XA ROLLBACK {} at {}: the source rolled back an XA transaction AFTER its XA PREPARE, "
+                                + "whose rows were already replicated (Debezium dispatches an XA transaction's rows at "
+                                + "PREPARE and ignores its outcome). ClickHouse now holds rows the source does not. "
+                                + "Tables written by its PREPARE: {}. Recovery: re-synchronise those tables from MySQL "
+                                + "(ch-mysql-resync, spec 11.04). Replication of everything else continues (spec 01.10).",
+                        xid, where(header), tables.isEmpty() ? "none (no row events)" : tables);
+            } else {
+                // MySQL binlogs an XA ROLLBACK only for a prepared XA transaction, so its PREPARE (and rows) are
+                // earlier in the binlog -- before this process's start position.
+                log.error("XA ROLLBACK {} at {}: the source rolled back an XA transaction whose XA PREPARE was written "
+                                + "before this process's start position, so its tables are UNKNOWN here. If its rows "
+                                + "were in captured tables they were replicated and ClickHouse holds rows the source does "
+                                + "not: find the PREPARE with mysqlbinlog before this position and re-synchronise the "
+                                + "tables it wrote (ch-mysql-resync, spec 11.04) (spec 01.10).", xid, where(header));
+            }
         }
     }
 

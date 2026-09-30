@@ -164,6 +164,9 @@ public final class BinlogConnectionGuard {
      */
     public static void install(BinaryLogClient client) {
         if (client == null) {
+            log.warn("binlog connection guard NOT installed: the task context has no binlog client yet (a Debezium "
+                    + "change in construction order?). A binlog connection closed by the source, or one that dies "
+                    + "silently, would stall replication until the process is restarted (spec 01.09).");
             return;
         }
         long ms = timeoutMs;
@@ -236,7 +239,7 @@ public final class BinlogConnectionGuard {
 
         @Override
         public Socket createSocket() throws SocketException {
-            Socket socket = new GuardedSocket();
+            Socket socket = new GuardedSocket(timeoutMs);
             socket.setSoTimeout(timeoutMs);
             socket.setKeepAlive(true);
             return socket;
@@ -245,9 +248,15 @@ public final class BinlogConnectionGuard {
 
     /** A plain socket whose input stream turns the peer's end of stream into an {@link EOFException}. */
     static final class GuardedSocket extends Socket {
+        private final int timeoutMs;
+
+        GuardedSocket(int timeoutMs) {
+            this.timeoutMs = timeoutMs;
+        }
+
         @Override
         public InputStream getInputStream() throws IOException {
-            return new PeerCloseIsAFailure(super.getInputStream());
+            return new PeerCloseIsAFailure(super.getInputStream(), timeoutMs);
         }
     }
 
@@ -256,8 +265,16 @@ public final class BinlogConnectionGuard {
      * A zero-length read still returns 0, as the contract requires.
      */
     static final class PeerCloseIsAFailure extends FilterInputStream {
+        private final int timeoutMs;
+
         PeerCloseIsAFailure(InputStream in) {
+            this(in, 0);
+        }
+
+        /** @param timeoutMs the SO_TIMEOUT of the socket this stream reads, for the ERROR line. */
+        PeerCloseIsAFailure(InputStream in, int timeoutMs) {
             super(in);
+            this.timeoutMs = timeoutMs;
         }
 
         @Override
@@ -297,11 +314,11 @@ public final class BinlogConnectionGuard {
             return new EOFException(PEER_CLOSED);
         }
 
-        private static SocketTimeoutException timedOut(SocketTimeoutException e) {
+        private SocketTimeoutException timedOut(SocketTimeoutException e) {
             Metrics.incrementBinlogConnectionLost();
             log.error("no byte from the MySQL source for {} ms ({}): the binlog connection is dead (a partition, a "
                     + "dropped firewall or NAT flow, a vanished host); treated as a communication failure so the "
-                    + "engine restarts from the last committed offset (spec 01.09)", timeoutMs, PROPERTY);
+                    + "engine restarts from the last committed offset (spec 01.09)", this.timeoutMs, PROPERTY);
             return e;
         }
     }
