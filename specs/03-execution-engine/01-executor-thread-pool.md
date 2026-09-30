@@ -117,3 +117,58 @@ Contract:
 - `ClickHouseSinkTaskTest.deadRunnableFailsPut()`, `ClickHouseSinkTaskTest.deadRunnableFailsPreCommit()` — §3.4: a terminated runnable future makes `put` / `preCommit` throw `ConnectException` carrying the runnable's cause, and nothing is enqueued.
 - `ClickHouseSinkTaskTest.liveRunnableAcceptsRecords()` — a live runnable: records are enqueued and `preCommit` holds at the durable watermark.
 - `ClickHouseBatchRunnableErrorLoggerTest.sourceRecordIsNullForKafkaModeRecord()`, `ClickHouseBatchRunnableErrorLoggerTest.sourceRecordIsUnwrappedWhenPresent()` — §3.4 item 3.
+
+---
+
+## 6. Failure Modes & Recovery
+
+The worker pool's recovery posture is "stop loudly, restart from the committed offset": a worker that can no longer run must turn into an engine stop and a process exit within one Debezium batch, never into a silent stall, and every unit it held stays outstanding so the restart redelivers it. The retry of a batch that keeps failing inside a *live* worker is spec 03.03 §6 FM-03.03-1; a hung JDBC call inside a live worker is spec 03.06 §6 FM-03.06-1.
+
+- **FM-03.01-1 Worker killed by an `Error` (OutOfMemoryError, StackOverflowError, linkage error)**
+  - **Trigger**: heap exhaustion while the driver renders a wide chunk (spec 03.06 §3.1 item 2), a deep recursion, a class that fails to load after a bad deploy.
+  - **Behaviour**: `ClickHouseBatchRunnable.run` catches `Exception` only, so the `Error` leaves the task; `ScheduledThreadPoolExecutor` completes the periodic future exceptionally and never runs it again; `ClickHouseBatchExecutor.afterExecute` still decrements the in-flight count, so no drain is wedged; `currentBatch` is kept, so its unit stays outstanding. `DebeziumChangeEventCapture.failIfWorkerDied` (first statement of `handleChangeEventBatch`, and between the slices of `DebeziumOffsetManagement.awaitHandoffCapacity` and of the DDL/TRUNCATE drains) throws with the `Error` as cause; `handleEngineCompletion` sees `hasDeadWorker()` and goes terminal without an in-process retry (spec 10.04 §3.5 rule 6); `onTerminalFailure` exits with code 3 unless `exit.on.terminal.failure=false`.
+  - **Detection**: the worker itself logs nothing (neither the runnable nor the executor logs an `Error`). ERROR `Sink worker <i> of <n> is dead: its scheduled task has terminated. Batches queued for it can never be written, ...` with the `Error` stack, then ERROR `Engine stopped while a sink worker is dead; not retrying: ...`, FATAL `Replication is STOPPED: ...`, exit code 3. Latency: the next batch Debezium delivers — immediately on a busy source; on an idle one the next heartbeat (`heartbeat.interval.ms`, defaulted to 5000 ms by `DEFAULT_HEARTBEAT_INTERVAL_MS`; that Debezium emits it with no binlog traffic at all is Debezium's behaviour, not verified here). The shipped systemd template sets no `-XX:+ExitOnOutOfMemoryError`, so an OOM that also kills non-worker threads relies on the same engine path.
+  - **Blast radius**: all replication stops. No loss: nothing is acknowledged past the dead worker's unit. Units other workers wrote after the last committed offset are redelivered and collapse under ReplacingMergeTree.
+  - **Recovery**: the supervisor restarts the process (`Restart=always`, `RestartSec=30` in the ansible-systemd unit template). For an OOM that recurs on the same batch: raise `-Xmx` (`sink_connector_java_opts`) or lower `buffer.max.bytes` / `thread.pool.size`, then restart; otherwise every restart dies on the same redelivered batch.
+  - **RTO**: ≤ 5 s detection + 30 s `RestartSec` + JVM/engine start + redelivery of the outstanding units (bounded by `sink.connector.handoff.max.outstanding.records`, 500,000 rows) — unmeasured: no harness kills a worker inside a running connector.
+  - **Test**: `WorkerFailureModesTest.anErrorFromAWriteEscapesTheRunnableAndEndsItsPeriodicTask()`, `WorkerErrorDeathIsLoudTest.aWorkerKilledByAnErrorStopsTheEngineOnTheNextHeartbeat()`, `DeadWorkerRetryIsTerminalTest.deadWorkerIsTerminalAtOnce()`.
+
+- **FM-03.01-2 FATAL classification ends the worker**
+  - **Trigger**: ClickHouse answers a code in `FATAL_ERROR_CODES` (516, 497, 50, 53, 60, 81, 16, 396, 27, 33, 69, 349) or a `ValueOutOfRangeException` is in the cause chain (spec 10.01).
+  - **Behaviour**: `ClickHouseBatchRunnable.run` rethrows `RuntimeException("Fatal ClickHouse error, stopping task", e)` with `currentBatch` retained; from there identical to FM-03.01-1, except that `handleEngineCompletion` goes terminal through `isDeterministicFailure` (rule 4).
+  - **Detection**: ERROR `FATAL ClickHouse error (Code: <n>) -- this batch will never succeed. Stopping this worker; ...` at once, then the dead-worker ERROR and exit code 3 on the next batch (≤ 5 s on an idle source).
+  - **Blast radius**: all replication stops; no loss, no divergence.
+  - **Recovery**: fix the named cause (grant, missing table or column, column type), then restart. If the batch can never be written as the source holds it, moving the offset past it (`sink-connector-client change_replication_source`) is valid only followed by `ch-mysql-resync` of every table the transaction touched (spec 11.04).
+  - **RTO**: time to fix + 30 s restart + redelivery; measured: none.
+  - **Test**: `WorkerFailureModesTest.aFatalCodeEndsTheWorkerWithTheBatchStillOutstanding()`, `WorkerDeathIsLoudTest.deadWorkerFailsTheNextBatchLoudly()`.
+
+- **FM-03.01-3 Handoff caps disabled: the dead-worker check is never reached**
+  - **Trigger**: an operator sets both `sink.connector.handoff.max.outstanding.records` and `sink.connector.handoff.max.outstanding.bytes` to 0, then a worker dies.
+  - **Behaviour**: `awaitHandoffCapacity` returns at once, so the only liveness check on the handoff path is gone; `appendToRecordsWithHashRouting` calls `queue.put` on the dead worker's queue, which fills to `max.queue.size` (500,000 batches) and then blocks the Debezium thread forever; `failIfWorkerDied` at the top of the NEXT batch is never reached.
+  - **Detection**: WARN `Routed queue <i> is at 90% capacity! ...` and `Routed queue <i> is full! ...`, then nothing.
+  - **Blast radius**: replication stops with the process up; no loss.
+  - **Recovery**: restart; restore the default caps.
+  - **RTO**: unbounded without an operator.
+  - **Test**: GAP: a unit test that hands off to a dead worker's full routed queue with both caps at 0 and expects the handoff to fail naming the dead worker.
+  - **DEFECT**: `queue.put` has no liveness bound of its own, so a configuration that disables the caps turns a dead worker back into the silent stall §3.3 exists to prevent.
+
+- **FM-03.01-4 Pool thread interrupted while parked by `pause()`**
+  - **Trigger**: a pool thread waiting in `beforeExecute` during a DDL pause is interrupted (`shutdownNow()`, `Future.cancel(true)`). No 2.11.0 caller does this to the sink pool (`stop()` uses `shutdown()`, which does not interrupt a worker that holds its lock), so the defect is latent.
+  - **Behaviour**: `ClickHouseBatchExecutor.beforeExecute` returns without `activeBatches.incrementAndGet()`; `ThreadPoolExecutor.runWorker` still runs the task body (during the pause) and `afterExecute` decrements: the count is -1 and every later `awaitQuiescent` under-counts by one, so a DDL drain can report quiescence while a batch runs.
+  - **Detection**: none.
+  - **Blast radius**: a record captured under the pre-ALTER schema can be bound against the post-ALTER table (silent column loss, Invariant I5).
+  - **Recovery**: restart (the count lives in the executor instance); `ch-mysql-resync` (spec 11.04) of the tables altered while the count was wrong.
+  - **RTO**: unbounded (silent).
+  - **Test**: `ClickHouseBatchExecutorInterruptTest.interruptWhilePausedDoesNotUnbalanceTheInFlightCount()` (disabled, fails on 2.11.0).
+  - **DEFECT**: an interrupted `beforeExecute` must either register the batch or keep the task body from running; today it does neither.
+
+- **FM-03.01-5 Kafka Connect mode: the sink task's runnable dies**
+  - **Trigger**: FM-03.01-1 or FM-03.01-2 under `ClickHouseSinkTask`.
+  - **Behaviour**: `ClickHouseSinkTask.failIfRunnableDied` (first statement of `put` and `preCommit`) throws `ConnectException` carrying the runnable's cause; Kafka Connect fails the task; `preCommit` never answers past `durablyInsertedOffsets`.
+  - **Detection**: task state `FAILED` with the trace in the Connect REST API and worker log, on the next `put` / `preCommit`.
+  - **Blast radius**: that task stops; no loss.
+  - **Recovery**: fix the cause, restart the task (`POST /connectors/<name>/tasks/<id>/restart`); Kafka Connect does not restart a failed task by itself.
+  - **RTO**: depends on the external restarter — unmeasured.
+  - **Test**: `ClickHouseSinkTaskTest.deadRunnableFailsPut()`, `ClickHouseSinkTaskTest.deadRunnableFailsPreCommit()`.
+
+Summary: 5 failure modes, 2 DEFECT, 1 GAP.

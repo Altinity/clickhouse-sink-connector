@@ -82,3 +82,58 @@ and counts for tooling.
 - §3.3 line 1 (`ClickHouseBatchRunnable.processBatch`, `ClickHouseBatchWriter.persistRecords`) has no unit harness that reaches the pick-up line without a live ClickHouse (both paths resolve the destination through `DBMetadata` on a real connection); covered by review of the two call sites.
 - `BatchChunkerTest` — §3.1 item 2: the row limit alone splits like a partition, order and identity preserved (`rowLimitAlone`); the byte limit closes a chunk before the row limit when the rows are wide (`byteLimitClosesEarly`); a single row wider than the byte limit is its own chunk, never dropped or split (`oversizedRowIsItsOwnChunk`); unstamped rows obey the row limit and both limits disabled yield one chunk (`unstampedRowsAndDisabledLimits`); empty input yields no chunks and a null row counts as zero bytes (`emptyAndNull`).
 - Verification: the `buffer.flush.time.ms` cadence is not yet covered by an automated test (gap).
+
+---
+
+## 6. Failure Modes & Recovery
+
+The executor sends and does not retry: every failure of `executeBatch()` is rethrown to the worker, which classifies it (spec 10.01) and either retries the whole batch (spec 03.03 §6) or stops (spec 03.01 §6). Its own recovery risks are a call that never returns, a failure after part of the batch was sent, and a driver result it does not check.
+
+- **FM-03.06-1 An INSERT that never returns (no socket read timeout)**
+  - **Trigger**: ClickHouse stops answering without closing the socket — host freeze, network partition without a RST, a stuck query, a firewall that drops a long-idle flow.
+  - **Behaviour**: `client-v2` 0.9.8 defaults `socket_timeout` to 0 (no read timeout; `ClientConfigProperties` constant pool) and `BaseDbWriter.createConnection` sets none (only `client_name`, `custom_settings`, `http_connection_provider` and the user's `clickhouse.jdbc.params`). `ps.executeBatch()` in `PreparedStatementExecutor.executePreparedStatement` blocks inside the task body: no exception, no retry, no classification. The worker's queue and every offset behind it freeze; the DDL/TRUNCATE drains wait on a live future; on a busy source the handoff hard cap stops the engine after 600 s, but the engine retry keeps the pool with the hung thread, so the cap is met again — ~10 × 610 s before the terminal exit; on a quiet source, forever. Whether the kernel ends it (TCP keepalive is not enabled by the connector; `tcp_retries2` only bounds unacknowledged sends) is host configuration, not verified here.
+  - **Detection**: none from the worker. The last line of that thread is `*** INSERT QUERY for Database(<db>) ***: ...` with no `EXECUTED BATCH Successfully` after it; indirectly WARN `Pipeline drain: ... still pending after <n> ms ...` or `DDL drain: a batch is still inside a worker after <n> ms ...` every 60 s when a DDL/TRUNCATE waits, and `Handoff hard cap: ...` 600 s after the cap is met on a busy source.
+  - **Blast radius**: the whole connector's committed offset freezes; tables on other workers keep writing but are not acknowledged; no loss.
+  - **Recovery**: restart the connector (kill it if it does not stop: `stop()` waits 60 s for the pool). Permanently: `clickhouse.jdbc.params=socket_timeout=<ms>` (accepted by the V2 driver per `BaseDbWriter.V1_ONLY_PROPERTIES`' note), larger than the longest legitimate INSERT, e.g. 600000.
+  - **RTO**: unbounded by default; with `socket_timeout` set, that timeout + one backoff — unmeasured.
+  - **Test**: GAP: a TCP endpoint that accepts and never answers, asserting the INSERT fails within the configured timeout and the batch is retried.
+  - **DEFECT**: no timeout bounds a single INSERT, so a silent network or server hang stalls replication indefinitely without an error.
+
+- **FM-03.06-2 A later chunk fails after earlier chunks were written**
+  - **Trigger**: a template split into several chunks by `BatchChunker.chunk` (`buffer.max.records`, `buffer.max.bytes`), and chunk k fails (252, 241, a network error). Also a single INSERT that the server commits block by block (`max_insert_block_size`) and that fails mid-stream — ClickHouse insert semantics, not verified for the V2 driver.
+  - **Behaviour**: each chunk is its own `executeBatch()`; the failure is rethrown as `RuntimeException` after chunks 1..k-1 returned, and nothing rolls them back. The worker retries the whole batch (spec 03.03 §6 FM-03.03-2).
+  - **Detection**: ERROR `******* ERROR inserting Batch Database(<db>), Table(<t>) *****************` with the driver exception, then the worker's retry lines.
+  - **Blast radius**: the earlier chunks are written again: idempotent under ReplacingMergeTree (same key, same `_version`); additive under CollapsingMergeTree and plain MergeTree (spec 05.04 §6 FM-05.04-1).
+  - **Recovery**: none for ReplacingMergeTree; `ch-mysql-resync` (spec 11.04) of an additive-engine table.
+  - **RTO**: the retry's (spec 03.03 §6); resync time for additive engines — unmeasured.
+  - **Test**: `PreparedStatementExecutorFailureModesTest.aFailedChunkLeavesTheEarlierChunksWrittenAndFailsTheBatch()`.
+
+- **FM-03.06-3 ClickHouse rejects the INSERT with a server error**
+  - **Trigger**: 252 TOO_MANY_PARTS (parts above `parts_to_throw_insert`), 241 MEMORY_LIMIT_EXCEEDED, 242 TABLE_IS_READ_ONLY (a Replicated table whose Keeper session is lost), 164 READONLY (a read-only user profile), 53/16/60/81/497/516.
+  - **Behaviour**: the executor rethrows; `ClickHouseErrorClassifier` files 252, 241, 242 and 164 as RETRIABLE (not in `FATAL_ERROR_CODES`) — retried forever (spec 03.03 §6 FM-03.03-1) — and the rest as FATAL (spec 03.01 §6 FM-03.01-2). 252 and 242 clear by themselves when merges catch up or Keeper returns; 241 does when concurrent pressure passes; 164, and 241 for one chunk above the query budget, never do.
+  - **Detection**: ERROR `******* ERROR inserting Batch Database(<db>), Table(<t>) *****************`, then WARN `Retriable ClickHouse error (Code: <n>, Category: RETRIABLE) ...` or ERROR `FATAL ClickHouse error (Code: <n>) ...`; immediate.
+  - **Blast radius**: the worker's tables and the connector's committed offset wait (retriable) or everything stops (FATAL); no loss.
+  - **Recovery**: 252: spec 03.07 §7 FM-03.07-1; 242: restore Keeper — self-heals; 241: lower `buffer.max.records` / `buffer.max.bytes` or raise the user's memory limit; 164: fix the user profile; FATAL codes: fix and restart.
+  - **RTO**: self-healing codes: cause + ≤ 30 s backoff; the others: operator-bound (spec 03.03 §6) — unmeasured.
+  - **Test**: `ClickHouseErrorClassifierTest.testClassifyRetriable()`, `ClickHouseErrorClassifierTest.testClassifyFatal()`, `WorkerFailureModesTest.backpressureCodesAreRetriedWithTheBatchKeptUntilTheyClear()`; GAP: a classifier assertion for 242 and 164.
+
+- **FM-03.06-4 A statement the driver marks `EXECUTE_FAILED` is treated as written**
+  - **Trigger**: `executeBatch()` returns an `int[]` containing `Statement.EXECUTE_FAILED` without throwing. Whether `jdbc-v2` 0.9.8 ever does so is not verified; the JDBC contract allows it.
+  - **Behaviour**: `executePreparedStatement` only counts the entry into the INFO line (`describeBatchResult`) and sets the result true; the worker reports the batch written and its offset is acknowledged.
+  - **Detection**: only the suffix `, <f> marked EXECUTE_FAILED` on the INFO line `*************** EXECUTED BATCH Successfully Records: <n> ...`.
+  - **Blast radius**: the flagged rows may be missing in ClickHouse while the offset moves past them — silent loss.
+  - **Recovery**: value-level checksum (spec 11.02) to find the tables, `ch-mysql-resync` (spec 11.04).
+  - **RTO**: resync time — unmeasured.
+  - **Test**: `PreparedStatementExecutorFailureModesTest.anExecuteFailedEntryFailsTheBatch()` (disabled, fails on 2.11.0).
+  - **DEFECT**: a driver-reported statement failure must fail the batch, not be logged at INFO and acknowledged.
+
+- **FM-03.06-5 A row or chunk larger than the heap can render**
+  - **Trigger**: multi-megabyte BLOB/TEXT rows; `BatchChunker` writes a row wider than `buffer.max.bytes` alone, and the driver renders the whole chunk as SQL text in memory, once per worker thread (§3.1 item 2).
+  - **Behaviour**: `OutOfMemoryError` in the worker — spec 03.01 §6 FM-03.01-1 (engine stop, exit code 3). The row is redelivered after the restart, so a row that cannot be rendered in the heap fails every time.
+  - **Detection**: `java.lang.OutOfMemoryError` as the cause of `Sink worker <i> of <n> is dead ...`, exit code 3, repeating after each restart.
+  - **Blast radius**: all replication stops; no loss.
+  - **Recovery**: raise `-Xmx`, lower `thread.pool.size` (fewer concurrent renders) and `buffer.max.bytes`, restart. A row cannot be split.
+  - **RTO**: restart after the heap change; unmeasured.
+  - **Test**: `BatchChunkerTest.oversizedRowIsItsOwnChunk()`.
+
+Summary: 5 failure modes, 2 DEFECT, 2 GAP.
