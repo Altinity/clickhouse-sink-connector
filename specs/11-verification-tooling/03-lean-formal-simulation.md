@@ -199,3 +199,68 @@ Keys of the `xfails` dictionary at the top of `sink-connector-lightweight/tests/
 `insert/parallel` (different results in MySQL and ClickHouse).
 
 The keyless-table entries correspond to the GIPK requirement surfaced by the keyless-table preflight (spec 01.01 §3.2); the `types/*` entries are open type-mapping gaps for Domain 07.
+
+---
+
+## 7. Failure Modes & Recovery
+The Lean suite runs only in CI and on developer machines. It never runs next to the connector, so its failures cannot stop replication or touch data. A failing build blocks a merge (loud, fixed by the author). The dangerous failure is a green build that proves less than the specs claim, because the Constitution cites these theorems as guarantees.
+
+- **FM-11.03-1 A bare `lake build` builds nothing and succeeds**
+  - **Trigger**: the `@[default_target]` attribute is removed from `lean_lib «Replication»` in `formal_specs/lean/lakefile.lean` (for example in a lakefile refactor).
+  - **Behaviour**: Lake has no default target. `lake build` prints `Build completed successfully` and compiles nothing (§3.2, observed before the attribute was added). The CI step `Build the formal proofs (lake build)` passes, and `scripts/validate_specs.py` checks roots and forbidden tokens but not the attribute.
+  - **Detection**: none. The only sign is that the per-module `Built Replication.<Module>` lines are missing from the CI log.
+  - **Blast radius**: every theorem cited by the Constitution §5 goes unchecked while CI stays green.
+  - **Recovery**: restore the attribute and run `lake build` in `formal_specs/lean`. Confirm one `Built Replication.<Module>` line per root.
+  - **RTO**: one build. The warm incremental build measured 4.9 s wall (19 modules, dev host, 2026-09-30, `time lake build`). The cold build is unmeasured and bounded by the 30-minute CI job timeout.
+  - **Test**: `scripts/tests/test_validate_specs_failure_modes.py::LeanGateTests::test_lakefile_without_default_target_is_rejected` (skipped, DEFECT).
+  - **DEFECT**: nothing enforces the attribute that makes the build real.
+
+- **FM-11.03-2 A declared axiom proves anything**
+  - **Trigger**: a Lean file adds `axiom <name> : <prop>`, whether deliberately or as a "temporary" stand-in for a hard lemma.
+  - **Behaviour**: `lake build` accepts it. The validator rejects only `sorry`, `admit` and `native_decide` (`FORBIDDEN_LEAN_TOKENS`), and the CI grep matches the same three. The `#print axioms` check of §3.2 is manual. No step runs it.
+  - **Detection**: none.
+  - **Blast radius**: any theorem that depends on the axiom is "machine-checked" whatever it states.
+  - **Recovery**: run `#print axioms` on every cited theorem. It must list only the standard axioms §3.2 names. Remove the declared axiom.
+  - **RTO**: minutes to hours of proof work, once noticed.
+  - **Test**: `scripts/tests/test_validate_specs_failure_modes.py::LeanGateTests::test_user_declared_axiom_is_rejected` (skipped, DEFECT). A CI step that runs `#print axioms` for the Constitution §5 theorems is a GAP.
+  - **DEFECT**: the axiom set the specs claim is not checked by any gate.
+
+- **FM-11.03-3 A theorem holds, but production violates its hypothesis**
+  - **Trigger**: the model states a property under a hypothesis that the shipped code does not guarantee. Concrete case: `Replication.History.closed_row_visible_at_close_key` assumes `hfresh`, that no earlier row of the key was closed at the same `_valid_to`. A redelivered UPDATE (batch retry or restart) writes a second close row at exactly that key, and the earlier closed version disappears under `FINAL` (spec 12.03 §7 FM-12.03-1). `VersionFloor` models only the restart boundary, and within-run monotonicity is model-only (§3.0).
+  - **Behaviour**: the proof is correct. The guarantee quoted in the specs ("no version is lost") is not.
+  - **Detection**: none from the suite.
+  - **Blast radius**: a spec reader takes a conditional theorem for an unconditional guarantee.
+  - **Recovery**: for each cited theorem, state its hypotheses next to the claim in the citing spec, and name the runtime guard or test that establishes each one, or a GAP.
+  - **RTO**: n/a (design-time). The data-path consequences carry their own RTO in the citing spec.
+  - **Test**: GAP: a per-theorem hypothesis table checked against the citing specs.
+  - **DEFECT**: at least one cited history theorem rests on a hypothesis the implementation violates under at-least-once delivery.
+
+- **FM-11.03-4 The module inventory in this spec drifts from the lakefile**
+  - **Trigger**: a module is added to `lakefile.lean` without updating §2.
+  - **Behaviour**: §2 omits `Replication.PkRebuild` and `Replication.PayloadStream`, which are lakefile roots and are built. The validator compares the lakefile with the files, not with this spec.
+  - **Detection**: none.
+  - **Blast radius**: readers undercount what is proved. No correctness impact.
+  - **Recovery**: add the two modules to §2 in a spec change.
+  - **RTO**: minutes.
+  - **Test**: GAP: a self-test asserting every lakefile root is named in §2 of this spec.
+  - **DEFECT**: the inventory is stale and no check notices.
+
+- **FM-11.03-5 The toolchain cannot be installed in CI**
+  - **Trigger**: GitHub's raw download of `elan-init.sh` or the pinned `leanprover/lean4:v4.11.0` toolchain fails (network, rate limit).
+  - **Behaviour**: the step runs under `set -euo pipefail` and fails, so the job is red.
+  - **Detection**: loud. The CI step fails with the download error, within minutes of the push.
+  - **Blast radius**: merges are blocked. Nothing is skipped silently.
+  - **Recovery**: re-run the workflow. Locally, `lake build` in `formal_specs/lean` with the pinned toolchain.
+  - **RTO**: one CI re-run, a few minutes.
+  - **Test**: GAP: none is practical offline (network-dependent).
+
+- **FM-11.03-6 A proof no longer checks**
+  - **Trigger**: a Lean edit, or a toolchain bump in `lean-toolchain`.
+  - **Behaviour**: `lake build` exits non-zero. The CI job fails, and so does `validate_specs.py --lake` (`run_lake_build`, which reports the last 20 lines).
+  - **Detection**: loud. `` `lake build` failed in formal_specs/lean `` and non-zero exit.
+  - **Blast radius**: merges are blocked.
+  - **Recovery**: repair the proof, or revert the change. Never add `sorry` (rejected by pass 3).
+  - **RTO**: developer time. It is not a production outage.
+  - **Test**: `scripts/tests/test_validate_specs.py::LeanTests::test_lake_build_failure_is_reported`.
+
+Summary: 6 failure modes, 4 DEFECT, 4 GAP.
