@@ -99,9 +99,19 @@ public class TransactionPayloadDeserializer extends TransactionPayloadEventDataD
             throw new PayloadEventDecodingException("Transaction_payload header declares " + payloadSize
                     + " payload bytes but the event carries " + remaining);
         }
+        if (!hasUncompressedSize && compressionType == StreamedPayloadEvents.COMPRESSION_ZSTD) {
+            // MySQL's encoder writes the uncompressed-size field for every compressed payload (it omits it
+            // only for compression type NONE): libbinlogevents/src/codecs/binary.cpp,
+            // Transaction_payload::encode. The end-of-pass byte count is checked against this field, and
+            // without it a zstd stream cut at a frame boundary would decode "successfully" to a shorter
+            // transaction, so a ZSTD payload without it is refused rather than trusted (spec 01.08 §3.2.1).
+            throw new PayloadEventDecodingException("Transaction_payload header declares compression type ZSTD "
+                    + "but carries no uncompressed-size field, which every MySQL writer emits for a compressed "
+                    + "payload; the payload's integrity could not be verified");
+        }
         byte[] payload = inputStream.read((int) payloadSize);
         if (!hasUncompressedSize) {
-            // Same default as the stock decoder: an absent field means "as large as the payload".
+            // Compression type NONE: MySQL omits the field and the payload IS the uncompressed stream.
             uncompressedSize = payloadSize;
         }
         StreamedPayloadEvents events = new StreamedPayloadEvents(payload, compressionType, uncompressedSize,

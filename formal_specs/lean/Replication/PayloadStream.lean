@@ -25,8 +25,14 @@ length-prefixed byte blocks and proves:
   the end-of-pass check compares with the header's declared uncompressed size.
 * `step_short_fails` — an event announcing more bytes than remain is refused (`none`), never
   returned truncated: a cut stream fails loudly instead of ending the transaction early.
-* `pass_deterministic` — two passes over the same retained bytes return the same events,
-  so the registration passes and the dispatch pass see identical streams.
+* `decode_fuel_mono` — once a pass has returned a result, running it with more fuel
+  returns the SAME result: the decoded stream is a function of the retained bytes alone,
+  not of how far the reader was allowed to run. (That repeated Java passes re-read the
+  same retained bytes is established by the JUnit test `passesAreLazyAndRepeatable`;
+  the pure model cannot express a destructive read, so it does not claim it.)
+* `decode_short_fails` — a stream whose first event announces more bytes than remain is
+  refused by the whole decoder, at every fuel: a truncated payload never decodes to a
+  shorter transaction.
 -/
 
 namespace Replication.PayloadStream
@@ -107,6 +113,46 @@ theorem decode_encode_full (bs : List Body) :
   | nil => simp
   | cons b bs ih => simp; omega
 
-theorem pass_deterministic (fuel : Nat) (s : List Nat) : decode fuel s = decode fuel s := rfl
+/-- More fuel never changes a result the decoder has already produced. -/
+theorem decode_fuel_mono (f k : Nat) (s : List Nat) (r : List Body)
+    (h : decode f s = some r) : decode (f + k) s = some r := by
+  induction f generalizing s r with
+  | zero =>
+    cases s with
+    | nil => simp [decode] at h ⊢; exact h
+    | cons n rest => simp [decode] at h
+  | succ f ih =>
+    cases s with
+    | nil => simp [decode] at h ⊢; exact h
+    | cons n rest =>
+      have e1 : decode (f + 1) (n :: rest) =
+          (match step (n :: rest) with
+            | none => none
+            | some (b, r) => (decode f r).map (b :: ·)) := rfl
+      have e2 : decode (f + 1 + k) (n :: rest) =
+          (match step (n :: rest) with
+            | none => none
+            | some (b, r) => (decode (f + k) r).map (b :: ·)) := by
+        rw [Nat.succ_add]; rfl
+      rw [e1] at h
+      rw [e2]
+      cases hs : step (n :: rest) with
+      | none => simp only [hs] at h
+      | some p =>
+        obtain ⟨b, r'⟩ := p
+        simp only [hs] at h
+        show (decode (f + k) r').map (b :: ·) = some r
+        cases hd : decode f r' with
+        | none => simp [hd] at h
+        | some rs =>
+          rw [ih r' rs hd]
+          simpa [hd] using h
+
+/-- A first event longer than the remaining bytes makes the whole pass fail, at any fuel. -/
+theorem decode_short_fails (fuel n : Nat) (rest : List Nat) (h : rest.length < n) :
+    decode fuel (n :: rest) = none := by
+  cases fuel with
+  | zero => simp [decode]
+  | succ f => simp only [decode, step_short_fails n rest h]
 
 end Replication.PayloadStream

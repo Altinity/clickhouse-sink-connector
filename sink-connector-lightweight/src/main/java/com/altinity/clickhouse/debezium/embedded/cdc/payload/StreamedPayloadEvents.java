@@ -288,6 +288,26 @@ public final class StreamedPayloadEvents extends ArrayList<Event> {
         }
     }
 
+    /**
+     * Refused: the retained state is {@code transient} (native streams, the shared table-id map), so a
+     * serialized copy could not decode. Fail at write time with the reason instead of at read time with
+     * a NullPointerException (spec 01.08 §3.2.1 item 8).
+     */
+    private void writeObject(java.io.ObjectOutputStream out) throws java.io.IOException {
+        throw new java.io.NotSerializableException(getClass().getName()
+                + ": streamed Transaction_payload state is not serializable (spec 01.08 §3.2.1)");
+    }
+
+    private void readObject(java.io.ObjectInputStream in) throws java.io.IOException {
+        throw new java.io.InvalidObjectException(getClass().getName()
+                + ": streamed Transaction_payload state is not serializable (spec 01.08 §3.2.1)");
+    }
+
+    private void readObjectNoData() throws java.io.ObjectStreamException {
+        throw new java.io.InvalidObjectException(getClass().getName()
+                + ": streamed Transaction_payload state is not serializable (spec 01.08 §3.2.1)");
+    }
+
     // ------------------------------------------------------------------
     // Everything else is refused: the backing array is always empty
     // ------------------------------------------------------------------

@@ -39,6 +39,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
@@ -284,6 +286,47 @@ class StreamingTransactionPayloadTest {
         byte[] body = PayloadFixtures.body(Zstd.compress(cut), 0, (long) cut.length);
         TransactionPayloadEventData data = decode(body, new HashMap<>());
         assertThrows(PayloadEventDecodingException.class, () -> dispatch(data));
+    }
+
+    @Test
+    @DisplayName("A ZSTD payload without the uncompressed-size field is refused: a stream cut at a frame boundary cannot pass as a shorter transaction")
+    void zstdPayloadWithoutUncompressedSizeIsRefused() {
+        byte[] a = concat(PayloadFixtures.tableMap(9), PayloadFixtures.writeRow(9, 1, new byte[] {1}));
+        byte[] b = concat(PayloadFixtures.writeRow(9, 2, new byte[] {2}), PayloadFixtures.xid(5));
+        byte[] frameA = Zstd.compress(a);
+        byte[] full = concat(frameA, Zstd.compress(b));
+        // Cut at the frame boundary: zstd decodes frame a cleanly, so only the size check can catch it.
+        byte[] cut = Arrays.copyOf(full, frameA.length);
+        PayloadEventDecodingException e = assertThrows(PayloadEventDecodingException.class,
+                () -> decode(PayloadFixtures.body(cut, StreamedPayloadEvents.COMPRESSION_ZSTD, null), new HashMap<>()));
+        assertTrue(e.getMessage().contains("uncompressed-size"), e.getMessage());
+        // The whole stream without the field is refused too: MySQL always writes it for ZSTD.
+        assertThrows(PayloadEventDecodingException.class,
+                () -> decode(PayloadFixtures.body(full, StreamedPayloadEvents.COMPRESSION_ZSTD, null), new HashMap<>()));
+        // The same cut stream WITH the field fails at the end of the pass (spec 01.08 §3.2.1 item 5).
+        assertDoesNotThrow(() -> decode(PayloadFixtures.body(cut, 0, (long) (a.length + b.length)), new HashMap<>()));
+        assertThrows(PayloadEventDecodingException.class, () -> dispatch(
+                decode(PayloadFixtures.body(cut, 0, (long) (a.length + b.length)), new HashMap<>())));
+    }
+
+    @Test
+    @DisplayName("Streamed payload state refuses Java serialization at write time instead of NPE-ing after a read")
+    void streamedStateIsNotSerializable() throws IOException {
+        TransactionPayloadEventData data = decode(PayloadFixtures.mysql80Fixture(), new HashMap<>());
+        Event lazy = null;
+        for (Event e : data.getUncompressedEvents()) {
+            if (e instanceof LazyPayloadEvent) {
+                lazy = e;
+                break;
+            }
+        }
+        assertNotNull(lazy, "the fixture has lazily parsed rows events");
+        for (Object o : new Object[] {data, data.getUncompressedEvents(), lazy}) {
+            java.io.ObjectOutputStream out = new java.io.ObjectOutputStream(new java.io.ByteArrayOutputStream());
+            java.io.NotSerializableException ex = assertThrows(java.io.NotSerializableException.class,
+                    () -> out.writeObject(o), o.getClass().getName());
+            assertTrue(ex.getMessage().contains("spec 01.08"), ex.getMessage());
+        }
     }
 
     @Test

@@ -26,6 +26,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Verifies at start that the connector can read a MySQL source whose
@@ -55,7 +57,10 @@ import java.util.function.Supplier;
  * a WARN banner, because the variable is dynamic and a later {@code SET GLOBAL}
  * -- or even a session-level {@code SET} -- would start producing payloads. In
  * {@code require} mode the operator has said the pipeline depends on
- * compression, and anything other than ON-and-decodable refuses.</p>
+ * compression, and anything other than ON-and-decodable refuses -- including
+ * a source older than 8.0.34, which can write a compressed transaction no
+ * reader can receive (see {@link #OVERSIZED_PAYLOAD_HAZARD}; in {@code auto}
+ * mode that is a WARN banner).</p>
  *
  * <p>The check is read-only against the source, on the same footing as the
  * keyless-table and row-image checks: one {@code SELECT} on a connection
@@ -371,6 +376,24 @@ public final class BinlogTransactionCompressionPreflight {
         String version = probe.version == null ? "(version unknown)" : probe.version;
         switch (probe.state) {
             case ON:
+                if (decoderOk && writesOversizedPayloads(probe.version)) {
+                    if (require) {
+                        refuse(String.format(
+                                "%s=%s and binlog_transaction_compression=ON, but the source is MySQL %s. %s "
+                                        + "Upgrade the source to 8.0.34 or later before relying on compression, or "
+                                        + "turn it off:\n    SET PERSIST binlog_transaction_compression = OFF;\n"
+                                        + "To start anyway, set %s=%s.",
+                                PROPERTY, MODE_REQUIRE, version, OVERSIZED_PAYLOAD_HAZARD, PROPERTY, MODE_AUTO));
+                        return outcome; // unreachable: refuse throws
+                    }
+                    log.warn("\n{}\n  !!  binlog_transaction_compression=ON on MySQL {}, a server older than 8.0.34  "
+                                    + "!!\n{}\n  {} The connector decodes every compressed transaction the source can "
+                                    + "send, of any uncompressed size; this limit is the source's own. Upgrade the "
+                                    + "source to 8.0.34 or later, or turn compression off "
+                                    + "(SET PERSIST binlog_transaction_compression = OFF).\n{}",
+                            BANNER_RULE, version, BANNER_RULE, OVERSIZED_PAYLOAD_HAZARD, BANNER_RULE);
+                    return outcome;
+                }
                 if (decoderOk) {
                     log.info("binlog_transaction_compression=ON (zstd level {}) on MySQL {}: compressed "
                                     + "transactions are decoded transparently (Transaction_payload decoder "
@@ -402,6 +425,12 @@ public final class BinlogTransactionCompressionPreflight {
                                     + "the ERROR above); fix the platform before enabling compression",
                             PROPERTY, MODE_AUTO));
                     return outcome; // unreachable: refuse throws
+                }
+                if (decoderOk && writesOversizedPayloads(probe.version)) {
+                    log.warn("binlog_transaction_compression=OFF on MySQL {}: the source writes uncompressed "
+                            + "transactions and the Transaction_payload decoder self-test passed. Do not turn "
+                            + "compression on for this server: {}", version, OVERSIZED_PAYLOAD_HAZARD);
+                    return outcome;
                 }
                 if (decoderOk) {
                     log.info("binlog_transaction_compression=OFF on MySQL {}: the source writes uncompressed "
@@ -451,6 +480,47 @@ public final class BinlogTransactionCompressionPreflight {
                                 + "are decoded if the source sends them. Set {}={} to have this refuse instead.",
                         probe.version == null ? "" : " (version " + probe.version + ")", PROPERTY, MODE_REQUIRE);
                 return outcome;
+        }
+    }
+
+    /**
+     * The hazard of a source older than 8.0.34 (spec 01.08 §3.1 item 4). Until MySQL 8.0.34 (Bug
+     * #33588473) a server writes a transaction whose COMPRESSED payload exceeds 1 GiB as one
+     * Transaction_payload anyway; the dump thread cannot send an event above the 1 GiB replication
+     * packet limit, so no reader -- this connector or a MySQL replica -- can receive it. From 8.0.34 the
+     * server writes such a transaction uncompressed instead.
+     */
+    static final String OVERSIZED_PAYLOAD_HAZARD = "Before MySQL 8.0.34 (Bug #33588473) a transaction whose "
+            + "COMPRESSED payload exceeds 1 GiB is still written as one Transaction_payload event larger than the "
+            + "1 GiB replication packet limit: no reader can receive it (the source's dump thread fails with error "
+            + "1236 'log event entry exceeded max_allowed_packet'; SHOW BINLOG EVENTS fails with 'Event too big'), "
+            + "so replication stops at it for this connector and for every MySQL replica. From 8.0.34 the server "
+            + "writes such a transaction uncompressed instead.";
+
+    /** major.minor.patch at the start of {@code @@version} ("8.0.41-32", "8.4.3", "9.1.0"). */
+    private static final Pattern SERVER_VERSION = Pattern.compile("^(\\d+)\\.(\\d+)\\.(\\d+)");
+
+    /**
+     * True for a MySQL server that can write a Transaction_payload larger than the 1 GiB replication
+     * packet limit: 8.0.20 (where compression exists) up to 8.0.33. 8.0.34+, 8.1+ and later series fall
+     * back to an uncompressed transaction. An unparseable or missing version is not classified (false):
+     * the probe never refuses on a guess.
+     */
+    static boolean writesOversizedPayloads(String version) {
+        if (version == null) {
+            return false;
+        }
+        Matcher m = SERVER_VERSION.matcher(version.trim());
+        if (!m.find()) {
+            return false;
+        }
+        try {
+            int major = Integer.parseInt(m.group(1));
+            int minor = Integer.parseInt(m.group(2));
+            int patch = Integer.parseInt(m.group(3));
+            return major == 8 && minor == 0 && patch < 34;
+        } catch (NumberFormatException e) {
+            return false;
         }
     }
 
