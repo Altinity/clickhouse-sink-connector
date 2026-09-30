@@ -219,3 +219,50 @@ and continuity across the boundary is established by the seeded floor
 (`Replication.VersionFloor.restart_boundary`) on every start that has a seed
 source (§6.1), and is not established on a first start without one (§6.2) or
 above sentinel rows (§6.3).
+
+---
+
+## 7. Failure Modes & Recovery
+An upgrade or a downgrade is a restart plus a change of code; the persisted formats do not change (§3.2), so no failure here stops replication. What can fail is version continuity across the boundary, and every such failure is silent. The recovery posture is therefore procedural: upgrade and downgrade with the connector caught up and the source briefly quiescent, and verify with the value checksum (spec 11.02) afterwards.
+
+- **FM-02.06-1 Upgrading a lagging connector**
+  - **Trigger**: the first 2.11.0 start (no `replica_version_high_water` row) happens while the connector is behind the source — or on a ClickHouse replica other than the one the mark was written to (the mark table is not replicated).
+  - **Behaviour**: `VersionHighWaterMark.seedFloor` seeds the floor at the connector clock + 5 000 ms (spec 02.02 §3.5 (2)); every backlog row is clamped to that one millisecond until the source clock passes it, so the counter grows by the whole backlog without a reset (spec 02.03 §3.2). At the clamp's exit FM-02.03-1 inverts the order of the next `backlog rows / 10^6` ms of commits; if the connector host's clock is also more than 5 s behind the source's, FM-02.02-5 applies on top.
+  - **Detection**: WARN `Version floor seeded to <ms> ms from the connector clock + 5000 ms (no usable row in <table>): ...` at start; the inversion itself is not detected. DEFECT.
+  - **Blast radius**: keys written just before and just after the clamp's exit keep stale values; silent.
+  - **Recovery**: prevention — upgrade only when replication lag is under a few seconds (`show_replica_status`), on the replica that will keep serving the connector. After an upgrade done under lag: value checksum (spec 11.02) and resync (spec 11.04) of the tables written around the instant the source clock passed the WARN's floor.
+  - **RTO**: 0 with the procedure; otherwise unbounded (resync); unmeasured.
+  - **Test**: `VersionHighWaterMarkTest.seedFloorWithoutAMarkUsesTheClockAndReadsNoTargetTable()` (the seed); `CounterCarryResetInversionTest.resetAfterALongClampStillRanksAbove()` (disabled; the inversion at the clamp's exit).
+  - **DEFECT**: an upgrade under lag inverts versions at the end of the backlog, silently.
+
+- **FM-02.06-2 Downgrade to 2.10.x / 2.9.1 / 2.8.0**
+  - **Trigger**: 2.11.0 is replaced by an older release on the same tables.
+  - **Behaviour**: the older release ignores `replica_version_high_water` and starts with the floor at 0 (§6.1): its first rows can rank below 2.11.0's last rows by the counter carry (≤ 0.5 s) plus the horizon head-room (≤ 5 s after a recent 2.11.0 restart) plus any clamp 2.11.0 had in force.
+  - **Detection**: none (the older release has no check). DEFECT.
+  - **Blast radius**: keys written in the last seconds before the downgrade keep stale values until rewritten.
+  - **Recovery**: prevention — stop 2.11.0 with the source quiescent for at least 6 s and the connector caught up, then start the older release; afterwards run the value checksum and resync what it reports.
+  - **RTO**: 0 with the procedure; otherwise unbounded (resync); unmeasured.
+  - **Test**: GAP: an end-to-end downgrade test (2.11.0 writes, 2.10.x restarts on a lagging source) — already recorded in §5.
+  - **DEFECT**: not fixable in 2.11.0 (the older code decides); safe only by procedure.
+
+- **FM-02.06-3 `snowflake.id=false` with a data snapshot**
+  - **Trigger**: an existing configuration sets `snowflake.id=false` and a `snapshot.mode` that reads data (including the unset default `initial`).
+  - **Behaviour**: `DebeziumChangeEventCapture.warnIfRawGtidVersioningWithDataSnapshot` logs once and the start continues (Invariant I11 forbids refusing an existing configuration); streamed GTID rows are versioned with the raw transaction number, below every snapshot row (§3.2.1).
+  - **Detection**: ERROR `snowflake.id=false with snapshot.mode=... versions streamed GTID rows with the raw transaction number, which ranks BELOW every snapshot row's sequence version: ...` once per start, before the engine is created.
+  - **Blast radius**: every UPDATE and DELETE of a snapshotted key is discarded, permanently; row counts match.
+  - **Recovery**: set `snowflake.id=true` (the default) or a no-data `snapshot.mode` and restart; if the engine already streamed under the bad combination, resync (spec 11.04) every snapshotted table.
+  - **RTO**: restart ~20 s before any streaming; afterwards unbounded (resync); unmeasured.
+  - **Test**: `SnowflakeIdSnapshotWarningTest.rawGtidVersioningWithDataSnapshotIsLoud()`, `SnowflakeIdSnapshotWarningTest.noDataSnapshotModesAreSilent()`.
+  - **DEFECT**: a known data-destroying configuration is allowed to stream after one ERROR line.
+
+- **FM-02.06-4 UInt64-max sentinel rows written by older releases**
+  - **Trigger**: tables written by a release before the timestamp+offset fallback of `ClickHouseStruct.calculateVersion` hold rows with `_version = 18446744073709551615` (§6.3, issue #1213).
+  - **Behaviour**: 2.11.0 no longer writes them but cannot supersede them: no version is greater.
+  - **Detection**: none by the connector. DEFECT. The operator's check: `SELECT count() FROM <table> WHERE _version = 18446744073709551615`.
+  - **Blast radius**: each such key is frozen at its sentinel row forever.
+  - **Recovery**: resync the affected tables with `ch-mysql-resync` (spec 11.04), whose `REPLACE PARTITION` replaces the sentinel rows with the source's.
+  - **RTO**: unbounded (resync of the affected tables); unmeasured.
+  - **Test**: `VersionFallbackWithoutGtidTest.bindMustNotWriteUint64Max()`, `VersionFallbackWithoutGtidTest.calculateVersionMustNotFallThroughToSentinel()` (2.11.0 writes none).
+  - **DEFECT**: pre-existing frozen keys are neither detected nor repaired by the upgrade.
+
+Summary: 4 failure modes, 4 DEFECT, 1 GAP.

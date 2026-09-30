@@ -91,3 +91,40 @@ The GTID path no longer bypasses the floor: §3.1 feeds the clamped `effectiveTs
 - `ReplicationHistoryHandlerTest.everyHistoryRowCarriesTheEventsHistoryVersion()`, `ReplicationHistoryHandlerTest.underivableVersionIsRefused()`, `QueryFormatterTest.allRowsOfOneEventShareOneVersion()` — §3.5 (b): the history statements embed `historyVersion(record)` in every row and refuse an underivable version.
 - `ReplicationHistoryVersionDomainTest.sequenceRowEncodesTheMillisecondBelowItsEffectiveOneAndTheCounterLessItsSeed()`, `ReplicationHistoryVersionDomainTest.sequenceRowWithoutAnEffectiveMillisecondRecoversItFromTheSequence()`, `ReplicationHistoryVersionDomainTest.sequenceEncodingIsStrictlyMonotoneLikeTheSequence()`, `ReplicationHistoryVersionDomainTest.gtidSourceIsTheStandardSnowflakeVersionItself()`, `ReplicationHistoryVersionDomainTest.legacyOpenRowIsSupersededOnUpgrade()`, `ReplicationHistoryVersionDomainTest.fixedOpenRowIsSupersededOnDowngrade()` — §3.5 (b): the encoding on each path, its monotonicity, and the ranking against rows written by 2.11.0 in both directions (Lean: `Replication.History.snowflake_encode_strict_mono`, `Replication.History.legacy_open_row_superseded_by_later_event`, `Replication.History.fixed_open_row_superseded_by_later_legacy_event`).
 - Verification: the GTID same-millisecond tie across an insert-batch boundary (§3.1.1) is not yet covered by an automated test (gap). The `_operation` spelling mismatch (§3.5 c) is a recorded gap without a test.
+
+---
+
+## 7. Failure Modes & Recovery
+The version is computed in memory from the record alone, so this component never stops replication by itself; its failure modes are **silent orderings**: a newer row versioned below an older row of the same key, which then loses under `FINAL`. None is detected at run time and none self-heals until the key is written again, so each is recovered by the value-level checksum (spec 11.02) and a per-table re-synchronisation (spec 11.04). The six-digit counter budget of §3.3 is failure mode FM-02.03-1 (spec 02.03 §6); the restart floor's failure modes are in spec 02.02 §7.
+
+- **FM-02.01-1 Version-domain switch from GTID to no-GTID**
+  - **Trigger**: rows without a GTID follow rows with one on the same tables: `gtid_mode` lowered (`ON` → `ON_PERMISSIVE`/`OFF_PERMISSIVE`/`OFF`, anonymous transactions interleaved during an online migration), a failover to a replica with GTIDs off, or a MariaDB source (colon-less GTID) replacing a MySQL one.
+  - **Behaviour**: `ClickHouseStruct.calculateVersion` takes path 1 (`SnowFlakeId.generate`, ≈2.1·10^18 in 2026) when `gtid` is set and path 2 (`effectiveTs × 10^6 + counter`, ≈1.79·10^18) when it is not (`ClickHouseStruct.setAdditionalMetaData` leaves `gtid` unset for an anonymous transaction). Every no-GTID row therefore ranks below every snowflake row ever written for its key, whatever its time.
+  - **Detection**: none. DEFECT. Row counts still match; only the value checksum (spec 11.02) shows it.
+  - **Blast radius**: every key written while GTIDs were on stays frozen at its GTID-era value; its UPDATEs and DELETEs are discarded by `ReplacingMergeTree` until the sequence domain passes 2.1·10^18 (year 2032). New keys replicate. No self-heal.
+  - **Recovery**: put `gtid_mode=ON` back on every server the connector reads or can fail over to, restart the connector, then run `ch-mysql-resync` (spec 11.04) on every table that received writes while GTIDs were off and re-run the checksum.
+  - **RTO**: unbounded — proportional to the tables written during the switch; unmeasured (no harness switches `gtid_mode` under load).
+  - **Test**: `GtidVersionTieBreakTest.laterRowWithoutGtidRanksAboveEarlierGtidRow()` (disabled; fails on 2.11.0 with `1757900061000000000 < 1967401312056246772`).
+  - **DEFECT**: a source-side GTID mode change silently freezes every key ever written under GTIDs, with no log line.
+
+- **FM-02.01-2 GTID tie-break inside one effective millisecond**
+  - **Trigger**: several transactions share one effective millisecond — a late commit clamped to the floor (spec 02.02 §3.1), a restart on a lagging source whose first seconds are clamped to the seeded floor (spec 02.02 §3.5), a source clock stepped back — and their GTID transaction numbers are not in commit order: after a failover (the new primary's own UUID starts at small numbers while the replicated old-UUID transactions carry large ones) or across a wrap of the 22-bit field (every 4 194 304 transactions of one UUID).
+  - **Behaviour**: `SnowFlakeId.generate(effectiveTs, gtid, false)` keeps only the low 22 bits of `gtid` below the timestamp; inside one millisecond the order is that field's order, not binlog order.
+  - **Detection**: none. DEFECT.
+  - **Blast radius**: a key written by two such transactions inside the clamped millisecond keeps the older value. A clamp lasting seconds (restart head-room up to 5 s; a clock seed on a lagging source for the whole lag) makes it likely after a failover and certain at a wrap inside the clamp. No self-heal.
+  - **Recovery**: after a failover, or a restart on a lagging GTID source, run the value checksum (spec 11.02) and `ch-mysql-resync` (spec 11.04) on the tables it reports.
+  - **RTO**: unbounded (resync); unmeasured.
+  - **Test**: `GtidVersionTieBreakTest.gtidWrapInsideAClampedMillisecondKeepsCommitOrder()`, `GtidVersionTieBreakTest.newServerUuidInsideAClampedMillisecondKeepsCommitOrder()` (both disabled; fail on 2.11.0).
+  - **DEFECT**: the low bits of an unrelated transaction number decide the order of commits that the floor placed in one millisecond.
+
+- **FM-02.01-3 History-mode discriminator overflow on a large window**
+  - **Trigger**: `replication.history.enable=true` and more than 4 194 303 rows versioned in one counter window: one statement touching millions of rows (all its row events carry one statement time), or a long clamp at the floor (FM-02.03-1).
+  - **Behaviour**: `ReplicationHistoryHandler.historyVersion` refuses a counter whose distance from its seed exceeds the 22-bit discriminator with `IllegalStateException`. `ClickHouseBatchRunnable.run` classifies it `UNKNOWN` (no ClickHouse code) and retries the same batch with backoff; the redelivered statement reproduces the same count after any restart, so it never succeeds.
+  - **Detection**: ERROR `ClickHouseBatchRunnable exception - Task(...)` carrying `History version for topic '...' at kafka offset ... cannot be encoded: ... outside the 22-bit discriminator field (Spec 12.03 section 3.5.1)`, then WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN) -- the same batch will be retried in ... ms` on every retry; immediate.
+  - **Blast radius**: nothing wrong is written; every table hashed to that worker stops, the FIFO head blocks every offset (spec 09.01 FM-09.01-2) and the reader stops at the handoff cap.
+  - **Recovery**: no bounded procedure — the statement cannot be encoded in history mode. Either disable `replication.history.enable` for the run that passes the statement (the standard tables stay correct), or stop the process, move the offset past the transaction (spec 09.03 §6 FM-09.03-4 for how) and re-synchronise the tables it touched, history tables included, with `ch-mysql-resync` (spec 11.04).
+  - **RTO**: unbounded (operator decision plus resync); unmeasured.
+  - **Test**: `ReplicationHistoryVersionDomainTest.underivableOrUnencodableVersionsAreRefused()` (the refusal itself).
+  - **DEFECT**: one multi-million-row statement is a permanent stall in history mode, and the stall is retried as transient.
+
+Summary: 3 failure modes, 3 DEFECT, 0 GAP.

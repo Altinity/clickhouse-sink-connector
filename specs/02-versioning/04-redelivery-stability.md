@@ -72,3 +72,38 @@ Without a seeded floor the newer post-restart event ranked below the older pre-r
 - `DeDuplicatorTest.testRedeliveredEventIsDuplicate()` — event-identity de-duplication on the Kafka Connect path only (§3.3).
 - Lean: `Replication.VersionFloor.restart_boundary`, `Replication.VersionFloor.first_row_after_restart_is_first`.
 - Verification: a crash-restart integration test asserting no data degradation on redelivery is not yet covered by an automated test (gap).
+
+---
+
+## 7. Failure Modes & Recovery
+Redelivery is the connector's universal recovery: every stop, crash and re-position ends in Debezium re-publishing from the last committed offset, and this spec is what makes that replay harmless. It is harmless after a **process** restart (the high-water position is empty and the floor is seeded, §3.2). It is NOT harmless after an engine restart **inside** the process, because the high-water position survives it (FM-02.04-2) — and the documented operator procedures (`stop_replica` / `start_replica` around `change_replication_source`, the spec 11.04 rewind) restart the engine inside the process. Until that is fixed, every operator re-position ends with a process restart.
+
+- **FM-02.04-1 Hard kill mid-stream: replay from the last committed offset**
+  - **Trigger**: `kill -9`, OOM kill, host crash or power loss while rows are in flight.
+  - **Behaviour**: every unit handed off but not acknowledged (spec 09.01) is lost from memory; its offset was never committed. The next process seeds the floor from the durable mark (spec 02.02 §3.5) and Debezium re-publishes from the committed offset; the replayed records are first deliveries, versioned above everything the previous run wrote, in log order, so `FINAL` converges to the same image (§3.2). The engine is built with `OffsetCommitPolicy.always()` (`DebeziumChangeEventCapture.setupDebeziumEventCapture`), so an offset flush is requested at every acknowledged unit: the replay is bounded by the outstanding units, not by `offset.flush.interval.ms` (which the shipped `docker/config.yml` comment calls "THE REPLAY WINDOW").
+  - **Detection**: the process exit (supervisor / exit status); at the next start Debezium INFO `Found previous offset {...}` and the resume-replay summary (spec 01.07 §3.5).
+  - **Blast radius**: nothing lost; replayed rows are written a second time (same data, higher version) and collapse on merge.
+  - **Recovery**: restart the service (`systemctl restart` or the container supervisor); nothing to repair.
+  - **RTO**: JVM + engine start (~20 s, unmeasured) + replay of at most `sink.connector.handoff.max.outstanding.records` (default 500 000) rows / `sink.connector.handoff.max.outstanding.bytes` (default heap/4) + Debezium re-reading the in-flight transaction from its start (Debezium's restart-skip semantics; not read in this repository — unverified).
+  - **Test**: `DebeziumChangeEventCaptureTest.replayAfterSeededRestartIsClampedAboveTheOldRun()`, `DebeziumChangeEventCaptureTest.newerEventAfterSeededRestartRanksAboveOlderPreRestartEvent()`; GAP: a kill -9 harness on a lagging source that measures the restart time and checks `FINAL` equals the source.
+
+- **FM-02.04-2 In-process engine restart keeps the high-water position**
+  - **Trigger**: the engine is recreated inside the running JVM — the completion-callback retry after a transient failure (spec 10.04 §3.5; e.g. the source connection dropping mid-transaction), REST `/restart`, `sink-connector-client stop_replica` + `start_replica`, the restart monitor — with units that had been handed off but not written (retired, spec 09.01 §3.8).
+  - **Behaviour**: `sequenceHighWaterPosition` is a static that no engine start resets (`setupDebeziumEventCapture` only raises the floor). The re-published records sit at or below it, so `nextVersionAssignment` treats them as redeliveries: no clamp, raw statement time (§3.2). For the never-written rows there is no stored copy to lose to, and a late commit among them is versioned below the earlier commit it follows.
+  - **Detection**: none. DEFECT. (The engine restart itself logs ERROR `Restarting the engine - retry n of m` or the REST line; nothing flags the versions.)
+  - **Blast radius**: keys touched by a late-commit pair inside the redelivered, never-written range keep the older value. Silent, not self-healing.
+  - **Recovery**: for any re-position or restart the operator controls, restart the PROCESS, not the engine. After an automatic in-process retry (the log shows `Restarting the engine - retry`), run the value checksum (spec 11.02) and resync (spec 11.04) the tables written in the redelivered range.
+  - **RTO**: process restart ~20 s (unmeasured); after an unnoticed in-process retry, unbounded (resync).
+  - **Test**: `InRunRedeliveryVersionTest.redeliveredLateCommitPairKeepsCommitOrderAfterAnInProcessEngineRestart()` (disabled; fails on 2.11.0); `CommitOrderVersionClampTest.redeliveryKeepsRedeliveryStableVersion()` pins the in-run redelivery rule that causes it.
+  - **DEFECT**: §3.3's "in-run redelivery ranks at or below the stored row" assumes a stored row; for handed-off-but-unwritten units there is none and commit order is lost.
+
+- **FM-02.04-3 Operator rewind replays a range already in ClickHouse**
+  - **Trigger**: the operator moves the offset back on purpose — the spec 11.04 `rewind-sql` after a patch, or a manual re-position to re-apply a range.
+  - **Behaviour**: after a process restart the replay is a contiguous suffix of the binlog, versioned above every stored row and in log order (§3.2), so every key ends at the source's latest image. After an in-process restart it is FM-02.04-2.
+  - **Detection**: intended; progress is visible in the per-unit INFO `***** BATCH marked as processed to debezium ****Binlog file:... Binlog position:... GTID:...`.
+  - **Blast radius**: none after a process restart; duplicates collapse on merge.
+  - **Recovery**: `sink-connector-client stop_replica`; write the new offset (spec 11.04 §3.5 `rewind-sql`; not `change_replication_source`, see spec 09.03 §6 FM-09.03-4); restart the PROCESS; watch the replay; re-run the checksum. The binlog must still hold the target file (`SHOW BINARY LOGS`).
+  - **RTO**: process restart ~20 s + replay proportional to the rewind distance chosen by the operator; unmeasured.
+  - **Test**: `DebeziumChangeEventCaptureTest.replayAfterSeededRestartIsClampedAboveTheOldRun()`.
+
+Summary: 3 failure modes, 1 DEFECT, 1 GAP.
