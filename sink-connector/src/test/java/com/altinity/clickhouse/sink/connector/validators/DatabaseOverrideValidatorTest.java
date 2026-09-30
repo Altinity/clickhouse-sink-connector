@@ -48,6 +48,6 @@ public class DatabaseOverrideValidatorTest {
         assertThrows(ConfigException.class, () -> new ClickHouseSinkConnectorConfig(props("employees:1x")));
         // Duplicated source -- parseSourceToDestinationDatabaseMap throws.
         assertThrows(ConfigException.class,
-                () -> new ClickHouseSinkConnectorConfig(props("employees:ch_a,employees:ch_b")));
+                () -> new ClickHouseSinkConnectorConfig(props("employees:target_a,employees:target_b")));
     }
 }
