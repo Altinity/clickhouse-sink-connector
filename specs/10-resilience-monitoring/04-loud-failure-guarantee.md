@@ -321,3 +321,75 @@ counterpart for the sink task: spec 03.01 §3.4.
 - `BinlogRowImagePreflightTest.minimalIsRefused()`, `BinlogRowImagePreflightTest.noblobIsRefused()`, `BinlogRowImagePreflightTest.skipIsLoud()` — §3.6.
 - `IgnoreDeleteWarningTest.trueIsDetectedCaseAndSpaceInsensitively()`, `IgnoreDeleteWarningTest.unsetFalseOrNullIsNot()` — §3.7: the predicate behind the startup WARN.
 - §3.8 has no unit test: constructing a `DbWriter` needs a live ClickHouse (`DbWriterTest` is Testcontainers-based); the change is two `catch (ColumnTypeOverrideMismatchException e) { throw e; }` clauses ahead of the generic catches.
+
+---
+
+## 6. Failure Modes & Recovery
+A FATAL classification, a dead worker and an exhausted engine budget all end in a FATAL log line and exit code 3, within one Debezium batch for the first two and within about ten engine restarts for the third; the supervisor then restarts from the last committed offset. What this contract does not cover is the process that is up, retrying forever and reporting itself healthy, and two documented "halts" that do not halt.
+
+- **FM-10.04-1 A deterministic failure is terminal at once**
+  - **Trigger**: an engine failure that `ClickHouseErrorClassifier.classify` calls FATAL (spec 10.01 FM-10.01-3).
+  - **Behaviour**: `DebeziumChangeEventCapture.handleEngineCompletion` retires the stopped engine's handoffs, sees `isDeterministicFailure`, marks replication stopped and calls `terminalFailureHook` with `TERMINAL_FAILURE_EXIT_CODE` (3) unless `exit.on.terminal.failure=false`; the budget is untouched.
+  - **Detection**: ERROR `Engine stopped with an error: ...`, ERROR `Engine stopped with a FATAL (deterministic) failure; not retrying: ...`, FATAL `Replication is STOPPED: the engine failed {} time(s) in a row (errors.max.retries={}) and will not be restarted. Last failure: {}. Offsets were not committed past the failing point; fix the cause and restart. Exiting with code 3 ...`; exit code 3.
+  - **Blast radius**: all replication stops; nothing is committed past the failing point.
+  - **Recovery**: fix the cause, then let systemd restart the service (FM-10.04-6).
+  - **RTO**: detection immediate; restart 30 s + engine start + redelivery after the fix; unmeasured.
+  - **Test**: `TerminalFailureExitTest.fatalErrorCodeIsNotRetried()`, `TerminalFailureExitTest.fatalTerminalTypeIsNotRetried()`.
+
+- **FM-10.04-2 A dead worker stops the engine and is terminal**
+  - **Trigger**: a worker's scheduled task ends (a FATAL rethrow, a poisoned `OffsetStorageWriter`).
+  - **Behaviour**: `failIfWorkerDied` runs at the top of every `handleChangeEventBatch`, between the 50 ms slices of the handoff-cap wait, and in every DDL-drain poll; it raises the worker's cause and the engine stops; `handleEngineCompletion` sees `hasDeadWorker()` and exits 3 without a retry. On an idle source the next batch is a heartbeat, so detection is bounded by `heartbeat.interval.ms` (5 s by default); with heartbeats disabled (`heartbeat.interval.ms=0`) an idle source defers detection to the next source event.
+  - **Detection**: ERROR `Sink worker %d of %d is dead: its scheduled task has terminated. ...`, ERROR `Engine stopped while a sink worker is dead; not retrying: ...`, FATAL `Replication is STOPPED: ...`, exit code 3.
+  - **Blast radius**: all replication stops; the dead worker's batch stays outstanding, so nothing is committed past it.
+  - **Recovery**: as FM-10.04-1; a process restart is what gives a fresh worker pool.
+  - **RTO**: detection <= 5 s with heartbeats on; restart 30 s + start; unmeasured.
+  - **Test**: `DeadWorkerRetryIsTerminalTest.deadWorkerIsTerminalAtOnce()`, `DeadWorkerRetryIsTerminalTest.engineFailureWhileAWorkerIsDeadIsTerminalToo()`, `WorkerDeathIsLoudTest.deadWorkerFailsTheNextBatchLoudly()`, `DdlDrainDeadlockTest.testStuckQueueWithDeadWorkerAborts()`.
+
+- **FM-10.04-3 An unclassified failure recurs on every start**
+  - **Trigger**: an engine failure the classifier cannot recognise (no code, an unlisted type, an `Error`) that happens again after every restart -- a source-side error, a bookkeeping write that keeps failing (spec 10.06 FM-10.06a-2).
+  - **Behaviour**: each failure without an acknowledged offset since the previous one consumes one of `errors.max.retries` (10) retries, `SLEEP_TIME` (10 s) apart, each a full engine start; progress (an acknowledgement) refills the budget, a clean start does not. When spent: FATAL and exit 3.
+  - **Detection**: ERROR `Restarting the engine - retry {} of {}` per retry, then the FATAL line and exit 3.
+  - **Blast radius**: all replication stops for the duration; nothing is committed past the failing point.
+  - **Recovery**: fix the cause; the supervisor restarts the service.
+  - **RTO**: detection 10 x (10 s + engine start), about 3-5 minutes; unmeasured (the unit test counts restarts, not time).
+  - **Test**: `TerminalFailureExitTest.exitHookFiresAfterMaxRetries()`, `TerminalFailureExitTest.startWithoutProgressDoesNotResetTheBudget()`, `TerminalFailureExitTest.progressResetsTheBudget()`.
+
+- **FM-10.04-4 The JVM is up, replicating nothing, and reports healthy**
+  - **Trigger**: a worker retries a batch forever (spec 10.02 FM-10.02-1): TOO_MANY_PARTS that never clears, a missing column with evolution off, a revoked grant outside the FATAL set, a table metadata that never loads.
+  - **Behaviour**: no engine failure occurs, so none of FM-10.04-1 to FM-10.04-3 applies. The only exit path is the handoff cap: after `sink.connector.handoff.wait.timeout.ms` (600 s) with `sink.connector.handoff.max.outstanding.records` (500,000) rows unacknowledged the engine stops with `Handoff hard cap: ... they are stalled, not slow. Stopping the engine ...`, and FM-10.04-3's ten restarts follow (each redelivering into the same stall) -- over 100 minutes, and never if the source writes fewer rows than the cap.
+  - **Detection**: WARN/ERROR retry lines at most 30 s apart; `/status` reports `Replica_Running=true` with a frozen `Seconds_Behind_Source`; the Prometheus lag gauge is frozen (spec 10.03 FM-10.03-2, FM-10.03-4); only `show_replica_status.seconds_behind_source` grows.
+  - **Blast radius**: all replication behind the stalled worker; no loss.
+  - **Recovery**: remove the cause; the retry succeeds within 30 s without a restart.
+  - **RTO**: <= 30 s after the fix; detection by the process unbounded; unmeasured.
+  - **Test**: `HandoffHardCapBackpressureTest.theWaitIsBoundedAndLoud()` (the only bounded stop); GAP: a liveness test asserting that a batch failing for longer than a stated bound changes `/status` or a metric, or stops the process.
+  - **DEFECT**: there is no bounded liveness signal: a stall with live workers is not reflected in `/status`, in any metric, or in the exit code within any stated time (Invariant I15 property 1).
+
+- **FM-10.04-5 Terminal exit disabled**
+  - **Trigger**: `exit.on.terminal.failure=false`.
+  - **Behaviour**: on a terminal failure the process stays up, `/status` reports `Replica_Running=false`, and a FATAL line says replication is stopped; nothing restarts it.
+  - **Detection**: FATAL `Replication is STOPPED: ... The process stays up with replication stopped (exit.on.terminal.failure=false); /status reports Replica_Running=false.`; a supervisor sees nothing.
+  - **Blast radius**: replication stays stopped until an operator acts.
+  - **Recovery**: fix the cause and restart the service, or `sink-connector-client restart`.
+  - **RTO**: operator response time; unmeasured.
+  - **Test**: `TerminalFailureExitTest.exitDisabledIsALoudLivenessFailure()`.
+
+- **FM-10.04-6 The supervisor gives up after repeated terminal exits**
+  - **Trigger**: a deterministic failure that persists across restarts.
+  - **Behaviour**: the shipped unit (`deploy/ansible-systemd/templates/systemd_sink_connector.service.j2`) has `Restart=always`, `RestartSec=30`, `StartLimitInterval=300`, `StartLimitBurst=5`: each exit 3 is followed by a restart 30 s later, each start redelivers from the committed offset and fails again, and after 5 starts in 300 s systemd marks the unit failed and stops restarting.
+  - **Detection**: the unit enters `failed` (`systemctl status`), with the FATAL line of the last run in the journal.
+  - **Blast radius**: replication stays down until an operator acts; nothing is committed past the failing point.
+  - **Recovery**: fix the cause, `systemctl reset-failed <unit>`, `systemctl start <unit>`.
+  - **RTO**: operator response time + 30 s + engine start; unmeasured.
+  - **Test**: GAP: a deployment test asserting the unit's restart limits and that exit code 3 is restarted.
+
+- **FM-10.04-7 A documented halt that retries instead**
+  - **Trigger**: `ColumnTypeOverrideMismatchException` (section 3.8), or any other connector exception documented as halting that carries no ClickHouse code and is not in `TERMINAL_EXCEPTION_TYPES`.
+  - **Behaviour**: `DbWriter` rethrows it past its generic catch as section 3.8 says, but `ClickHouseBatchRunnable.run` classifies it UNKNOWN and retries the batch forever; in practice the check is not even reached for an existing table (spec 08.05 FM-08.05-4).
+  - **Detection**: as FM-10.04-4.
+  - **Blast radius**: as spec 08.05 FM-08.05-4.
+  - **Recovery**: as spec 08.05 FM-08.05-4.
+  - **RTO**: unbounded; unmeasured.
+  - **Test**: `ClickHouseErrorClassifierFailureModesTest.columnTypeOverrideMismatchIsFatal()` (`@Disabled`, confirmed red on 2.11.0).
+  - **DEFECT**: section 3.8's halt is not implemented: the exception is retried, not terminal.
+
+Summary: 7 failure modes, 2 DEFECT, 2 GAP.

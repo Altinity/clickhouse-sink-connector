@@ -216,3 +216,50 @@ type the operator has declared wrong (spec 10.04 §3.8).
   record-schema path (with the parameters Debezium propagates) and
   `DataTypeConverter.convertToString` declare the same ClickHouse type
   (whitespace-normalised, `DateTime64(p, 0)` read as `DateTime64(p)`).
+
+---
+
+## 6. Failure Modes & Recovery
+Auto-create runs once per writer build, inside the `DbWriter` constructor. When it fails, nothing retries it for the life of the process (spec 08.01 FM-08.01-5); when it succeeds after an out-of-band drop, it silently builds an empty replica; and the override contradiction it is documented to halt on is neither reachable for an existing table nor classified as terminal.
+
+- **FM-08.05-1 A transient failure during auto-create is never retried**
+  - **Trigger**: with `auto.create.tables=true`, the first batch for a missing table meets a transient ClickHouse failure: `SELECT VERSION()` fails (it now propagates, section 3.1.1), the `CREATE TABLE` exhausts its retries, or the database step fails first (spec 08.01 FM-08.01-4).
+  - **Behaviour**: the exception reaches the constructor's generic catch; the half-built writer is cached and served until a DDL on the table (`ClickHouseBatchRunnable.getDbWriterForTable`). The retry path only re-reads metadata, so the table is never created in this process. Section 3.1.1's statement that the batch "is retried against a writer that is rebuilt" does not hold on 2.11.0. A `CREATE TABLE` that exhausts retryable errors returns normally (spec 08.01 FM-08.01-6), with the same result.
+  - **Detection**: ERROR `***** DBWriter error initializing ****` once, then ERROR `*** TABLE METADATA not retrieved for Database(%s), table(%s), retrying on next attempt` and WARN `Batch not written to ClickHouse; retrying the same batch in {} ms ...` on every attempt, at most 30 s apart.
+  - **Blast radius**: the table and every table hashed to its worker stall; no loss.
+  - **Recovery**: restart the service (a fresh cache re-runs auto-create), or create the table by hand (the writer then proceeds with unresolved engine columns, spec 08.01 FM-08.01-5, so restart anyway).
+  - **RTO**: unbounded without an operator; restart 30 s + engine start; unmeasured.
+  - **Test**: `DbWriterPartialInitCacheTest.partiallyInitialisedWriterIsRebuilt()` (`@Disabled`, confirmed red on 2.11.0); `DbWriterEngineSelectionTest.versionQueryFailurePropagates()` pins the propagation half.
+  - **DEFECT**: a transient failure during the one auto-create attempt leaves the table uncreated until the process restarts.
+
+- **FM-08.05-2 Auto-create after an out-of-band drop builds an empty replica**
+  - **Trigger**: the target table is dropped in ClickHouse (by a DBA, a cleanup job, a restore gone wrong) while the source table keeps its rows; the connector restarts after the FATAL insert of spec 08.01 FM-08.01-3.
+  - **Behaviour**: `DbWriter.initializeTableEngine` sees no engine and `createNewTable` creates the table from the first record's schema; replication resumes from the committed offset, so only rows changed after that point ever reach the new table.
+  - **Detection**: INFO `**** Task(%s), AUTO CREATE TABLE (%s) Database(%s) ***` and INFO `**** AUTO CREATE TABLE for database(%s), Query :%s)`; nothing at WARN or above, no metric.
+  - **Blast radius**: every pre-existing row of the table is missing; counts diverge silently from then on.
+  - **Recovery**: stop the service; `ch-mysql-resync dump`, `patch` and `rewind-sql` for the table (spec 11.04); start the service.
+  - **RTO**: proportional to the table, outside the 5-minute RTO; unmeasured.
+  - **Test**: GAP: an integration test that drops a populated target table out of band and asserts the connector does not recreate it silently (for example, requires an explicit operator flag when the offset store shows the table was replicated before).
+  - **DEFECT**: auto-create cannot tell a never-replicated table from a dropped one, and repopulates neither.
+
+- **FM-08.05-3 Keyless source table: byte-identical rows collapse**
+  - **Trigger**: a source table without a primary key or fully NOT NULL unique key holds two rows identical in every column, or two rows that differ only in a column added after the table was created.
+  - **Behaviour**: the all-columns sorting key (section 3.2) makes them one ReplacingMergeTree key; merges and `FINAL` keep one row.
+  - **Detection**: ERROR banner from `KeylessTableWarning.banner(database, table)` when the table is created; nothing when rows collapse later.
+  - **Blast radius**: count divergence for duplicate rows of that table only; permanent.
+  - **Recovery**: give the source table an identity (`ADD COLUMN ... INVISIBLE PRIMARY KEY`, or `sql_generate_invisible_primary_key=ON` for new tables), then rebuild the ClickHouse table and re-synchronise it (spec 11.04); the schema-override `primary_key` is the interim escape hatch.
+  - **RTO**: proportional to the table; outside the RTO by construction (the binlog does not distinguish the rows); unmeasured.
+  - **Test**: `ClickHouseAutoCreateTableTest.testKeylessTableOrdersByAllColumns()`, `ClickHouseAutoCreateTableTest.testKeylessTableWithNullableColumnEnablesNullableKey()`.
+  - **DEFECT**: byte-identical duplicate rows of a keyless table cannot be represented; the divergence is announced once at creation and then silent.
+
+- **FM-08.05-4 A column type override that contradicts an existing table is not checked, and would not halt**
+  - **Trigger**: `column_type_override.*` names a type that differs from the column's type in an existing ClickHouse table.
+  - **Behaviour**: the reconciliation that raises `ColumnTypeOverrideMismatchException` runs only inside `ClickHouseAutoCreateTable.createNewTable`, after its `CREATE TABLE` (no `IF NOT EXISTS`) succeeded -- that is, only for a table just created from the same overrides. `createNewTable` is called only when the table was missing, so for an existing table the check never runs and rows are written under the table's actual type. Were it raised, the exception carries no ClickHouse code and is not a terminal type, so `ClickHouseErrorClassifier` returns UNKNOWN and the batch is retried forever; the "halt" of section 3.3 and spec 10.04 section 3.8 does not happen.
+  - **Detection**: none for an existing table; for the unreachable case, ERROR `ClickHouseBatchRunnable exception - Task(%s)` and WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN) ...` per attempt.
+  - **Blast radius**: values are converted to the table's type instead of the declared one (precision or representation may differ); silent.
+  - **Recovery**: align the ClickHouse column with the override by hand (`ALTER TABLE ... MODIFY COLUMN`) or remove the override, then restart; re-synchronise rows written in between if the conversion lost information (spec 11.04).
+  - **RTO**: unbounded -- silent; unmeasured.
+  - **Test**: `ClickHouseErrorClassifierFailureModesTest.columnTypeOverrideMismatchIsFatal()` (`@Disabled`, confirmed red on 2.11.0) for the classification half; GAP: a unit test that builds a writer for an existing table whose column contradicts an override and asserts the connector refuses to write.
+  - **DEFECT**: the override-contradiction check is unreachable for existing tables and, if reached, is retried forever instead of halting.
+
+Summary: 4 failure modes, 4 DEFECT, 2 GAP.

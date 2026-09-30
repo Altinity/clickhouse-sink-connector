@@ -107,3 +107,47 @@ throughput, `parts_to_throw_insert`, memory limits), not by connector settings.
 - `RetryBackoffTest.resetClearsTheSequence`.
 - `RetryBackoffTest.delayForNeverOverflows` — a very large attempt count still
   yields `max`.
+
+---
+
+## 6. Failure Modes & Recovery
+The backoff bounds how fast a failing batch is retried and how soon the retry notices a fixed cause (at most `batch.retry.backoff.max.ms`, 30 s); it deliberately does not bound how long the retry lasts. Recovery after the cause is removed is therefore within the RTO, but detection of a retry that never ends is left to the log, and the stall spreads to every table behind the failing batch.
+
+- **FM-10.02-1 A batch is retried forever and nothing outside the log says so**
+  - **Trigger**: any failure classified RETRIABLE/UNKNOWN that does not clear on its own (spec 10.01 FM-10.01-2), or `processRecordsByTopic` returning false on every attempt (table metadata never retrievable, spec 08.01 FM-08.01-5).
+  - **Behaviour**: `RetryBackoff.nextDelayMs(currentBatch)` grows 500 ms, 1 s, ... to 30 s and stays there; there is no attempt cap. The engine keeps running, so `DebeziumChangeEventCapture.handleEngineCompletion` is never called, the retry budget is never spent and the terminal exit never happens -- unless the handoff cap (spec 01.05) stops the engine after 600 s with 500,000 rows outstanding, after which ten engine retries (10 s apart) precede exit 3.
+  - **Detection**: WARN `Retriable ClickHouse error (Code: {}, Category: {}) -- the same batch will be retried in {} ms (consecutive failures: {}). ...` or WARN `Batch not written to ClickHouse; retrying the same batch in {} ms (consecutive failures: {})`, at least every 30 s + `buffer.flush.time.ms` per worker. The consecutive-failure count is in the log only; there is no metric for it or for the age of the oldest unacknowledged unit. `show_replica_status.seconds_behind_source` grows (spec 10.03); the Prometheus lag gauge and `/status` do not (spec 10.03 FM-10.03-2, FM-10.03-4).
+  - **Blast radius**: the worker's tables, then (once the worker's queue fills) every table; no loss.
+  - **Recovery**: remove the cause (spec 10.01 FM-10.01-2); the next attempt succeeds and the backlog drains in order.
+  - **RTO**: <= 30 s + `buffer.flush.time.ms` after the cause is removed, plus the backlog; detection unbounded; unmeasured.
+  - **Test**: `RetryBackoffTest.delaySequenceDoublesToCap()`, `RetryBackoffTest.differentBatchRestartsTheSequence()`, `HandoffHardCapBackpressureTest.theWaitIsBoundedAndLoud()`; GAP: a test asserting a metric (consecutive failures, or oldest-outstanding-unit age) rises while a batch is being retried.
+  - **DEFECT**: a retry that never ends exposes no metric and no status, so a monitoring system that does not read the log cannot see a stall of any length.
+
+- **FM-10.02-2 One failing table blocks its worker and every later offset**
+  - **Trigger**: one table in TOO_MANY_PARTS (or any FM-10.02-1 cause) in routing mode.
+  - **Behaviour**: the worker keeps the failing batch at its head (section 3.4); tables hashed to the same worker wait; units handed off after the failing one stay outstanding in the FIFO even when written by healthy workers; when the worker's queue reaches `sink.connector.max.queue.size` the Debezium thread blocks, and the handoff cap pauses the reader.
+  - **Detection**: WARN `Routed queue {} is at 90% capacity! ...` / `Routed queue {} is full! ...`, the handoff-cap pause WARN (spec 01.05), and the FM-10.02-1 lines.
+  - **Blast radius**: all replication stops advancing its committed offset; healthy workers' written rows are redelivered after a restart (idempotent under `_version`).
+  - **Recovery**: fix the ClickHouse-side condition for the one table (merge throughput, `parts_to_throw_insert`, memory limits); connector settings do not relieve it.
+  - **RTO**: <= 30 s after the fix, plus draining the backlog (bounded by the handoff cap, 500,000 rows by default); unmeasured.
+  - **Test**: `OffsetNoLossParameterIndependenceTest.commitFrontierIsIndependentOfCompletionOrder()` (later units are parked, not acknowledged); GAP: an end-to-end test measuring drain time after a TOO_MANY_PARTS episode on one table.
+
+- **FM-10.02-3 A retried INSERT had already been applied**
+  - **Trigger**: the client times out or loses the connection after ClickHouse applied the INSERT (209 SOCKET_TIMEOUT, a cut connection).
+  - **Behaviour**: the failure is retriable; the same batch is inserted again with the same `_version` values.
+  - **Detection**: the FM-10.02-1 WARN once; nothing else is needed.
+  - **Blast radius**: duplicate rows with identical sorting key and version, collapsed by ReplacingMergeTree merges and `FINAL` (a Replicated table's insert deduplication may also drop the identical block); `count()` without `FINAL` is inflated until the merge.
+  - **Recovery**: none needed.
+  - **RTO**: one retry delay.
+  - **Test**: `OffsetNoLossParameterIndependenceTest.retriedBatchIsNeverAcknowledgedUntilWritten()`, `ReplaySafetyTest.testAutoCreatedEnginesAreReplaceNotAdditive()`.
+
+- **FM-10.02-4 Extra fixed sleeps lengthen recovery**
+  - **Trigger**: `error.logging.enable=true` while a batch is failing.
+  - **Behaviour**: each failed attempt also writes the error table and sleeps `ERROR_SLEEP_TIME_MS` (10 s) in `logErrorToClickHouse`, on top of the backoff and `buffer.flush.time.ms`; if the error table itself cannot be written, that failure is logged, the 10 s sleep is skipped and the retry continues.
+  - **Detection**: ERROR `******* ERROR **** Failed to log error to ClickHouse *********` when the error table is unreachable.
+  - **Blast radius**: up to 10 s more per attempt before a fixed cause is noticed.
+  - **Recovery**: none needed.
+  - **RTO**: worst case 30 s + 10 s + `buffer.flush.time.ms` after the fix; unmeasured.
+  - **Test**: `RetryBackoffTest.delayForNeverOverflows()` (the backoff half); GAP: a test of the total delay with error logging enabled.
+
+Summary: 4 failure modes, 1 DEFECT, 3 GAP.
