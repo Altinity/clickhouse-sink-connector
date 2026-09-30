@@ -63,3 +63,47 @@ Unit level: `VersionHighWaterMarkTest.seedFloorWithoutAMarkUsesTheClockAndReadsN
 - Lean: `Replication.VersionFloor.clockSeed`, `Replication.VersionFloor.below_clock_seed`, `Replication.VersionFloor.clock_restart_boundary`, `Replication.VersionFloor.clock_seed_example` — the clock seed's restart boundary, with no hypothesis about the targets.
 - Validator: `scripts/validate_specs.py` pass 8 fails on any unmarked aggregate read over a non-system table or any `SETTINGS max_execution_time` literal under `*/src/main/**`; the two `PrimaryKeyBackfill` sites carry markers citing spec 06.09.
 - Verification: an integration test that restarts the connector against a replica holding a multi-billion-row table and asserts no query touches that table during startup is not yet automated (gap); the statement-set pin above is the unit-level proxy.
+
+---
+
+## 6. Failure Modes & Recovery
+The version-floor seed is two statements on the mark table on every start and every engine retry, so a failing bookkeeping step costs the same bounded amount each time and fails loudly. Two gaps remain: the schema history, a connector-owned table read in full on every engine start, grows with DDL volume; and the enforcement that keeps target scans out is a text heuristic that recognises only the shapes of the original defect.
+
+- **FM-10.06a-1 The mark table cannot be read at start**
+  - **Trigger**: ClickHouse unreachable, the offset database missing, or no privilege on `replica_version_high_water` when the engine starts.
+  - **Behaviour**: `DebeziumChangeEventCapture.seedVersionFloorFromDurableMark` catches the failure; the start is unseeded (the floor is not raised) and the first handoff writes the mark before any row (`VersionHighWaterMark.cover`). No target table is read in either case. The version consequences of an unseeded start belong to spec 02.02.
+  - **Detection**: ERROR `Could not establish the version high-water mark in {}; this start is unseeded and the first handoff will retry the mark before any row is written` at start.
+  - **Blast radius**: see spec 02.02 section 6 for the version ordering across the boundary; bookkeeping cost unchanged.
+  - **Recovery**: restore access to the offset database; the next start seeds normally.
+  - **RTO**: one restart; unmeasured.
+  - **Test**: `VersionHighWaterMarkTest.seedFloorWithoutAMarkUsesTheClockAndReadsNoTargetTable()`, `VersionHighWaterMarkTest.implausiblePersistedMarkFallsBackToTheClock()`.
+
+- **FM-10.06a-2 The mark cannot be written during replication**
+  - **Trigger**: the offset database becomes read-only, full or unreachable while rows are being handed off.
+  - **Behaviour**: `VersionHighWaterMark.cover` retries the INSERT 30 times, 2 s apart, on the Debezium thread (up to 60 s), then throws `IllegalStateException`; no row whose version is not covered is handed off; the engine stops and the retry budget of spec 10.04 applies (FM-10.04-3, or FM-10.04-1 when the cause carries a FATAL code such as 497).
+  - **Detection**: ERROR `Could not persist the version high-water horizon {} to {} (attempt {}/{}); rows are held back until it is durable` every 2 s, then `The version high-water horizon {} could not be persisted to {} after {} attempts; refusing to hand off rows whose versions the next start could not order above. Restore ClickHouse write access to the offset database and restart.`
+  - **Blast radius**: all replication pauses; nothing is handed off or committed without a durable mark.
+  - **Recovery**: restore write access to the offset database; the engine retry (10 s) or a restart resumes.
+  - **RTO**: <= 60 s of retries + 10 s engine retry after the fix; unmeasured.
+  - **Test**: `VersionHighWaterMarkTest.horizonWriteFailureIsLoud()`, `VersionHighWaterMarkTest.horizonIsWrittenAheadOfHandoffAndReusedUntilExceeded()`.
+
+- **FM-10.06a-3 The schema history grows with DDL volume and is replayed on every start**
+  - **Trigger**: a source with frequent DDL (view refreshes, schema reloads, online schema-change tools) over months; every DDL is appended to the schema-history table unless `schema.history.internal.store.only.captured.tables.ddl=true`.
+  - **Behaviour**: Debezium rebuilds its in-memory schema by reading the whole history table at every engine start, including every engine retry (spec 10.04 section 3.5 item 4 records the re-read on each retry); its cost is proportional to the number of DDL events since the last snapshot, not bounded by a key lookup (section 3.2 properties 1 and 2). Debezium's reader was not re-read in this run.
+  - **Detection**: none; the start takes longer, visible only as the gap between the engine start and the first binlog event in the log.
+  - **Blast radius**: every start and every engine retry is slower; a retry loop (spec 10.04 FM-10.04-3) multiplies it.
+  - **Recovery**: rebuild the history from the current source schema: `sink-connector-client delete_schema_history`, then start with Debezium's schema-recovery snapshot mode (`recovery` in Debezium 3.x); valid only when no DDL was applied at the source after the committed offset.
+  - **RTO**: start time grows without bound with history size; unmeasured.
+  - **Test**: GAP: a test that seeds a schema history of N DDL events and asserts engine start time or statement count does not grow with N.
+  - **DEFECT**: a connector-owned bookkeeping read (the schema history) grows with DDL volume and is repeated by every engine retry, contrary to section 3.2.
+
+- **FM-10.06a-4 A new target scan evades the validator**
+  - **Trigger**: a change adds a read over a replicated table in a shape pass 8 does not recognise: `SELECT argMax(...)`, `SELECT uniqExact(...)`, `SELECT x FROM t ORDER BY _version DESC LIMIT 1`, `SELECT ... FINAL`, or SQL assembled entirely at run time.
+  - **Behaviour**: `scripts/validate_specs.py` pass 8 matches only `SELECT max|min|count|sum|avg|uniq|any(` literals and `SETTINGS max_execution_time`; other shapes pass review silently. At run time such a read behaves like the original defect (a scan on the event thread, re-run by every retry).
+  - **Detection**: none at review time for those shapes; at run time, slow starts and heavy queries in ClickHouse's `system.query_log`.
+  - **Blast radius**: as the original incident: stalled starts and scan load on the ClickHouse side.
+  - **Recovery**: revert the change.
+  - **RTO**: a release rollback; unmeasured.
+  - **Test**: `VersionHighWaterMarkTest.seedFloorWithoutAMarkUsesTheClockAndReadsNoTargetTable()` pins the seed's statement set (any new statement fails it); GAP: a statement-set pin for the other startup and retry paths (writer build, DDL drain, offset load).
+
+Summary: 4 failure modes, 1 DEFECT, 2 GAP.
