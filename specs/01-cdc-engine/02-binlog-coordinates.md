@@ -60,3 +60,49 @@ When Global Transaction Identifiers (GTID) are enabled:
 - `SourcePositionTest.sameLogIsByFilePrefix()` — §3.1.1: same prefix across a rotation, different prefix across a basename change, LSNs always the same log.
 - `CommitOrderVersionClampTest.binlogBasenameChangeResetsTheHighWaterMark()` — §3.1.1 through the version sequence: the first record of a differently named log is a first delivery, is clamped to the floor and becomes the new mark (pre-fix: treated as a redelivery, never clamped).
 - Corresponds to `Replication.Binlog.BinlogPos` and `BinlogPos.lt` in `formal_specs/lean/`.
+
+---
+
+## 6. Failure Modes & Recovery
+Coordinates are server-local: a `(file, pos)` pair means something only on the server that wrote it, and the in-memory high-water mark built from them (`DebeziumChangeEventCapture.sequenceHighWaterPosition`) lives for the whole JVM. The component recovers by itself from a log basename change; it has no defence against a source whose log identity changes without a basename change, and no way to tell a new server from the old one without GTID.
+
+- **FM-01.02-1 Binary log basename change**
+  - **Trigger**: `log_bin` reconfigured, or a failover to a server whose binlog basename differs.
+  - **Behaviour**: `SourcePosition.sameLog` compares the prefix; `nextVersionAssignment` treats the first record of a differently named log as a first delivery, replaces the mark and keeps clamping to the floor (§3.1.1).
+  - **Detection**: WARN `Binary log identity changed: high-water position <old> is replaced by <new> from a differently named log; its first record is versioned as a first delivery`, on the first record of the new log.
+  - **Blast radius**: none; versions stay commit-ordered.
+  - **Recovery**: none needed (positioning on the new server is FM-01.02-3).
+  - **RTO**: 0 — no interruption.
+  - **Test**: `CommitOrderVersionClampTest.binlogBasenameChangeResetsTheHighWaterMark()`, `SourcePositionTest.sameLogIsByFilePrefix()`.
+
+- **FM-01.02-2 Same-named log restarting at a lower number inside one JVM**
+  - **Trigger**: `RESET MASTER` / `RESET BINARY LOGS AND GTIDS` on the source, or a failover (GTID or not) to a server whose binlog numbering is below the old server's, picked up by the completion-callback restart (spec 01.01 FM-01.01-1) rather than a process restart.
+  - **Behaviour**: `sequenceHighWaterPosition` is a process static that nothing resets on an engine restart (`setupDebeziumEventCapture` only raises the floor through `seedVersionFloorFromDurableMark`). Every position of the new log compares below the old mark, so `nextVersionAssignment` classifies every new record as a redelivery and does not clamp it: the late-commit floor (spec 01.04 §3.1) is off, and any clock skew between the old and new primary shows through, until the new numbering passes the old mark — possibly never in the life of the process.
+  - **Detection**: none; nothing is logged (the identity WARN of FM-01.02-1 needs a prefix change).
+  - **Blast radius**: silent value divergence on keys written by a late-committing transaction (the older write wins in ReplacingMergeTree); row counts intact.
+  - **Recovery**: restart the connector PROCESS after every source failover or binlog reset: the mark starts empty and the floor is seeded from the durable mark (spec 02.02 §3.5), so every record is clamped above the previous run. Then check the tables written since the failover with the checksum job and repair diverged ones with `ch-mysql-resync` (spec 11.04).
+  - **RTO**: process restart ≈ 30 s + start once someone knows to do it; unmeasured.
+  - **Test**: GAP: an in-process engine restart followed by positions of a same-named, lower-numbered log, asserting that a late-committing transaction still outranks the earlier commit (needs a restart hook that resets the mark).
+  - **DEFECT**: a binlog reset or a failover into a lower-numbered log disables the commit-order floor silently for the rest of the process.
+
+- **FM-01.02-3 Source failover without GTID: the durable coordinates name the old server's log**
+  - **Trigger**: the source VIP/DNS moves to a promoted replica while `gtid_mode=OFF` (or the offset carries no GTID set).
+  - **Behaviour**: Debezium 3.1.3 positions the binlog client from the offset's `file`/`pos` unless GTID mode is on and the offset has a GTID set (`BinlogStreamingChangeEventSource`: `setBinlogFilename`/`setBinlogPosition` vs `setGtidSet`, read in the bytecode). On the new server the file is absent — Debezium WARNs `Last recorded offset is no longer available on the server.` and the dump fails with server error 1236 (spec 01.07 FM-01.07-5) — or it exists with unrelated content, and the dump starts at an arbitrary byte of another log: a server error, a deserialization failure, or, if the byte happens to be an event boundary, transactions skipped or replayed without an error (server-side behaviour, unverified). The offset records the old `server_id`; nothing compares it with the new server.
+  - **Detection**: none guaranteed; when it fails loudly, the lines of FM-01.07-5.
+  - **Blast radius**: all tables; possible silent loss or duplication of every transaction between the old position and the new server's matching point.
+  - **Recovery**: stop the connector; find the promoted server's binlog coordinates at the failover point; `sink-connector-client change_replication_source --binlog_file <f> --binlog_position <p>` (`UPDATE_BINLOG_COMMAND` in `sink-connector-client/main.go`); start; then `ch-mysql-resync` (spec 11.04) every table written around the failover. Prevention: `gtid_mode=ON` — Debezium then logs `Registering binlog reader with GTID set: '<set>'` and resumes at a transaction boundary on any server (FM-01.07-6).
+  - **RTO**: GTID: one engine restart (spec 01.07 FM-01.07-1); without GTID: manual, unbounded; unmeasured.
+  - **Test**: GAP: a two-server failover harness without GTID.
+  - **DEFECT**: without GTID a failover can mis-position the reader with no detection; the recorded `server_id` is never checked.
+
+- **FM-01.02-4 GTID versioning with `snowflake.id=false` across a failover**
+  - **Trigger**: raw GTID versioning (`snowflake.id=false`, spec 02.06 §3.2.1) and a failover to a server whose own GTID transaction numbers are lower than the old server's.
+  - **Behaviour**: `ClickHouseStruct.calculateVersion` uses the raw transaction number of the GTID (§3.2); the new server's numbers restart from its own sequence, so every update after the failover can carry a lower `_version` than the row already in ClickHouse.
+  - **Detection**: none at the failover (the start WARN of `warnIfRawGtidVersioningWithDataSnapshot` covers data snapshots only).
+  - **Blast radius**: silent loss of every update and delete to pre-existing keys until the new numbers pass the old ones.
+  - **Recovery**: keep `snowflake.id=true` (default; the snowflake's timestamp dominates the GTID); after such a failover `ch-mysql-resync` (spec 11.04) the written tables.
+  - **RTO**: table resync time; unmeasured.
+  - **Test**: GAP: a version comparison across two GTID source UUIDs with `snowflake.id=false`.
+  - **DEFECT**: raw GTID versions are not ordered across servers and nothing warns at the failover.
+
+Summary: 4 failure modes, 3 DEFECT, 3 GAP.

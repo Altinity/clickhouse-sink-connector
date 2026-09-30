@@ -51,3 +51,47 @@ For every incoming batch emitted by Debezium:
 - `UnparseableRowRecordIsTerminalTest` — a row record that produced no struct is never retained as `lastControlRecord`: `RecordReplicationException` leaves `handleChangeEventBatch` and nothing is acknowledged.
 - `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()` — the DDL path escapes the catch-all; `DdlDrainDeadlockTest` — the drain does not deadlock.
 - Verification: an end-to-end test of interleaved DML and DDL asserting exact execution ordering is not yet covered by an automated test (gap).
+
+---
+
+## 6. Failure Modes & Recovery
+The dispatch loop's posture is "a record that cannot be handled leaves `handleChangeEventBatch` as an exception": the engine stops, nothing past the record is acknowledged, and the restart redelivers it (spec 01.01 FM-01.01-1). The unconvertible row is spec 01.06 FM-01.06-1; the loop's own failure modes are below. Its one remaining hole is the catch-all at the bottom of `processEveryChangeRecord`, which still swallows exceptions thrown on the DDL path before the `DDLReplicationException` guard.
+
+- **FM-01.03-1 A DDL that cannot be applied**
+  - **Trigger**: ClickHouse rejects the translated statement (unknown table, type mismatch, access denied, read-only replica), its retries are exhausted, or the pre-DDL drain aborts on a dead worker.
+  - **Behaviour**: `processEveryChangeRecord` wraps `drainBeforeDDL()` and `performDDLOperation(...)` and raises `DDLReplicationException`, re-thrown ahead of the catch-all; the executor is resumed in `finally`; the DDL acknowledges its own offset only on success. The engine stops; a ClickHouse code in `FATAL_ERROR_CODES` (e.g. 16, 50, 60, 81, 497) is terminal at once (exit 3), anything else draws on the retry budget.
+  - **Detection**: ERROR `DDL replication failed for [<ddl>]; stopping the pipeline rather than advancing offsets past an unapplied schema change and silently diverging from MySQL.`, then `Engine stopped with an error:` — at the DDL.
+  - **Blast radius**: all tables stop at the DDL's position; no loss; rows before the DDL were handed off and are written first (§3 step 2).
+  - **Recovery**: fix the target (apply the equivalent change by hand, grant the privilege, restore the table) and restart; if the statement must not be replicated, add a matching `ignore.ddl.regex` entry (entries separated by `||`) and restart — the ignored DDL is then committed as a no-row record — and align the ClickHouse schema by hand.
+  - **RTO**: after the fix, 30 s (systemd) or ≤ 10 s (retry) + start + redelivery of the batch holding the DDL; unmeasured.
+  - **Test**: `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()`, `TerminalFailureExitTest.fatalErrorCodeIsNotRetried()`.
+
+- **FM-01.03-2 A DDL silently dropped when its ignore rules cannot be evaluated**
+  - **Trigger**: an exception inside `checkIfDDLNeedsToBeIgnored` — typically an `ignore.ddl.regex` entry that does not compile (`Pattern.compile` throws `PatternSyntaxException` for every DDL), or a failure in table-name extraction / `DdlCaptureFilter.isCaptured`.
+  - **Behaviour**: that call sits BEFORE the `try` that raises `DDLReplicationException`, so the exception reaches the catch-all `catch (Exception e) { log.error("Exception processing record", e); }`; the method returns `null`; `handleChangeEventBatch` treats a DDL record as self-acknowledging (`else if (!ddlRecord)` is false) and throws nothing, and the next written rows move the durable offset past a schema change ClickHouse never received.
+  - **Detection**: ERROR `Exception processing record` with the stack trace, once per DDL; the pipeline keeps running and reports healthy.
+  - **Blast radius**: every DDL of the process (for a bad regex) is lost: silent schema divergence, later rows written against the old ClickHouse schema (NULL or default for new columns, failures on dropped ones).
+  - **Recovery**: fix `ignore.ddl.regex` and restart; the dropped DDLs are NOT redelivered (their offsets are behind the durable position), so compare `SHOW CREATE TABLE` on MySQL with ClickHouse for every table altered since the bad setting, apply the missing changes by hand, and `ch-mysql-resync` (spec 11.04) the tables whose rows were written against the wrong schema.
+  - **RTO**: unbounded — nothing announces the divergence; repair is per table.
+  - **Test**: `DdlIgnoreRuleFailureIsLoudTest.invalidIgnoreRegexDoesNotSilentlySkipTheDdl()` (disabled, fails on 2.11.0: nothing is thrown).
+  - **DEFECT**: an exception in the DDL ignore-rule evaluation drops the DDL and lets the offset pass it; an invalid `ignore.ddl.regex` is not validated at startup.
+
+- **FM-01.03-3 The pre-DDL drain holds the reader behind a live but failing writer**
+  - **Trigger**: a DDL arrives while a worker retries a transient ClickHouse error (server down, `TOO_MANY_PARTS`, `MEMORY_LIMIT_EXCEEDED`) — retried without limit by `ClickHouseBatchRunnable.run`.
+  - **Behaviour**: `drainBeforeDDL` → `awaitPipelineQuiescent` waits while the pipeline is not quiescent, bounded only by worker liveness (`failIfWorkerDiedDuringDrain`), not by time — unlike the 600 s limit at the hard cap (spec 01.05). The Debezium thread is held; the source aborts the undrained dump after `net_write_timeout`; when the drain completes the DDL is applied and the next read fails, which is spec 01.07 FM-01.07-1. Detail in spec 06.01 §6.
+  - **Detection**: WARN `Pipeline drain: <backlog> still pending after <ms> ms; the writers are alive, so the backlog is a slow or retrying batch, not a dead one.` every 60 s (`ddlDrainWarnIntervalMs`), plus the worker's WARN `Retriable ClickHouse error (Code: <c>, Category: <cat>) -- the same batch will be retried in <ms> ms`.
+  - **Blast radius**: all tables stop until ClickHouse accepts the batch; no loss.
+  - **Recovery**: self-heals when ClickHouse recovers; otherwise fix ClickHouse (parts, memory, availability).
+  - **RTO**: ClickHouse recovery + worker backoff (≤ `batch.retry.backoff.max.ms`, 30 s) + one engine restart (FM-01.07-1) + redelivery; unmeasured.
+  - **Test**: `DdlDrainDeadlockTest.testUndrainableQueueWithLiveWorkersKeepsWaiting()`, `DdlDrainDeadlockTest.testStuckQueueWithDeadWorkerAborts()`.
+
+- **FM-01.03-4 A dead worker is only noticed on the next source batch**
+  - **Trigger**: a worker's scheduled task terminates (FATAL ClickHouse code, `OutOfMemoryError`, poisoned offset writer).
+  - **Behaviour**: `failIfWorkerDied` runs first in every `handleChangeEventBatch` and between hard-cap slices; on an idle MySQL source the next batch is the Debezium heartbeat that follows the next server heartbeat (requested at 0.8 × `connect.keep.alive.interval.ms` = 48 s by default, inferred from `BinlogStreamingChangeEventSource.handleEvent` dispatching a heartbeat after each event). The engine stops; the completion callback makes it terminal (`hasDeadWorker`, exit 3). If the reader is instead blocked in a queue `put`, nothing notices (spec 01.05 FM-01.05-4).
+  - **Detection**: the worker's ERROR (e.g. `FATAL ClickHouse error (Code: 60) -- this batch will never succeed.`) at once; ERROR `Sink worker N of M is dead: its scheduled task has terminated...` within ≤ ~48 s on an idle source, at once on a busy one; exit code 3.
+  - **Blast radius**: all tables stop; no loss.
+  - **Recovery**: fix the FATAL cause (create the missing table or column, restore the privilege), then let systemd restart the process.
+  - **RTO**: 30 s + start after the fix; unmeasured.
+  - **Test**: `WorkerDeathIsLoudTest.deadWorkerFailsTheNextBatchLoudly()`, `DeadWorkerRetryIsTerminalTest.deadWorkerIsTerminalAtOnce()`.
+
+Summary: 4 failure modes, 1 DEFECT, 0 GAP.

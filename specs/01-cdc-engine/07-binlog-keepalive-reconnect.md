@@ -72,3 +72,76 @@ Every start — the completion-callback restart of §3.3 included — resumes fr
 - `ResumeReplayLogSummaryTest` — §3.5: skip lines are denied and counted by operation and the next non-skip line from the same logger emits exactly one summary naming counts and positions with no row image, after which the counters are reset (`skipLinesAreCountedAndSummarisedOnce`); lines from other loggers are neutral and uncounted (`otherLoggersAreUntouched`); a long replay reports one progress line per interval and a stop flushes the final summary (`longReplayReportsProgress`); `install()` is idempotent and Debezium's real logger is routed through the filter so the row image is never written (`installIsIdempotentAndEffective`); the first delivered row ends a pending replay with exactly one summary naming the row-delivered reason, and a row with no replay pending — before or after — reports nothing (`deliveredRowEndsTheReplay`); binlog event types map to INSERT/UPDATE/DELETE, others by name (`operationMapping`).
 - `ResumeReplaySummaryEndsOnDeliveredRowTest` — §3.5 through the real `handleChangeEventBatch`: the first row through the handler ends a pending replay with one summary, the counters reset and no row image is written (`firstDeliveredRowEndsTheReplay`); a heartbeat and a transaction-boundary record delivered mid-replay do not end it (`controlRecordsDoNotEndTheReplay`); a row with no replay pending reports nothing (`rowWithoutReplayIsSilent`).
 - Gap (tracked): an end-to-end reproduction (blocked sink, source-side abort, keep-alive resume mid-statement) needs a live MySQL and a controllable sink stall; it is covered upstream by the integration test attached to debezium/dbz#2359 and not duplicated here.
+
+---
+
+## 6. Failure Modes & Recovery
+With `connect.keep.alive=false` every connection failure the binlog client SEES becomes an engine restart from the durable offset — correct and bounded (spec 01.01 FM-01.01-1). What the client does not see it waits on forever: the socket has no read timeout, no TCP keep-alive, and the keep-alive thread that would have noticed the missing server heartbeats is the one this spec turns off. Facts below about Debezium 3.1.3 and mysql-binlog-connector-java 0.40.2 were read in their bytecode (`~/.m2`).
+
+- **FM-01.07-1 Connection lost while the sink holds the Debezium thread (or dropped by the source)**
+  - **Trigger**: the source aborts the dump after `net_write_timeout` because the reader stopped draining (pre-DDL drain, hard cap, retrying write — §3.1), or the source restarts, kills the dump thread, or the network resets the connection.
+  - **Behaviour**: the client's next read fails; Debezium's `ReaderThreadLifecycleListener.onCommunicationFailure` calls `ErrorHandler.setProducerThrowable(wrap(e))`; `MySqlErrorHandler.isRetriable` ends in `super.isRetriable(null)` = false for every cause chain, so the task fails with `ConnectException` and the engine completes with an error; `handleEngineCompletion` recreates it after 10 s from the durable offset (§3.3), and the replay is summarized (§3.5). The retry budget refills on every acknowledged offset, so repeated aborts during a long catch-up never exhaust it.
+  - **Detection**: ERROR `Producer failure` (Debezium), ERROR `Engine stopped with an error: org.apache.kafka.connect.errors.ConnectException: An exception occurred in the change event producer. This connector will be stopped. ...`, ERROR `Restarting the engine - retry 1 of 10`, then INFO `Resume replay done (...)` — when the Debezium thread next polls, i.e. once the blocking handler returns (≥ `net_write_timeout`, 60 s by MySQL default, after the stall began).
+  - **Blast radius**: all tables pause for one restart; no loss (§3.3); the queued, unacknowledged records are re-read.
+  - **Recovery**: automatic.
+  - **RTO**: 10 s + engine start (3–9 s observed, spec 01.01 FM-01.01-1) + re-read of what the reader had queued; unmeasured end to end.
+  - **Test**: `EngineFailureClassificationTest.sourceConnectionLossStillRetries()`, `ResumeReplaySummaryEndsOnDeliveredRowTest.firstDeliveredRowEndsTheReplay()`; the end-to-end reproduction is the tracked gap of §5.
+
+- **FM-01.07-2 Half-open binlog connection**
+  - **Trigger**: the path to the source dies without a FIN or RST reaching the connector — source host power loss or kernel panic, network partition, a firewall/NAT/load-balancer dropping the connection state, a VIP moved without resetting clients.
+  - **Behaviour**: `BinaryLogClient` opens a plain `new Socket()` and never calls `setSoTimeout` or `setKeepAlive` (none in the class; Debezium's `BinlogStreamingChangeEventSource` neither), so the reader blocks in `read()` with an infinite timeout and TCP never probes an idle receive-only connection. Debezium asks the server for heartbeat events every 0.8 × `connect.keep.alive.interval.ms` (48 s; `setHeartbeatInterval` is called whatever `connect.keep.alive` says), but only the keep-alive thread checks that events keep arriving — and `BinlogKeepAlivePreflight` switches it off. No record, no heartbeat, no error ever reaches the sink. The restart monitor, when enabled (ansible default, 3000 s), restarts the engine 50–100 min later because no ROW arrived (spec 01.01 FM-01.01-3); with the code default (`restart.event.loop=false`) nothing ever does.
+  - **Detection**: none. `/status` reports `Replica_Running=true`; `Seconds_Behind_Source` and the lag gauges (`clickhouse_sink_db_lag`, `clickhouse_sink_debezium_lag`) freeze at their last values because they are updated only when a row is processed or written; `clickhouse_sink_binlog_pos` stops moving — visible only against the source's `SHOW BINARY LOG STATUS`.
+  - **Blast radius**: every table stops, indefinitely; no loss (nothing is acknowledged); the source may purge the binlog the connector still needs (FM-01.07-5).
+  - **Recovery**: restart the service (`systemctl restart`); it reconnects from the durable offset. Mitigation available today: on a GTID source set `connect.keep.alive: "true"` explicitly (§3.4: the reconnect resumes at a GTID boundary), which restores a 60 s silence detector.
+  - **RTO**: unbounded with code defaults; 50–100 min with the ansible monitor; after a manual restart 30 s + start; unmeasured.
+  - **Test**: `RestartMonitorLivenessTest.heartbeatRefreshesTheMonitorClock()` (disabled, fails on 2.11.0: heartbeats do not count as liveness); GAP: a fake source that completes the handshake and then goes silent, asserting a loud stop within a stated bound.
+  - **DEFECT**: a half-open source connection stalls replication silently and forever under the connector's own defaults.
+
+- **FM-01.07-3 `connect.keep.alive=true` on a file/position source**
+  - **Trigger**: the operator sets `connect.keep.alive: "true"` and the source is positioned by file/offset (no GTID auto-positioning), with a binlog client without debezium/mysql-binlog-connector-java#28.
+  - **Behaviour**: `BinlogKeepAlivePreflight.apply` keeps the value; after a connection loss while the sink was blocked, the keep-alive thread resumes from its last-read byte offset and Debezium skips the rest of the in-flight statement at DEBUG (§3.2).
+  - **Detection**: only the WARN banner at every start (`!!  connect.keep.alive=true -- BINLOG KEEP-ALIVE AUTO-RECONNECT ENABLED  !!`); the loss itself logs nothing; a row-count checksum finds it hours later.
+  - **Blast radius**: silent loss of the remaining rows of one statement per such reconnect, in any table.
+  - **Recovery**: remove the key (default false) and restart; checksum every table and `ch-mysql-resync` (spec 11.04) the diverged ones.
+  - **RTO**: unbounded — the loss is silent; repair is per table.
+  - **Test**: `BinlogKeepAlivePreflightTest.explicitTrueIsKeptAndWarned()`.
+  - **DEFECT**: a configuration value that loses rows silently on non-GTID sources is accepted with a WARN instead of refused.
+
+- **FM-01.07-4 Source down or unreachable for a long time**
+  - **Trigger**: MySQL stopped, crashed, in maintenance, or the network to it cut with RST / refused connections.
+  - **Behaviour**: each recreated engine fails to connect (binlog connect bounded by `connect.timeout.ms`, Debezium default 30 000; the JDBC connect timeout is unverified) and completes with an error; with no acknowledgement in between, the budget runs out after ≈ 10 × (10 s + up to 30 s + start) ≈ 2–7 min → exit 3 → systemd restarts after 30 s → the cycle repeats while the source is down.
+  - **Detection**: ERROR `Engine stopped with an error:` per attempt (cause: the connection error), FATAL `Replication is STOPPED ...` and exit 3 every cycle; `/status` `Replica_Running` is set false at each stop (`onConnectorStopped`) and true again at each engine start (`markEngineStarted`), so it flickers rather than staying false.
+  - **Blast radius**: all tables stop; no loss while the source keeps its binlog (FM-01.07-5 otherwise).
+  - **Recovery**: automatic once the source is reachable.
+  - **RTO**: source back → ≤ 10 s (in-process retry) or ≤ 30 s (systemd) + start; unmeasured.
+  - **Test**: `TerminalFailureExitTest.exitHookFiresAfterMaxRetries()`, `EngineFailureClassificationTest.sourceConnectionLossStillRetries()`.
+
+- **FM-01.07-5 The binlog the durable offset needs has been purged**
+  - **Trigger**: the connector was down, stalled (FM-01.07-2) or lagging longer than the source's `binlog_expire_logs_seconds`, or someone ran `PURGE BINARY LOGS`; with GTID, the needed GTIDs are in `gtid_purged`.
+  - **Behaviour**: at task start Debezium's `BaseSourceTask` logs WARN `Last recorded offset is no longer available on the server.` and, unless the snapshot mode snapshots on data errors (`when_needed`: `Attempting to snapshot data to fill the gap.`), continues; the dump then fails with server error 1236, which follows FM-01.07-1's path and is retried like a transient failure: 10 × (10 s + start) → exit 3 → systemd → the same, forever.
+  - **Detection**: WARN `Last recorded offset is no longer available on the server.` then ERROR `Engine stopped with an error: cause: <server message> Error code: 1236; SQLSTATE: HY000.` at every start; FATAL and exit 3 every ≈ 3 min. No earlier warning while the lag approaches the retention.
+  - **Blast radius**: every change between the durable offset and the oldest remaining binlog is unrecoverable from the log; all tables stop.
+  - **Recovery**: the source tables are the only copy: either re-snapshot (`snapshot.mode: when_needed`, or `sink-connector-client delete_offsets` then `initial`), or `change_replication_source` to the source's current coordinates (`SHOW BINARY LOG STATUS`) followed by `ch-mysql-resync` (spec 11.04) of EVERY replicated table.
+  - **RTO**: a full reload or a resync of every table — far beyond 5 minutes; unmeasured.
+  - **Test**: `EngineFailureClassificationTest.purgedBinlogIsTerminalAtOnce()` (disabled, fails on 2.11.0: the engine is recreated); GAP: no check warns while lag approaches the source's binlog retention.
+  - **DEFECT**: a deterministic purge is retried as transient, and nothing warns before the retention is crossed, so the only recovery is a full reload.
+
+- **FM-01.07-6 Source failover to a promoted replica**
+  - **Trigger**: the VIP or DNS name of `database.hostname` moves to another server.
+  - **Behaviour**: the old connection drops (FM-01.07-1) or goes half-open (FM-01.07-2). With `gtid_mode=ON` the recreated task positions by the offset's executed GTID set (`BinlogStreamingChangeEventSource`: `Registering binlog reader with GTID set: '<set>'`) — a transaction boundary valid on any server of the topology. Without GTID it positions by the old server's file/offset (spec 01.02 FM-01.02-3). In both cases the in-memory version mark is not reset by the in-process restart (spec 01.02 FM-01.02-2).
+  - **Detection**: the lines of FM-01.07-1, then INFO `Registering binlog reader with GTID set: ...` on a GTID source.
+  - **Blast radius**: GTID: one restart, no loss; the version-floor gap of FM-01.02-2 if the new server's binlog numbering is lower. Without GTID: see FM-01.02-3.
+  - **Recovery**: GTID: automatic, then restart the process once to re-seed the version floor (FM-01.02-2). Without GTID: the manual repositioning of FM-01.02-3.
+  - **RTO**: GTID: one engine restart (FM-01.07-1) + one process restart ≈ 1 min; without GTID: manual, unbounded; unmeasured.
+  - **Test**: GAP: a GTID failover between two MySQL servers with the connector running.
+
+- **FM-01.07-7 Two connectors share one `database.server.id`**
+  - **Trigger**: a copied configuration, a second instance started against the same source with the same `database.server.id`.
+  - **Behaviour**: MySQL keeps one dump per replica server id and ends the older one when a new one registers (documented server behaviour, not reproduced here); each connector's loss is FM-01.07-1, whose restart ends the other's dump — a ping-pong in which each side re-reads from its durable offset every cycle. Progress between cycles refills the budget, so it never reaches the terminal exit.
+  - **Detection**: the FM-01.07-1 lines repeating on both connectors every restart cycle (≈ 13–19 s) with no other cause; the source error log shows the replaced dump.
+  - **Blast radius**: both pipelines crawl and re-read continuously; no loss.
+  - **Recovery**: give every connector against one source a unique `database.server.id` (distinct from every real replica's `server_id`) and restart.
+  - **RTO**: one restart after the fix; unmeasured.
+  - **Test**: GAP: no check refuses a server id already registered on the source (`SHOW REPLICAS`).
+
+Summary: 7 failure modes, 3 DEFECT, 4 GAP.
