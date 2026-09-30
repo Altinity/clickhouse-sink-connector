@@ -14,7 +14,11 @@ do the other columns changed by the same UPDATE statement. This happens with and
 `binlog_transaction_compression`, and the connector logs no error. Row counts stay equal; only a value-level
 comparison (`db_compare`, spec 11.02) shows the divergence.
 
-- **Requirement:** run the source with `binlog_row_value_options=''` (the MySQL default):
+- **The source is the server the connector reads.** A MySQL replica re-logs what it applies with its OWN
+  `binlog_row_value_options`: a connector that reads a replica running with `''` receives full row images even
+  when the primary logs partial updates (measured, `binlog_transaction_compression_edge.sh` with
+  `VIA_REPLICA=1`: the partial updates of case E2 arrived in ClickHouse through the replica hop).
+- **Requirement:** run the server the connector reads with `binlog_row_value_options=''` (the MySQL default):
   `SET PERSIST binlog_row_value_options = '';` and make sure no application sets it per session.
   Check with `SELECT @@GLOBAL.binlog_row_value_options;`.
 - **Repair** after partial updates were logged: re-synchronise the affected tables from MySQL
