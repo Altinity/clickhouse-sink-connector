@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc.payload;
 
+import com.altinity.clickhouse.debezium.embedded.cdc.BinlogEventAudit;
 import com.github.luben.zstd.ZstdInputStreamNoFinalizer;
 import com.github.shyiko.mysql.binlog.event.Event;
 import com.github.shyiko.mysql.binlog.event.EventData;
@@ -86,6 +87,12 @@ public final class StreamedPayloadEvents extends ArrayList<Event> {
     private final transient Map<Long, TableMapEventData> tableMapEventByTableId;
 
     /**
+     * Whether a pass has already handed this payload's inner events to the XA audit (spec 01.10): only the
+     * first pass does, so the audit sees each inner event once although the payload is iterated three times.
+     */
+    private transient boolean auditClaimed;
+
+    /**
      * @param compressed               the payload bytes, as read from the event
      * @param compressionType          {@link #COMPRESSION_ZSTD} or {@link #COMPRESSION_NONE}
      * @param declaredUncompressedSize the uncompressed size from the payload header
@@ -141,8 +148,11 @@ public final class StreamedPayloadEvents extends ArrayList<Event> {
         private Event pending;
         private boolean finished;
         private long eventsRead;
+        private final boolean audit;
 
         Pass() {
+            this.audit = !auditClaimed;
+            auditClaimed = true;
             InputStream raw = new java.io.ByteArrayInputStream(compressed);
             InputStream decoded;
             if (compressionType == COMPRESSION_ZSTD) {
@@ -205,7 +215,18 @@ public final class StreamedPayloadEvents extends ArrayList<Event> {
                         TableMapEventData tableMap = (TableMapEventData) data;
                         tableMapEventByTableId.put(tableMap.getTableId(), tableMap);
                     }
-                    return new Event(header, data);
+                    Event tableMapEvent = new Event(header, data);
+                    if (audit) {
+                        BinlogEventAudit.observeInner(tableMapEvent);
+                    }
+                    return tableMapEvent;
+                }
+                if (audit && (type == EventType.QUERY || type == EventType.XA_PREPARE)) {
+                    // The body of a compressed XA transaction (XA START, its TABLE_MAPs, XA END) is inside the
+                    // payload, where the client-level audit cannot see it (spec 01.10). Parsed here, once, on the
+                    // first pass; the dispatch pass parses its own copy lazily as before.
+                    BinlogEventAudit.observeInner(new Event(header,
+                            innerDeserializer.getEventDataDeserializer(type).deserialize(new ByteArrayInputStream(body))));
                 }
                 return new LazyPayloadEvent(header, body, innerDeserializer.getEventDataDeserializer(type));
             } catch (IOException e) {

@@ -962,6 +962,15 @@ public class DebeziumChangeEventCapture {
         // a transaction boundary (spec 01.07). Same Properties object the
         // completion-callback restart rebuilds the engine from.
         BinlogKeepAlivePreflight.apply(props);
+        // With the keep-alive thread off, two ways a binlog connection dies go
+        // unnoticed and replication stands still while the engine reports
+        // running: the source closes it (mysqld killed, a failover) -- the
+        // client treats end of stream as a normal end -- or it dies silently
+        // behind a partition -- the socket has no read timeout. The guarded
+        // socket turns both into a communication failure, so the engine
+        // restarts from the durable offset (spec 01.09).
+        BinlogConnectionGuard.configure(props);
+        BinlogConnectionGuard.shadowActive(props);
         // Debezium's own change-event queue is bounded in events only unless
         // max.queue.size.in.bytes is set; its default is 0 (off). On a
         // wide-row source that is gigabytes held in front of every bound the
