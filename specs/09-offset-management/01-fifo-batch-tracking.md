@@ -450,3 +450,66 @@ would let a later batch commit an offset past rows that never reached a queue.
   `old_overlap_rule_unsafe`, `fifo_acknowledges_in_handoff_order`,
   `restart_quiescent`, `acked_never_rolled_back`, `abandoned_not_acked`,
   `old_restart_poisons_fifo`, `restart_unblocks_next_engine`.
+
+---
+
+## 6. Failure Modes & Recovery
+The FIFO fails SAFE: every failure leaves units outstanding, so the durable offset stops rather than passing unwritten rows (I8), and the cost of any failure is a replay of the outstanding units, bounded by the hard cap (§3.1 step 5: `sink.connector.handoff.max.outstanding.records` 500 000 rows, `sink.connector.handoff.max.outstanding.bytes` heap/4). What it does not bound well is TIME: a head that never completes freezes every offset while other tables keep being written, and the default wait before that is made loud exceeds the RTO. The versioning of the redelivered units is spec 02.04 §7 (FM-02.04-2 for in-process restarts).
+
+- **FM-09.01-1 A worker dies with units outstanding**
+  - **Trigger**: a FATAL ClickHouse error (unknown table/column, type mismatch, access denied, spec 10.01), a poisoned `OffsetStorageWriter` (spec 09.02 §6 FM-09.02-1), or any exception that ends the worker's scheduled task.
+  - **Behaviour**: `ClickHouseBatchRunnable.run` rethrows and keeps `currentBatch`, so its unit stays outstanding; `DebeziumChangeEventCapture.failIfWorkerDied`, at the top of the next `handleChangeEventBatch`, throws the worker's cause; `handleEngineCompletion` does not retry with a dead worker and ends in `onTerminalFailure` (exit code 3 unless `exit.on.terminal.failure=false`). The next process redelivers from the last committed offset.
+  - **Detection**: ERROR `FATAL ClickHouse error (Code: N) -- this batch will never succeed. Stopping this worker; ...`, then `Sink worker i of n is dead: its scheduled task has terminated...`, ERROR `Engine stopped while a sink worker is dead; not retrying: ...`, FATAL `Replication is STOPPED: ...`, exit code 3 — within one source batch; heartbeats (`heartbeat.interval.ms`, default 5 000 ms) bound that on an idle source.
+  - **Blast radius**: all replication stops; nothing acknowledged past the dead worker's unit; no loss.
+  - **Recovery**: read the FATAL cause, fix it on the ClickHouse side (create the column/table, grant, correct the type), restart the service.
+  - **RTO**: detection ≤ 5 s + the operator's fix + restart ~20 s + replay ≤ the hard cap; unmeasured.
+  - **Test**: `WorkerDeathIsLoudTest.deadWorkerFailsTheNextBatchLoudly()`, `DeadWorkerRetryIsTerminalTest.deadWorkerIsTerminalAtOnce()`.
+
+- **FM-09.01-2 Head-of-line stall behind a live, retrying worker**
+  - **Trigger**: one worker keeps failing its batch with a retriable error — `TOO_MANY_PARTS`, `MEMORY_LIMIT_EXCEEDED`, a replicated table read-only after Keeper loss, a slow or overloaded server — or an `UNKNOWN` error (spec 02.05 FM-02.05-1).
+  - **Behaviour**: that unit never completes, so `drainCompletedUnits` stops at it and every younger unit, on every worker, parks in `completedUnits`: rows of the other tables keep being written while no offset is acknowledged. The outstanding count grows until `awaitHandoffCapacity` holds the reader at the hard cap, and fails after `sink.connector.handoff.wait.timeout.ms` (default 600 000 ms); the engine then stops and retries (spec 10.04 §3.5).
+  - **Detection**: WARN `Retriable ClickHouse error (Code: N, Category: ...) -- the same batch will be retried in ... ms ...` per retry; WARN `Handoff backlog: N batch(es) awaiting acknowledgement, above the advisory threshold of 1000. ...` once; WARN `Handoff hard cap: N row(s) in M unit(s) handed off and not yet acknowledged ...`; the loud stop `Handoff hard cap: ... are still unacknowledged after ... ms ... Stopping the engine ...` only after 600 s at the cap.
+  - **Blast radius**: offsets frozen for all tables; a restart replays every parked unit (≤ the hard cap), written a second time and collapsed by `ReplacingMergeTree`. No loss.
+  - **Recovery**: remove the ClickHouse-side cause (let merges catch up or raise `parts_to_throw_insert`, free memory, restore Keeper); the retry succeeds within the backoff interval (spec 10.02) and the drain releases every parked unit at once. Set `sink.connector.handoff.wait.timeout.ms` ≤ 240 000 so a stall that cannot clear becomes a loud stop within the RTO.
+  - **RTO**: cause removed → one backoff interval + one drain; stall that cannot clear → loud after 600 s by default. Unmeasured.
+  - **Test**: `HandoffHardCapBackpressureTest.theWaitIsBoundedAndLoud()`, `HandoffHardCapBackpressureTest.atTheCapWaitsUntilTheHeadIsAcknowledged()`, `HandoffBacklogAdvisoryTest.raisedOnceAtWarnWhenCrossingTheThreshold()`, `HandedOffBatchVisibilityTest.parkedBatchStillBlocksTheCommit()`.
+  - **DEFECT**: the default `sink.connector.handoff.wait.timeout.ms` (600 000 ms) keeps a frozen offset at WARN level for twice the 5-minute RTO.
+
+- **FM-09.01-3 Engine stopped or recreated inside the process with units outstanding**
+  - **Trigger**: source connection lost mid-transaction (engine completion and retry), REST `/restart`, `stop_replica` / `start_replica`, the restart monitor, or a previous engine that died without `stop()`.
+  - **Behaviour**: §3.8 — `DebeziumOffsetManagement.reset()` retires every sequence assigned so far (from `onConnectorStopped`, the top of `handleEngineCompletion`, `stop()`, or `setup()` for a dead previous engine); a retired group reported written later is answered `false` without touching the closed committer; `setup()` refuses a second engine while a live one still owns units.
+  - **Detection**: WARN `Offset FIFO reset: abandoning N handed-off unit(s) that were never acknowledged ...`, WARN `<caller>: N handed-off batch(es) of the stopped engine were still unacknowledged and have been retired. ...`, INFO `Handoff sequence N was retired by an engine restart before its rows were reported written: ...`; `IllegalStateException` `Refusing to start the engine: N handed-off batch(es) from a previous engine in this process are still unacknowledged ...` for the live-engine case; immediate.
+  - **Blast radius**: redelivery of the retired units (at-least-once, no loss); their versions: spec 02.04 §7 FM-02.04-2 (DEFECT) for never-written late commits.
+  - **Recovery**: automatic (completion-callback retry after `SLEEP_TIME` 10 s); for a refused second engine, `stop_replica` first.
+  - **RTO**: 10 s + engine start + replay ≤ the hard cap; unmeasured.
+  - **Test**: `EngineRestartFifoResetTest.stopThenStartNewInstanceIsNotPoisoned()`, `EngineRestartFifoResetTest.deadEngineWithoutStopIsAbandonedNotPoisoning()`, `EngineRestartFifoResetTest.liveEngineStillRefusesASecondEngine()`, `StoppedEngineRetiresHandoffsTest.completionCallbackRetiresTheStoppedEnginesUnitsBeforeRetrying()`, `RetiredHandoffNotAcknowledgedTest.writtenAfterRetirementIsNotAcknowledgedAndNotAnError()`.
+
+- **FM-09.01-4 The offset commit fails while the drain acknowledges the head**
+  - **Trigger**: the committer throws inside `acknowledgeRecords` — Debezium's `Timed out while waiting for committing task offset`, an offset store that cannot be reached, a committer racing a failing worker.
+  - **Behaviour**: the exception propagates out of `checkIfBatchCanBeCommitted` to the worker, which had already dropped the written batch (WRITTEN-ONCE, §3.2) and treats the error as `UNKNOWN` (retried, the worker moves on). The unit stays in `completedUnits` and `outstandingSequences` (removal follows acknowledgement), so no younger unit and no control record can pass it; the NEXT drain — the next unit any worker completes — acknowledges it again, in order.
+  - **Detection**: ERROR `ClickHouseBatchRunnable exception - Task(...)` with the committer's cause, WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN) ...`; immediate. A poisoned writer (`OffsetStorageWriter is already flushing`) is FM-09.02-1 instead.
+  - **Blast radius**: none lost. On an idle source the retry waits for the next row: heartbeats cannot commit while the unit is outstanding (spec 09.04), so the durable position lags by one unit until then.
+  - **Recovery**: self-heals at the next completed unit; nothing to do.
+  - **RTO**: time to the next row on the source; if the process restarts first, replay of that unit.
+  - **Test**: `OffsetAcknowledgementFailureTest.failedAcknowledgementIsRetriedByTheNextDrainInHandoffOrder()`, `DebeziumOffsetManagementTest.testAcknowledgePropagatesCommitError()`.
+
+- **FM-09.01-5 Handoff enqueue interrupted**
+  - **Trigger**: the Debezium thread is interrupted while `put` blocks on a full worker queue (engine shutdown during backpressure).
+  - **Behaviour**: §3.7 — `InterruptedException` leaves `handleChangeEventBatch`; the registration is kept (the unit stays outstanding), the engine stops, and the completion callback retires it.
+  - **Detection**: ERROR `Engine stopped with an error: java.lang.InterruptedException ...`; immediate.
+  - **Blast radius**: redelivery of that unit; no loss.
+  - **Recovery**: automatic (engine retry).
+  - **RTO**: 10 s + engine start + replay ≤ the hard cap; unmeasured.
+  - **Test**: GAP: a capture-level test that interrupts the producer inside `put` and asserts the unit stays outstanding and nothing is acknowledged.
+
+- **FM-09.01-6 FIFO bookkeeping error is retried as transient**
+  - **Trigger**: a defect in the producer or the FIFO: a committer-bearing batch without a handoff sequence, or a completed unit that is not outstanding.
+  - **Behaviour**: `checkIfBatchCanBeCommitted` / `drainCompletedUnits` throw `IllegalStateException`; in the worker it is classified `UNKNOWN`, so the worker moves on instead of stopping. For the corrupt-bookkeeping case the state persists and every later drain throws again: rows keep being written, no offset is acknowledged, until the hard cap's wait limit stops the engine; the in-process retry's `reset()` then clears the state.
+  - **Detection**: ERROR `ClickHouseBatchRunnable exception - Task(...)` carrying `a batch carrying a Debezium committer reached the writer without a handoff sequence; ...` or `a completed unit is not outstanding; the handoff FIFO bookkeeping is corrupt`; immediate and repeated.
+  - **Blast radius**: offsets frozen (replay ≤ the hard cap); no loss.
+  - **Recovery**: restart the process (fresh static state); report the defect with the log.
+  - **RTO**: loud stop after `sink.connector.handoff.wait.timeout.ms` (600 s by default) + restart ~20 s; unmeasured.
+  - **Test**: `OffsetHandoffOrderTest.committerBearingBatchWithoutHandoffIsRejected()`, `RetiredHandoffNotAcknowledgedTest.neverHandedOffIsStillRejected()` (the refusal); GAP: a test that a FIFO bookkeeping `IllegalStateException` stops the worker and the engine instead of being retried.
+  - **DEFECT**: a corrupted FIFO is handled as a transient error rather than a terminal one (Invariant I9).
+
+Summary: 6 failure modes, 2 DEFECT, 2 GAP.

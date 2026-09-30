@@ -55,3 +55,20 @@ positive, non-zero 64-bit version.
   version is exactly `0` fails the batch with `IllegalStateException` on both
   the live-row and the tombstone bind paths (pre-fix code binds `0`).
 - `RejectUnderivableVersionTest.testPositiveVersionIsBound()` — `1` is accepted.
+
+---
+
+## 6. Failure Modes & Recovery
+The guard itself is correct and loud: no row with a version `<= 0` is ever bound. Its recovery posture is the weak part: the refusal is deterministic but is handled as a transient error.
+
+- **FM-02.05-1 Underivable version refused, then retried forever**
+  - **Trigger**: a record reaches the bind with `version <= 0` — no GTID, sequence number, LSN or positive `ts_ms` (possible on the Kafka Connect path; on the lightweight streaming path every row receives a sequence version, so only a defect produces it), or a history-mode encoding refusal (spec 02.01 §7 FM-02.01-3).
+  - **Behaviour**: `PreparedStatementFieldMapper.rejectUnderivableVersion` throws `IllegalStateException`; nothing is bound. The exception reaches `ClickHouseBatchRunnable.run`, where `ClickHouseErrorClassifier.classify` finds no `Code: N` and answers `UNKNOWN`, so the worker retries the same batch with backoff (spec 10.02) indefinitely; the redelivered record is the same record.
+  - **Detection**: ERROR `ClickHouseBatchRunnable exception - Task(...)` carrying `Cannot bind _version -1 for record from topic '...' at kafka offset ...: ... Refusing to write the row.`, then WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN) -- the same batch will be retried in ... ms (consecutive failures: n). Every table hashed to this worker waits behind it until it succeeds.`; immediate.
+  - **Blast radius**: no bad row is written (the UInt64-max sentinel of issue #1213 cannot reach ClickHouse). Every table hashed to that worker stops; the FIFO head blocks every offset (spec 09.01 FM-09.01-2) until the handoff wait limit stops the engine (`sink.connector.handoff.wait.timeout.ms`, default 600 000 ms).
+  - **Recovery**: none bounded: fix the producer of the record (configuration or code), then restart. Skipping it means stopping the process, moving the offset past its transaction and resyncing the tables it touched (spec 11.04).
+  - **RTO**: unbounded (code or configuration fix); unmeasured.
+  - **Test**: `RejectUnderivableVersionTest.testZeroVersionIsRejected()`, `RejectUnderivableVersionTest.testZeroVersionIsRejectedForTombstone()`, `VersionFallbackWithoutGtidTest.unresolvableVersionThrowsInsteadOfBinding()` (the refusal); `UnderivableVersionClassificationTest.refusalIsCurrentlyClassifiedUnknown()` (pins the retry classification); `UnderivableVersionClassificationTest.underivableVersionIsClassifiedFatal()` (disabled; fails on 2.11.0).
+  - **DEFECT**: a deterministic refusal is classified retriable, so the worker loops instead of stopping the engine at once (Invariant I9).
+
+Summary: 1 failure modes, 1 DEFECT, 0 GAP.

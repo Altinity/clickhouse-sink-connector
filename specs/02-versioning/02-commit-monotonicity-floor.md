@@ -167,3 +167,69 @@ The carry itself is unchanged: the ten-digit seeds still add ~1000 ms (`SEQUENCE
 - `VersionHighWaterMarkTest.seedFloorUsesThePersistedMark()`, `VersionHighWaterMarkTest.seedFloorWithoutAMarkUsesTheClockAndReadsNoTargetTable()`, `VersionHighWaterMarkTest.implausiblePersistedMarkFallsBackToTheClock()` — the seed of §3.5 (2): the mark when plausible, the clock plus head-room otherwise, and in every case exactly two statements, both on the mark table (Invariant I14; the second test goes red the moment a discovery or target read is added back).
 - Lean: `Replication.VersionFloor.restart_boundary`, `Replication.VersionFloor.version_ge_floor`, `Replication.VersionFloor.floor_mono`, `Replication.VersionFloor.seed_floor_gt`, `Replication.VersionFloor.dispatch_control_preserves_state`, `Replication.VersionFloor.old_dispatch_control_moves_floor`, `Replication.VersionFloor.seeded_restart_example`, `Replication.VersionFloor.unseeded_restart_inverts`, `Replication.VersionFloor.clockSeed`, `Replication.VersionFloor.below_clock_seed`, `Replication.VersionFloor.clock_restart_boundary`, `Replication.VersionFloor.clock_seed_example` (§5.1); `Replication.Proofs.version_strictly_monotonic` (coordinate encoding only).
 - Verification: a crash-restart integration test that kills the connector mid-stream on a lagging source and checks the first post-restart updates win under `FINAL` is not yet covered by an automated test (gap).
+
+---
+
+## 7. Failure Modes & Recovery
+The floor's recovery posture is fail-closed on the WRITE side and fail-open on the READ side: a horizon that cannot be persisted holds every row back and stops the engine (§3.5 (1)), but a mark that cannot be read, is missing, or looks implausible lets the run start from a weaker seed, and the rows of the restart window can then rank below rows of the previous run — silently. Within one run the floor protects only records it classifies as first deliveries; the in-process restart case is FM-02.04-2 (spec 02.04 §7), and the counter carry at the exit of a long clamp is FM-02.03-1 (spec 02.03 §6).
+
+- **FM-02.02-1 High-water horizon cannot be persisted**
+  - **Trigger**: the offset database is unreachable, read-only (disk full, a `readonly` user), refuses the insert (`TOO_MANY_PARTS`, `ACCESS_DENIED`), or the connection is half-open.
+  - **Behaviour**: `VersionHighWaterMark.cover`, on the dispatch thread before the row is handed off, retries the INSERT `DEFAULT_WRITE_ATTEMPTS` = 30 times, `DEFAULT_WRITE_RETRY_MS` = 2 000 ms apart, each attempt bounded by the JDBC `socket_timeout` of `clickhouse.jdbc.params` (30 000 ms in the shipped `docker/config.yml`); then throws `IllegalStateException`, which leaves `handleChangeEventBatch` and stops the engine; `handleEngineCompletion` retries (`errors.max.retries`, default 10, `SLEEP_TIME` 10 s) unless the ClickHouse code is FATAL (`ACCESS_DENIED` 497: terminal at once, exit code 3).
+  - **Detection**: ERROR `Could not persist the version high-water horizon <v> to <table> (attempt n/30); rows are held back until it is durable` on every attempt — within one attempt of the trigger (≤ 30 s); then `The version high-water horizon ... could not be persisted ... Restore ClickHouse write access to the offset database and restart.`; FATAL `Replication is STOPPED: ...` when the budget is spent.
+  - **Blast radius**: every table stops (the dispatch thread is held); no row is written above the durable horizon, nothing is lost, nothing diverges.
+  - **Recovery**: self-heals: restore write access to the offset database; the next attempt (≤ 2 s) or the next engine retry (≤ 10 s) proceeds. After a terminal exit, restart the service.
+  - **RTO**: cause removed → ≤ 2 s inside the retry loop, or 10 s + engine start + replay of the unacknowledged units (≤ `sink.connector.handoff.max.outstanding.records`, spec 09.01) after an engine retry; unmeasured end to end.
+  - **Test**: `VersionHighWaterMarkTest.horizonWriteFailureIsLoud()`.
+
+- **FM-02.02-2 Start with an unreadable mark runs unseeded**
+  - **Trigger**: at engine start `VersionHighWaterMark.seedFloor` fails (the `CREATE TABLE IF NOT EXISTS` or the `SELECT max(...)` is refused or times out) while the offset store itself loads — a transient ClickHouse error or timeout, or a user without `CREATE TABLE` on the offset database (whether ClickHouse checks that grant for `IF NOT EXISTS` on an existing table is not verified here).
+  - **Behaviour**: `DebeziumChangeEventCapture.seedVersionFloorFromDurableMark` catches the exception and continues with the floor at 0. The log line promises that "the first handoff will retry the mark", but `VersionHighWaterMark.cover` only WRITES a horizon; nothing re-reads the mark or raises the floor.
+  - **Detection**: ERROR `Could not establish the version high-water mark in <table>; this start is unseeded and the first handoff will retry the mark before any row is written`, once, at start. No metric.
+  - **Blast radius**: rows of the restart window (replication lag + ≤ 0.5 s counter carry + ≤ 5 s horizon head-room of the previous run) can rank below the previous run's rows of the same keys: stale values under `FINAL`, matching row counts. Not self-healing.
+  - **Recovery**: restore access to `<offset db>.replica_version_high_water`, restart the process (the next start seeds from the mark), then run the value checksum (spec 11.02) and `ch-mysql-resync` (spec 11.04) on the tables written since the unseeded start.
+  - **RTO**: restart ~20 s (unmeasured) + resync of the affected tables (unbounded).
+  - **Test**: GAP: a capture-level test that makes the seed fail and asserts the engine does not hand off a row until the floor is seeded.
+  - **DEFECT**: the start proceeds unseeded and the log line misstates what happens next.
+
+- **FM-02.02-3 No offset table name: the mark is disabled for the life of the deployment**
+  - **Trigger**: `offset.storage.jdbc.table.name` is not set (Debezium then uses its default `debezium_offset_storage`).
+  - **Behaviour**: `seedVersionFloorFromDurableMark` returns without creating a mark; `coverAssignedVersion` skips every cover. Every restart is unseeded.
+  - **Detection**: ERROR `offset.storage.jdbc.table.name is not set; the version floor cannot be persisted or seeded, so a restart can invert versions across the boundary (spec 02.02 section 3.5)` at every start, and WARN `Versioning rows without a durable high-water mark (no setup ran); ...` once per process.
+  - **Blast radius**: as FM-02.02-2, at every restart.
+  - **Recovery**: set `offset.storage.jdbc.table.name` to the database-qualified name of the table Debezium actually uses and restart; resync as FM-02.02-2.
+  - **RTO**: restart ~20 s + resync; unmeasured.
+  - **Test**: GAP: a test that a start without `offset.storage.jdbc.table.name` refuses to start.
+  - **DEFECT**: a configuration that can never be seeded is accepted with a log line instead of refused.
+
+- **FM-02.02-4 Clock step leaves a mark more than 24 h in the future**
+  - **Trigger**: the source host's clock stepped forward (rows versioned there, the horizon followed them), or the connector host's clock was wrong at a clock-seeded start (every row clamped to it and the horizon written there), then corrected by more than `PLAUSIBLE_FUTURE_MS` = 24 h. Also: the connector host's clock is more than 24 h BEHIND at start (RTC reset before NTP sync), which makes a valid mark look implausible.
+  - **Behaviour**: `VersionHighWaterMark.seedFloor` rejects a decoded floor above `now + PLAUSIBLE_FUTURE_MS` (`isPlausibleFloor`) and seeds from the connector clock + 5 000 ms — below every version the previous run wrote. A mark up to 24 h ahead is used as is (the first rows are clamped to it; ordering is kept, but see FM-02.03-1 for the clamp exit).
+  - **Detection**: ERROR `The persisted high-water version <v> in <table> decodes to floor <ms> ms, which is not a plausible timestamp; ignoring it and seeding from the connector clock`, then WARN `Version floor seeded to ... from the connector clock + 5000 ms ...`; at start.
+  - **Blast radius**: every key the previous run wrote keeps its value under `FINAL` until the source clock reaches the stepped instant (days); new keys replicate.
+  - **Recovery**: fix the clock (NTP on both hosts). The discarded mark is still true for the rows already written and 2.11.0 has no setting to seed from it, so after the restart run the value checksum (spec 11.02) and `ch-mysql-resync` (spec 11.04) on every table written since the step.
+  - **RTO**: unbounded (resync); unmeasured.
+  - **Test**: `VersionHighWaterMarkClockStepTest.futureMarkBeyondThePlausibilityWindowDoesNotLowerTheFloor()` (disabled; fails on 2.11.0), `VersionHighWaterMarkClockStepTest.markWithinTheFutureWindowIsStillTheSeed()`, `VersionHighWaterMarkTest.implausiblePersistedMarkFallsBackToTheClock()`.
+  - **DEFECT**: the plausibility fallback lowers the floor below rows already in ClickHouse; a too-high floor is the safe side (§3.5).
+
+- **FM-02.02-5 Clock seed without its precondition**
+  - **Trigger**: a start with no mark row — the first start after an upgrade from 2.8.0/2.9.1/2.10.x, a connector pointed at another ClickHouse replica (the mark table is a plain `ReplacingMergeTree`, not replicated, spec 09.03 §3.4), a dropped mark table, or a renamed `offset.storage.jdbc.table.name` (the mark is keyed by that name) — while the connector host's clock is more than `CLOCK_SEED_HEADROOM_MS` = 5 000 ms behind the clock that stamped the previous run's versions.
+  - **Behaviour**: `seedFloor` seeds `now + 5000` (§3.5 (2)); versions stamped within the skew window stay above the new run's first rows.
+  - **Detection**: WARN `Version floor seeded to <ms> ms from the connector clock + 5000 ms (...)` at every clock-seeded start — the same line whether the precondition holds or not; nothing compares it with the source clock.
+  - **Blast radius**: keys written in the last (skew − 5 s) of the previous run keep stale values until rewritten.
+  - **Recovery**: before an upgrade or a replica move, check NTP on the connector host (`chronyc tracking`) against the source; if the WARN's floor is behind the source's `NOW()`, run the checksum and resync the tables written in that window.
+  - **RTO**: unbounded (resync); unmeasured.
+  - **Test**: `VersionHighWaterMarkTest.seedFloorWithoutAMarkUsesTheClockAndReadsNoTargetTable()` (the seed); GAP: a test that a clock seed below the newest source timestamp seen at start is refused or raised.
+  - **DEFECT**: a violated precondition is silent.
+
+- **FM-02.02-6 In-run failover to a log with the same basename and a lower sequence**
+  - **Trigger**: inside one engine run the source's log restarts lower under the same basename: a GTID-mode failover where Debezium's binlog client reconnects to the new primary (both logs named `mysql-bin`, the new one at a lower number), or `RESET MASTER`.
+  - **Behaviour**: `SourcePosition.sameLog` compares the basename only, so `nextVersionAssignment` finds the new positions below `sequenceHighWaterPosition` and treats them as redeliveries: no clamp, raw statement time, until the new log passes the old mark (possibly never).
+  - **Detection**: none; the WARN `Binary log identity changed: high-water position ... is replaced by ... from a differently named log; ...` fires only when the basename differs. DEFECT.
+  - **Blast radius**: late commits on the new primary, and every write stamped by a new primary whose clock is behind the old one, rank below earlier writes of the same keys. Not self-healing.
+  - **Recovery**: after a failover, restart the connector PROCESS (an empty mark and a seeded floor make every record a first delivery), then checksum and resync (spec 11.04) the tables written between the failover and the restart.
+  - **RTO**: restart ~20 s + resync; unmeasured.
+  - **Test**: `InRunRedeliveryVersionTest.failoverToALowerNumberedLogOfTheSameNameIsAFirstDelivery()` (disabled; fails on 2.11.0); `CommitOrderVersionClampTest.binlogBasenameChangeResetsTheHighWaterMark()` pins the renamed-log case that works.
+  - **DEFECT**: a same-named log restarting lower silently disables the commit-order floor.
+
+Summary: 6 failure modes, 5 DEFECT, 3 GAP.
