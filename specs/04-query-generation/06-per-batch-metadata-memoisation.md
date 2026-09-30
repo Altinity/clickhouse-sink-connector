@@ -315,3 +315,49 @@ the pull request; the numbers in section 1 are the reference for 2.11.0 at
 `MAVEN_OPTS="-XX:StartFlightRecording=filename=<file>,settings=profile"` (the
 module's surefire runs in-process, `forkCount=0`, so `argLine` is not
 applied).
+
+---
+
+## 7. Failure Modes & Recovery
+
+Recovery posture: the memos change throughput only, live for one batch and are keyed by identity and content (§3.4), so a restart, a DDL barrier and a new batch all start from scratch; every failure path of specs 04.01, 04.03 and 07.x is reached unchanged. The failure modes that matter here are those in which a memoised verdict extends one bad decision to every record of the batch. Procedures P-FIX-TYPE / P-SKIP / P-RESYNC and the retry-vs-stop rule are defined in spec 07.01 §6.
+
+- **FM-04.06-1 Pre-ALTER record carrying a column the table no longer has**
+  - **Trigger**: a record buffered before a `DROP COLUMN` / `RENAME COLUMN` reaches the writer after the ClickHouse column is gone (the DDL barrier of spec 06.01 failed or was bypassed, or the column was dropped out of band on ClickHouse).
+  - **Behaviour**: the staleness check runs for that record's schema regardless of what was memoised for other schemas (§3.5 item 4); the re-read does not produce the column and `GroupInsertQueryWithBatchRecords.refreshIfRecordHasUnknownColumn` throws `MissingTargetColumnException`; UNKNOWN, retried every ≤ 30 s (spec 04.03 §6 FM-04.03-1).
+  - **Detection**: WARN `Cached schema for <db>.<t> does not contain column '<c>' ...`, ERROR `ClickHouseBatchRunnable exception - Task(<id>)` with `Column '<c>' is carried by the source record but does not exist in ClickHouse table <db>.<t> ...`, WARN `Retriable ... Category: UNKNOWN`, every ≤ 30 s; no exit.
+  - **Blast radius**: the worker's tables stop and offsets freeze; nothing is written with the value dropped.
+  - **Recovery**: re-add the column on ClickHouse (the retry then writes the pre-ALTER rows; drop it again afterwards if the source dropped it), or P-SKIP + P-RESYNC.
+  - **RTO**: `ADD COLUMN` + ≤ 30 s backoff; unmeasured.
+  - **Test**: `GroupInsertQueryDdlMemoTest.droppedColumnStillFailsLoudlyAfterACleanSchemaWasMemoised()`.
+  - **DEFECT**: as spec 04.03 §6 FM-04.03-1 — waits for an operator indefinitely with no metric.
+
+- **FM-04.06-2 Staleness re-read fails and the failed verdict is memoised**
+  - **Trigger**: a record carries a column the cached map lacks (an `ADD COLUMN` this writer has not seen) and the metadata re-read fails — ClickHouse refuses the `system.columns` query (`Code: 202` too many simultaneous queries, a timeout, a dropped connection) while INSERTs still succeed.
+  - **Behaviour**: `DBMetadata.getColumnsDataTypesForTable` retries 10 times without delay and returns an empty map; `refreshIfRecordHasUnknownColumn` logs that it keeps the cached map and returns null; `groupQueryWithRecords` records the schema in `verifiedSchemas` as consistent, so every record of that schema in the batch is grouped under a template built from the cached map, which omits the column. The binder walks the same map and never visits the record's extra field: the value is dropped and ClickHouse stores the column DEFAULT; the batch succeeds. (The same outcome without the memo: each record's re-read would fail alike; the memo extends the verdict to the whole batch.)
+  - **Detection**: ERROR `Exception retrieving Column Metadata, retrying (<n>/10)` ×10 and WARN `Re-read of <db>.<t> returned no columns; keeping the cached map. The bind-time check will fail the batch if a value would be dropped.` (the last clause is not true for this direction); the dropped values themselves: none. DEFECT.
+  - **Blast radius**: silent loss of the new column's value for every row of the batch (row counts intact); the next batch re-runs the check and heals for later rows only.
+  - **Recovery**: P-RESYNC the table (or re-apply the affected rows by a source `UPDATE`); find the window from the WARN's timestamp.
+  - **RTO**: unbounded detection; after detection resync of the table; unmeasured.
+  - **Test**: `GroupInsertQueryStaleCheckFailureTest.failedMetadataReReadDoesNotDropTheUnknownColumn()` (disabled, fails on 2.11.0 — the batch groups without `note` and nothing is thrown).
+  - **DEFECT**: a failed staleness re-read is treated as "consistent" (in `refreshIfRecordHasUnknownColumn`, spec 08.03, and memoised here); it must fail the batch so it is retried against readable metadata.
+
+- **FM-04.06-3 A memo returns a template or binding that does not match the record**
+  - **Trigger**: a defect in `TemplateKey` / `ColumnBinding` keying (e.g. a future change that keys by name), or a column map mutated in place with an equal content fingerprint (`Map.hashCode()` collision).
+  - **Behaviour**: guarded by identity plus content fingerprint and by the per-batch lifetime (§3.4 items 2–3); a placeholder/column mismatch is caught at bind time by `StaleSchemaCacheException` (spec 04.03 §6 FM-04.03-2); a wrong type rendering would not be caught.
+  - **Detection**: placeholder mismatch: the `StaleSchemaCacheException` ERROR; wrong rendering: none.
+  - **Blast radius**: the affected batch; a rendering mismatch would be silent divergence.
+  - **Recovery**: there is no configuration switch that bypasses the memos; roll back to the previous release (a restart, Invariant I11) and P-RESYNC the tables written by the faulty build.
+  - **RTO**: rollback restart ≈ 1 min + resync; unmeasured. No known instance on 2.11.0.
+  - **Test**: `GroupInsertQueryDdlMemoTest.templateIsRebuiltWhenTheColumnMapChangesInPlace()`, `PreparedStatementFieldMapperColumnBindingMemoTest.bindingIsRebuiltWhenTheDeclaredTypeChangesInPlace()`, `PreparedStatementFieldMapperColumnBindingMemoTest.memoisedBindingsEqualFreshBindings()`; GAP: a differential test that runs randomised batches (mixed schemas, in-batch refreshes) through the memoised and a fresh path and compares every bound value.
+
+- **FM-04.06-4 Write-path throughput regression**
+  - **Trigger**: a change reintroduces per-row metadata work (the pre-spec cost was ~27,000 rows/s per worker of connector CPU, §1) under a production burst (180M rows in 20 minutes needs ~150,000 rows/s).
+  - **Behaviour**: the connector falls behind; nothing fails.
+  - **Detection**: lag only: `show_replica_status.seconds_behind_source` grows (spec 10.03); `WriterHotPathBenchmarkTest` runs only with `-Dwriter.bench=1` and is not a CI gate (§6).
+  - **Blast radius**: replication lag; no loss.
+  - **Recovery**: raise `thread.pool.size` (key-aware routing spreads tables over more workers, spec 03.07) as a stopgap; roll back the regressing build.
+  - **RTO**: restart ≈ 1 min, then the backlog drains at the restored rate; unmeasured.
+  - **Test**: `WriterHotPathBenchmarkTest` (manual); GAP: a CI gate that fails when grouping plus binding of the 10,000-row benchmark batch exceeds a stated budget.
+
+Summary: 4 failure modes, 2 DEFECT, 2 GAP.
