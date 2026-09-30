@@ -119,3 +119,77 @@ WARN each time is noise that hides real warnings.
   `dropV1OnlyProperties` calls with the same keys produce exactly one WARN per
   key; both calls still remove the properties. Fails on the pre-fix code (two
   WARNs per key).
+
+---
+
+## 6. Failure Modes & Recovery
+
+The pool layer's posture is "a failed connection fails the batch, the worker retries": no connection failure is terminal by itself, and a worker that holds a usable handle recovers on its own when ClickHouse answers again. The risks are in the retirement shortcut (a dead endpoint is refused until something registers it again), in the unsynchronised static registry, and in the V2 client's defaults. Library behaviour below was read from the bytecode of HikariCP 6.0.0, clickhouse `client-v2` / `jdbc-v2` 0.9.8 in the local Maven repository; it is marked where it was not.
+
+- **FM-03.05-1 ClickHouse down or restarting while the connector runs**
+  - **Trigger**: ClickHouse restart, crash, host reboot, port closed.
+  - **Behaviour**: the INSERT fails: `client-v2` logs WARN `Failed to connect to '<host:port>': <reason>` and `jdbc-v2` maps a `ConnectionInitiationException` to SQLState `08000` (`ExceptionUtils.toSqlState`). HikariCP 6.0.0 `ProxyConnection.checkException` marks a connection broken on any `08*` SQLState and replaces its delegate, so the handle reports `isClosed()`. The worker classifies the failure UNKNOWN and retries (spec 03.03 §6 FM-03.03-1). On the next attempt `BaseDbWriter.getConnection` finds the handle unusable and calls `HikariDbSource.initiateNewConnectionIfClosed`, whose `retireIfServerGone` probes the endpoint (2 s TCP connect) and, on failure, closes every pool of that endpoint and marks it dead (FM-03.05-2).
+  - **Detection**: per attempt ERROR `ClickHouseBatchRunnable exception - Task(<id>)` and WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN) ...`; WARN `<pool> - Connection <c> marked as broken because of SQLSTATE(08000), ErrorCode(0)` (HikariCP); WARN `Retiring connection pools for '<host:port>': the server is no longer reachable. Further requests fail fast until it is registered again.`; ERROR `Error retrieving new connection in getConnection` (the cause is not logged). Within one attempt.
+  - **Blast radius**: all writes stop; the reader is paced by the handoff cap; no loss.
+  - **Recovery**: automatic once a connection can be obtained again — which, after a retirement, depends on FM-03.05-2; otherwise restart the connector.
+  - **RTO**: without a retirement: outage + ≤ 30 s backoff. With one: see FM-03.05-2. Unmeasured: the chaos harness of spec 01.08 §6 covers the source transport, not ClickHouse.
+  - **Test**: `ClickHouseUnavailableTest.testInitiateNewConnectionWithoutPool()`, `ClickHouseBatchRunnableDatabaseBootstrapTest.unreachableServerLogsErrorNamingTheDatabase()`; GAP: stop and restart ClickHouse under a running connector and measure the time to the first successful write.
+
+- **FM-03.05-2 A retired endpoint is never probed again**
+  - **Trigger**: FM-03.05-1 retired the endpoint; ClickHouse comes back.
+  - **Behaviour**: `initiateNewConnectionIfClosed` refuses a dead endpoint without probing it (`ClickHouse server <host:port> is no longer reachable; not retrying for database: <db>`). Only `HikariDbSource.getInstance` clears the mark, i.e. a caller opening a new connection through `BaseDbWriter.createConnection`. Inside a worker that happens when `ClickHouseBatchRunnable.systemConnection()` re-opens an unusable system connection — reached only from `getServerTimeZone`, and only when `clickhouse.datetime.timezone` is empty — or on a `getClickHouseConnection` cache miss (the map keeps the broken handle, so not after the first open); other threads (the DDL path) may also register it. With `clickhouse.datetime.timezone` set, a worker can stay refused after ClickHouse is healthy until a DDL or a restart (inferred from the code; not measured).
+  - **Detection**: ERROR `Error retrieving new connection in getConnection` and the FM-03.03-1 retry lines continue while ClickHouse is healthy (`SELECT 1` succeeds from the connector host).
+  - **Blast radius**: writes stay stopped after the cause is gone; no loss.
+  - **Recovery**: restart the connector (`HikariDbSource.close` clears both endpoint sets).
+  - **RTO**: restart (~1 min) once noticed; automatic recovery has no bound.
+  - **Test**: `RetiredEndpointRecoveryTest.registeringTheServerAgainClearsItsRetirement()`; `RetiredEndpointRecoveryTest.aRetiredEndpointThatAcceptsConnectionsAgainIsReprobed()` (disabled, fails on 2.11.0: a listening endpoint is refused).
+  - **DEFECT**: the dead mark has no expiry and no re-probe; recovery after ClickHouse returns depends on an incidental re-registration instead of a bounded retry.
+
+- **FM-03.05-3 Stale keep-alive connection (server `keep_alive_timeout`)**
+  - **Trigger**: an idle pooled HTTP connection outlives ClickHouse's `keep_alive_timeout`, or a load balancer drops it; the next request uses it.
+  - **Behaviour**: `client-v2` 0.9.8 retries, up to `retry` = 3 times, the causes in `client_retry_on_failures` — by default `NoHttpResponse`, `ConnectTimeout`, `ConnectionRequestTimeout`, `ServerRetryable` (`ClientConfigProperties`, `HttpAPIClientHelper.shouldRetry`). A `SocketException` (`Broken pipe`, `Connection reset`) while the request body is written is not in that list: it reaches the worker as an exception without a code, classified UNKNOWN, and the whole batch is retried after `batch.retry.backoff.initial.ms` (500 ms). That the retry gets a fresh socket is Apache HttpClient pool behaviour, not verified here.
+  - **Detection**: ERROR `ClickHouseBatchRunnable exception - Task(<id>)` with the `SocketException`, WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN) ... (consecutive failures: 1)`; normally none for a `NoHttpResponse` retried inside the client.
+  - **Blast radius**: one batch delayed; the re-sent rows collapse under ReplacingMergeTree (spec 03.03 §6 FM-03.03-2 for other engines).
+  - **Recovery**: none needed. To avoid it, set the `client-v2` property `http_keep_alive_timeout` (ms, name verified in `ClientConfigProperties`) below the server's `keep_alive_timeout` through `clickhouse.jdbc.params` — effect unmeasured.
+  - **RTO**: ≤ 500 ms + one batch; unmeasured.
+  - **Test**: GAP: an HTTP stub that half-closes an idle keep-alive socket, asserting one retried batch and no stall.
+
+- **FM-03.05-4 Connection pool exhausted**
+  - **Trigger**: checked-out connections are not returned — a writer's re-acquired connection is closed only by `closeConnections` at engine stop (spec 01.01 §3.3 step 4a) — or more concurrent holders than `connection.pool.max.size` (500 per `host:port|database` pool).
+  - **Behaviour**: HikariCP blocks `getConnection` for `connection.pool.timeout` (50,000 ms) and throws `SQLTransientConnectionException`; `BaseDbWriter.createConnection` logs it and returns null; `ClickHouseBatchRunnable.getClickHouseConnection` logs, does not cache the null, and the batch fails and is retried.
+  - **Detection**: ERROR `Error creating ClickHouse connection<exception>` and ERROR ``Could not obtain a ClickHouse connection to database `<db>` on <host>:<port>; the batch will be retried on the next tick.``, one pair per ≥ 50 s; HikariCP Prometheus metrics (`hikaricp_connections_pending`, `hikaricp_connections_timeout_total`) when metrics are enabled.
+  - **Blast radius**: every worker writing that database stalls; no loss.
+  - **Recovery**: restart (all pools are closed at stop); raise `connection.pool.max.size` if the demand is real.
+  - **RTO**: restart (~1 min); no self-healing while the connections stay checked out.
+  - **Test**: `ClickHouseBatchRunnableDatabaseBootstrapTest.unreachableServerLogsErrorNamingTheDatabase()` (the null-connection path), `ClickHouseBatchRunnableCloseConnectionsTest`; GAP: a pool of size 1 held by one caller, asserting the second caller's ERROR and retry.
+
+- **FM-03.05-5 The static pool registry is not thread-safe**
+  - **Trigger**: several workers (and the Debezium thread) create, look up or retire pools at the same time — at start, after a retirement.
+  - **Behaviour**: `instance`, `currentKey`, `liveEndpoints`, `deadEndpoints` are plain `HashMap` / `HashSet` read and written without a lock by `getInstance`, `initiateNewConnectionIfClosed`, `retireIfServerGone` and `dropPool`; `printConnectionInfo`, called by every `BaseDbWriter.getConnection`, iterates `instance.values()` (its DEBUG string is built eagerly). Two first-time `getInstance` calls for one key can both build a `HikariDataSource`, and the loser is never closed; an iteration concurrent with a put throws `ConcurrentModificationException` out of `getConnection`, outside its `try`.
+  - **Detection**: CME: the FM-03.03-1 retry lines with `ConcurrentModificationException`. Leaked pool: none.
+  - **Blast radius**: CME: one delayed batch. Leak: one pool (and its HikariCP housekeeping thread) per lost race, for the life of the process.
+  - **Recovery**: CME self-heals on retry; the leak only by restart.
+  - **RTO**: one backoff for the CME; n/a for the leak.
+  - **Test**: GAP: concurrent `getInstance` for one key from N threads, asserting exactly one pool is created.
+  - **DEFECT**: the registry is shared mutable state without synchronisation; a lost race leaks a pool silently.
+
+- **FM-03.05-6 Credentials rejected**
+  - **Trigger**: the ClickHouse password is rotated, the user is dropped or loses its grants.
+  - **Behaviour**: the first statement fails with 516 AUTHENTICATION_FAILED or 497 ACCESS_DENIED, both FATAL: the worker stops and the engine exits terminally (spec 03.01 §6 FM-03.01-2). At start, `ensureDatabaseExists` logs and continues (the key is not marked ensured).
+  - **Detection**: ERROR `FATAL ClickHouse error (Code: 516) ...` (or 497), exit code 3, on the first write.
+  - **Blast radius**: all replication stops; no loss.
+  - **Recovery**: fix `clickhouse.password` / the user's grants, restart.
+  - **RTO**: time to fix + restart.
+  - **Test**: `ClickHouseErrorClassifierTest.testClassifyFatal()`.
+
+- **FM-03.05-7 `connection.pool.min.idle` is ignored**
+  - **Trigger**: every pool the connector creates.
+  - **Behaviour**: `HikariDbSource.createConnectionPool` reads `connection.pool.min.idle` but never calls `setMinimumIdle`; HikariCP 6.0.0 `HikariConfig.validateNumerics` then sets `minimumIdle = maximumPoolSize` (500), so each `host:port|database` pool's housekeeper keeps up to 500 idle connections and replaces them every `connection.pool.max.lifetime` (300,000 ms). What a V2 connection object costs to create and hold (heap, a request at open) is not measured here.
+  - **Detection**: none (heap, connection counts on the server).
+  - **Blast radius**: heap and server connection load grow with the number of destination databases — unmeasured.
+  - **Recovery**: none by configuration in 2.11.0; lower `connection.pool.max.size` bounds the fill.
+  - **RTO**: n/a.
+  - **Test**: GAP: a pool built by `createConnectionPool` with `connection.pool.min.idle=2`, asserting `getMinimumIdle() == 2`.
+  - **DEFECT**: a documented setting is silently ignored and the pool library's fallback fills every pool to its maximum.
+
+Summary: 7 failure modes, 3 DEFECT, 5 GAP.
