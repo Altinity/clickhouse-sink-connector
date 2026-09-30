@@ -120,6 +120,16 @@ public class Metrics {
     private static Gauge gtidCounter;
 
     /**
+     * Gauges for the MySQL source's binlog transaction compression as found by
+     * the start-up preflight: the variable (1 ON, 0 OFF, -1 unknown), its zstd
+     * level (-1 unknown) and whether the Transaction_payload decoder self-test
+     * passed (1) or not (0).
+     */
+    private static Gauge binlogTransactionCompressionGauge;
+    private static Gauge binlogTransactionCompressionLevelGauge;
+    private static Gauge binlogPayloadDecoderOkGauge;
+
+    /**
      * HTTP server used to expose Prometheus metrics.
      */
     private static HttpServer server;
@@ -240,6 +250,21 @@ public class Metrics {
 
         gtidCounter = Gauge.build().name(MetricsConstants.CLICKHOUSE_SINK_GTID)
                 .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_GTID))
+                .register(collectorRegistry);
+
+        binlogTransactionCompressionGauge = Gauge.build()
+                .name(MetricsConstants.CLICKHOUSE_SINK_SOURCE_BINLOG_TRANSACTION_COMPRESSION)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_SOURCE_BINLOG_TRANSACTION_COMPRESSION))
+                .register(collectorRegistry);
+
+        binlogTransactionCompressionLevelGauge = Gauge.build()
+                .name(MetricsConstants.CLICKHOUSE_SINK_SOURCE_BINLOG_TRANSACTION_COMPRESSION_LEVEL_ZSTD)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_SOURCE_BINLOG_TRANSACTION_COMPRESSION_LEVEL_ZSTD))
+                .register(collectorRegistry);
+
+        binlogPayloadDecoderOkGauge = Gauge.build()
+                .name(MetricsConstants.CLICKHOUSE_SINK_BINLOG_PAYLOAD_DECODER_OK)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_BINLOG_PAYLOAD_DECODER_OK))
                 .register(collectorRegistry);
 
         partitionOffsetCounter = Gauge.build().
@@ -429,6 +454,28 @@ public class Metrics {
      */
     private static boolean counterRegistryOpen() {
         return enableMetrics && meterRegistry != null && !meterRegistry.isClosed();
+    }
+
+    /**
+     * Records what the binlog-transaction-compression preflight found on the
+     * MySQL source at start. A no-op when metrics are off or the registry has
+     * been released, mirroring {@link #counterRegistryOpen()}: the preflight
+     * runs before anything else and must never fail on the metrics side.
+     *
+     * @param sourceState 1 when {@code binlog_transaction_compression} is ON,
+     *                    0 when OFF, -1 when it could not be read.
+     * @param zstdLevel   {@code binlog_transaction_compression_level_zstd},
+     *                    or -1 when it could not be read.
+     * @param decoderOk   1 when the Transaction_payload decoder self-test
+     *                    passed, 0 otherwise.
+     */
+    public static void updateBinlogTransactionCompression(int sourceState, int zstdLevel, int decoderOk) {
+        if (!enableMetrics || collectorRegistry == null || binlogTransactionCompressionGauge == null) {
+            return;
+        }
+        binlogTransactionCompressionGauge.set(sourceState);
+        binlogTransactionCompressionLevelGauge.set(zstdLevel);
+        binlogPayloadDecoderOkGauge.set(decoderOk);
     }
 
     public static void updateCounters(String topicName, int numRecords) {

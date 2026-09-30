@@ -940,6 +940,13 @@ public class DebeziumChangeEventCapture {
         // as NULL), and nothing downstream can recover what the source never
         // logged. This call refuses to start (spec 01.01 section 3.2).
         BinlogRowImagePreflight.check(props);
+        // binlog_transaction_compression=ON (MySQL 8.0.20+) wraps each source
+        // transaction in one zstd-compressed Transaction_payload event. The
+        // binlog client decodes it through zstd-jni; verify that decoder on a
+        // synthetic payload and read the source's setting. Refuse only when the
+        // source is ON and the decoder does not work -- every transaction would
+        // then fail to deserialize; warn on what cannot be verified (spec 01.08).
+        BinlogTransactionCompressionPreflight.check(props);
         // The binlog client's keep-alive auto-reconnect resumes from its own
         // last-read byte offset -- inside a transaction, past the statement's
         // TABLE_MAP -- and Debezium then skips the rest of that statement at
@@ -3824,7 +3831,22 @@ public class DebeziumChangeEventCapture {
         // log as a redelivery ("binlog" < "mysql-bin"), never clamping it. The
         // first position of a differently named log is a first delivery and
         // becomes the mark (spec 01.02 section 3.1.1, 02.02 section 3.1).
-        if (position != null
+        // The rest of the event that set the mark: same log, same file, same
+        // byte position, ANY row index (SourcePosition.sameLogPosition). The
+        // row index restarts at 0 for every rows event, so it is not part of
+        // an event's identity and must not decide first delivery vs
+        // redelivery. Under binlog_transaction_compression a whole MySQL
+        // transaction is ONE Transaction_payload_event and Debezium stamps
+        // every row of every statement inside it with that event's position
+        // (spec 01.08 section 3.2): the second statement's rows arrive at the
+        // mark's file and position with a row index below the mark's, and
+        // compareTo ranks them BELOW it. Before this predicate they fell
+        // through to the redelivery branch and kept their raw statement time
+        // while the first statement's rows had been floored: an INSERT
+        // out-ranked its own UPDATE and DELETE (spec 02.02 section 3.1.2).
+        boolean restOfMarkedEvent = position != null && sequenceHighWaterPosition != null
+                && position.sameLogPosition(sequenceHighWaterPosition);
+        if (position != null && !restOfMarkedEvent
                 && (sequenceHighWaterPosition == null
                         || !position.sameLog(sequenceHighWaterPosition)
                         || position.compareTo(sequenceHighWaterPosition) > 0)) {
@@ -3838,21 +3860,20 @@ public class DebeziumChangeEventCapture {
                 effectiveTs = sequenceMaxSourceTs;
             }
             sequenceHighWaterEffectiveTs = effectiveTs;
-        } else if (position != null && sequenceHighWaterPosition != null
-                && position.sameLog(sequenceHighWaterPosition)
-                && position.compareTo(sequenceHighWaterPosition) == 0) {
-            // The SAME source position as the mark. Debezium stamps every row
-            // event of a MySQL transaction with the transaction's binlog
-            // position, and the row index restarts at 0 for every statement,
-            // so the rows that follow a transaction's first row compare EQUAL
-            // to the mark. They are first deliveries of that same transaction,
-            // not redeliveries: floor them at the effective timestamp the
-            // transaction's first row received. Without this only the first
+        } else if (restOfMarkedEvent) {
+            // The SAME binlog event as the mark. Debezium stamps every row of a
+            // MySQL transaction's rows events with the event's position -- and
+            // under binlog_transaction_compression every row of every
+            // statement of the transaction with the payload event's position
+            // -- while the row index restarts at 0 for every rows event. The
+            // rows that follow the event's first row are first deliveries of
+            // that same event, not redeliveries: floor them at the effective
+            // timestamp the first row received. Without this only the first
             // row was floored and the rest kept their older statement time,
             // so an INSERT ranked above its own UPDATE and DELETE and the
             // deleted row stayed live on the replica (spec 02.02 section
-            // 3.1.2). A redelivery of the transaction takes the same clamp,
-            // so the assignment stays redelivery-stable (spec 02.04).
+            // 3.1.2). A redelivery of the event takes the same clamp, so the
+            // assignment stays redelivery-stable (spec 02.04).
             if (effectiveTs < sequenceHighWaterEffectiveTs) {
                 effectiveTs = sequenceHighWaterEffectiveTs;
             }

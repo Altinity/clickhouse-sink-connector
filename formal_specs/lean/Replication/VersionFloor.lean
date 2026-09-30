@@ -51,17 +51,22 @@ def seqStart : Nat := 1000000000
 /-- `SEQUENCE_START_INITIAL`: the counter seed for the first record after a start. -/
 def seqStartInitial : Nat := 500000000
 
-/-- The four statics of `nextSequenceNumber`. Log positions are abstracted to
-    naturals ordered like `SourcePosition.compareTo`; `anchor = 0` means unset. -/
+/-- The five statics of `nextSequenceNumber`. Log positions are abstracted to
+    naturals ordered like `SourcePosition.compareTo` WITHOUT the row index: a
+    position is the binlog EVENT's position, and every row of that event -- under
+    `binlog_transaction_compression` every row of every statement of the whole
+    transaction, which is one `Transaction_payload_event` (spec 01.08 §3.2) --
+    carries the same one. `anchor = 0` means unset. -/
 structure SeqState where
   floor   : Nat        -- sequenceMaxSourceTs
   anchor  : Nat        -- sequenceAnchorTs
   counter : Nat        -- sequenceNumber
   mark    : Option Nat -- sequenceHighWaterPosition
+  markEff : Nat        -- sequenceHighWaterEffectiveTs: what the mark's first row received
 deriving Repr, DecidableEq
 
 /-- The state of a freshly started JVM. -/
-def initial : SeqState := ⟨0, 0, seqStart, none⟩
+def initial : SeqState := ⟨0, 0, seqStart, none, 0⟩
 
 /-- A record that reaches the sequence: its source timestamp (ms) and its log
     position, `none` for a row without coordinates. -/
@@ -80,8 +85,28 @@ def isFirst (s : SeqState) (r : Rec) : Bool :=
     | none => true
     | some m => decide (m < p)
 
-/-- The clamped timestamp: only a first delivery is floored. -/
+/-- A positioned record AT the high-water mark is the rest of the event that set
+    it (`SourcePosition.sameLogPosition`: same file and position, any row index --
+    spec 02.02 §3.1.2, spec 01.02 §3.3). It is tested before `isFirst`, as the Java
+    does. -/
+def isSame (s : SeqState) (r : Rec) : Bool :=
+  match r.pos, s.mark with
+  | some p, some m => decide (p = m)
+  | _, _ => false
+
+/-- The clamped timestamp: the rest of the marked event is floored at what the
+    event's first row received; a first delivery is floored at the floor; a
+    redelivery or a positionless row keeps its own timestamp. -/
 def effTs (s : SeqState) (r : Rec) : Nat :=
+  if isSame s r then max r.ts s.markEff
+  else if isFirst s r then max r.ts s.floor
+  else r.ts
+
+/-- The pre-rule clamp (2.11.0 before spec 01.08): the rest of the marked event was
+    classified by `(file, pos, row)`; a later statement's rows at the same position
+    with a restarted row index ranked BELOW the mark and were left at their raw
+    timestamp -- exactly the third branch here, applied to the same-event case. -/
+def oldEffTs (s : SeqState) (r : Rec) : Nat :=
   if isFirst s r then max r.ts s.floor else r.ts
 
 /-- The anchor in force for this record (the first record after a start anchors on
@@ -110,7 +135,22 @@ def step (s : SeqState) (r : Rec) : SeqState :=
   { floor   := max s.floor (effTs s r),
     anchor  := if resets s r then effTs s r else anchor0 s r,
     counter := nextCounter s r,
-    mark    := if isFirst s r then r.pos else s.mark }
+    mark    := if isFirst s r then r.pos else s.mark,
+    markEff := if isFirst s r then effTs s r else s.markEff }
+
+/-! The pre-rule sequence, for the counterexample only: same formula, `oldEffTs`. -/
+def oldResets (s : SeqState) (r : Rec) : Bool :=
+  decide ((oldEffTs s r - anchor0 s r) / 1000 > 1)
+def oldNextCounter (s : SeqState) (r : Rec) : Nat :=
+  if oldResets s r then seqStart else counter0 s + 1
+def oldVersion (s : SeqState) (r : Rec) : Nat :=
+  oldEffTs s r * M + oldNextCounter s r
+def oldStep (s : SeqState) (r : Rec) : SeqState :=
+  { floor   := max s.floor (oldEffTs s r),
+    anchor  := if oldResets s r then oldEffTs s r else anchor0 s r,
+    counter := oldNextCounter s r,
+    mark    := if isFirst s r then r.pos else s.mark,
+    markEff := if isFirst s r then oldEffTs s r else s.markEff }
 
 /-- `DebeziumChangeEventCapture.seedVersionFloor(v)`: raise the floor to
     `v / 1_000_000 + 1` (never lower it). -/
@@ -126,10 +166,67 @@ def firstDeliveryVersions (s : SeqState) : List Rec → List Nat
 
 /-! ## Single-step facts -/
 
+/-- A first delivery is never the rest of the marked event: `isFirst` needs the
+    mark strictly below the position, `isSame` needs them equal. -/
+theorem not_same_of_first (s : SeqState) (r : Rec) (h : isFirst s r = true) :
+    isSame s r = false := by
+  unfold isFirst at h
+  unfold isSame
+  cases hp : r.pos with
+  | none => simp [hp] at h
+  | some p =>
+    cases hm : s.mark with
+    | none => simp
+    | some m =>
+      simp [hp, hm] at h
+      simp
+      omega
+
 theorem effTs_ge_floor_of_first (s : SeqState) (r : Rec) (h : isFirst s r = true) :
     s.floor ≤ effTs s r := by
+  simp only [effTs, h, not_same_of_first s r h, if_true, Bool.false_eq_true, if_false]
+  exact Nat.le_max_right _ _
+
+/-! ## The rest of the marked event (spec 02.02 §3.1.2, spec 01.08 §3.5) -/
+
+/-- **The rest of the marked event shares its first row's floor.** A record at the
+    mark's position -- any row index, the later statements of a compressed
+    transaction included -- is versioned at least at the effective timestamp the
+    event's first row received. -/
+theorem same_event_rows_share_floor (s : SeqState) (r : Rec) (h : isSame s r = true) :
+    s.markEff ≤ effTs s r := by
   simp only [effTs, h, if_true]
   exact Nat.le_max_right _ _
+
+/-- The scenario of `CommitOrderVersionClampTest
+    .laterStatementsOfACompressedTransactionShareTheFirstStatementsFloor`, executed:
+    a newer commit at position 300 raises the floor to `T + 5000`; a compressed
+    transaction executed in second `T` then arrives as one payload at position 400 --
+    its INSERT, then its UPDATE and DELETE of a key the INSERT created. Under the
+    same-event rule the three versions are strictly increasing: the UPDATE and the
+    DELETE win. -/
+theorem compressed_transaction_example :
+    let T : Nat := 1757900000000
+    let s1 := step (step initial ⟨T - 10000, some 100⟩) ⟨T + 5000, some 300⟩
+    let vIns := version s1 ⟨T, some 400⟩
+    let s2 := step s1 ⟨T, some 400⟩
+    let vUpd := version s2 ⟨T, some 400⟩
+    let s3 := step s2 ⟨T, some 400⟩
+    let vDel := version s3 ⟨T, some 400⟩
+    vIns < vUpd ∧ vUpd < vDel := by
+  decide
+
+/-- The same scenario under the pre-rule classification: the INSERT is floored to
+    `T + 5000`, the UPDATE at the same position is left in second `T` and ranks
+    BELOW its own INSERT -- the update is lost on the replica. -/
+theorem compressed_transaction_inverts_without_same_event_rule :
+    let T : Nat := 1757900000000
+    let s1 := oldStep (oldStep initial ⟨T - 10000, some 100⟩) ⟨T + 5000, some 300⟩
+    let vIns := oldVersion s1 ⟨T, some 400⟩
+    let s2 := oldStep s1 ⟨T, some 400⟩
+    let vUpd := oldVersion s2 ⟨T, some 400⟩
+    vUpd < vIns := by
+  decide
 
 theorem nextCounter_pos (s : SeqState) (r : Rec) : 1 ≤ nextCounter s r := by
   unfold nextCounter

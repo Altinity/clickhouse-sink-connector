@@ -207,6 +207,27 @@ public class SourcePositionTest {
      */
     @Test
     @DisplayName("sameLog is equality of the file prefix: true across a rotation, false across a basename change")
+    public void sameLogPositionIgnoresTheRowIndex() {
+        SourcePosition first = SourcePosition.ofBinlog("mysql-bin.000123", 900L, 0);
+        SourcePosition laterRow = SourcePosition.ofBinlog("mysql-bin.000123", 900L, 7);
+        SourcePosition restartedRow = SourcePosition.ofBinlog("mysql-bin.000123", 900L, 0);
+        SourcePosition nextEvent = SourcePosition.ofBinlog("mysql-bin.000123", 950L, 0);
+        SourcePosition nextFile = SourcePosition.ofBinlog("mysql-bin.000124", 900L, 0);
+        SourcePosition renamed = SourcePosition.ofBinlog("binlog.000123", 900L, 0);
+
+        assertTrue(first.sameLogPosition(laterRow), "a higher row index is the same event");
+        assertTrue(laterRow.sameLogPosition(restartedRow), "a row index that restarted at 0 is the same event");
+        assertTrue(laterRow.compareTo(restartedRow) > 0,
+                "sanity: by compareTo the restarted row ranks BELOW, which is why compareTo alone "
+                        + "would call the rest of a compressed transaction a redelivery");
+        assertFalse(first.sameLogPosition(nextEvent), "another byte position is another event");
+        assertFalse(first.sameLogPosition(nextFile), "the same offset in the next file is another event");
+        assertFalse(first.sameLogPosition(renamed), "another log is never the same event");
+        assertTrue(SourcePosition.ofLsn(10L).sameLogPosition(SourcePosition.ofLsn(10L)));
+        assertFalse(SourcePosition.ofLsn(10L).sameLogPosition(SourcePosition.ofLsn(11L)));
+    }
+
+    @Test
     public void sameLogIsByFilePrefix() {
         SourcePosition oldLog = SourcePosition.ofBinlog("mysql-bin.000123", 900L, 0);
         SourcePosition rotated = SourcePosition.ofBinlog("mysql-bin.000124", 4L, 0);
