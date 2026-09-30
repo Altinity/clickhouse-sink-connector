@@ -139,3 +139,49 @@ deprecated and ignored.
 - `TableMetaDataWriterTest.testConvertRecordToJSONDoesNotSubstituteSchemaDefault()`
   — §3.2.2 rule 3: a NULL-with-default field is absent from the raw JSON
   rather than rendered as the default (pre-fix code renders `"new"`).
+
+---
+
+## 6. Failure Modes & Recovery
+
+Recovery posture: a source NULL is always bound as NULL and the server is told not to substitute a default (`input_format_null_as_default=0`), so a NULL the replica cannot hold is refused by ClickHouse with a terminal code; an unbindable field is refused by the connector (retried forever on 2.11.0). The remaining silent path is an operator opting back into default substitution. Procedures P-FIX-TYPE / P-SKIP / P-RESYNC and the retry-vs-stop rule are defined in spec 07.01 §6.
+
+- **FM-07.07-1 Source NULL for a non-Nullable ClickHouse column**
+  - **Trigger**: a column created non-Nullable while the source admits NULL (hand-created table, a MySQL `ALTER ... NULL` not applied on ClickHouse, a record-path geo column — spec 07.06 §6 FM-07.06-3), and a row carries NULL.
+  - **Behaviour**: `PreparedStatementFieldMapper.insertPreparedStatement` binds `ps.setNull`; the connection carries `input_format_null_as_default=0` (`BaseDbWriter.customSettings`), so ClickHouse refuses: `Code: 53 ... Cannot insert NULL value into a column of type 'Int32'` (measured). 53 is in `FATAL_ERROR_CODES`: the worker dies, the engine stops on the next source batch and the process exits 3.
+  - **Detection**: ERROR `******* ERROR inserting Batch Database(<db>), Table(<t>)`, ERROR `FATAL ClickHouse error (Code: 53) -- this batch will never succeed.`, FATAL `Replication is STOPPED: ...`, exit code 3, within ≤ 5 s of the failure; systemd restarts every 30 s and gives up after 5 starts in 300 s.
+  - **Blast radius**: the whole connector stops; nothing of the batch is written; no loss, no divergence.
+  - **Recovery**: P-FIX-TYPE with `MODIFY COLUMN c Nullable(T)`; for a sorting-key column ClickHouse refuses (`Code: 524 ALTER of key column ... is not safe`, measured), so rebuild the table with a nullable key (`allow_nullable_key=1`, spec 06.09) or `ch-mysql-resync` into a corrected table (spec 11.04); restart.
+  - **RTO**: non-key column: `ALTER` + restart ≈ 1–2 min + re-apply of the in-flight transaction; key column: + table rebuild proportional to table size; unmeasured.
+  - **Test**: `JdbcCustomSettingsTest.defaultSettingsDisableNullAsDefault()`, `PoisonValueClassificationTest.nullIntoNonNullableColumnIsFatal()`, `TerminalFailureExitTest.fatalErrorCodeIsNotRetried()`.
+
+- **FM-07.07-2 Operator re-enables default substitution**
+  - **Trigger**: `clickhouse.jdbc.settings` contains `input_format_null_as_default=1`.
+  - **Behaviour**: `BaseDbWriter.customSettings` passes a user list that mentions the key through unchanged and logs nothing (the INFO line is written only when the key is appended); ClickHouse then stores the column DEFAULT for every source NULL bound into a non-Nullable column (measured: `7` for `Int32 DEFAULT 7`).
+  - **Detection**: none. DEFECT.
+  - **Blast radius**: silent value divergence (default in place of NULL) on every such row; row counts intact.
+  - **Recovery**: remove the key (or set it to 0), restart, then make the columns `Nullable` (FM-07.07-1) and P-RESYNC the affected tables.
+  - **RTO**: restart ≈ 1 min + resync; unmeasured.
+  - **Test**: `JdbcCustomSettingsTest.explicitUserSettingIsHonoured()` pins the pass-through; GAP: a test that an explicit `input_format_null_as_default=1` is reported at WARN at start.
+  - **DEFECT**: a setting that reintroduces the substitution §3.2 forbids is accepted without a warning.
+
+- **FM-07.07-3 Field with no type binding**
+  - **Trigger**: a Connect type the mapper has no handler for (a `MAP`, a nested `STRUCT` that is not a known logical type) — a PostgreSQL `hstore`, a Kafka-mode schema.
+  - **Behaviour**: `ClickHouseDataTypeMapper.convert` returns `false` and `PreparedStatementFieldMapper.insertPreparedStatement` throws `DataException` (§3.2.2 rule 1); no ClickHouse code, so UNKNOWN: the worker retries forever.
+  - **Detection**: ERROR `ClickHouseBatchRunnable exception - Task(<id>)` with `No ClickHouse binding for type(MAP), name(<n>) of column <c> in Database(<db>), Table(<t>); the parameter would be left unbound. Failing the batch instead.`, WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN)` every ≤ 30 s; metric `clickhouse.sink.topics.error.records`; no exit.
+  - **Blast radius**: every table hashed to that worker stops; offsets freeze; the next DDL drain waits forever; no loss.
+  - **Recovery**: none by retry or by ClickHouse DDL; exclude the column on the source connector (`column.exclude.list`) or convert it upstream (an SMT), restart; if the offending transaction is already in the stream, P-SKIP + resync.
+  - **RTO**: unbounded; config change + restart ≈ 1–2 min if the exclusion applies to the redelivered event, else P-SKIP + resync; unmeasured.
+  - **Test**: `PreparedStatementFieldMapperUnhandledTypeTest.unhandledTypeFailsTheBatch()` (the refusal), `PoisonValueClassificationTest.unhandledTypeRefusalIsFatal()` (disabled, fails on 2.11.0: UNKNOWN instead of FATAL).
+  - **DEFECT**: a refusal that can never succeed on retry is retried forever with no exit.
+
+- **FM-07.07-4 A parameter left unbound reaches the V2 driver**
+  - **Trigger**: a future converter branch that returns `true` without binding (the float branch of `ClickHouseDataTypeMapper.convert` binds nothing for a value that is neither `Float` nor `Double`; Connect's `Struct` validation prevents that today).
+  - **Behaviour**: `PreparedStatementExecutor` calls `clearParameters()` after every `addBatch()` (§3.2.2 rule 2), so the stale value of the previous row cannot leak; the V2 driver's `addBatch` then dereferences the null parameter (`values[i].length()`, jdbc-v2 0.9.8 bytecode) and throws `NullPointerException`: UNKNOWN, retried forever.
+  - **Detection**: ERROR `ClickHouseBatchRunnable exception` with the `NullPointerException` from `PreparedStatementImpl.addBatch`, WARN `Retriable ... Category: UNKNOWN` every ≤ 30 s; no exit.
+  - **Blast radius**: the worker's tables stop; no silent reuse of another row's value.
+  - **Recovery**: a code fix (the branch must bind or throw); P-SKIP + resync if a release cannot be produced in time.
+  - **RTO**: unbounded (needs a fix); unmeasured.
+  - **Test**: `PreparedStatementExecutorClearParametersTest.parametersAreClearedAfterEveryAddBatch()`; GAP: a test that every `convert` branch either binds its parameter or throws.
+
+Summary: 4 failure modes, 2 DEFECT, 2 GAP.
