@@ -94,6 +94,14 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
      */
     public static final long DEFAULT_COALESCE_MAX_WAIT_MS = 0L;
 
+    /**
+     * Default {@code binlog.transaction.compression.check}: probe the MySQL
+     * source and self-test the Transaction_payload decoder, warn on what cannot
+     * be verified, refuse only what would certainly break (spec 01.08). The
+     * lightweight preflight reads the raw property against this same default.
+     */
+    public static final String DEFAULT_BINLOG_TRANSACTION_COMPRESSION_CHECK = "auto";
+
     /** One quarter of the given maximum heap; a floor of 256 MiB when the heap is unknown or unlimited. */
     static long defaultHandoffBytes(long maxHeapBytes) {
         if (maxHeapBytes <= 0 || maxHeapBytes == Long.MAX_VALUE) {
@@ -592,6 +600,22 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         1,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.BINLOG_TRANSACTION_COMPRESSION_CHECK.toString(),
+                        Type.STRING,
+                        DEFAULT_BINLOG_TRANSACTION_COMPRESSION_CHECK,
+                        ConfigDef.ValidString.in("auto", "require", "skip"),
+                        Importance.MEDIUM,
+                        "Start-up check of the MySQL source's binlog_transaction_compression (MySQL 8.0.20+; "
+                                + "each transaction is then one zstd-compressed Transaction_payload event) and of "
+                                + "the connector's own Transaction_payload decoder. auto (default): read the "
+                                + "variable, self-test the decoder, refuse to start only when the source is ON "
+                                + "and the decoder does not work; require: refuse unless the source is ON and "
+                                + "the decoder works; skip: no query, no self-test. Ignored for non-MySQL sources.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.BINLOG_TRANSACTION_COMPRESSION_CHECK.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.KAFKA_OFFSET_METADATA_TABLE.toString(),
                         Type.STRING,

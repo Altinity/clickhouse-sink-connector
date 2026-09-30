@@ -140,6 +140,10 @@ public enum ClickHouseSinkConnectorConfigVariables {
     DDL_SCHEMA_CHANGE_POLL_INTERVAL_MS("ddl.schema.change.poll.interval.ms"),
 
     DATABASE_HOSTNAME("database.hostname"),
+
+    // Start-up check of the MySQL source's binlog_transaction_compression and of
+    // the Transaction_payload zstd decoder: auto (default), require or skip (spec 01.08).
+    BINLOG_TRANSACTION_COMPRESSION_CHECK("binlog.transaction.compression.check"),
     /**
      * Prefix for direct column type override properties.
      * Format: column_type_override.direct.<schema>.<table>.<column>=<CHType>

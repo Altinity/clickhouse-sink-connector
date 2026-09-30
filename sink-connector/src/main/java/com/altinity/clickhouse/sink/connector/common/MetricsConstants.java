@@ -76,6 +76,27 @@ public class MetricsConstants {
     public static final String CLICKHOUSE_SINK_CONNECTOR_UPTIME = "clickhouse_sink_connector_uptime";
 
     /**
+     * Metric name for the MySQL source's {@code binlog_transaction_compression}
+     * as read at start: 1 ON, 0 OFF, -1 unknown.
+     */
+    public static final String CLICKHOUSE_SINK_SOURCE_BINLOG_TRANSACTION_COMPRESSION =
+            "clickhouse_sink_source_binlog_transaction_compression";
+
+    /**
+     * Metric name for the MySQL source's
+     * {@code binlog_transaction_compression_level_zstd} as read at start, -1 unknown.
+     */
+    public static final String CLICKHOUSE_SINK_SOURCE_BINLOG_TRANSACTION_COMPRESSION_LEVEL_ZSTD =
+            "clickhouse_sink_source_binlog_transaction_compression_level_zstd";
+
+    /**
+     * Metric name for the Transaction_payload zstd decoder self-test run at
+     * start: 1 passed, 0 otherwise.
+     */
+    public static final String CLICKHOUSE_SINK_BINLOG_PAYLOAD_DECODER_OK =
+            "clickhouse_sink_binlog_payload_decoder_ok";
+
+    /**
      * A map that stores the descriptions of the metrics.
      */
     private static final Map<String, String> metricsToHelp;
@@ -98,6 +119,13 @@ public class MetricsConstants {
         metricsToHelp.put(CLICKHOUSE_SINK_CONNECTOR_UPTIME, "Connector uptime in milliseconds");
 
         metricsToHelp.put(CLICKHOUSE_SINK_DDL, "DDL Statements and execution time");
+
+        metricsToHelp.put(CLICKHOUSE_SINK_SOURCE_BINLOG_TRANSACTION_COMPRESSION,
+                "MySQL source binlog_transaction_compression: 1 ON, 0 OFF, -1 unknown");
+        metricsToHelp.put(CLICKHOUSE_SINK_SOURCE_BINLOG_TRANSACTION_COMPRESSION_LEVEL_ZSTD,
+                "MySQL source binlog_transaction_compression_level_zstd, -1 unknown");
+        metricsToHelp.put(CLICKHOUSE_SINK_BINLOG_PAYLOAD_DECODER_OK,
+                "1 when the Transaction_payload zstd decoder self-test passed at start, 0 otherwise");
     }
 
     /**

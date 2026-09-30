@@ -150,6 +150,30 @@ public final class SourcePosition implements Comparable<SourcePosition> {
         return filePrefix.equals(other.filePrefix);
     }
 
+    /**
+     * Whether this position and {@code other} name the same binary log EVENT:
+     * same log, same file and same byte position, whatever the row index.
+     *
+     * <p>The row index is not part of an event's identity; it counts rows
+     * INSIDE the event, and it restarts at 0 for every rows event. A MySQL
+     * transaction written with {@code binlog_transaction_compression=ON}
+     * reaches the connector as ONE {@code Transaction_payload_event}, and
+     * Debezium stamps every row of every statement inside it with that one
+     * event's position (spec 01.08 section 3.2): the rows of the second
+     * statement carry the same file and position as the first statement's
+     * rows, with a row index that has restarted at 0, so under
+     * {@link #compareTo} they rank BELOW the last row of the first statement.
+     * The version sequence must not read that as a redelivery; it uses this
+     * predicate to recognise the rest of the same event (spec 02.02 section
+     * 3.1.2). PostgreSQL positions compare on the LSN alone.</p>
+     *
+     * @param other another position, not null
+     * @return true if both positions name the same event of the same log
+     */
+    public boolean sameLogPosition(SourcePosition other) {
+        return sameLog(other) && file.equals(other.file) && position == other.position;
+    }
+
     @Override
     public boolean equals(Object o) {
         if (this == o) {

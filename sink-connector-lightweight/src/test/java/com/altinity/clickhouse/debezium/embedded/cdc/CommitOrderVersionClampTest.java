@@ -134,6 +134,80 @@ public class CommitOrderVersionClampTest {
         assertEquals(insert + 2, delete, "same floored second, counter +2");
     }
 
+    /**
+     * A transaction written with {@code binlog_transaction_compression=ON} is ONE
+     * Transaction_payload_event: every row of every statement inside it carries the
+     * payload event's position, and the row index restarts at 0 for every rows event
+     * (spec 01.08 section 3.2). The second statement's rows therefore rank BELOW the
+     * first statement's last row under {@code SourcePosition.compareTo}. Before the
+     * fix they fell into the redelivery branch and kept their raw statement time while
+     * the first statement's rows had been floored, so the INSERT out-ranked its own
+     * UPDATE and DELETE.
+     */
+    @Test
+    @DisplayName("compressed transaction: a later statement's rows share the first statement's floor")
+    public void laterStatementsOfACompressedTransactionShareTheFirstStatementsFloor() {
+        versionOf(at(TS - 10_000, 100));
+        long unrelated = versionOf(at(TS + 5_000, 300)); // a newer commit raises the floor
+        // The long transaction commits now as one payload at position 400: a
+        // 3-row INSERT (rows 0..2), then an UPDATE and a DELETE of keys it inserted
+        // (rows 0 of their own statements), all executed in second T.
+        long insertRow0 = versionOf(at(TS, "mysql-bin.000007", 400, 0));
+        long insertRow1 = versionOf(at(TS, "mysql-bin.000007", 400, 1));
+        long insertRow2 = versionOf(at(TS, "mysql-bin.000007", 400, 2));
+        long update = versionOf(at(TS, "mysql-bin.000007", 400, 0));
+        long delete = versionOf(at(TS, "mysql-bin.000007", 400, 0));
+
+        assertTrue(insertRow0 > unrelated, "the payload's first row is floored above the newer commit");
+        assertEquals(insertRow0 + 1, insertRow1);
+        assertEquals(insertRow0 + 2, insertRow2);
+        assertEquals(insertRow2 + 1, update, "the UPDATE (row 0 of its statement, same payload position) "
+                + "is floored like the INSERT and out-ranks it; before the fix it kept second T and lost");
+        assertEquals(update + 1, delete, "the DELETE out-ranks the UPDATE");
+        assertEquals((TS + 5_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START + 1, insertRow0,
+                "floored to the newer commit's second (the newer commit reset the counter to SEQUENCE_START)");
+        assertEquals(TS + 5_000, (delete - DebeziumChangeEventCapture.SEQUENCE_START) / MULTIPLIER,
+                "the DELETE is versioned in the floored second, not in its raw second T");
+    }
+
+    /**
+     * One large statement inside a compressed transaction spans several rows events
+     * (binlog_row_event_max_size chunks); the row index restarts at 0 in each chunk
+     * while the position stays the payload's. Every chunk shares the floor.
+     */
+    @Test
+    @DisplayName("compressed transaction: every chunk of one large statement shares the floor")
+    public void chunksOfOneLargeStatementShareTheFloor() {
+        versionOf(at(TS - 10_000, 100));
+        versionOf(at(TS + 5_000, 300)); // a newer commit raises the floor
+        long previous = 0;
+        for (int chunk = 0; chunk < 3; chunk++) {
+            for (int row = 0; row < 4; row++) {
+                long v = versionOf(at(TS, "mysql-bin.000007", 400, row));
+                assertTrue(v > previous, "chunk " + chunk + " row " + row + " must out-rank every earlier row");
+                // The seeds are ten digits and carry 1000 ms into the timestamp field
+                // (spec 02.01 section 3.3): subtract the seed before reading the second.
+                assertEquals(TS + 5_000, (v - DebeziumChangeEventCapture.SEQUENCE_START) / MULTIPLIER,
+                        "every chunk is floored to the newer commit's second");
+                previous = v;
+            }
+        }
+        long nextTransaction = versionOf(at(TS + 6_000, 500));
+        assertTrue(nextTransaction > previous, "the next transaction is a first delivery above the payload");
+    }
+
+    @Test
+    @DisplayName("a redelivery from an earlier position is still not clamped, whatever its row index")
+    public void redeliveryFromAnEarlierPositionIsStillNotClamped() {
+        versionOf(at(TS, "mysql-bin.000007", 400, 0));
+        versionOf(at(TS, "mysql-bin.000007", 400, 1));
+        long newest = versionOf(at(TS + 3_000, 500));
+        long redelivered = versionOf(at(TS, "mysql-bin.000007", 400, 5)); // older event, higher row
+        assertTrue(redelivered < newest, "an earlier event redelivered with any row index is a redelivery");
+        assertEquals(TS, (redelivered - DebeziumChangeEventCapture.SEQUENCE_START) / MULTIPLIER,
+                "not clamped: the source-timestamp anchored assignment (seed carry subtracted)");
+    }
+
     @Test
     @DisplayName("a transaction whose rows carry a NEWER statement time than the floor keeps it")
     public void rowsOfOneTransactionKeepANewerTimestamp() {
