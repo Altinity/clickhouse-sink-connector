@@ -28,4 +28,5 @@ lean_lib «Replication» where
              `Replication.CreateTable,
              `Replication.PkRebuild,
              `Replication.History,
-             `Replication.KeyRouting]
+             `Replication.KeyRouting,
+             `Replication.PayloadStream]

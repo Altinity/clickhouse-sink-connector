@@ -295,7 +295,8 @@ public class BinlogTransactionCompressionPreflightTest {
         TransactionPayloadEventData decoded = BinlogTransactionCompressionPreflight.decodePayload(body);
         assertEquals(payloadSize, decoded.getPayloadSize());
         assertEquals(27, decoded.getUncompressedSize());
-        assertEquals(1, decoded.getUncompressedEvents().size());
+        // The inner events are streamed (spec 01.08 section 3.2): count them by iterating.
+        assertEquals(1, decoded.getUncompressedEvents().stream().count());
 
         // The packed-integer writer: one byte below 251, 0xFC + u16 LE above.
         ByteArrayOutputStream small = new ByteArrayOutputStream();
