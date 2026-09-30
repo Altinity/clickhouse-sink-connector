@@ -167,3 +167,74 @@ table receives the same coordinates again — collapsed by `FINAL` (§3.2).
 | G-12.04-1 | **Resolved** | `DebeziumChangeEventCapture.performDDLOperation` | the DDL audit insert's exception was caught and logged; the offset was acknowledged with the audit row missing | the exception propagates into the DDL failure handling; the DDL attempt fails before acknowledgement (§3.4, I9) |
 | G-12.04-2 | Open | `BinLogHistory.getValueFromStruct` | — | `_operation` stored as the enum name; SCD2 tables store the letter code: two spellings across the two history tables (02.01 §3.5 c) |
 | G-12.04-3 | Open | `createHistoryTableSyntax` | — | `ttl_only_drop_parts` commented out: TTL expiry is row-level rewriting inside daily partitions instead of part drops |
+
+---
+
+## 7. Failure Modes & Recovery
+The audit insert sits in front of every data write and every DDL acknowledgement, so its failures are loud by construction: the batch or the DDL fails, the offset holds, and the retry heals it once ClickHouse accepts writes again. Its weak points are the claims made about duplicates and retention. A redelivered record collapses into its first copy only within one run. The table deletes what it receives late. And an event whose images cannot be serialised is stored with empty images and acknowledged. In mode 3 the audit table is the replica (12.05), so each of these is a replica defect there.
+
+- **FM-12.04-1 The audit insert fails**
+  - **Trigger**: ClickHouse is down or read-only, or refuses the insert: `TOO_MANY_PARTS` or `MEMORY_LIMIT_EXCEEDED` on the audit table, a dropped audit table (`UNKNOWN_TABLE` 60), or missing grants (`ACCESS_DENIED` 497).
+  - **Behaviour**: `addRecordsToHistoryTable` is the first step of `ClickHouseBatchRunnable.processBatch` and `ClickHouseBatchWriter.persistRecords`. Its `SQLException` propagates to `run()`, which classifies it with `ClickHouseErrorClassifier`.
+    - A retriable or unknown error retries the same batch with backoff, and the audit insert is re-executed on every attempt.
+    - A FATAL code (60, 81, 497, ...) stops the worker. The capture loop then stops the engine loudly (spec 03.01).
+    - In mode 2, data replication on that worker stops with it, by design of the ordering (§3.4).
+  - **Detection**: ERROR `ClickHouseBatchRunnable exception - Task(...)`, then either `Retriable ClickHouse error (Code: ..., Category: ...) -- the same batch will be retried in ... ms` or `FATAL ClickHouse error (Code: ...) -- this batch will never succeed`, on the first failing batch.
+  - **Blast radius**: the worker's tables wait. Offsets hold, so nothing is lost. In-run re-inserts of the same records collapse under `FINAL`.
+  - **Recovery**: a retriable error heals by itself once ClickHouse accepts writes. For a FATAL error, fix it (restore the grant) or, if the table was dropped, restart the service: `connectorStarted` recreates the history database and the audit table (12.01 §3.5), and the batch is redelivered. Audit rows of a dropped table are gone.
+  - **RTO**: cause removal plus the backoff delay (spec 10.02), or a restart of about 20 s plus redelivery of the unacknowledged batches.
+  - **Test**: `BinLogHistoryRedeliveryTest.inRunRetryOfTheSameRecordBindsTheSameSortingKeyAndVersion()` pins the collapse of in-run re-inserts. GAP: a unit test provoking the audit-insert failure and asserting that the batch is not acknowledged (§5 coverage gap).
+
+- **FM-12.04-2 Records redelivered after a restart get a second, uncollapsible audit row**
+  - **Trigger**: `kill -9`, OOM, a host crash or an engine recreation while batches are unacknowledged. Debezium re-publishes them.
+  - **Behaviour**: the lightweight dispatch loop assigns the redelivered records new sequence numbers, above the previous run's high-water mark (spec 02.04 §3.2). `getValueFromStruct` binds that per-delivery number as the `sequence` sorting-key column. The redelivered copy therefore lands on a different `(server_id, logfile, position, sequence, _time)` than the first copy, and `FINAL` keeps both. §3.2 and §4 ("identical coordinates collapse") hold only for in-run retries of the same record objects.
+  - **Detection**: none. Query: `SELECT server_id, logfile, position, row, gtid, count() AS c FROM <db>.<table> FINAL WHERE _time >= <restart window start> GROUP BY server_id, logfile, position, row, gtid, "table", _operation, before, after HAVING c > 1`.
+  - **Blast radius**: every event in the redelivered window is counted twice by analytics and lag reports. In mode 3 the replica holds duplicates.
+  - **Recovery**: a bounded de-duplication per daily partition of the window, run on closed days or with the connector stopped:
+    1. `CREATE TABLE <db>.<table>_dedup AS <db>.<table>`.
+    2. `INSERT INTO <db>.<table>_dedup SELECT * FROM <db>.<table> FINAL WHERE toDate(_time) = '<D>' ORDER BY sequence LIMIT 1 BY server_id, logfile, position, row, gtid, "table", _operation, ddl, before, after`, which keeps the first delivery.
+    3. Compare the counts.
+    4. `ALTER TABLE <db>.<table> REPLACE PARTITION ID '<YYYYMMDD>' FROM <db>.<table>_dedup`. This atomically replaces the one day. `db_time` is `MATERIALIZED` and is recomputed for that day.
+  - **RTO**: one copy and one replace per affected day, proportional to that day's rows (unmeasured).
+  - **Test**: `BinLogHistoryRedeliveryTest.redeliveryAfterRestartBindsTheSameSortingKeyAndVersion()` (disabled, DEFECT).
+  - **DEFECT**: the audit sorting key includes a per-delivery number, so every restart duplicates the redelivered window.
+
+- **FM-12.04-3 The DDL audit insert fails**
+  - **Trigger**: the history connection or ClickHouse fails between the DDL's execution and its audit row.
+  - **Behaviour**: the exception propagates into the DDL failure handling of `performDDLOperation`, and a row is written to the error table. With `ddl.retry=true` the whole DDL step is retried: up to `MAX_RETRIES` attempts, `SLEEP_TIME` 10 s apart, re-running the translated DDL (idempotent `IF [NOT] EXISTS` forms) and in mode 2 the bulk close (12.03 §7 FM-12.03-7). After that it throws `Max retries exceeded applying DDL to ClickHouse: [...]`. Without `ddl.retry` it throws `DDL failed and ddl.retry is not enabled, so it is not retried; halting the pipeline ...`. The DDL offset is never acknowledged.
+  - **Detection**: ERROR `Error executing DDL` and an error-table row per attempt, then the terminal `DDLReplicationException`.
+  - **Blast radius**: the whole pipeline halts at the DDL (barrier). Nothing is lost.
+  - **Recovery**: fix ClickHouse and restart. The DDL is redelivered, re-applied idempotently and audited.
+  - **RTO**: self-heals within the retry budget (about 100 s by default). Otherwise a restart of about 20 s once the cause is gone.
+  - **Test**: GAP: a unit test failing the DDL audit insert and asserting no acknowledgement and the terminal exception (§5 coverage gap).
+
+- **FM-12.04-4 Very large transactions and rows are amplified in the audit table**
+  - **Trigger**: a multi-GB transaction, or rows with large `BLOB`/`TEXT`/`JSON` values.
+  - **Behaviour**: each record stores `before`, `after` and `_raw`. `_raw` (`sourceRecordToJson`) holds the full Debezium key and value, which contain both images again. Every value is thus rendered about four times as JSON. The whole batch is built in the JVM and sent as one `input()` INSERT (`executeInsertWithStructs`). Memory per batch is bounded by `buffer.max.records` times the row size times that factor, with no cap per row.
+  - **Detection**: ClickHouse `MEMORY_LIMIT_EXCEEDED` (241) appears as retried batches (FM-12.04-1). For a JVM heap exhaustion, the outcome depends on the JVM flags (not verified here).
+  - **Blast radius**: audit storage grows several times faster than the source data. A single huge row can fail every attempt.
+  - **Recovery**: lower `buffer.max.records` and raise the JVM heap, then restart. Size the audit disk for about 4× the replicated volume.
+  - **RTO**: a restart plus the retry. Unmeasured.
+  - **Test**: GAP: a unit test that measures the audit payload of a record with a 10 MB value and asserts a stated bound.
+
+- **FM-12.04-5 An event whose images cannot be serialised is audited with empty images**
+  - **Trigger**: a value Jackson cannot serialise in `sourceRecordToJson`, `beforeModifiedFieldsToJson` or `afterModifiedFieldsToJson` (not reproduced).
+  - **Behaviour**: the method catches the exception, logs `Error serializing sourceRecord to JSON` (or `... beforeModifiedFields ...`) at ERROR, and returns `null` or `""`. `getValueFromStruct` stores `""`. The insert succeeds and the batch is acknowledged.
+  - **Detection**: the ERROR line only. No metric, and nothing fails.
+  - **Blast radius**: that event's content is missing from the audit trail, which in mode 3 is the replica. It cannot be used by the history rebuild of 12.03 §7 FM-12.03-8.
+  - **Recovery**: re-read the event from the source binlog while it is still retained (coordinates are in the row), and insert its images by hand.
+  - **RTO**: manual, unmeasured.
+  - **Test**: GAP: a unit test with an unserialisable value asserting that the batch fails instead of storing empty images.
+  - **DEFECT**: the offset passes an audit row whose content was dropped.
+
+- **FM-12.04-6 Events arriving after a long outage are deleted by the TTL; a TTL change never applies**
+  - **Trigger**: the connector is down, or lags, for more days than `replication.history.ttl`. Or the operator raises `replication.history.ttl`.
+  - **Behaviour**: the TTL is on event time (`toDate(_time) + toIntervalDay(<ttl>)`, §3.5) and is written into the table at creation. Rows inserted during catch-up that are already past it are removed at the next TTL merge. A new `replication.history.ttl` affects only a newly created table, because `CREATE TABLE IF NOT EXISTS` never alters the existing one.
+  - **Detection**: none.
+  - **Blast radius**: the recording of the outage window is lost after it is written. In mode 3 that is the replica.
+  - **Recovery**: before catch-up, or to extend retention, run `ALTER TABLE <db>.<table> MODIFY TTL toDate(_time) + toIntervalDay(<N>)`.
+  - **RTO**: one ALTER, metadata plus an optional background rewrite (unmeasured).
+  - **Test**: `BinLogHistoryTest.testCreateHistoryTableSyntax()` pins the TTL at creation. GAP: a startup check comparing the table's TTL with the configured value.
+  - **DEFECT**: late events are deleted silently, and the retention setting is silently ineffective on an existing table.
+
+Summary: 6 failure modes, 3 DEFECT, 5 GAP.

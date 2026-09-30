@@ -154,3 +154,58 @@ effect in this mode on either engine: nothing is routed.
 | G-12.05-1 | `ClickHouseBatchWriter.persistRecords` | no `log_only` skip on the single-threaded path: a mode-3 connector with `single.threaded=true` replicated data as SCD2 tables into the history database | the same skip as the multi-threaded engine (§3.3) | `Replication.History.both_engines_skip_data_in_log_only` | `Replication.History.old_writer_path_ignored_log_only` |
 | G-12.05-2 | `ClickHouseSinkConnectorConfig` doc strings | "only track binlog position without inserting data" omitted the audit table; `enable` described "history tables" without saying which | both doc strings state the modes of 12.01 §1 (§2) | — | — |
 | G-12.05-3 | `ReplicationLogOnlyIT` | assertion message named `binlog_history.log_only_test` while the query counted `binlog_history.history`; no assertion that no data table was created | messages name the counted table; asserts the absence of `binlog_history.log_only_test` (§5) | — | — |
+
+---
+
+## 7. Failure Modes & Recovery
+In mode 3 the audit table is the replica. Every audit-table failure mode of 12.04 §7 applies with the blast radius of a replica failure, and it is referenced rather than repeated here. What is specific to this mode is that the connector still parses and translates every DDL it will never execute, so a translator limitation stops a recorder that did not need the translation. Leaving the mode also has no data tables to fall back on.
+
+- **FM-12.05-1 A DDL the translator cannot parse halts the recorder**
+  - **Trigger**: a captured DDL that the ANTLR grammar rejects, or an `ALTER TABLE` clause the translator does not know.
+  - **Behaviour**: `performDDLOperation` calls `ddlParserService.parseSql` **before** the `replication_log_only` gate (§3.4). `ErrorListenerImpl.syntaxError` throws `RuntimeException("Error parsing DDL")`, and `MySqlDDLParserListenerImpl` throws `DDLReplicationException("ALTER TABLE clause not supported by the DDL translator: ...")`. The DDL call site wraps any failure in `DDLReplicationException("DDL replication failed for [<DDL>]; stopping the pipeline ...")` and the engine halts. The failure comes before the audit insert, so the statement is not even recorded. After a restart it is redelivered and fails again.
+  - **Detection**: loud. ERROR `Error parsing`, then the `DDL replication failed for [...]` exception, at the DDL. Repeated restarts end in the terminal exit of spec 10.04 (code 3).
+  - **Blast radius**: all recording stops at that statement. Nothing is lost while the offset holds and the binlog is retained.
+  - **Recovery**: none by configuration. With the connector stopped, move past that one DDL event with `sink-connector-client update_binlog --binlog_file <f> --binlog_position <next event>` (or `--gtid` including its transaction). Then insert the statement's audit row by hand, from the source binlog (`ddl` = the raw text, coordinates of the event). That satisfies Invariant I15 item 2 for mode 3: the only target the event touched is its audit row.
+  - **RTO**: a restart (about 20 s) plus the manual audit insert. Operator-dependent.
+  - **Test**: GAP: a unit test driving `performDDLOperation` in mode 3 with an unparseable DDL and asserting that the raw DDL is audited and acknowledged without translation.
+  - **DEFECT**: in replication-log-only mode a translation that is never used can stop the recording.
+
+- **FM-12.05-2 The audit write fails: the only output stops**
+  - **Trigger**: see 12.04 §7 FM-12.04-1 (ClickHouse down or read-only, part or memory limits, a dropped audit table, missing grants).
+  - **Behaviour**: the batch fails before anything is acknowledged. After the audit insert there is no other write in this mode, so the offset certifies exactly the audit rows (§3.2).
+  - **Detection**: as 12.04 §7 FM-12.04-1: `ClickHouseBatchRunnable exception - Task(...)` followed by the retriable or FATAL line.
+  - **Blast radius**: all recording stops. Nothing is lost.
+  - **Recovery**: as 12.04 §7 FM-12.04-1.
+  - **RTO**: the backoff delay after the cause is removed (spec 10.02), or a restart of about 20 s.
+  - **Test**: `ReplicationLogOnlyIT.testReplicationLogOnlyWritesToBinlogHistoryOnly()` pins the healthy path.
+
+- **FM-12.05-3 The recording duplicates, empties or expires events**
+  - **Trigger**: a restart during unacknowledged batches (12.04 §7 FM-12.04-2), an unserialisable value (FM-12.04-5), or an outage longer than `replication.history.ttl` (FM-12.04-6).
+  - **Behaviour**: as referenced. In this mode each of them is a defect of the replica itself.
+  - **Detection**: as referenced. None for duplicates and TTL expiry. The ERROR `Error serializing ... to JSON` for empty images.
+  - **Blast radius**: consumers that count, time or replay events from the recording get double counts, empty images or gaps.
+  - **Recovery**: as referenced: the per-day de-duplication, a manual re-insert from the binlog, or `MODIFY TTL` before catch-up.
+  - **RTO**: as referenced (per affected day, or manual).
+  - **Test**: `BinLogHistoryRedeliveryTest.redeliveryAfterRestartBindsTheSameSortingKeyAndVersion()` (disabled, DEFECT, see 12.04).
+  - **DEFECT**: see 12.04 §7 FM-12.04-2, -5 and -6. In this mode they corrupt the replica.
+
+- **FM-12.05-4 Leaving mode 3 finds no data to continue from**
+  - **Trigger**: the operator switches `replication_log_only` to `false`, keeping the offset, to start writing data tables.
+  - **Behaviour**: no data table exists (§3.1). From the next batch, mode 2 creates SCD2 tables that hold only keys changed after the switch, with the consequences of 12.01 §7 FM-12.01-2.
+  - **Detection**: none (12.01 §7 FM-12.01-2).
+  - **Blast radius**: every data table is incomplete from the start.
+  - **Recovery**: a new snapshot, not a switch: stop, `sink-connector-client delete_offsets` and `delete_schema_history`, `snapshot.mode=initial`, then start. Or run a separate mode-2 connector beside the recorder.
+  - **RTO**: a full snapshot (hours on large sources).
+  - **Test**: GAP (as 12.01 §7 FM-12.01-2).
+  - **DEFECT**: the switch is accepted silently (12.01 §7 FM-12.01-2).
+
+- **FM-12.05-5 DDL that is ignored is also not recorded**
+  - **Trigger**: `disable.drop.truncate=true`, or DDL filtered by `checkIfDDLNeedsToBeIgnored` (not captured, snapshot DDL without `enable.snapshot.ddl`), on a recorder.
+  - **Behaviour**: `performDDLOperation` returns before the audit insert (12.04 §3.4). The recording has no row for the statement.
+  - **Detection**: WARN `Ignoring DROP/TRUNCATE statement because disable.drop.truncate=true; ...`, or INFO `Ignored Source DB DDL: ...`, per statement.
+  - **Blast radius**: the recording silently lacks those statements, although in this mode nothing would have been executed anyway.
+  - **Recovery**: do not set `disable.drop.truncate` on a mode-3 connector. Statements already missed can be re-read from the source binlog while it is retained.
+  - **RTO**: a restart (about 20 s) for the configuration. Missed statements are manual.
+  - **Test**: GAP: a unit test asserting that a mode-3 connector audits a DDL that `disable.drop.truncate` suppresses.
+
+Summary: 5 failure modes, 3 DEFECT, 3 GAP.
