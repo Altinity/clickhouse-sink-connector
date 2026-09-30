@@ -58,6 +58,7 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [Mutable Data Handling](doc/mutable_data.md)
 * [ClickHouse Table Engine Types](doc/clickhouse_engines.md)
 * [Troubleshooting](doc/Troubleshooting.md)
+* [Known Limitations](doc/limitations.md)
 * [TimeZone and DATETIME/TIMESTAMP](doc/timezone.md)
 * [Replication Start Position](doc/replication_start_position.md)
 * [Logging](doc/logging.md)
