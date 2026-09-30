@@ -295,7 +295,8 @@ public class BinlogTransactionCompressionPreflightTest {
         TransactionPayloadEventData decoded = BinlogTransactionCompressionPreflight.decodePayload(body);
         assertEquals(payloadSize, decoded.getPayloadSize());
         assertEquals(27, decoded.getUncompressedSize());
-        assertEquals(1, decoded.getUncompressedEvents().size());
+        // The inner events are streamed (spec 01.08 section 3.2): count them by iterating.
+        assertEquals(1, decoded.getUncompressedEvents().stream().count());
 
         // The packed-integer writer: one byte below 251, 0xFC + u16 LE above.
         ByteArrayOutputStream small = new ByteArrayOutputStream();
@@ -339,6 +340,58 @@ public class BinlogTransactionCompressionPreflightTest {
                 sourceAnswering("ON", 3, "8.0.41", null)).sourceState);
         assertEquals(SourceState.ON, BinlogTransactionCompressionPreflight.check(mysqlProps("REQUIRE"),
                 sourceAnswering("true", 1, "8.4.0", null)).sourceState);
+    }
+
+    @Test
+    @DisplayName("Source ON older than 8.0.34 warns in auto (a >1 GiB compressed payload is unreadable by every reader) and refuses in require")
+    public void sourceOnBefore8034WarnsInAutoAndRefusesInRequire() {
+        AtomicReference<List<LogEvent>> events = new AtomicReference<>();
+        Outcome outcome = assertDoesNotThrow(() -> checked(mysqlProps(), sourceAnswering("1", 3, "8.0.32-24", null), events));
+        assertEquals(SourceState.ON, outcome.sourceState);
+        assertTrue(outcome.decoderOk);
+        assertTrue(logged(events.get(), Level.WARN, "8.0.32-24", "8.0.34", "Bug #33588473", "1 GiB"),
+                "the pre-8.0.34 hazard must be a WARN banner in auto: " + events.get());
+        assertFalse(logged(events.get(), Level.ERROR), events.get().toString());
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+                () -> BinlogTransactionCompressionPreflight.check(mysqlProps("require"),
+                        sourceAnswering("ON", 3, "8.0.33", null)));
+        assertTrue(ex.getMessage().contains("8.0.33"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("8.0.34"), ex.getMessage());
+        assertTrue(ex.getMessage().contains("SET PERSIST binlog_transaction_compression = OFF"), ex.getMessage());
+
+        // 8.0.34 and later (and the 8.1+/8.4/9.x series) fall back to an uncompressed transaction: no warning.
+        for (String v : new String[] {"8.0.34", "8.0.41-32", "8.0.46", "8.1.0", "8.4.3", "9.1.0"}) {
+            AtomicReference<List<LogEvent>> ev = new AtomicReference<>();
+            assertDoesNotThrow(() -> checked(mysqlProps("require"), sourceAnswering("1", 3, v, null), ev), v);
+            assertFalse(logged(ev.get(), Level.WARN), v + ": " + ev.get());
+        }
+    }
+
+    @Test
+    @DisplayName("Source OFF older than 8.0.34 in auto warns not to enable compression on that server")
+    public void sourceOffBefore8034WarnsNotToEnable() {
+        AtomicReference<List<LogEvent>> events = new AtomicReference<>();
+        Outcome outcome = assertDoesNotThrow(() -> checked(mysqlProps(), sourceAnswering("0", 3, "8.0.20", null), events));
+        assertEquals(SourceState.OFF, outcome.sourceState);
+        assertTrue(logged(events.get(), Level.WARN, "binlog_transaction_compression=OFF", "8.0.20", "Do not turn"),
+                events.get().toString());
+    }
+
+    @Test
+    @DisplayName("Only 8.0.20-8.0.33 is classified as writing oversized payloads; an unparseable version is never a refusal")
+    public void oversizedPayloadVersionClassification() {
+        assertTrue(BinlogTransactionCompressionPreflight.writesOversizedPayloads("8.0.20"));
+        assertTrue(BinlogTransactionCompressionPreflight.writesOversizedPayloads("8.0.33-25"));
+        assertTrue(BinlogTransactionCompressionPreflight.writesOversizedPayloads(" 8.0.32-24 "));
+        assertFalse(BinlogTransactionCompressionPreflight.writesOversizedPayloads("8.0.34"));
+        assertFalse(BinlogTransactionCompressionPreflight.writesOversizedPayloads("8.0.41-32"));
+        assertFalse(BinlogTransactionCompressionPreflight.writesOversizedPayloads("8.1.0"));
+        assertFalse(BinlogTransactionCompressionPreflight.writesOversizedPayloads("8.4.3"));
+        assertFalse(BinlogTransactionCompressionPreflight.writesOversizedPayloads("9.1.0"));
+        assertFalse(BinlogTransactionCompressionPreflight.writesOversizedPayloads(null));
+        assertFalse(BinlogTransactionCompressionPreflight.writesOversizedPayloads("garbage"));
+        assertFalse(BinlogTransactionCompressionPreflight.writesOversizedPayloads("8.0"));
     }
 
     @Test

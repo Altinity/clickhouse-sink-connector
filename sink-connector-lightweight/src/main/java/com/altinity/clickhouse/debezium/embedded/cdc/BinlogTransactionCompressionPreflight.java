@@ -7,9 +7,11 @@ import com.github.shyiko.mysql.binlog.event.Event;
 import com.github.shyiko.mysql.binlog.event.EventHeaderV4;
 import com.github.shyiko.mysql.binlog.event.EventType;
 import com.github.shyiko.mysql.binlog.event.TransactionPayloadEventData;
+import com.altinity.clickhouse.debezium.embedded.cdc.payload.StreamingTransactionPayloadEventData;
 import com.github.shyiko.mysql.binlog.event.XidEventData;
-import com.github.shyiko.mysql.binlog.event.deserialization.TransactionPayloadEventDataDeserializer;
 import com.github.shyiko.mysql.binlog.io.ByteArrayInputStream;
+import io.debezium.config.CommonConnectorConfig;
+import io.debezium.connector.binlog.event.TransactionPayloadDeserializer;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -18,10 +20,14 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Properties;
 import java.util.function.Supplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Verifies at start that the connector can read a MySQL source whose
@@ -32,9 +38,11 @@ import java.util.function.Supplier;
  * ONE {@code Transaction_payload} event whose body is the zstd-compressed
  * stream of the transaction's ordinary events (TABLE_MAP, ROWS, XID). The
  * binlog client the connector embeds ({@code mysql-binlog-connector-java},
- * io.debezium fork) decodes that transparently: {@link
- * TransactionPayloadEventDataDeserializer} inflates the body with zstd-jni and
- * re-reads the inner events. Nothing else in the pipeline sees a difference --
+ * io.debezium fork) hands the event to the decoder Debezium registers for it,
+ * which in this connector is its own streaming {@link
+ * TransactionPayloadDeserializer}: it inflates the body with zstd-jni one inner
+ * event at a time while the events are dispatched, with no limit on the
+ * uncompressed size. Nothing else in the pipeline sees a difference --
  * PROVIDED the decoder works on this platform. zstd-jni is a native library;
  * on a platform it has no binary for, or with the class missing from a
  * repackaged jar, every compressed transaction fails to deserialize and the
@@ -49,7 +57,10 @@ import java.util.function.Supplier;
  * a WARN banner, because the variable is dynamic and a later {@code SET GLOBAL}
  * -- or even a session-level {@code SET} -- would start producing payloads. In
  * {@code require} mode the operator has said the pipeline depends on
- * compression, and anything other than ON-and-decodable refuses.</p>
+ * compression, and anything other than ON-and-decodable refuses -- including
+ * a source older than 8.0.34, which can write a compressed transaction no
+ * reader can receive (see {@link #OVERSIZED_PAYLOAD_HAZARD}; in {@code auto}
+ * mode that is a WARN banner).</p>
  *
  * <p>The check is read-only against the source, on the same footing as the
  * keyless-table and row-image checks: one {@code SELECT} on a connection
@@ -117,6 +128,9 @@ public final class BinlogTransactionCompressionPreflight {
 
     /** The XID the self-test encodes and expects back. */
     static final long SELF_TEST_XID = 0x0102030405060708L;
+
+    /** The class Debezium instantiates for TRANSACTION_PAYLOAD events. */
+    static final String PAYLOAD_DECODER_CLASS = "io.debezium.connector.binlog.event.TransactionPayloadDeserializer";
 
     /** What the source reported. */
     public enum SourceState {
@@ -362,6 +376,24 @@ public final class BinlogTransactionCompressionPreflight {
         String version = probe.version == null ? "(version unknown)" : probe.version;
         switch (probe.state) {
             case ON:
+                if (decoderOk && writesOversizedPayloads(probe.version)) {
+                    if (require) {
+                        refuse(String.format(
+                                "%s=%s and binlog_transaction_compression=ON, but the source is MySQL %s. %s "
+                                        + "Upgrade the source to 8.0.34 or later before relying on compression, or "
+                                        + "turn it off:\n    SET PERSIST binlog_transaction_compression = OFF;\n"
+                                        + "To start anyway, set %s=%s.",
+                                PROPERTY, MODE_REQUIRE, version, OVERSIZED_PAYLOAD_HAZARD, PROPERTY, MODE_AUTO));
+                        return outcome; // unreachable: refuse throws
+                    }
+                    log.warn("\n{}\n  !!  binlog_transaction_compression=ON on MySQL {}, a server older than 8.0.34  "
+                                    + "!!\n{}\n  {} The connector decodes every compressed transaction the source can "
+                                    + "send, of any uncompressed size; this limit is the source's own. Upgrade the "
+                                    + "source to 8.0.34 or later, or turn compression off "
+                                    + "(SET PERSIST binlog_transaction_compression = OFF).\n{}",
+                            BANNER_RULE, version, BANNER_RULE, OVERSIZED_PAYLOAD_HAZARD, BANNER_RULE);
+                    return outcome;
+                }
                 if (decoderOk) {
                     log.info("binlog_transaction_compression=ON (zstd level {}) on MySQL {}: compressed "
                                     + "transactions are decoded transparently (Transaction_payload decoder "
@@ -377,8 +409,9 @@ public final class BinlogTransactionCompressionPreflight {
                                 + "    SET PERSIST binlog_transaction_compression = OFF;\n"
                                 + "    # or in my.cnf: binlog_transaction_compression = OFF\n"
                                 + "or fix the platform (zstd-jni needs a native library for this OS/arch; the "
-                                + "connector's jar must carry com.github.luben.zstd and the binlog client's "
-                                + "TransactionPayloadEventDataDeserializer). To start anyway, set %s=%s.",
+                                + "connector's jar must carry com.github.luben.zstd and this connector's streaming "
+                                + "io.debezium.connector.binlog.event.TransactionPayloadDeserializer ahead of "
+                                + "Debezium's). To start anyway, set %s=%s.",
                         probe.level, version, PROPERTY, MODE_SKIP));
                 return outcome; // unreachable: refuse throws
             case OFF:
@@ -393,6 +426,12 @@ public final class BinlogTransactionCompressionPreflight {
                             PROPERTY, MODE_AUTO));
                     return outcome; // unreachable: refuse throws
                 }
+                if (decoderOk && writesOversizedPayloads(probe.version)) {
+                    log.warn("binlog_transaction_compression=OFF on MySQL {}: the source writes uncompressed "
+                            + "transactions and the Transaction_payload decoder self-test passed. Do not turn "
+                            + "compression on for this server: {}", version, OVERSIZED_PAYLOAD_HAZARD);
+                    return outcome;
+                }
                 if (decoderOk) {
                     log.info("binlog_transaction_compression=OFF on MySQL {}: the source writes uncompressed "
                             + "transactions. The Transaction_payload decoder self-test passed, so the "
@@ -405,8 +444,8 @@ public final class BinlogTransactionCompressionPreflight {
                                 + "The variable is dynamic: a SET GLOBAL, a SET PERSIST or even a session-level SET "
                                 + "on the source would start writing zstd-compressed Transaction_payload events this "
                                 + "build cannot decode, and the connector would stop at the first one. Fix the "
-                                + "platform (zstd-jni native library for this OS/arch, the binlog client's "
-                                + "TransactionPayloadEventDataDeserializer on the classpath) or keep compression "
+                                + "platform (zstd-jni native library for this OS/arch, this connector's streaming "
+                                + "TransactionPayloadDeserializer ahead of Debezium's on the classpath) or keep compression "
                                 + "off on the source. See the ERROR above for the cause.\n{}",
                         BANNER_RULE, version, BANNER_RULE, BANNER_RULE);
                 return outcome;
@@ -441,6 +480,47 @@ public final class BinlogTransactionCompressionPreflight {
                                 + "are decoded if the source sends them. Set {}={} to have this refuse instead.",
                         probe.version == null ? "" : " (version " + probe.version + ")", PROPERTY, MODE_REQUIRE);
                 return outcome;
+        }
+    }
+
+    /**
+     * The hazard of a source older than 8.0.34 (spec 01.08 §3.1 item 4). Until MySQL 8.0.34 (Bug
+     * #33588473) a server writes a transaction whose COMPRESSED payload exceeds 1 GiB as one
+     * Transaction_payload anyway; the dump thread cannot send an event above the 1 GiB replication
+     * packet limit, so no reader -- this connector or a MySQL replica -- can receive it. From 8.0.34 the
+     * server writes such a transaction uncompressed instead.
+     */
+    static final String OVERSIZED_PAYLOAD_HAZARD = "Before MySQL 8.0.34 (Bug #33588473) a transaction whose "
+            + "COMPRESSED payload exceeds 1 GiB is still written as one Transaction_payload event larger than the "
+            + "1 GiB replication packet limit: no reader can receive it (the source's dump thread fails with error "
+            + "1236 'log event entry exceeded max_allowed_packet'; SHOW BINLOG EVENTS fails with 'Event too big'), "
+            + "so replication stops at it for this connector and for every MySQL replica. From 8.0.34 the server "
+            + "writes such a transaction uncompressed instead.";
+
+    /** major.minor.patch at the start of {@code @@version} ("8.0.41-32", "8.4.3", "9.1.0"). */
+    private static final Pattern SERVER_VERSION = Pattern.compile("^(\\d+)\\.(\\d+)\\.(\\d+)");
+
+    /**
+     * True for a MySQL server that can write a Transaction_payload larger than the 1 GiB replication
+     * packet limit: 8.0.20 (where compression exists) up to 8.0.33. 8.0.34+, 8.1+ and later series fall
+     * back to an uncompressed transaction. An unparseable or missing version is not classified (false):
+     * the probe never refuses on a guess.
+     */
+    static boolean writesOversizedPayloads(String version) {
+        if (version == null) {
+            return false;
+        }
+        Matcher m = SERVER_VERSION.matcher(version.trim());
+        if (!m.find()) {
+            return false;
+        }
+        try {
+            int major = Integer.parseInt(m.group(1));
+            int minor = Integer.parseInt(m.group(2));
+            int patch = Integer.parseInt(m.group(3));
+            return major == 8 && minor == 0 && patch < 34;
+        } catch (NumberFormatException e) {
+            return false;
         }
     }
 
@@ -485,11 +565,35 @@ public final class BinlogTransactionCompressionPreflight {
      */
     static boolean decoderSelfTest(byte[] body, long expectedXid) {
         try {
+            String streaming = streamingDecoderMarker();
+            if (!TransactionPayloadDeserializer.STREAMING_DECODER.equals(streaming)) {
+                log.error("Transaction_payload decoder self-test FAILED: the TRANSACTION_PAYLOAD decoder on the "
+                                + "runtime classpath ({}) is not this connector's streaming decoder (marker {}, "
+                                + "expected {}). The stock Debezium decoder cannot decode a transaction whose "
+                                + "uncompressed payload exceeds 2 GiB and holds every transaction's whole "
+                                + "uncompressed payload in heap (spec 01.08 section 3.2). The connector jar must "
+                                + "carry its own io.debezium.connector.binlog.event.TransactionPayloadDeserializer "
+                                + "ahead of Debezium's.",
+                        decoderLocation(), streaming, TransactionPayloadDeserializer.STREAMING_DECODER);
+                return false;
+            }
             TransactionPayloadEventData data = decodePayload(body);
-            List<Event> events = data.getUncompressedEvents();
-            if (events == null || events.size() != 1) {
+            if (!(data instanceof StreamingTransactionPayloadEventData)) {
+                log.error("Transaction_payload decoder self-test FAILED: the decoder returned {}, not a streamed "
+                        + "payload (spec 01.08 section 3.2).", data == null ? "null" : data.getClass().getName());
+                return false;
+            }
+            // Iterate, never index or size: the inner events are streamed (spec 01.08 section 3.2).
+            List<Event> events = new ArrayList<>(2);
+            for (Event inner : data.getUncompressedEvents()) {
+                events.add(inner);
+                if (events.size() > 1) {
+                    break;
+                }
+            }
+            if (events.size() != 1) {
                 log.error("Transaction_payload decoder self-test FAILED: expected 1 inner event, decoded {} ({}).",
-                        events == null ? "none" : events.size(), data);
+                        events.size() > 1 ? "more than 1" : "0", data);
                 return false;
             }
             Event event = events.get(0);
@@ -505,9 +609,12 @@ public final class BinlogTransactionCompressionPreflight {
                         expectedXid, xid);
                 return false;
             }
-            log.info("Transaction_payload decoder self-test passed: zstd-jni + Transaction_payload decoder "
-                            + "available (decoded 1 XID event, xid={}, {} compressed bytes -> {} uncompressed).",
-                    xid, data.getPayloadSize(), data.getUncompressedSize());
+            log.info("Transaction_payload decoder self-test passed: zstd-jni + streaming Transaction_payload "
+                            + "decoder {} available, no uncompressed-size limit (decoded 1 XID event, xid={}, "
+                            + "{} compressed bytes -> {} uncompressed).",
+                    TransactionPayloadDeserializer.STREAMING_DECODER, xid,
+                    ((StreamingTransactionPayloadEventData) data).getPayloadSizeLong(),
+                    ((StreamingTransactionPayloadEventData) data).getUncompressedSizeLong());
             return true;
         } catch (Throwable t) {
             // UnsatisfiedLinkError / NoClassDefFoundError are exactly the failures this test exists to catch.
@@ -516,9 +623,40 @@ public final class BinlogTransactionCompressionPreflight {
         }
     }
 
-    /** The real decoder, as the binlog client runs it on a TRANSACTION_PAYLOAD event. */
+    /**
+     * The decoder Debezium registers for TRANSACTION_PAYLOAD
+     * ({@code BinlogStreamingChangeEventSource.createEventDeserializer}), constructed the
+     * way Debezium constructs it.
+     */
     static TransactionPayloadEventData decodePayload(byte[] body) throws Exception {
-        return new TransactionPayloadEventDataDeserializer().deserialize(new ByteArrayInputStream(body));
+        return new TransactionPayloadDeserializer(new HashMap<>(),
+                CommonConnectorConfig.EventProcessingFailureHandlingMode.FAIL)
+                .deserialize(new ByteArrayInputStream(body));
+    }
+
+    /**
+     * The {@code STREAMING_DECODER} marker of the TRANSACTION_PAYLOAD decoder class that
+     * the runtime actually loaded, read reflectively so that a classpath on which
+     * Debezium's stock class shadows this connector's is detected (the stock class has no
+     * such field); null when the field is absent.
+     */
+    static String streamingDecoderMarker() {
+        try {
+            Object value = Class.forName(PAYLOAD_DECODER_CLASS).getField("STREAMING_DECODER").get(null);
+            return value instanceof String ? (String) value : null;
+        } catch (ReflectiveOperationException e) {
+            return null;
+        }
+    }
+
+    private static String decoderLocation() {
+        try {
+            java.security.CodeSource source = Class.forName(PAYLOAD_DECODER_CLASS).getProtectionDomain().getCodeSource();
+            return source == null || source.getLocation() == null ? PAYLOAD_DECODER_CLASS
+                    : PAYLOAD_DECODER_CLASS + " from " + source.getLocation();
+        } catch (ReflectiveOperationException | SecurityException e) {
+            return PAYLOAD_DECODER_CLASS + " (" + e + ")";
+        }
     }
 
     /**
