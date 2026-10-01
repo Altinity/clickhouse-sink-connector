@@ -158,6 +158,30 @@ behaviour is measured, not an argparse error.
 | `test_packaged_driver_run_from_another_directory_reports_a_difference` | FALSE MATCH: both sides fail to start outside the tool tree, `(None, None) == (None, None)`, `No difference` for the planted difference (spec repro R02) | PASS | PR 1539 `e1724038` D-13.06-1, -14, -25 |
 | `test_loader_loads_a_table_with_a_dollar_in_its_name` | XFAIL | XFAIL (strict) | open defect D-13.04-32 (registered, not fixed) |
 
+### Nullability mismatch (`test_mysql_06_null_flags.py`, added after the observed runs above)
+
+`pyref.position_flags` has a STORED generated column (`is_valid TINYINT(1) GENERATED ALWAYS AS (qty > 0) STORED`)
+and a `VARCHAR NULL` column, both declared nullable by MySQL and never NULL. The module declares their ClickHouse
+twins non-Nullable (`Int8`, `String`) once the replica is in sync. These tests were not part of the three
+observed runs: the pre-fix outcome below is the expected one, and the defect itself was observed in a
+production-shaped sandbox run, where the `--debug_output` row strings of a 300-row table were identical except
+the trailing flags (`0000000010` on MySQL, `000000001` on ClickHouse). "Pre-fix" here means any tree before
+D-13.06-40, including 2.11.0 and the parent commit of the fix.
+
+| Test | Pre-fix (expected) | Observed | Fixed | Justifies |
+|---|---|---|---|---|
+| `test_job_matches_a_replica_with_non_nullable_twins` | FAIL: `Checksum difference` for `pyref.position_flags` on clean data, the job verdict fails: the null flags were built over each side's declared-nullable columns (`00` from MySQL, nothing from ClickHouse), so every row hashed differently (on 2.11.0 the BIT(16) noise of D-13.06-38 fails the job as well) | observed in a production-shaped sandbox run | PASS | D-13.06-40 |
+| `test_manual_recipe_is_equal_for_a_replica_with_non_nullable_twins` | FAIL: unequal checksum lines, and every line of the sorted diff differs only in the trailing flags (on 2.11.0 the recipe stops earlier, at `--no_wc`, D-13.06-26) | observed in a production-shaped sandbox run | PASS | D-13.06-40 |
+| `test_planted_difference_in_a_replica_with_non_nullable_twins_fails_the_job` | PASS for the wrong reason: the table is DIFFERENT on clean data already | not run | PASS | regression guard: the fix still reports a real change |
+| `test_null_against_the_non_nullable_default_fails_the_job` | PASS for the wrong reason, as above | not run | PASS | regression guard: a MySQL NULL against the replica's empty string differs only in its null flag and is still DIFFERENT |
+
+Adding the table to the seed also adds `pyref.position_flags: MATCH` to the expected verdicts of the tests that
+run the non-partitioned job over `pyref` (`test_clean_data_passes_the_job` and the others built on
+`JOB_NON_PARTITIONED`, `test_table_include_list_restricts_the_job`,
+`test_equal_mysql_and_clickhouse_host_strings_still_give_verdicts`). Those tests run before
+`test_mysql_06_null_flags.py`, while both sides still declare the columns nullable, so their pre-fix outcomes
+above are unchanged.
+
 ## Fixes this suite forced (mandatory use cases blocked end to end)
 
 | Defect | What the suite saw | Fix | Offline test |

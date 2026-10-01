@@ -62,7 +62,8 @@ def test_equal_mysql_and_clickhouse_host_strings_still_give_verdicts(ws):
     result = ws.run_job([ws.job_command(config, partitioned=False)])
     assert result.returncode == 0, result
     assert warning_lines(result.all_logs) == [], result
-    assert parse_verdicts(result.log(JOB_LOG_NON_PARTITIONED)) == {f"{DB2}.accounts": "MATCH"}, result
+    assert parse_verdicts(result.log(JOB_LOG_NON_PARTITIONED)) == {f"{DB2}.accounts": "MATCH",
+                                                                   f"{DB2}.position_flags": "MATCH"}, result
 
 
 PACKAGED_DRIVER = ["-m", "ch_sink_tools.db_compare.top_level_table_checksum"]

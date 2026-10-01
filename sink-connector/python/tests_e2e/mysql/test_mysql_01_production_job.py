@@ -104,7 +104,8 @@ def test_table_include_list_restricts_the_job(ws):
     result = ws.run_job([ws.job_command(config, partitioned=True), ws.job_command(config, partitioned=False)])
     assert_clean_job(result,
                      partitioned={f"{DB}.fills": "MATCH", f"{DB2}.daily_marks": "MATCH"},
-                     non_partitioned={f"{DB}.instruments": "MATCH", f"{DB2}.accounts": "MATCH"})
+                     non_partitioned={f"{DB}.instruments": "MATCH", f"{DB2}.accounts": "MATCH",
+                                      f"{DB2}.position_flags": "MATCH"})
 
 
 def test_empty_partition_does_not_fail_the_job(ws, job_config):

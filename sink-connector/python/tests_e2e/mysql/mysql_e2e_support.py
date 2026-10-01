@@ -113,7 +113,7 @@ PARTITIONED = [(DB, "fills"), (DB, "positions_bt"), (DB, "quotes"), (DB, "temp_x
                (DB, "temp_events_by_days"), (DB2, "daily_marks")]
 NON_PARTITIONED = [(DB, "instruments"), (DB, "keyless_events"), (DB, "ledger"), (DB, "temp_fx$rates"),
                    (DB, "temp_checksum_named"), (DB, "fills_p1"), (DB, "heartbeat"), (DB, "temp_resync_guard"),
-                   (DB2, "accounts")]
+                   (DB2, "accounts"), (DB2, "position_flags")]
 SEEDED_TABLES = PARTITIONED + NON_PARTITIONED
 # The connector creates `temp_fx$rates` in ClickHouse but writes its rows to
 # `temp_fx_rates` (the name with `$` replaced): the `$` table stays empty there,
@@ -126,7 +126,8 @@ REPLICATED_TABLES = [(d, t) for (d, t) in SEEDED_TABLES if t != DOLLAR_TABLE]
 # "p.*", exclude "(temp|no_partition|heartbeat)") and the non-partitioned run
 # (exclude "(temp|_p[0-9]|no_partition|heartbeat)").
 JOB_PARTITIONED = [f"{DB}.fills", f"{DB}.positions_bt", f"{DB}.quotes", f"{DB2}.daily_marks"]
-JOB_NON_PARTITIONED = [f"{DB}.instruments", f"{DB}.keyless_events", f"{DB}.ledger", f"{DB2}.accounts"]
+JOB_NON_PARTITIONED = [f"{DB}.instruments", f"{DB}.keyless_events", f"{DB}.ledger", f"{DB2}.accounts",
+                       f"{DB2}.position_flags"]
 JOB_EXCLUDED = [f"{DB}.temp_x", f"{DB}.temp_events_by_days", f"{DB}.temp_fx$rates", f"{DB}.temp_checksum_named",
                 f"{DB}.temp_resync_guard", f"{DB}.heartbeat", f"{DB}.fills_p1"]
 IGNORED_COLUMNS = [f"{DB}.instruments.attrs", f"{DB}.fills.note"]

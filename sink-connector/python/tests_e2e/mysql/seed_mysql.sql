@@ -13,7 +13,7 @@
 -- Shapes covered: keyless table, BINARY/VARBINARY/BLOB, BIT(1)/BIT(16),
 -- DATETIME(6)/TIMESTAMP(6), DECIMAL, JSON (ignored column), FLOAT (not compared),
 -- NULLs including a lower-case `null` column definition, a source column named
--- _sign, and tables the jobs exclude (temp_*, heartbeat, *_p<digit>). The temp_*
+-- _sign, a nullable STORED generated column, and tables the jobs exclude (temp_*, heartbeat, *_p<digit>). The temp_*
 -- tables also carry shapes that dedicated runs exercise: a `$` in a table name,
 -- "checksum" in column names, a TO_DAYS() partition expression.
 
@@ -221,6 +221,22 @@ INSERT INTO accounts VALUES
   (1, 'alpha', 1000.00, '2001-02-03', '${Y} 12:00:00.000000'),
   (2, 'beta', NULL, NULL, NULL),
   (3, 'gamma', -0.01, '1999-12-31', '${T} 00:00:00.000001');
+
+-- columns MySQL declares nullable that never hold NULL: a STORED generated column (no NOT
+-- NULL, so IS_NULLABLE = 'YES') and an explicitly nullable varchar. test_mysql_06 declares
+-- their ClickHouse twins non-Nullable, as hand-written replica DDL does (spec 13.06 D-13.06-40).
+CREATE TABLE position_flags (
+  id INT NOT NULL PRIMARY KEY,
+  qty INT NOT NULL,
+  label VARCHAR(16) NULL,
+  is_valid TINYINT(1) GENERATED ALWAYS AS (qty > 0) STORED
+);
+INSERT INTO position_flags (id, qty, label) VALUES
+  (1, 10, 'alpha'),
+  (2, 0, 'beta'),
+  (3, -5, 'gamma'),
+  (4, 7, ''),
+  (5, 1, 'epsilon');
 
 CREATE TABLE daily_marks (
   instrument_id INT NOT NULL,
