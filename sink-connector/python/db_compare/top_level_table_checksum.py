@@ -11,6 +11,7 @@ from subprocess import Popen, PIPE
 import subprocess
 import time
 import re
+import shlex
 import traceback
 
 
@@ -96,33 +97,95 @@ def validate_config(config):
         return False
 
 
-def parse_checksum(data, table):
-    # Step 1: Decode the byte string into a regular string
-    decoded_data = data.decode('utf-8').strip()  # Remove the trailing newline with .strip()
-    # Step 2: Split the string into components
-    parts = decoded_data.split()
-    checksum = None
-    row_count = None
-    if len(parts) == 3:
-        # Extract the three values
-        table = parts[0]
-        checksum = parts[1]
-        row_count = int(parts[2])
-    else:
-        logging.error(f"Invalid checksum output from {data} for table {table}")
-    return (table, checksum, row_count)
+# The one line a side script prints per table. Both sides log it at INFO with
+# the format '%(asctime)s - %(levelname)s - %(threadName)s - %(message)s'. It is
+# matched per line and anchored on the whole message, so a database, table or
+# column name containing "checksum" in any other log line is never taken for a
+# result (spec 13.06 FM-13.06-2).
+CHECKSUM_LINE = re.compile(r" - INFO - .* - Checksum for table (?P<table>\S.*) = (?P<checksum>[0-9a-f]{32}) count (?P<count>\d+)\s*$")
+SIDE_MESSAGE_LEVELS = ((" - CRITICAL - ", logging.ERROR), (" - ERROR - ", logging.ERROR),
+                       (" - WARNING - ", logging.WARNING))
+SIDE_OUTPUT_TAIL_LINES = 20
+
+VERDICT_MATCH = "MATCH"
+VERDICT_DIFFERENT = "DIFFERENT"
+VERDICT_EMPTY = "EMPTY"
+VERDICT_ERROR = "ERROR"
+
+
+def side_output_text(data):
+    if data is None:
+        return ""
+    if isinstance(data, bytes):
+        return data.decode('utf-8', errors='replace')
+    return str(data)
+
+
+def parse_checksum(data, table, expected_name=None):
+    """(name, md5, count) from a side script's raw output, else (name, None, None).
+
+    Exactly one ``Checksum for table`` line must be present. Zero or several,
+    or a line naming another table than ``expected_name`` (``<db>.<table>``),
+    is an invalid output, never a result."""
+    lines = side_output_text(data).splitlines()
+    matches = [match for match in (CHECKSUM_LINE.search(line) for line in lines) if match]
+    if len(matches) != 1:
+        logging.error(f"Invalid checksum output for table {table}: expected exactly one "
+                      f"'Checksum for table' line, found {len(matches)}")
+        return (table, None, None)
+    match = matches[0]
+    name = match.group('table')
+    if expected_name is not None and name != expected_name:
+        logging.error(f"Invalid checksum output for table {table}: the side reported {name}, expected {expected_name}")
+        return (name, None, None)
+    return (name, match.group('checksum'), int(match.group('count')))
+
+
+def relay_side_messages(data, host, table):
+    """Re-log the side script's WARNING/ERROR/CRITICAL lines (columns not
+    compared, clamped values, SQL warnings) in the driver log: they qualify the
+    verdict (spec 13.06 FM-13.06-8)."""
+    for line in side_output_text(data).splitlines():
+        for marker, level in SIDE_MESSAGE_LEVELS:
+            if marker in line:
+                logging.log(level, f"{host} {table} side: {line.strip()}")
+                break
+
+
+def log_side_output_tail(data, host, table):
+    for line in side_output_text(data).splitlines()[-SIDE_OUTPUT_TAIL_LINES:]:
+        logging.error(f"{host} {table} side output: {line}")
+
+
+def command_text(cmd):
+    return shlex.join(cmd) if isinstance(cmd, (list, tuple)) else str(cmd)
+
+
+def expected_side_name(cmd, table):
+    """``<database>.<table>`` a side command asks for, or None when ``cmd`` is
+    not an argv list naming a database."""
+    if not isinstance(cmd, (list, tuple)):
+        return None
+    for flag in ("--mysql_database", "--clickhouse_database"):
+        if flag in cmd and cmd.index(flag) + 1 < len(cmd):
+            return f"{cmd[cmd.index(flag) + 1]}.{table}"
+    return None
 
 
 def run_quick_safe_checksum(cmd, host, table):
     start = time.perf_counter()
     (rc, stdout) = run_quick_safe_command(cmd)
     duration = time.perf_counter() - start
+    relay_side_messages(stdout, host, table)
     if rc == '0':
-        (table, checksum, count) = parse_checksum(stdout, table)
+        (table, checksum, count) = parse_checksum(stdout, table, expected_side_name(cmd, table))
+        if checksum is None:
+            log_side_output_tail(stdout, host, table)
         logging.info(f"{( host, table, checksum, count)} in {duration:0.3f} seconds" )
         return ( host, table, checksum, count)
     else:
-        logging.error(f"{cmd}. failed")
+        logging.error(f"{command_text(cmd)}. failed with return code {rc}")
+        log_side_output_tail(stdout, host, table)
         return None
 
 
@@ -203,14 +266,26 @@ def get_tables_from_regexp(conn, database, tables_regexp):
     return get_tables_from_regex(conn, args.no_wc, database, tables_regexp, include_partitions_regex=args.include_partitions_regex, exclude_tables_regex=args.exclude_tables_regex, non_partitioned_tables_only=args.non_partitioned_tables_only)
 
 
-def include_flags_clause():
+def include_flags():
     """The coverage opt-ins, passed identically to both sides (spec 11.02 section 3.9)."""
     flags = []
     if args.include_floating_point_columns:
         flags.append("--include_floating_point_columns")
     if args.include_json_columns:
         flags.append("--include_json_columns")
-    return " ".join(flags)
+    return flags
+
+
+# Characters that are regex syntax in MySQL (ICU), ClickHouse (re2) and Python.
+# Each is matched literally as a one-character class: a backslash escape would
+# be consumed by the SQL string literal the sides paste the regex into.
+TABLE_REGEX_SPECIALS = set(".$|?*+(){}")
+
+
+def exact_table_regex(table):
+    """``^<table>$`` matching exactly that table name (``orders$archive`` must
+    not become ``^orders$``)."""
+    return "^" + "".join(f"[{ch}]" if ch in TABLE_REGEX_SPECIALS else ch for ch in table) + "$"
 
 
 LEGACY_ESCAPED_QUOTE = "\\'"
@@ -237,89 +312,94 @@ def normalize_where_override(table, where):
 
 def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None):
     partition_date = args.partition_date
-    where_argument = '--where " 1=1 '
+    where_value = " 1=1 "
     if where:
-        where_argument += f" and {where} "
+        where_value += f" and {where} "
     if partition_date:
-      where_argument += f""" and {{partition_expression}}={partition_date:%Y%m%d}"""
-    where_argument += '"'
+      where_value += f""" and {{partition_expression}}={partition_date:%Y%m%d}"""
 
-    ignored_columns_clause = ""
+    ignored_columns_clause = []
     if len(ignored_columns) > 0:
         logging.info(f"Ignoring columns {ignored_columns} for table {table}")
-        ignored_columns_clause = "--exclude_columns "+",".join(ignored_columns)
+        ignored_columns_clause = ["--exclude_columns", ",".join(ignored_columns)]
 
-    debug_output_clause = ""
+    debug_output_clause = []
     if debug_output:
-        debug_output_clause = "--debug_output"
+        debug_output_clause = ["--debug_output"]
 
-    defaults_file_clause = ""
+    defaults_file_clause = []
     if defaults_file:
-        defaults_file_clause = f"--defaults_file={defaults_file}"
-    # `set -eo pipefail` (NOT `set -e pipefail`): bash parses the latter as
-    # `set -e` plus a positional argument named "pipefail", so pipefail is
-    # never enabled. Without it a failing checksum script on the left of the
-    # pipe is masked by a successful awk and the pipeline exits 0 -- a run
-    # that never produced a checksum is reported as a PASS. Verified in bash:
-    # `set -e pipefail; false | grep x | awk '{print}'` exits 0.
-    cmd = f"""set -eo pipefail;python db_compare/mysql_table_checksum.py --threads_per_table {args.threads_per_table} --threads={args.threads} --min_date_value "1900-01-01" --mysql_host {mysql_host} --mysql_database {database} --tables_regex "^{table}$" {where_argument} --source_timezone {args.source_timezone} --binary_encoding {args.binary_encoding} {include_flags_clause()} {ignored_columns_clause} {debug_output_clause} {defaults_file_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
-    logging.debug(f"MySQL command: {cmd}")
+        defaults_file_clause = [f"--defaults_file={defaults_file}"]
+    # An argv list, run without a shell: every value (table name, where clause,
+    # partition expression) reaches the side byte for byte -- no `$` or
+    # backtick expansion, no word splitting -- and the return code is the side
+    # script's own. Its output is parsed in Python (parse_checksum), not by
+    # grep|awk, so its WARNING lines are kept (spec 13.06 FM-13.06-3, -8).
+    cmd = ["python", "db_compare/mysql_table_checksum.py",
+           "--threads_per_table", str(args.threads_per_table), f"--threads={args.threads}",
+           "--min_date_value", "1900-01-01", "--mysql_host", str(mysql_host), "--mysql_database", str(database),
+           "--tables_regex", exact_table_regex(table), "--where", where_value,
+           "--source_timezone", str(args.source_timezone), "--binary_encoding", str(args.binary_encoding)]
+    cmd += include_flags() + ignored_columns_clause + debug_output_clause + defaults_file_clause
+    logging.debug(f"MySQL command: {command_text(cmd)}")
     return cmd
 
 
 
 def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, where=None, ignored_columns=[], debug_output=False, partition_key = None, timestamp_columns=(), binary_columns=(), json_columns=()):
     partition_date = args.partition_date
-    where_argument = '--where " 1=1 '
+    where_value = " 1=1 "
     if where:
-        where_argument += f" and {where} "
+        where_value += f" and {where} "
     if partition_date:
-      # Plain single quotes: the value sits inside a double-quoted shell
-      # argument, where a single quote needs no escaping, and fstr() on the
-      # ClickHouse side is a literal substitution. The former backslash
-      # escapes (toDate(\\'...\\')) only existed for the eval()-based fstr,
-      # which interpreted them; with the literal fstr they reached the server
-      # and every partitioned table failed with Code 62 "Unrecognized token: '\\'".
-      where_argument += f""" and {{partition_expression}}=toDate('{partition_date:%Y-%m-%d}') """
-    where_argument += '"'
+      # Plain single quotes: fstr() on the ClickHouse side is a literal
+      # substitution. The former backslash escapes (toDate(\\'...\\')) only
+      # existed for the eval()-based fstr, which interpreted them; with the
+      # literal fstr they reached the server and every partitioned table failed
+      # with Code 62 "Unrecognized token: '\\'".
+      where_value += f""" and {{partition_expression}}=toDate('{partition_date:%Y-%m-%d}') """
 
-    ignored_columns_clause = "--exclude_columns _version,is_deleted,_is_deleted,__is_deleted"
+    ignored_columns_value = "_version,is_deleted,_is_deleted,__is_deleted"
     if len(ignored_columns) > 0:
         logging.info(f"Ignoring columns {ignored_columns} for table {table}")
-        ignored_columns_clause += ","+",".join(ignored_columns)
+        ignored_columns_value += ","+",".join(ignored_columns)
 
-    debug_output_clause = ""
+    debug_output_clause = []
     if debug_output:
-        debug_output_clause = "--debug_output"
+        debug_output_clause = ["--debug_output"]
 
-    partition_key_clause = ""
+    # One argv word, so a function partition (to_days(dt)) or one with spaces
+    # reaches the side intact.
+    partition_key_clause = []
     if partition_key:
-        partition_key_clause = f" --partition_key {partition_key.replace('`','')}"
+        partition_key_clause = ["--partition_key", partition_key.replace('`','')]
 
     # MySQL TIMESTAMP columns are compared as UTC instants, the other datetime
     # columns as wall clocks of the source zone (spec 11.02 section 3.4).
-    timestamp_columns_clause = ""
+    timestamp_columns_clause = []
     if timestamp_columns:
-        timestamp_columns_clause = "--timestamp_columns " + ",".join(timestamp_columns)
+        timestamp_columns_clause = ["--timestamp_columns", ",".join(timestamp_columns)]
 
     # Only raw bytes need hexing on the replica; hex and base64 are compared
     # as the text the connector stored (spec 11.02 section 3.6).
-    binary_encoding_clause = f"--binary_encoding {args.binary_encoding}"
+    binary_encoding_clause = ["--binary_encoding", str(args.binary_encoding)]
     if args.binary_encoding == 'raw' and binary_columns:
-        binary_encoding_clause += " --hex_columns " + ",".join(binary_columns)
+        binary_encoding_clause += ["--hex_columns", ",".join(binary_columns)]
 
     # String columns that replicate MySQL JSON (spec 11.02 section 3.9).
-    json_columns_clause = ""
+    json_columns_clause = []
     if json_columns:
-        json_columns_clause = "--json_columns " + ",".join(json_columns)
-    # `set -eo pipefail` (NOT `set -e pipefail`): bash parses the latter as
-    # `set -e` plus a positional argument named "pipefail", so pipefail is
-    # never enabled. Without it a failing checksum script on the left of the
-    # pipe is masked by a successful awk and the pipeline exits 0 -- a run
-    # that never produced a checksum is reported as a PASS. Verified in bash:
-    # `set -e pipefail; false | grep x | awk '{print}'` exits 0.
-    cmd = f"""set -eo pipefail;python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads={args.threads} --clickhouse_host {replica_host} --clickhouse_database  {database}  --tables_regex "^{table}$" {where_argument} --source_timezone {args.source_timezone} {timestamp_columns_clause} {json_columns_clause} {binary_encoding_clause} {include_flags_clause()} {ignored_columns_clause} --sign_column "" {debug_output_clause} {partition_key_clause} | grep -i checksum | awk '{{print $11" "$13" "$15}}' """ 
-    return cmd 
+        json_columns_clause = ["--json_columns", ",".join(json_columns)]
+    # An argv list, run without a shell (see get_mysql_checksum_command).
+    cmd = ["python", "db_compare/clickhouse_table_checksum.py",
+           "--max_memory_usage", "80000000000", f"--threads={args.threads}",
+           "--clickhouse_host", str(replica_host), "--clickhouse_database", str(database),
+           "--tables_regex", exact_table_regex(table), "--where", where_value,
+           "--source_timezone", str(args.source_timezone)]
+    cmd += timestamp_columns_clause + json_columns_clause + binary_encoding_clause + include_flags()
+    cmd += ["--exclude_columns", ignored_columns_value, "--sign_column", ""]
+    cmd += debug_output_clause + partition_key_clause
+    return cmd
 
 
 def resolve_source_timezone(conn, explicit):
@@ -340,19 +420,73 @@ def resolve_source_timezone(conn, explicit):
     return zone
 
 
-def analyze_differences(results, mysql_host, replica_hosts):
-    source_results = [result for result in results if result[0] == mysql_host]
-    replica_results = [result for result in results if result[0] in replica_hosts]
-    if len(source_results) == 1:
-        (mysql_checksum, mysql_count) = (source_results[0][2], source_results[0][3])
-        is_difference = False
-        for replica_result in replica_results:
-            (checksum, count) = (replica_result[2], replica_result[3])
-            if  (checksum, count) !=  (mysql_checksum, mysql_count):
-                logging.warning(f"Checksum difference : {replica_result} to {source_results[0]}")
-                is_difference = True
-        if not is_difference:
-            logging.info(f"No difference for {source_results[0][1]}")
+def analyze_differences(results, mysql_host, replica_hosts, table_name=None):
+    """Log and return the table's verdict: MATCH, DIFFERENT, EMPTY or ERROR.
+
+    ``results`` is in submission order: the MySQL source first, then one entry
+    per replica in ``replica_hosts`` order. The source is identified by that
+    position, never by its host string, so a replica configured with the same
+    host string as MySQL still gets a verdict (spec 13.06 FM-13.06-4). A side
+    that failed (None) or printed no parseable checksum (None md5 or count)
+    makes the table an ERROR, never a match (FM-13.06-1, FM-13.06-2). Equal
+    results with zero rows are EMPTY, not a match (FM-13.06-5)."""
+    results = list(results or [])
+    label = table_name
+    if label is None:
+        label = next((r[1] for r in results if r is not None), "<unknown table>")
+    expected = 1 + len(replica_hosts)
+    if len(results) != expected:
+        logging.error(f"Checksum ERROR for {label}: {len(results)} side result(s) for {expected} side(s) "
+                      f"(source {mysql_host}, replicas {list(replica_hosts)}); no verdict")
+        return VERDICT_ERROR
+    failed = [i for i, r in enumerate(results) if r is None or r[2] is None or r[3] is None]
+    if failed:
+        hosts = [mysql_host if i == 0 else replica_hosts[i - 1] for i in failed]
+        logging.error(f"Checksum ERROR for {label}: no valid checksum from {hosts}; no verdict")
+        return VERDICT_ERROR
+    source_result = results[0]
+    (mysql_checksum, mysql_count) = (source_result[2], source_result[3])
+    is_difference = False
+    for replica_result in results[1:]:
+        (checksum, count) = (replica_result[2], replica_result[3])
+        if  (checksum, count) !=  (mysql_checksum, mysql_count):
+            logging.warning(f"Checksum difference : {replica_result} to {source_result}")
+            is_difference = True
+    if is_difference:
+        return VERDICT_DIFFERENT
+    if mysql_count == 0:
+        logging.warning(f"EMPTY on both sides for {source_result[1]}: 0 rows compared "
+                        "(empty table, or a filter or --partition_date that matched nothing)")
+        return VERDICT_EMPTY
+    logging.info(f"No difference for {source_result[1]}")
+    return VERDICT_MATCH
+
+
+def report_run_summary(verdicts, fail_on_empty):
+    """Log the per-verdict totals; return the process exit code.
+
+    ERROR (a table with no verdict) always fails the run. EMPTY fails it only
+    with --fail_on_empty. DIFFERENT keeps exit 0 (spec 11.02 FM-11.02-1)."""
+    by_verdict = {}
+    for table_name, verdict in verdicts.items():
+        by_verdict.setdefault(verdict, []).append(table_name)
+    counts = ", ".join(f"{len(by_verdict.get(v, []))} {v}"
+                       for v in (VERDICT_MATCH, VERDICT_DIFFERENT, VERDICT_EMPTY, VERDICT_ERROR))
+    logging.info(f"Run summary: {len(verdicts)} table(s) verified: {counts}")
+    exit_code = 0
+    empty = by_verdict.get(VERDICT_EMPTY, [])
+    if empty:
+        logging.warning(f"EMPTY on both sides: {len(empty)} table(s) compared 0 rows"
+                        f"{' (failing the run: --fail_on_empty)' if fail_on_empty else ' (pass --fail_on_empty to fail the run)'}: "
+                        + ", ".join(empty))
+        if fail_on_empty:
+            exit_code = 1
+    errors = by_verdict.get(VERDICT_ERROR, [])
+    if errors:
+        logging.error(f"{len(errors)} table(s) have NO verdict (a side failed or its output could not be parsed): "
+                      + ", ".join(errors))
+        exit_code = 1
+    return exit_code
 
 
 def quote_mysql_identifier(identifier):
@@ -486,6 +620,7 @@ def run_config(config):
             table_dict[table]['where'] = normalize_where_override(table, table_dict[table]['where'])
             table_overrides_map[table]['where'] = table_dict[table]['where']
     logging.info(f"Table overrides : {table_overrides_map}")
+    verdicts = {}
     for database in databases:
         logging.info(f"Using MySQL database: {database}")
         try:
@@ -548,7 +683,7 @@ def run_config(config):
                         logging.error(exc)
                         raise exc
                     else:
-                        analyze_differences(future.result(), mysql_host, replica_hosts)
+                        verdicts[table_name] = analyze_differences(future.result(), mysql_host, replica_hosts, table_name)
                 if skipped_tables:
                     logging.warning(
                         "COVERAGE GAP -- checksum finished but " +
@@ -565,15 +700,20 @@ def run_config(config):
             logging.error(traceback.format_exc())
             sys.exit(1)
 
+    exit_code = report_run_summary(verdicts, args.fail_on_empty)
     logging.debug("Exiting Main Thread")
-    sys.exit(0)
+    sys.exit(exit_code)
 
 def run_quick_safe_command(cmd):
-    logging.debug("cmd " + cmd)
-    process = subprocess.Popen(cmd,
-                               stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT,
-                               shell=True)
+    """Run a side command given as an argv list (no shell); return (rc, output)."""
+    logging.debug("cmd " + command_text(cmd))
+    try:
+        process = subprocess.Popen(cmd,
+                                   stdout=subprocess.PIPE,
+                                   stderr=subprocess.STDOUT)
+    except OSError as e:
+        logging.error(f"command failed to start : {e}")
+        return "127", str(e).encode('utf-8')
     stdout, stderr = process.communicate()
     rc = str(process.poll())
     if stdout:
@@ -659,6 +799,8 @@ def main():
                         help='Seconds to wait for the source READ lock on each table before giving up on that table (default 30). Bounds the wait so a continuously-written table fails fast instead of stalling the whole run for the server-default timeout.')
     parser.add_argument('--fail_on_lock_timeout', action='store_true', default=False,
                         help='Abort the whole run if any table cannot be locked within --lock_wait_timeout. Default is to log a loud COVERAGE GAP warning, skip that one table, and keep checksumming the rest so a single continuously-written table does not fail the whole job.')
+    parser.add_argument('--fail_on_empty', action='store_true', default=False,
+                        help='Exit non-zero when a table compared 0 rows on both sides (verdict EMPTY). Default: EMPTY is a WARNING and the run exits 0, since empty partitions are normal in date-partitioned runs.')
 
     global args
     args = parser.parse_args()

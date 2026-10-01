@@ -25,6 +25,16 @@ from db.checksum_common import (  # noqa: E402
     clamp_datetime_expression, clamped_datetime_flag, shift_datetime_bounds,
 )
 
+def mysql_command_line(*args, **kwargs):
+    """The driver's MySQL side command (an argv list) as one line of text."""
+    return " ".join(tl.get_mysql_checksum_command(*args, **kwargs))
+
+
+def clickhouse_command_line(*args, **kwargs):
+    """The driver's ClickHouse side command (an argv list) as one line of text."""
+    return " ".join(tl.get_clickhouse_checksum_command(*args, **kwargs))
+
+
 CHECKSUM_LINE_RE = re.compile(
     r"Checksum for table (?P<db>\S+?)\.(?P<table>\S+?) = (?P<md5>[0-9a-f]{32}) count (?P<count>\d+)"
 )
@@ -370,13 +380,13 @@ class TestInstantComparison(unittest.TestCase):
         tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="Asia/Tokyo",
                                      binary_encoding="hex", include_floating_point_columns=False,
                                      include_json_columns=False)
-        mysql_cmd = tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None)
+        mysql_cmd = mysql_command_line("mysql-host", "db1", "t1", "id", 10, None)
         self.assertIn("--source_timezone Asia/Tokyo", mysql_cmd)
-        clickhouse_cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10,
+        clickhouse_cmd = clickhouse_command_line("clickhouse-host", "db1", "t1", "id", 10,
                                                             timestamp_columns=["created_at", "updated_at"])
         self.assertIn("--source_timezone Asia/Tokyo", clickhouse_cmd)
         self.assertIn("--timestamp_columns created_at,updated_at", clickhouse_cmd)
-        self.assertNotIn("--timestamp_columns", tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10))
+        self.assertNotIn("--timestamp_columns", clickhouse_command_line("clickhouse-host", "db1", "t1", "id", 10))
 
     def test_driver_resolves_the_source_zone_from_mysql(self):
         def zones(session_zone, system_zone):
@@ -593,15 +603,15 @@ class TestFloatAndJsonCoverage(unittest.TestCase):
         tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="UTC",
                                      binary_encoding="hex", include_floating_point_columns=False,
                                      include_json_columns=False)
-        mysql_cmd = tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None)
-        clickhouse_cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10, json_columns=["j"])
+        mysql_cmd = mysql_command_line("mysql-host", "db1", "t1", "id", 10, None)
+        clickhouse_cmd = clickhouse_command_line("clickhouse-host", "db1", "t1", "id", 10, json_columns=["j"])
         self.assertNotIn("--include_", mysql_cmd)
         self.assertNotIn("--include_", clickhouse_cmd)
         self.assertIn("--json_columns j", clickhouse_cmd)
         tl.args.include_floating_point_columns = True
         tl.args.include_json_columns = True
-        mysql_cmd = tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None)
-        clickhouse_cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10, json_columns=["j"])
+        mysql_cmd = mysql_command_line("mysql-host", "db1", "t1", "id", 10, None)
+        clickhouse_cmd = clickhouse_command_line("clickhouse-host", "db1", "t1", "id", 10, json_columns=["j"])
         for cmd in (mysql_cmd, clickhouse_cmd):
             self.assertIn("--include_floating_point_columns", cmd)
             self.assertIn("--include_json_columns", cmd)
@@ -745,16 +755,16 @@ class TestBinaryEncoding(unittest.TestCase):
         tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="UTC",
                                      binary_encoding="hex", include_floating_point_columns=False,
                                      include_json_columns=False)
-        mysql_cmd = tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None)
+        mysql_cmd = mysql_command_line("mysql-host", "db1", "t1", "id", 10, None)
         self.assertIn("--binary_encoding hex", mysql_cmd)
         self.assertNotIn("base64", mysql_cmd)
-        clickhouse_cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10, binary_columns=["b1", "b2"])
+        clickhouse_cmd = clickhouse_command_line("clickhouse-host", "db1", "t1", "id", 10, binary_columns=["b1", "b2"])
         self.assertIn("--binary_encoding hex", clickhouse_cmd)
         self.assertNotIn("--hex_columns", clickhouse_cmd)
         tl.args.binary_encoding = "raw"
-        clickhouse_cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10, binary_columns=["b1", "b2"])
+        clickhouse_cmd = clickhouse_command_line("clickhouse-host", "db1", "t1", "id", 10, binary_columns=["b1", "b2"])
         self.assertIn("--binary_encoding raw --hex_columns b1,b2", clickhouse_cmd)
-        self.assertIn("--binary_encoding raw", tl.get_mysql_checksum_command("mysql-host", "db1", "t1", "id", 10, None))
+        self.assertIn("--binary_encoding raw", mysql_command_line("mysql-host", "db1", "t1", "id", 10, None))
 
 
 class TestBooleanAndBit(unittest.TestCase):

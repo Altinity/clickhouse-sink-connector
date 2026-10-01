@@ -25,7 +25,7 @@ This spec is the map of the toolset as built on 2.11.0. It covers:
 
 Headline findings, each a DEFECT in §7:
 
-- An installed `ch-mysql-checksum` reports "No difference" for tables it never compared (D-13.01-2).
+- An installed `ch-mysql-checksum` reported "No difference" for tables it never compared (D-13.01-2, fixed since 2.11.0: it now runs its packaged side modules with its own interpreter and exits 1 when a side fails; see 13.06 §3.1 and §3.8).
 - The packaged loader, which `ch-mysql-load` and `ch-mysql-resync` run, resolves a dump's time zone to a random IANA zone (D-13.01-1).
 - Every `ch-*` MySQL command ships the copy without the spec 11.02/11.05 fixes: `eval()` of `--where`, passwords in logs. The 2.10.0 release notes say those fixes are in `ch_sink_tools` (D-13.01-4).
 - The `[mysql]` extra cannot import the MySQL tools (D-13.01-5).
@@ -122,7 +122,7 @@ Lifecycle roles:
 | ClickHouse side checksum (MySQL flavour) | `db_compare/clickhouse_table_checksum.py` | `ch_sink_tools/db_compare/clickhouse_table_checksum.py` | `ch-ch-checksum` | VERIFY | none | 13.06 |
 | MySQL count | `db_compare/mysql_table_count.py` | `ch_sink_tools/db_compare/mysql_table_count.py` | none | COUNT | none | 13.06 |
 | ClickHouse count | `db_compare/clickhouse_table_count.py` | `ch_sink_tools/db_compare/clickhouse_table_count.py` | `ch-ch-count` | COUNT | none | 13.06 |
-| MySQL checksum orchestrator | `db_compare/top_level_table_checksum.py` | `ch_sink_tools/db_compare/top_level_table_checksum.py` | `ch-mysql-checksum` | VERIFY (driver) | `bash -c` pipelines: `python db_compare/<side>_table_checksum.py ... \| grep -i checksum \| awk` | 13.06 (11.02) |
+| MySQL checksum orchestrator | `db_compare/top_level_table_checksum.py` | `ch_sink_tools/db_compare/top_level_table_checksum.py` | `ch-mysql-checksum` | VERIFY (driver) | argv lists without a shell: `<sys.executable> -m ch_sink_tools.db_compare.<side>_table_checksum` (packaged), `python db_compare/<side>_table_checksum.py` (legacy); side output parsed in Python | 13.06 (11.02) |
 | PostgreSQL single-table checksum | none | `ch_sink_tools/db_compare/postgres_table_checksum.py` | `ch-pg-checksum` | VERIFY | none | 13.07 |
 | PostgreSQL count | none | `ch_sink_tools/db_compare/postgres_table_count.py` | `ch-pg-count` | COUNT | none | 13.07 |
 | PostgreSQL checksum orchestrator | none | `ch_sink_tools/db_compare/top_level_postgres_checksum.py` (+ `_expressions.py`) | `ch-checksum` | VERIFY (driver) + COUNT | none | 13.07 |
@@ -133,7 +133,7 @@ Lifecycle roles:
 | Shared checksum canonicalisation | `db/checksum_common.py` | none | none | VERIFY | none | 13.06 (11.02) |
 | Dev end-to-end harness | `test_db.sh` | none | none | SNAP-LOAD + VERIFY | `docker exec`, legacy loader and checksums, `diff` | §3.10.4 here |
 
-Two tools have no packaged entry point although their packaged module has a `main()`: `ch_sink_tools.db_compare.mysql_table_checksum` and `ch_sink_tools.db_compare.mysql_table_count`. `ch-mysql-checksum` reaches the MySQL side only through a cwd-relative script path (§3.14.5, D-13.01-2).
+Two tools have no packaged entry point although their packaged module has a `main()`: `ch_sink_tools.db_compare.mysql_table_checksum` and `ch_sink_tools.db_compare.mysql_table_count`. `ch-mysql-checksum` reaches the MySQL side as `<sys.executable> -m ch_sink_tools.db_compare.mysql_table_checksum` (§3.14.5; before D-13.01-2 was fixed it used a cwd-relative script path).
 
 ### 3.3 Console scripts (`pyproject.toml:35-50`)
 
@@ -531,7 +531,7 @@ Method: an AST-based function diff. For every file pair it parses both copies an
 
 #### 3.14.5 Cross-tree mixing hazards
 
-- `ch-mysql-checksum` (packaged) spawns `python db_compare/mysql_table_checksum.py` and `python db_compare/clickhouse_table_checksum.py` **relative to the cwd** (`top_level_table_checksum.py:159,186`), using whatever `python` is first on `PATH` (not `sys.executable`). Three cases:
+- `ch-mysql-checksum` (packaged) now spawns `<sys.executable> -m ch_sink_tools.db_compare.mysql_table_checksum` and `... clickhouse_table_checksum` as argv lists without a shell, with the directory holding the imported `ch_sink_tools` first on the child's `PYTHONPATH`, so it runs the packaged sides of its own installation from any cwd, and a failed side is verdict `ERROR` with exit 1 (13.06 §3.1, §3.8; D-13.01-2 fixed, pinned by `sink-connector/python/db_compare/tests/test_packaged_checksum_verdicts.py::TestPackagedSidesAndFailures::test_side_module_starts_from_a_foreign_cwd_without_pythonpath`). On 2.11.0 it spawned `python db_compare/mysql_table_checksum.py` and `python db_compare/clickhouse_table_checksum.py` **relative to the cwd**, using whatever `python` is first on `PATH`. Three cases, as built on 2.11.0:
   - **cwd without `db_compare/`** (any installed use): both children fail with `can't open file`. Under `set -e pipefail` the pipeline exits 0 with the error text on stdout. Both sides parse as `(table, None, None)`, and `analyze_differences` logs `No difference for <t>` (reproduced, §5 R12; D-13.01-2). This is a stronger form of FM-11.02-2: any failure, not only a name collision, becomes a false "equal".
   - **cwd = `sink-connector/python` with `PYTHONPATH=.`**: the children are the **legacy** side scripts. Their parsers accept every flag the packaged orchestrator passes (reproduced, §5 R13). The MySQL side then runs with `--binary_encoding base64` and the ClickHouse side with the legacy default `hex`, both with `source_timezone=UTC` and the 1969-12-31 18:00:00 clamp floor. That differs from the result of either tree run alone.
   - **cwd = `sink-connector/python` without `PYTHONPATH`**: the children die with `No module named 'db'`, which is the first case again.
@@ -558,8 +558,8 @@ These are the properties the toolset's architecture must have. The "As built" no
 - **I-13.01-2 Every console script imports under the extras the README names for it.** *As built: violated* for the three MySQL commands under `[mysql]` (D-13.01-5).
 - **I-13.01-3 `requires-python` is the real floor.** Every module imports and every code path runs on the declared minimum. *As built: violated*: the floor is 3.10 (D-13.01-6).
 - **I-13.01-4 Generated code is reproducible from the committed grammars into the directory that is imported.** *As built: violated* (D-13.01-8, D-13.01-9). The committed MySQL output does match its grammar (§3.7).
-- **I-13.01-5 A launcher that cannot run its tool fails non-zero and never prints a success-shaped result.** *As built: violated* by `ch-mysql-checksum` from a foreign cwd (D-13.01-2) and by `test_db.sh` (D-13.01-13). It holds for `postgres_checksum_runner.sh` (exit 2) and for the legacy scripts without `PYTHONPATH` (exit 1).
-- **I-13.01-6 The wheel contains every file a packaged tool reads at runtime and no source-tree path is assumed.** *As built*: the contents hold (§3.4). The path assumption is violated by `ch-mysql-checksum` and `postgres_checksum_runner.sh`.
+- **I-13.01-5 A launcher that cannot run its tool fails non-zero and never prints a success-shaped result.** *As built: violated* by `test_db.sh` (D-13.01-13). On 2.11.0 it was also violated by `ch-mysql-checksum` from a foreign cwd (D-13.01-2, now fixed). It holds for `postgres_checksum_runner.sh` (exit 2) and for the legacy scripts without `PYTHONPATH` (exit 1).
+- **I-13.01-6 The wheel contains every file a packaged tool reads at runtime and no source-tree path is assumed.** *As built*: the contents hold (§3.4). The path assumption is violated by `postgres_checksum_runner.sh` (and was by `ch-mysql-checksum` until D-13.01-2 was fixed).
 - **I-13.01-7 No secret is written to a log or a process argument by the copy a user installs.** *As built: violated* by the packaged dumper, loader and `resolve_credentials_from_config` (D-13.01-4).
 - **I-13.01-8 Documentation matches the build.** *As built: violated* (§3.13).
 
@@ -610,7 +610,8 @@ Existing tests that pin parts of this contract:
 - `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestUnixTimezoneFromMysqlTimezone::test_unknown_offset_falls_back_to_utc` pins the **legacy** fallback only.
 - `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestDdlConversionAntlr::test_returns_ddl_and_columns` (legacy translator).
 - `sink-connector/python/db_dump/tests/test_mysql_dumper_unit.py::TestRedactPassword::test_registered_secret_is_masked` (legacy only; the packaged dumper has no `redact_password`).
-- `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestVerdictOnUnparseableOutput::test_both_sides_unparseable_is_never_reported_equal` (skipped, DEFECT; legacy orchestrator; same verdict logic as packaged).
+- `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestVerdictOnUnparseableOutput::test_both_sides_unparseable_is_never_reported_equal` (passing since the verdict fix; legacy orchestrator; same verdict logic as packaged).
+- `sink-connector/python/db_compare/tests/test_packaged_checksum_verdicts.py::TestPackagedSidesAndFailures::test_side_module_starts_from_a_foreign_cwd_without_pythonpath` (packaged orchestrator; G6).
 
 Required new tests (GAPs, referenced from §6):
 
@@ -619,7 +620,7 @@ Required new tests (GAPs, referenced from §6):
 - G3: an equality test that runs each function pair of §3.14.2 on both trees and asserts the same output.
 - G4: regenerate the grammars in CI and `git diff --exit-code`.
 - G5: packaged `get_unix_timezone_from_mysql_timezone` is deterministic and falls back to UTC.
-- G6: `ch-mysql-checksum` from a foreign cwd exits non-zero.
+- G6: `ch-mysql-checksum` from a foreign cwd exits non-zero. Added (see the list above).
 - G7: build each Dockerfile and run `--help`.
 - G8: `parse_postgres_ddl` on `DEFAULT -1`.
 - G9: listener tests for `charset`, `null` and `_ident` inside generated expressions.
@@ -645,8 +646,8 @@ The component is the delivery layer: which code runs, under which interpreter an
   - **Blast radius**: every table of the run is reported equal. A scheduler trusting the log verdict or the exit code records a fully unverified replica as verified.
   - **Recovery**: run the legacy orchestrator from `sink-connector/python` with `PYTHONPATH=.` (`python db_compare/top_level_table_checksum.py`). Treat any `Invalid checksum output` line as a failed run.
   - **RTO**: one legacy re-run (proportional to data size; unmeasured).
-  - **Test**: GAP: G6. Related: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestVerdictOnUnparseableOutput::test_both_sides_unparseable_is_never_reported_equal` (skipped, legacy).
-  - **DEFECT**: D-13.01-2, a packaged console script depends on a source-tree-relative path and masks the failure.
+  - **Test**: `sink-connector/python/db_compare/tests/test_packaged_checksum_verdicts.py::TestPackagedSidesAndFailures::test_both_sides_failing_exits_non_zero_and_never_reports_equal` (and `...::test_side_module_starts_from_a_foreign_cwd_without_pythonpath`, G6).
+  - **FIXED**: D-13.01-2 (= D-13.06-1). The packaged sides run as `<sys.executable> -m ch_sink_tools.db_compare.<side>` from any cwd; a failed side is verdict `ERROR` and the run exits 1.
 
 - **FM-13.01-3 A generated column becomes a different MATERIALIZED expression**
   - **Trigger**: initial load (schema phase) of a table with a generated column whose expression contains an identifier starting with `_` before a quote, e.g. `concat(_code, 'x')`.
@@ -807,14 +808,14 @@ The component is the delivery layer: which code runs, under which interpreter an
   - **Test**: GAP: G1, G2, G4, G7 as workflow steps.
   - **DEFECT**: D-13.01-24, no CI job builds or imports what users install (extends FM-11.05-3).
 
-Summary: 17 failure modes, 17 DEFECT, 17 GAP.
+Summary: 17 failure modes, 16 DEFECT, 16 GAP.
 
 ## 7. Defect Register
 
 | ID | Severity | Copy (legacy/packaged/both) | Location | Evidence | Summary |
 |---|---|---|---|---|---|
 | D-13.01-1 | S1 | packaged | `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py:266-284` | reproduced (R14: four hash seeds, four different zones for `+01:00`, `Japan`/`Europe/Lisbon`/... for an unmatched offset; legacy stable and `UTC`) | Dump time zone resolved by unordered set iteration, last zone returned when nothing matches; affects `ch-mysql-load` and `ch-mysql-resync`. |
-| D-13.01-2 | S1 | packaged | `sink-connector/python/ch_sink_tools/db_compare/top_level_table_checksum.py:159,186` | reproduced (R12: empty cwd → both sides `None` → `No difference for t1`, pipeline rc 0) | `ch-mysql-checksum` spawns cwd-relative side scripts under `set -e pipefail`; installed use reports equality without comparing. |
+| D-13.01-2 | S1 | packaged | `sink-connector/python/ch_sink_tools/db_compare/top_level_table_checksum.py:159,186` | reproduced (R12: empty cwd → both sides `None` → `No difference for t1`, pipeline rc 0) | FIXED (same fix as D-13.06-1): sides run as `<sys.executable> -m ch_sink_tools.db_compare.<side>` without a shell; a failed side is `ERROR`, exit 1. Test: `test_packaged_checksum_verdicts.py::TestPackagedSidesAndFailures::test_side_module_starts_from_a_foreign_cwd_without_pythonpath`. Was: `ch-mysql-checksum` spawned cwd-relative side scripts under `set -e pipefail`; installed use reported equality without comparing. |
 | D-13.01-3 | S1 | both | `sink-connector/python/db_load/mysql_parser/CreateTableMySQLParserListener.py:98` (same line in packaged) | reproduced (R8: `concat(_code, 'x')` → `MATERIALIZED concat('x')`) | Introducer-strip regex deletes identifiers starting with `_`, silently changing MATERIALIZED expressions. |
 | D-13.01-4 | S2 | packaged | `sink-connector/python/ch_sink_tools/db_compare/mysql_table_count.py:44-46`, `.../mysql_table_checksum.py:168-170`, `.../clickhouse_table_checksum.py:218-220`, `sink-connector/python/ch_sink_tools/db_dump/mysql_dumper.py` `run_command`/`generate_mysqlsh_command`, `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py` `execute_load`, `sink-connector/python/ch_sink_tools/db/clickhouse.py:68`; `release-notes/2.10.0.md:11` | reproduced (R6: `{__import__('os').getpid() > 0}` evaluated to `True`); code-read for the log lines (§3.14.2) | The installed copy keeps `eval()` of `--where` and logs passwords; release notes claim both fixed in `ch_sink_tools`. |
 | D-13.01-5 | S3 | packaged | `sink-connector/python/pyproject.toml:23-30`, `sink-connector/python/ch_sink_tools/db/mysql.py:8` | reproduced (R2: `No module named 'pandas'` under `[mysql]`) | `[mysql]` extra omits pandas, a top-level import of every MySQL tool; README promises `[mysql]` suffices. |
