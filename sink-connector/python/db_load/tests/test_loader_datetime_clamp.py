@@ -69,25 +69,43 @@ def loader_args(dump_dir):
                      binary_handling_mode="bytes", persist_raw_bytes=False)
 
 
-def schema_and_insert(loader, tmp_path, datetime_timezone):
-    """The CREATE TABLE and the INSERT ... SELECT ... FROM input(...) the loader would run for t1."""
+# A target created by someone else than this loader run: the connector (its zone UTC) or ch-mysql-resync's scratch
+# table, CREATE TABLE ... AS the live table, loaded with --data_only and no --clickhouse_datetime_timezone.
+CONNECTOR_TARGET = ("CREATE TABLE db1_ch.t1 (`id` Int32, `valid_to` Nullable(DateTime64(6, 'UTC')), "
+                    "`created` DateTime64(0, 'UTC'), `_version` UInt64 DEFAULT 0, `is_deleted` UInt8 DEFAULT 0) "
+                    "ENGINE = ReplacingMergeTree(_version, is_deleted) ORDER BY id")
+
+
+def own_types(columns):
+    """system.columns of the table the loader creates from its own translation."""
+    return {c["column_name"].strip("`"): (f"Nullable({c['datatype'].strip()})" if c["nullable"] else
+                                         c["datatype"].strip()) for c in columns}
+
+
+def schema_and_insert(loader, tmp_path, datetime_timezone, target_types=None):
+    """The CREATE TABLE and the INSERT ... SELECT ... FROM input(...) the loader would run for t1; the target
+    table's system.columns are ``target_types`` (default: the loader's own translation)."""
     ddl, columns = loader.convert_to_clickhouse_table("u", "t1", DDL, True, False, datetime_timezone)
     (tmp_path / "db1@t1.sql").write_text(DDL)
     (tmp_path / "db1@t1@@0.tsv.zst").write_bytes(b"")
     commands = []
-    with mock.patch.object(loader, "execute_load", commands.append):
+    types = target_types if target_types is not None else own_types(columns)
+    with mock.patch.object(loader, "execute_load", commands.append), \
+            mock.patch.object(loader, "target_column_types", return_value=types) as lookup:
         loader.load_data_mysqlshell(loader_args(tmp_path), "UTC", {"db1.t1": columns}, "loader", None)
     assert len(commands) == 1, commands
+    assert lookup.call_args.args[3:] == ("db1_ch", "t1"), lookup.call_args
     query = re.search(r'--query="(.*?)" -u', commands[0], re.S).group(1).replace("\\`", "`")
     return ddl, query
 
 
-def run(loader, tmp_path, datetime_timezone, server_zone):
-    ddl, query = schema_and_insert(loader, tmp_path, datetime_timezone)
+def run(loader, tmp_path, datetime_timezone, server_zone, target_ddl=None, target_types=None):
+    ddl, query = schema_and_insert(loader, tmp_path, datetime_timezone, target_types)
     data = "\n".join("\t".join(row) for row in ROWS) + "\n"
     query = re.sub(r"FROM input\('(.*?)'\) FORMAT TSV", lambda m: f"FROM format(TSV, '{m.group(1)}', $${data}$$)",
                    query, flags=re.S)
-    script = (ddl.replace("CREATE TABLE `t1`", "CREATE DATABASE db1_ch; CREATE TABLE db1_ch.t1", 1) + ";\n" + query +
+    create = target_ddl or ddl.replace("CREATE TABLE `t1`", "CREATE TABLE db1_ch.t1", 1)
+    script = ("CREATE DATABASE db1_ch;\n" + create + ";\n" + query +
               ";\nSELECT id, toString(valid_to, 'UTC'), toString(created, 'UTC') FROM db1_ch.t1 ORDER BY id FORMAT TSV")
     result = subprocess.run([CLICKHOUSE, "local", "--multiquery", "-q", script], capture_output=True, text=True,
                             env=dict(os.environ, TZ=server_zone))
@@ -96,15 +114,34 @@ def run(loader, tmp_path, datetime_timezone, server_zone):
 
 
 def test_datetime_column_is_clamped_to_the_connector_bounds(loader):
-    column = {"column_name": "`valid_to`", "datatype": "DateTime64(6,'UTC')", "mysql_datatype": "datetime(6)",
+    column = {"column_name": "`valid_to`", "datatype": "DateTime64(6)", "mysql_datatype": "datetime(6)",
               "nullable": True}
-    expression = loader.mysqlshell_column_expression(column, "\\`valid_to\\`", None)
+    # the target table's own type wins over the loader's translation
+    expression = loader.mysqlshell_column_expression(column, "\\`valid_to\\`", None,
+                                                     target_types={"valid_to": "Nullable(DateTime64(6, 'UTC'))"})
     assert expression == (
         "multiIf(\\`valid_to\\` >= '2299-12-31 23:59:59', "
-        "CAST(toDateTime64('2299-12-31 23:59:59', 6, 'UTC') AS Nullable(DateTime64(6,'UTC'))), "
+        "CAST(toDateTime64('2299-12-31 23:59:59', 6, 'UTC') AS Nullable(DateTime64(6, 'UTC'))), "
         "\\`valid_to\\` < '1900-01-01 00:00:00.000001', "
-        "CAST(toDateTime64('1900-01-01 00:00:00', 6, 'UTC') AS Nullable(DateTime64(6,'UTC'))), "
-        "CAST(\\`valid_to\\` AS Nullable(DateTime64(6,'UTC'))))")
+        "CAST(toDateTime64('1900-01-01 00:00:00', 6, 'UTC') AS Nullable(DateTime64(6, 'UTC'))), "
+        "CAST(\\`valid_to\\` AS Nullable(DateTime64(6, 'UTC'))))")
+    # without a known target type, the translation (Nullable when the column is)
+    assert loader.mysqlshell_column_expression(column, "\\`valid_to\\`", None).endswith(
+        "CAST(\\`valid_to\\` AS Nullable(DateTime64(6))))")
+
+
+@pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse local not installed")
+@pytest.mark.parametrize("server_zone", ["UTC", "America/Chicago"])
+def test_data_only_load_into_a_table_created_elsewhere(loader, tmp_path, server_zone):
+    """The target's columns are DateTime64(.., 'UTC') while the loader's translation (no
+    --clickhouse_datetime_timezone) has no zone, as for the ch-mysql-resync scratch table: in-range values are
+    still converted in the target's zone (an end-to-end resync stored 03:04:05 as 09:04:05 under America/Chicago
+    when the cast used the translation), out-of-range ones take the bound instants."""
+    target_types = {"id": "Int32", "valid_to": "Nullable(DateTime64(6, 'UTC'))", "created": "DateTime64(0, 'UTC')"}
+    stored = run(loader, tmp_path, None, server_zone, target_ddl=CONNECTOR_TARGET, target_types=target_types)
+    for row_id, expected in CONNECTOR.items():
+        assert stored[row_id] == expected, (row_id, stored[row_id], server_zone)
+    assert stored["5"] == ("2024-05-06 07:08:09.123456", "2024-05-06 07:08:09"), stored["5"]
 
 
 @pytest.mark.skipif(CLICKHOUSE is None, reason="clickhouse local not installed")

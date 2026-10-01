@@ -462,10 +462,21 @@ def mysqlshell_binary_kind(mysql_datatype):
 
 
 MYSQL_DATETIME_DATATYPE = re.compile(r"\s*datetime\b", re.IGNORECASE)
-DATETIME64_PRECISION = re.compile(r"\s*DateTime64\(\s*(\d+)")
+DATETIME64_PRECISION = re.compile(r"DateTime64\(\s*(\d+)")
 
 
-def datetime_clamp_expression(column, column_name):
+def target_column_types(args, clickhouse_user, clickhouse_password, database, table):
+    """{column: ClickHouse type} of the target table as it exists (system.columns). A --data_only load (the
+    ch-mysql-resync scratch table is CREATE TABLE ... AS the live table) or a table created by the connector can
+    differ from the loader's own translation, e.g. DateTime64(6, 'UTC') against DateTime64(6)."""
+    quote = lambda name: name.replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
+    with get_connection(args, clickhouse_user, clickhouse_password) as conn:
+        rows = clickhouse_execute_conn(conn, f"SELECT name, type FROM system.columns WHERE database = "
+                                             f"'{quote(database)}' AND table = '{quote(table)}'")
+    return {name: column_type for (name, column_type) in rows}
+
+
+def datetime_clamp_expression(column, column_name, target_types=None):
     """A MySQL DATETIME field of the dump (text, input() declares it String), saturated as the streaming connector
     saturates it (Spec 13.04 D-13.04-34): above 2299-12-31 23:59:59 the instant 2299-12-31 23:59:59 UTC, below
     1900-01-01 00:00:00 the instant 1900-01-01 00:00:00 UTC (DataTypeRange.DATETIME64_MAX/MIN, clamp.out.of.range;
@@ -475,12 +486,19 @@ def datetime_clamp_expression(column, column_name):
     too (the same instant, whatever the zone); any other value is cast to the column type exactly as the INSERT
     cast it before. The dump writes 'YYYY-MM-DD HH:MM:SS[.ffffff]', so text order is time order: '>= max' catches
     the bound and anything later, '< min + 1 microsecond' the bound written with or without a fraction and
-    anything earlier."""
-    target = column['datatype'].strip()
-    precision = DATETIME64_PRECISION.match(target)
+    anything earlier.
+
+    The type cast to is the target table's own column type (``target_types``, from system.columns), so an
+    in-range value is converted in the target column's zone as the implicit INSERT conversion did; the loader's
+    own translation (``datatype``) is used only when the target type is not known."""
+    bare_name = column['column_name'].replace('`', '')
+    target = (target_types or {}).get(bare_name)
+    if target is None:
+        target = column['datatype'].strip()
+        if column.get('nullable'):
+            target = f"Nullable({target})"
+    precision = DATETIME64_PRECISION.search(target)
     precision = precision.group(1) if precision else '6'
-    if column.get('nullable'):
-        target = f"Nullable({target})"
     (low, high) = (_DATETIME64_MIN_UTC, _DATETIME64_MAX_UTC)
     return (f"multiIf({column_name} >= '{high}', CAST(toDateTime64('{high}', {precision}, 'UTC') AS {target}), "
             f"{column_name} < '{low}.000001', CAST(toDateTime64('{low}', {precision}, 'UTC') AS {target}), "
@@ -499,7 +517,7 @@ def read_mysqlshell_decode_columns(table_metadata_path):
 
 
 def mysqlshell_column_expression(column, column_name, decode_columns, binary_handling_mode='bytes',
-                                 persist_raw_bytes=False):
+                                 persist_raw_bytes=False, target_types=None):
     """SELECT expression that turns a MySQL Shell TSV field into the text the streaming connector stores.
 
     Spec 07.05 section 3.2 and Spec 07.06 section 3.2. MySQL Shell writes binary, BIT and spatial columns as
@@ -520,7 +538,7 @@ def mysqlshell_column_expression(column, column_name, decode_columns, binary_han
     if kind is None:
         if encoding is None:
             if MYSQL_DATETIME_DATATYPE.match(mysql_datatype or ''):
-                return datetime_clamp_expression(column, column_name)
+                return datetime_clamp_expression(column, column_name, target_types)
             return column_name
         raise ValueError(f"Column {bare_name} ({mysql_datatype}) is encoded in the dump ({encoding}) but the loader "
                          f"has no rule for the representation the connector stores for that type")
@@ -550,7 +568,7 @@ def mysqlshell_column_expression(column, column_name, decode_columns, binary_han
 
 
 def get_column_list(schema_map, schema, table, virtual_columns, transform=False, mysqlshell=False,
-                    decode_columns=None, binary_handling_mode='bytes', persist_raw_bytes=False):
+                    decode_columns=None, binary_handling_mode='bytes', persist_raw_bytes=False, target_types=None):
     key = f"{schema}.{table}"
     column_list = "*"
     if key in schema_map:
@@ -570,7 +588,7 @@ def get_column_list(schema_map, schema, table, virtual_columns, transform=False,
                 logging.debug(f"{table} {column_name} {datatype}")
                 if transform and mysqlshell:
                     column_list += mysqlshell_column_expression(column, column_name, decode_columns,
-                                                                binary_handling_mode, persist_raw_bytes)
+                                                                binary_handling_mode, persist_raw_bytes, target_types)
                 elif transform and is_binary_datatype(datatype):
                     # mydumper layout: unchanged (its binary rendering is unverified, Spec 13.04 section 3.8)
                     column_list += "lower(hex("+column_name+"))"
@@ -661,11 +679,16 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
                                 f"encoding (useBase64: true) for the binary, BIT and spatial columns of {table_name}")
             columns = get_column_list(
                 schema_map, schema, table_name, args.virtual_columns, transform=False, mysqlshell=args.mysqlshell)
+            # DATETIME values are cast to the target table's own column types (datetime_clamp_expression)
+            target_types = None
+            if any(MYSQL_DATETIME_DATATYPE.match(c.get('mysql_datatype', '') or '')
+                   for c in schema_map.get(f"{schema}.{table_name}", [])):
+                target_types = target_column_types(args, clickhouse_user, clickhouse_password, ch_schema, table_name)
             transformed_columns = get_column_list(
                 schema_map, schema, table_name, args.virtual_columns, transform=True, mysqlshell=args.mysqlshell,
                 decode_columns=decode_columns,
                 binary_handling_mode=getattr(args, 'binary_handling_mode', 'bytes'),
-                persist_raw_bytes=getattr(args, 'persist_raw_bytes', False))
+                persist_raw_bytes=getattr(args, 'persist_raw_bytes', False), target_types=target_types)
             
             if args.truncate_tables:
                 if not args.dry_run:
