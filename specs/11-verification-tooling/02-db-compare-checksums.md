@@ -154,10 +154,16 @@ single character `#`:
 - A `NULL` value renders as the empty string on both sides
   (`ifnull(expr, '')` / `case when col is null then '' else expr end`), and
   the nullability of the row is carried by one extra trailing element: the
-  concatenation, in column order, of `1` (NULL) or `0` (not NULL) for every
-  nullable compared column (`concat(ISNULL(a), ISNULL(b))` /
+  concatenation, in column order, of `1` (NULL) or `0` (not NULL) for
+  **every** compared column, whether or not its catalog declares it nullable
+  (`concat(ISNULL(a), ISNULL(b))` /
   `case when a is null then '1' else '0' end || ...`). This keeps `NULL`
-  distinguishable from `''`.
+  distinguishable from `''`. The flags are value-based over the same columns
+  on both sides, so a column declared nullable on MySQL and non-Nullable on
+  ClickHouse (a stored generated column, for instance) gives the same flags
+  for equal values, while a MySQL NULL against the ClickHouse default still
+  differs in its flag (spec 13.06 D-13.06-40,
+  `test_checksum_fidelity.py::TestNullFlagsOverEveryComparedColumn`).
 - Per-type rendering (both sides must produce byte-identical text for equal
   values):
 
@@ -465,11 +471,15 @@ connect to a database.
 - `sink-connector/python/db_compare/tests/test_checksum_fidelity.py`
   - `TestClickHouseRowExpression.test_trailing_float_column_leaves_no_dangling_separator`
     — §3.3: with `execute_sql` stubbed to describe `(id Int32, name String,
-    f Float64)`, the built expression is exactly
-    `toString("id")||'#'||toString("name")`; the pre-fix code produced
+    f Float64)`, the values part of the built expression is exactly
+    `toString("id")||'#'||toString("name")`, followed only by the null-flags
+    element over `id` and `name`; the pre-fix code produced
     `toString("id")||'#'||toString("name")||'#'`.
   - `TestClickHouseRowExpression.test_nullable_flags_are_one_trailing_element`
     — §3.3 nullability element.
+  - `TestNullFlagsOverEveryComparedColumn` — §3.3: one null flag per compared
+    column on both sides, the same columns whatever each catalog declares
+    nullable; excluded and skipped columns flag nothing.
   - `TestEndToEndChecksum.test_equal_fixtures_report_equal` — §3.5: both side
     scripts, driven through their real `compute_checksum` /
     `calculate_checksum` paths with stubbed engines, print the same checksum

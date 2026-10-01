@@ -156,9 +156,16 @@ def build_clickhouse_row_expression(columns_metadata, options):
     JSON) must contribute neither a value nor a separator, otherwise a table
     whose last column is a skipped Float64 hashes ``1#bob#`` here against
     ``1#bob`` from MySQL's concat_ws (spec 11.02 section 3.3).
+
+    The null flags are one trailing part with one flag per compared column,
+    Nullable or not (a non-Nullable column yields '0'), so a column declared
+    nullable on MySQL and non-Nullable here gives the same flags for equal
+    values (spec 13.06 D-13.06-40). ``nullables`` lists the compared columns
+    declared Nullable (the ones whose value has the NULL guard).
     """
     parts = []
     nullables = []
+    compared = []
     columns = []
     data_types = {}
     clamped_flags = []
@@ -203,10 +210,11 @@ def build_clickhouse_row_expression(columns_metadata, options):
             nullables.append(column_name)
             expression = "case when " + column_name + " is null then '' else " + expression + " end"
         parts.append(expression)
+        compared.append(column_name)
     logging.debug(str(nullables))
-    if len(nullables) > 0:
+    if len(compared) > 0:
         parts.append(" || ".join(
-            "case when " + nullable + " is null then '1' else '0' end" for nullable in nullables))
+            "case when " + compared_column + " is null then '1' else '0' end" for compared_column in compared))
     select = "||'#'||".join(parts)
     return (select, nullables, columns, data_types, clamped_count_expression(clamped_flags), skipped)
 

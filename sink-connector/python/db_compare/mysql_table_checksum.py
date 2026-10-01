@@ -125,10 +125,15 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
     ``select`` is the comma separated argument list of ``concat_ws('#', ...)``,
     ``clamped_expression`` the per-row count of datetime values the clamp
     changed and ``skipped`` the columns not compared by kind. Skipped columns
-    contribute nothing; the nullability flags are one trailing element.
+    contribute nothing. The null flags are one trailing element with one
+    ``ISNULL`` per compared column, nullable or not, so a column declared
+    nullable here and non-Nullable on the replica gives the same flags for
+    equal values (spec 13.06 D-13.06-40). ``nullables`` lists the compared
+    columns declared nullable (the ones whose value is wrapped in ``ifnull``).
     """
     pieces = []
     nullables = []
+    compared = []
     data_types = {}
     clamped_flags = []
     skipped = {"floating point": [], "JSON": []}
@@ -160,10 +165,11 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
             nullables.append(column_name)
             expression = f"ifnull({expression},'')"
         pieces.append(expression)
+        compared.append(column_name)
         data_types[name] = column['column_type']
     logging.debug(str(nullables))
-    if len(nullables) > 0:
-        pieces.append("concat(" + ",".join("ISNULL(" + nullable + ")" for nullable in nullables) + ")")
+    if len(compared) > 0:
+        pieces.append("concat(" + ",".join("ISNULL(" + compared_column + ")" for compared_column in compared) + ")")
     return (",".join(pieces), nullables, data_types, clamped_count_expression(clamped_flags), skipped)
 
 

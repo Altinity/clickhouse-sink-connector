@@ -270,7 +270,9 @@ class TestPackagedJsonCoverage(unittest.TestCase):
         with self.assertLogs(level="WARNING") as logs:
             select = clickhouse_select_for([("id", "Int32", 0, None), ("j", "Nullable(String)", 1, None),
                                             ("name", "String", 0, None)], args_overrides={"json_columns": "j"})
-        self.assertEqual(select, "toString(\"id\")||'#'||toString(\"name\")")
+        self.assertEqual(select, "toString(\"id\")||'#'||toString(\"name\")"
+                                 "||'#'|| case when \"id\" is null then '1' else '0' end "
+                                 "|| case when \"name\" is null then '1' else '0' end ")
         self.assertTrue(any('JSON column "j"' in line for line in logs.output), logs.output)
 
     def test_driver_derives_json_columns_for_the_clickhouse_side(self):
@@ -286,7 +288,9 @@ class TestPackagedJsonCoverage(unittest.TestCase):
 
     def test_skipped_last_column_leaves_no_dangling_separator(self):
         select = clickhouse_select_for([("id", "Int32", 0, None), ("name", "String", 0, None), ("f", "Float64", 0, None)])
-        self.assertEqual(select, "toString(\"id\")||'#'||toString(\"name\")")
+        self.assertEqual(select, "toString(\"id\")||'#'||toString(\"name\")"
+                                 "||'#'|| case when \"id\" is null then '1' else '0' end "
+                                 "|| case when \"name\" is null then '1' else '0' end ")
 
 
 class TestPackagedClickHouseSideIsReadOnly(unittest.TestCase):
@@ -337,7 +341,7 @@ class MappingRows(list):
         return iter(self)
 
 
-def mysql_select_for(columns, args_overrides=None):
+def mysql_select_for(columns, args_overrides=None, excluded_columns=()):
     """The packaged MySQL side's row expression for (name, column_type, is_nullable, collation) rows."""
     values = dict(mysql_database="shop", min_date_value="1900-01-01", max_date_value="2299-12-31",
                   min_datetime_value="1900-01-01 00:00:00", max_datetime_value="2299-12-31 23:59:59")
@@ -345,7 +349,8 @@ def mysql_select_for(columns, args_overrides=None):
     pm.args = argparse.Namespace(**values)
     rows = MappingRows({"column_name": n, "data_type": t, "is_nullable": nl, "collation": c} for (n, t, nl, c) in columns)
     with patch.object(pm, "execute_mysql", return_value=(rows, -1)):
-        (query, select, order_by, external) = pm.get_table_checksum_query("orders", MagicMock(), "hex", None, [], False, False)
+        (query, select, order_by, external) = pm.get_table_checksum_query("orders", MagicMock(), "hex", None,
+                                                                         list(excluded_columns), False, False)
     return select
 
 
@@ -364,6 +369,60 @@ def clickhouse_select_for(columns, args_overrides=None):
     with patch.object(pc, "execute_sql", side_effect=execute_sql):
         (query, select, order_by, external) = pc.get_table_checksum_query(MagicMock(), "orders")
     return select
+
+
+def packaged_mysql_flag_columns(select):
+    """The columns of the packaged MySQL side's trailing null-flags element, in order."""
+    return re.findall(r"ISNULL\(`(\w+)`\)", select)
+
+
+def packaged_clickhouse_flag_columns(select):
+    """The columns of the packaged ClickHouse side's trailing null-flags element, in order."""
+    return re.findall(r"""case when "(\w+)" is null then '1' else '0' end""", select)
+
+
+class TestPackagedNullFlagsOverEveryComparedColumn(unittest.TestCase):
+    """D-13.06-40 in the packaged sides: one value-based null flag per compared
+    column, the same columns on both sides, whatever each catalog declares nullable."""
+
+    def test_nullability_mismatch_gives_the_same_flags_on_both_sides(self):
+        # MySQL declares is_valid nullable (a stored generated column that is
+        # never NULL); the replica declares it non-Nullable.
+        mysql_select = mysql_select_for([("id", "int", "NO", None),
+                                         ("name", "varchar(32)", "YES", "utf8mb4_0900_ai_ci"),
+                                         ("is_valid", "tinyint(1)", "YES", None)])
+        ch_select = clickhouse_select_for([("id", "Int32", 0, None), ("name", "Nullable(String)", 1, None),
+                                           ("is_valid", "Int8", 0, None)])
+        self.assertEqual(packaged_mysql_flag_columns(mysql_select), ["id", "name", "is_valid"])
+        self.assertEqual(packaged_clickhouse_flag_columns(ch_select), ["id", "name", "is_valid"])
+        self.assertEqual(mysql_select, "`id`,ifnull(`name`,''),ifnull(`is_valid`,''),"
+                                       " concat(ISNULL(`id`),ISNULL(`name`),ISNULL(`is_valid`))")
+        self.assertEqual(ch_select,
+                         "toString(\"id\")||'#'|| case when \"name\" is null then '' else toString(\"name\") end"
+                         "||'#'||toString(\"is_valid\")"
+                         "||'#'|| case when \"id\" is null then '1' else '0' end "
+                         "|| case when \"name\" is null then '1' else '0' end "
+                         "|| case when \"is_valid\" is null then '1' else '0' end ")
+
+    def test_excluded_and_skipped_columns_contribute_no_flag(self):
+        mysql_select = mysql_select_for([("id", "int", "NO", None), ("f", "double", "YES", None),
+                                         ("j", "json", "YES", None), ("secret", "varchar(8)", "YES", None),
+                                         ("name", "varchar(32)", "NO", None)], excluded_columns=["secret"])
+        ch_select = clickhouse_select_for([("id", "Int32", 0, None), ("f", "Nullable(Float64)", 1, None),
+                                           ("j", "Nullable(String)", 1, None), ("secret", "Nullable(String)", 1, None),
+                                           ("name", "String", 0, None)],
+                                          args_overrides={"exclude_columns": ["secret"], "json_columns": "j"})
+        self.assertEqual(mysql_select, "`id`,`name`, concat(ISNULL(`id`),ISNULL(`name`))")
+        self.assertEqual(ch_select,
+                         "toString(\"id\")||'#'||toString(\"name\")"
+                         "||'#'|| case when \"id\" is null then '1' else '0' end "
+                         "|| case when \"name\" is null then '1' else '0' end ")
+
+    def test_table_without_nullable_columns_gets_one_flag_per_column(self):
+        mysql_select = mysql_select_for([("id", "int", "NO", None), ("name", "varchar(32)", "NO", None)])
+        ch_select = clickhouse_select_for([("id", "Int32", 0, None), ("name", "String", 0, None)])
+        self.assertEqual(packaged_mysql_flag_columns(mysql_select), ["id", "name"])
+        self.assertEqual(packaged_clickhouse_flag_columns(ch_select), ["id", "name"])
 
 
 if __name__ == "__main__":

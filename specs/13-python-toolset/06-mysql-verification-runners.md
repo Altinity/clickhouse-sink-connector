@@ -71,7 +71,10 @@ manual recipes, the snapshot path and ch-mysql-resync against a real MySQL, Clic
 fresh `install.sh` installs), D-13.06-38 (BIT(n>1) is rendered as lower-case hex under every
 `--binary_encoding`, as the connector stores it; with `--binary_encoding base64` every table with such a column
 was DIFFERENT on clean data) and D-13.06-39 (`install.sh` can be sourced by the job's `set -euo pipefail`
-script).
+script). **Fixed after running the scheduled job against a production-shaped schema**: D-13.06-40 (the
+trailing null flags are value-based, one per compared column on both sides; a column declared nullable on
+MySQL and non-Nullable on ClickHouse, such as a stored generated column, made every row of an equal table
+differ).
 
 ## 2. Codebase Mapping on 2.11.0
 
@@ -614,11 +617,14 @@ equal values give byte-identical text (expressions compared, not executed).
 | spatial (`point`, `geometry`, ...) → per Spec 07.06 | binary rendering of MySQL's internal SRID+WKB | `toString` | **not determined** (depends on the connector's spatial encoding) | binary rendering | `toString` | not determined |
 | `char`/`varchar`/`text`, one collation in the table | `` `c` `` (the outer `convert(concat_ws(...) using utf8mb4)` turns it into UTF-8) | `toString` | yes (MySQL strips CHAR trailing spaces, and so does Debezium; `PAD_CHAR_TO_FULL_LENGTH` not considered) | same | same | yes |
 | text, ≥ 2 collated columns | `convert(c using utf8mb4)` per column. `same_charset` counts **columns**, not distinct collations (D-13.06-35) | `toString` | yes | same | same | yes |
-| NULL in a nullable column | `ifnull(<expr>,'')` plus trailing `concat(ISNULL(a),ISNULL(b),...)` | `case when c is null then '' else <expr> end` plus trailing `case ... '1' else '0' end \|\| ...` | yes when both sides agree on which columns are nullable. A nullability mismatch (MySQL NULL against CH non-Nullable) changes the flag element, which is noise | same shape (`ifnull`, `concat(ISNULL)`) | same shape, `\|\|'#'\|\|` before the flags | yes |
-| empty string `''` | `''` plus flag `0` (if nullable) | `''` plus flag `0` | yes, distinct from NULL | same | same | yes |
+| NULL in a nullable column | `ifnull(<expr>,'')` for a column declared nullable, plus one trailing `concat(ISNULL(a),ISNULL(b),...)` with one flag per **compared** column, nullable or not | `case when c is null then '' else <expr> end` for a `Nullable` column, plus one trailing `case when c is null then '1' else '0' end \|\| ...` with one flag per **compared** column (a non-Nullable column yields `0`) | yes, whatever each catalog declares nullable: the flags are value-based over the same columns on both sides, so equal values give the same flags. A NULL on MySQL against the non-Nullable default on ClickHouse still differs in its flag (`1` against `0`). Before the fix each side flagged only the columns its own catalog declares nullable, so a nullability mismatch with equal values made every row differ (D-13.06-40) | same rule (`ifnull` per nullable column, `, concat(ISNULL(...))` over every compared column) | same rule, `\|\|'#'` before the flags | yes, as in legacy (D-13.06-40 fixed in both copies) |
+| empty string `''` | `''` plus flag `0` | `''` plus flag `0` | yes, distinct from NULL | same | same | yes |
 
 Whole-row shape: legacy joins the pieces with `','` inside `concat_ws('#', ...)` on MySQL and with `||'#'||` on
-ClickHouse, and skipped columns contribute nothing (11.02 §3.3). The packaged ClickHouse side now writes
+ClickHouse, and skipped columns contribute nothing (11.02 §3.3). In both copies the last element is always the
+null flags: one value-based flag per compared column, in column order, the same set of columns on both sides
+(after exclusions and the floating-point/JSON skips), so `(id int NOT NULL, name varchar NOT NULL)` gives
+`id#name#00` on both sides for a row without NULLs (D-13.06-40). The packaged ClickHouse side now writes
 `||'#'||` before every compared column but the first, so `(id Int32, name String, f Float64)` gives
 `toString("id")||'#'||toString("name")`, matching MySQL's `id#name`. Before the fix it appended `||'#'` after
 every column except the last of the unfiltered list, which left a dangling `#` whenever the last column was
@@ -915,6 +921,13 @@ The suite was run on 2026-10-01 from `sink-connector/python` with the toolset ve
     D-13.06-9, D-13.03-3; passes on SQLAlchemy 1.4 and 2.x)
   - `sink-connector/python/db_compare/tests/test_scheduled_job_findings.py` (BIT(n>1) rendering, D-13.06-38;
     `install.sh` under `set -euo pipefail` with stand-in `python3`/`pip`, D-13.06-39)
+- Defect found by the scheduled job on a production-shaped schema (with it the four suites give 559 passed,
+  4 skipped):
+  - `sink-connector/python/db_compare/tests/test_checksum_fidelity.py::TestNullFlagsOverEveryComparedColumn`
+    (legacy: one value-based null flag per compared column on both sides, whatever each catalog declares
+    nullable; excluded and skipped columns flag nothing; D-13.06-40)
+  - `sink-connector/python/db_compare/tests/test_packaged_checksum_verdicts.py::TestPackagedNullFlagsOverEveryComparedColumn`
+    (the same for the packaged sides; D-13.06-40)
 - Where quoting (§3.13):
   - `sink-connector/python/db_compare/tests/test_top_level_where_quoting.py::ClickHouseWhereQuotingTestCase::test_partition_date_uses_plain_quotes`
   - `sink-connector/python/db_compare/tests/test_top_level_where_quoting.py::WhereOverrideNormalizationTestCase::test_legacy_escaped_quotes_are_folded`
@@ -1364,7 +1377,23 @@ cross-referenced where this spec adds a trigger or corrects them.
     end to end `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_job_sources_install_sh_under_set_euo_pipefail`.
   - **FIXED**: D-13.06-39. `install.sh` reads `${PYTHONPATH:-}`.
 
-Summary: 23 failure modes, 10 DEFECT, 10 GAP.
+- **FM-13.06-24 A nullability mismatch makes an equal table DIFFERENT**
+  - **Trigger**: a compared column declared nullable on one side and not on the other while its values are
+    equal, e.g. a MySQL stored generated column (nullable, never NULL) replicated as a non-Nullable integer.
+  - **Behaviour**: each side built the trailing null-flags element over the columns its own catalog declares
+    nullable, so the flags strings had different lengths (`0000000010` against `000000001`) and every row hashed
+    differently (LM `build_mysql_row_expression`, LC `build_clickhouse_row_expression`, and the PM/PC
+    `get_table_checksum_query`).
+  - **Detection**: `Checksum difference` on equal data; the per-row files of `--debug_output` differ only in the
+    last element.
+  - **Blast radius**: hides nothing, but every scheduled run fails on every such table.
+  - **Recovery**: `ignored_columns` for the mismatched column.
+  - **RTO**: one re-run (unmeasured).
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_fidelity.py::TestNullFlagsOverEveryComparedColumn::test_nullability_mismatch_gives_the_same_flags_on_both_sides`;
+    packaged `sink-connector/python/db_compare/tests/test_packaged_checksum_verdicts.py::TestPackagedNullFlagsOverEveryComparedColumn::test_nullability_mismatch_gives_the_same_flags_on_both_sides`.
+  - **FIXED**: D-13.06-40. One value-based flag per compared column on both sides, in both copies.
+
+Summary: 24 failure modes, 10 DEFECT, 10 GAP.
 
 ## 7. Defect Register
 
@@ -1412,3 +1441,4 @@ LCC/PCC the ClickHouse count runners.
 | D-13.06-37 | S4 | both | `db_compare/top_level_table_checksum.py:203`; `db/mysql.py:46-47` | code-read | The driver's `--include_partitions_regex` filters tables but checksums them whole. The name suggests a partition-restricted comparison. |
 | D-13.06-38 | S2 | legacy | `db_compare/mysql_table_checksum.py` (`mysql_column_expression`, binary branch) | reproduced end to end (connector `binary.handling.mode: base64`: ClickHouse holds `abcd` for `b'1010101111001101'`, the MySQL side rendered `q80=`; the scheduled job reported `Checksum difference` for every table with a BIT(16) column on clean data) | FIXED: BIT(n>1) is rendered `lower(hex(cast(c as binary)))` under every `--binary_encoding`. Test: `test_scheduled_job_findings.py::TestBitColumnRendering::test_bit_n_is_lower_hex_under_every_encoding`; e2e `tests_e2e/mysql/test_mysql_01_production_job.py::test_clean_data_passes_the_job`. Was: base64 with `--binary_encoding base64`, while the connector applies base64 to binary/varbinary/blob only. |
 | D-13.06-39 | S2 | legacy | `install.sh:4` | reproduced end to end (`install.sh: line 4: PYTHONPATH: unbound variable` under the job's `set -euo pipefail`) | FIXED: `export PYTHONPATH="${PYTHONPATH:-}":.`. Test: `test_scheduled_job_findings.py::TestInstallShUnderStrictMode::test_sources_with_pythonpath_unset`; e2e `tests_e2e/mysql/test_mysql_01_production_job.py::test_job_sources_install_sh_under_set_euo_pipefail`. Was: a job sourcing `install.sh` after `set -u` with `PYTHONPATH` unset died before any checksum. |
+| D-13.06-40 | S1 | both | `db_compare/mysql_table_checksum.py` (`build_mysql_row_expression`); `db_compare/clickhouse_table_checksum.py` (`build_clickhouse_row_expression`); `ch_sink_tools/db_compare/mysql_table_checksum.py` and `ch_sink_tools/db_compare/clickhouse_table_checksum.py` (`get_table_checksum_query`) | reproduced end to end (a MySQL `tinyint(1) GENERATED ALWAYS AS (...) STORED` column, nullable but never NULL, replicated as a non-Nullable `Int8`: the `--debug_output` row strings were identical except the trailing flags, `0000000010` on MySQL against `000000001` on ClickHouse; every row differed and the scheduled job reported a `Checksum difference` for a table whose values were all equal) | FIXED in both copies: the trailing null-flags element holds one value-based flag per compared column (after exclusions and the floating-point/JSON skips) on both sides, nullable or not: `ISNULL(c)` on MySQL, `case when c is null then '1' else '0' end` on ClickHouse. The per-value NULL guards are unchanged, so a MySQL NULL against a non-Nullable default still differs in its flag. Tests: `test_checksum_fidelity.py::TestNullFlagsOverEveryComparedColumn::test_nullability_mismatch_gives_the_same_flags_on_both_sides`, `::test_excluded_and_skipped_columns_contribute_no_flag`, `::test_table_without_nullable_columns_gets_one_flag_per_column`, `::test_returned_nullables_are_still_the_declared_nullable_columns`; packaged `test_packaged_checksum_verdicts.py::TestPackagedNullFlagsOverEveryComparedColumn::test_nullability_mismatch_gives_the_same_flags_on_both_sides`, `::test_excluded_and_skipped_columns_contribute_no_flag`, `::test_table_without_nullable_columns_gets_one_flag_per_column`. Was: each side flagged only the columns its own catalog declares nullable, so a column declared nullable on one side and not on the other made every row hash differently on clean data. It hid nothing, but every scheduled run failed on every such table. |

@@ -60,6 +60,10 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     logging.debug("Excluded columns: "+str(excluded_columns))
     select = ""
     nullables = []
+    # every compared column gets a value-based null flag, nullable or not, so
+    # a nullability mismatch with the replica gives the same flags for equal
+    # values (spec 13.06 D-13.06-40)
+    compared = []
     data_types = {}
     first_column = True
     min_date_value = args.min_date_value
@@ -91,7 +95,8 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
                 continue
         if not first_column:
             select += ","
-            
+        compared.append(column_name)
+
         if is_nullable == 'YES':
             nullables.append(column_name)
         
@@ -135,15 +140,15 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
         data_types[row['column_name']] = data_type
 
     logging.debug(str(nullables))
-    if len(nullables) > 0:
+    if len(compared) > 0:
         select += ", concat("
         first = True
-        for nullable in nullables:
+        for compared_column in compared:
             if not first:
                 select += ','
             else:
                 first = False
-            select += "ISNULL("+nullable+")"
+            select += "ISNULL("+compared_column+")"
         select += ")"
     # order is not important
     primary_key_columns = []
