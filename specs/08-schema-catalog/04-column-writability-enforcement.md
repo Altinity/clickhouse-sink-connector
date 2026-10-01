@@ -45,7 +45,7 @@ ALTER TABLE `db`.`table` MODIFY COLUMN `col` type DEFAULT (default_expression)
 ```
 - Modifies column kind in ClickHouse metadata without rewriting existing data parts.
 - Invalidates local schema cache: `CacheInvalidationManager.getInstance().invalidateTable(tableKey)`.
-- Subsequent `INSERT` statements now successfully bind MySQL values directly into the column.
+- Subsequent `INSERT` statements now successfully bind MySQL values directly into the column, starting with the batch that triggered the conversion: that batch's INSERT is built from the post-DDL re-read and bound with the same map, not with the writer's cached map (spec 04.03 §3.5).
 
 ### 3.3 Absent column: add it, or fail the batch
 The prime directive: "If a column exists in MySQL but not usefully in
@@ -98,6 +98,11 @@ side; never a log line only."
   still lacks the column: same exception, no proven-absent entry.
 - `GroupInsertQueryWithBatchRecordsTest.materializedColumnConvertedIsBoundInSameBatch()`
   — the successful conversion path binds the column in the same batch.
+- `StaleCacheBindingMapTest.materializedColumnConvertedMidBatchIsBoundInTheSameBatch()`
+  — the converted column is bound, through the executor, in the batch that
+  triggered the conversion: every placeholder set, the source value written
+  (pre-fix code builds the INSERT from the re-read map but binds with the
+  cached one, leaving the column's parameter unset).
 - `UnwritableColumnReportingTest` — MATERIALIZED → DEFAULT conversion DDL.
 
 ---

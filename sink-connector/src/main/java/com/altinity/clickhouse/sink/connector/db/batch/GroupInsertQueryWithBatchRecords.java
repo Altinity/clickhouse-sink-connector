@@ -131,6 +131,53 @@ public class GroupInsertQueryWithBatchRecords {
     }
 
     /**
+     * A segment key for an INSERT template: the SQL text and the parameter
+     * index map (equality is unchanged, inherited from {@code Pair}: text
+     * and index map), plus the ClickHouse column map the template was built
+     * from (Spec 04.03 section 3.5).
+     *
+     * <p>The executor must bind a template with the map it was built from.
+     * The grouper may replace its column map mid-batch -- a stale-cache
+     * re-read, a MATERIALIZED column converted to DEFAULT, schema evolution --
+     * while the caller still holds the writer's cached map. Binding with the
+     * cached map walks a column set that lacks the new column, so its
+     * placeholder is never bound and the driver's {@code addBatch()} fails
+     * on the null parameter. Two keys that are equal (same text, same index
+     * map) name the same column list, so the map of the key that opened the
+     * bucket binds every record in it.</p>
+     */
+    static final class InsertTemplate extends MutablePair<String, Map<String, Integer>> {
+        private static final long serialVersionUID = 1L;
+
+        /** The column map the template was built from; never serialised. */
+        private final transient Map<String, String> columnNameToDataTypeMap;
+
+        InsertTemplate(String insertQuery, Map<String, Integer> parameterIndexMap,
+                       Map<String, String> columnNameToDataTypeMap) {
+            super(insertQuery, parameterIndexMap);
+            this.columnNameToDataTypeMap = columnNameToDataTypeMap;
+        }
+    }
+
+    /**
+     * The column map a segment key must be bound with: the map its template
+     * was built from when the key was produced by this grouper, otherwise
+     * {@code fallback} (a key built elsewhere carries no map).
+     *
+     * @param template the segment key.
+     * @param fallback the map to use for a key that carries none.
+     * @return the map to bind the key's records with.
+     */
+    static Map<String, String> bindingColumnMap(MutablePair<String, Map<String, Integer>> template,
+                                                Map<String, String> fallback) {
+        if (template instanceof InsertTemplate
+                && ((InsertTemplate) template).columnNameToDataTypeMap != null) {
+            return ((InsertTemplate) template).columnNameToDataTypeMap;
+        }
+        return fallback;
+    }
+
+    /**
      * Templates built during this grouper's life (one batch: a grouper is
      * created per {@code processRecordsByTopic} call), keyed by
      * {@link TemplateKey}. Values are exactly what
@@ -520,10 +567,14 @@ public class GroupInsertQueryWithBatchRecords {
         }
         String insertQueryTemplate = response.getKey();
 
-        MutablePair<String, Map<String, Integer>> mp =
-                new MutablePair<>();
-        mp.setLeft(insertQueryTemplate);
-        mp.setRight(response.getValue());
+        // The key carries the column map the template was built from, so the
+        // executor binds the segment with THAT map (Spec 04.03 section 3.5).
+        // It may differ from the writer's cached map the caller passed in:
+        // refreshIfRecordHasUnknownColumn or schema evolution can replace the
+        // map mid-batch, and binding a template built from the fresh map with
+        // the stale one leaves the new column's placeholder unbound.
+        MutablePair<String, Map<String, Integer>> mp = new InsertTemplate(
+                insertQueryTemplate, response.getValue(), columnNameToDataTypeMap);
 
         if (!queryToRecordsMap.containsKey(mp)) {
             List<ClickHouseStruct> newList = new ArrayList<>();
