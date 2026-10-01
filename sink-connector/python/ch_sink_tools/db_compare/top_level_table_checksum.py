@@ -129,10 +129,18 @@ def parse_checksum(data, table, expected_name=None):
     return (name, match.group('checksum'), int(match.group('count')))
 
 
+# The MySQL side's hint to pass --json_columns to the ClickHouse side (spec 13.06 D-13.06-41).
+JSON_COLUMNS_HINT_RE = re.compile(r"; pass --json_columns .*? to clickhouse_table_checksum\.py so both row strings "
+                                  r"skip them")
+
+
 def side_note_text(line):
     """A side output line without the word WARNING (its level or any other
-    occurrence), as the driver relays or dumps it below WARNING."""
-    return line.strip().replace(SIDE_WARNING_MARKER, " - ").replace("WARNING", "warning")
+    occurrence), as the driver relays or dumps it below WARNING. The MySQL
+    side's hint to pass --json_columns to the ClickHouse side is dropped: the
+    driver forwards that list itself (spec 13.06 D-13.06-41)."""
+    text = JSON_COLUMNS_HINT_RE.sub("", line.strip())
+    return text.replace(SIDE_WARNING_MARKER, " - ").replace("WARNING", "warning")
 
 
 def relay_side_messages(data, host, table):

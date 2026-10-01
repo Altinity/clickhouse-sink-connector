@@ -74,6 +74,12 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     same_charset = True
     collations = [row['collation'] for row in row_list if row['collation'] is not None]
     same_charset = len(collations) <= 1
+    # A standalone run is told the exact list to pass to the ClickHouse side, which cannot tell a String column
+    # that replicates a MySQL JSON column from any other String (spec 13.06 D-13.06-41).
+    json_names = [row['column_name'] for row in row_list
+                  if row['column_name'] not in excluded_columns and 'json' in row['data_type']]
+    json_hint = (f"; pass --json_columns {','.join(json_names)} to clickhouse_table_checksum.py so both row strings "
+                 f"skip them")
     for row in row_list:
         column_name = '`'+row['column_name']+'`'
         data_type = row['data_type']
@@ -91,7 +97,7 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
             # FM-13.06-7): the MySQL rendering below is normalised, the
             # replica text is not, so comparing them can mask differences.
             if 'json' in data_type:
-                logging.warning(f"Not compared in table {args.mysql_database}.{table}: JSON column {column_name} of type {data_type} (pass --include_json_columns for a best-effort comparison)")
+                logging.warning(f"Not compared in table {args.mysql_database}.{table}: JSON column {column_name} of type {data_type} (pass --include_json_columns for a best-effort comparison{json_hint})")
                 continue
         if not first_column:
             select += ","

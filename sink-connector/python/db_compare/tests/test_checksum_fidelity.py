@@ -683,7 +683,11 @@ class TestFloatAndJsonCoverage(unittest.TestCase):
         self.assertEqual(len(warnings), 2, warnings)
         self.assertTrue(any("Not compared in table db1.t1: floating point columns ['f', 'g']" in w for w in warnings), warnings)
         self.assertTrue(any("Not compared in table db1.t1: JSON columns ['j']" in w for w in warnings), warnings)
-        self.assertFalse(any("checksum" in w.lower() for w in warnings), warnings)
+        # The only "checksum" is the standalone hint naming clickhouse_table_checksum.py (spec 13.06
+        # D-13.06-41), which the driver drops when it relays the note; no warning reads as a result line.
+        hint = "; pass --json_columns j to clickhouse_table_checksum.py so both row strings skip them"
+        self.assertFalse(any("checksum" in w.replace(hint, "").lower() for w in warnings), warnings)
+        self.assertFalse(any(CHECKSUM_LINE_RE.search(w) for w in warnings), warnings)
         # A second chunk of the same table does not repeat the warning.
         with self.assertLogs(level="DEBUG") as logs:
             build_mysql_select(self.MYSQL)

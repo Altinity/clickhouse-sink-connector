@@ -182,7 +182,8 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     row_list = [row for row in rowset.mappings()]
     (select, nullables, data_types, clamped_expression, skipped) = build_mysql_row_expression(
         row_list, args, binary_encoding, excluded_columns, include_floating_point_columns, include_json_columns)
-    warn_not_compared(args.mysql_database, table, skipped, warned_tables)
+    # A standalone run is told to pass the JSON columns to the ClickHouse side (spec 13.06 D-13.06-41).
+    warn_not_compared(args.mysql_database, table, skipped, warned_tables, json_hint=True)
     # order is not important
     primary_key_columns = []
     logging.debug(str(primary_key_columns))
