@@ -109,13 +109,16 @@ For every table selected by `--tables_regex` (and the optional
    `finally` block; the lock connection is closed even if `UNLOCK TABLES`
    fails (`test_table_locking.py`).
 4. Parses the single line `Checksum for table <db>.<table> = <md5> count <n>`
-   from each process (`parse_checksum()`; the shell pipeline is
-   `set -eo pipefail; ... | grep -i checksum | awk '{print $11" "$13" "$15}'`,
-   so no other line printed by the side scripts may contain the word
-   "checksum").
-5. `analyze_differences()` compares each replica's `(md5, count)` with the
-   source's. A mismatch is logged as `WARNING Checksum difference : ...`;
-   agreement as `INFO No difference for <table>`.
+   from each process (`parse_checksum()`). The side commands are argv lists
+   run without a shell; the raw output is matched line by line, exactly one
+   such message naming the expected `<db>.<table>` must be present, and every
+   side WARNING/ERROR line is relayed into the driver log (spec 13.06 §3.2,
+   §3.8). Other lines may contain the word "checksum".
+5. `analyze_differences()` gives each table a verdict: a mismatch is logged as
+   `WARNING Checksum difference : ...`; agreement as `INFO No difference for
+   <table>`; agreement on zero rows as `WARNING EMPTY on both sides ...`; a
+   failed or unparseable side as `ERROR`, which makes the run exit 1 (spec
+   13.06 §3.8).
 
 ### 3.3 Canonical row string
 Both sides render every compared column to text and join the pieces with the
@@ -603,17 +606,17 @@ connect to a database.
   - **Blast radius**: that table is reported equal without having been compared.
   - **Recovery**: treat any `Invalid checksum output` as a failed run. Compare the table standalone: run the two side scripts by hand and read their `Checksum for table` lines.
   - **RTO**: one standalone run per affected table.
-  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestVerdictOnUnparseableOutput::test_both_sides_unparseable_is_never_reported_equal` (skipped, DEFECT). The refusal of multi-line output is pinned by `...::test_parse_checksum_refuses_more_than_one_line`.
-  - **DEFECT**: a double parse failure is reported as equality.
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestVerdictOnUnparseableOutput::test_both_sides_unparseable_is_never_reported_equal`. The refusal of multi-line output is pinned by `...::test_parse_checksum_refuses_more_than_one_line`.
+  - **FIXED**: an unparseable side is verdict `ERROR` (exit 1), and the output is parsed per line so other lines naming "checksum" are ignored (spec 13.06 D-13.06-2).
 
-- **FM-11.02-3 One side script fails: the whole run aborts**
-  - **Trigger**: the side script exits non-zero. Causes include a refused connection, `MEMORY_LIMIT_EXCEEDED` on the `FINAL` read, a table missing on the replica (no checksum line, so `grep` exits 1 under `set -eo pipefail`), or a bad `--where`.
-  - **Behaviour**: `run_quick_safe_checksum()` logs `command failed : terminating` and `<cmd>. failed`, then returns `None`. `analyze_differences()` then raises `TypeError` on the `None` result, and `run_config()` logs `Exception in main thread : 'NoneType' object is not subscriptable` with a traceback and exits 1. Tables not yet compared are skipped.
-  - **Detection**: loud, but the ERROR names the symptom (`NoneType`) rather than the cause. The cause is in the preceding `<cmd>. failed` line, and in the side script's own output under `--debug`.
-  - **Blast radius**: no false verdict. Coverage of every later table is lost for this run.
-  - **Recovery**: fix the cause, or exclude the table with `--exclude_tables_regex`. Then re-run only the remaining tables (`--tables_regex`). Tables already done appear as `No difference for <t>` / `Checksum difference`.
-  - **RTO**: time to re-run the remaining tables (unmeasured — proportional to their size).
-  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestRunExitCode::test_failed_side_script_aborts_the_whole_run_non_zero`.
+- **FM-11.02-3 One side script fails: that table has no verdict and the run exits 1**
+  - **Trigger**: the side script exits non-zero, or exits 0 without a checksum line. Causes include a refused connection, `MEMORY_LIMIT_EXCEEDED` on the `FINAL` read, a table missing on the replica (no checksum line), or a bad `--where`.
+  - **Behaviour**: `run_quick_safe_checksum()` logs `<argv>. failed with return code <rc>` and the last 20 side lines, then returns `None` (or a result with `None` md5 and count for a missing checksum line). `analyze_differences()` logs `Checksum ERROR for <db.t>: ...; no verdict`, the remaining tables are still compared, and the run ends with `<n> table(s) have NO verdict ...` and exit 1 (spec 13.06 §3.8).
+  - **Detection**: loud: the ERROR names the table, and the side's own error lines are in the driver log.
+  - **Blast radius**: no false verdict. Only the failed tables are unverified.
+  - **Recovery**: fix the cause, or exclude the table with `--exclude_tables_regex`, then re-run the tables named in the summary (`--tables_regex`).
+  - **RTO**: time to re-run the failed tables (unmeasured — proportional to their size).
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestRunExitCode::test_failed_side_script_fails_the_table_and_the_run_non_zero`.
 
 - **FM-11.02-4 A huge table: no time bound, and the source lock is held throughout**
   - **Trigger**: a multi-hundred-GB table, or a slow replica under `FINAL` over a whole table.
@@ -672,4 +675,4 @@ connect to a database.
   - **Test**: GAP: a replica-script test asserting the open-row filter and the history-column exclusions produce the source's checksum for a fixture with closed versions.
   - **DEFECT**: the driver cannot verify a replication-history replica.
 
-Summary: 9 failure modes, 5 DEFECT, 4 GAP.
+Summary: 9 failure modes, 4 DEFECT, 4 GAP.

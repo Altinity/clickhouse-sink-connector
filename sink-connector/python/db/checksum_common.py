@@ -135,7 +135,8 @@ def warn_not_compared(database, table, skipped, warned):
     compare (spec 11.02 section 3.9). ``skipped`` maps a kind of
     NOT_COMPARED_HINTS to column names; ``warned`` is the caller's set of
     (database, table, kind) already reported, so chunked tables warn once. The
-    line must not contain the word "checksum" (the driver greps for it)."""
+    driver relays every side WARNING line into its own log (spec 13.06
+    FM-13.06-8)."""
     for kind, names in skipped.items():
         if names and (database, table, kind) not in warned:
             warned.add((database, table, kind))

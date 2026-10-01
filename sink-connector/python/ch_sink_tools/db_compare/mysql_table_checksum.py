@@ -81,11 +81,14 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
             continue
         if not include_floating_point_columns:
             if 'float' in data_type or 'double' in data_type or 'real' in data_type:
-                logging.info(f"Excluding floating point column {column_name} of type {data_type}")
+                logging.warning(f"Not compared in table {args.mysql_database}.{table}: floating point column {column_name} of type {data_type} (pass --include_floating_point_columns to compare it)")
                 continue
         if not include_json_columns:
+            # Not compared by default, like the ClickHouse side (spec 13.06
+            # FM-13.06-7): the MySQL rendering below is normalised, the
+            # replica text is not, so comparing them can mask differences.
             if 'json' in data_type:
-                logging.info(f"Excluding json column {column_name} of type {data_type}")
+                logging.warning(f"Not compared in table {args.mysql_database}.{table}: JSON column {column_name} of type {data_type} (pass --include_json_columns for a best-effort comparison)")
                 continue
         if not first_column:
             select += ","
@@ -362,7 +365,7 @@ def main():
     parser.add_argument(
         '--max_date_value', help='Maximum Date32/Datetime64 date', default='2299-12-31', required=False)
     parser.add_argument(
-            '--min_datetime_value', help='Min Datetime64 datetime', default='1970-01-01 00:00:00', required=False)
+            '--min_datetime_value', help='Min Datetime64 datetime', default='1900-01-01 00:00:00', required=False)
     parser.add_argument(
             '--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59', required=False)
     parser.add_argument('--debug', dest='debug',
@@ -376,8 +379,8 @@ def main():
                         help='number of tables in parallel to compute', default=1)
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
                         help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
-    parser.add_argument('--include_json_columns', action='store_true', default=True,
-                        help='JSON data types can not easily be compared, we do not include them by default', required=False)
+    parser.add_argument('--include_json_columns', action='store_true', default=False,
+                        help='JSON data types can not easily be compared, we do not include them by default (a WARNING names them); pass it to both sides', required=False)
     global args
     args = parser.parse_args()
 
