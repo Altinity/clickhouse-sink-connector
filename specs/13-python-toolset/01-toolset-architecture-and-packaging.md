@@ -565,6 +565,16 @@ These are the properties the toolset's architecture must have. The "As built" no
 
 ## 5. Verification Criteria
 
+End-to-end suites (Pull Request Pipeline, `.github/workflows/pull-request.yml` jobs `python-toolset-e2e-mysql` and
+`python-toolset-e2e-postgres`, defined in `.github/workflows/python-toolset-e2e-mysql.yml` and
+`.github/workflows/python-toolset-e2e-postgres.yml`): `sink-connector/python/tests_e2e/mysql/` and
+`sink-connector/python/tests_e2e/postgres/` run the installed tools (`pip install -e`, `source ./install.sh` in a copy of
+the tree as the scheduled checksum job does) against real MySQL, PostgreSQL, ClickHouse and the lightweight connector.
+Each suite's `JUSTIFICATION.md` maps every test to the fix it proves, with its outcome on the pre-fix tools. The tool
+contracts they exercise are specified in 13.03 to 13.08 (§5 of each lists its e2e tests). This partly closes
+D-13.01-24: the console scripts are installed and run in CI; the wheel build, the Python floor, grammar regeneration and
+the Dockerfiles remain unchecked.
+
 Offline reproductions run for this spec. Python 3.12.11 venv with the dependencies of §3.6, plus the system Python 3.6.8 and 3.9.7 interpreters. All were throwaway scripts outside the repository; no database or network was used.
 
 - **R1 Wheel.** `pip wheel --no-deps --no-build-isolation --no-index -w <out> <copy of sink-connector/python>` (setuptools 84.0.0, wheel 0.48.0) prints `Successfully built ch-sink-tools`, `ch_sink_tools-0.3.0-py3-none-any.whl size=1241730`. Listing the zip gives 50 `ch_sink_tools/` files and the `entry_points.txt` of §3.3. Applying the `build_wheel.sh:38` regex to the member names yields `['ch_sink_tools/__init__.py']`; there are no directory entries.
