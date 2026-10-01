@@ -209,7 +209,7 @@ Enforced by `scripts/validate_specs.py` (pass 2: the section and its Detection, 
 
 ## 4. Architectural Domain Taxonomy
 
-Specifications are modularized into 12 specialized domains with fine-grained micro-encapsulations:
+Specifications are modularized into 13 specialized domains with fine-grained micro-encapsulations:
 
 | Domain | Topic | Path | Scope |
 |---|---|---|---|
@@ -225,6 +225,7 @@ Specifications are modularized into 12 specialized domains with fine-grained mic
 | `10` | Resilience & Monitoring | `specs/10-resilience-monitoring/` | Error taxonomy, backoff retries, replica status view, loud failure guarantee |
 | `11` | Verification Tooling | `specs/11-verification-tooling/` | Spec validator, db_compare value checksums, Lean 4 formal simulation |
 | `12` | Replication History | `specs/12-replication-history/` | Operating-mode matrix and routing, SCD2 table shape, SCD2 write protocol, binlog audit table, replication-log-only |
+| `13` | Python Toolset | `specs/13-python-toolset/` | Non-streaming tools: packaging and shared connection layer, MySQL and PostgreSQL snapshot dump and load, DDL translation, verification runners, resync; per-tool defect registers |
 
 ---
 

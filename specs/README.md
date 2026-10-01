@@ -4,7 +4,7 @@ Welcome to the specification-driven development (SDD) repository for the `clickh
 
 This repository operates under a formal, spec-first methodology. The connector is strictly defined as an exact, high-performance, zero-loss replication tool from MySQL to ClickHouse using the MySQL binary log (binlog).
 
-To facilitate fine-grained feature development and rigorous agentic engineering, all specifications are organized into **small, focused, modular encapsulations** across 12 architectural domains.
+To facilitate fine-grained feature development and rigorous agentic engineering, all specifications are organized into **small, focused, modular encapsulations** across 13 architectural domains.
 
 ---
 
@@ -132,6 +132,17 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 - **[12.03: SCD2 Write Protocol — INSERT, UPDATE (3-SELECT) and DELETE (2-SELECT)](12-replication-history/03-scd2-write-protocol.md)**: the `INSERT ... SELECT ... UNION ALL` statements, versions, key predicate, the inline UPDATE vs flushed DELETE, and the recorded gaps.
 - **[12.04: Binlog History Audit Table](12-replication-history/04-binlog-history-audit-table.md)**: the 19-column `<history db>.<history table>` — per-column values, DML and DDL rows, coordinate sorting key, TTL.
 - **[12.05: Replication-Log-Only Mode](12-replication-history/05-replication-log-only.md)**: audit rows only; DDL translated but not executed; what the offset certifies; the single-threaded parity gap.
+
+### Domain 13: Python Toolset — Snapshot, Load, Verification & Repair (`specs/13-python-toolset/`)
+The non-streaming tools under `sink-connector/python/`, specified as built (both the legacy top-level tree and the packaged `ch_sink_tools` tree), each with a failure-mode section and a defect register that the follow-up fixes work from.
+- **[13.01: Toolset Architecture, Packaging and the Two Source Trees](13-python-toolset/01-toolset-architecture-and-packaging.md)**: tool inventory and lifecycle roles, entry points, dependencies, grammar generation, Dockerfiles, the legacy-vs-packaged divergence matrix.
+- **[13.02: Shared Connection, Credential and Configuration Layer](13-python-toolset/02-connection-and-config-layer.md)**: MySQL, ClickHouse and PostgreSQL connection factories and execute helpers, session settings, credential sources and exposure.
+- **[13.03: MySQL Snapshot Dump (`mysql_dumper`)](13-python-toolset/03-mysql-snapshot-dump.md)**: CLI, dump engines and command templates, table selection, consistency and handoff position, output layout, naming rules.
+- **[13.04: ClickHouse Snapshot Loader and MySQL-to-ClickHouse DDL Translation](13-python-toolset/04-clickhouse-loader-and-mysql-ddl-translation.md)**: load phases, ANTLR and regexp translators, type mapping table, column type overrides and the reconciler.
+- **[13.05: PostgreSQL Snapshot Dump and Load](13-python-toolset/05-postgres-snapshot-dump-and-load.md)**: `ch-pg-dump` algorithm, PostgreSQL-to-ClickHouse type mapping, value conversion, DDL parser.
+- **[13.06: MySQL-to-ClickHouse Verification Runners](13-python-toolset/06-mysql-verification-runners.md)**: checksum and count runners, source locking, per-type checksum expressions on both sides, verdict and exit codes.
+- **[13.07: PostgreSQL-to-ClickHouse Verification and `auto_diff`](13-python-toolset/07-postgres-verification-and-auto-diff.md)**: `ch-checksum` orchestration and YAML schema, per-type canonicalisation, verdicts, chunked XOR diff search.
+- **[13.08: Ad Hoc Repair and Re-synchronisation (`ch-mysql-resync`)](13-python-toolset/08-mysql-resync-and-adhoc-patching.md)**: subcommands, statements issued, partition replacement, versions of reloaded rows, dry run vs apply, offset rewind, deviations from 11.04.
 
 ---
 

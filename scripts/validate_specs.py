@@ -69,6 +69,7 @@ EXPECTED_DOMAINS = [
     "10-resilience-monitoring",
     "11-verification-tooling",
     "12-replication-history",
+    "13-python-toolset",
 ]
 
 REQUIRED_SPEC_SECTIONS = [
