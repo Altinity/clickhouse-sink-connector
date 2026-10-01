@@ -7,6 +7,7 @@ import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.data.value.ClickHouseDoubleValue;
 import com.clickhouse.data.value.ClickHouseGeoPointValue;
 import com.clickhouse.data.value.ClickHouseGeoPolygonValue;
+import com.altinity.clickhouse.sink.connector.db.batch.SpillingInsertStatement;
 import com.google.common.io.BaseEncoding;
 import io.debezium.data.*;
 import io.debezium.data.Enum;
@@ -701,10 +702,17 @@ public class ClickHouseDataTypeMapper {
                     }
                     rawBytes = bigEndian;
                 }
+                // On the spill path a large binary value is streamed from the array
+                // into the spill file with the same text the two binds below
+                // produce, instead of being turned into a hex String twice its
+                // size (spec 03.06 section 3.4 item 3); offer* returns false
+                // everywhere else and the binds run exactly as before.
                 if (config.getBoolean(
                         ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())) {
-                    ps.setBytes(index, rawBytes);
-                } else {
+                    if (!SpillingInsertStatement.offerUnhex(ps, index, rawBytes)) {
+                        ps.setBytes(index, rawBytes);
+                    }
+                } else if (!SpillingInsertStatement.offerHexText(ps, index, rawBytes)) {
                     ps.setString(index, BaseEncoding.base16().lowerCase().encode(rawBytes));
                 }
             }
