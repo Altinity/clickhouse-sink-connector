@@ -68,13 +68,14 @@ VALUE_COLUMNS = {
     "fills": "id, side, flags, venue_id, toString(executed_at), toString(updated_at), qty, price",
     "instruments": "id, isin, code4, token, blob_data, active, mask, toString(listed_at), toString(updated_at), tick",
     "keyless_events": "toString(event_time), kind, amount, raw",
+    "ledger": "id, _sign, amount, cutoff, delay",
 }
 
 
 @pytest.mark.parametrize("table", sorted(VALUE_COLUMNS))
 def test_loaded_values_equal_the_streamed_values(snapshot_load, table):
-    """TIMESTAMP, DATETIME(6), binary and BIT values the loader wrote equal what the
-    connector streamed (spec 13.04 D-13.04-2, D-13.04-3)."""
+    """TIMESTAMP, DATETIME(6), binary, BIT and TIME values the loader wrote equal what the
+    connector streamed (spec 13.04 D-13.04-2, D-13.04-3, D-13.04-35)."""
     assert snapshot_load.returncode == 0, snapshot_load
     columns = VALUE_COLUMNS[table]
 

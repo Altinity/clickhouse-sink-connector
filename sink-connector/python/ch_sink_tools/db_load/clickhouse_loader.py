@@ -465,6 +465,23 @@ MYSQL_DATETIME_DATATYPE = re.compile(r"\s*datetime\b", re.IGNORECASE)
 DATETIME64_PRECISION = re.compile(r"DateTime64\(\s*(\d+)")
 
 
+MYSQL_TIME_DATATYPE = re.compile(r"\s*time\b", re.IGNORECASE)
+
+
+def time_text_expression(column, column_name, target_types=None):
+    """A MySQL TIME field of the dump as the streaming connector writes it into the String column
+    (MicroTimeConverter.convert: '%s%02d:%02d:%02d.%06d', sign kept, hours unbounded; Spec 07.03 section 3.2), so
+    loaded and streamed rows hold the same text (Spec 13.04 D-13.04-35). MySQL prints TIME(p) with at least two
+    hour digits and p fraction digits ('01:15:00', '-838:59:59', '12:00:00.500'); the fraction is padded to six
+    digits. NULL stays NULL. A target column that is not a String is left to the INSERT conversion."""
+    target = (target_types or {}).get(column['column_name'].replace('`', ''))
+    if target is not None and 'String' not in target:
+        return column_name
+    return (f"if(position({column_name}, '.') > 0, concat(substring({column_name}, 1, position({column_name}, '.')), "
+            f"rightPad(substring({column_name}, position({column_name}, '.') + 1), 6, '0')), "
+            f"concat({column_name}, '.000000'))")
+
+
 def target_column_types(args, clickhouse_user, clickhouse_password, database, table):
     """{column: ClickHouse type} of the target table as it exists (system.columns). A --data_only load (the
     ch-mysql-resync scratch table is CREATE TABLE ... AS the live table) or a table created by the connector can
@@ -539,6 +556,8 @@ def mysqlshell_column_expression(column, column_name, decode_columns, binary_han
         if encoding is None:
             if MYSQL_DATETIME_DATATYPE.match(mysql_datatype or ''):
                 return datetime_clamp_expression(column, column_name, target_types)
+            if MYSQL_TIME_DATATYPE.match(mysql_datatype or ''):
+                return time_text_expression(column, column_name, target_types)
             return column_name
         raise ValueError(f"Column {bare_name} ({mysql_datatype}) is encoded in the dump ({encoding}) but the loader "
                          f"has no rule for the representation the connector stores for that type")
@@ -679,9 +698,11 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
                                 f"encoding (useBase64: true) for the binary, BIT and spatial columns of {table_name}")
             columns = get_column_list(
                 schema_map, schema, table_name, args.virtual_columns, transform=False, mysqlshell=args.mysqlshell)
-            # DATETIME values are cast to the target table's own column types (datetime_clamp_expression)
+            # DATETIME values are cast to the target table's own column types (datetime_clamp_expression), TIME
+            # values are rendered only for a String target (time_text_expression)
             target_types = None
             if any(MYSQL_DATETIME_DATATYPE.match(c.get('mysql_datatype', '') or '')
+                   or MYSQL_TIME_DATATYPE.match(c.get('mysql_datatype', '') or '')
                    for c in schema_map.get(f"{schema}.{table_name}", [])):
                 target_types = target_column_types(args, clickhouse_user, clickhouse_password, ch_schema, table_name)
             transformed_columns = get_column_list(

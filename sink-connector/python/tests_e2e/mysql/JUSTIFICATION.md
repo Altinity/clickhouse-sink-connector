@@ -182,6 +182,16 @@ run the non-partitioned job over `pyref` (`test_clean_data_passes_the_job` and t
 `test_mysql_06_null_flags.py`, while both sides still declare the columns nullable, so their pre-fix outcomes
 above are unchanged.
 
+### TIME columns in the snapshot path (`test_mysql_03_snapshot.py`, added after the observed runs above)
+
+`pyops.ledger` carries `cutoff TIME` and `delay TIME(3)` (`01:15:00`, `-01:30:00`, `12:00:00.5`, `100:00:01.250`,
+NULLs). The connector writes TIME as `[-]HH:MM:SS.ffffff`; MySQL Shell dumps it with the declared fraction digits.
+
+| Test | Pre-fix (expected) | Observed | Fixed | Justifies |
+|---|---|---|---|---|
+| `test_loaded_values_equal_the_streamed_values[ledger]` | FAIL: the loaded rows hold `01:15:00` / `12:00:00.500`, the streamed rows `01:15:00.000000` / `12:00:00.500000` | observed on a real replica (2.69 M loaded rows `01:15:00` next to 97 K streamed rows `01:15:00.000000` in one TIME column) | PASS | D-13.04-35 |
+| `test_production_job_matches_the_loaded_snapshot` | FAIL: `Checksum difference` for `pyops.ledger` (the MySQL side renders `01:15:00.000000`) | observed in a production-shaped sandbox run (every row of such a table DIFFERENT) | PASS | D-13.04-35 |
+
 ### Generated bit-flag columns in the snapshot path (`test_mysql_03_snapshot.py`, added after the observed runs above)
 
 `pyflags.trade_flags` has two VIRTUAL and one STORED generated column of the form

@@ -11,7 +11,7 @@
 -- America/Chicago, written in UTC (the source time zone).
 --
 -- Shapes covered: keyless table, BINARY/VARBINARY/BLOB, BIT(1)/BIT(16),
--- DATETIME(6)/TIMESTAMP(6), DECIMAL, JSON (ignored column), FLOAT (not compared),
+-- DATETIME(6)/TIMESTAMP(6), TIME/TIME(3), DECIMAL, JSON (ignored column), FLOAT (not compared),
 -- NULLs including a lower-case `null` column definition, a source column named
 -- _sign, a nullable STORED generated column, generated bit-flag columns in a database the
 -- connector does not replicate (pyflags, snapshot path only), and tables the jobs exclude (temp_*, heartbeat, *_p<digit>). The temp_*
@@ -165,13 +165,17 @@ INSERT INTO keyless_events VALUES
   ('${T} 01:00:00.000000', 'open', 1.00, X'01'),
   ('${T} 04:00:00.000001', 'close', 0.00, X'FF00');
 
--- a source column named _sign (a connector bookkeeping name)
+-- a source column named _sign (a connector bookkeeping name); TIME columns, which MySQL Shell dumps with the
+-- declared fraction digits and the connector writes as [-]HH:MM:SS.ffffff (negative and > 24 h included)
 CREATE TABLE ledger (
   id INT NOT NULL PRIMARY KEY,
   _sign TINYINT NOT NULL,
-  amount DECIMAL(12,2) NOT NULL
+  amount DECIMAL(12,2) NOT NULL,
+  cutoff TIME NULL,
+  delay TIME(3) NULL
 );
-INSERT INTO ledger VALUES (1, 1, 10.00), (2, -1, 20.00), (3, 0, 30.00);
+INSERT INTO ledger VALUES (1, 1, 10.00, '01:15:00', '12:00:00.5'), (2, -1, 20.00, '-01:30:00', NULL),
+  (3, 0, 30.00, NULL, '100:00:01.250');
 
 -- a `$` in the table name ("temp": exercised by a dedicated run, outside the jobs)
 CREATE TABLE `temp_fx$rates` (
