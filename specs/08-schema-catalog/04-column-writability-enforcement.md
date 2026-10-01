@@ -99,3 +99,38 @@ side; never a log line only."
 - `GroupInsertQueryWithBatchRecordsTest.materializedColumnConvertedIsBoundInSameBatch()`
   — the successful conversion path binds the column in the same batch.
 - `UnwritableColumnReportingTest` — MATERIALIZED → DEFAULT conversion DDL.
+
+---
+
+## 6. Failure Modes & Recovery
+Every non-ALIAS miss fails the batch rather than dropping the value, and the failure is retried with backoff (spec 10.02) until the ClickHouse side is fixed, so the fix is picked up within 30 s without a restart. The price is that a deterministic miss stalls its worker indefinitely, and the stall is announced only by per-attempt log lines: no metric, no status change, no exit.
+
+- **FM-08.04-1 The source adds a column that ClickHouse lacks, schema evolution off**
+  - **Trigger**: a source `ADD COLUMN` whose replicated DDL did not reach ClickHouse (unrecognised by the parser, a schema reload under `sql_log_bin=0`, spec 08.01 FM-08.01-6), or a table created by hand without the column; `schema.evolution=false` (the default).
+  - **Behaviour**: `refreshIfRecordHasUnknownColumn` re-reads, finds no `system.columns` row (or an empty `default_kind`) and throws `MissingTargetColumnException`; the classifier returns UNKNOWN (no code) and the batch is retried with backoff forever. Nothing is proven absent, so each retry re-probes.
+  - **Detection**: on every attempt ERROR `ClickHouseBatchRunnable exception - Task(%s)` carrying `Column '<c>' is carried by the source record but does not exist in ClickHouse table <db>.<t> (default_kind not found). ... Set schema.evolution=true to let the connector add it, or add the column to the ClickHouse table. Failing the batch instead.` and WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN) -- the same batch will be retried in {} ms (consecutive failures: {}). ...`, at most 30 s apart. `clickhouse_sink_topics_error_records_total` does not move (the batch fails before any INSERT); `/status` keeps `Replica_Running=true`.
+  - **Blast radius**: every table hashed to the worker waits, and every later offset stays outstanding (spec 10.02 section 3.4). No loss. If the source keeps writing, the handoff cap stops the engine after `sink.connector.handoff.wait.timeout.ms` (600 s) at 500,000 outstanding rows and the process exits 3 after the engine retry budget (spec 10.04 FM-10.04-4); a quieter source stalls without end.
+  - **Recovery**: `ALTER TABLE <db>.<t> ADD COLUMN <c> <type>` in ClickHouse with the type the DDL path would declare (`sink-connector-client ddl_translate` on the source DDL), or set `schema.evolution=true` and restart. The next retry binds the column in the same batch.
+  - **RTO**: <= 30 s after the column exists; unmeasured.
+  - **Test**: `GroupInsertQueryWithBatchRecordsTest.missingPlainColumnFailsBatch()`, `SchemaCacheFailureModesTest.missingColumnFailsTheBatchAfterOneProbe()` (heals when the column is added).
+  - **DEFECT**: the stall is visible only in the log: no metric counts the consecutive failures and `/status` reports the replica running (spec 10.02 FM-10.02-1).
+
+- **FM-08.04-2 Schema evolution on, but the ADD COLUMN does not take effect**
+  - **Trigger**: `schema.evolution=true` and the connector's `ALTER TABLE ... ADD COLUMN` is denied (497), rejected, or exhausts its retries.
+  - **Behaviour**: `ClickHouseAlterTable.alterTable` catches every exception itself; a retry exhaustion returns normally (spec 08.01 FM-08.01-6). The re-read still lacks the column and `MissingTargetColumnException` names the failed automatic ALTER; retried as FM-08.04-1.
+  - **Detection**: ERROR `**** ALTER TABLE EXCEPTION` (or ERROR `ALTER TABLE ... ADD COLUMN for '{}' on {} failed`), then the FM-08.04-1 lines with `The automatic ALTER TABLE ... ADD COLUMN did not produce a writable column; add it to the ClickHouse table.`
+  - **Blast radius**: as FM-08.04-1.
+  - **Recovery**: grant `ALTER` on the table to the connector user, or add the column by hand; heals on the next retry.
+  - **RTO**: <= 30 s after the grant or the column; unmeasured.
+  - **Test**: `GroupInsertQueryWithBatchRecordsTest.missingPlainColumnIsAddedWhenSchemaEvolutionEnabled()` covers the success path; GAP: a unit test in which the ADD COLUMN is denied, asserting the batch fails naming the automatic ALTER.
+
+- **FM-08.04-3 A MATERIALIZED column cannot be converted**
+  - **Trigger**: a ClickHouse column the source also supplies is MATERIALIZED, and `MODIFY COLUMN ... DEFAULT <expr>` fails: no ALTER privilege, a type or expression that cannot be read, a key column ClickHouse refuses to modify, or a conversion that reads back unchanged.
+  - **Behaviour**: `enforceSourceColumnIsWritable` returns false, or the re-read still lacks the column; `MissingTargetColumnException` names the remediation; retried as FM-08.04-1. A successful conversion fixes the write path forward only: rows written while the column was MATERIALIZED keep ClickHouse's computed values.
+  - **Detection**: WARN `SOURCE VALUE SHADOWED: {} defines column '{}' as MATERIALIZED, ...`, WARN `Could not make {}.{}.{} writable; ...` or `Conversion did not take effect on {}.{}.{}: ...`, then the FM-08.04-1 lines. After a successful conversion, WARN `ENFORCED: '{}' on {} now stores the source value. Rows written BEFORE this point still hold ClickHouse's computed values -- backfill the affected range ...`.
+  - **Blast radius**: stall as FM-08.04-1; after conversion, historical rows keep computed values until backfilled.
+  - **Recovery**: grant ALTER, or redefine the column as `DEFAULT` over the same expression by hand; backfill the historical range with `ch-mysql-resync` (spec 11.04).
+  - **RTO**: <= 30 s after the redefinition for new rows; the backfill is proportional to the table; unmeasured.
+  - **Test**: `GroupInsertQueryWithBatchRecordsTest.materializedColumnWhoseConversionFailsFailsBatch()`, `GroupInsertQueryWithBatchRecordsTest.materializedColumnStillMissingAfterConversionFailsBatch()`, `GroupInsertQueryWithBatchRecordsTest.materializedColumnConvertedIsBoundInSameBatch()`.
+
+Summary: 3 failure modes, 1 DEFECT, 1 GAP.

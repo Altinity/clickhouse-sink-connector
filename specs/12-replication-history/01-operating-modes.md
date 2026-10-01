@@ -212,3 +212,63 @@ When `enable=true`:
 | G-12.01-2 | `DebeziumChangeEventCapture.connectorStarted` | creation failure caught and logged; engine started without the audit table | failure rethrown; the engine start fails (§3.5) | — | — |
 | G-12.01-3 | `DebeziumChangeEventCapture` startup banner | "only history will be tracked" printed in mode 2 | the banner names the mode (§3.5) | — | — |
 | S8 (new) | `MySqlDDLParserListenerImpl.enterCreateDatabase` / `enterDropDatabase` | database-level DDL translated verbatim; a mode-2 snapshot dropped another connector's database | ignored in history mode (§3.3) | `Replication.History.database_ddl_ignored_in_history_mode` | — (found by the end-to-end suite) |
+
+---
+
+## 7. Failure Modes & Recovery
+The mode matrix is decided from configuration at every batch and every DDL, with no persisted notion of "the mode these offsets were written under". The startup failure is loud and self-limiting. The dangerous failures are configuration mistakes the connector accepts silently: a mode change on a live deployment, or two source tables mapped onto one history table. None of them is recoverable from the offset store alone, because the target no longer matches what the offsets certify. Row-level failures of each mode are in 12.03 §7 (SCD2 writes), 12.04 §7 (audit table) and 12.05 §7 (log-only).
+
+- **FM-12.01-1 The history database or the audit table cannot be created at start**
+  - **Trigger**: the ClickHouse account lacks `CREATE DATABASE`/`CREATE TABLE`, the server is read-only, or Keeper is down for a replicated audit table.
+  - **Behaviour**: `connectorStarted` logs `Error creating history database or audit table` and throws `RuntimeException("replication.history.enable=true: could not create the history database ... the engine must not start without the audit table (Invariant I9)")`. The engine run ends. `handleEngineCompletion` recreates the engine up to `errors.max.retries` times (default `MAX_RETRIES = 10`), `SLEEP_TIME` 10 s apart. The failure has no ClickHouse FATAL code, so it draws on that budget. When the budget is spent, it logs FATAL `Replication is STOPPED: the engine failed ...` and exits with code 3 (`TERMINAL_FAILURE_EXIT_CODE`) unless `exit.on.terminal.failure=false`.
+  - **Detection**: the ERROR line at the first start. Process exit code 3 after about 10 × (10 s + engine start).
+  - **Blast radius**: nothing is replicated and no offset moves, so no data is lost. In mode 3 there is no output at all.
+  - **Recovery**: grant the privilege or restore Keeper, then restart the service. It resumes from the last committed offset. A cause cleared within the retry budget recovers on its own at the next retry.
+  - **RTO**: time to fix the cause plus one start (about 20 s). Self-healing is bounded by the budget of about 100 s plus the start times.
+  - **Test**: GAP: a unit test driving `connectorStarted` with a failing `ClickHouseAutoCreateTable.createHistoryTable` and asserting the rethrow (§5 coverage gap).
+
+- **FM-12.01-2 The mode is changed on a deployment that already has offsets**
+  - **Trigger**: the operator flips `replication.history.enable` (false→true or true→false), or `replication.history.replication_log_only` (true→false), and restarts. The stored offset is kept.
+  - **Behaviour**: routing (`resolveDatabaseName`) and the data-table skip (`processBatch` / `persistRecords`) follow the new flags from the next batch. Nothing compares them with the mode that wrote the existing target.
+    - Switching to mode 2 creates SCD2 tables in the history database on first touch. They hold only keys changed after the flip. An UPDATE of an older key writes an after row with no close row, and a DELETE of an older key writes nothing (12.03 §7 FM-12.03-4). The previous standard tables in the source databases stop receiving changes.
+    - Leaving mode 2 or 3 writes into source-database tables that missed every change made while the connector was in history mode.
+  - **Detection**: none. The startup banner states the new mode (§3.5) but not that it changed.
+  - **Blast radius**: silent divergence of every replicated table. There is no data loss on the source.
+  - **Recovery**: treat it as a new target.
+    - For the new mode's tables: stop the connector, run `sink-connector-client delete_offsets` and `delete_schema_history`, set `snapshot.mode=initial` and start. This is a full snapshot into the new target.
+    - For standard tables left stale by an excursion into history mode: rewind to the position of the flip and repair each table with `ch-mysql-resync` (spec 11.04).
+  - **RTO**: a full snapshot or resync. Hours on large sources, which exceeds the Invariant I15 target.
+  - **Test**: GAP: a startup check that compares the configured mode with a mode marker stored next to the offset, and refuses a change without an explicit override.
+  - **DEFECT**: a mode change is accepted silently although it invalidates the target.
+
+- **FM-12.01-3 Two source databases with a same-named table write into one SCD2 table**
+  - **Trigger**: a mode-2 connector captures several databases that share table names (sharded schemas `shop1.orders`, `shop2.orders`).
+  - **Behaviour**: `resolveDatabaseName` returns `replication.history.database.name` for every table, and the table name is the bare source name (`getTableFromTopic`). Both source tables therefore resolve to `binlog_history.orders`. Rows of both land in one table, and an UPDATE or DELETE of key `k` in one shard closes the open row of `k` from the other shard.
+  - **Detection**: none when the column sets match. When they differ, the bind-time schema check fails loudly (`StaleSchemaCacheException`, spec 08.03) and the batch retries.
+  - **Blast radius**: the current state and the history of both tables are corrupted silently. The audit table still records the source database (12.04 §3.3).
+  - **Recovery**: run one connector per source database, each with its own `replication.history.database.name`. Rebuild the mixed tables: their current state by a snapshot, their history only from the audit table (12.03 §7 FM-12.03-8).
+  - **RTO**: a snapshot of the affected tables plus the history rebuild (unmeasured).
+  - **Test**: `HistoryModeTableCollisionTest.sameNamedTablesOfTwoSourceDatabasesGetDistinctTargets()` (disabled, DEFECT). Today's routing is pinned by `HistoryModeTableCollisionTest.everySourceDatabaseIsRoutedToTheOneHistoryDatabase()`.
+  - **DEFECT**: history-mode routing drops the source database from a table's identity.
+
+- **FM-12.01-4 The history database already holds standard (non-SCD2) tables**
+  - **Trigger**: `replication.history.database.name` names a database a standard connector writes into, or tables created before history mode was enabled.
+  - **Behaviour**: `CREATE TABLE IF NOT EXISTS` keeps the existing shape (12.02 §3.7). INSERTs bind only the columns ClickHouse has, so they succeed. The first UPDATE or DELETE runs the history statement, whose predicate names `_valid_to`. ClickHouse refuses it with an unknown-identifier error. That code is not in `ClickHouseErrorClassifier`'s FATAL set, so `ClickHouseBatchRunnable.run()` retries the batch forever (`RetryBackoff` has no attempt cap).
+  - **Detection**: repeating `Retriable ClickHouse error (Code: ..., Category: ...) -- the same batch will be retried` WARN lines, and `ClickHouseBatchRunnable exception` ERROR lines naming the statement, from the first UPDATE on.
+  - **Blast radius**: every table routed to that worker stalls, and the standard tables receive SCD2-mode INSERT rows.
+  - **Recovery**: point `replication.history.database.name` at a dedicated database and restart. Then repair the touched standard tables with `ch-mysql-resync` (spec 11.04).
+  - **RTO**: a restart once noticed. The stall itself is unbounded.
+  - **Test**: GAP: a test that classifies ClickHouse's unknown-identifier error on a history statement as FATAL.
+  - **DEFECT**: a deterministic schema mismatch stalls instead of stopping.
+
+- **FM-12.01-5 `replication_log_only=true` without `enable=true`**
+  - **Trigger**: the operator sets only `replication.history.replication_log_only`, expecting a binlog recorder.
+  - **Behaviour**: nothing history-related is enabled (§3.4). Both engines replicate data as mode 1, and no audit row is written.
+  - **Detection**: none. The history banner is absent, and no line says the flag is ineffective.
+  - **Blast radius**: data is replicated where the operator expected none, and no recording exists. Nothing diverges.
+  - **Recovery**: set `replication.history.enable=true` and restart. Tables created meanwhile are the operator's to keep or drop.
+  - **RTO**: a restart (about 20 s).
+  - **Test**: `ClickHouseBatchWriterDatabaseResolutionTest.testResolveDatabaseNameLogOnlyAloneIsStandard()`.
+  - **DEFECT**: an ineffective flag combination starts without a warning.
+
+Summary: 5 failure modes, 4 DEFECT, 3 GAP.

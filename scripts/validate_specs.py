@@ -76,10 +76,15 @@ REQUIRED_SPEC_SECTIONS = [
     "Codebase Mapping",
     "Invariants",
     "Verification",
+    "Failure Modes",
 ]
 
+# Invariant I15: the fields every "Failure Modes & Recovery" section must carry.
+# Each is matched as a whole word, case-sensitively, anywhere in the section body.
+FAILURE_MODE_FIELDS = ("Detection", "Recovery", "RTO")
+
 # Every invariant the Constitution must define (one heading each).
-INVARIANT_COUNT = 14
+INVARIANT_COUNT = 15
 
 # Test source trees searched by the cited-test check.
 TEST_TREES = [
@@ -292,6 +297,13 @@ def check_spec_schema(path: Path, repo_root: Path) -> list[str]:
     for sec in REQUIRED_SPEC_SECTIONS:
         if not re.search(rf"^#+\s*.*{sec}", content, re.IGNORECASE | re.MULTILINE):
             errors.append(f"{rel}: missing required section matching '{sec}'")
+    for body in sections(content, r"Failure Modes"):
+        missing = [f for f in FAILURE_MODE_FIELDS if not re.search(rf"\b{f}\b", body)]
+        if missing:
+            errors.append(
+                f"{rel}: 'Failure Modes' section lacks the field(s) {', '.join(missing)} "
+                "(Invariant I15: every failure mode states its Detection, its Recovery procedure and its RTO)"
+            )
     return errors
 
 
@@ -451,36 +463,39 @@ def check_verification_refs(spec: Path, repo_root: Path, index: RepoIndex) -> tu
     findings: list[Finding] = []
     refs: list[tuple[str, str, str]] = []
     seen: set[str] = set()
-    for body in sections(content, r"Verification"):
-        for token in backticked(body):
-            if token in seen:
-                continue
-            seen.add(token)
-            test_match = TEST_REF_RE.match(token)
-            lean_match = LEAN_REF_RE.match(token)
-            if test_match:
-                cls, method = test_match.group(1), test_match.group(2)
-                files = index.test_classes().get(cls)
-                if not files:
-                    status = "missing class"
-                    findings.append(Finding(rel, token, f"{rel}: Verification cites `{token}` but no {cls}.java exists under {' or '.join(TEST_TREES)}"))
-                elif method and not _method_declared(files, method):
-                    status = "missing method"
-                    findings.append(Finding(rel, token, f"{rel}: Verification cites `{token}` but {cls} declares no method {method}()"))
-                else:
-                    status = "ok"
-                refs.append((rel, token, status))
-            elif lean_match:
-                declared = _lean_declares(repo_root, lean_match.group(1), lean_match.group(2))
-                if declared is None:
-                    status = "missing module"
-                    findings.append(Finding(rel, token, f"{rel}: Verification cites `{token}` but Replication/{lean_match.group(1)}.lean does not exist"))
-                elif not declared:
-                    status = "missing declaration"
-                    findings.append(Finding(rel, token, f"{rel}: Verification cites `{token}` but Replication/{lean_match.group(1)}.lean declares no {lean_match.group(2)}"))
-                else:
-                    status = "ok"
-                refs.append((rel, token, status))
+    cited: list[tuple[str, str]] = []
+    for label, pattern in (("Verification", r"Verification"), ("Failure Modes", r"Failure Modes")):
+        for body in sections(content, pattern):
+            cited += [(label, token) for token in backticked(body)]
+    for label, token in cited:
+        if token in seen:
+            continue
+        seen.add(token)
+        test_match = TEST_REF_RE.match(token)
+        lean_match = LEAN_REF_RE.match(token)
+        if test_match:
+            cls, method = test_match.group(1), test_match.group(2)
+            files = index.test_classes().get(cls)
+            if not files:
+                status = "missing class"
+                findings.append(Finding(rel, token, f"{rel}: {label} cites `{token}` but no {cls}.java exists under {' or '.join(TEST_TREES)}"))
+            elif method and not _method_declared(files, method):
+                status = "missing method"
+                findings.append(Finding(rel, token, f"{rel}: {label} cites `{token}` but {cls} declares no method {method}()"))
+            else:
+                status = "ok"
+            refs.append((rel, token, status))
+        elif lean_match:
+            declared = _lean_declares(repo_root, lean_match.group(1), lean_match.group(2))
+            if declared is None:
+                status = "missing module"
+                findings.append(Finding(rel, token, f"{rel}: {label} cites `{token}` but Replication/{lean_match.group(1)}.lean does not exist"))
+            elif not declared:
+                status = "missing declaration"
+                findings.append(Finding(rel, token, f"{rel}: {label} cites `{token}` but Replication/{lean_match.group(1)}.lean declares no {lean_match.group(2)}"))
+            else:
+                status = "ok"
+            refs.append((rel, token, status))
     return findings, refs
 
 

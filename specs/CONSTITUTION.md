@@ -195,6 +195,16 @@ and formalised for the version floor as `clock_restart_boundary` in
 `formal_specs/lean/Replication/VersionFloor.lean` (the seed is a function of the
 mark and the clock alone). Spec 10.06.
 
+
+### Invariant I15: Bounded, Declared Recovery (Minutes, Not Hours)
+The connector runs against production workloads of arbitrary size and shape. Every failure it can meet — a source, network, ClickHouse, host, configuration or data condition, and every defect it can reach — MUST satisfy four properties:
+
+1. **Detected loudly and promptly.** The process exits non-zero, or an ERROR log line plus a metric name the condition, within the time its spec states. A replication that stands still without saying so violates Invariant I9 and this invariant alike. "Promptly" is bounded by a stated number (a timeout, a retry count, a keepalive interval), never by "eventually".
+2. **Recoverable by a declared procedure.** Exact operator steps — commands, config keys, the offset or table to touch — that need nothing the operator cannot read from the connector log, the offset store and the source. Recovery never trades correctness for speed: MySQL stays the source of truth, and moving an offset past a transaction is never a recovery by itself — it is valid only when followed by the count- and value-reconciled re-synchronisation of every table that transaction touched (spec 11.04).
+3. **Bounded in time.** Once the cause is removed, replication resumes and the replica converges within the **Recovery Time Objective (RTO): 5 minutes, plus the time to re-apply at most the one source transaction that was in flight**, whose cost is proportional to its size and is stated in its spec. Repeated faults do not accumulate cost beyond that per fault. A recovery that re-reads more than the in-flight transaction, waits on a timeout longer than the RTO, or needs a full reload for a condition that a bounded procedure could repair, is a defect.
+4. **Declared.** Every micro-spec carries a **Failure Modes & Recovery** section listing each failure mode of the component with its trigger, its detection, its blast radius, its recovery procedure and its RTO — measured, citing the test or harness that measured it, or marked `unmeasured` with the reason — and the test that pins it, or an explicit `GAP:` naming the test that is missing. A failure mode whose recovery is unknown, silent, or longer than the RTO is recorded there as `DEFECT:` until it is fixed.
+
+Enforced by `scripts/validate_specs.py` (pass 2: the section and its Detection, Recovery and RTO fields are required in every micro-spec; pass 5: the tests it cites must exist). Chaos and recovery-time measurements for the source transport are spec 01.08 section 6.
 ---
 
 ## 4. Architectural Domain Taxonomy
@@ -238,7 +248,7 @@ To provide mathematical proof of system correctness, the invariants and state tr
 - `Replication.CreateTable`: CREATE TABLE sorting-key selection for Specs 06.05 §3.6 / 08.05 §3.2 — a table with a storable column never gets `ORDER BY tuple()`, a declared key always wins, and only the value-derived fallback key can require `allow_nullable_key`.
 - `Replication.History`: the replication-history modes of Domain 12 — the corrected SCD2 write protocol of Spec 12.03 (one standard version per event; an UPDATE closes the open row at the before-image key and its new image supersedes the open row, a key-changing UPDATE retires the old key and opens the new one, the closed version stays visible at its close key, a DELETE hides the key, the bulk close of TRUNCATE / DROP TABLE hides every key and destroys nothing, closed and successor validity ranges meet exactly), with the shipped defects kept as machine-checked `old_*` counterexamples (the inline UPDATE wrote no closed row, the close row and the before copy tied on sorting key and version, the after-image key never closed the old key), and the mode-flag gating, database routing and database-level-DDL rule of Specs 12.01 / 12.05 (both execution engines skip data tables in log-only mode and route on `enable` alone; database-level DDL is ignored in history mode).
 
-### 5.1 Coverage of the thirteen invariants
+### 5.1 Coverage of the fifteen invariants
 Honest status per invariant. "Lean" means a proposition and a machine-checked theorem exist; "model only" means the property holds in the abstract model but the shipped arithmetic is not modelled.
 
 | Invariant | Lean status | Where |
@@ -256,5 +266,7 @@ Honest status per invariant. "Lean" means a proposition and a machine-checked th
 | I11 Drop-in Upgrade Safety | Lean, conditional on `GapMono`; the boundary clause ("continues above the old version's last write") is proved for the seeded floor (spec 02.06 §6 lists the remaining first-start-without-seed case) | `upgrade_safe`, `replicate_convergesV`, `liveVersion_gapMono`; `VersionFloor.lean`: `restart_boundary` |
 | I12 Snapshot Completion & Control-Record Offset Progress | Lean | `control_commit_safe`, `quiescent_control_commits`, `snapshot_completes` |
 | I13 Generated-Column Type Integrity | Lean | `alter_preserves_type`, `type_is_never_expression`, `generated_has_default` |
+| I14 Bounded Bookkeeping | none (a static property of the source, enforced by the validator's pass 8) | — |
+| I15 Bounded, Declared Recovery | none (an operational property; empirical — the chaos and recovery-time harnesses of spec 01.08 section 6 and the per-spec Failure Modes sections) | — |
 
 `ReplayIdempotency` (`Invariants.lean`) is a stated proposition supporting I3 under at-least-once delivery (spec 02.04); it is not numbered as an invariant and has no theorem.

@@ -37,7 +37,7 @@ The engineering workflow follows seven discrete, sequential phases:
 |                                                                                   |
 |  [Phase 4: Architectural Design & Invariant Alignment]                            |
 |       Author/update design sections mapping state transitions.                    |
-|       Check against System Constitution (Invariants I1–I13).                      |
+|       Check against System Constitution (Invariants I1–I15).                      |
 |       Update Lean 4 formal model (`formal_specs/lean/`) if invariants change.     |
 |                                                                                   |
 |  [Phase 5: Task Breakdown]                                                        |
@@ -63,8 +63,9 @@ Every specification document in this repository must adhere to the standard enca
 1. **Executive Summary & Purpose**: Concrete statement of the component's role and boundaries.
 2. **Codebase Mapping**: Specific Java classes, methods, and files on the active branch.
 3. **Operational Specification / Flow**: Detailed algorithms, data structures, and state transitions.
-4. **Invariants Preserved**: Explicit mapping to System Constitution Invariants (`I1`–`I13`).
+4. **Invariants Preserved**: Explicit mapping to System Constitution Invariants (`I1`–`I15`).
 5. **Verification Criteria**: Unit tests, integration tests, and formal verification links.
+6. **Failure Modes & Recovery** (Invariant I15): every way the component can fail, with its Detection, blast radius, Recovery procedure and RTO (measured, or `unmeasured` with the reason), and the test that pins it or an explicit `GAP:`. A change that adds a failure mode declares it here before it is implemented.
 
 ---
 

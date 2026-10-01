@@ -51,3 +51,31 @@ When `replication.history.enable = true`:
 - `PreparedStatementExecutorCollapsingSignTest.testUpdateStagesCancelRowThenLiveRow()` — §3.1 CollapsingMergeTree: the sign values staged by `addBatch()` for one UPDATE are `[-1, +1]`, the `-1` row carrying the before image.
 - `ReplicationHistoryHandlerTest` — history-column population; `ReplicationHistoryHandlerTest.compositePrimaryKeyClosesOnlyTheMatchingRow()` — the previous history row is closed by every primary-key column, not only the first (spec 02.01 §3.5 a).
 - `BinLogHistoryIT` — end to end history mode.
+
+---
+
+## 6. Failure Modes & Recovery
+
+Recovery posture: an UPDATE is one grouped record whose images are bound through one template; a missing image is refused rather than written from the wrong image, and on `ReplacingMergeTree` a replayed UPDATE converges by version. The replay of an UPDATE is not idempotent on `CollapsingMergeTree` and in replication-history mode. Procedures P-FIX-TYPE / P-SKIP / P-RESYNC and the retry-vs-stop rule are defined in spec 07.01 §6.
+
+- **FM-04.04-1 UPDATE without its after image**
+  - **Trigger**: an UPDATE event whose `after` image is missing — a malformed Kafka-mode event, or a source whose `binlog_row_image` changed after the start-time check (spec 10.04 §3.6).
+  - **Behaviour**: `GroupInsertQueryWithBatchRecords.updateQueryToRecordsMap` throws `IllegalStateException` (`... carries no after image, so its row cannot be built ...`) instead of writing the before image as a live row (§3.1, spec 04.01 §3.3); UNKNOWN, retried forever — spec 04.01 §6 FM-04.01-1.
+  - **Detection**: ERROR `ClickHouseBatchRunnable exception - Task(<id>)` with that message naming topic, partition and offset; WARN `Retriable ... Category: UNKNOWN` every ≤ 30 s; no metric, no exit.
+  - **Blast radius**: the worker's tables stop, offsets freeze, the next DDL drain waits forever; nothing written with stale values.
+  - **Recovery**: restore `binlog_row_image=FULL`; P-SKIP the transaction and P-RESYNC its tables.
+  - **RTO**: unbounded until an operator acts; then P-SKIP + resync; unmeasured.
+  - **Test**: `GroupInsertQueryWithBatchRecordsTest.updateWithoutAfterImageFailsLoudly()`; classification: `PoisonValueClassificationTest.groupingRefusalIsFatal()` (disabled, fails on 2.11.0).
+  - **DEFECT**: as FM-04.01-1 — retried forever instead of stopping the engine.
+
+- **FM-04.04-2 UPDATE replayed on a non-idempotent engine**
+  - **Trigger**: a batch containing UPDATEs is written partly and retried (spec 04.01 §6 FM-04.01-3), or written and redelivered after a crash before its offset was committed (spec 09.01).
+  - **Behaviour**: `ReplacingMergeTree`: the replayed after image (and relocation tombstone) carry the same `_version`, so the replica converges on merge and under `FINAL`. `CollapsingMergeTree`: `PreparedStatementExecutor.executePreparedStatement` stages a second `-1`/`+1` pair per replayed UPDATE (§3.1), and two cancel rows for one live row do not collapse to the source state (spec 05.04). History mode: the SCD2 `INSERT ... SELECT` is executed again (spec 12.03).
+  - **Detection**: none for the duplication (the batch reports success on the retry). DEFECT.
+  - **Blast radius**: `CollapsingMergeTree` / history tables: wrong row counts or duplicated history for the replayed keys; `ReplacingMergeTree`: transient duplicates in non-`FINAL` reads only.
+  - **Recovery**: P-RESYNC the affected `CollapsingMergeTree` / history tables (value-reconciled, spec 11.04).
+  - **RTO**: resync proportional to the table size; unmeasured.
+  - **Test**: `PreparedStatementExecutorCollapsingSignTest.testUpdateStagesCancelRowThenLiveRow()` pins the `[-1, +1]` staging of one UPDATE; GAP: a replay test asserting the collapsed state after the same batch is written twice.
+  - **DEFECT**: at-least-once delivery (spec 02.04) is only safe on `ReplacingMergeTree`; the other engines this spec supports diverge on replay with no signal.
+
+Summary: 2 failure modes, 2 DEFECT, 1 GAP.

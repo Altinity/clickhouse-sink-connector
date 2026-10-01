@@ -55,3 +55,41 @@ not textually — equal unless both sides are normalised identically.
 - `MySQLJsonIT` — JSON columns replicated end to end.
 - `ClickHouseDataTypeMapperTest.getClickHouseDataType()` — the type-name mapping table.
 - Verification: unit coverage of string/ENUM/SET value binding and UTF-8 round-trip is not yet covered by an automated test (gap). The TestFlows suite lists `types/enum` and `types/json` as expected failures (spec 11.03 §6).
+
+---
+
+## 6. Failure Modes & Recovery
+
+Recovery posture: text, ENUM, SET and JSON values are bound verbatim (`setString` / `setObject`) and quoted by the V2 driver (`SQLUtils.escapeSingleQuotes` doubles backslashes and escapes quotes, verified in client-v2 0.9.8 bytecode), so the connector itself never alters a string. Failures come from the source-side decoder, from narrow hand-created ClickHouse types that refuse or pad a value, and from values so large the JVM cannot render them. Procedures P-FIX-TYPE / P-SKIP / P-RESYNC and the retry-vs-stop rule are defined in spec 07.01 §6.
+
+- **FM-07.04-1 Bytes invalid in the column's character set**
+  - **Trigger**: a `CHAR`/`VARCHAR`/`TEXT` column holds byte sequences that are not valid in its declared charset (written under a lax `sql_mode`, through a mis-declared client charset, or by `sql_log_bin=0` repairs).
+  - **Behaviour**: Debezium decodes the column with `new String(bytes, charset)` (`BinlogValueConverters.convertString`, debezium-connector-binlog 3.1.3 bytecode), which replaces every malformed sequence with U+FFFD; the connector binds the replaced text verbatim.
+  - **Detection**: none. DEFECT (library-side, not signalled by the connector).
+  - **Blast radius**: the affected values differ from the source bytes; row counts intact; the original bytes are unrecoverable from the stream.
+  - **Recovery**: repair the source rows (re-encode them) so a new binlog event carries valid text, or declare the column binary on the source; then P-RESYNC the table.
+  - **RTO**: unbounded detection; after detection one source repair + resync; unmeasured.
+  - **Test**: `ClickHouseDataTypeMapperPoisonValueTest.textEnumSetAndJsonAreBoundVerbatim()` pins that the connector passes a U+FFFD (and multi-byte text) through unchanged; GAP: a test at the Debezium boundary asserting that a malformed source byte sequence is reported rather than replaced.
+  - **DEFECT**: the substitution is silent; a strict decoder (`CharsetDecoder` with `CodingErrorAction.REPORT`) in the record parser would turn it into a loud failure naming the column.
+
+- **FM-07.04-2 A narrow ClickHouse type refuses the value**
+  - **Trigger**: a hand-created or overridden column narrower than `String`: an `Enum8/16` lacking a label added on MySQL by an `ALTER ... MODIFY ENUM(...)` that was not translated, a `FixedString(N)` shorter than the value, `UUID` for a `CHAR(36)` holding a non-UUID, `Bool` for a text flag, a native `JSON`/`Object` column refusing a document.
+  - **Behaviour**: the value is bound as text; ClickHouse refuses it — measured with `clickhouse local` 24.8.14: `Code: 691` (unknown enum element), `Code: 131` (string too long for `FixedString`), `Code: 376` (cannot parse UUID), `Code: 41` (cannot parse DateTime), `Code: 467` (cannot parse boolean). None of these codes is in `FATAL_ERROR_CODES`, so the worker retries the batch forever. (A value shorter than `FixedString(N)` is zero-padded silently instead: `'ab'` into `FixedString(4)` stores `61620000`, measured.) Error codes for the native `JSON` type were not measured.
+  - **Detection**: ERROR `******* ERROR inserting Batch Database(<db>), Table(<t>)` with the ClickHouse message, ERROR `ClickHouseBatchRunnable exception - Task(<id>)`, WARN `Retriable ClickHouse error (Code: 691, Category: RETRIABLE)` every ≤ 30 s; metric `clickhouse.sink.topics.error.records`; no exit. Zero-padding: none.
+  - **Blast radius**: every table hashed to that worker stops; offsets freeze; the next DDL drain waits forever. No loss (nothing of the batch is written).
+  - **Recovery**: P-FIX-TYPE to `String` (or add the enum value: `MODIFY COLUMN e Enum8(..., 'c' = 3)`), restart; the batch is redelivered and written.
+  - **RTO**: never self-heals; after P-FIX-TYPE ≈ 1–2 min + re-apply of the in-flight transaction; unmeasured.
+  - **Test**: `PoisonValueClassificationTest.clickHouseValueRejectionsAreFatal()` (disabled, fails on 2.11.0).
+  - **DEFECT**: deterministic value refusals are classified RETRIABLE and retried forever with no exit and no escalation; they should be terminal (or at least counted and escalated), like `Code: 53`/`69`.
+
+- **FM-07.04-3 Very large `TEXT` / `JSON` value (hundreds of MB up to 1 GiB)**
+  - **Trigger**: a `LONGTEXT`/`JSON` value near `max_allowed_packet` (up to 1 GiB).
+  - **Behaviour**: the value is a Java `String` (two bytes per char once any character is outside Latin-1); the V2 driver copies it at least four times before sending — `escapeSingleQuotes` (two `String.replace`), the quoted literal, the per-row `StringBuilder` in `addBatch`, the chunk-wide `StringBuilder` in `executeInsertBatch` and its `toString` (bytecode) — and a chunk holding it is its own chunk (`BatchChunker`, a row wider than `buffer.max.bytes` is never refused). With the shipped `-Xmx4G` a value of a few hundred MB exhausts the heap (unmeasured); a Java string cannot exceed about 2^31 bytes (2^30 characters once any character is outside Latin-1), so above that the value cannot be rendered at any heap size. `OutOfMemoryError` is not caught by `ClickHouseBatchRunnable.run` (`catch (Exception e)`), so the worker's scheduled task dies, the engine stops and the process exits 3 (spec 10.04 §3.5 rule 6).
+  - **Detection**: `java.lang.OutOfMemoryError` in the log, then `Sink worker <i> of <n> is dead: its scheduled task has terminated. ...` and FATAL `Replication is STOPPED: ...`, exit code 3, within ≤ 5 s; on restart the same row fails the same way; systemd gives up after 5 starts in 300 s. No metric names the row.
+  - **Blast radius**: whole connector stopped; nothing written for the batch; other JVM threads may also fail while the heap is exhausted.
+  - **Recovery**: raise `-Xmx` (roughly ten times the value; unmeasured) and restart; if no heap suffices, exclude the column on the source connector (`column.exclude.list`) and P-SKIP + resync, or change the application.
+  - **RTO**: heap change + restart ≈ 1–2 min when it suffices; otherwise P-SKIP + resync; unmeasured.
+  - **Test**: `BatchChunkerTest.oversizedRowIsItsOwnChunk()` pins that a huge row is written alone; GAP: a heap-bounded test (or harness) that measures the largest value a given `-Xmx` can replicate.
+  - **DEFECT**: the largest replicable value is bounded by the JVM and the driver's text rendering, not by the source; there is no bounded recovery for a value above that limit short of excluding the column.
+
+Summary: 3 failure modes, 3 DEFECT, 2 GAP.

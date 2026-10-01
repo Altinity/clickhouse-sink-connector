@@ -267,3 +267,48 @@ This is proven at the model level by
 covered by an end-to-end integration test that runs the connector with key
 routing on, restarts it with it off (downgrade) and on again (upgrade), and
 checks ClickHouse converges value-identically to MySQL across both switches.
+
+## 7. Failure Modes & Recovery
+
+Key-aware routing changes only which worker applies a row, so it adds no new way to lose or reorder data: routing is a deterministic function of the record and a restart resumes from the committed low-water mark (section 3.5, section 6). What it adds is load shape — N writers on one hot table — and a whole-pipeline barrier for every TRUNCATE row-event. Its failure modes are those two, plus the cases where the token does not spread the table at all.
+
+- **FM-03.07-1 A hot table fanned out over N workers multiplies parts until TOO_MANY_PARTS**
+  - **Trigger**: a burst on one table (180M rows in 20 minutes) with the shipped defaults `routing.by.primary.key=true`, `thread.pool.size=10`, `coalesce.max.wait.ms=0`.
+  - **Behaviour**: every worker holding some of the table's keys writes its own INSERT per poll, one ClickHouse part per partition it touches — up to `thread.pool.size` times the parts of table routing (measured on the part-pressure matrix, spec 03.03 §3.1.1 step 6: 5,210 parts against 194). ClickHouse first delays inserts (`parts_to_delay_insert`), then refuses them with 252 TOO_MANY_PARTS, which is RETRIABLE: each affected worker retries its batch without bound (spec 03.03 §6 FM-03.03-1), every other table on those workers waits, and the connector's committed offset freezes. It clears when merges catch up, and the same insert pattern rebuilds the pressure.
+  - **Detection**: WARN `Retriable ClickHouse error (Code: 252, Category: RETRIABLE) ...` on several `Sink Connector thread-pool-<n>` threads at once; on the server, the partition's active part count in `system.parts`.
+  - **Blast radius**: the hot table and every table sharing its workers stall; no loss, no divergence.
+  - **Recovery**: set `coalesce.max.wait.ms` (e.g. 1000–5000, spec 03.03 §3.1.1 step 6) so each worker writes parts of up to `buffer.max.records` rows, or `routing.by.primary.key=false` (one writer per table; safe to flip on a restart, section 6); restart. A temporary server-side raise of `parts_to_throw_insert` is a ClickHouse operation outside the connector.
+  - **RTO**: restart (~1 min) + merge catch-up, unmeasured.
+  - **Test**: `CoalescedQueuedBatchesTest.waitCoalescesABatchThatArrivesDuringTheWindow()`, `ClickHouseErrorClassifierTest.testTooManyPartsIsRetriableBackpressure()`, `WorkerFailureModesTest.backpressureCodesAreRetriedWithTheBatchKeptUntilTheyClear()`; GAP: an IT that drives a hot table at the default configuration and asserts the part count stays below `parts_to_delay_insert`.
+  - **DEFECT**: the shipped defaults multiply part creation by the pool size exactly when a table is hot, and the 252 that follows is retried without bound.
+
+- **FM-03.07-2 A binary primary key routes the whole table to one worker**
+  - **Trigger**: a table keyed by `BINARY(16)` (UUIDs) or another bytes-typed key.
+  - **Behaviour**: `ClickHouseStruct` keeps the Debezium key as `key.toString()`; Kafka Connect's `Struct.toString` appends each value with `StringBuilder.append(Object)` (connect-api 3.8.0 bytecode) and Debezium delivers bytes as a `ByteBuffer` (`JdbcValueConverters.toByteBuffer`, debezium-core 3.1.3 bytecode; that the MySQL connector takes that path for `BINARY` keys is inferred), whose `toString()` names its length, not its content. `RoutedBatch.createShardKey` therefore gives every key of one length the same token. Deterministic, so per-row order is safe; but the table is not spread at all.
+  - **Detection**: none; per-thread `****** Thread: Sink Connector thread-pool-<n> Batch Size: <k> ******` lines for the table come from one thread only.
+  - **Blast radius**: throughput only: the single-worker saturation this spec exists to remove (section 1) stays.
+  - **Recovery**: none in 2.11.0.
+  - **RTO**: n/a (throughput).
+  - **Test**: `RoutedBatchBinaryKeyTest.theSameBinaryKeyAlwaysRoutesToTheSameShard()`; `RoutedBatchBinaryKeyTest.distinctBinaryKeysOfOneTableProduceDistinctTokens()` (disabled, fails on 2.11.0).
+  - **DEFECT**: the routing token of a bytes-typed key must be derived from the key's content, not from `ByteBuffer.toString()`.
+
+- **FM-03.07-3 Restart with some shards of a unit written and others not**
+  - **Trigger**: kill -9, OOM, or a terminal failure while one poll batch's groups are spread over several workers.
+  - **Behaviour**: `Replication.OffsetFifo` acknowledges a unit only when all its groups are written, in handoff order (spec 09.01), so the committed offset stays below the unit; the restart redelivers it whole and routes every record to the same shard as before (the token is a pure function of the record and the pool size).
+  - **Detection**: the resume summary of spec 01.07 §3.5 at start; nothing is wrong.
+  - **Blast radius**: the already-written shards are written again: they collapse under ReplacingMergeTree `_version`; additive on CollapsingMergeTree (spec 05.04 §6 FM-05.04-1).
+  - **Recovery**: none needed.
+  - **RTO**: restart + redelivery of the outstanding units (≤ `sink.connector.handoff.max.outstanding.records`, 500,000 rows); unmeasured.
+  - **Test**: `Replication.KeyRouting.recovery_converges`, `OffsetHandoffOrderTest`, `HashRoutingPerTableOrderingTest.sameRowKeyStaysOnOneQueue()`.
+
+- **FM-03.07-4 A TRUNCATE row-event waits behind a stuck shard**
+  - **Trigger**: a TRUNCATE row-event arrives while any worker — for any table — is retrying a batch that does not clear (spec 03.03 §6 FM-03.03-1) or is hung in an INSERT (spec 03.06 §6 FM-03.06-1).
+  - **Behaviour**: `appendSegmentedAtTruncate` brackets the truncate with `awaitPipelineQuiescent()`, which waits until every queue of every worker is empty and nothing is outstanding; the wait is bounded by liveness only (a dead worker aborts it), so the Debezium thread parks there. It is not in `awaitHandoffCapacity`, so the handoff hard cap never fires and the engine never stops. Each TRUNCATE also costs two full drains of the whole pipeline.
+  - **Detection**: WARN `Pipeline drain: <pending> still pending after <n> ms; the writers are alive, so the backlog is a slow or retrying batch, not a dead one.` every 60 s (`ddlDrainWarnIntervalMs`).
+  - **Blast radius**: all replication stops behind the barrier; no loss.
+  - **Recovery**: remove the cause of the stuck batch (spec 03.03 §6) or restart the connector.
+  - **RTO**: unbounded without an operator.
+  - **Test**: `HashRoutingPerTableOrderingTest.truncateInMixedBatchSplitsIntoOrderedSegments()`; GAP: a drain behind a worker that keeps failing retriably, asserting the drain gives up with an error after a bound.
+  - **DEFECT**: the TRUNCATE barrier has no deadline, so one stuck batch anywhere parks the source reader indefinitely with WARN lines only.
+
+Summary: 4 failure modes, 3 DEFECT, 2 GAP.

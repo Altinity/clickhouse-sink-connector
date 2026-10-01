@@ -42,6 +42,9 @@ SPEC_TEMPLATE = textwrap.dedent(
 
     ## 5. Verification Criteria
     - `{verification}`
+
+    ## 6. Failure Modes & Recovery
+    - **FM-1 Fixture fault** — Detection: an ERROR line. Recovery: restart. RTO: under a minute, `{verification}`.
     """
 )
 
@@ -133,6 +136,21 @@ class GovernanceTests(FixtureCase):
         spec = spec_path(self.root)
         spec.write_text(spec.read_text(encoding="utf-8").replace("## 5. Verification Criteria", "## 5. Checks"), encoding="utf-8")
         self.assertOneErrorContaining(run(self.root), "missing required section matching 'Verification'")
+
+    def test_missing_failure_modes_section_fails(self) -> None:
+        spec = spec_path(self.root)
+        spec.write_text(spec.read_text(encoding="utf-8").replace("## 6. Failure Modes & Recovery", "## 6. Notes"), encoding="utf-8")
+        self.assertOneErrorContaining(run(self.root), "missing required section matching 'Failure Modes'")
+
+    def test_failure_modes_section_must_state_detection_recovery_and_rto(self) -> None:
+        spec = spec_path(self.root)
+        spec.write_text(spec.read_text(encoding="utf-8").replace("RTO: under a minute", "time: under a minute"), encoding="utf-8")
+        self.assertOneErrorContaining(run(self.root), "'Failure Modes' section lacks the field(s) RTO", "Invariant I15")
+
+    def test_failure_modes_citation_of_a_missing_test_fails(self) -> None:
+        spec = spec_path(self.root)
+        spec.write_text(spec.read_text(encoding="utf-8").replace("Recovery: restart.", "Recovery: restart, `FooTest.noSuchTest()`."), encoding="utf-8")
+        self.assertOneErrorContaining(run(self.root), "Failure Modes cites `FooTest.noSuchTest()`", "declares no method noSuchTest()")
 
     def test_agents_md_must_reference_mandate(self) -> None:
         write(self.root, "AGENTS.md", "# AGENTS\nnothing here\n")

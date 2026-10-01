@@ -292,3 +292,48 @@ the ConfigDef default never reached it.
   operator's value is kept, `0` included, a blank treated as absent
   (`operatorValueIsKept`); the real entry point yields a positive bound
   (`realEntryPointIsPositive`).
+
+---
+
+## 6. Failure Modes & Recovery
+The handoff's posture is backpressure first, then a loud stop: a stalled writer pauses the reader at the hard cap and, if it stays stalled for `sink.connector.handoff.wait.timeout.ms`, stops the engine for the retry path (spec 01.01 FM-01.01-1). Two things break that promise: the heap bound is only as good as a first-row size estimate, and the final `put` on a bounded queue waits forever without looking at the workers.
+
+- **FM-01.05-1 Writers stalled (ClickHouse down, read-only, slow, TOO_MANY_PARTS)**
+  - **Trigger**: workers stop acknowledging — every batch retried with backoff by `ClickHouseBatchRunnable.run` (`RetryBackoff`, 500 ms doubling to `batch.retry.backoff.max.ms` 30 s, without a retry limit).
+  - **Behaviour**: `DebeziumOffsetManagement.awaitHandoffCapacity` pauses the Debezium thread once `outstandingRecordCount()` ≥ `sink.connector.handoff.max.outstanding.records` (500 000) or `outstandingByteCount()` ≥ `.bytes` (¼ heap); Debezium's queue fills and the binlog client stops reading; the source aborts the dump after `net_write_timeout`. The first acknowledgement releases the reader; after 600 000 ms without one the wait throws `IllegalStateException`, the engine stops and is recreated (the kept pool keeps retrying the retired batches, whose acknowledgements are then refused and redelivered, spec 09.01 §3.8). With ClickHouse down for good the budget, refilled only by acknowledgements, is spent after ≈ 10 × (600 s + 10 s + start) ≈ 1 h 45 min → exit 3 → systemd restart.
+  - **Detection**: WARN `Retriable ClickHouse error (Code: <c>, Category: <cat>) -- the same batch will be retried in <ms> ms ...` from the first failed batch; WARN `Handoff hard cap: <rows> row(s) in <units> unit(s) handed off and not yet acknowledged ...` when the cap is met (seconds to minutes, depending on the inflow); the `IllegalStateException` text `Handoff hard cap: ... The writers have not acknowledged the head of the FIFO in that long: they are stalled, not slow.` after 10 min.
+  - **Blast radius**: all tables stop (per-worker routing: one stalled worker blocks every table, spec 10.02 §3.4); no loss; heap bounded by the caps (see FM-01.05-2).
+  - **Recovery**: self-heals when ClickHouse accepts writes again: the waiting reader resumes at the first acknowledgement; if the engine was stopped meanwhile, the retry or systemd restart resumes from the durable offset.
+  - **RTO**: ClickHouse back → ≤ 30 s backoff + (if stopped) ≤ 10 s + start + redelivery of ≤ the cap; unmeasured.
+  - **Test**: `HandoffHardCapBackpressureTest.atTheCapWaitsUntilTheHeadIsAcknowledged()`, `HandoffHardCapBackpressureTest.theWaitIsBoundedAndLoud()`, `HandoffHardCapBytesTest.atTheByteCapWaitsUntilTheHeadIsAcknowledged()`.
+
+- **FM-01.05-2 Heap filled by rows the byte cap under-charges (GC death spiral)**
+  - **Trigger**: a table whose row width varies within one Debezium batch — a JSON/TEXT/BLOB column empty on most rows and megabytes on some — or either cap set to `0`, or `max.queue.size.in.bytes: 0` kept by `DebeziumQueueBytesPreflight` as an explicit operator value.
+  - **Behaviour**: `RecordSizeEstimator.estimateGroup` walks only the FIRST row of each table in a group and charges that size to every row of the table (§3.4 item 7). Measured: 100 rows of a 1 MiB document behind one empty-document row are charged 125 038 bytes (~122 KiB) instead of ≥ 100 MiB. The byte cap (¼ heap) cannot see the heap filling; with the row cap at 500 000 the live heap can exceed `-Xmx` long before either cap is met, and the JVM goes into back-to-back full collections (spec 01.01 FM-01.01-6) — the stall §3.4 describes, which the cap exists to prevent.
+  - **Detection**: none — the cap WARN never fires because the estimate stays under it; no GC metric; `/status` reports running.
+  - **Blast radius**: all tables stall; the source aborts the dump; no loss (nothing unwritten is acknowledged).
+  - **Recovery**: restart the service; size `sink.connector.handoff.max.outstanding.records` so that the cap × the widest real row fits a quarter of the heap (e.g. 5 000 for 1 MiB rows on a 4 GiB heap), lower `max.batch.size`, or raise `-Xmx`; never set a cap to `0` on wide tables.
+  - **RTO**: unbounded while thrashing (no detector); 30 s + start after a restart with corrected caps; unmeasured.
+  - **Test**: `RecordSizeEstimatorVariableWidthTest.wideRowsBehindANarrowFirstRowAreCharged()` (disabled, fails on 2.11.0 with 122 KiB charged); `RecordSizeEstimatorTest.multiTableGroupIsSampledPerTable()` pins the per-table sampling it relies on.
+  - **DEFECT**: the heap bound samples one row per table per batch, so variable-width tables defeat it and the GC spiral it was built to prevent is reachable again.
+
+- **FM-01.05-3 Handoff interrupted**
+  - **Trigger**: the Debezium thread is interrupted while waiting at the cap or in `put` (engine shutdown).
+  - **Behaviour**: `InterruptedException` propagates out of `appendToRecords` and `handleChangeEventBatch` (§3.5); the unit's registration is kept, so no offset can pass rows that never reached a queue; the engine stops and its handoffs are retired and redelivered (spec 09.01 §3.8).
+  - **Detection**: the engine completion lines (spec 01.01 FM-01.01-1), at once.
+  - **Blast radius**: none beyond the restart; no loss.
+  - **Recovery**: automatic.
+  - **RTO**: ≤ 10 s + engine start + redelivery; unmeasured.
+  - **Test**: `HandoffBlockedPutFailureModesTest.interruptedPutKeepsTheUnitOutstanding()`.
+
+- **FM-01.05-4 A worker dies while the reader is blocked on its full queue**
+  - **Trigger**: a worker's queue reaches `sink.connector.max.queue.size` batches before the row and byte caps are met — a routed group can hold one row, and the ansible template sets `sink.connector.max.queue.size: 100000` under the 500 000-row cap — and that worker then dies (FATAL ClickHouse code, `OutOfMemoryError`).
+  - **Behaviour**: `appendToRecordsWithHashRouting` (and the legacy path) call `LinkedBlockingQueue.put` with no timeout while holding the queue's monitor; the dead-worker check (`failIfWorkerDied`) runs only at the top of `handleChangeEventBatch` and between hard-cap slices, never during `put`. The Debezium thread waits forever on a queue nobody drains.
+  - **Detection**: only the worker's own ERROR `FATAL ClickHouse error (Code: <c>) -- this batch will never succeed. Stopping this worker; the engine is stopped on the next source batch ...`, which is then untrue; WARN `Routed queue <n> is full! ...` from the handoff before it blocked; no engine stop, no exit, `/status` running.
+  - **Blast radius**: all tables stop for good while the process stays up (spec 01.01 FM-01.01-4 class); no loss.
+  - **Recovery**: restart the service after fixing the FATAL cause.
+  - **RTO**: unbounded — nothing detects it.
+  - **Test**: `HandoffBlockedPutFailureModesTest.workerDeathWhileTheReaderIsBlockedInPutStopsTheEngine()` (disabled, fails on 2.11.0: the call is still blocked after 5 s).
+  - **DEFECT**: the enqueue `put` has neither a timeout nor a liveness check, so a worker death during it is a silent, permanent stall.
+
+Summary: 4 failure modes, 2 DEFECT, 0 GAP.

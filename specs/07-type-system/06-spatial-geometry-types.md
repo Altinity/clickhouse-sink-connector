@@ -180,3 +180,51 @@ and the DDL path always uses `String`.
   — §3.1: `POLYGON` → `Polygon` (also when optional), `LINESTRING` /
   `MULTIPOLYGON` / `GEOMETRY` / `GEOMCOLLECTION` → `String` /
   `Nullable(String)`, no source type → `Polygon`, `POINT` → `Point`.
+
+---
+
+## 6. Failure Modes & Recovery
+
+Recovery posture: a spatial value is stored faithfully or refused (§3.2); the refusals are raised by the connector as `IllegalArgumentException`, which carries no ClickHouse error code, so on 2.11.0 every spatial poison value is retried forever rather than stopping the engine. Procedures P-FIX-TYPE / P-SKIP / P-RESYNC and the retry-vs-stop rule are defined in spec 07.01 §6.
+
+- **FM-07.06-1 Non-polygon geometry for a `Polygon` column**
+  - **Trigger**: a `LINESTRING`/`MULTIPOLYGON`/`GEOMETRY` value reaches a column typed `Polygon` — Kafka Connect mode without `column.propagate.source.type` auto-creates every `Geometry` column as `Polygon` (§3.1), or a hand-created table.
+  - **Behaviour**: `ClickHouseDataTypeMapper.convert` decodes the WKB and throws `IllegalArgumentException` (`Geometry for column <c> is a LineString, not a Polygon, and the ClickHouse column is Polygon; refusing to store an empty polygon in its place. Declare the column as String ...`). `ClickHouseErrorClassifier.classify` returns UNKNOWN; the worker retries the batch forever.
+  - **Detection**: that message in ERROR `ClickHouseBatchRunnable exception - Task(<id>)` plus WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN)` every ≤ 30 s; metric `clickhouse.sink.topics.error.records`; no exit.
+  - **Blast radius**: every table hashed to that worker stops; offsets freeze; the next DDL drain waits forever. Nothing of the batch is written; no loss.
+  - **Recovery**: P-FIX-TYPE with `MODIFY COLUMN g String` (accepted by ClickHouse 24.8; existing polygons become their text literal `[[(1,2),...]]`, measured) and restart; the redelivered batch writes WKB hex; then P-RESYNC the table so the older rows carry WKB hex as well. In Kafka mode set `column.propagate.source.type=.*` before any further auto-create.
+  - **RTO**: never self-heals; P-FIX-TYPE ≈ 1–2 min + resync of the table; unmeasured.
+  - **Test**: `ClickHouseDataTypeMapperGeometryTest.nonPolygonIntoPolygonColumnThrows()` (the refusal), `PoisonValueClassificationTest.spatialValueRefusalIsFatal()` (disabled, fails on 2.11.0: UNKNOWN instead of FATAL).
+  - **DEFECT**: a deterministic refusal is retried forever with no exit; the connector's own refusal types must join `TERMINAL_EXCEPTION_TYPES` (as `ValueOutOfRangeException` did).
+
+- **FM-07.06-2 Unparseable or missing WKB, non-Struct carrier**
+  - **Trigger**: a corrupt WKB payload, a `Geometry`/`Point` Struct without `wkb` bound for a `String` column, or a value that is not a Struct (Kafka converters, a Debezium change).
+  - **Behaviour**: `ClickHouseDataTypeMapper.convert` throws `IllegalArgumentException` (`WKB payload for column <c> (<n> bytes) cannot be parsed ...`, `... carries no WKB payload ...`, `... is a <class>, not a Struct ...`); UNKNOWN, retried forever — as FM-07.06-1.
+  - **Detection**: as FM-07.06-1, with these messages.
+  - **Blast radius**: as FM-07.06-1.
+  - **Recovery**: none by retry and none by P-FIX-TYPE (the value itself is bad); repair the source row and P-SKIP + P-RESYNC the transaction's tables.
+  - **RTO**: unbounded; P-SKIP + resync; unmeasured.
+  - **Test**: `ClickHouseDataTypeMapperGeometryTest.unparseableWkbThrows()`, `ClickHouseDataTypeMapperGeometryTest.nonStructGeometryThrows()`, `ClickHouseDataTypeMapperGeometryTest.nonStructPointThrows()`; classification: as FM-07.06-1.
+  - **DEFECT**: as FM-07.06-1 — retried forever instead of refused terminally.
+
+- **FM-07.06-3 NULL in a nullable `POLYGON` / `POINT` column on the record-schema path**
+  - **Trigger**: the record-schema auto-create path (spec 08.05) types an optional `POLYGON` as `Polygon` and `POINT` as `Point`, never `Nullable` (ClickHouse rejects `Nullable(Polygon)`, §3.1); the source row holds NULL.
+  - **Behaviour**: `PreparedStatementFieldMapper.insertPreparedStatement` binds `setNull`; with `input_format_null_as_default=0` (spec 07.07 §3.2.1) ClickHouse refuses with `Code: 53 Cannot insert NULL value into a column of type ...`; 53 is FATAL: the worker dies and the process exits 3.
+  - **Detection**: ERROR `FATAL ClickHouse error (Code: 53) -- this batch will never succeed.`, FATAL `Replication is STOPPED: ...`, exit 3 within ≤ 5 s; systemd restarts every 30 s and gives up after 5 starts in 300 s.
+  - **Blast radius**: whole connector stopped; nothing lost.
+  - **Recovery**: P-FIX-TYPE to `Nullable(String)` (`MODIFY COLUMN g Nullable(String)`), restart, then P-RESYNC the table (older rows hold the geo literal, new rows WKB hex).
+  - **RTO**: ≈ 1–2 min to resume + resync of the table; unmeasured.
+  - **Test**: `ClickHouseDataTypeMapperGeometryTest.recordSchemaMapsNonPolygonSpatialTypesToString()` pins the non-Nullable `Polygon` mapping of an optional `POLYGON`; `PoisonValueClassificationTest.nullIntoNonNullableColumnIsFatal()` pins the terminal refusal.
+  - **DEFECT**: the record-schema mapping creates a column that is guaranteed to stop replication on the first source NULL; an optional `POLYGON`/`POINT` should map to `Nullable(String)` like the DDL path (§3.4).
+
+- **FM-07.06-4 SRID dropped**
+  - **Trigger**: a spatial column whose SRID differs between rows or matters to consumers.
+  - **Behaviour**: only the WKB is stored; Debezium's separate `srid` field is ignored by every branch of `ClickHouseDataTypeMapper.convert` (§3.2 (1), known limitation).
+  - **Detection**: none. DEFECT (documented limitation).
+  - **Blast radius**: the SRID is absent from the replica for every row; coordinates are exact.
+  - **Recovery**: add a companion column on the source (`ST_SRID(g)`) so it replicates as an ordinary column; P-RESYNC to back-fill.
+  - **RTO**: not applicable (design limitation); unmeasured.
+  - **Test**: `ClickHouseDataTypeMapperGeometryTest.geometryIntoStringColumnIsWkbHex()` pins that exactly the WKB is stored; GAP: a test that a non-zero SRID is either stored or reported.
+  - **DEFECT**: a source attribute is dropped with no signal.
+
+Summary: 4 failure modes, 4 DEFECT, 1 GAP.

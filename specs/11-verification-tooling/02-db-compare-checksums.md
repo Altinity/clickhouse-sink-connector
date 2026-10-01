@@ -580,3 +580,96 @@ connect to a database.
    other pair compares different subsets.
 6. **Floating point and JSON opt-ins** are best-effort text comparisons
    (§3.9).
+
+---
+
+## 7. Failure Modes & Recovery
+`db_compare` is read-only on both engines: none of its failures can change replicated data (the one side effect is the optional source `LOCK TABLES ... READ`), and every run can be repeated. Its recovery posture is "re-run, narrower if needed". The failures that matter are the ones that make it lie: EQUAL while the values differ, or a green exit while it reported a difference. Those are listed first.
+
+- **FM-11.02-1 A checksum difference ends the run with exit code 0**
+  - **Trigger**: any table whose replica `(md5, count)` differs from the source.
+  - **Behaviour**: `analyze_differences()` only logs `WARNING Checksum difference : <replica> to <source>`. `run_config()` then ends in `sys.exit(0)` whatever was found (`top_level_table_checksum.py`).
+  - **Detection**: only the log line `Checksum difference :`, printed as soon as that table's checksums return. The exit code says nothing.
+  - **Blast radius**: a scheduler or CI job that trusts the exit code reports a diverged replica as verified. The divergence itself keeps growing until someone reads the log.
+  - **Recovery**: grep every run's output for `Checksum difference`. Then repair the table (spec 11.04) and re-run the checksum for it (`--tables_regex '^<table>$'`).
+  - **RTO**: unbounded while the log goes unread. The repair is the spec 11.04 RTO.
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestRunExitCode::test_a_difference_makes_the_run_exit_non_zero` (skipped, DEFECT). The equal path is pinned by `...::TestRunExitCode::test_equal_run_exits_zero`.
+  - **DEFECT**: the verdict of the only value-level proof is not in the exit code.
+
+- **FM-11.02-2 Two unparseable side outputs are reported as "No difference"**
+  - **Trigger**: a database or table whose name contains `checksum` (any case). Each side script logs to stdout, and the driver keeps every line matching `grep -i checksum` (§3.2 step 4). The replica script always logs `REGEX QUERY: ... match(name,'^<table>$')`. Both sides log `Not compared in table <db>.<table>: ...` when a float or JSON column is skipped, and the clamp WARNING of §3.4 when values are clamped. So the pipeline hands back two lines instead of one.
+  - **Behaviour**: `parse_checksum()` logs `Invalid checksum output from ... for table ...` and returns `(table, None, None)`. When both sides are malformed, `analyze_differences()` compares `(None, None)` with `(None, None)` and logs `No difference for <table>`. When only one side is malformed it reports a difference (noise).
+  - **Detection**: an ERROR `Invalid checksum output` per malformed side, next to an INFO `No difference`. Nothing fails.
+  - **Blast radius**: that table is reported equal without having been compared.
+  - **Recovery**: treat any `Invalid checksum output` as a failed run. Compare the table standalone: run the two side scripts by hand and read their `Checksum for table` lines.
+  - **RTO**: one standalone run per affected table.
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestVerdictOnUnparseableOutput::test_both_sides_unparseable_is_never_reported_equal` (skipped, DEFECT). The refusal of multi-line output is pinned by `...::test_parse_checksum_refuses_more_than_one_line`.
+  - **DEFECT**: a double parse failure is reported as equality.
+
+- **FM-11.02-3 One side script fails: the whole run aborts**
+  - **Trigger**: the side script exits non-zero. Causes include a refused connection, `MEMORY_LIMIT_EXCEEDED` on the `FINAL` read, a table missing on the replica (no checksum line, so `grep` exits 1 under `set -eo pipefail`), or a bad `--where`.
+  - **Behaviour**: `run_quick_safe_checksum()` logs `command failed : terminating` and `<cmd>. failed`, then returns `None`. `analyze_differences()` then raises `TypeError` on the `None` result, and `run_config()` logs `Exception in main thread : 'NoneType' object is not subscriptable` with a traceback and exits 1. Tables not yet compared are skipped.
+  - **Detection**: loud, but the ERROR names the symptom (`NoneType`) rather than the cause. The cause is in the preceding `<cmd>. failed` line, and in the side script's own output under `--debug`.
+  - **Blast radius**: no false verdict. Coverage of every later table is lost for this run.
+  - **Recovery**: fix the cause, or exclude the table with `--exclude_tables_regex`. Then re-run only the remaining tables (`--tables_regex`). Tables already done appear as `No difference for <t>` / `Checksum difference`.
+  - **RTO**: time to re-run the remaining tables (unmeasured — proportional to their size).
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestRunExitCode::test_failed_side_script_aborts_the_whole_run_non_zero`.
+
+- **FM-11.02-4 A huge table: no time bound, and the source lock is held throughout**
+  - **Trigger**: a multi-hundred-GB table, or a slow replica under `FINAL` over a whole table.
+  - **Behaviour**: `run_quick_safe_command()` calls `Popen.communicate()` with no timeout. The replica query carries only `max_memory_usage` (the driver passes 80 GB), with no `max_execution_time`. The MySQL session sets `wait_timeout=28000` and nothing else. With `--lock_tables_on_source` the `READ` lock is held from `LOCK TABLES` until the slowest side returns (`compute_checksum()`), so every writer of that table on that MySQL server waits for the whole duration.
+  - **Detection**: none from the tool. The source shows sessions waiting on the table lock (`SHOW PROCESSLIST`).
+  - **Blast radius**: if run against a primary, application writes to that table stall for hours. If run against a replica, its applier stalls and it lags. The connector itself is not affected.
+  - **Recovery**: kill the driver. MySQL releases table locks when the session ends (MySQL server behaviour, not verified here). Then checksum the table in bounded slices: `--partition_date YYYY-MM-DD` (§6 item 5 limits), or a per-table `where` override in the YAML (`tables: - db.t: where: "id between A and B"`) repeated per range. `--threads_per_table N` parallelises only the MySQL side (by integer primary key).
+  - **RTO**: unmeasured. Proportional to table size on both engines. One slice is bounded by its row range.
+  - **Test**: GAP: a driver test asserting that a per-table timeout is passed to both side scripts and that the lock is released when it expires.
+  - **DEFECT**: neither the run time nor the source-lock hold time is bounded.
+
+- **FM-11.02-5 EQUAL although values differ (structural blind spots)**
+  - **Trigger**: a divergence that the row string of §3.3 cannot see. That is a `#` moved between adjacent text values (§6 item 1), two same-typed columns swapped in every row (§6 item 4), word sums past about 2^31 rows (§6 item 2), float and JSON columns (excluded by default), or datetimes outside the clamp range.
+  - **Behaviour**: the checksums match.
+  - **Detection**: floats and JSON give one `WARNING Not compared in table ...` per table and side. Clamping gives `WARNING <n> out-of-range datetime values clamped ...`. The `#` shift and the column swap give none.
+  - **Blast radius**: a real divergence is certified equal.
+  - **Recovery**: for suspected tables, compare the affected columns value by value (`SELECT` both sides by primary key). Include floats with `--include_floating_point_columns` and inspect any difference by value (§3.9).
+  - **RTO**: unbounded for the silent cases.
+  - **Test**: GAP: a fixture pair `('a#b','c')` / `('a','b#c')` that must checksum differently. It fails today by design of the row string.
+  - **DEFECT**: the `#`-shift and column-swap divergences are silent (§6 items 1 and 4).
+
+- **FM-11.02-6 Replication in flight: a difference that is only lag**
+  - **Trigger**: a run without `--lock_tables_on_source` on a written table, or with it but with replication lag above `--sleep_after_lock` (default 3 s).
+  - **Behaviour**: the two sides read different moments and report `Checksum difference`. This errs on the safe side: a lag is never reported as equality unless the moments happen to agree.
+  - **Detection**: `WARNING Checksum difference`, indistinguishable from a real one.
+  - **Blast radius**: noise only. No data changes.
+  - **Recovery**: re-run the table with `--lock_tables_on_source --sleep_after_lock <S>`, where `S` is above the connector's current `seconds_behind_source` (spec 10.03 view).
+  - **RTO**: one re-run of that table.
+  - **Test**: `sink-connector/python/db_compare/tests/test_table_locking.py` (lock before both sides, unlock after, connection closed on failure).
+
+- **FM-11.02-7 The source lock cannot be acquired**
+  - **Trigger**: a continuously written table never gets its metadata lock within `--lock_wait_timeout` (default 30 s).
+  - **Behaviour**: `lock_tables()` raises `LockAcquisitionError`, recognised only from errno 1205. `run_config()` logs `COVERAGE GAP -- skipping checksum for <db>.<table>: source lock could not be acquired` and continues. At the end it logs `COVERAGE GAP -- checksum finished but <n> table(s) were NOT compared`. `--fail_on_lock_timeout` aborts the run instead.
+  - **Detection**: the two WARNING lines above, within `--lock_wait_timeout` seconds per table.
+  - **Blast radius**: that table is unverified for this run. Nothing else is affected.
+  - **Recovery**: re-run that table at a quieter time, or with a longer `--lock_wait_timeout`.
+  - **RTO**: `--lock_wait_timeout` per attempt, plus one table re-run.
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestRunExitCode::test_lock_timeout_skips_the_table_and_names_it_in_the_summary`, `...::test_lock_timeout_fails_the_run_when_asked`, and `test_bounded_source_lock.py::TestLockTables`.
+
+- **FM-11.02-8 The driver is killed half way**
+  - **Trigger**: Ctrl-C, `kill -9`, or the host rebooting during a run.
+  - **Behaviour**: Ctrl-C reaches `except (KeyboardInterrupt, SystemExit)`, which logs `Received interrupt` and calls `os._exit(1)`. `kill -9` stops it without a word. The side scripts run as `shell=True` children and may keep running until their query ends. They only read. Held table locks go away with the lock connection's session (MySQL server behaviour, not verified here).
+  - **Detection**: non-zero exit, or no final `Exiting Main Thread` in the log.
+  - **Blast radius**: no data risk. There is no resume state.
+  - **Recovery**: re-run with `--tables_regex` restricted to the tables that have no `No difference for` / `Checksum difference` line in the interrupted log. Check the source for orphaned checksum sessions (`SHOW PROCESSLIST`) and kill them if they hold resources.
+  - **RTO**: re-run of the remaining tables (unmeasured).
+  - **Test**: GAP: a driver test that interrupts `compute_checksum` and asserts the lock connection is closed.
+
+- **FM-11.02-9 A replication-history (SCD2) table cannot be verified by the driver**
+  - **Trigger**: a mode-2 connector (spec 12.01). Its tables hold one row per version plus `_valid_from`, `_valid_to` and `_operation`.
+  - **Behaviour**: the driver applies the same `--where` to both sides, and its replica exclusion list is `_version,is_deleted,_is_deleted,__is_deleted`. It therefore compares every closed version and the history columns against the current MySQL rows, and always reports a difference.
+  - **Detection**: `WARNING Checksum difference` on every history table. This is noise, never a masked equality.
+  - **Blast radius**: mode-2 replicas have no value-level proof through the driver.
+  - **Recovery**: run the side scripts standalone. On the source, run `mysql_table_checksum.py` with `--tables_regex '^t$'`. On the replica, run `clickhouse_table_checksum.py --clickhouse_database <history db> --tables_regex '^t$' --where "_valid_to = toDateTime('2100-01-01 00:00:00', '<column tz>')" --exclude_columns _sign _version is_deleted _is_deleted _valid_from _valid_to _operation`, then compare the two `Checksum for table` lines (spec 12.02 §4). `FINAL` already drops the delete markers.
+  - **RTO**: one standalone pair of runs per table.
+  - **Test**: GAP: a replica-script test asserting the open-row filter and the history-column exclusions produce the source's checksum for a fixture with closed versions.
+  - **DEFECT**: the driver cannot verify a replication-history replica.
+
+Summary: 9 failure modes, 5 DEFECT, 4 GAP.

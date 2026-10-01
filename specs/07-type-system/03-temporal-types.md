@@ -426,3 +426,79 @@ default. When `enable.time.adjuster` is absent or blank it is set to `false`
   terminal-exception rule) the refused batch parked forever and every later
   suite test failed on a timeout.
 - `ConnectionTimeZonePreflightTest.ambiguousAbbreviationRefuses()` — §3.1.5: `time_zone=SYSTEM`, `system_time_zone=CDT`, property unset → refusal naming `database.connectionTimeZone`; `ConnectionTimeZonePreflightTest.namedZoneResolves()`, `ConnectionTimeZonePreflightTest.systemUtcResolves()`, `ConnectionTimeZonePreflightTest.offsetResolves()` — an IANA id, `SYSTEM`+`UTC` and an offset pass; `ConnectionTimeZonePreflightTest.configuredPropertySkipsTheProbe()` — a configured value issues no query; `ConnectionTimeZonePreflightTest.serverKeywordIsProbed()` — `SERVER` is probed like an unset value (refused on `CDT`, passed on `UTC`); `ConnectionTimeZonePreflightTest.probeFailureWarnsAndContinues()`, `ConnectionTimeZonePreflightTest.nonMySqlConnectorIsUntouched()`; `ConnectionTimeZonePreflightTest.driverAgreesWithThePreflight()` — pins the driver contract the rule relies on (`CDT` throws, `America/Chicago` resolves).
+
+---
+
+## 6. Failure Modes & Recovery
+
+Recovery posture: every temporal value is either rendered faithfully, saturated to the ClickHouse bound by policy (the default, logged at DEBUG only), or refused terminally (`clamp.out.of.range=false`); zone configuration mistakes are refused at start where the preflight can see them and otherwise surface per batch. The residual silent modes are the saturation itself, Debezium's zero-date substitution and the DST ambiguity of `DateTime` (32-bit) columns. Procedures P-FIX-TYPE / P-SKIP / P-RESYNC and the retry-vs-stop rule are defined in spec 07.01 §6.
+
+- **FM-07.03-1 Out-of-range value saturated under the default policy**
+  - **Trigger**: a `DATE`/`DATETIME` outside the ClickHouse type's range — the `9999-12-31 23:59:59` open-ended sentinel, a `1000-01-01` floor, or a typo year such as `0201-05-01` — with the default `clamp.out.of.range=true`.
+  - **Behaviour**: `DebeziumConverter.RangePolicy.report` saturates to the bound (`DateTime64`/`Date32`: 1900-01-01 .. 2299-12-31; `Date`: 1970-01-01 .. 2149-06-06; `DateTime`: 1970 .. 2106) and logs at DEBUG only (§3.3 rule 2). The batch succeeds.
+  - **Detection**: none at the default log level: DEBUG `Value <v> for column <db.t.c> is outside the ClickHouse <type> range [<min> .. <max>]; stored as <bound> (clamp.out.of.range=true)`; no counter metric. DEFECT.
+  - **Blast radius**: the saturated rows hold a value MySQL never held; a typo year is indistinguishable from the sentinel; row counts intact. Deterministic, so redelivery writes the same bound (no duplication beyond ReplacingMergeTree dedup).
+  - **Recovery**: if the value must be kept, P-FIX-TYPE to a type that holds it (`String`, or `Date32`/`DateTime64` for a `Date`/`DateTime` column) and P-RESYNC the table; a typo is repaired by fixing the source row (`UPDATE`), which replicates.
+  - **RTO**: unbounded detection (only a value-level checksum or a DEBUG log shows it); after detection minutes + resync; unmeasured.
+  - **Test**: `DebeziumConverterRangePolicyTest.defaultPolicySaturatesOutOfRangeDatetimeAtTheMapper()`, `DebeziumConverterRangePolicyTest.clampSettingSaturatesSilently()`; GAP: a test that each saturation increments a per-column counter metric.
+  - **DEFECT**: saturation is uncounted; a per-column saturation counter (metric, not a log line — the WARN revision flooded the log, §3.3) would make it detectable without the flood.
+
+- **FM-07.03-2 Out-of-range value refused under `clamp.out.of.range=false`**
+  - **Trigger**: as FM-07.03-1 with the strict setting.
+  - **Behaviour**: `RangePolicy.report` throws `DebeziumConverter.ValueOutOfRangeException`; `ClickHouseErrorClassifier` classifies it FATAL (`TERMINAL_EXCEPTION_TYPES`); the worker dies, the engine stops on the next source batch and the process exits 3 (spec 10.04 §3.5). Nothing of the batch is written.
+  - **Detection**: ERROR `Value <v> for column <db.t.c> is outside the ClickHouse <type> range [...]. Refusing to store <bound> in its place ... Widen the ClickHouse column type, or return to the default clamp.out.of.range=true`, ERROR `FATAL ClickHouse error (Code: -1) -- this batch will never succeed.`, FATAL `Replication is STOPPED: ...`, exit code 3 — within ≤ 5 s (heartbeat) of the failing batch; systemd restarts every 30 s and gives up after 5 starts in 300 s.
+  - **Blast radius**: the whole connector stops; no data lost, nothing diverges; offsets stay at the last committed transaction.
+  - **Recovery**: P-FIX-TYPE (`String`, or `Date32`/`DateTime64` where the value fits), or set `clamp.out.of.range=true` (accepting FM-07.03-1) and restart.
+  - **RTO**: config edit or `ALTER` + `RestartSec=30` + engine start + re-apply of the in-flight transaction ≈ 1–2 min; unmeasured.
+  - **Test**: `DebeziumConverterRangePolicyTest.strictSettingRejectsOutOfRangeDatetimeAtTheMapper()`, `DebeziumConverterRangePolicyTest.strictSettingRejectsOutOfRangeDateAtTheMapper()`, `ClickHouseErrorClassifierTest.valueOutOfRangeIsFatalRegardlessOfCode()`, `TerminalFailureExitTest.fatalTerminalTypeIsNotRetried()`.
+
+- **FM-07.03-3 Zero or invalid date (`0000-00-00`, `2020-00-15`)**
+  - **Trigger**: a permissive `sql_mode` on the source lets MySQL store a zero date (or a zero month/day) in a `DATE`/`DATETIME` column.
+  - **Behaviour**: decided by Debezium before connector code runs: `JdbcValueConverters.convertValue` (debezium-core 3.1.3, bytecode) returns `null` for a missing value of an optional column and, for a `NOT NULL` column, the Connect schema default (the MySQL column `DEFAULT`) or the converter's fallback (`convertDateToEpochDays` passes epoch day 0, i.e. `1970-01-01`). How the binlog client presents the zero date to that converter was not verified in bytecode. The connector then binds that value (NULL, the default, or 1970-01-01).
+  - **Detection**: none on the binlog path. Debezium's `BinlogValueConverters.containsZeroValuesInDatePart` logs WARN `Invalid value '<v>' stored in column '<c>' of table '<t>' converted to empty value` only on its string-parsing path (snapshot). DEFECT.
+  - **Blast radius**: silent substitution on the affected rows; row counts intact. ClickHouse has no zero date, so no column type can hold the source value.
+  - **Recovery**: fix the source rows (`UPDATE ... SET d = NULL` or a real date) — the UPDATE replicates and supersedes the substituted value; or map the column to `String` and P-RESYNC.
+  - **RTO**: unbounded detection; after detection one source UPDATE (seconds) per affected set; unmeasured.
+  - **Test**: GAP: an end-to-end test that a `0000-00-00` in a `NOT NULL DATE` column is either refused or reported, instead of arriving as the default or `1970-01-01`.
+  - **DEFECT**: a source value is replaced by a different one with no signal from the connector.
+
+- **FM-07.03-4 Zone configuration mistakes**
+  - **Trigger**: (a) `database.connectionTimeZone` unset while the source's `@@time_zone` resolves to an ambiguous abbreviation (`CDT`); (b) an unparseable `database.connectionTimeZone`; (c) an unparseable `clickhouse.datetime.timezone`.
+  - **Behaviour**: (a) `ConnectionTimeZonePreflight.check` throws `IllegalStateException("Refusing to start: ...")` before the engine is built (§3.1.5). (b) `ClickHouseDataTypeMapper.resolveSourceTimeZone` throws `DateTimeException` for every `DATETIME` bound — UNKNOWN, so the worker retries forever (whether Connector/J already rejects the value at engine start is unverified). (c) `ClickHouseBatchRunnable.getServerTimeZone` logs ERROR and falls back to the ClickHouse server zone for every batch; `DateTime64` instants are epoch text and unaffected (§3.1.4), but `DateTime`/`String` targets are rendered in the fallback zone.
+  - **Detection**: (a) ERROR banner `!!  REFUSING TO START: ...` naming `database.connectionTimeZone`, at start. (b) ERROR `ClickHouseBatchRunnable exception - Task(<id>)` with `java.time.DateTimeException` + WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN)` every ≤ 30 s, no exit. (c) ERROR `**** Error parsing user provided timezone:<value>` on every batch.
+  - **Blast radius**: (a) nothing starts, nothing lost; (b) the worker's tables stop, offsets freeze, no loss; (c) replication continues, `DateTime`/`String` temporal values may be rendered in an unintended zone (silent shift).
+  - **Recovery**: set the key to the IANA zone of the source host / a valid zone id and restart; for (c) P-RESYNC the `DateTime`/`String` temporal columns written meanwhile.
+  - **RTO**: config edit + restart ≈ 1 min (a, b); (c) + resync; unmeasured.
+  - **Test**: `ConnectionTimeZonePreflightTest.ambiguousAbbreviationRefuses()` (a), `ClickHouseDataTypeMapperTimeZoneTest.garbageSourceZoneThrows()` (b); GAP: a test that an unparseable `database.connectionTimeZone` or `clickhouse.datetime.timezone` refuses at start instead of failing per batch (b) or falling back silently (c).
+  - **DEFECT**: (b) is retried forever instead of refused at start, and (c) continues with a zone nobody configured.
+
+- **FM-07.03-5 DST ambiguity in `DateTime` (32-bit) and DDL-created DST-zone columns**
+  - **Trigger**: a `TIMESTAMP` in the fall-back overlap hour bound into a `DateTime`/`DateTime32` column, or a `DATETIME` spring-forward gap time into a DDL-created `DateTime64(p, '<DST zone>')` column (§3.1.3 residual, §3.1.4 exclusions).
+  - **Behaviour**: `DateTime` rejects epoch text, so `DebeziumConverter.bindsAsEpochText` keeps the digits rendering; ClickHouse resolves ambiguous digits to the first occurrence and shifts gap digits (measured, §3.1.3/§3.1.4). The batch succeeds.
+  - **Detection**: none. DEFECT (documented residual).
+  - **Blast radius**: one-hour shift on rows inside the transition hour; row counts intact.
+  - **Recovery**: P-FIX-TYPE to `DateTime64(p, 'UTC')` (or `DateTime64` for the `DateTime` column), then P-RESYNC the rows of the transition hours.
+  - **RTO**: unbounded detection; after detection minutes + resync; unmeasured.
+  - **Test**: `PreparedStatementFieldMapperColumnZoneTest.testOverlapInstantBindsExactEpochIntoChicagoColumn()` (pins that a `DateTime` target keeps the digits); GAP: a test that a DDL-created `DATETIME` column is declared in `'UTC'`.
+  - **DEFECT**: the value path cannot store an overlap-hour instant exactly in a `DateTime` column, and the DDL path still declares `DATETIME` columns in the session zone.
+
+- **FM-07.03-6 Unparseable `ZonedTimestamp` text**
+  - **Trigger**: a PostgreSQL `timestamptz` whose Debezium text matches none of the accepted ISO-8601 forms (e.g. a BC date), other than `infinity`/`-infinity`.
+  - **Behaviour**: `ZonedTimestampConverter.boundedInstant` throws `IllegalArgumentException` (§3.3 of spec 07.06); classified UNKNOWN, retried forever.
+  - **Detection**: ERROR `ClickHouseBatchRunnable exception` with `ZonedTimestamp value '<v>' for column <c> matches none of the accepted ISO-8601 forms; refusing to store an empty string in its place` and the WARN `Retriable ... Category: UNKNOWN` every ≤ 30 s; metric `clickhouse.sink.topics.error.records`; no exit.
+  - **Blast radius**: the worker's tables stop and offsets freeze; nothing lost.
+  - **Recovery**: none by retry; P-FIX-TYPE cannot help (the refusal is in the connector); fix the source value and P-SKIP + resync the transaction's tables.
+  - **RTO**: unbounded; P-SKIP + resync; unmeasured.
+  - **Test**: `ClickHouseDataTypeMapperGeometryTest.unparseableZonedTimestampThrows()` pins the refusal; GAP: its classification as terminal (same root defect as `PoisonValueClassificationTest.spatialValueRefusalIsFatal()`).
+  - **DEFECT**: a deterministic refusal raised by the connector is retried forever instead of stopping the engine.
+
+- **FM-07.03-7 Year-below-100 remap re-enabled by configuration**
+  - **Trigger**: a configuration sets `enable.time.adjuster=true` explicitly.
+  - **Behaviour**: `DebeziumChangeEventCapture.ensureTimeAdjusterDisabled` leaves it (§3.4); Debezium remaps `0001-01-01` to `2001-01-01` before the connector sees it.
+  - **Detection**: WARN at start `enable.time.adjuster=true is set by configuration: Debezium will remap years below 100 into 1970-2069 ...`; nothing per row.
+  - **Blast radius**: silent value change on rows with years below 100.
+  - **Recovery**: remove the key (or set `false`), restart, P-RESYNC the affected tables.
+  - **RTO**: restart ≈ 1 min + resync; unmeasured.
+  - **Test**: `TimeAdjusterDefaultTest.explicitValueWins()`, `TimeAdjusterDefaultTest.absentIsForcedToFalse()`.
+
+Summary: 7 failure modes, 5 DEFECT, 5 GAP.

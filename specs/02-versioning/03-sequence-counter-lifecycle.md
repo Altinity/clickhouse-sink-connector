@@ -48,4 +48,39 @@ Consequences:
 - `DebeziumChangeEventCaptureTest.shouldAssignUniqueSequenceNumbersWithinSameSecond()` — strictly increasing values within one window.
 - `SourceTsVersionAnchorTest.counterResetsOnlyOnSourceClockAdvance()`, `SourceTsVersionAnchorTest.anchorNeverMovesBackward()`, `SourceTsVersionAnchorTest.counterKeptAcrossBinlogRotation()`, `SourceTsVersionAnchorTest.resumeSeedsCounterAtInitial()`, `SourceTsVersionAnchorTest.initialSeedEscapesToNormalDomainAfterOneSecond()` (the test advances the clock by 2001 ms, matching §3.2).
 - `CommitOrderVersionClampTest.counterResetFollowsTheEffectiveClock()` — the reset is evaluated on the floored timestamp.
-- Verification: a multi-threaded test asserting no duplicate values under concurrent callers is not yet covered by an automated test (gap; the method is `synchronized`).
+- Verification: a multi-threaded test asserting no duplicate values under concurrent callers was missing; it is now `SequenceCounterConcurrencyTest.concurrentCallersNeverReceiveTheSameVersion()` (§6 FM-02.03-2).
+
+---
+
+## 6. Failure Modes & Recovery
+The counter is process-local, in-memory and `synchronized`: it cannot fail loudly and needs no recovery of its own after a crash (the floor orders the next run, spec 02.02 §3.5). Its one real failure mode is arithmetic — the six-digit budget of spec 02.01 §3.3 — and it is silent.
+
+- **FM-02.03-1 Counter carry at the reset after a window of more than 10^6 rows**
+  - **Trigger**: more than 1 000 000 rows are versioned in one anchor window, then a record crosses the reset boundary (§3.2) fewer than `rows / 10^6` ms of effective time after the window's last row. Production shapes: (a) one statement touching millions of rows — every row event of it carries the same statement time — followed by a commit that started just after it (e.g. a transaction that waited on its row locks); (b) a long clamp at the floor, during which `effectiveTs` is constant and the counter never resets: a restart on a lagging source with more than 10^6 rows in the ≤ 5 s head-room clamp (≥ 200 000 rows/s), a clock-seeded start (first start after an upgrade) on a lagging source — the clamp lasts the whole backlog — or a source clock stepped back.
+  - **Behaviour**: `DebeziumChangeEventCapture.nextVersionAssignment` returns `effectiveTs × 10^6 + counter`; after N rows the counter is `SEQUENCE_START + N`, i.e. `N / 10^6` ms carried into the timestamp field. At the reset it restarts at `SEQUENCE_START` with the new `effectiveTs`, so the first rows after the reset are versioned up to `N / 10^6` ms below the last rows before it.
+  - **Detection**: none. DEFECT.
+  - **Blast radius**: keys written both by the rows before the reset and by the commits of the next `N / 10^6` ms keep the older value under `FINAL` (for a 540 000 000-row clamp: 540 ms of commits). Silent, matching row counts, not self-healing until each key is written again.
+  - **Recovery**: identify the window (a multi-million-row transaction in the binlog, or the restart/upgrade instant); run the value checksum (spec 11.02) and `ch-mysql-resync` (spec 11.04) on the tables written around it. Operator prevention: upgrade and restart with the connector caught up (lag under a few seconds), so no long clamp forms.
+  - **RTO**: unbounded (resync); unmeasured.
+  - **Test**: `CounterCarryResetInversionTest.resetAfterMoreThanAMillionRowsInOneWindowStillRanksAbove()` and `CounterCarryResetInversionTest.resetAfterALongClampStillRanksAbove()` (both disabled; fail on 2.11.0); `CounterCarryResetInversionTest.underAMillionRowsPerWindowTheResetStillRanksAbove()` pins the bound that holds (900 000 rows, reset 1 ms later, still above).
+  - **DEFECT**: a window of more than 10^6 rows — one large statement or a long clamp — inverts the order at the next counter reset.
+
+- **FM-02.03-2 Concurrent callers of the sequence**
+  - **Trigger**: more than one thread versions rows at once (the dispatch loop and `addVersion`, or two engines in one JVM).
+  - **Behaviour**: `nextSequenceNumber` / `nextVersionAssignment` are `static synchronized`, so the four statics are never torn and no value repeats.
+  - **Detection**: not applicable — the race cannot produce a wrong value.
+  - **Blast radius**: none.
+  - **Recovery**: none needed.
+  - **RTO**: 0 — no failure to recover from.
+  - **Test**: `SequenceCounterConcurrencyTest.concurrentCallersNeverReceiveTheSameVersion()` (8 threads × 25 000 calls on one millisecond: all distinct, each thread strictly increasing).
+
+- **FM-02.03-3 Counter and anchor lost at a crash**
+  - **Trigger**: `kill -9`, OOM kill or host crash.
+  - **Behaviour**: the next process re-arms the counter at `SEQUENCE_START_INITIAL` (§3.1); ordering against the previous run comes from the seeded floor, not from the counter (spec 02.02 §3.5).
+  - **Detection**: the process exit itself (supervisor); at start INFO `Version floor seeded to <ms> ms from the persisted high-water version <v>`.
+  - **Blast radius**: none when the seed comes from the mark; see spec 02.02 §7 FM-02.02-2 to FM-02.02-5 for starts without one.
+  - **Recovery**: restart the service; nothing to repair.
+  - **RTO**: restart ~20 s (unmeasured) + replay of the unacknowledged units (spec 02.04 §7 FM-02.04-1).
+  - **Test**: `DebeziumChangeEventCaptureTest.newerEventOneMillisecondAfterSeededRestartRanksAboveOlderPreRestartEvent()`.
+
+Summary: 3 failure modes, 1 DEFECT, 0 GAP.
