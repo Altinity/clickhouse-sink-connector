@@ -345,6 +345,25 @@ class TestStandaloneExitCodes(unittest.TestCase):
                 patch.object(ptc, 'get_postgres_table_checksum', return_value=DIGEST):
             self.assertEqual(self._run_main(ptc, argv), 0)
 
+    def test_pg_checksum_exits_nonzero_for_a_missing_table(self):
+        # A table with no visible column (missing, hidden) has nothing to
+        # digest; it must fail, not print the empty-table digest (found end to
+        # end: tests_e2e/postgres/test_pg_verification.py).
+        argv = ['ch-pg-checksum', '--pg_host', 'pg-host', '--pg_user', 'u',
+                '--pg_password', 'p', '--pg_database', 'db1', '--tables_regex',
+                't_missing', '--no_wc']
+        with patch.object(ptc, 'get_table_columns', return_value=[]), \
+                patch.object(ptc, 'get_table_pk', return_value=[]):
+            self.assertEqual(self._run_main(ptc, argv), 1)
+
+    def test_no_comparable_column_gives_no_digest(self):
+        conn = MagicMock()
+        for columns in ([], [col('doc', pg_type='jsonb')]):
+            self.assertIsNone(ptc.get_postgres_table_checksum(
+                conn=conn, table_name='t1', columns_meta=columns,
+                pk_columns=[], schema='public'))
+        conn.cursor.assert_not_called()
+
     def test_pg_count_exits_nonzero_when_table_fails(self):
         argv = ['ch-pg-count', '--pg_host', 'pg-host', '--pg_user', 'u',
                 '--pg_password', 'p', '--pg_database', 'db1']
