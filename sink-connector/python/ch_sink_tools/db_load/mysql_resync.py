@@ -19,7 +19,12 @@ The procedure is the operator's authoritative-side reinsert, made mechanical and
               row count verified against the dump.
   rewind-sql  emit the offset-table INSERT that rewinds ONE connector (one ``offset_key``) to the position captured by
               ``dump``, so that every binlogged change made while the dump and the patch ran is replayed on top of the
-              patched tables.
+              patched tables. It refuses unless the connector is attested stopped (``--connector-stopped``) and its
+              offset row is idle, the key exists, and the move is not forward (``--allow-forward-rewind`` overrides).
+
+Before any REPLACE, ``patch --apply`` requires the connector's durable offset (``--offset-table``) to be at or past
+the dump position (``--skip-connector-position-check`` overrides, with a WARNING); SCD2 history tables are refused, and
+a scratch table is recreated or reused only when it carries this tool's marker comment for the same dump.
 
 Nothing is written to ClickHouse unless ``patch --apply`` is given: the default is a dry run that prints every write
 and executes every read. The tool never issues ``DELETE``, ``TRUNCATE`` or a mutation against a live table, and it
@@ -45,7 +50,19 @@ import sys
 
 VIRTUAL_COLUMNS = {"_version", "is_deleted", "_sign", "_is_deleted", "__is_deleted"}
 DEFAULT_RESTORE_SUFFIX = "_restore"
-FAILED_STATUSES = {"LOAD_FAILED", "COUNT_MISMATCH", "CANARY_FAILED", "REPLACED_VERIFY_FAIL", "DUMP_INCOMPLETE"}
+FAILED_STATUSES = {"LOAD_FAILED", "COUNT_MISMATCH", "CANARY_FAILED", "REPLACED_VERIFY_FAIL", "DUMP_INCOMPLETE",
+                   "SIGN_MISMATCH", "SCD2_REFUSED", "SCRATCH_NOT_OURS", "SCRATCH_STAMP_MISMATCH",
+                   "CONNECTOR_BEHIND", "CONNECTOR_UNVERIFIED"}
+# Comment the tool puts on every scratch table it creates. It ties a scratch table to its source table and dump stamp
+# (--skip-load refuses a scratch table loaded from another dump), and it is the only proof that an existing
+# <schema><suffix>.<table> is a scratch copy this tool may recreate (never a live table under a colliding name).
+SCRATCH_MARKER_PREFIX = "ch-mysql-resync scratch"
+# SCD2 history tables (replication-history mode 2) carry these connector-owned validity columns. Replacing their
+# open-row partition from a reload would rewrite the history metadata, so such tables are refused.
+HISTORY_COLUMNS = {"_valid_from", "_valid_to"}
+# Legacy engine ReplacingMergeTree(_version) + `_sign Int8` (no DEFAULT): the connector writes 1 for every live row and
+# -1 only for a DELETE (PreparedStatementFieldMapper.handleReplacingMergeTreeDeleteColumn).
+LEGACY_SIGN_COLUMN = "_sign"
 LOG_FILE = None
 
 
@@ -196,6 +213,41 @@ def select_offset_row(rows: list[list[str]], offset_key: str | None) -> tuple[st
     if len(rows) == 1:
         return rows[0][0], rows[0][1]
     raise ValueError(f"offset table holds {len(rows)} connector rows; pass --offset-key, keys present: {[r[0] for r in rows]}")
+
+
+def scratch_marker(schema: str, table: str, stamp: str, dump_rows: int | None = None) -> str:
+    """Comment of a scratch table: provisional (``state=loading``) right after its creation, final
+    (``dump_rows=<n>``) once its row count equals the dump's. Only a final marker for the same source table, stamp
+    and dump row count lets ``--skip-load`` replace from it."""
+    state = "state=loading" if dump_rows is None else f"dump_rows={int(dump_rows)}"
+    return f"{SCRATCH_MARKER_PREFIX} source={schema}.{table} stamp={stamp} {state}"
+
+
+def binlog_coordinate(binlog_file: str, binlog_pos) -> tuple[str, int, int]:
+    """(base name, file sequence number, position) of a binlog coordinate such as ``mysql-bin.000042``:4."""
+    m = re.fullmatch(r"(.+)\.(\d+)", str(binlog_file or ""))
+    if not m:
+        raise ValueError(f"binlog file name {binlog_file!r} has no numeric sequence suffix")
+    return m.group(1), int(m.group(2)), int(binlog_pos)
+
+
+def compare_binlog_positions(file_a: str, pos_a, file_b: str, pos_b) -> int:
+    """-1, 0 or 1 as coordinate a is before, equal to or after coordinate b: the file sequence numbers are compared
+    first, then the positions. Coordinates of differently named binlogs cannot be ordered (ValueError)."""
+    base_a, seq_a, p_a = binlog_coordinate(file_a, pos_a)
+    base_b, seq_b, p_b = binlog_coordinate(file_b, pos_b)
+    if base_a != base_b:
+        raise ValueError(f"binlog base names differ ({file_a!r} vs {file_b!r}): the positions cannot be compared")
+    a, b = (seq_a, p_a), (seq_b, p_b)
+    return (a > b) - (a < b)
+
+
+def offset_position(offset_val: str) -> tuple[str, int]:
+    """(file, pos) of a Debezium MySQL offset value; ValueError when it carries no file/pos."""
+    cur = json.loads(offset_val) if offset_val else {}
+    if not isinstance(cur, dict) or not cur.get("file") or cur.get("pos") is None:
+        raise ValueError(f"offset value {offset_val!r} carries no binlog file/pos")
+    return cur["file"], int(cur["pos"])
 
 
 def isolate_table_dir(dump_dir: str, schema: str, table: str) -> str:
@@ -366,6 +418,36 @@ def run_loader(args, restore_db: str, schema: str, table: str, table_dir: str, l
     return p.returncode, logpath
 
 
+def read_offset_rows(ch: ClickHouse, offset_table: str) -> list[list[str]]:
+    """Every connector row of the offset store: [offset_key, offset_val, seconds since the row was written]."""
+    return ch.rows(f"SELECT offset_key, offset_val, dateDiff('second', record_insert_ts, now()) "
+                   f"FROM {offset_table} FINAL ORDER BY offset_key")
+
+
+def connector_position_refusal(args, ch: ClickHouse):
+    """None when the connector's durable offset is at or past the dump's binlog position, else (status, reason).
+
+    A connector still BEFORE the dump position has not applied the binlog up to the dump yet: every event it applies
+    after the REPLACE carries a version far above the reloaded rows' 0, so older row images undo the repair."""
+    if not args.offset_table:
+        return "CONNECTOR_UNVERIFIED", "no --offset-table given, so the connector position cannot be compared with the dump position"
+    pos_path = os.path.join(args.dump_base, f"binlog_position_{args.stamp}.json")
+    try:
+        with open(pos_path) as f:
+            pos = json.load(f)
+        rows = read_offset_rows(ch, args.offset_table)
+        key, current = select_offset_row(rows, args.offset_key)
+        cur_file, cur_pos = offset_position(current)
+        cmp = compare_binlog_positions(cur_file, cur_pos, pos["file"], pos["pos"])
+    except (OSError, ValueError, KeyError) as e:
+        return "CONNECTOR_UNVERIFIED", f"connector position not verifiable: {e}"
+    if cmp < 0:
+        return "CONNECTOR_BEHIND", (f"connector {key} durable offset {cur_file}:{cur_pos} is BEHIND the dump position "
+                                    f"{pos['file']}:{pos['pos']}; wait until it is at or past it, then re-run with --skip-load")
+    log(f"== connector {key} durable offset {cur_file}:{cur_pos} is at or past the dump position {pos['file']}:{pos['pos']}")
+    return None
+
+
 def column_names(ch: ClickHouse, schema: str, table: str) -> set:
     return {r[0] for r in ch.rows(f"SELECT name FROM system.columns WHERE database='{schema}' AND table='{table}'")}
 
@@ -389,6 +471,13 @@ def cmd_patch(args) -> int:
     global LOG_FILE
     if not os.path.isfile(args.ch_config):
         sys.exit(f"ClickHouse client config not found: {args.ch_config}")
+    # The scratch database <schema><suffix> is recreated table by table. An empty suffix makes it the live database,
+    # and a suffix that turns one selected schema into another selected schema makes it a live database too: refuse
+    # both before anything is written. A colliding name outside --schemas is caught per table by the scratch marker.
+    collisions = sorted(f"{s}{args.restore_suffix}" for s in args.schemas if f"{s}{args.restore_suffix}" in args.schemas)
+    if collisions:
+        sys.exit(f"--restore-suffix {args.restore_suffix!r} makes a scratch database a selected (live) schema {collisions}: "
+                 f"an empty suffix names the live schema itself")
     ts = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     outdir = os.path.join(args.dump_base, f"patch_{args.stamp}")
     os.makedirs(outdir, exist_ok=True)
@@ -413,6 +502,7 @@ def cmd_patch(args) -> int:
                 "-- Blast radius: exactly the enumerated partition ids / tables, one statement each."]
     canary_hits = canary_total = canary_evaluated = 0
     canary_no_overlap: list[str] = []
+    canary_below: list[str] = []     # canary tables whose OWN ratio is below the threshold (never pooled across tables)
     ready: list[tuple[str, str, str, list, int]] = []   # (schema, restore_db, table, live_row, dump_rows) cleared for REPLACE
 
     def set_status(schema, table, status, extra=()):
@@ -441,8 +531,12 @@ def cmd_patch(args) -> int:
                 drop_sql += [f"-- DESTRUCTIVE (never executed by this tool, human decision): table exists only in ClickHouse, rows={live[t][4]}",
                              f"-- DROP TABLE {q(schema)}.{q(t)};"]
         ch.write(f"CREATE DATABASE IF NOT EXISTS {q(restore_db)}")
+        # Existing tables of the scratch database with their comments: the scratch marker (scratch_marker) proves a
+        # table there is a scratch copy made by this tool, and for --skip-load which dump it was loaded from.
+        scratch = {r[0]: (r[1] if len(r) > 1 else "")
+                   for r in ch.rows(f"SELECT name, comment FROM system.tables WHERE database = '{restore_db}'")}
 
-        todo = []
+        todo, signed = [], set()
         for t in tables:
             if t not in live:
                 report.append([schema, t, "NOT_IN_CH"])
@@ -454,6 +548,12 @@ def cmd_patch(args) -> int:
                 continue
             mcols = parse_mysql_ddl(open(os.path.join(dump_dir, f"{schema}@{t}.sql"), encoding="utf-8", errors="replace").read())
             ccols = {r[0]: r[1] for r in ch.rows(f"SELECT name, default_kind FROM system.columns WHERE database='{schema}' AND table='{t}' ORDER BY position")}
+            history = sorted(HISTORY_COLUMNS & (set(ccols) - {c[0] for c in mcols}))
+            if history:
+                report.append([schema, t, "SCD2_REFUSED", ",".join(history)])
+                log(f"   !! {schema}.{t}: replication-history (SCD2) table (connector columns {history}) -> REFUSED: a reload would "
+                    f"overwrite the open-row partition with rows lacking history metadata (use the history repair procedure)")
+                continue
             mysql_only, ch_only_cols = column_drift(mcols, ccols)
             if mysql_only:
                 drift_sql += drift_ddl(schema, t, mcols, mysql_only)
@@ -462,12 +562,28 @@ def cmd_patch(args) -> int:
                 continue
             if ch_only_cols:
                 log(f"   {schema}.{t}: ClickHouse-only columns {ch_only_cols} (kept, filled with defaults)")
+            if not args.skip_load and t in scratch and not scratch[t].startswith(SCRATCH_MARKER_PREFIX):
+                report.append([schema, t, "SCRATCH_NOT_OURS"])
+                log(f"   !! {schema}.{t}: {restore_db}.{t} exists and is not marked as a ch-mysql-resync scratch table "
+                    f"(comment {scratch[t]!r}) -> REFUSED, nothing recreated: choose another --restore-suffix, or remove it by hand "
+                    f"if it is a stale scratch table")
+                continue
+            if LEGACY_SIGN_COLUMN in ccols and LEGACY_SIGN_COLUMN not in {c[0] for c in mcols}:
+                signed.add(t)
             todo.append(t)
             if not args.skip_load:
                 # DESTRUCTIVE: drops ONLY the scratch copy <schema><suffix>.<table> (never the live table) so it is
                 # recreated with the live table's exact current structure before being refilled from the dump.
+                # Bounded: the suffix is non-empty and names no selected schema (checked at start), and an existing
+                # table is only recreated when it carries the scratch marker (SCRATCH_NOT_OURS above).
                 ch.write(f"DROP TABLE IF EXISTS {q(restore_db)}.{q(t)}")
                 ch.write(f"CREATE TABLE {q(restore_db)}.{q(t)} AS {q(schema)}.{q(t)}")
+                if t in signed:
+                    # The loader never writes the connector's `_sign`, so reloaded rows would take the column's
+                    # type default 0 and vanish for `_sign > 0` readers. The connector writes 1 for a live row:
+                    # give the scratch copy (metadata only) the same default before it is filled.
+                    ch.write(f"ALTER TABLE {q(restore_db)}.{q(t)} MODIFY COLUMN {q(LEGACY_SIGN_COLUMN)} DEFAULT 1")
+                ch.write(f"ALTER TABLE {q(restore_db)}.{q(t)} MODIFY COMMENT {sql_str(scratch_marker(schema, t, args.stamp))}")
 
         dump_rows, load_rc = {}, {}
 
@@ -494,11 +610,29 @@ def cmd_patch(args) -> int:
                 report.append([schema, t, "DRY_RUN", str(dump_rows[t])])
                 ready.append((schema, restore_db, t, live[t], dump_rows[t]))
                 continue
+            if args.skip_load:
+                # Nothing was loaded in this run: the scratch table must carry the final marker written by the run that
+                # loaded it from THIS dump (same source table, same stamp, same dump row count).
+                want = scratch_marker(schema, t, args.stamp, dump_rows[t])
+                if scratch.get(t) != want:
+                    report.append([schema, t, "SCRATCH_STAMP_MISMATCH", str(dump_rows[t])])
+                    log(f"   !! {schema}.{t}: --skip-load, but {restore_db}.{t} is not marked as loaded from this dump "
+                        f"(comment {scratch.get(t)!r}, expected {want!r}) -> FAILED, no REPLACE (re-run without --skip-load)")
+                    continue
             rcount = int(ch.one(f"SELECT count() FROM {q(restore_db)}.{q(t)}") or 0)
             if rcount != dump_rows[t]:
                 report.append([schema, t, "COUNT_MISMATCH", str(dump_rows[t]), str(rcount)])
                 log(f"   !! {schema}.{t}: restore rows {rcount} != dump rows {dump_rows[t]} -> FAILED, no REPLACE")
                 continue
+            if t in signed:
+                unsigned = int(ch.one(f"SELECT countIf({q(LEGACY_SIGN_COLUMN)} != 1) FROM {q(restore_db)}.{q(t)}") or 0)
+                if unsigned:
+                    report.append([schema, t, "SIGN_MISMATCH", str(dump_rows[t]), str(rcount)])
+                    log(f"   !! {schema}.{t}: {unsigned} scratch rows have {LEGACY_SIGN_COLUMN} != 1 (the connector writes 1 for a live row) "
+                        f"-> FAILED, no REPLACE")
+                    continue
+            if not args.skip_load:
+                ch.write(f"ALTER TABLE {q(restore_db)}.{q(t)} MODIFY COMMENT {sql_str(scratch_marker(schema, t, args.stamp, dump_rows[t]))}")
             ratio = ""
             if f"{schema}.{t}" in canary:
                 res = canary_ratio(ch, schema, restore_db, t, live[t][3])
@@ -513,14 +647,20 @@ def cmd_patch(args) -> int:
                         # that is supposed to be unchanged: the loader (or the dump) is not comparable to the
                         # connector's output. A zero denominator is evidence, not absence of evidence.
                         canary_no_overlap.append(f"{schema}.{t}")
+                    elif n and same / n < args.canary_threshold:
+                        # Each canary table is judged on its own: a large matching table must not dilute a small one
+                        # whose rows all differ.
+                        canary_below.append(f"{schema}.{t} {same}/{n}")
             ready.append((schema, restore_db, t, live[t], dump_rows[t]))
             report.append([schema, t, "LOADED", str(dump_rows[t]), str(rcount), ratio])
 
     # ---------------------------------------------------------------- canary gate: evaluated once, before ANY replace
-    canary_failed = (bool(canary_total) and canary_hits / canary_total < args.canary_threshold) or bool(canary_no_overlap)
+    canary_failed = bool(canary_below) or bool(canary_no_overlap)
     if canary_total:
-        log(f"== canary overall: {canary_hits}/{canary_total} = {canary_hits / canary_total:.5f} (threshold {args.canary_threshold}) "
-            f"over {canary_evaluated} tables")
+        log(f"== canary overall: {canary_hits}/{canary_total} = {canary_hits / canary_total:.5f} over {canary_evaluated} tables "
+            f"(informational: the threshold {args.canary_threshold} applies to each table on its own)")
+    if canary_below:
+        log(f"!! canary tables below the threshold {args.canary_threshold}: {canary_below}")
     if canary_no_overlap:
         log(f"!! canary tables with ZERO joined rows although the scratch table is not empty (no sorting-key overlap): {canary_no_overlap}")
     if canary and args.apply and canary_evaluated == 0:
@@ -532,6 +672,26 @@ def cmd_patch(args) -> int:
         for schema, _, t, _, _ in ready:
             set_status(schema, t, "CANARY_FAILED")
         ready = []
+
+    # ---------------------------------------------------------------- connector position gate: before ANY replace
+    # The REPLACE is safe only when the connector has already applied the binlog up to the dump position: its durable
+    # offset (a lower bound of what it applied) must be at or past it. Checked in apply mode, and in a dry run when
+    # --offset-table is given (it is a read).
+    if ready and args.skip_connector_position_check:
+        log("WARNING: --skip-connector-position-check given: the connector position is NOT compared with the dump position; "
+            "a connector behind it will undo the repair with older row images.")
+    elif ready and (args.apply or args.offset_table):
+        refusal = connector_position_refusal(args, ch)
+        if refusal:
+            status, reason = refusal
+            log(f"!! {status}: {reason}. No REPLACE was issued for any table; the scratch tables are kept "
+                f"(pass --offset-table/--offset-key, or --skip-connector-position-check only once the position is known to be safe).")
+            for schema, _, t, _, _ in ready:
+                set_status(schema, t, status)
+            ready = []
+    elif ready:
+        log("WARNING: dry run without --offset-table: the connector position is not checked; --apply will refuse to replace "
+            "unless --offset-table (and --offset-key) or --skip-connector-position-check is given.")
 
     # ---------------------------------------------------------------- phase 2: replace, list replica-only partitions, verify
     for schema, restore_db, t, live_row, drows in ready:
@@ -584,7 +744,8 @@ def cmd_patch(args) -> int:
         log("== FAILED: at least one selected table did not reach REPLACED_OK -- do not rewind the connector until every table is repaired "
             "(apply the drift DDL / exclude the table with --tables and re-run).")
     else:
-        log("   next: `ch-mysql-resync rewind-sql` -> stop the connector, run the INSERT, start it, then re-run the checksum job.")
+        log("   next: stop the connector, then `ch-mysql-resync rewind-sql --connector-stopped ...` -> run the INSERT, verify it, "
+            "start the connector, then re-run the checksum job.")
     LOG_FILE.close()
     LOG_FILE = None
     return 1 if failed else 0
@@ -592,26 +753,57 @@ def cmd_patch(args) -> int:
 
 def cmd_rewind_sql(args) -> int:
     pos = json.load(open(args.position_file or os.path.join(args.dump_base, f"binlog_position_{args.stamp}.json")))
-    rows = []
-    if args.ch_config and os.path.isfile(args.ch_config):
-        ch = ClickHouse(args.ch_host, args.ch_config, apply=False, port=args.ch_port)
-        rows = ch.rows(f"SELECT offset_key, offset_val FROM {args.offset_table} FINAL ORDER BY offset_key")
-    elif not args.offset_key:
-        sys.exit("--offset-key is required when the current offset table cannot be read (--ch-host/--ch-config not given)")
-    if rows:
+    # A running connector's next offset flush supersedes the rewind row, so the procedure starts by stopping it, and
+    # the operator attests that here. The offset row's age (below) is the tool's own evidence of a running connector.
+    if not args.connector_stopped:
+        sys.exit("refusing: stop THAT connector first, then re-run with --connector-stopped "
+                 "(a running connector's next offset flush silently supersedes the rewind row)")
+    # The offset table is always read: the key must exist (an INSERT ... SELECT on an unknown key inserts nothing and
+    # reports success), and the recorded position is compared with the current one.
+    if not args.ch_host or not args.ch_config or not os.path.isfile(args.ch_config):
+        sys.exit("refusing: --ch-host and an existing --ch-config are required: the offset table must be read to check the "
+                 "offset key, the rewind direction and that the connector is idle")
+    ch = ClickHouse(args.ch_host, args.ch_config, apply=False, port=args.ch_port)
+    rows = read_offset_rows(ch, args.offset_table)
+    try:
         offset_key, current = select_offset_row(rows, args.offset_key)
-    else:
-        offset_key, current = args.offset_key, ""
+    except ValueError as e:
+        sys.exit(f"refusing: {e}")
+    age_field = next(r for r in rows if r[0] == offset_key)[2:3]
+    try:
+        age = int(age_field[0])
+    except (IndexError, ValueError):
+        sys.exit(f"refusing: cannot tell when the offset row of {offset_key} was written ({age_field!r})")
+    if args.connector_idle_seconds > 0 and abs(age) < args.connector_idle_seconds:
+        sys.exit(f"refusing: the offset row of {offset_key} was written {age}s ago (less than --connector-idle-seconds "
+                 f"{args.connector_idle_seconds}): the connector looks RUNNING. Stop it, wait, and re-run")
+    try:
+        cur_file, cur_pos = offset_position(current)
+        forward = compare_binlog_positions(pos["file"], pos["pos"], cur_file, cur_pos) > 0
+        problem = (f"the recorded position {pos['file']}:{pos['pos']} is AFTER the connector's current offset {cur_file}:{cur_pos}, "
+                   f"so this would move the offset FORWARD") if forward else None
+    except ValueError as e:
+        problem = f"the rewind direction cannot be verified: {e}"
+    warning = None
+    if problem:
+        if not args.allow_forward_rewind:
+            sys.exit(f"refusing: {problem}; the skipped binlog events would be lost for every table of that connector. "
+                     f"Pass --allow-forward-rewind only if that is intended")
+        warning = f"WARNING: --allow-forward-rewind given: {problem}"
+        print(warning, file=sys.stderr, flush=True)
     new_val = rewind_offset_json(current, pos["file"], pos["pos"], pos.get("ts_sec") or 0)
     sql = rewind_offset_sql(args.offset_table, offset_key, new_val)
     print(f"-- Rewind the connector whose offset_key is {offset_key} in {args.offset_table} to the binlog position captured at dump start:")
     print(f"--   {pos['file']}:{pos['pos']} taken {pos.get('taken_at')} on {pos.get('source_host')} (gtid_executed: {pos.get('gtid_executed') or 'n/a'})")
-    print("-- Procedure: (1) stop THAT connector service; (2) run the INSERT below; (3) start the connector; (4) watch it")
-    print("-- replay the binlog from that position (every change binlogged since the dump is re-applied on top of the")
-    print("-- patched tables -- idempotent on ReplacingMergeTree); (5) re-run the value-level checksum (spec 11.02).")
+    if warning:
+        print(f"-- {warning}")
+    print(f"-- Procedure: (1) THAT connector is stopped (attested with --connector-stopped; its offset row was last written {age}s ago);")
+    print("-- (2) run the INSERT below; (3) verify that `SELECT offset_val FROM <offset table> FINAL WHERE offset_key = <key>`")
+    print("-- returns the new offset; (4) start the connector and watch it replay the binlog from that position (every change")
+    print("-- binlogged since the dump is re-applied on top of the patched tables -- idempotent on ReplacingMergeTree);")
+    print("-- (5) re-run the value-level checksum (spec 11.02).")
     print("-- The source must still hold that binlog file: check `SHOW BINARY LOGS` before starting the connector.")
-    if rows:
-        print(f"-- offset rows in {args.offset_table}: {len(rows)}; current offset_val of the selected key: {current}")
+    print(f"-- offset rows in {args.offset_table}: {len(rows)}; current offset_val of the selected key: {current}")
     print(sql)
     return 0
 
@@ -653,6 +845,12 @@ def main(argv=None) -> int:
     p.add_argument("--force", action="store_true", help="continue to REPLACE even if the canary check fails")
     p.add_argument("--loader-cmd", default=None, help="override the loader command (default: python -m ch_sink_tools.db_load.clickhouse_loader)")
     p.add_argument("--loader-cwd", default=None)
+    p.add_argument("--offset-table", default=None, help="the connector's offset table (db.table): before any REPLACE its durable "
+                                                        "offset must be at or past the dump position (required with --apply "
+                                                        "unless --skip-connector-position-check)")
+    p.add_argument("--offset-key", default=None, help="the connector's offset_key row; may be omitted only when the table holds a single row")
+    p.add_argument("--skip-connector-position-check", action="store_true",
+                   help="replace without comparing the connector position with the dump position (logged as a WARNING)")
     p.set_defaults(func=cmd_patch)
 
     r = sub.add_parser("rewind-sql", help="print the offset-table INSERT that rewinds ONE connector to the captured binlog position")
@@ -663,7 +861,15 @@ def main(argv=None) -> int:
                                                         "use distinct stamps for distinct connectors)")
     r.add_argument("--ch-host", default=None)
     r.add_argument("--ch-port", type=int, default=9000)
-    r.add_argument("--ch-config", default=None, help="if given, the current offset rows are read (server_id kept, key checked)")
+    r.add_argument("--ch-config", default=None, help="required: the current offset rows are read (key checked, direction checked, "
+                                                     "server_id kept)")
+    r.add_argument("--connector-stopped", action="store_true",
+                   help="required attestation: THAT connector is stopped (a running connector supersedes the rewind row)")
+    r.add_argument("--connector-idle-seconds", type=int, default=60,
+                   help="refuse when the selected offset row was written less than this many seconds ago (connector looks "
+                        "running); 0 disables the check (default 60)")
+    r.add_argument("--allow-forward-rewind", action="store_true",
+                   help="emit the INSERT even when it moves the offset forward or the direction cannot be verified (WARNING)")
     r.set_defaults(func=cmd_rewind_sql)
 
     args = ap.parse_args(argv)
