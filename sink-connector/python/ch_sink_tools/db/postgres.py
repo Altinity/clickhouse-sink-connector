@@ -595,17 +595,32 @@ def build_ch_create_table_ddl(pg_schema, table_name, columns, pk_columns,
 
     cols_sql = ",\n".join(col_defs)
 
+    settings = "index_granularity = 8192"
     if pk_columns:
         order_by = ", ".join(f"`{c}`" for c in pk_columns)
     else:
-        order_by = "tuple()"
+        # Keyless table: never ORDER BY tuple() (every row would collapse into
+        # one); same all-columns key as postgres_type_mapper.build_create_table.
+        from ch_sink_tools.db_load.postgres_type_mapper import keyless_sorting_key
+        key_columns, nullable_key = keyless_sorting_key(
+            columns, override_config=override_config, schema=pg_schema,
+            table=table_name, database=pg_database,
+        )
+        if not key_columns:
+            raise ValueError(
+                f"Cannot derive a sorting key for {ch_database}.{table_name}: no "
+                f"primary key and no column; refusing ORDER BY tuple()"
+            )
+        order_by = ", ".join(f"`{c}`" for c in key_columns)
+        if nullable_key:
+            settings += ", allow_nullable_key = 1"
 
     ddl = (
         f"CREATE TABLE IF NOT EXISTS `{ch_database}`.`{table_name}`\n"
         f"(\n{cols_sql}\n)\n"
         f"ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
         f"ORDER BY ({order_by})\n"
-        f"SETTINGS index_granularity = 8192"
+        f"SETTINGS {settings}"
     )
     return ddl
 
