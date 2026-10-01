@@ -12,6 +12,7 @@ import argparse
 import traceback
 import sys
 import datetime
+import json
 import os
 from db.mysql import *
 from subprocess import Popen, PIPE
@@ -91,7 +92,9 @@ def run_command(cmd):
     for line in process.stdout:
         logging.info(line.decode().strip())
         time.sleep(0.02)
-    rc = str(process.poll())
+    # End of output does not mean the child has exited: wait() for the real status
+    # (poll() here can return None and report a good dump as failed).
+    rc = str(process.wait())
     logging.debug("return code = " + str(rc))
     return rc
 
@@ -110,6 +113,188 @@ def run_quick_command(cmd):
     if rc != "0":
         logging.error("command failed : terminating")
     return rc, stdout
+
+
+# -- ======================================================================
+# -- Post-dump verification and snapshot position handoff (Spec 13.03 3.8)
+# -- MySQL Shell writes the dump metadata itself (Dumper::write_dump_started_metadata
+# -- in modules/util/dump/dumper.cc): '@.json' holds binlogFile, binlogPosition,
+# -- gtidExecuted, gtidExecutedInconsistent, consistent, schemas, basenames, begin;
+# -- '<basename>.json' holds the list of dumped 'tables'; '@.done.json' is written
+# -- last and holds 'end'.
+# -- ======================================================================
+SNAPSHOT_POSITION_FILE = "snapshot_position.json"
+SNAPSHOT_POSITION_FORMAT_VERSION = 1
+
+
+class DumpVerificationError(Exception):
+    """The dump finished but cannot be trusted as a snapshot."""
+
+
+def _read_dump_json(dump_dir, name):
+    path = os.path.join(dump_dir, name)
+    if not os.path.isfile(path):
+        raise DumpVerificationError(f"MySQL Shell dump metadata file {name} is missing from {dump_dir}")
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except ValueError as e:
+        raise DumpVerificationError(f"MySQL Shell dump metadata file {path} is not valid JSON: {e}")
+
+
+def read_dumped_tables(dump_dir, database):
+    """Return the table names MySQL Shell recorded for database ('tables' of '<basename>.json')."""
+    metadata = _read_dump_json(dump_dir, "@.json")
+    basename = (metadata.get("basenames") or {}).get(database)
+    if not basename:
+        raise DumpVerificationError(f"@.json in {dump_dir} has no 'basenames' entry for schema {database}")
+    schema_metadata = _read_dump_json(dump_dir, basename + ".json")
+    tables = schema_metadata.get("tables")
+    if not isinstance(tables, list):
+        raise DumpVerificationError(f"{basename}.json in {dump_dir} has no 'tables' list")
+    return tables
+
+
+def find_missing_tables(dump_dir, database, source_tables):
+    """Tables present in the source listing but absent from the dump, sorted."""
+    dumped = set(read_dumped_tables(dump_dir, database))
+    return sorted(set(source_tables) - dumped)
+
+
+def read_snapshot_position(dump_dir):
+    """Read and validate the snapshot position MySQL Shell recorded in '@.json'.
+
+    Raises DumpVerificationError when the dump is incomplete, was not consistent, or
+    carries no usable binlog position (MySQL Shell leaves it out when the account lacks
+    REPLICATION CLIENT, and it is empty when binary logging is off).
+    """
+    done = _read_dump_json(dump_dir, "@.done.json")
+    metadata = _read_dump_json(dump_dir, "@.json")
+    if metadata.get("consistent") is not True:
+        raise DumpVerificationError(
+            f"dump in {dump_dir} is not consistent (@.json consistent={metadata.get('consistent')!r}): "
+            "its binlog position does not describe the data")
+    if metadata.get("gtidExecutedInconsistent") is True:
+        raise DumpVerificationError(
+            f"dump in {dump_dir} reports gtidExecutedInconsistent=true: the GTID set does not describe the data")
+    binlog_file = metadata.get("binlogFile")
+    binlog_position = metadata.get("binlogPosition")
+    if not isinstance(binlog_file, str) or not binlog_file:
+        raise DumpVerificationError(
+            f"@.json in {dump_dir} has no binlogFile (got {binlog_file!r}): the dump account needs "
+            "REPLICATION CLIENT and the source needs binary logging enabled")
+    if isinstance(binlog_position, bool) or not isinstance(binlog_position, int) or binlog_position < 0:
+        raise DumpVerificationError(f"@.json in {dump_dir} has no valid binlogPosition (got {binlog_position!r})")
+    gtid_executed = metadata.get("gtidExecuted")
+    if not isinstance(gtid_executed, str):
+        raise DumpVerificationError(f"@.json in {dump_dir} has no gtidExecuted (got {gtid_executed!r})")
+    return {
+        "binlog_file": binlog_file,
+        "binlog_position": binlog_position,
+        # MySQL Shell keeps the newlines of @@gtid_executed; the set itself has no whitespace
+        "gtid_executed": "".join(gtid_executed.split()),
+        "server_hostname": metadata.get("server"),
+        "mysqlsh_version": metadata.get("dumper"),
+        "dump_started": metadata.get("begin"),
+        "dump_finished": done.get("end"),
+    }
+
+
+def write_snapshot_position(dump_dir, position, source_host, source_port, database, tables):
+    """Write the machine-readable handoff file and return its path."""
+    handoff = {
+        "format_version": SNAPSHOT_POSITION_FORMAT_VERSION,
+        "source_host": source_host,
+        "source_port": int(source_port),
+        "database": database,
+        "tables": sorted(tables),
+    }
+    handoff.update(position)
+    # keys read by `ch-mysql-resync rewind-sql --position-file` (Spec 13.08)
+    handoff["file"] = position["binlog_file"]
+    handoff["pos"] = position["binlog_position"]
+    handoff["taken_at"] = position["dump_started"]
+    path = os.path.join(dump_dir, SNAPSHOT_POSITION_FILE)
+    # mode 'x': never overwrite an existing handoff file (FileExistsError instead)
+    with open(path, "x") as f:
+        json.dump(handoff, f, indent=2, sort_keys=True)
+        f.write("\n")
+    return path
+
+
+def select_tables(conn, args):
+    """Resolve (tables_to_dump, partition_map) for the requested scope from information_schema."""
+    tables = get_tables_from_regex(conn, False,
+                                   args.mysql_database,
+                                   args.include_tables_regex,
+                                   exclude_tables_regex=args.exclude_tables_regex,
+                                   non_partitioned_tables_only=args.non_partitioned_tables_only)
+    partitions = get_partitions_from_regex(conn,
+                                           args.mysql_database,
+                                           args.include_tables_regex,
+                                           exclude_tables_regex=args.exclude_tables_regex,
+                                           include_partitions_regex=args.include_partitions_regex,
+                                           non_partitioned_tables_only=args.non_partitioned_tables_only)
+
+    tables_to_dump = []
+    if not args.partitioned_tables_only:
+      for table in tables.fetchall():
+          logging.debug(table['table_name'])
+          tables_to_dump.append(table['table_name'])
+
+    partition_map = {}
+    for partition in partitions.fetchall():
+        schema = partition['table_schema']
+        table = partition['table_name']
+        partition_name = partition['partition_name']
+        key = schema+"."+table
+        if key not in partition_map:
+            partition_map[key]=[partition_name] if partition_name is not None else []
+        else:
+            partition_map[key].append(partition_name)
+        if args.partitioned_tables_only:
+            if table not in tables_to_dump:
+               tables_to_dump.append(table)
+    logging.debug(partition_map)
+    return (tables_to_dump, partition_map)
+
+
+def verify_dump(args, mysql_user, mysql_password):
+    """After mysqlsh succeeded: fail loudly unless the dump is complete, holds every
+    in-scope source table, and (for a consistent data dump) carries a usable snapshot
+    position, which is logged and written to snapshot_position.json."""
+    if args.dry_run:
+        logging.info("dry run: MySQL Shell wrote no dump files, post-dump verification skipped")
+        return None
+    _read_dump_json(args.dump_dir, "@.done.json")
+    # Fresh connection and listing, taken after the snapshot: a table created after the
+    # pre-dump selection is in the source but not in the dump.
+    conn = get_mysql_connection(args.mysql_host, mysql_user,
+                                mysql_password, args.mysql_port, args.mysql_database)
+    try:
+        (source_tables, _) = select_tables(conn, args)
+    finally:
+        conn.close()
+    missing = find_missing_tables(args.dump_dir, args.mysql_database, source_tables)
+    if missing:
+        raise DumpVerificationError(
+            f"{len(missing)} in-scope source table(s) missing from the dump in {args.dump_dir} "
+            f"(created after the table list was resolved?): {missing}. Re-run the dump.")
+    dumped_tables = read_dumped_tables(args.dump_dir, args.mysql_database)
+    if args.schema_only:
+        logging.info("schema-only dump: no snapshot position handoff written")
+        return None
+    if args.non_consistent:
+        logging.warning("--no_consistent dump: it has no usable snapshot position, "
+                        f"{SNAPSHOT_POSITION_FILE} not written. Do not seed a connector offset from it.")
+        return None
+    position = read_snapshot_position(args.dump_dir)
+    path = write_snapshot_position(args.dump_dir, position, args.mysql_host, args.mysql_port,
+                                   args.mysql_database, dumped_tables)
+    logging.info(f"snapshot position: binlog {position['binlog_file']}:{position['binlog_position']} "
+                 f"gtid_executed '{position['gtid_executed']}' (dump started {position['dump_started']}, "
+                 f"finished {position['dump_finished']}) written to {path}")
+    return position
 
 
 def generate_mysqlsh_dump_tables_clause(dump_dir,
@@ -241,12 +426,17 @@ def main():
     mysql_user = args.mysql_user
     mysql_password = args.mysql_password
 
-    assert check_program_exists("mysqlsh"), "mysqlsh should in the PATH"
-    
+    # explicit checks, not assert: assertions are stripped under python -O
+    if not check_program_exists("mysqlsh"):
+        logging.error("mysqlsh should be in the PATH")
+        sys.exit(1)
+
     # check parameters
     if args.mysql_password:
         logging.warning("Using password on the command line is not secure, please specify a config file ")
-        assert args.mysql_user is not None, "--mysql_user must be specified"
+        if args.mysql_user is None:
+            logging.error("--mysql_user must be specified")
+            sys.exit(1)
     else:
         config_file = args.defaults_file
         (mysql_user, mysql_password) = resolve_credentials_from_config(config_file)
@@ -254,39 +444,11 @@ def main():
     try:
         conn = get_mysql_connection(args.mysql_host, mysql_user,
                                 mysql_password, args.mysql_port, args.mysql_database)
-        tables = get_tables_from_regex(conn, False, 
-                                       args.mysql_database, 
-                                       args.include_tables_regex, 
-                                       exclude_tables_regex=args.exclude_tables_regex, 
-                                       non_partitioned_tables_only=args.non_partitioned_tables_only)
-        partitions = get_partitions_from_regex(conn, 
-                                               args.mysql_database, 
-                                               args.include_tables_regex, 
-                                               exclude_tables_regex=args.exclude_tables_regex, 
-                                               include_partitions_regex=args.include_partitions_regex,
-                                               non_partitioned_tables_only=args.non_partitioned_tables_only)
-        
-    
-        tables_to_dump = []
-        if not args.partitioned_tables_only:
-          for table in tables.fetchall():
-              logging.debug(table['table_name'])
-              tables_to_dump.append(table['table_name'])
-        
-        partition_map = {}
-        for partition in partitions.fetchall():
-            schema = partition['table_schema']
-            table = partition['table_name']
-            partition_name = partition['partition_name']
-            key = schema+"."+table
-            if key not in partition_map:
-                partition_map[key]=[partition_name] if partition_name is not None else []
-            else:
-                partition_map[key].append(partition_name)
-            if args.partitioned_tables_only:
-                if table not in tables_to_dump:
-                   tables_to_dump.append(table)
-        logging.debug(partition_map)
+        (tables_to_dump, partition_map) = select_tables(conn, args)
+        if args.include_partitions_regex is None:
+            # No partition filter requested: dump whole tables. An explicit list resolved
+            # before the snapshot would silently drop partitions added in the meantime.
+            partition_map = None
         # the generated json can be bigger than the shell allows, so using the -f option with
         # a temporary file
         tmp = tempfile.NamedTemporaryFile()
@@ -310,8 +472,10 @@ def main():
                                        consistent=not args.non_consistent
                                        )
           rc = run_command(cmd)
-          assert rc == "0", "mysqldumper failed, check the log."
-             
+          if rc != "0":
+              raise RuntimeError(f"mysqldumper failed (mysqlsh exit status {rc}), check the log.")
+        verify_dump(args, mysql_user, mysql_password)
+
     except (KeyboardInterrupt, SystemExit):
         logging.info("Received interrupt")
         os._exit(1)

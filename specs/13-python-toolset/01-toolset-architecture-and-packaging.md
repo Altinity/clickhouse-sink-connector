@@ -113,7 +113,7 @@ Lifecycle roles:
 
 | Tool | Legacy file | Packaged file | Entry point | Role | External programs it runs | Detailed spec |
 |---|---|---|---|---|---|---|
-| MySQL dumper | `db_dump/mysql_dumper.py` | `ch_sink_tools/db_dump/mysql_dumper.py` | `ch-mysql-dump` | SNAP-DUMP | `mysqlsh` (asserted on PATH) | 13.03 |
+| MySQL dumper | `db_dump/mysql_dumper.py` | `ch_sink_tools/db_dump/mysql_dumper.py` | `ch-mysql-dump` | SNAP-DUMP | `mysqlsh` (checked on PATH, exit 1 if missing) | 13.03 |
 | ClickHouse loader (MySQL dumps) | `db_load/clickhouse_loader.py` | `ch_sink_tools/db_load/clickhouse_loader.py` | `ch-mysql-load` | SNAP-LOAD + DDL | `clickhouse-client`, `zstd` (asserted), `gunzip`, `sed`, `/usr/bin/which` | 13.04 |
 | MySQL DDL translator (ANTLR) | `db_load/mysql_parser/*` | `ch_sink_tools/db_load/mysql_parser/*` | none (library). `main(argv)` debug CLI by path. | DDL | none | 13.04 (DDL semantics); §3.8 here (wrapper and packaging) |
 | PostgreSQL dump+load | none | `ch_sink_tools/db_dump/postgres_dumper.py` (+ `naming.py`, `db_load/postgres_type_mapper.py`, `config/column_type_overrides.py`, `config/override_reconciler.py`) | `ch-pg-dump` | SNAP-DUMP + SNAP-LOAD + DDL | `psql`, `pg_dump`, `pg_restore` (via `PG_BIN_DIR`), `clickhouse-client` | 13.05 |

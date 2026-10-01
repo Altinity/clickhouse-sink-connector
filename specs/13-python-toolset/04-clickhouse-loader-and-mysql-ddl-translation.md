@@ -781,7 +781,8 @@ This is D-13.04-26.
 
 - Spec 13.03 produces the MySQL Shell dump this loader reads. The loader does not read `@.json` metadata,
   binlog position, chunk row counts or `@.done.json` completeness, so an incomplete dump is loaded silently
-  (D-13.04-19). The position hand-off gap is D-13.03-1.
+  (D-13.04-19). The position hand-off gap was D-13.03-1, now fixed in the dumper: it verifies the dump and
+  writes `snapshot_position.json` into the dump directory (Spec 13.03, 3.8). The loader still does not read it.
 - Spec 11.04 (`ch-mysql-resync`) wraps the packaged loader per table, adds exact count reconciliation and an
   optional canary, and avoids `--truncate_tables`. FM-11.04-8 is the downstream effect of the rendering
   differences recorded here (D-13.04-3, D-13.04-10).

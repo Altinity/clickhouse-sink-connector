@@ -19,11 +19,13 @@ defect. Do not read it as a design. The main conclusions:
 - **Consistency is delegated to MySQL Shell.** Both copies leave mysqlsh's `consistent` option at `true` by
   default: `FLUSH TABLES WITH READ LOCK` or `LOCK TABLES`, then per-thread `START TRANSACTION WITH CONSISTENT
   SNAPSHOT`, then `LOCK INSTANCE FOR BACKUP`. Only the legacy copy can switch it off (`--no_consistent`).
-- **The tool captures no snapshot position (binlog file/position or GTID set) and hands none to the
-  connector.** MySQL Shell writes the position into the dump's `@.json` file when it has the privilege to read
-  it. No Python component reads that file, checks that it is present, or logs it. The table and partition list
-  is resolved **outside** the snapshot, before mysqlsh starts. Both points are S1 defects (D-13.03-1,
-  D-13.03-2).
+- **After a successful dump the tool reads the snapshot position from MySQL Shell's `@.json`, checks it,
+  logs it and writes it to `snapshot_position.json` in the dump directory** (3.8). It exits 1 when the dump
+  is incomplete, not consistent, or has no binlog position. This was the S1 defect D-13.03-1 (fixed).
+- **The table list is still resolved outside the snapshot, but a missed table is now detected.** Without a
+  partition filter no explicit partition list is passed, so whole tables are dumped. After the dump a fresh
+  listing is compared with the tables in the dump metadata, and any in-scope source table missing from the
+  dump fails the run. This was the S1 defect D-13.03-2 (fixed).
 - **The tool cannot run on SQLAlchemy 2.x**, which the declared dependency `sqlalchemy>=1.4` installs by
   default: rows are indexed by column name and that raises `TypeError` before mysqlsh is called (D-13.03-3,
   reproduced).
@@ -58,6 +60,19 @@ Line anchors used throughout (L = legacy dumper, P = packaged dumper):
 | `generate_mysqlsh_command` | L136-181 | P103-145 |
 | `main` | L184-323 | P148-283 |
 
+The L/P anchors above and in the rest of this spec are 2.11.0 lines. The fixes for D-13.03-1, -2, -12 and
+-13 moved code. In the fixed tree the new and moved code is at these lines:
+
+| Function | Legacy lines (fixed) | Packaged lines (fixed) |
+|---|---|---|
+| `run_command` (`process.wait()`) | `sink-connector/python/db_dump/mysql_dumper.py:81-99` | `sink-connector/python/ch_sink_tools/db_dump/mysql_dumper.py:49-67` |
+| `DumpVerificationError`, `_read_dump_json`, `read_dumped_tables`, `find_missing_tables` | L130-161 | P98-129 |
+| `read_snapshot_position` | L164-200 | P132-168 |
+| `write_snapshot_position` | L203-222 | P171-190 |
+| `select_tables` (selection loop moved out of `main`) | L225-259 | P193-227 |
+| `verify_dump` | L262-297 | P230-261 |
+| `main` | L369-493 | P329-449 |
+
 Connection-layer functions the dumper calls (full contract in Spec 13.02):
 
 | Function | Legacy | Packaged |
@@ -89,9 +104,11 @@ Related code outside the scope, cited for contrast or handoff:
 
 1. Input: one MySQL schema (`--mysql_database`) and selection flags.
 2. Output: a MySQL Shell dump directory (`--dump_dir`) written by `mysqlsh`. The Python process writes one
-   temporary file holding the JS statement and nothing else.
-3. It does **not**: create ClickHouse objects, translate DDL, load data, capture or record a binlog
-   position or GTID set, write a connector offset, validate the dump after mysqlsh exits, retry, or resume.
+   temporary file holding the JS statement and, after a successful consistent data dump, the handoff file
+   `<dump_dir>/snapshot_position.json` (3.8).
+3. It does **not**: create ClickHouse objects, translate DDL, load data, write a connector offset, retry, or
+   resume. It **does** validate the dump after mysqlsh exits: completion marker, table coverage, consistency
+   and snapshot position (3.8).
 4. Single schema per run. Single mysqlsh invocation per run. No Python-level concurrency.
 
 ### 3.2 Command-line interface
@@ -104,33 +121,34 @@ used to find `mysqlsh`, and `HOME` is used by `os.path.expanduser` inside `resol
 |---|---|---|---|---|
 | `--mysql_host` | str, **required** | none | PyMySQL host. mysqlsh `-h <host>`, unquoted in the shell string. | yes |
 | `--mysql_user` | str | `None` | Password mode: user for both PyMySQL and mysqlsh (`--user <u>`, unquoted). Config mode: still passed to mysqlsh if given, while PyMySQL uses the option file's user, so the two can diverge. | yes, see D-13.03-4 |
-| `--mysql_password` | str | `None` | Turns on password mode. Logs a WARNING (L248/P209) and asserts `--mysql_user` is set (L249/P210). PyMySQL gets it. mysqlsh gets `--password <pw>` (L159 `shlex.quote`; P124 `"<pw>"`). | **not as a password by mysqlsh** (D-13.03-4), exposed (D-13.03-5/6/7) |
+| `--mysql_password` | str | `None` | Turns on password mode. Logs a WARNING (L248/P209) and exits 1 with an ERROR when `--mysql_user` is not set (explicit check, formerly an `assert`, D-13.03-13). PyMySQL gets it. mysqlsh gets `--password <pw>` (L159 `shlex.quote`; P124 `"<pw>"`). | **not as a password by mysqlsh** (D-13.03-4), exposed (D-13.03-5/6/7) |
 | `--defaults_file` | str | `'~/.my.cnf'` | Config mode (no `--mysql_password`): `resolve_credentials_from_config` reads `[client] user/password` with `configparser` for PyMySQL. **Always** passed to mysqlsh as `--defaults-file=<value>`, unquoted and unexpanded, because the default is never `None` (L164-165/P129-130). | yes, see D-13.03-16 |
 | `--mysql_database` | str, **required** | none | Schema for selection SQL (`table_schema = '<db>'`), the PyMySQL default DB, and the first `dumpTables` argument (`'<db>'`, unescaped). | yes |
 | `--mysql_port` | str when given, int 3306 by default (no `type=`) | `3306` | PyMySQL port (`int(...)`). mysqlsh `--port <p>`, always emitted. | yes |
 | `--dump_dir` | str, **required** | none | Third `dumpTables` argument (`'<dir>'`, unescaped JS literal). | yes |
 | `--include_tables_regex` | str | `'.'` | `table_name rlike '<re>'` in the table query and in the partition query's sub-select. Interpolated unescaped. | yes, see D-13.03-8 |
 | `--exclude_tables_regex` | str | `None` | `and table_name not rlike '<re>'` in both queries. | yes, see D-13.03-8 |
-| `--include_partitions_regex` | str | `None` | Partition query only: `and partition_name rlike '<re>'`. **Not** passed to the table query (L257-261/P218-222). | partially (D-13.03-10) |
+| `--include_partitions_regex` | str | `None` | Partition query only: `and partition_name rlike '<re>'`. **Not** passed to the table query (L257-261/P218-222). It is the only flag that makes the dumper pass the mysqlsh `partitions` option: without it, whole tables are dumped (D-13.03-2 fix). | partially (D-13.03-10) |
 | `--where` | str | `None` | Passed to `generate_mysqlsh_command` and on to the clause builder as `where`, then **never used**. | **ignored** (D-13.03-11) |
 | `--threads` | int | `1` | mysqlsh `threads` (mysqlsh's own default is 4). | yes |
 | `--bytes_per_chunk` | str | `'64M'` | mysqlsh `bytesPerChunk`. Setting it implicitly turns chunking on. Not validated (mysqlsh minimum `128k`). | yes |
 | `--debug` | flag | `False` | Root logger and handler at DEBUG: logs the full mysqlsh command (redacted in legacy, **clear text in packaged**, D-13.03-7) and every selection SQL. | yes |
-| `--schema_only` | flag | `False` | `ddlOnly: 1`. Suppresses the `partitions` option. | yes |
+| `--schema_only` | flag | `False` | `ddlOnly: 1`. Suppresses the `partitions` option. The post-dump table-coverage check still runs. No `snapshot_position.json` is written (INFO line). | yes |
 | `--data_only` | flag | `False` | `dataOnly: 1`. Not mutually exclusive with `--schema_only` (D-13.03-20). A data-only dump has no `<schema>@<table>.sql`, which the loader requires (Spec 13.04). | yes |
 | `--non_partitioned_tables_only` | flag | `False` | Adds a `count(*) = 1` partition-count filter to both queries. A table with exactly one partition counts as non-partitioned (D-13.03-14). | yes (imprecise) |
 | `--partitioned_tables_only` | flag | `False` | Skips the table query rows and builds the table list from the partition rows. Non-partitioned tables are still included because their single `PARTITION_NAME IS NULL` row is in the result (D-13.03-9). | **not as named** |
-| `--dry_run` | flag | `False` | `dryRun: 1`. mysqlsh prints what it would dump and writes no data. The Python side still requires `mysqlsh` in PATH, connects with PyMySQL, runs the selection SQL, writes the temp file and runs mysqlsh, which connects to the server. | yes |
+| `--dry_run` | flag | `False` | `dryRun: 1`. mysqlsh prints what it would dump and writes no data. The Python side still requires `mysqlsh` in PATH, connects with PyMySQL, runs the selection SQL, writes the temp file and runs mysqlsh, which connects to the server. The post-dump verification (3.8) is skipped, with an INFO line, because mysqlsh writes no dump files. | yes |
 | `--consistent` | flag (legacy only) | `True` | `store_true` with `default=True`: a **no-op** (L219-220). | no-op (D-13.03-17) |
-| `--no_consistent` | flag (legacy only, dest `non_consistent`) | `False` | `consistent: 0` (L310, L127). | legacy yes. Packaged rejects it: argparse exit 2 (reproduced) |
+| `--no_consistent` | flag (legacy only, dest `non_consistent`) | `False` | `consistent: 0` (L310, L127). The dump has no usable snapshot position: the post-dump table-coverage check runs, then a WARNING says no `snapshot_position.json` is written, and the exit code is 0. | legacy yes. Packaged rejects it: argparse exit 2 (reproduced) |
 
 ### 3.3 Credential resolution (both copies, L241-252 / P202-213)
 
-1. `assert check_program_exists("mysqlsh")` runs first, **outside** the `try` block. It runs
-   `/usr/bin/which mysqlsh`. If mysqlsh is missing, an uncaught `AssertionError` gives a traceback and exit 1.
+1. `check_program_exists("mysqlsh")` runs first, **outside** the `try` block. It runs `/usr/bin/which
+   mysqlsh`. If mysqlsh is missing, the tool logs ERROR `mysqlsh should be in the PATH` and exits 1. This is an
+   explicit check, so it also holds under `python -O` (D-13.03-13 fix).
 2. Password mode (`--mysql_password` is truthy): WARNING `Using password on the command line is not secure...`,
-   then `assert args.mysql_user is not None` (outside the `try`). PyMySQL credentials are `(--mysql_user,
-   --mysql_password)`.
+   then, if `--mysql_user` is not set, ERROR `--mysql_user must be specified` and exit 1 (explicit check,
+   outside the `try`). PyMySQL credentials are `(--mysql_user, --mysql_password)`.
 3. Config mode: `resolve_credentials_from_config(args.defaults_file)` (outside the `try`). It asserts the
    path exists after `expanduser`, ends with `.cnf`, and has a `[client]` section, then reads `user` and
    `password` with `configparser`. The Python side differs from MySQL option-file syntax: quotes are kept,
@@ -171,24 +189,33 @@ where table_schema = '<db>' [and partition_name rlike '<part_re>']
 order by 1,2,3
 ```
 
-Then the dumper builds the list (L270-289 / P231-250):
+Then the dumper builds the list (L270-289 / P231-250; in the fixed tree the loop is `select_tables`, which
+`main` calls before the dump and `verify_dump` calls again after it):
 - `tables_to_dump` is every `row['table_name']` from the table query, unless `--partitioned_tables_only`.
 - `partition_map` is keyed `"<schema>.<table>"`. The first row for a key sets `[partition_name]`, or `[]` when
   the name is `NULL`. Later rows append. With `--partitioned_tables_only`, every table seen in the partition
   rows is appended to `tables_to_dump`, and that includes non-partitioned tables, whose single row carries
   `NULL`.
 - The table list is logged only at DEBUG (each name) and as part of the INFO-level clause (3.5).
+- `main` passes `partition_map` to the clause builder **only when `--include_partitions_regex` is given**.
+  Otherwise it passes `None` and the `partitions` option is omitted, so mysqlsh dumps whole tables, including
+  partitions added after selection (D-13.03-2 fix).
 
-Resulting scopes (reproduced with `r2_main_flow.py`, see 5.3):
+Resulting scopes (2.11.0 behaviour reproduced with `r2_main_flow.py`, see 5.3; the `partitions` column is the
+fixed behaviour, covered by
+`sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestTableAndPartitionScope`):
 
 | Flags | `tables_to_dump` | `partitions` option | What mysqlsh dumps |
 |---|---|---|---|
-| none | all base tables | every table: `[]` for non-partitioned tables (mysqlsh ignores an empty list), the full list of partitions **known at selection time** for partitioned ones | everything, except partitions created after selection (D-13.03-2) |
+| none | all base tables | omitted | every selected table in full, including partitions created after selection |
 | `--include_partitions_regex R` | **all** base tables | only tables with at least one partition matching R | matching partitions, **plus** non-partitioned tables in full, **plus** partitioned tables with no match in full (D-13.03-10) |
-| `--partitioned_tables_only` | non-partitioned and partitioned tables | as in the first row | everything (D-13.03-9) |
-| `--partitioned_tables_only --include_partitions_regex R` | tables with at least one matching partition | matching partitions | the intended scope |
-| `--non_partitioned_tables_only` | tables with exactly one `information_schema.partitions` row | single-partition tables carry `[p]` | non-partitioned and single-partition tables |
-| `--schema_only` | as selected | omitted (`partition_map and not schema_only`) | DDL only |
+| `--partitioned_tables_only` | non-partitioned and partitioned tables | omitted | everything (D-13.03-9) |
+| `--partitioned_tables_only --include_partitions_regex R` | tables with at least one matching partition | matching partitions, as known at selection time | the intended scope, except matching partitions created after selection |
+| `--non_partitioned_tables_only` | tables with exactly one `information_schema.partitions` row | omitted | non-partitioned and single-partition tables, in full |
+| `--schema_only` | as selected | omitted | DDL only |
+
+The table list itself is still resolved before the snapshot (2.11.0 behaviour). A table created in that window
+is not dumped, and the post-dump coverage check (3.8) then fails the run.
 
 Regex semantics: MySQL `RLIKE` (ICU in 8.0). Case sensitivity follows the collation of
 `information_schema.TABLES.TABLE_NAME`, which depends on `lower_case_table_names`. This was not determined
@@ -215,12 +242,13 @@ Template, written verbatim (leading and trailing space included) to the temp fil
 | `threads` | `threads` | same |
 | `bytesPerChunk` | `'<bytes_per_chunk>'` | same |
 | `consistent` | `int(consistent)`, 1 unless `--no_consistent` | **absent**: mysqlsh default `true` |
-| `partitions` | `partition_map` when non-empty and not `--schema_only` | same |
+| `partitions` | `partition_map` when `main` passes one (only with `--include_partitions_regex`), it is non-empty, and not `--schema_only` | same |
 
-Example output (reproduced, legacy, default flags):
+Example output (legacy, default flags; on 2.11.0 the same call also carried `'partitions': {'mydb.t_np': [],
+'mydb.t_p': ['p2025', 'p2026'], 'mydb.t_q': ['p2024']}`, D-13.03-2):
 
 ```
- util.dumpTables('mydb',['t_np', 't_p', 't_q'], '/backups/dump', {'dryRun': 0, 'ddlOnly': 0, 'dataOnly': 0, 'threads': 1, 'bytesPerChunk': '64M', 'consistent': 1, 'partitions': {'mydb.t_np': [], 'mydb.t_p': ['p2025', 'p2026'], 'mydb.t_q': ['p2024']}} );
+ util.dumpTables('mydb',['t_np', 't_p', 't_q'], '/backups/dump', {'dryRun': 0, 'ddlOnly': 0, 'dataOnly': 0, 'threads': 1, 'bytesPerChunk': '64M', 'consistent': 1} );
 ```
 
 Quoting: table names are rendered by Python `repr()`, which yields valid JS string literals for names with
@@ -286,22 +314,23 @@ Consequences:
 2. Reads the merged stdout+stderr line by line. Each line goes out as `logging.info(line.decode().strip())`
    (strict UTF-8; a non-UTF-8 byte raises and exits 1 while mysqlsh keeps running), followed by
    `time.sleep(0.02)`, which caps throughput at about 50 lines/s and back-pressures mysqlsh through the pipe.
-3. At EOF, `rc = str(process.poll())`. `poll()` does not wait. If the child closed its output but has not yet
-   exited, `rc` is `'None'` (reproduced, D-13.03-12). A grandchild that inherits the pipe keeps the loop
-   blocked until it exits (reproduced: 2.02 s).
+3. At EOF, `rc = str(process.wait())`: the real exit status, even when the child closed its output before
+   exiting (on 2.11.0 this was `poll()`, which returned `'None'` in that case, D-13.03-12, fixed). A
+   grandchild that inherits the pipe keeps the loop blocked until it exits (reproduced: 2.02 s).
 4. Returns the string. A signal death gives a negative number as a string.
 
-`main` then runs `assert rc == "0", "mysqldumper failed, check the log."` (L313/P273), inside the `try`.
-mysqlsh output is **not parsed**: the tool never inspects warnings such as a failed consistency check, a
-missing `REPLICATION CLIENT` privilege (binlog info then silently left out of the metadata), or skipped tables.
+`main` then checks `rc != "0"` explicitly and raises `RuntimeError("mysqldumper failed (mysqlsh exit status
+<rc>), check the log.")` inside the `try` (on 2.11.0 an `assert`, D-13.03-13, fixed). On success it calls
+`verify_dump` (3.8), also inside the `try`. mysqlsh output is **not parsed**. The dump metadata is read
+instead (3.8), which catches a missing binlog position, a non-consistent dump and missing tables.
 
 Exit codes of the process:
 
 | Code | Cause |
 |---|---|
-| 0 | `rc == "0"`. Also **any** mysqlsh failure, or mysqlsh missing, when Python runs with `-O` / `PYTHONOPTIMIZE`, because every check is an `assert` (reproduced, D-13.03-13). |
-| 1 | Exception inside the `try`: connection failure, selection SQL error, SQLAlchemy `TypeError` (D-13.03-3), `AssertionError` from `rc != "0"` (including `'None'`). Logged as `Exception in main thread : ...` plus traceback, then `sys.exit(1)`. |
-| 1 | Uncaught exception outside the `try`: mysqlsh not on PATH, password without user, option-file problems. Python prints a traceback. |
+| 0 | `rc == "0"` and `verify_dump` passed (or was skipped for `--dry_run`). Holds with and without `python -O`: no check is an `assert` any more. |
+| 1 | Exception inside the `try`: connection failure, selection SQL error, SQLAlchemy `TypeError` (D-13.03-3), `RuntimeError` from `rc != "0"`, or `DumpVerificationError` from `verify_dump` (3.8). Logged as `Exception in main thread : ...` plus traceback, then `sys.exit(1)`. |
+| 1 | Outside the `try`: mysqlsh not on PATH or password without user (ERROR line, `sys.exit(1)`), or an uncaught option-file exception (traceback). |
 | 1 | `KeyboardInterrupt`/`SystemExit` raised inside the `try`: `os._exit(1)`, with no cleanup and the temp file left behind. |
 | 2 | argparse error (unknown flag, `--threads abc`, packaged `--no_consistent`). |
 
@@ -318,36 +347,92 @@ What the code guarantees:
   From MySQL Shell 8.0.29, a table dump without `BACKUP_ADMIN` runs an extra consistency check. If it fails,
   the dump **continues** and reports an error message. The tool does not parse that message (3.7), and
   whether mysqlsh's exit code reflects it could not be determined offline.
-- Legacy `--no_consistent` sends `consistent: 0`: each thread reads at its own time and nothing warns the
-  operator.
+- Legacy `--no_consistent` sends `consistent: 0`: each thread reads at its own time. The tool then writes no
+  handoff file and logs a WARNING (below).
 
-What the code does **not** do (proved by absence; `grep -n -i "gtid\|binlog\|SHOW MASTER\|@.json"` over both
-dumpers, both connection layers and both loaders finds no hit):
-1. It does not run `SHOW MASTER STATUS` / `SHOW BINARY LOG STATUS` / `SELECT @@gtid_executed`.
-2. It does not read MySQL Shell's dump metadata JSON. MySQL Shell writes `binlogFile`, `binlogPosition` and
-   `gtidExecuted` there when the account has `REPLICATION CLIENT`. Without that privilege the dump continues
-   without them.
-3. It does not log, print or persist any position. It writes no offset into the connector's offset store
-   (Spec 09.03) and prints no instruction for doing so.
-4. It does not check that the position exists, that the dump was consistent, or that the dump finished
-   (MySQL Shell's completion marker file).
-5. The ClickHouse loader does not read the metadata either (Spec 13.04).
+**Dump metadata the tool reads.** Key names come from MySQL Shell, not from this tool:
+- MySQL Shell manual, *Dump Loading Utility*: "The `gtid_executed` GTID set is always included in the dump as
+  the `gtidExecuted` field in the `@.json` dump file."
+- MySQL Shell manual, *Instance Dump Utility, Schema Dump Utility, and Table Dump Utility*, Requirements: "The
+  user account used to run the utility needs the `REPLICATION CLIENT` privilege in order for the utility to be
+  able to include the binary log file name and position in the dump metadata. If the user ID does not have
+  that privilege, the dump continues but does not include the binary log information."
+- MySQL Shell source (github.com/mysql/mysql-shell, `modules/util/dump/dumper.cc`):
+  `Dumper::write_dump_started_metadata()` writes `@.json` with, among others, `schemas`, `basenames`
+  (schema name to file basename), `tzUtc`, `user`, `hostname`, `gtidExecutedInconsistent`, `consistent`,
+  `server`, `serverVersion`, `binlogFile` and `binlogPosition` (when binlog info is dumped), `gtidExecuted`
+  and `begin`. `Dumper::write_schema_metadata()` writes `<basename>.json` with the `tables` list of the
+  dumped tables. `Dumper::write_dump_finished_metadata()` writes `@.done.json` (with `end`) last.
+  `is_gtid_executed_inconsistent()` is `!consistent_dump()`. The file names are the constants
+  `k_root_metadata_file = "@.json"` and `k_done_metadata_file = "@.done.json"`
+  (`modules/util/common/dump/constants.h`).
 
-The handoff from snapshot to stream is therefore **manual and undocumented**. An operator must find the
-metadata file in the dump directory, extract the binlog coordinates or GTID set, and seed the connector's
-offset with them before it starts. Anything else (connector default `snapshot.mode`, a schema-only snapshot,
-or starting from "now") silently loses every change committed between the snapshot point and the connector
-start. The only correct reference implementation in the toolset is `ch-mysql-resync dump`, which captures
-`SHOW MASTER STATUS` **before** its dump and persists it (`mysql_resync.py:307-320`; Spec 11.04 and Spec
-13.08). It deliberately accepts at-least-once replay over a gap. This is D-13.03-1 (S1).
+**Post-dump verification (`verify_dump`, both copies).** It runs inside the `try` after mysqlsh returned
+`"0"`. Every failure raises `DumpVerificationError`, logged as `Exception in main thread : ...`, exit 1:
+1. `--dry_run`: skipped (INFO `dry run: MySQL Shell wrote no dump files, post-dump verification skipped`).
+2. `@.done.json` must exist (the dump finished).
+3. Table coverage: a **new** PyMySQL connection runs `select_tables` again with the same include, exclude and
+   partition-scope flags, and is closed. Every table in that listing must appear in `tables` of
+   `<basenames[db]>.json`. Otherwise the error names the missing tables and asks for a re-run. Tables that are
+   in the dump but no longer in the source (dropped after the dump) are not an error. A table created after
+   the snapshot but before this listing also fails the run: a false positive that a re-run clears.
+4. `--schema_only`: no position handoff (INFO), exit 0. Legacy `--no_consistent`: no position handoff,
+   WARNING `--no_consistent dump: it has no usable snapshot position, snapshot_position.json not written. Do
+   not seed a connector offset from it.`, exit 0.
+5. Otherwise `read_snapshot_position` requires, in `@.json`: `consistent` is `true`; `gtidExecutedInconsistent`
+   is not `true`; `binlogFile` is a non-empty string (absent without `REPLICATION CLIENT`, empty with binary
+   logging off); `binlogPosition` is a non-negative integer; `gtidExecuted` is a string (empty when GTIDs are
+   off). Whitespace is removed from the GTID set (MySQL Shell keeps the newlines of `@@gtid_executed`).
+6. `write_snapshot_position` writes `<dump_dir>/snapshot_position.json` (exclusive create: an existing file fails the run, it is never overwritten),
+   and the tool logs at INFO `snapshot position: binlog <file>:<pos> gtid_executed '<set>' (dump started
+   <begin>, finished <end>) written to <path>`.
 
-In addition, the table and partition list is computed over a **separate PyMySQL connection before mysqlsh
-starts** (L255-289 / P216-250). The snapshot is taken later, inside mysqlsh. Any table created, or partition
-added or reorganised under a new name, in that window is absent from the explicit list. A table is then not
-dumped. A partition is excluded because the `partitions` option "limits the export to the specified
-partitions". Both happen silently, and their pre-snapshot rows never reach ClickHouse. A dropped table or
-partition fails loudly (MySQL Shell rejects missing partitions with `Invalid partitions`). This is
-D-13.03-2 (S1).
+**Handoff file format** (`snapshot_position.json`, JSON object, keys sorted, `format_version` 1):
+
+| Key | Type | Source |
+|---|---|---|
+| `format_version` | int | always `1` |
+| `binlog_file` | str | `@.json` `binlogFile` |
+| `binlog_position` | int | `@.json` `binlogPosition` |
+| `gtid_executed` | str | `@.json` `gtidExecuted`, whitespace removed; `""` when GTIDs are off |
+| `source_host` | str | `--mysql_host` |
+| `source_port` | int | `--mysql_port` |
+| `server_hostname` | str or null | `@.json` `server` (the server's `@@hostname`) |
+| `database` | str | `--mysql_database` |
+| `tables` | list of str | `tables` of `<basename>.json`, sorted |
+| `dump_started` | str or null | `@.json` `begin` |
+| `dump_finished` | str or null | `@.done.json` `end` |
+| `mysqlsh_version` | str or null | `@.json` `dumper` |
+| `file`, `pos`, `taken_at` | str, int, str | copies of `binlog_file`, `binlog_position`, `dump_started`: the keys `ch-mysql-resync rewind-sql --position-file` reads (Spec 13.08), together with `source_host` and `gtid_executed` |
+
+Example:
+
+```json
+{
+  "binlog_file": "binlog.000042", "binlog_position": 157, "database": "appdb",
+  "dump_finished": "2026-10-01 00:05:00", "dump_started": "2026-10-01 00:00:00",
+  "file": "binlog.000042", "format_version": 1,
+  "gtid_executed": "3e11fa47-71ca-11e1-9e33-c80aa9429562:1-100",
+  "mysqlsh_version": "mysqlsh Ver 8.4.0", "pos": 157, "server_hostname": "db1",
+  "source_host": "db1", "source_port": 3306, "tables": ["t1", "t2"], "taken_at": "2026-10-01 00:00:00"
+}
+```
+
+The position is the one MySQL Shell read under its global lock, so it is the exact snapshot point: replay
+from it applies every change committed after the snapshot and none before. Seeding the connector is still an
+operator step: `ch-mysql-resync rewind-sql --dump-base <dump_dir> --position-file
+<dump_dir>/snapshot_position.json --offset-table <table> --offset-key <key>` prints the offset `INSERT` for one
+connector (Spec 13.08), or use `binlog_file`/`binlog_position`
+(file/position mode) or `gtid_executed` (GTID mode) directly (Spec 09.03). The tool writes no offset itself,
+and the ClickHouse loader does not read the file (Spec 13.04). This was D-13.03-1 (S1), fixed.
+
+The table and partition list is still computed over a **separate PyMySQL connection before mysqlsh starts**.
+Without a partition filter no `partitions` option is passed (3.4), so partitions added or reorganised in that
+window are dumped. A table created in that window is not in the explicit table list, so it is not dumped, and
+the coverage check (step 3) fails the run instead of leaving it out silently. With
+`--include_partitions_regex`, a matching partition created in that window is still left out: the coverage
+check compares tables, not partitions. A dropped table or partition fails loudly (MySQL Shell rejects missing
+partitions with `Invalid partitions`). This was D-13.03-2 (S1), fixed.
 
 ### 3.9 Output directory layout and file naming
 
@@ -361,6 +446,9 @@ The Python code names no dump file. MySQL Shell owns the layout (vendor behaviou
   `<schema>@<table>@<partition>@<n>.tsv.zst`. Identifiers with special characters are percent-encoded by
   MySQL Shell.
 - With `--dry_run` no dump files are written.
+- The only file the tool itself adds is `snapshot_position.json` (3.8), after a verified consistent data dump.
+  It contains no `@`, so the loader's `<schema>@*.sql` and `<schema>@<table>@*.tsv.zst` globs (Spec 13.04)
+  do not pick it up.
 
 The `naming` module plays **no part** in MySQL dump file naming (3.10).
 
@@ -398,8 +486,11 @@ Character mapping, collisions, length limits (reproduced with `r7_naming.py`):
   `user="me"` (L36-44/P38-46). That is a process-wide side effect on importers, tests included.
 - `main` adds a stdout `StreamHandler` (`%(asctime)s - %(levelname)s - %(threadName)s - %(message)s`) to the
   root logger at INFO, or DEBUG with `--debug`.
-- INFO: the options dict, the `util.dumpTables` statement, and every mysqlsh output line. WARNING: password on
-  the command line, SQL warnings from `execute_mysql`. ERROR: `Exception in main thread : <e>` plus traceback.
+- INFO: the options dict, the `util.dumpTables` statement, every mysqlsh output line, and after a verified
+  dump the `snapshot position: binlog <file>:<pos> gtid_executed '<set>' ... written to <path>` line (or the
+  dry-run / schema-only skip line). WARNING: password on the command line, SQL warnings from `execute_mysql`,
+  the legacy `--no_consistent` no-handoff line. ERROR: `mysqlsh should be in the PATH`, `--mysql_user must be
+  specified`, `Exception in main thread : <e>` plus traceback.
   DEBUG: SQL text, table names, `partition_map`, the command (legacy redacted, packaged clear text), and the
   return code.
 - Legacy redaction (`redact_password`, L63-77) masks every registered secret (longest first), then any
@@ -408,10 +499,12 @@ Character mapping, collisions, length limits (reproduced with `r7_naming.py`):
 
 ### 3.12 Ordering, concurrency, resources, time zones, types
 
-- Order: parse args, set up logging, assert mysqlsh, resolve credentials, open the PyMySQL connection
+- Order: parse args, set up logging, check mysqlsh, resolve credentials, open the PyMySQL connection
   (session `wait_timeout=28000`, `charset=utf8mb4`), run the table query, run the partition query, build the
-  lists, write the temp file, run mysqlsh, then exit. The PyMySQL connection is never closed explicitly. It
-  stays open, idle, for the whole dump.
+  lists, write the temp file, run mysqlsh, wait for its exit status, then `verify_dump` (3.8: completion
+  marker, a second connection for the fresh listing, coverage, position, handoff file), then exit. The first
+  PyMySQL connection is never closed explicitly. It stays open, idle, for the whole dump. The second one is
+  closed after the listing.
 - Concurrency: none in Python. mysqlsh opens `--threads` worker connections plus a coordinator.
 - Time zones: the tool does nothing with them. MySQL Shell's default `tzUtc: true` dumps `TIMESTAMP` values in
   UTC and records `SET TIME_ZONE='+00:00'` in the DDL files, which the loader reads (FM-11.05-4).
@@ -448,14 +541,19 @@ What the tool **does** preserve, as built:
    MySQL. mysqlsh takes only the locks described in 3.8.
 4. **Non-destructive output:** MySQL Shell refuses a non-empty `--dump_dir`, so an existing dump is never
    overwritten.
-5. **A non-zero mysqlsh exit becomes a non-zero tool exit**, but only when assertions are enabled (not under
-   `-O`).
+5. **A non-zero mysqlsh exit becomes a non-zero tool exit**, with or without `python -O` (explicit checks,
+   D-13.03-13 fixed), and the exit status is waited for (D-13.03-12 fixed).
 6. **The legacy copy never logs a password** given through `--mysql_password` (registered before use).
+7. **Snapshot position handoff:** a run that exits 0 after a consistent data dump has written
+   `snapshot_position.json` with the binlog file, position and GTID set MySQL Shell recorded at the snapshot
+   point. A dump without them, or not consistent, exits 1 (D-13.03-1 fixed).
+8. **No silently missing table:** every in-scope table that exists in the source after the dump is in the
+   dump, or the run exits 1. Without a partition filter whole tables are dumped (D-13.03-2 fixed).
 
 Invariants a snapshot step **should** hold but does not (each is a defect in section 7):
-- (missing) The snapshot position is captured inside, or before, the snapshot and handed to the stream
-  (D-13.03-1).
-- (missing) The object list is resolved inside the snapshot (D-13.03-2).
+- (partial) The object list is resolved inside the snapshot. It is still resolved before it, and a table
+  missed that way is detected after the dump (D-13.03-2 fix). Partitions matching
+  `--include_partitions_regex` that are created in that window are still not detected.
 - (missing) Credentials never appear on a command line or in a log (D-13.03-5, D-13.03-7).
 
 Constitution relationship: MySQL is the source of truth (Spec 11.04, `AGENTS.md`). A snapshot that silently
@@ -470,9 +568,27 @@ Run on 2026-10-01 from `sink-connector/python` with the toolset venv (Python 3.1
 PyMySQL 2.2.8):
 `python -m pytest -q -p no:cacheprovider db_dump/tests tests` gives **48 passed in 0.73 s**. The full offline
 baseline (`db_compare/tests db_load/tests db_dump/tests tests`) gives **227 passed, 5 skipped in 5.91 s**,
-unchanged from the brief.
+unchanged from the brief. With the fixes for D-13.03-1, -2, -12 and -13 the same run gives **268 passed, 5
+skipped**: the 41 tests of `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py` were added.
 
-Dumper tests (all target the **legacy** copy only):
+Snapshot tests (`sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py`). Each one runs against
+**both** copies (parametrised `legacy` / `packaged`) unless noted. `main()` runs with a fake connection layer
+and a fake mysqlsh that writes MySQL Shell dump metadata into a temporary directory:
+- `TestSnapshotPositionHandoff`: `test_position_written_and_logged_after_successful_dump`,
+  `test_handoff_file_accepted_by_resync_rewind_sql`, `test_missing_binlog_position_fails`,
+  `test_empty_binlog_file_fails`, `test_inconsistent_dump_fails`, `test_gtid_executed_inconsistent_fails`,
+  `test_missing_metadata_file_fails`, `test_incomplete_dump_fails`, `test_dry_run_skips_post_dump_checks`,
+  `test_mysqlsh_failure_exits_one_without_handoff`, `test_schema_only_dump_writes_no_handoff`
+- `TestLegacyNoConsistent::test_no_consistent_dump_warns_and_writes_no_handoff` (legacy only)
+- `TestTableAndPartitionScope`: `test_no_partition_list_without_partition_filter`,
+  `test_partition_list_passed_with_partition_filter`,
+  `test_table_created_before_snapshot_but_missing_from_dump_fails`, `test_table_dropped_after_dump_is_not_an_error`
+- `TestRunCommandExitStatus`: `test_child_closing_output_before_exit_reports_zero`,
+  `test_child_closing_output_before_failing_reports_status` (real `/bin/sh` child, no mysqlsh)
+- `TestOptimizedInterpreter::test_failure_exits_non_zero_under_python_O` (subprocess under `python -O`; three
+  scenarios: mysqlsh fails, mysqlsh missing, password without user)
+
+Dumper unit tests (all target the **legacy** copy only):
 - `sink-connector/python/db_dump/tests/test_mysql_dumper_unit.py::TestRedactPassword::test_registered_secret_is_masked`
 - `sink-connector/python/db_dump/tests/test_mysql_dumper_unit.py::TestRedactPassword::test_password_flag_value_masked_even_if_unregistered`
 - `sink-connector/python/db_dump/tests/test_mysql_dumper_unit.py::TestRedactPassword::test_secret_with_single_quote_is_fully_masked`
@@ -496,10 +612,10 @@ Naming tests (packaged `naming.py`; 29 of the 36 tests in the file, the other 7 
   `sink-connector/python/tests/test_naming.py::TestValidateTemplate::test_missing_required_variable_raises`)
 - `sink-connector/python/tests/test_naming.py::TestResolveCHNames` (6 methods)
 
-What the existing tests do **not** reach: `main()`, `generate_mysqlsh_command` (shell string and password
-form), `run_command` (rc capture), the packaged dumper at all, the selection SQL, the `partition_map` scopes,
-SQLAlchemy row access, and naming collisions or malformed placeholders. These tests do not run in CI
-(FM-11.05-3).
+What the existing tests do **not** reach: `generate_mysqlsh_command` (shell string and password form), the
+selection SQL, the full `partition_map` scope matrix (only the default and the
+`--partitioned_tables_only --include_partitions_regex` rows are covered), SQLAlchemy row access (the fakes
+return dicts), and naming collisions or malformed placeholders. These tests do not run in CI (FM-11.05-3).
 
 ### 5.2 Acceptance criteria for this spec (each one is a test to add; `GAP` until added)
 
@@ -510,10 +626,13 @@ SQLAlchemy row access, and naming collisions or malformed placeholders. These te
 3. The shell string from `generate_mysqlsh_command` is tokenised by `shlex.split` (or by `/bin/sh` with a
    printer) and asserted to contain no password token. The password must be supplied by stdin or by an
    option file.
-4. `run_command` against `sh -c 'echo x; exec 1>&- 2>&-; sleep 1; exit 0'` returns `"0"`.
-5. A failing command under `python -O` gives a non-zero exit.
+4. `run_command` against `sh -c 'echo x; exec 1>&- 2>&-; sleep 1; exit 0'` returns `"0"`. Done:
+   `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestRunCommandExitStatus::test_child_closing_output_before_exit_reports_zero`.
+5. A failing command under `python -O` gives a non-zero exit. Done:
+   `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestOptimizedInterpreter::test_failure_exits_non_zero_under_python_O`.
 6. A snapshot-position test: after a (mocked) dump, the tool emits or persists the binlog file/position/GTID
-   set, or refuses to finish without it.
+   set, or refuses to finish without it. Done:
+   `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestSnapshotPositionHandoff`.
 7. Naming: a collision between two work items is detected and refused.
 
 ### 5.3 Offline reproduction scripts used by this spec
@@ -536,16 +655,19 @@ statement quoting). Key outputs are quoted with each defect.
     `sink-connector/python/ch_sink_tools/db_dump/mysql_dumper.py:148-283`), and the loader ignores the
     metadata (`clickhouse_loader.py:470-480`). Changes committed between the snapshot point and the
     connector's start position are never applied.
-  - **Detection**: none at dump or load time. Only a later checksum or count comparison (Spec 11.02 / Spec
-    13.06) shows missing or stale rows.
+  - **Detection**: on 2.11.0 none at dump or load time; only a later checksum or count comparison (Spec 11.02 /
+    Spec 13.06) shows missing or stale rows. Fixed tree: a dump without a usable position exits 1, and a good
+    one logs the position and writes `snapshot_position.json`. A connector started without it is still not
+    detected.
   - **Blast radius**: every table in the snapshot. Rows inserted, updated or deleted in the gap are silently
     wrong in ClickHouse.
-  - **Recovery**: read `binlogFile`/`binlogPosition`/`gtidExecuted` from the dump metadata, set the connector
+  - **Recovery**: read `binlog_file`/`binlog_position`/`gtid_executed` from `snapshot_position.json` (or
+    `binlogFile`/`binlogPosition`/`gtidExecuted` from `@.json`), set the connector
     offset to that point (Spec 09.03), and replay (idempotent under ReplacingMergeTree). If the binlog has
     been purged, resynchronise with `ch-mysql-resync` (Spec 11.04), which captures its own position.
   - **RTO**: unmeasured (no database offline). Bounded by the replay length, or by a full resync.
-  - **Test**: `GAP: dumper emits or persists the snapshot position and fails when it is absent`
-  - **DEFECT**: no snapshot-to-stream position handoff (D-13.03-1).
+  - **Test**: `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestSnapshotPositionHandoff::test_position_written_and_logged_after_successful_dump`
+  - **FIXED**: after the dump both copies read `binlogFile`/`binlogPosition`/`gtidExecuted` from `@.json`, exit 1 if absent, incomplete or not consistent, log them at INFO and write `snapshot_position.json` (3.8); seeding the connector from it stays an operator step (D-13.03-1).
 
 - **FM-13.03-2 A table or partition appears between selection and snapshot**
   - **Trigger**: `CREATE TABLE`, `ALTER TABLE ... ADD PARTITION` or `REORGANIZE PARTITION` into new names
@@ -556,14 +678,16 @@ statement quoting). Key outputs are quoted with each defect.
     `sink-connector/python/ch_sink_tools/db_dump/mysql_dumper.py:216-250`). mysqlsh dumps only the listed
     partitions. The new object's pre-snapshot rows are left out and nothing reports it. Disappeared objects
     fail loudly (`Invalid partitions`).
-  - **Detection**: none. A checksum or count comparison per partition shows the shortfall.
+  - **Detection**: on 2.11.0 none; a checksum or count comparison per partition shows the shortfall. Fixed
+    tree: a missing table fails the run (ERROR names it). A new partition is dumped unless
+    `--include_partitions_regex` is used, in which case it is still not detected.
   - **Blast radius**: the affected tables or partitions. Silent missing rows.
   - **Recovery**: re-dump the affected tables or partitions (`--include_tables_regex`,
     `--partitioned_tables_only --include_partitions_regex`) and load them. Or resync with `ch-mysql-resync`.
   - **RTO**: unmeasured (no database offline). Re-dump plus load time of the affected objects.
-  - **Test**: `GAP: partition map not passed when no partition filter is requested`
-  - **DEFECT**: object list resolved outside the snapshot, explicit partition list passed by default
-    (D-13.03-2).
+  - **Test**: `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestTableAndPartitionScope::test_table_created_before_snapshot_but_missing_from_dump_fails`
+    (and `::test_no_partition_list_without_partition_filter`)
+  - **FIXED**: no `partitions` option without `--include_partitions_regex`, and a post-dump fresh listing fails the run on any in-scope source table missing from the dump metadata (D-13.03-2).
 
 - **FM-13.03-3 The tool crashes before dumping under SQLAlchemy 2.x**
   - **Trigger**: an installation that resolves `sqlalchemy>=1.4` to 2.x (the default today), with at least one
@@ -679,8 +803,8 @@ statement quoting). Key outputs are quoted with each defect.
   - **Recovery**: check for MySQL Shell's completion marker in `--dump_dir`. If it is present, the dump is
     complete.
   - **RTO**: unmeasured.
-  - **Test**: `GAP: run_command returns the real exit status (5.2 item 4)`
-  - **DEFECT**: exit status read with `poll()` instead of `wait()` (D-13.03-12).
+  - **Test**: `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestRunCommandExitStatus::test_child_closing_output_before_exit_reports_zero`
+  - **FIXED**: `run_command` reads the status with `process.wait()` after end of output, in both copies (D-13.03-12); a descendant holding the pipe still blocks the loop.
 
 - **FM-13.03-11 Failures exit 0 under `python -O`**
   - **Trigger**: the interpreter runs with `-O` or `PYTHONOPTIMIZE` set.
@@ -691,8 +815,8 @@ statement quoting). Key outputs are quoted with each defect.
   - **Blast radius**: a failed or partial snapshot is reported as successful and may be loaded (silent loss).
   - **Recovery**: run without `-O`, and verify MySQL Shell's completion marker before loading.
   - **RTO**: unmeasured.
-  - **Test**: `GAP: failing command under -O exits non-zero (5.2 item 5)`
-  - **DEFECT**: control flow by `assert` (D-13.03-13).
+  - **Test**: `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestOptimizedInterpreter::test_failure_exits_non_zero_under_python_O`
+  - **FIXED**: the three dumper `assert`s are explicit checks (ERROR plus `sys.exit(1)`, or `RuntimeError` inside the `try`), so failures exit 1 under `-O` too (D-13.03-13); the `assert`s in `resolve_credentials_from_config` belong to Spec 13.02.
 
 - **FM-13.03-12 Option-file handling breaks config mode**
   - **Trigger**: config mode with any of: `~` in `--defaults_file` (the default), MySQL Shell older than
@@ -711,17 +835,17 @@ statement quoting). Key outputs are quoted with each defect.
 
 - **FM-13.03-13 mysqlsh fails mid-dump (non-empty directory, privilege, invalid partition, disk full)**
   - **Trigger**: any MySQL Shell error.
-  - **Behaviour**: mysqlsh output is relayed at INFO. A non-zero rc trips the assertion, which logs `Exception
-    in main thread : mysqldumper failed, check the log.`, and the tool exits 1
-    (`sink-connector/python/db_dump/mysql_dumper.py:312-321`). The partial directory stays (no completion
+  - **Behaviour**: mysqlsh output is relayed at INFO. A non-zero rc raises `RuntimeError`, which logs
+    `Exception in main thread : mysqldumper failed (mysqlsh exit status <rc>), check the log.`, and the tool
+    exits 1 (`sink-connector/python/db_dump/mysql_dumper.py:312-321` on 2.11.0, an `assert` there). No
+    verification runs and no `snapshot_position.json` is written. The partial directory stays (no completion
     marker). There is no retry and no resume.
   - **Detection**: exit 1 and the mysqlsh error text in the log.
   - **Blast radius**: no dump. MySQL locks are released by mysqlsh when it exits.
   - **Recovery**: move the partial directory aside, fix the cause, and re-run (mysqlsh requires an empty
     directory).
   - **RTO**: unmeasured. A full re-dump.
-  - **Test**: `GAP: run_command non-zero rc gives exit 1` (reproduced offline with `r2_main_flow.py`:
-    `run_command rc='1' | exit: 1`)
+  - **Test**: `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestSnapshotPositionHandoff::test_mysqlsh_failure_exits_one_without_handoff`
 
 - **FM-13.03-14 Identifiers or paths containing quotes or shell metacharacters**
   - **Trigger**: `--mysql_database` or `--dump_dir` containing `'`, or host, user or defaults path containing
@@ -787,7 +911,7 @@ statement quoting). Key outputs are quoted with each defect.
   - **Test**: `GAP: legacy script starts from an arbitrary working directory`
   - **DEFECT**: path set-up after the import (D-13.03-18).
 
-Summary: 18 failure modes, 17 DEFECT, 18 GAP.
+Summary: 18 failure modes, 13 DEFECT, 13 GAP.
 
 ## 7. Defect Register
 
@@ -795,8 +919,8 @@ Locations are relative to `sink-connector/python/` in the 2.11.0 tree.
 
 | ID | Severity | Copy | Location | Evidence | Summary |
 |---|---|---|---|---|---|
-| D-13.03-1 | S1 | both | `db_dump/mysql_dumper.py:184-323`, `ch_sink_tools/db_dump/mysql_dumper.py:148-283`; loader `ch_sink_tools/db_load/clickhouse_loader.py:470-480` | code-read (absence: no `SHOW MASTER STATUS`, GTID or metadata read anywhere in the dumpers, connection layers or loaders; contrast `mysql_resync.py:275-287`) | The initial snapshot captures, logs and persists no binlog position or GTID set and hands none to the connector. The position exists only inside MySQL Shell's metadata, which nothing reads or checks (and which lacks it without `REPLICATION CLIENT`). Any connector start not seeded by hand loses the gap silently. |
-| D-13.03-2 | S1 | both | `db_dump/mysql_dumper.py:255-289` (L128-129 clause), `ch_sink_tools/db_dump/mysql_dumper.py:216-250` (P95-96) | code-read, with vendor semantics: listed partitions only, empty list ignored, missing partition rejected | The table list and the full per-table partition list are resolved over a separate connection **before** mysqlsh takes its snapshot. The partition list is passed even when no partition filter was requested. Tables created, or partitions added or renamed, in the window are silently left out. |
+| D-13.03-1 | S1 | both | `db_dump/mysql_dumper.py:184-323`, `ch_sink_tools/db_dump/mysql_dumper.py:148-283`; loader `ch_sink_tools/db_load/clickhouse_loader.py:470-480` | code-read (absence: no `SHOW MASTER STATUS`, GTID or metadata read anywhere in the dumpers, connection layers or loaders; contrast `mysql_resync.py:275-287`) | FIXED: after a successful dump both copies read `binlogFile`/`binlogPosition`/`gtidExecuted` from `@.json`, exit 1 when `@.done.json` is missing, `consistent` is not true, `gtidExecutedInconsistent` is true or the position is absent, log the position at INFO and write `snapshot_position.json` (3.8). Test: `db_dump/tests/test_mysql_dumper_snapshot.py::TestSnapshotPositionHandoff`. Was: the initial snapshot captures, logs and persists no binlog position or GTID set and hands none to the connector. The position exists only inside MySQL Shell's metadata, which nothing reads or checks (and which lacks it without `REPLICATION CLIENT`). Any connector start not seeded by hand loses the gap silently. |
+| D-13.03-2 | S1 | both | `db_dump/mysql_dumper.py:255-289` (L128-129 clause), `ch_sink_tools/db_dump/mysql_dumper.py:216-250` (P95-96) | code-read, with vendor semantics: listed partitions only, empty list ignored, missing partition rejected | FIXED: without `--include_partitions_regex` no `partitions` option is passed (whole tables), and after the dump a fresh listing over a new connection is compared with `tables` of the schema's dump metadata; any in-scope source table missing from the dump exits 1. Residual: matching partitions created in the window under `--include_partitions_regex` are not detected. Test: `db_dump/tests/test_mysql_dumper_snapshot.py::TestTableAndPartitionScope`. Was: the table list and the full per-table partition list are resolved over a separate connection **before** mysqlsh takes its snapshot. The partition list is passed even when no partition filter was requested. Tables created, or partitions added or renamed, in the window are silently left out. |
 | D-13.03-3 | S3 | both | `db_dump/mysql_dumper.py:273-274,278-280`, `ch_sink_tools/db_dump/mysql_dumper.py:234-235,239-241` | reproduced (`r4_sqlalchemy_row.py`, SQLAlchemy 2.1.1: `TypeError ... not str`, exit 1, mysqlsh never invoked) | `row['col']` on SQLAlchemy Rows. The tool cannot run on SQLAlchemy 2.x although `sqlalchemy>=1.4` allows it. |
 | D-13.03-4 | S3 | both | `db_dump/mysql_dumper.py:159`, `ch_sink_tools/db_dump/mysql_dumper.py:124` | code-read with MySQL Shell docs ("with a space ... not interpreted as a password"); argv reproduced (`'--password', 's3cret'`) | Password mode emits `--password <pw>`, which mysqlsh does not read as a password, so password-mode dumps prompt or fail. |
 | D-13.03-5 | S2 | both | `db_dump/mysql_dumper.py:159,180,87-90`, `ch_sink_tools/db_dump/mysql_dumper.py:124,144,55-58` | reproduced (argv printer shows the password token) | The password is on the `sh -c` and `mysqlsh` command lines, visible to any local user through `ps` or `/proc`. |
@@ -806,8 +930,8 @@ Locations are relative to `sink-connector/python/` in the 2.11.0 tree.
 | D-13.03-9 | S3 | both | `db_dump/mysql_dumper.py:271,286-288`, `ch_sink_tools/db_dump/mysql_dumper.py:232,247-249` | reproduced (`--partitioned_tables_only` lists `t_np` with `'mydb.t_np': []`) | `--partitioned_tables_only` still dumps non-partitioned tables (their NULL partition row is counted). |
 | D-13.03-10 | S3 | both | `db_dump/mysql_dumper.py:257-261`, `ch_sink_tools/db_dump/mysql_dumper.py:218-222` | reproduced (`--include_partitions_regex p2026` dumps all three tables, map only `{'mydb.t_p': ['p2026']}`) | `--include_partitions_regex` does not restrict the table list: non-partitioned tables and partitioned tables without a matching partition are dumped in full. |
 | D-13.03-11 | S3 | both | `db_dump/mysql_dumper.py:121,131,200,305`, `ch_sink_tools/db_dump/mysql_dumper.py:89,98,164,266` | reproduced (statement identical with and without `--where`) | `--where` is accepted and silently ignored. |
-| D-13.03-12 | S3 | both | `db_dump/mysql_dumper.py:91-96`, `ch_sink_tools/db_dump/mysql_dumper.py:59-64` | reproduced (`'None' after 0.02s`; grandchild blocks 2.02 s) | Exit status read with `poll()` right after EOF: it can be `'None'`, so a successful dump is reported as failed. |
-| D-13.03-13 | S2 | both | `db_dump/mysql_dumper.py:244,249,313`, `ch_sink_tools/db_dump/mysql_dumper.py:205,210,273` | reproduced (`python -O`: mysqlsh rc 127 and exit 0) | All failure checks are `assert`s. Under `-O`/`PYTHONOPTIMIZE` a failed or partial dump exits 0. |
+| D-13.03-12 | S3 | both | `db_dump/mysql_dumper.py:91-96`, `ch_sink_tools/db_dump/mysql_dumper.py:59-64` | reproduced (`'None' after 0.02s`; grandchild blocks 2.02 s) | FIXED: `run_command` uses `process.wait()` in both copies. Test: `db_dump/tests/test_mysql_dumper_snapshot.py::TestRunCommandExitStatus`. Was: exit status read with `poll()` right after EOF: it can be `'None'`, so a successful dump is reported as failed. |
+| D-13.03-13 | S2 | both | `db_dump/mysql_dumper.py:244,249,313`, `ch_sink_tools/db_dump/mysql_dumper.py:205,210,273` | reproduced (`python -O`: mysqlsh rc 127 and exit 0) | FIXED: the three `assert`s are explicit checks in both copies (ERROR plus exit 1, or `RuntimeError` inside the `try`). Test: `db_dump/tests/test_mysql_dumper_snapshot.py::TestOptimizedInterpreter::test_failure_exits_non_zero_under_python_O`. Was: all failure checks are `assert`s. Under `-O`/`PYTHONOPTIMIZE` a failed or partial dump exits 0. |
 | D-13.03-14 | S4 | both | `db/mysql.py:44`, `ch_sink_tools/db/mysql.py:36` | code-read (`having count(*) = 1` over `information_schema.partitions`) | A single-partition table is classified as non-partitioned. |
 | D-13.03-15 | S3 | both | `db_dump/mysql_dumper.py:131,155,165,180`, `ch_sink_tools/db_dump/mysql_dumper.py:98,121,130,144` | reproduced (`'my'db'`, `'/backups/o'brien'`, injected `println`) | Database and dump directory go unescaped into the JS literal. Host, user, port and defaults path go unquoted into the shell string. |
 | D-13.03-16 | S3 | both | `db_dump/mysql_dumper.py:192-193,164-165`, `ch_sink_tools/db_dump/mysql_dumper.py:156-157,129-130` | reproduced (sh keeps `--defaults-file=~/.my.cnf` literal); version gate per vendor docs | `--defaults-file` is always emitted (the default is never `None`), with an unexpanded `~`, even in password mode. It requires MySQL Shell 8.0.32 or later and an option file both parsers accept. |
