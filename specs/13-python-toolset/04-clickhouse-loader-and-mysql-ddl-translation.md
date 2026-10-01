@@ -19,24 +19,25 @@ This spec records the behaviour as built in both copies (legacy `db_load/` and p
 It also covers the column type override configuration and reconciler under `ch_sink_tools/config/`, which
 only the PostgreSQL dumper consumes today. The most consequential findings:
 
-- **Keyless tables lose rows (S1).** A table without a `PRIMARY KEY` is created as
-  `ReplacingMergeTree ... ORDER BY tuple()` by both translators. Merges and `FINAL` then collapse the table
-  to one row. The streaming connector refuses to emit that DDL (Spec 08.05 §3.2).
-- **The packaged copy picks a random time zone (S1).** `get_unix_timezone_from_mysql_timezone` iterates an
-  unsorted set, discards `sorted()`, and returns the last zone it iterated when nothing matches. For
-  `'+00:00'` in January it picked `Europe/Dublin`, `WET` or `Antarctica/Troll` for 4 of 10 hash seeds. Those
-  zones are not at UTC in summer, so summer `TIMESTAMP` values shift. This is the copy `ch-mysql-load` and
-  `ch-mysql-resync` run.
-- **Binary values are loaded as base64 text (S1).** The `lower(hex(base64Decode(col)))` transform is dead
-  code: it tests the translated type (`String`), never the MySQL type. Binary, BIT and spatial columns
-  receive MySQL Shell's base64 text. The connector's default rendering is lower-case hex (Spec 07.05 §3.2).
-- **Load failures can be invisible (S1).** The exit status of a load pipeline is that of
-  `clickhouse-client` alone. A truncated, corrupt or missing chunk file therefore exits 0, and
-  `--throw_if_no_data_to_insert=0` accepts the empty input. The loader never compares loaded row counts
-  with the dump.
-- **Other S1 defects.** A `-` anywhere in a mydumper `--dump_dir` loads zero rows with exit 0. A source
-  column named like a bookkeeping column (`_sign`, `_is_deleted`) is silently left out of the load. A
-  lower-case `null` modifier turns NULLs into empty strings.
+- **Keyless tables (S1, fixed).** A table without a `PRIMARY KEY` used to be created as
+  `ReplacingMergeTree ... ORDER BY tuple()`, which merges and `FINAL` collapse to one row. The ANTLR
+  translator now derives the sorting key exactly as the streaming DDL path does: the first `UNIQUE` key when
+  all its columns are `NOT NULL`, otherwise every stored column, with `allow_nullable_key=1` when one of them
+  is nullable (§3.12). The regexp fallback refuses a keyless table.
+- **Dump time zone (S1, fixed).** The packaged copy used to pick a random zone from an unsorted set (a
+  January `'+00:00'` gave a DST zone for 4 of 10 hash seeds). Both copies now map a MySQL zone value
+  deterministically (`UTC`, a fixed-offset `Etc/GMT±N` zone or a named zone), and the MySQL Shell zone comes
+  from the dump's `@.json` `tzUtc` flag. An undeterminable zone gives `UTC` with a WARNING (§3.9).
+- **Binary values (S1, fixed).** The decode transform used to test the translated type (`String`) and never
+  ran, so binary, BIT and spatial columns received MySQL Shell's base64 text. The loader now renders them in
+  the connector's representation, selected by `--binary_handling_mode` and `--persist_raw_bytes` (defaults
+  match the connector's defaults: lower-case hex) and decoded as the dump's per-table metadata says (§3.7.1).
+- **Pipeline failures (S1, fixed).** Load pipelines now run under `bash -o pipefail`, so a failing
+  decompressor or `sed` stage fails the load with a non-zero exit (§3.10). The loader still never compares
+  loaded row counts with the dump (D-13.04-19).
+- **Other S1 defects (fixed).** A `-` in a mydumper `--dump_dir` no longer hides the data files. A source
+  column named `_sign` or `_is_deleted` is loaded, and a source column that collides with an appended
+  bookkeeping column is refused loudly. A lower-case `null` modifier is recorded as nullable.
 - **Divergence from the streaming connector (S2).** Generated columns become `MATERIALIZED`, which the
   connector's own inserts then fail on (Spec 06.06). ENUM becomes `Enum8` (the stream uses `String`), BIT(1)
   becomes `String` (the stream uses `Bool`), and DATETIME/TIMESTAMP carry no zone (the stream uses
@@ -75,7 +76,12 @@ re-load into a table that already holds streamed rows cannot repair them (§3.11
 | Streaming auto-create used for comparison | `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/operations/ClickHouseAutoCreateTable.java` | |
 
 Line anchors used throughout. L means the legacy loader, P the packaged loader, and LS the listener. The
-listener is identical in both copies except for the import lines 2-4.
+listener is identical in both copies except for the import lines 2-4. The anchors refer to the 2.11.0 sources,
+before the fixes of D-13.04-1 to D-13.04-7 and D-13.04-28. Code added by those fixes is cited by function
+name: in the loader `get_unix_timezone_from_mysql_timezone`, `find_mysqlshell_dump_timezone`,
+`is_loaded_column`, `mysqlshell_binary_kind`, `read_mysqlshell_decode_columns` and
+`mysqlshell_column_expression`; in the listener `UnsafeTableDefinitionError`, `index_column_names`,
+`exitUniqueKeyTableConstraint` and `sorting_key`.
 
 | Function | Legacy (L) | Packaged (P) |
 |---|---|---|
@@ -134,10 +140,12 @@ setting `module.args` raises `NameError`. The unit tests set it by hand.
 | `--use_regexp_parser` | flag | False | Passed to `convert_to_clickhouse_table`, whose use of it is commented out (L255-256) | no |
 | `--truncate_tables` | flag | False | mysqlshell only: `truncate table <mysql_source_database>.<table>` before loading each table | yes, wrong target (D-13.04-8) |
 | `--dry_run` | flag | False | Schema SQL is not executed and clickhouse-client commands are logged but not run. Database/table creation is skipped. | yes |
-| `--virtual_columns` | list (`nargs='+'`) | `` `_sign` `_version` `is_deleted` `_is_deleted` `` (backticked) | Names excluded from the INSERT column list and the input structure. The match is on the backticked spelling. | yes (D-13.04-6) |
+| `--virtual_columns` | list (`nargs='+'`) | `` `_sign` `_version` `is_deleted` `_is_deleted` `` (backticked) | Names excluded from the INSERT column list and the input structure. The match is on the backticked spelling. It applies only to column dicts not marked `source_column`, i.e. the bookkeeping columns the regexp translator lists; a MySQL column from the ANTLR translator is always loaded (§3.7.1). | only for regexp-translated tables |
 | `--mysqlshell` | flag | False | Selects the MySQL Shell layout. Without it the mydumper layout is used. | yes; mydumper mode fails the zstd assertion (D-13.04-14) |
 | `--rmt_delete_support` | flag | False | `ReplacingMergeTree(_version, is_deleted)` plus an `is_deleted UInt8 DEFAULT 0` column. Without the flag: `ReplacingMergeTree(_version)` plus `_sign Int8 DEFAULT 1`. | yes |
 | `--clickhouse_datetime_timezone` | str | `None` | Appends `,'<tz>'` to every `DateTime64(p)` from DATETIME/TIMESTAMP (ANTLR only). Not used by the `--data_only` re-parse. | schema phase only |
+| `--binary_handling_mode` | `bytes`/`base64`/`hex` | `bytes` | Mirror of the streaming connector's (Debezium's) `binary.handling.mode`; set it to the value of the connector that streams into the tables. Selects how binary/varbinary/blob values of a MySQL Shell dump are rendered: lower-case hex, base64 text or upper-case hex. BIT and spatial values are hex under every mode (§3.7.1). The default is Debezium's default; the shipped `deploy/ansible-systemd/templates/config.yml.j2` sets `base64`. | mysqlshell path |
+| `--persist_raw_bytes` | flag | False | Mirror of the connector's `persist.raw.bytes`: load the decoded bytes instead of lower-case hex (binary types only under `--binary_handling_mode bytes`; BIT and spatial always) | mysqlshell path |
 
 There are no environment variables. `TZ` is **set** inside every shell command (§3.9), never read.
 
@@ -186,10 +194,10 @@ There are no environment variables. `TZ` is **set** inside every shell command (
 - Schema files: `glob(<dump_dir>/*-schema.sql.gz)` for **all** databases in the directory, not only
   `--mysql_source_database`. `parse_schema_path` takes the file name and strips `-schema.sql.gz`. Then
   `db = split('.')[0]` and `table = split('.')[1]`, so dots in names truncate the table name.
-- Data files: `dfile = <schema file path>.split("-")[0]`, then `glob(dfile + ".*dat.gz")` (L428-430/P428-430).
-  The split runs on the **full path**. Any `-` in `--dump_dir` (or in a table name) cuts the prefix, the glob
-  finds nothing, and the table stays empty with exit 0. Reproduced: `dump_mydumper/` gives 1 command,
-  `dump-mydumper/` gives 0 commands (D-13.04-5).
+- Data files: the schema file path minus its `-schema.sql.gz` suffix, glob-escaped, plus `.*dat.gz`, i.e.
+  `<dump_dir>/<db>.<table>.*dat.gz`. A `-` (or a glob metacharacter) in `--dump_dir` or in a table name no
+  longer matters. Before the fix the whole path was split on `-`, so `dump-mydumper/` gave 0 commands and
+  exit 0 (D-13.04-5, fixed).
 
 Glob results are unsorted, in filesystem order, so table and chunk order are not deterministic.
 
@@ -223,8 +231,8 @@ create database if not exists <clickhouse_database>        -- unquoted; any exce
 <translated CREATE TABLE ...>                              -- one statement per schema file, sequential, same connection
 ```
 
-The `timezone` is hard-coded to `'+00:00'`, because MySQL Shell dumps in UTC
-(`find_dump_timezone` is commented out at L368). Statements run through `clickhouse_execute_conn`
+The dump zone is read from `<dump_dir>/@.json` by `find_mysqlshell_dump_timezone` before any table is created
+(§3.9). Statements run through `clickhouse_execute_conn`
 (`cursor.execute` + `fetchall`). The first failing `CREATE TABLE` raises out of `main`, so later tables are
 not created and the process exits 1.
 
@@ -240,7 +248,8 @@ not created and the process exits 1.
 The database created is the **source** name from the dump, not `--clickhouse_database`. The `IF NOT EXISTS`
 sits inside a MySQL version comment, which ClickHouse treats as a comment. Re-runs therefore fail on the
 database, and on every table, because the ANTLR DDL has no `IF NOT EXISTS` (D-13.04-20). The time zone is
-re-read from every schema file (`SET TIME_ZONE='...'`), and the last file wins.
+read from every schema file (`SET TIME_ZONE='...'`). Files without the statement are ignored; two files
+naming different zones raise `ValueError` (no glob-order winner).
 
 The translated statement is unqualified unless the source DDL was qualified. ANTLR copies `tableName` text
 verbatim, so `` CREATE TABLE `mydb`.`qt` `` stays qualified with the source schema (reproduced). Tables
@@ -250,8 +259,11 @@ otherwise land in the connection's database, `--clickhouse_database`.
 
 Per schema file (glob order), the main thread:
 
-1. builds `columns` = `get_column_list(transform=False)` and `transformed_columns` =
-   `get_column_list(transform=True, mysqlshell=True)`;
+1. reads the table's MySQL Shell metadata `<db>@<table>.json` (`read_mysqlshell_decode_columns`:
+   `options.decodeColumns`, the decode function per encoded column; `None` when the file is absent, which
+   logs a WARNING if the table has binary, BIT or spatial columns), then builds `columns` =
+   `get_column_list(transform=False)` and `transformed_columns` =
+   `get_column_list(transform=True, mysqlshell=True, decode_columns=..., binary_handling_mode=..., persist_raw_bytes=...)`;
 2. with `--truncate_tables` and not `--dry_run`, opens a new driver connection and executes
    `truncate table <schema>.<table_name>`, where `<schema>` is the **source** schema parsed from the file name
    (L518-521/P486-489; reproduced `truncate table mydb.t1` while the target was `mydb_ch`). This is
@@ -269,10 +281,11 @@ export TZ=<unix_tz>; zstd -d --stdout <data_file>  | clickhouse-client <--config
   -u<user> <--password ...> -mn
 ```
 
-Reproduced (legacy, password `pa'ss word`):
+Reproduced (legacy, password `pa'ss word`; before the D-13.04-2 fix the zone was `Africa/Abidjan`, now it
+is `UTC` for a `tzUtc` dump). The string is run as `bash -o pipefail -c '<cmd>'` (§3.10):
 
 ```
-export TZ=Africa/Abidjan; zstd -d --stdout /backups/dump/mydb@t1@@1.tsv.zst  | clickhouse-client --config-file ./clickhouse-client.xml
+export TZ=UTC; zstd -d --stdout /backups/dump/mydb@t1@@1.tsv.zst  | clickhouse-client --config-file ./clickhouse-client.xml
  --use_client_time_zone 1 --throw_if_no_data_to_insert=0  --max_partitions_per_insert_block=1000 -h ch-host --port 9000
  --query="INSERT INTO mydb_ch.t1(\`id\`,\`ts\`,\`payload\`,\`note\`)  SELECT \`id\`,\`ts\`,\`payload\`,\`note\` FROM
  input(' \`id\`  String,  \`ts\`  Nullable( DateTime64(0)),  \`payload\`  Nullable(String),  \`note\`  Nullable(String)') FORMAT TSV"
@@ -286,24 +299,54 @@ Every value except `TIMESTAMP` columns is parsed as `String` and converted by Cl
 `INSERT ... SELECT` to the column type (integers, `Decimal`, `Date32`, `DateTime64`, `Enum`).
 `TIMESTAMP` columns are parsed as `DateTime64(p)`, in the client zone given by `TZ` (§3.9).
 
-#### 3.7.1 Column list (`get_column_list`, L380-405 / P381-406)
+#### 3.7.1 Column list (`get_column_list`, `is_loaded_column`, `mysqlshell_column_expression`)
 
 - When the table is missing from `schema_map`, the result is `*`, a broken statement in both paths.
-- A column is kept when `(name not in virtual_columns or (name == '`is_deleted`' and has_is_deleted_column)) and not generated`.
-  So:
+- A column is kept when `is_loaded_column`: `(source_column or name not in virtual_columns) and not generated`.
+  Every ANTLR column dict carries `source_column: True`, because the ANTLR translator's `columns_map` holds
+  only MySQL columns (the bookkeeping columns are appended to the DDL, never to the map). So:
   - Generated columns are always excluded. They are `MATERIALIZED` in the target and cannot be inserted.
-  - The bookkeeping columns `_version`, `is_deleted`/`_is_deleted` and `_sign` are excluded, so the target
-    defaults apply (§3.11).
-  - A **source** column named `is_deleted` is kept, because `has_is_deleted_column` is true from that column
-    on. A source column named `_sign`, `_version` or `_is_deleted` is dropped silently (D-13.04-6).
+  - The bookkeeping columns `_version`, `is_deleted`/`_is_deleted` and `_sign` are never in the INSERT, so
+    the target defaults apply (§3.11).
+  - A **source** column is always loaded whatever its name: `is_deleted`, `_sign` (with
+    `--rmt_delete_support`) and `_is_deleted` (when the bookkeeping column is `is_deleted`) are data. A source
+    column whose name equals a bookkeeping column the translator appends is refused at translation (§3.11), so
+    it can neither be dropped nor land in the bookkeeping column (D-13.04-6, fixed).
+  - `--virtual_columns` still filters the regexp translator's dicts, which list the bookkeeping columns and
+    carry no `source_column` key (those dicts then fail on `generated`, D-13.04-18).
 - Identifiers are rendered as `` \`name\` ``. The backticks of the parsed name are escaped for the
   double-quoted shell string. No other escaping is done: `$`, `"` or `\` in a name are interpreted by the
   shell.
-- `transform=True` and `is_binary_datatype(datatype)` select
-  `if(col='\N', null, lower(hex(base64Decode(col))))` (mysqlshell) or `lower(hex(col))` (mydumper).
-  `datatype` is the **translated** type. Every binary type is translated to `String` (§3.15), so the
-  predicate is never true for ANTLR output and the transform never runs (reproduced: the transformed list
-  equals the plain list, D-13.04-3).
+- **Binary, BIT and spatial columns (mysqlshell, `transform=True`).** MySQL Shell writes every column whose
+  `DATA_TYPE` ends in `binary` or `blob`, every `BIT` and every spatial column with `TO_BASE64(col)` (its
+  default `useBase64: true`) or `HEX(col)`, and records the inverse (`FROM_BASE64`/`UNHEX`) per column in the
+  table's `<db>@<table>.json` under `options.decodeColumns` (MySQL Shell `instance_cache.cc` `csv_unsafe`,
+  `dumper.cc` `encoding_type`/`decode_column`; the MySQL Shell manual's dump utility page states that columns
+  not safe to store as text, such as `BLOB`, are converted to Base64). `mysqlshell_binary_kind` classifies the column from its
+  **MySQL** type (`mysql_datatype`: `bit`, a spatial type, or a keyword ending in `binary`/`blob`), and
+  `mysqlshell_column_expression` builds the SELECT expression:
+
+  | Step | Expression |
+  |---|---|
+  | decode `FROM_BASE64` (also assumed when the metadata file is absent) | `raw = base64Decode(replaceAll(col, char(10), ''))`. MySQL's `TO_BASE64` breaks lines every 76 characters, and ClickHouse's `base64Decode` rejects the newline (measured with `clickhouse local` 24.8). |
+  | decode `UNHEX` | `raw = unhex(col)` |
+  | not encoded per the metadata | `raw = col` |
+  | spatial | `raw = substring(raw, 5)`: MySQL's internal value is a 4-byte SRID followed by the WKB; the connector stores the WKB only (Spec 07.06 §3.2, POINT(1 2) = `0101000000000000000000f03f0000000000000040`) |
+  | binary type, `--binary_handling_mode base64` | `base64Encode(raw)` (no line breaks, like the connector's base64 text) |
+  | binary type, `--binary_handling_mode hex` | `hex(raw)` (upper case, as Debezium's hex mode, Spec 07.05 §3.2) |
+  | otherwise, `--persist_raw_bytes` | `raw` |
+  | otherwise | `lower(hex(raw))`, the connector's default rendering |
+
+  BIT(n) and spatial values reach the connector as bytes under every `binary.handling.mode` (Spec 07.05 §3.2,
+  Spec 07.06 §3.2), so they ignore `--binary_handling_mode`. A NULL needs no special case: the input
+  structure declares a nullable column `Nullable(String)` and every function propagates NULL. A column the
+  metadata lists as encoded whose MySQL type has no rule (e.g. `VECTOR`) raises `ValueError`. BIT(1) is
+  loaded as hex (`01`/`00`) into the `String` column the loader creates; the stream binds a Boolean there,
+  which stays divergent until the type itself is aligned (D-13.04-10). The values of the default rendering
+  (varbinary, a 60-byte blob with a wrapped base64 line, BIT(16), POINT, NULL) are checked with
+  `clickhouse local` in `test_loader_s1_fixes.py::TestBinaryRepresentation::test_values_match_the_connector_rendering`.
+- **mydumper (`transform=True`, `mysqlshell=False`)**: unchanged. `is_binary_datatype(datatype)` tests the
+  translated type, so `lower(hex(col))` never applies. mydumper's binary rendering was not verified.
 
 #### 3.7.2 Concurrency and ordering
 
@@ -346,26 +389,41 @@ of 100 applies).
 
 ### 3.9 Time zones
 
-- **Dump zone.** mysqlshell: `'+00:00'`, hard-coded. mydumper: `find_dump_timezone(schema text)`
-  (`SET TIME_ZONE='(.*?)'`, case-insensitive, first match, last schema file wins), possibly `None`.
-- **Offset to IANA name** (`get_unix_timezone_from_mysql_timezone`):
-  - Legacy (L268-284): iterates `sorted(zoneinfo.available_timezones())`. Each zone's offset is computed **at
-    `datetime.now()`** and rendered `±HH:MM`. The first match is returned, else `"UTC"`. Deterministic, but it
-    depends on the season and on the zone's current offset. Example: `+00:00` gives `Africa/Abidjan`
-    (FM-11.05-4).
-  - Packaged (P268-285): `sorted(timezones)` discards its result. The loop variable `tz` overwrites the `"UTC"`
-    default, and `break` stops at the first match, so with no match the last-iterated zone is returned. Set
-    iteration order varies with `PYTHONHASHSEED`, so the result is **non-deterministic**. Reproduced
-    (Oct 2026):
-
-    | Input | seed 1 | seed 2 | seed 3 |
-    |---|---|---|---|
-    | `'+00:00'` | `Africa/Conakry` | `Etc/UCT` | `Iceland` |
-    | `None` / `'+99:00'` | `Europe/San_Marino` | `Europe/Lisbon` | `Japan` |
-
-    Simulating a January run, `'+00:00'` resolved to a zone that is not at UTC in July for 4 of 10 seeds:
-    `Europe/Dublin` (+1h, seeds 0 and 5), `WET` (+1h, seed 1) and `Antarctica/Troll` (+2h, seed 8). The
-    legacy copy chose `Africa/Abidjan` every time (D-13.04-2).
+- **Dump zone, MySQL Shell** (`find_mysqlshell_dump_timezone`). MySQL Shell's dump option `tzUtc` (default
+  `true`: `Ddl_dumper_options::m_timezone_utc = true` in `modules/util/dump/ddl_dumper_options.h`) makes every
+  dump session run `SET TIME_ZONE = '+00:00'` (`Dumper::on_init_thread_session` in
+  `modules/util/dump/dumper.cc`), so `TIMESTAMP` values are written in UTC, and records the option as
+  `"tzUtc"` in the dump's `@.json`. The per-table `.sql` files carry no `SET TIME_ZONE` (the schema dumper's
+  `write_header`, which writes it for mysqldump-style output, is not called for them). Vendor documentation:
+  the `tzUtc` option of `util.dumpInstance()`/`dumpSchemas()`/`dumpTables()` in the MySQL Shell manual
+  (https://dev.mysql.com/doc/mysql-shell/8.0/en/mysql-shell-utilities-dump-instance-schema.html). Hence:
+  - `@.json` with `"tzUtc": true`: `'+00:00'`, mapped to `UTC`.
+  - `"tzUtc": false`: `ValueError`. The values are in the dump session's zone, which the dump does not
+    record, and loading them as UTC would shift every `TIMESTAMP`.
+  - `@.json` missing (WARNING) or without a boolean `tzUtc` (WARNING): `None`, mapped to `UTC` with a WARNING.
+    A malformed `@.json` raises.
+  `ch-mysql-resync` hard-links `@.json` into each per-table directory (`isolate_table_dir`), so its loads
+  read the flag. The in-tree dumpers never set `tzUtc`, so their dumps are UTC.
+- **Dump zone, mydumper**: `find_dump_timezone(schema text)` (`SET TIME_ZONE='(.*?)'`, case-insensitive,
+  first match) per schema file; conflicting files raise (§3.6); possibly `None`.
+- **MySQL zone value to IANA name** (`get_unix_timezone_from_mysql_timezone`, identical in both copies):
+  - `'+00:00'`/`'-00:00'` → `UTC`.
+  - Another whole-hour offset within MySQL's range (±14:00) → the fixed-offset zone `Etc/GMT∓N` (POSIX sign:
+    `+05:00` → `Etc/GMT-5`), when zoneinfo knows it. Never a regional zone whose offset merely equals the value
+    today: a DST zone would shift the other half of the year.
+  - A valid offset that no fixed-offset IANA zone represents (`+05:30`, `+05:45`, `-13:00`) → `ValueError`
+    asking for a UTC re-dump. No zone choice would be correct.
+  - A named zone known to zoneinfo (e.g. `Europe/Paris`) → itself.
+  - `None`, empty, `SYSTEM`, out of range or malformed → `UTC` with a WARNING ("cannot be determined").
+  - The result does not depend on `PYTHONHASHSEED` or on the date of the run.
+  `Etc/GMT-5`, `Etc/GMT+12` and `Etc/GMT-14` are listed in ClickHouse's `system.time_zones` (24.8), and
+  `TZ=Etc/GMT-5 clickhouse local --use_client_time_zone 1` parses `2026-07-01 12:00:00` as 07:00:00 UTC.
+- **Before the fix (D-13.04-2).** The packaged copy iterated an unsorted set, discarded `sorted()`, matched
+  offsets at `datetime.now()` and returned the last iterated zone when nothing matched, so the result varied
+  with `PYTHONHASHSEED` (a January `'+00:00'` gave `Europe/Dublin`, `WET` or `Antarctica/Troll` for 4 of 10
+  seeds; `None` gave `Japan`, `Europe/Lisbon`, ...). The legacy copy sorted and returned the first zone with
+  the matching offset today (`Africa/Abidjan` for `+00:00`), else `UTC`: deterministic for `+00:00`, but a
+  seasonal choice for other offsets.
 - **Application.** The name is exported as `TZ` in the shell command, and clickhouse-client runs with
   `--use_client_time_zone 1`. TIMESTAMP text (UTC in MySQL Shell dumps) is meant to be interpreted in that
   zone. Whether `input()` parsing honours the client zone was not verified offline (GAP in §5.2). DATETIME
@@ -376,20 +434,19 @@ of 100 applies).
 
 ### 3.10 Command execution, logging, exit codes
 
-- `run_quick_command(cmd)` (L47-60) runs `Popen(cmd, shell=True, stdout=PIPE, stderr=STDOUT)` and
-  `communicate()`, so all output is buffered in memory. The return code is `str(process.poll())`. It logs
-  stdout at INFO and `command failed : terminating` at ERROR when `rc != "0"`.
-- **The pipeline's status is the status of its last command** (`/bin/sh` without `pipefail`). A failing
-  `zstd`/`gunzip`/`sed` is therefore invisible. Reproduced with the exact decompressor and `wc -l` standing in
-  for clickhouse-client:
-  - a truncated `.tsv.zst` gives `rc = 0`, 91 500 of 200 000 rows, and `Read error (39) : premature end`;
-  - a missing file gives `rc = 0`, 0 rows, and `can't stat ... -- ignored`;
-  - a truncated `.dat.gz` gives `rc = 0`, 49 865 of 100 000 rows.
+- `run_quick_command(cmd)` runs `Popen(['bash', '-o', 'pipefail', '-c', cmd], stdout=PIPE, stderr=STDOUT)`
+  and `communicate()`, so all output is buffered in memory. The return code is `str(process.poll())`. It logs
+  stdout at INFO and `command failed : terminating` at ERROR when `rc != "0"`. `bash` must be on `PATH`
+  (otherwise `FileNotFoundError` fails the load).
+- **The pipeline's status is that of its last failing stage** (`pipefail`). A failing `zstd`/`gunzip`/`sed`
+  makes the command non-zero, `execute_load` raises, and the run exits 1 (§3.7.2). Before the fix the command
+  ran under `/bin/sh` without `pipefail`, and with `wc -l` standing in for clickhouse-client a truncated
+  `.tsv.zst` gave `rc = 0` with 91 500 of 200 000 rows, a missing file `rc = 0` with 0 rows, and a truncated
+  `.dat.gz` `rc = 0` with 49 865 of 100 000 rows (D-13.04-4, fixed). A truncated chunk is now refused even
+  when the prefix ends on a row boundary, because the decompressor itself reports the truncation.
 
-  With `--throw_if_no_data_to_insert=0`, clickhouse-client also accepts the empty input of a missing or
-  unreadable chunk. A truncated stream that ends on a row boundary inserts the prefix. One that ends
-  mid-row is normally rejected by ClickHouse's TSV/CSV parser (engine behaviour, not verified offline).
-  This is D-13.04-4.
+  `--throw_if_no_data_to_insert=0` is kept: a valid empty chunk (an empty table) must load. A missing or
+  unreadable chunk no longer reaches it, because the decompressor fails first.
 - `execute_load(cmd)` (L475-483/P444-452) logs the command at INFO, redacted in the legacy copy and in clear
   text in the packaged one. If `args.dry_run` is set it returns. Otherwise it raises
   `AssertionError("command " + cmd + " failed")` on non-zero rc. The message holds the **unredacted** command,
@@ -402,7 +459,10 @@ of 100 applies).
 
 | Outcome | Exit code | Data state |
 |---|---|---|
-| All statements and pipelines return 0 | 0 | Loaded, but **not verified**. Missing files, masked decompressor failures, and silently skipped columns all exit 0. |
+| All statements and pipelines return 0 | 0 | Loaded, but **not verified** against the dump's row counts. Chunk files the glob does not find still exit 0 (D-13.04-19). |
+| A decompressor or `sed` stage fails | 1, after all submitted chunks finish | partial table(s) |
+| Undeterminable dump zone | continues, WARNING | `TIMESTAMP` read as UTC |
+| `tzUtc: false` dump, unrepresentable offset, conflicting mydumper zones, bookkeeping-name collision, or a keyless table the translators cannot key | 1 (`ValueError` / `UnsafeTableDefinitionError`) | tables created before the failing one remain |
 | `assert` failure (missing clickhouse-client, mydumper mode, password without user, config file missing) | 1 (traceback) | nothing done |
 | CREATE DATABASE fails (mysqlshell) | continues | the next CREATE TABLE fails |
 | CREATE TABLE / CREATE DATABASE (mydumper) / truncate fails | 1 | tables created so far remain |
@@ -422,6 +482,14 @@ ANTLR (`exitColumnCreateTable`, LS156-184) appends to the source columns:
 | yes | no | `` `_version` UInt64 DEFAULT 0 ``, `` `is_deleted` UInt8 DEFAULT 0 `` | `engine=ReplacingMergeTree(_version,is_deleted)` |
 | yes | yes | `` `_version` UInt64 DEFAULT 0 ``, `` `_is_deleted` UInt8 DEFAULT 0 `` | `engine=ReplacingMergeTree(_version,_is_deleted)` |
 | no | any | `` `_version` UInt64 DEFAULT 0 ``, `` `_sign` Int8 DEFAULT 1 `` | `engine=ReplacingMergeTree(_version)` |
+
+**Bookkeeping-name collisions.** Before appending, `exitColumnCreateTable` compares the source column names
+(backticks stripped, exact case, as ClickHouse compares) with the two columns it is about to append. A match
+raises `UnsafeTableDefinitionError` naming the column: `_version` always; `_sign` without
+`--rmt_delete_support` (the message suggests the flag); `_is_deleted` when the source also has `is_deleted`.
+Without the check the CREATE carried a duplicate column, and a `--data_only` load would have written the MySQL
+values into the bookkeeping column or left them out. The streaming DDL path renames the delete flag to
+`_is_deleted` for a source `is_deleted` the same way (`MySqlDDLParserListenerImpl.enterColumnCreateTable`).
 
 The regexp translator (L188-200) appends `` `is_deleted` UInt8 DEFAULT 0, `_version` UInt64 DEFAULT 0 `` (or
 `_sign`/`_version`) and `ENGINE = ReplacingMergeTree(_version[, is_deleted]) ... SETTINGS index_granularity = 8192`.
@@ -461,7 +529,24 @@ An underivable version is refused (Spec 02.05). Hence:
 |---|---|---|
 | Table-level `PRIMARY KEY (a, b)` | `order by (`a`,`b`)`. The raw text of `indexColumnNames`, parentheses included. | `ORDER BY (<text inside the last parentheses on the PRIMARY KEY line>)` |
 | Column-level `id int NOT NULL PRIMARY KEY` | `order by `id`` | `ORDER BY (tuple())`, plus a missing comma after the next column, so invalid DDL (reproduced) |
-| No primary key, with or without `UNIQUE` keys | `order by tuple()` (D-13.04-1) | `ORDER BY (tuple())` (D-13.04-1) |
+| No primary key, first `UNIQUE` key (table- or column-level) with every column `NOT NULL` | `order by (<unique key columns>)`, identifiers as written, prefix lengths and `ASC`/`DESC` dropped (`index_column_names`) | refused: `UnsafeTableDefinitionError` |
+| No primary key, no such `UNIQUE` key | `order by (<every stored column in declaration order>)`, plus ` SETTINGS allow_nullable_key=1` when one of them is nullable. Generated columns are left out. A WARNING names the table and the key. | refused: `UnsafeTableDefinitionError` |
+| No primary key and no stored column | refused: `UnsafeTableDefinitionError` (not passed to the regexp fallback) | n/a |
+
+**Parity with the streaming connector (D-13.04-1, fixed).** The listener's `sorting_key` reproduces the table
+shape the streaming DDL path creates for the same source table, so a snapshot-created table and a
+stream-created table agree:
+`sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/MySqlDDLParserListenerImpl.java`
+lines 652-667 (the first UNIQUE key is adopted only when every column is NOT NULL; table-level keys at
+line 1160, column-level at line 1314, column names from `indexColumnNames` at line 1471), lines 704-724 (the
+all-columns fallback over the stored, non-generated columns in declaration order, refusing a table with none)
+and line 870 (`allow_nullable_key=1` only when the fallback key names a nullable column). The record-schema
+path builds the same identity (`sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/operations/ClickHouseAutoCreateTable.java`
+lines 347 and 466, `keylessSortingKey`). Known residual differences, both for hand-written DDL only: the
+Python side takes nullability from the column's own `NOT NULL` modifier, while Java also treats
+`AUTO_INCREMENT` and `SERIAL` columns as NOT NULL (`SHOW CREATE TABLE`, which dumps contain, always prints
+`NOT NULL` for them); and the Java path honours a schema-override `primary_key`, which the loader has no input
+for (D-13.04-27).
 | PK with prefix length `PRIMARY KEY (name(10))` | `order by (`name`(10))`, not a valid ClickHouse key (D-13.04-16) | `ORDER BY (10)`, a constant key that collapses all rows (D-13.04-16, latent because ANTLR does not raise) |
 | PK with `DESC` | copied verbatim | copied |
 | `PRIMARY KEY` clause in ClickHouse DDL | never emitted | never emitted |
@@ -492,7 +577,9 @@ override `partition_by` (Spec 08.05).
    silently and is not put in `schema_map`.
 2. `partition_options = find_partitioning_options(source)`.
 3. `try: return convert_to_clickhouse_table_antlr(source, rmt, partition_options, datetime_timezone)`.
-4. `except Exception`: log `Use regexp DDL converter` and the exception at **INFO**, then return the regexp
+4. `except UnsafeTableDefinitionError`: re-raised. A refusal (keyless table without a stored column,
+   bookkeeping-name collision) is not a parse failure and must not be papered over by the regexp translator.
+5. `except Exception`: log `Use regexp DDL converter` and the exception at **INFO**, then return the regexp
    translation (FM-11.05-5). Only translator exceptions are caught. ClickHouse rejecting the ANTLR DDL is
    not a translator exception, so the fallback is never used for semantic errors.
 
@@ -548,8 +635,8 @@ appended bookkeeping columns.
 ANTLR `convertDataType` (LS33-54) handles types as follows:
 
 1. Strip `CHARACTER SET.*` (case-insensitive).
-2. Strip `CHARSET.*`. Case-**sensitive**, and it may replace at most 2 occurrences, because `re.IGNORECASE`
-   is passed as the positional `count` (D-13.04-28).
+2. Strip `CHARSET.*`, case-insensitive (`flags=re.IGNORECASE`). Before the fix the flag was passed as the
+   positional `count`, so a lower-case `charset latin1` survived into the ClickHouse DDL (D-13.04-28, fixed).
 3. `DATE` becomes `Date32`.
 4. `DATETIME`/`TIMESTAMP` become `DateTime64(<fsp or 0>)[,'tz']`.
 5. `TIME` becomes `String`.
@@ -581,15 +668,15 @@ exact emitted text by a server was **not** verified offline.
 | `timestamp`, `timestamp(p)` | `DateTime64(0)` / `DateTime64(p)`, `+ ,'tz'` with the option | **`String`**: `\stime(.*?)\s` runs before the timestamp rule | zone-less | `DateTime64(p,'UTC')` | zone (D-13.04-10); regexp type (D-13.04-18) |
 | `time`, `time(p)` | `String` | `String` | String | `String`, always 6 fractional digits (Spec 07.03 §3.2) | value text: MySQL Shell writes `12:00:00` for TIME(0) where the stream writes `12:00:00.000000` (D-13.04-10) |
 | `year` | verbatim `year` | verbatim | `YEAR` alias (22.5+) → UInt16 | `UInt16`/`Int32` | minor |
-| `bit(1)` | `String` | `String` | String | `Bool` (Spec 07.04 §3.1) | **type** (D-13.04-10) and value (D-13.04-3) |
-| `bit(n>1)` | `String` | `String` | String | `String` (hex) | value (D-13.04-3) |
+| `bit(1)` | `String` | `String` | String | `Bool` (Spec 07.04 §3.1) | **type** (D-13.04-10); value loaded as hex `01`/`00` (§3.7.1) |
+| `bit(n>1)` | `String` | `String` | String | `String` (hex) | none since the D-13.04-3 fix (§3.7.1) |
 | `enum('a','b,c','it''s')` | verbatim | verbatim | `ENUM` → Enum8/Enum16 with auto-numbered values. `''` escaping and commas inside labels survive. | `String` (`Types.CHAR`) | **type** (D-13.04-10) |
 | `set('x','y')` | verbatim | `String` | `SET` alias (22.5+) is an integer type: CREATE with string arguments expected to fail | `String` | D-13.04-15 |
 | `json` | `String` | `String` | String | `String` | value text: MySQL rendering vs Debezium re-rendering (Spec 07.04 §3.1) |
 | `char(n)`, `varchar(n)`, `*text` | verbatim, `CHARACTER SET x` stripped | verbatim, `CHARACTER SET`/`COLLATE` stripped | String aliases | `String` | none |
 | `varchar(64) COLLATE utf8mb4_bin` (column collation without charset, MySQL 8's normal form) | `varchar(64) COLLATE utf8mb4_bin` | stripped | a MySQL collation name in a ClickHouse COLLATE clause: CREATE expected to fail (not verified) | `String` | D-13.04-15 |
-| `binary(n)`, `varbinary(n)`, `blob`, `tinyblob`, `mediumblob`, `longblob` | `String`. Packaged: upper-case `MEDIUMBLOB`/`VARBINARY(16)` pass through verbatim (still String aliases). | `binary(n)` → String; `blob`/`longblob`/`varbinary(n)` verbatim (String aliases) | String | `String` (hex by default) | value (D-13.04-3) |
-| `geometry`, `point`, `linestring`, `polygon`, `multi*`, `geomcollection` | `String` | `String` (`multi*` partly verbatim) | String | `String` (WKB hex, Spec 07.06 §3.4) | value (D-13.04-3) |
+| `binary(n)`, `varbinary(n)`, `blob`, `tinyblob`, `mediumblob`, `longblob` | `String`. Packaged: upper-case `MEDIUMBLOB`/`VARBINARY(16)` pass through verbatim (still String aliases). | `binary(n)` → String; `blob`/`longblob`/`varbinary(n)` verbatim (String aliases) | String | `String` (hex by default) | none since the D-13.04-3 fix, with `--binary_handling_mode`/`--persist_raw_bytes` set like the connector (§3.7.1) |
+| `geometry`, `point`, `linestring`, `polygon`, `multi*`, `geomcollection` | `String` | `String` (`multi*` partly verbatim) | String | `String` (WKB hex, Spec 07.06 §3.4) | none since the D-13.04-3 fix (§3.7.1) |
 | `geometrycollection` | legacy `String`; packaged **verbatim** (missing from its tuple) | verbatim | unknown to ClickHouse | `String` | D-13.04-22 |
 | `enum('bit','byte')` | legacy verbatim enum; packaged **`String`** (`"bit" in datatype`) | verbatim | | `String` | copies diverge (D-13.04-22) |
 
@@ -598,9 +685,8 @@ exact emitted text by a server was **not** verified offline.
 | Attribute | ANTLR (LS56-106) | Regexp |
 |---|---|---|
 | `NOT NULL` | appended verbatim. `nullable=False`. | kept. `nullable=False`. |
-| `NULL` (exact upper-case text) | appended. `nullable=True`. | kept |
+| `NULL`, any case (`null`, `Null`) | appended verbatim. `nullable=True` (case-insensitive test `text.upper() == "NULL"`). Before the fix only the exact upper-case text matched, and a lower-case `null` fell into the NOT branch with `nullable=False`, so the load structure declared `String` (D-13.04-7, fixed). | kept. `nullable=True`. |
 | no modifier | ` NULL` appended. `nullable=True`. MySQL columns are nullable by default; ClickHouse columns are not. | `DEFAULT NULL` appended on lines without `NULL`/`DEFAULT`, but the type is **not** made Nullable |
-| lower-case `null` | appended verbatim (ClickHouse makes the column Nullable), but **`nullable=False`**, because `notSymbol` is initialised `True` (LS65), so the `"NULL" == text` test (LS77) fails and the branch reads it as NOT NULL (D-13.04-7) | `nullable=True` |
 | `DEFAULT <expr>`, `ON UPDATE`, `AUTO_INCREMENT`, `COMMENT`, `INVISIBLE`, `SRID` | dropped (never copied). The target has no defaults except the bookkeeping columns. | `\bDEFAULT\b.*,` removes up to the **last comma on the line**. `AUTO_INCREMENT` removed. |
 | `GENERATED ALWAYS AS (expr) VIRTUAL\|STORED` | `<type> NULL MATERIALIZED <expr>`. The MySQL expression is copied verbatim after `re.sub(r"\b_.*?'", "'", text)` strips charset introducers (`_utf8mb4'x'` → `'x'`). That regex also deletes any text from a word starting with `_` up to the next quote, e.g. `` if((`_x` > 0),'pos','neg') `` → `` if((`'pos','neg') `` (reproduced, D-13.04-23). VIRTUAL and STORED both become MATERIALIZED (D-13.04-9). | the column line is deleted |
 | `CHARACTER SET` / `COLLATE` | `CHARACTER SET x [COLLATE y]` stripped. A bare `COLLATE y` is kept. | both stripped |
@@ -646,14 +732,16 @@ on both copies. The output is identical in both except where §3.15 notes otherw
 | `` `ts` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP `` | `` `ts` DateTime64(0) NOT NULL `` (default and ON UPDATE dropped) |
 | `` `e` enum('a','b,c','it''s') DEFAULT 'a' `` | `` `e` enum('a','b,c','it''s') NULL `` (default dropped) |
 | `` CREATE TABLE `order` (`select` int NOT NULL, `from` varchar(10) NOT NULL, `My Col` int ..., PRIMARY KEY (`select`,`from`)) `` | `` CREATE TABLE `order` (`select` int NOT NULL, `from` varchar(10) NOT NULL, `My Col` int NULL, ... order by (`select`,`from`) ``. Backticks preserved, reserved words and spaces safe. |
-| keyless table with `UNIQUE KEY u (msg)` | `... engine=ReplacingMergeTree(_version,is_deleted)  order by tuple()` |
+| keyless table `a int NOT NULL, msg varchar(20) NOT NULL, UNIQUE KEY u (msg(10),a)` | `... engine=ReplacingMergeTree(_version,is_deleted)  order by (`msg`,`a`)` |
+| keyless table `a int DEFAULT NULL, b varchar(10) NOT NULL, g int GENERATED ... VIRTUAL` | `... order by (`a`,`b`) SETTINGS allow_nullable_key=1` |
 | `` `b` int GENERATED ALWAYS AS ((`a` * 2)) VIRTUAL `` | `` `b` int NULL MATERIALIZED (`a` * 2) `` |
 | `` `c` varchar(20) GENERATED ALWAYS AS (concat(_utf8mb4'x_', `a`)) STORED `` | `` `c` varchar(20) NULL MATERIALIZED concat('x_', `a`) `` |
 | `/*!50500 PARTITION BY RANGE COLUMNS(d) (...) */` | `engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY d order by (`id`,`d`)` |
 | `/*!50100 PARTITION BY RANGE (year(`d`)) ... */` | no PARTITION BY |
 | `PRIMARY KEY (`name`(10))` | `order by (`name`(10))` |
 | source column `is_deleted tinyint` | `` `is_deleted` tinyint NULL, `_version` UInt64 DEFAULT 0, `_is_deleted` UInt8 DEFAULT 0 ) engine=ReplacingMergeTree(_version,_is_deleted) `` |
-| source column `_version bigint` | duplicate `` `_version` `` column (CREATE fails) |
+| source column `_version bigint` | `UnsafeTableDefinitionError` naming `_version` (was a duplicate column and a failing CREATE) |
+| source column `_sign int` with `rmt_delete_support=True` | `` `_sign` int NULL `` kept as a data column, loaded |
 | `CREATE TABLE `mydb`.`qt`` | `CREATE TABLE `mydb`.`qt`` (source schema kept) |
 
 ### 3.19 Quoting and escaping summary
@@ -765,7 +853,8 @@ This is D-13.04-26.
 | Function / area | Legacy | Packaged | Effect |
 |---|---|---|---|
 | Imports | `from db.clickhouse import *`. `sys.path` is appended **after** the imports that need it (L21-25), so it only works with `PYTHONPATH` set to `sink-connector/python`. | explicit package imports | packaging only |
-| `get_unix_timezone_from_mysql_timezone` | sorted, first match, `"UTC"` fallback | unsorted, last-iterated zone on no match, non-deterministic | D-13.04-2 |
+| `get_unix_timezone_from_mysql_timezone`, `find_mysqlshell_dump_timezone` | identical (§3.9) | identical | none (D-13.04-2 fixed in both) |
+| Listener fixes (D-13.04-1/6/7/28), `get_column_list`/`mysqlshell_column_expression` (D-13.04-3), `run_quick_command` (D-13.04-4), mydumper data glob (D-13.04-5) | identical | identical | none |
 | Password quoting | `shlex.quote` | `'...'` | D-13.04-11 |
 | Log redaction | `register_secret` + `redact_password` | none: full command at INFO | D-13.04-11 (FM-11.05-1) |
 | Failure exception text | unredacted command | unredacted command | D-13.04-12 (both) |
@@ -784,7 +873,9 @@ This is D-13.04-26.
   (D-13.04-19). The position hand-off gap is D-13.03-1.
 - Spec 11.04 (`ch-mysql-resync`) wraps the packaged loader per table, adds exact count reconciliation and an
   optional canary, and avoids `--truncate_tables`. FM-11.04-8 is the downstream effect of the rendering
-  differences recorded here (D-13.04-3, D-13.04-10).
+  differences recorded here (D-13.04-10; D-13.04-3 is fixed, but `ch-mysql-resync` passes no
+  `--binary_handling_mode`, so a connector running `binary.handling.mode=base64` needs the flag through
+  `--loader-cmd`).
 - Spec 11.05 owns the unit-test contract. FM-11.05-1, -2, -4, -5 and -6 are restated here with their full
   control flow.
 
@@ -795,15 +886,15 @@ This is D-13.04-26.
 | ID | Invariant | Status as built |
 |---|---|---|
 | INV-13.04-1 | Every loaded row carries `_version = 0` and `is_deleted = 0` (or `_sign = 1`), strictly below every streamed version, so streaming changes after the dump point always win and never tie. | **Holds** (§3.11) |
-| INV-13.04-2 | A table is created as `ReplacingMergeTree` keyed so that distinct source rows stay distinct. | **Violated** for keyless tables (D-13.04-1) and prefix PKs (D-13.04-16) |
+| INV-13.04-2 | A table is created as `ReplacingMergeTree` keyed so that distinct source rows stay distinct. | **Holds** for keyless tables (keyed like the stream, §3.12; rows identical in every column still collapse, as on the stream). **Violated** for prefix PKs (D-13.04-16) |
 | INV-13.04-3 | Column types equal the types the streaming DDL path would declare for the same source column. | **Violated** for ENUM, BIT(1), DATETIME/TIMESTAMP zone, generated columns, overrides (D-13.04-9/10/27) |
-| INV-13.04-4 | Values are stored in the same canonical rendering the streaming writer stores. | **Violated** for binary/BIT/spatial and TIME(0) (D-13.04-3/10). Unverified for TIMESTAMP zone handling. |
-| INV-13.04-5 | Every source row in the dump is loaded, or the loader exits non-zero. | **Violated** (D-13.04-4/5/6/19) |
-| INV-13.04-6 | A failed chunk makes the run fail (non-zero exit). | **Holds** for clickhouse-client failures; **violated** for decompressor failures (D-13.04-4) |
+| INV-13.04-4 | Values are stored in the same canonical rendering the streaming writer stores. | **Holds** for binary/BIT(n>1)/spatial when `--binary_handling_mode`/`--persist_raw_bytes` match the connector (§3.7.1). **Violated** for BIT(1) and TIME(0) (D-13.04-10). Unverified for TIMESTAMP zone handling. |
+| INV-13.04-5 | Every source row in the dump is loaded, or the loader exits non-zero. | **Violated** only by chunk files the glob does not find and the absent count check (D-13.04-19). D-13.04-4/5/6 are fixed. |
+| INV-13.04-6 | A failed chunk makes the run fail (non-zero exit). | **Holds** (clickhouse-client, decompressor and `sed` failures, §3.10) |
 | INV-13.04-7 | Generated columns are not inserted. | **Holds** (§3.7.1) |
 | INV-13.04-8 | The loader writes only to `--clickhouse_database`. | **Violated** by `--truncate_tables` (D-13.04-8) and by the mydumper `CREATE DATABASE` (D-13.04-20) |
 | INV-13.04-9 | Credentials appear neither in logs nor on process argv. | **Violated** (D-13.04-11/12/13) |
-| INV-13.04-10 | The translation is deterministic (same dump gives same DDL and same load). | Holds for DDL. **Violated** for the packaged time zone (D-13.04-2). Load order is glob order. |
+| INV-13.04-10 | The translation is deterministic (same dump gives same DDL and same load). | **Holds** for DDL and the time zone (D-13.04-2 fixed). Load order is glob order. |
 
 ---
 
@@ -815,33 +906,51 @@ Run from `sink-connector/python` with the toolset venv Python:
 
 - Loader suites: `pytest -q -p no:cacheprovider db_load/tests/test_clickhouse_loader_unit.py db_load/tests/test_loader_failure_modes.py`
   gave **22 passed, 2 skipped**. The skips are the declared defects FM-11.05-1 and FM-11.05-2.
-- Full offline baseline (`db_compare/tests db_load/tests db_dump/tests tests`): **227 passed, 5 skipped**,
-  matching the brief.
+- Full offline baseline (`db_compare/tests db_load/tests db_dump/tests tests`): **227 passed, 5 skipped** on
+  2.11.0. With the S1 fixes and `db_load/tests/test_loader_s1_fixes.py` (83 tests, every one parametrised over
+  both copies): **310 passed, 5 skipped**.
 
 What the existing tests pin (all legacy unless noted):
 
 - `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestSchemaPathParsing::test_parse_schema_path_mydumper`, `::TestSchemaPathParsing::test_parse_schema_path_mysqlshell`, `::TestSchemaPathParsing::test_mysqlshell_table_with_special_chars`: file-name parsing (§3.4).
 - `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestDumpTimezone::test_finds_set_time_zone`, `::TestDumpTimezone::test_case_insensitive`, `::TestDumpTimezone::test_absent_returns_none`: `find_dump_timezone`.
-- `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestUnixTimezoneFromMysqlTimezone::test_utc_offset_resolves_to_a_zero_offset_zone`, `::TestUnixTimezoneFromMysqlTimezone::test_unknown_offset_falls_back_to_utc`: legacy mapping only. The second test would fail against the packaged copy (D-13.04-2).
+- `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestUnixTimezoneFromMysqlTimezone::test_utc_offset_resolves_to_a_zero_offset_zone`, `::TestUnixTimezoneFromMysqlTimezone::test_unknown_offset_falls_back_to_utc`: legacy mapping only; both still pass after the D-13.04-2 fix.
 - `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestSourceIntrospection::test_find_primary_key`, `::TestSourceIntrospection::test_find_partitioning_options_range_columns` and the related absent/true/false cases: regex helpers.
 - `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestDdlConversionAntlr::test_returns_ddl_and_columns`, `::TestDdlConversionAntlr::test_datetime_maps_to_datetime64`, `::TestDdlConversionAntlr::test_decimal_precision_preserved`, `::TestDdlConversionAntlr::test_replacing_merge_tree_engine`, `::TestDdlConversionAntlr::test_order_by_primary_key`, `::TestDdlConversionAntlr::test_datetime_timezone_applied_when_configured`, `::TestDdlConversionAntlr::test_no_create_table_returns_empty`: structural ANTLR contract.
 - `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestLegacyLoaderFailurePath::test_logged_command_is_redacted`: legacy log redaction, and a failing load raises.
 - `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestLegacyLoaderFailurePath::test_failure_message_is_redacted`: skipped, DEFECT D-13.04-12.
 - `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestPackagedLoaderRedaction::test_logged_command_is_redacted`: packaged, skipped, DEFECT D-13.04-11.
 
-No test covers the packaged loader's translation, the data phase command shape, the type mapping table,
-keyless tables, overrides or the reconciler.
+`sink-connector/python/db_load/tests/test_loader_s1_fixes.py` covers both copies (offline; data pipelines run
+with a stand-in `clickhouse-client` script, binary values are checked with `clickhouse local`, skipped when
+it is not installed):
+
+- `TestDumpTimezoneMapping`, `TestMysqlShellDumpTimezone`: D-13.04-2 (UTC, `Etc/GMT±N`, named zones,
+  WARNING + UTC when undeterminable, refusal of `+05:30` and of `tzUtc: false`, identical result for
+  `PYTHONHASHSEED` 0-5, `@.json` read by `load_schema`).
+- `TestKeylessSortingKey`: D-13.04-1 (all-columns key with `allow_nullable_key`, NOT NULL UNIQUE key
+  table- and column-level, nullable UNIQUE fallback, PK unchanged, refusals not passed to the regexp fallback,
+  regexp refusal).
+- `TestSourceColumnsNamedLikeBookkeeping`: D-13.04-6. `TestColumnModifiers`: D-13.04-7, D-13.04-28.
+- `TestBinaryRepresentation`: D-13.04-3 (expressions per mode and per decode function, values via
+  `clickhouse local`).
+- `TestPipelineFailure`: D-13.04-4 (`false | cat`, a truncated `.tsv.zst` through `load_data_mysqlshell`, a
+  truncated `.dat.gz` through `load_data`, both with `execute_load` raising).
+- `TestMydumperDataFileDiscovery`: D-13.04-5. `test_resync_isolated_table_dir_carries_the_dump_metadata`:
+  the `@.json` hand-off to `ch-mysql-resync` loads.
+
+No test covers the type mapping table, overrides or the reconciler.
 
 ### 5.2 Acceptance criteria (each is a test to add; GAP until added)
 
-1. Keyless DDL never yields `order by tuple()` (both translators, both copies).
+1. Keyless DDL never yields `order by tuple()` (both translators, both copies). **Covered** (§5.1).
 2. `get_unix_timezone_from_mysql_timezone` is deterministic across `PYTHONHASHSEED` values, returns `UTC` for
-   `None` or unknown offsets, and never returns a DST zone for a fixed offset (packaged).
+   `None` or unknown offsets, and never returns a DST zone for a fixed offset (packaged). **Covered**.
 3. For a MySQL Shell dump with a `varbinary` and a `bit(1)` column, the rendered INSERT applies the binary
-   transform that matches the configured connector rendering.
+   transform that matches the configured connector rendering. **Covered** (BIT(1) type still D-13.04-10).
 4. A data pipeline whose decompressor fails makes the loader exit non-zero (`set -o pipefail` or equivalent).
-   An empty chunk is refused unless the dump metadata says the chunk is empty.
-5. The mydumper data glob is independent of `-` in `--dump_dir`.
+   **Covered**. An empty chunk is refused unless the dump metadata says the chunk is empty: GAP (D-13.04-19).
+5. The mydumper data glob is independent of `-` in `--dump_dir`. **Covered**.
 6. `--truncate_tables` targets `--clickhouse_database`.
 7. Generated columns are emitted as `DEFAULT (expr)`, matching Spec 06.06.
 8. The type mapping in §3.15 equals the streaming DDL path's mapping for every row marked as divergent.
@@ -880,8 +989,8 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Blast radius**: all rows of every keyless table, silently, after the first merge.
   - **Recovery**: drop and recreate the table with a sorting key of all columns (as the connector does) or a declared identity, then reload.
   - **RTO**: unmeasured (no server). The time to recreate and reload the table.
-  - **Test**: GAP: keyless DDL must not produce `order by tuple()`.
-  - **DEFECT**: D-13.04-1.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestKeylessSortingKey::test_no_key_uses_every_stored_column_and_allows_nullable_key`
+  - **FIXED**: D-13.04-1. The listener keys a keyless table like the streaming DDL path (NOT NULL UNIQUE key, else all stored columns with `allow_nullable_key=1` when needed, §3.12); the regexp fallback refuses it.
 
 - **FM-13.04-2 Packaged loader interprets TIMESTAMP text in a random zone**
   - **Trigger**: `ch-mysql-load` or `ch-mysql-resync` (packaged) on any MySQL Shell dump, or a mydumper dump without `SET TIME_ZONE`.
@@ -890,8 +999,8 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Blast radius**: every TIMESTAMP value of every table in the run (all, or only DST-period values).
   - **Recovery**: re-run the load with the legacy copy (`--loader-cmd`) or with `PYTHONHASHSEED` pinned to a seed known to pick a UTC-equivalent zone, until fixed. Reload the affected tables.
   - **RTO**: unmeasured (no server). The time to reload the affected tables.
-  - **Test**: `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestUnixTimezoneFromMysqlTimezone::test_unknown_offset_falls_back_to_utc` covers the legacy copy only. GAP for the packaged copy.
-  - **DEFECT**: D-13.04-2.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestDumpTimezoneMapping::test_deterministic_across_hash_seeds`
+  - **FIXED**: D-13.04-2. Both copies map the zone deterministically (`UTC`, `Etc/GMT±N` or a named zone; WARNING + UTC when undeterminable) and take the MySQL Shell zone from `@.json` `tzUtc` (§3.9).
 
 - **FM-13.04-3 Binary, BIT and spatial values loaded as base64 text**
   - **Trigger**: a MySQL Shell dump of a table with `binary`/`varbinary`/`blob`/`bit`/spatial columns.
@@ -900,8 +1009,8 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Blast radius**: every binary-family value in snapshot rows. Rows streamed later use the connector's rendering, so one column mixes two renderings.
   - **Recovery**: transform in place with `ALTER TABLE ... UPDATE col = lower(hex(base64Decode(col)))` on snapshot rows (`_version = 0`), or reload after a fix.
   - **RTO**: unmeasured (no server). The duration of one mutation per affected table.
-  - **Test**: GAP: assert that the transformed column list differs from the plain list for binary columns.
-  - **DEFECT**: D-13.04-3.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestBinaryRepresentation::test_values_match_the_connector_rendering`
+  - **FIXED**: D-13.04-3. The transform classifies by the MySQL type, decodes as the dump metadata says, and renders per `--binary_handling_mode`/`--persist_raw_bytes` (connector defaults: lower-case hex, §3.7.1).
 
 - **FM-13.04-4 Decompressor failure is invisible and the chunk is loaded partially or not at all**
   - **Trigger**: a truncated, corrupt, unreadable or vanished `.tsv.zst` or `.dat.gz` chunk.
@@ -910,8 +1019,8 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Blast radius**: the rows of the affected chunk. Exit code 0.
   - **Recovery**: re-dump or repair the chunk. Truncate the target table and reload it.
   - **RTO**: unmeasured (no server). Reload time of one table.
-  - **Test**: GAP: a pipeline with a failing first stage must make `execute_load` raise.
-  - **DEFECT**: D-13.04-4.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestPipelineFailure::test_truncated_mysqlshell_chunk_fails_the_load`
+  - **FIXED**: D-13.04-4. Pipelines run under `bash -o pipefail`, so a failing decompressor or `sed` fails the load (exit 1, §3.10).
 
 - **FM-13.04-5 mydumper dump directory containing `-` loads nothing**
   - **Trigger**: mydumper layout with a `-` anywhere in `--dump_dir` or in a table name. This requires first getting past D-13.04-14.
@@ -920,8 +1029,8 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Blast radius**: every table of the dump.
   - **Recovery**: move or rename the dump directory without `-`, then re-run `--data_only`.
   - **RTO**: unmeasured (no server). The rename plus a full data load.
-  - **Test**: GAP.
-  - **DEFECT**: D-13.04-5.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestMydumperDataFileDiscovery::test_dash_in_dump_dir_still_finds_data`
+  - **FIXED**: D-13.04-5. The data glob strips only the `-schema.sql.gz` suffix and glob-escapes the prefix (§3.4).
 
 - **FM-13.04-6 Source column named like a bookkeeping column is not loaded**
   - **Trigger**: a source column `_sign` (with `--rmt_delete_support`), `_is_deleted`, or `_version`.
@@ -930,8 +1039,8 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Blast radius**: one column of the affected tables.
   - **Recovery**: pass `--virtual_columns` without the colliding name, or rename at the source, then reload.
   - **RTO**: unmeasured (no server). Reload time of the table.
-  - **Test**: GAP.
-  - **DEFECT**: D-13.04-6.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestSourceColumnsNamedLikeBookkeeping::test_source_sign_and_is_deleted_lookalikes_are_loaded`
+  - **FIXED**: D-13.04-6. Every ANTLR source column is loaded whatever its name; a collision with an appended bookkeeping column raises `UnsafeTableDefinitionError` (§3.7.1, §3.11).
 
 - **FM-13.04-7 Lower-case `null` turns NULL into empty string**
   - **Trigger**: hand-written DDL with a lower-case `null` modifier (`SHOW CREATE TABLE` writes `NULL`).
@@ -940,8 +1049,8 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Blast radius**: NULLs of the affected columns.
   - **Recovery**: `ALTER TABLE ... UPDATE col = NULL WHERE col = ''` only if `''` never occurs at the source. Otherwise reload.
   - **RTO**: unmeasured (no server). One mutation or one reload.
-  - **Test**: GAP.
-  - **DEFECT**: D-13.04-7.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestColumnModifiers::test_lower_case_null_is_nullable`
+  - **FIXED**: D-13.04-7. The NULL modifier test is case-insensitive (§3.16).
 
 - **FM-13.04-8 `--truncate_tables` truncates a table in the source-named database**
   - **Trigger**: `--mysqlshell --truncate_tables` where a ClickHouse database named like the MySQL schema exists (typically the live replica, while `--clickhouse_database` is a scratch database).
@@ -1121,7 +1230,7 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Test**: GAP.
   - **DEFECT**: D-13.04-27.
 
-Summary: 25 failure modes, 23 DEFECT, 24 GAP.
+Summary: 25 failure modes, 16 DEFECT, 17 GAP.
 
 ---
 
@@ -1129,13 +1238,13 @@ Summary: 25 failure modes, 23 DEFECT, 24 GAP.
 
 | ID | Severity | Copy (legacy/packaged/both) | Location | Evidence | Summary |
 |---|---|---|---|---|---|
-| D-13.04-1 | S1 | both | `db_load/mysql_parser/CreateTableMySQLParserListener.py:145,182-183`; `db_load/clickhouse_loader.py:140-144,195-200` (same lines in `ch_sink_tools/`) | reproduced (`r1_translate.py no_pk`: `order by tuple()` / `ORDER BY (tuple())`); collapse semantics measured in Spec 08.05 §3.2 | Keyless tables are created as `ReplacingMergeTree ORDER BY tuple()`. Merges and `FINAL` collapse every table to one row. The connector forbids exactly this. |
-| D-13.04-2 | S1 | packaged | `ch_sink_tools/db_load/clickhouse_loader.py:268-285` | reproduced (`r4_pure.py`, `r5_dst.py`: `None` gives `Japan`/`Europe/Lisbon`; a January `+00:00` gives `Europe/Dublin`/`WET`/`Antarctica/Troll` in 4/10 seeds) | Time-zone mapping is non-deterministic, falls back to the last iterated zone instead of UTC, and can pick DST zones, which shifts TIMESTAMP values. |
-| D-13.04-3 | S1 | both | `db_load/clickhouse_loader.py:398-402` (P399-403); `CreateTableMySQLParserListener.py:51-52,127-130` | reproduced (`r4_pure.py` B: transformed list equals plain list) | The binary decode transform tests the translated type `String` and never fires. MySQL Shell's base64 text is stored for binary/BIT/spatial columns, which differs from the connector's default hex rendering. |
-| D-13.04-4 | S1 | both | `db_load/clickhouse_loader.py:47-60,440,549`; `ch_sink_tools/db_load/clickhouse_loader.py:47-60,440,517` | reproduced (`r7_pipefail.py`, `r8_zstd.py`: rc 0 with 91 500/200 000, 49 865/100 000 and 0 rows) | The shell pipeline status hides decompressor failures, and `--throw_if_no_data_to_insert=0` accepts empty input. Truncated or missing chunks load partially or not at all with exit 0. |
-| D-13.04-5 | S1 | both | `db_load/clickhouse_loader.py:428-430`; `ch_sink_tools/db_load/clickhouse_loader.py:428-430` | reproduced (`r2_flow.py mydumper_noassert dump-mydumper`: 0 commands, exit 0) | mydumper data files are found via `path.split("-")[0]`. A `-` in the dump path or table name loads zero rows silently. |
-| D-13.04-6 | S1 | both | `db_load/clickhouse_loader.py:388,528,612` (P389,496,580); `CreateTableMySQLParserListener.py:159-167` | reproduced (`r4_pure.py` D: `_sign` dropped from the load list; `_version` duplicated in DDL) | Source columns named `_sign`/`_is_deleted` are silently excluded from the load (NULL). `_version` produces a duplicate column. |
-| D-13.04-7 | S1 | both | `CreateTableMySQLParserListener.py:64-89` | reproduced (`r1_translate.py lower_null`: `` `a` varchar(10) null `` gives `nullable False`) | A lower-case `null` modifier is recorded as NOT NULL, so the load structure declares `String` and NULLs are stored as `''` (null-as-default, engine side unverified). |
+| D-13.04-1 | S1 | both | `db_load/mysql_parser/CreateTableMySQLParserListener.py:145,182-183`; `db_load/clickhouse_loader.py:140-144,195-200` (same lines in `ch_sink_tools/`) | reproduced (`r1_translate.py no_pk`: `order by tuple()` / `ORDER BY (tuple())`); collapse semantics measured in Spec 08.05 §3.2 | FIXED: keyed like the streaming DDL path (`MySqlDDLParserListenerImpl.java` 652-724, 870): NOT NULL UNIQUE key, else every stored column with `allow_nullable_key=1` when needed; the regexp fallback refuses. Test `test_loader_s1_fixes.py::TestKeylessSortingKey`. Was: keyless tables created as `ReplacingMergeTree ORDER BY tuple()`, collapsed to one row by merges and `FINAL`. |
+| D-13.04-2 | S1 | packaged | `ch_sink_tools/db_load/clickhouse_loader.py:268-285` | reproduced (`r4_pure.py`, `r5_dst.py`: `None` gives `Japan`/`Europe/Lisbon`; a January `+00:00` gives `Europe/Dublin`/`WET`/`Antarctica/Troll` in 4/10 seeds) | FIXED (both copies converged): deterministic mapping (`UTC`, `Etc/GMT±N`, named zone; WARNING + UTC when undeterminable; refusal of unrepresentable offsets) and the MySQL Shell zone read from `@.json` `tzUtc`. Tests `test_loader_s1_fixes.py::TestDumpTimezoneMapping`, `::TestMysqlShellDumpTimezone`. Was: non-deterministic mapping falling back to the last iterated zone, possibly a DST zone. |
+| D-13.04-3 | S1 | both | `db_load/clickhouse_loader.py:398-402` (P399-403); `CreateTableMySQLParserListener.py:51-52,127-130` | reproduced (`r4_pure.py` B: transformed list equals plain list) | FIXED: classified by the MySQL type, decoded per `<db>@<table>.json` `decodeColumns`, rendered per the new `--binary_handling_mode` (default `bytes`) and `--persist_raw_bytes` flags, mirroring the connector settings. Test `test_loader_s1_fixes.py::TestBinaryRepresentation`. Was: the transform tested the translated type `String`, never fired, and base64 text was stored. |
+| D-13.04-4 | S1 | both | `db_load/clickhouse_loader.py:47-60,440,549`; `ch_sink_tools/db_load/clickhouse_loader.py:47-60,440,517` | reproduced (`r7_pipefail.py`, `r8_zstd.py`: rc 0 with 91 500/200 000, 49 865/100 000 and 0 rows) | FIXED: commands run under `bash -o pipefail`; a failing decompressor or `sed` fails the load with exit 1. Test `test_loader_s1_fixes.py::TestPipelineFailure`. Was: the pipeline status hid decompressor failures, so truncated or missing chunks loaded partially or not at all with exit 0. (`--throw_if_no_data_to_insert=0` stays for valid empty chunks.) |
+| D-13.04-5 | S1 | both | `db_load/clickhouse_loader.py:428-430`; `ch_sink_tools/db_load/clickhouse_loader.py:428-430` | reproduced (`r2_flow.py mydumper_noassert dump-mydumper`: 0 commands, exit 0) | FIXED: the data glob strips only the `-schema.sql.gz` suffix and glob-escapes the prefix. Test `test_loader_s1_fixes.py::TestMydumperDataFileDiscovery`. Was: `path.split("-")[0]`, so a `-` in the dump path or table name loaded zero rows silently. |
+| D-13.04-6 | S1 | both | `db_load/clickhouse_loader.py:388,528,612` (P389,496,580); `CreateTableMySQLParserListener.py:159-167` | reproduced (`r4_pure.py` D: `_sign` dropped from the load list; `_version` duplicated in DDL) | FIXED: every ANTLR source column is loaded (`source_column`); a collision with an appended bookkeeping column (`_version`; `_sign` without `--rmt_delete_support`; `_is_deleted` next to a source `is_deleted`) raises `UnsafeTableDefinitionError`. Test `test_loader_s1_fixes.py::TestSourceColumnsNamedLikeBookkeeping`. Was: such columns silently excluded (NULL), `_version` duplicated. |
+| D-13.04-7 | S1 | both | `CreateTableMySQLParserListener.py:64-89` | reproduced (`r1_translate.py lower_null`: `` `a` varchar(10) null `` gives `nullable False`) | FIXED: case-insensitive `NULL` test. Test `test_loader_s1_fixes.py::TestColumnModifiers::test_lower_case_null_is_nullable`. Was: a lower-case `null` was recorded as NOT NULL, so the load structure declared `String` and NULLs became `''`. |
 | D-13.04-8 | S2 | both | `db_load/clickhouse_loader.py:518-521`; `ch_sink_tools/db_load/clickhouse_loader.py:486-489` | reproduced (`r2_flow.py mysqlsh`: `truncate table mydb.t1`, target `mydb_ch`) | `--truncate_tables` truncates `<mysql_source_database>.<table>`, potentially the live replica, never the target. |
 | D-13.04-9 | S2 | both | `CreateTableMySQLParserListener.py:93-105` | reproduced (DDL `MATERIALIZED (`a` * 2)`); stream rejection per Spec 06.06 §3.1 (code-read) | Generated columns are emitted as `MATERIALIZED <MySQL expr>`. The connector's inserts into them fail (Code 44). The streaming DDL path uses `DEFAULT`. |
 | D-13.04-10 | S2 | both | `CreateTableMySQLParserListener.py:33-54`; `db_load/clickhouse_loader.py:159-167` | reproduced (DDL in §3.15); streaming types from Specs 07.03/07.04/08.05 and `DataTypeConverter.java` (code-read) | Type/rendering divergence from the streaming path: ENUM to Enum8, BIT(1) to String, zone-less DateTime64, TIME(0) text, legacy `_sign` engine by default. Enum inserts of new labels fail, and other values compare unequal. |
@@ -1156,7 +1265,7 @@ Summary: 25 failure modes, 23 DEFECT, 24 GAP.
 | D-13.04-25 | S3 | packaged | `ch_sink_tools/config/column_type_overrides.py:138-155,186-197` | reproduced (`r3_overrides.py` 2: singular `None`, plural match) | `get_direct_override` ignores db-specific/schema-wildcard (and similar) entries that `get_direct_overrides` matches, so CREATE and reconciliation disagree. |
 | D-13.04-26 | S3 | packaged | `ch_sink_tools/config/override_reconciler.py:153-183,258-279` | reproduced with mocked `system.columns` (`r3_overrides.py` 5-7) | The reconciler compares type/expression strings exactly and column names case-sensitively: false mismatches, missed mismatches, and a needless ALTER on every run. |
 | D-13.04-27 | S3 | both | `db_load/clickhouse_loader.py` (no override input; whole file); contrast `MySqlDDLParserListenerImpl.java` around line 1557 | code-read | The MySQL snapshot loader ignores `column_type_override.*`. Snapshot tables lack override types and alias columns that the streaming path would create. |
-| D-13.04-28 | S4 | both | `CreateTableMySQLParserListener.py:37` | reproduced (`'varchar(5) charset latin1'` unchanged) | `re.sub("CHARSET.*", '', t, re.IGNORECASE)` passes the flag as `count`. The strip is case-sensitive. |
+| D-13.04-28 | S4 | both | `CreateTableMySQLParserListener.py:37` | reproduced (`'varchar(5) charset latin1'` unchanged) | FIXED: `flags=re.IGNORECASE`. Test `test_loader_s1_fixes.py::TestColumnModifiers::test_lower_case_charset_is_stripped`. Was: `re.sub("CHARSET.*", '', t, re.IGNORECASE)` passed the flag as `count`, so the strip was case-sensitive. |
 | D-13.04-29 | S4 | both | `CreateTableMySQLParserListener.py:148-154,189-282`; `db_load/clickhouse_loader.py:28-44`; `mysql_parser.py:26` | code-read (grammar rule `partitionClause` is the window clause; `translateFieldDefinition` undefined); stderr noise reproduced | Dead code: `exitPartitionClause`, `exitAlterList` (calls an undefined method), `run_command`. antlr4's default console error listener stays installed. |
 | D-13.04-30 | S4 | both | `db_load/clickhouse_loader.py:255-256,410-411,597-600,605-606` (P similar) | code-read | Flags declared but ignored or mis-declared: `--use_regexp_parser`, `--debug`, `--threads` (required although it has a default; ignored by the mydumper path), the `load_data` `dry_run` parameter. `load_data` falls through after the mysqlshell load. |
 | D-13.04-31 | S4 | both | `db_load/clickhouse_loader.py:1`; `ch_sink_tools/db_load/postgres_type_mapper.py:8`; `ch_sink_tools/config/column_type_overrides.py:17-18`; `Dockerfile_db_load` | code-read | Doc drift. The usage header names a nonexistent script and flags. The PostgreSQL mapper claims a `--source postgres` loader flag. The override docstring uses dashed flag names (the dumper uses underscores). The `db_load` image contains no loader. Unit tests cover the legacy copy only. |

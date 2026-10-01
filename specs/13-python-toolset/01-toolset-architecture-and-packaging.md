@@ -26,7 +26,7 @@ This spec is the map of the toolset as built on 2.11.0. It covers:
 Headline findings, each a DEFECT in §7:
 
 - An installed `ch-mysql-checksum` reports "No difference" for tables it never compared (D-13.01-2).
-- The packaged loader, which `ch-mysql-load` and `ch-mysql-resync` run, resolves a dump's time zone to a random IANA zone (D-13.01-1).
+- The packaged loader, which `ch-mysql-load` and `ch-mysql-resync` run, resolved a dump's time zone to a random IANA zone (D-13.01-1, fixed: both copies now map it deterministically, Spec 13.04 §3.9).
 - Every `ch-*` MySQL command ships the copy without the spec 11.02/11.05 fixes: `eval()` of `--where`, passwords in logs. The 2.10.0 release notes say those fixes are in `ch_sink_tools` (D-13.01-4).
 - The `[mysql]` extra cannot import the MySQL tools (D-13.01-5).
 - `requires-python >=3.6` is false: the real floor is 3.10 (D-13.01-6).
@@ -274,8 +274,8 @@ The two copies of `mysql_parser.py` (55 lines) and `CreateTableMySQLParserListen
 
 Wrapper-level defects in the listener, all present in **both** copies and reproduced in §5 R8:
 
-- Line 37: `re.sub("CHARSET.*", '', dataTypeText, re.IGNORECASE)` passes the flag as `count`, so only upper-case `CHARSET` is stripped. `varchar(10) charset latin1` reaches ClickHouse verbatim (D-13.01-15).
-- Lines 77-89: a column constraint written `null` (lower case) fails the `"NULL" == text` test. It falls into the `NOT` branch with `notSymbol` pre-set to `True` (line 65), so `columns_map` says `nullable: False` while the emitted DDL says `NULL`. The loader then declares that column `String` instead of `Nullable(String)` in `input()` (`clickhouse_loader.py:505-513`) (D-13.01-16).
+- Line 37 (fixed): `re.sub("CHARSET.*", '', dataTypeText, flags=re.IGNORECASE)`. On 2.11.0 the flag was passed as `count`, so `varchar(10) charset latin1` reached ClickHouse verbatim (D-13.01-15).
+- Lines 77-89 (fixed): the `NULL` modifier test is case-insensitive (`text.upper() == "NULL"`). On 2.11.0 a lower-case `null` fell into the `NOT` branch with `notSymbol` pre-set to `True`, so `columns_map` said `nullable: False` and the loader declared the column `String` instead of `Nullable(String)` in `input()` (D-13.01-16).
 - Line 98: the collation-introducer strip `re.sub(r"\b_.*?'", "'", text)` also deletes any identifier that starts with `_`, up to the next quote. `GENERATED ALWAYS AS (concat(_code, 'x'))` becomes `MATERIALIZED concat('x')`, silently (D-13.01-3).
 
 ### 3.9 PostgreSQL DDL parser package (packaged only)
@@ -496,7 +496,7 @@ Method: an AST-based function diff. For every file pair it parses both copies an
 
 | Function | Legacy | Packaged |
 |---|---|---|
-| `get_unix_timezone_from_mysql_timezone` | iterates `sorted(zoneinfo.available_timezones())`, returns the first zone whose current offset matches, else `"UTC"` | `sorted(timezones)` result discarded; iterates the **unordered set** and `break`s on a match. With no match it returns the **last zone iterated**, not `UTC`. The result changes with `PYTHONHASHSEED` (D-13.01-1). |
+| `get_unix_timezone_from_mysql_timezone` | identical in both copies since the D-13.01-1 fix: `UTC`, a fixed-offset `Etc/GMT±N` zone or a named zone, UTC + WARNING when undeterminable (Spec 13.04 §3.9) | identical. On 2.11.0 it discarded `sorted(timezones)`, iterated the unordered set and returned the last zone iterated when nothing matched, so the result changed with `PYTHONHASHSEED` (D-13.01-1). |
 | `load_data` | `load_data_mysqlshell(..., dry_run=dry_run)`; `--password <shlex>`; secret registered | `dry_run=False` passed, with no effect because `execute_load` reads the global `args.dry_run`; `--password '<pw>'`; `--config-file '<path>'` |
 | `load_data_mysqlshell` | password = the resolved `clickhouse_password` (config file or CLI); shlex-quoted | password = `args.clickhouse_password` (CLI only; a config-file password reaches `clickhouse-client` through `--config-file`); single-quoted |
 | `execute_load` | `logging.info(redact_password(cmd))` | `logging.info(cmd)`: password in clear (FM-11.05-1) |
@@ -618,11 +618,11 @@ Required new tests (GAPs, referenced from §6):
 - G2: run the offline suite under the declared minimum Python.
 - G3: an equality test that runs each function pair of §3.14.2 on both trees and asserts the same output.
 - G4: regenerate the grammars in CI and `git diff --exit-code`.
-- G5: packaged `get_unix_timezone_from_mysql_timezone` is deterministic and falls back to UTC.
+- G5: packaged `get_unix_timezone_from_mysql_timezone` is deterministic and falls back to UTC. Closed by `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestDumpTimezoneMapping`.
 - G6: `ch-mysql-checksum` from a foreign cwd exits non-zero.
 - G7: build each Dockerfile and run `--help`.
 - G8: `parse_postgres_ddl` on `DEFAULT -1`.
-- G9: listener tests for `charset`, `null` and `_ident` inside generated expressions.
+- G9: listener tests for `charset`, `null` and `_ident` inside generated expressions. `charset` and `null` are covered by `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestColumnModifiers`; `_ident` remains open.
 
 ## 6. Failure Modes & Recovery
 
@@ -635,8 +635,8 @@ The component is the delivery layer: which code runs, under which interpreter an
   - **Blast radius**: every `TIMESTAMP` column of every table loaded in that run, and it differs from run to run.
   - **Recovery**: reload with the legacy loader (`--loader-cmd "python db_load/clickhouse_loader.py"` for resync), or with a dump taken under `SET TIME_ZONE='+00:00'`. Verify with the legacy checksum.
   - **RTO**: a reload of the affected tables (proportional to size; unmeasured).
-  - **Test**: GAP: G5. The legacy-only `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestUnixTimezoneFromMysqlTimezone::test_unknown_offset_falls_back_to_utc` does not cover this copy.
-  - **DEFECT**: D-13.01-1, non-deterministic, non-UTC fallback in the copy the entry points run.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestDumpTimezoneMapping::test_deterministic_across_hash_seeds`
+  - **FIXED**: D-13.01-1 (= D-13.04-2). Both copies map the zone deterministically and fall back to UTC with a WARNING (Spec 13.04 §3.9).
 
 - **FM-13.01-2 An installed `ch-mysql-checksum` reports equality without comparing**
   - **Trigger**: `ch-mysql-checksum --config_file ...` from any directory that has no `db_compare/` with working side scripts. That is every use of the installed wheel, and every use from the Python root without `PYTHONPATH`.
@@ -782,8 +782,8 @@ The component is the delivery layer: which code runs, under which interpreter an
   - **Blast radius**: that table is not created.
   - **Recovery**: upper-case the attribute in the dump's DDL file and reload the schema.
   - **RTO**: minutes per table.
-  - **Test**: GAP: G9.
-  - **DEFECT**: D-13.01-15, regex flags passed positionally as `count`.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestColumnModifiers::test_lower_case_charset_is_stripped`
+  - **FIXED**: D-13.01-15 (= D-13.04-28). `flags=re.IGNORECASE`.
 
 - **FM-13.01-16 A lower-case `null` constraint loads NULLs as non-null**
   - **Trigger**: data load (mysqlsh path) of a table whose DDL declares a column `... null` in lower case.
@@ -792,8 +792,8 @@ The component is the delivery layer: which code runs, under which interpreter an
   - **Blast radius**: NULLs of that column on every row.
   - **Recovery**: fix the DDL case and reload the table.
   - **RTO**: one table reload.
-  - **Test**: GAP: G9.
-  - **DEFECT**: D-13.01-16, case-sensitive NULL detection with a mis-initialised `notSymbol`.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestColumnModifiers::test_lower_case_null_is_nullable`
+  - **FIXED**: D-13.01-16 (= D-13.04-7). The NULL modifier test is case-insensitive.
 
 - **FM-13.01-17 Packaging regressions merge unseen**
   - **Trigger**: any change under `sink-connector/python/`.
@@ -807,13 +807,13 @@ The component is the delivery layer: which code runs, under which interpreter an
   - **Test**: GAP: G1, G2, G4, G7 as workflow steps.
   - **DEFECT**: D-13.01-24, no CI job builds or imports what users install (extends FM-11.05-3).
 
-Summary: 17 failure modes, 17 DEFECT, 17 GAP.
+Summary: 17 failure modes, 14 DEFECT, 14 GAP.
 
 ## 7. Defect Register
 
 | ID | Severity | Copy (legacy/packaged/both) | Location | Evidence | Summary |
 |---|---|---|---|---|---|
-| D-13.01-1 | S1 | packaged | `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py:266-284` | reproduced (R14: four hash seeds, four different zones for `+01:00`, `Japan`/`Europe/Lisbon`/... for an unmatched offset; legacy stable and `UTC`) | Dump time zone resolved by unordered set iteration, last zone returned when nothing matches; affects `ch-mysql-load` and `ch-mysql-resync`. |
+| D-13.01-1 | S1 | packaged | `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py:266-284` | reproduced (R14: four hash seeds, four different zones for `+01:00`, `Japan`/`Europe/Lisbon`/... for an unmatched offset; legacy stable and `UTC`) | FIXED (with D-13.04-2): deterministic mapping in both copies, UTC + WARNING when undeterminable. Test `test_loader_s1_fixes.py::TestDumpTimezoneMapping`. Was: dump time zone resolved by unordered set iteration, last zone returned when nothing matched; affected `ch-mysql-load` and `ch-mysql-resync`. |
 | D-13.01-2 | S1 | packaged | `sink-connector/python/ch_sink_tools/db_compare/top_level_table_checksum.py:159,186` | reproduced (R12: empty cwd → both sides `None` → `No difference for t1`, pipeline rc 0) | `ch-mysql-checksum` spawns cwd-relative side scripts under `set -e pipefail`; installed use reports equality without comparing. |
 | D-13.01-3 | S1 | both | `sink-connector/python/db_load/mysql_parser/CreateTableMySQLParserListener.py:98` (same line in packaged) | reproduced (R8: `concat(_code, 'x')` → `MATERIALIZED concat('x')`) | Introducer-strip regex deletes identifiers starting with `_`, silently changing MATERIALIZED expressions. |
 | D-13.01-4 | S2 | packaged | `sink-connector/python/ch_sink_tools/db_compare/mysql_table_count.py:44-46`, `.../mysql_table_checksum.py:168-170`, `.../clickhouse_table_checksum.py:218-220`, `sink-connector/python/ch_sink_tools/db_dump/mysql_dumper.py` `run_command`/`generate_mysqlsh_command`, `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py` `execute_load`, `sink-connector/python/ch_sink_tools/db/clickhouse.py:68`; `release-notes/2.10.0.md:11` | reproduced (R6: `{__import__('os').getpid() > 0}` evaluated to `True`); code-read for the log lines (§3.14.2) | The installed copy keeps `eval()` of `--where` and logs passwords; release notes claim both fixed in `ch_sink_tools`. |
@@ -827,8 +827,8 @@ Summary: 17 failure modes, 17 DEFECT, 17 GAP.
 | D-13.01-12 | S3 | n/a (no Python) | `sink-connector/python/Dockerfile_db_load:2-19` | code-read (no `COPY` of any tool; `apt-get` on `mysql:latest`; retired apt repository). Image build not attempted offline. | "db_load" image contains no loader and its install steps presume a Debian base. |
 | D-13.01-13 | S3 | legacy | `sink-connector/python/test_db.sh:5-9` | reproduced in part (R4: the three commands fail `No module named 'db'` without `PYTHONPATH`); the empty-diff pass is code-read | Dev harness drops the DB, masks tool failures through pipes and prints nothing, which looks like success. |
 | D-13.01-14 | S3 | legacy | `sink-connector/python/db_dump/mysql_dumper.py:16,26-27`, `sink-connector/python/db_load/clickhouse_loader.py:4,21,24-25` | reproduced (R4) | `sys.path.append` placed after the imports it should enable. |
-| D-13.01-15 | S3 | both | `sink-connector/python/db_load/mysql_parser/CreateTableMySQLParserListener.py:37` | reproduced (R8: `charset latin1` kept in the ClickHouse DDL) | `re.IGNORECASE` passed as `count`; lower-case `charset` survives into ClickHouse DDL. |
-| D-13.01-16 | S3 | both | `sink-connector/python/db_load/mysql_parser/CreateTableMySQLParserListener.py:65-89` | reproduced (R8: DDL `v int null`, map `nullable False`); load effect code-read | Lower-case `null` recorded as NOT NULL in the column map used to build the load structure. |
+| D-13.01-15 | S3 | both | `sink-connector/python/db_load/mysql_parser/CreateTableMySQLParserListener.py:37` | reproduced (R8: `charset latin1` kept in the ClickHouse DDL) | FIXED (with D-13.04-28): `flags=re.IGNORECASE`. Test `test_loader_s1_fixes.py::TestColumnModifiers::test_lower_case_charset_is_stripped`. Was: `re.IGNORECASE` passed as `count`; lower-case `charset` survived into ClickHouse DDL. |
+| D-13.01-16 | S3 | both | `sink-connector/python/db_load/mysql_parser/CreateTableMySQLParserListener.py:65-89` | reproduced (R8: DDL `v int null`, map `nullable False`); load effect code-read | FIXED (with D-13.04-7): case-insensitive `NULL` test. Test `test_loader_s1_fixes.py::TestColumnModifiers::test_lower_case_null_is_nullable`. Was: lower-case `null` recorded as NOT NULL in the column map used to build the load structure. |
 | D-13.01-17 | S4 | both | `sink-connector/python/db_load/mysql_parser/CreateTableMySQLParserListener.py:148-154,189-245` | reproduced (R8: `AttributeError` on window `PARTITION BY`; RANGE COLUMNS ignored; `exitAlterList` never fires) | Listener hooks bound to a different grammar: window-clause hook crashes, ALTER hook is dead and calls an undefined method. |
 | D-13.01-18 | S4 | both | `sink-connector/python/README.md:9-54`, `sink-connector/python/TESTING.md`, `sink-connector/python/ch_sink_tools/db_load/postgres_parser/README.md:1,30,98`, `postgres_parser.py:1,11`, `pyproject.toml:36` | reproduced (R15: both quick-start commands rejected by argparse) | README, TESTING.md and parser docs drift from the build (versions, flags, extras, paths, consumers). |
 | D-13.01-19 | S4 | packaged | `sink-connector/python/ch_sink_tools/__init__.py:5`, `sink-connector/python/pyproject.toml:7`, `sink-connector/python/README.md:9` | code-read | Three different version strings (0.2.0 / 0.3.0 / 0.2.0). |

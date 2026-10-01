@@ -6,6 +6,13 @@ import re
 import logging
 
 
+class UnsafeTableDefinitionError(ValueError):
+    """The translator refuses a table it cannot create faithfully (Spec 13.04 sections 3.11, 3.12).
+
+    Raised instead of emitting DDL that would lose or misplace MySQL data. The loader re-raises it rather than
+    falling back to the regexp translator, so the run fails loudly with this message."""
+
+
 class CreateTableMySQLParserListener(MySqlParserListener):
     def __init__(self, rmt_delete_support, partition_options, datetime_timezone=None):
         self.buffer = ""
@@ -34,7 +41,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         dataTypeText = self.extract_original_text(dataType)
         dataTypeText = re.sub("CHARACTER SET.*", '',
                               dataTypeText, flags=re.IGNORECASE)
-        dataTypeText = re.sub("CHARSET.*", '', dataTypeText, re.IGNORECASE)
+        dataTypeText = re.sub("CHARSET.*", '', dataTypeText, flags=re.IGNORECASE)
 
         if isinstance(dataType, MySqlParser.SimpleDataTypeContext) and dataType.DATE():
             dataTypeText = 'Date32'
@@ -74,7 +81,8 @@ class CreateTableMySQLParserListener(MySqlParserListener):
                     if nullNotNull:
                         text = self.extract_original_text(child)
                         column_buffer += " " + text
-                        if "NULL" == text:
+                        # SQL keywords are case-insensitive: `null` is the same modifier as `NULL`.
+                        if text.upper() == "NULL":
                             nullable = True
                             notNull = True
                             continue
@@ -90,6 +98,9 @@ class CreateTableMySQLParserListener(MySqlParserListener):
 
                 if isinstance(child, MySqlParser.PrimaryKeyColumnConstraintContext) and child.PRIMARY():
                     self.primary_key = column_name
+                if isinstance(child, MySqlParser.UniqueKeyColumnConstraintContext) and self.unique_key_columns is None:
+                    # the first UNIQUE key of the table, column-level form (the streaming DDL path keeps the first one)
+                    self.unique_key_columns = [column_name]
                 if isinstance(child, MySqlParser.GeneratedColumnConstraintContext):
                     expression = child.expression()
                     text = self.extract_original_text(expression)
@@ -127,9 +138,16 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         dataTypeText = self.convertDataType(dataType)
         if column_name in ['is_deleted','`is_deleted`']:
             self.has_is_deleted_column = True
+        if not generated:
+            # stored columns in declaration order: the keyless sorting key (sorting_key)
+            self.stored_columns.append(column_name)
+            if not nullable:
+                self.not_null_columns.add(column_name.replace('`', ''))
+        # source_column: every entry of columns_map is a MySQL column, never a bookkeeping column the translator
+        # appends, so the loader loads it whatever its name (Spec 13.04 section 3.7.1).
         columnMap = {'column_name': column_name, 'datatype': dataTypeText,
                 'nullable': nullable, 'mysql_datatype': originalDataTypeText, 'generated': generated, 
-                'has_is_deleted_column':self.has_is_deleted_column}
+                'has_is_deleted_column':self.has_is_deleted_column, 'source_column': True}
         logging.info(str(columnMap))
         self.columns_map.append(columnMap)
 
@@ -138,12 +156,38 @@ class CreateTableMySQLParserListener(MySqlParserListener):
         text = self.extract_original_text(ctx.indexColumnNames())
         self.primary_key = text
 
+    @staticmethod
+    def index_column_names(ctx):
+        """Column identifiers of an index column list; sort direction and prefix length dropped.
+
+        Mirrors MySqlDDLParserListenerImpl.indexColumnNames in sink-connector-lightweight."""
+        columns = []
+        for entry in ctx.getChildren():
+            if isinstance(entry, MySqlParser.IndexColumnNameContext):
+                if entry.uid() is not None:
+                    columns.append(entry.uid().getText())
+                elif entry.STRING_LITERAL() is not None:
+                    columns.append(entry.STRING_LITERAL().getText())
+                else:
+                    columns.append(entry.getText())
+        return columns
+
+    def exitUniqueKeyTableConstraint(self, ctx):
+        # the first UNIQUE key of the table, table-level form
+        if self.unique_key_columns is None and ctx.indexColumnNames() is not None:
+            names = self.index_column_names(ctx.indexColumnNames())
+            if names:
+                self.unique_key_columns = names
+
     def enterColumnCreateTable(self, ctx):
         self.buffer = ""
         self.columns = []
         self.columns_map = []
         self.primary_key = 'tuple()'
         self.partition_keys = None
+        self.unique_key_columns = None
+        self.stored_columns = []
+        self.not_null_columns = set()
 
     def exitPartitionClause(self, ctx):
         if ctx.partitionTypeDef():
@@ -153,14 +197,59 @@ class CreateTableMySQLParserListener(MySqlParserListener):
                     partitionTypeDef.identifierList())
                 self.partition_keys = text
 
+    def sorting_key(self, tableName):
+        """ORDER BY clause and extra table SETTINGS, derived as the streaming connector derives them.
+
+        Mirrors MySqlDDLParserListenerImpl.enterColumnCreateTable (sink-connector-lightweight): the PRIMARY KEY;
+        else the first UNIQUE key when every column of it is NOT NULL; else every stored (non-generated) column in
+        declaration order, plus allow_nullable_key=1 when one of them is nullable. ORDER BY tuple() is never
+        emitted: ReplacingMergeTree would collapse the whole table into one row (Spec 13.04 section 3.12)."""
+        if self.primary_key != 'tuple()':
+            return (self.primary_key, '')
+        if self.unique_key_columns:
+            bare = [re.sub(r"\(\d+\)$", '', c.replace('`', '').strip()) for c in self.unique_key_columns]
+            if all(c in self.not_null_columns for c in bare):
+                logging.info(f"Table {tableName} has no PRIMARY KEY; using its NOT NULL UNIQUE key as the "
+                             f"sorting key: {self.unique_key_columns}")
+                return ("(" + ",".join(self.unique_key_columns) + ")", '')
+            logging.warning(f"Table {tableName} has no PRIMARY KEY and its UNIQUE key {self.unique_key_columns} "
+                            f"spans nullable columns, so it is not a row identity; falling back to all columns")
+        if not self.stored_columns:
+            raise UnsafeTableDefinitionError(
+                f"Cannot derive a sorting key for {tableName}: no PRIMARY KEY, no NOT NULL UNIQUE key and no stored "
+                f"(non-generated) column. Refusing to create ReplacingMergeTree ... ORDER BY tuple(), which would "
+                f"collapse every row into one.")
+        settings = ''
+        if any(c.replace('`', '') not in self.not_null_columns for c in self.stored_columns):
+            settings = ' SETTINGS allow_nullable_key=1'
+        logging.warning(f"Table {tableName} has no PRIMARY KEY and no NOT NULL UNIQUE key; using every stored column "
+                        f"as the ReplacingMergeTree sorting key so distinct rows stay distinct: {self.stored_columns}. "
+                        f"Rows identical in every column still collapse; add a PRIMARY KEY at the source.")
+        return ("(" + ",".join(self.stored_columns) + ")", settings)
+
     def exitColumnCreateTable(self, ctx):
         tableName = self.extract_original_text(ctx.tableName())
         self.buffer = f"CREATE TABLE {tableName} ("
-        self.columns.append("`_version` UInt64 DEFAULT 0")
         is_deleted_column = 'is_deleted'
         if self.has_is_deleted_column:
             is_deleted_column = '_is_deleted'
         # is_deleted and _sign are redundant, so exclusive in the schema
+        bookkeeping = ['_version', is_deleted_column if self.rmt_delete_support else '_sign']
+        # A source column named like an appended bookkeeping column would duplicate it in the DDL, and in a
+        # --data_only load its MySQL values would land in the bookkeeping column. MySQL owns its columns, so
+        # refuse loudly instead of creating a table that cannot hold them (Spec 13.04 section 3.11).
+        source_names = [m['column_name'].replace('`', '') for m in self.columns_map]
+        collisions = [name for name in bookkeeping if name in source_names]
+        if collisions:
+            hint = ""
+            if not self.rmt_delete_support and '_sign' in collisions:
+                hint = " or load with --rmt_delete_support (is_deleted replaces _sign)"
+            raise UnsafeTableDefinitionError(
+                f"Table {tableName}: source column(s) {collisions} collide with the bookkeeping column(s) "
+                f"{bookkeeping} the loader appends. The MySQL column cannot be stored faithfully; rename it at the "
+                f"source{hint}.")
+        (order_by, settings) = self.sorting_key(tableName)
+        self.columns.append("`_version` UInt64 DEFAULT 0")
         if self.rmt_delete_support: 
             self.columns.append(f"`{is_deleted_column}` UInt8 DEFAULT 0")
         else:
@@ -180,7 +269,7 @@ class CreateTableMySQLParserListener(MySqlParserListener):
             rmt_params += f",{is_deleted_column}"
 
         self.buffer += f") engine=ReplacingMergeTree({rmt_params}) {partition_by} order by " + \
-            self.primary_key
+            order_by + settings
         logging.info(self.buffer)
 
     def get_clickhouse_sql(self):

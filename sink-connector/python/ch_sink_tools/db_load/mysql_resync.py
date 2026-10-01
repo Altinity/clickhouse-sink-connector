@@ -203,7 +203,8 @@ def isolate_table_dir(dump_dir: str, schema: str, table: str) -> str:
     (``zstd -d --stdout <symlink>`` refuses symbolic links: "is a symbolic link, ignoring".)"""
     d = os.path.join(dump_dir, "_bytable", table)
     os.makedirs(d, exist_ok=True)
-    names = [f"{schema}@{table}.sql", f"{schema}@{table}.json"]
+    # @.json records tzUtc, from which the loader takes the zone of the TIMESTAMP text (Spec 13.04 section 3.9)
+    names = ["@.json", f"{schema}@{table}.sql", f"{schema}@{table}.json"]
     names += [os.path.basename(x) for x in data_files(dump_dir, schema, table)]
     for name in names:
         src, dst = os.path.join(dump_dir, name), os.path.join(d, name)

@@ -31,11 +31,12 @@ leaves behind, version and delete-flag semantics of reloaded rows, value
 rendering, the dry-run contract, the rewind, and concurrency with a running
 connector. It records 32 defects (§7). The most serious:
 
-- binary columns are loaded in a different text form from the one the connector
-  writes in its default mode (D-13.08-1);
-- the packaged loader picks the time zone for `TIMESTAMP` parsing at random from
-  the zones whose offset is `+00:00` on the day of the run, which can be a DST
-  zone (D-13.08-2);
+- binary columns were loaded in a different text form from the one the connector
+  writes in its default mode (D-13.08-1, fixed with D-13.04-3; a connector in
+  `base64` mode needs `--binary_handling_mode base64` through `--loader-cmd`);
+- the packaged loader picked the time zone for `TIMESTAMP` parsing at random from
+  the zones whose offset is `+00:00` on the day of the run, which could be a DST
+  zone (D-13.08-2, fixed with D-13.04-2);
 - reloaded rows of legacy-engine tables get `_sign = 0` (D-13.08-3);
 - a pooled canary ratio hides a table whose rows all differ (D-13.08-4);
 - nothing compares the connector's position with the recorded position, either
@@ -346,9 +347,12 @@ export TZ=Etc/UCT; zstd -d --stdout <dump>/_bytable/t/mydb@t@@0.tsv.zst | clickh
   is executed. The two native connections (`default`, `<restore_db>`) are created but never used.
 - The column map is built by `load_schema(..., dry_run=True)` (`clickhouse_loader.py:615`), so data-only mode
   issues no `CREATE`.
-- The INSERT column list is the MySQL DDL's non-generated columns minus the virtual columns `_sign`,
-  `_version`, `is_deleted` and `_is_deleted`. A source column literally named `is_deleted` is kept
-  (`has_is_deleted_column`).
+- The listing above is the 2.11.0 output. Since the Spec 13.04 S1 fixes the command runs under
+  `bash -o pipefail`, `TZ` is `UTC` for a `tzUtc` dump (§3.9.3), and `b`, `vb`, `bt` are selected through the
+  binary rendering of §3.9.2.
+- The INSERT column list is the MySQL DDL's non-generated columns. Every source column is kept whatever its
+  name (`_sign`, `is_deleted`, `_is_deleted`); a source column named like a bookkeeping column the loader's
+  translator appends (`_version` always) is refused, so the table's load fails (`LOAD_FAILED`). Spec 13.04 §3.7.1.
 - Every non-`timestamp` column arrives as `String` or `Nullable(String)` and is cast server-side to the
   scratch column type. `timestamp` columns arrive typed (§3.9.3).
 - Names are unquoted in `INSERT INTO <db>.<t>`. The data-file path is not shell-quoted (D-13.08-26).
@@ -356,7 +360,15 @@ export TZ=Etc/UCT; zstd -d --stdout <dump>/_bytable/t/mydb@t@@0.tsv.zst | clickh
   `mysql_datatype` and `has_is_deleted_column`, so `load_data_mysqlshell` raises `KeyError` → `LOAD_FAILED`
   (code-read, `clickhouse_loader.py:496-503`).
 
-#### 3.9.2 Binary columns (D-13.08-1, S1)
+#### 3.9.2 Binary columns (D-13.08-1, S1, fixed)
+**Since the fix** (Spec 13.04 §3.7.1, D-13.04-3) the loader classifies binary, BIT and spatial columns by
+their MySQL type, decodes them as the table's `<schema>@<t>.json` (`decodeColumns`, already hard-linked by
+`isolate_table_dir`) says, and renders them as the connector stores them: by default lower-case hex
+(`binary.handling.mode=bytes`, `persist.raw.bytes=false`). `run_loader` passes no rendering flag, so for a
+connector running `binary.handling.mode=base64` (the shipped templates' setting) or `persist.raw.bytes=true`
+the operator passes `--loader-cmd "python -m ch_sink_tools.db_load.clickhouse_loader --binary_handling_mode base64"`
+(or `--persist_raw_bytes`). The rest of this section records the 2.11.0 behaviour.
+
 `get_column_list(..., transform=True, mysqlshell=True)` would render binary columns as
 `if(col='\N', null, lower(hex(base64Decode(col))))` (`clickhouse_loader.py:399-401`). The branch is guarded by
 `is_binary_datatype(column['datatype'])`. On the antlr path, `datatype` holds the **ClickHouse** type
@@ -372,8 +384,12 @@ no line breaks. MySQL's `TO_BASE64()` wraps every 76 characters, and which encod
 determinable offline. Without a canary table that holds binary values, the difference is installed silently and
 is reported only by the next checksum.
 
-#### 3.9.3 Time zones (D-13.08-2, S1, packaged loader)
-- `load_schema_mysqlshell` fixes the dump zone at `'+00:00'` (`clickhouse_loader.py:347`). MySQL Shell's
+#### 3.9.3 Time zones (D-13.08-2, S1, packaged loader, fixed)
+- **Since the fix** (Spec 13.04 §3.9, D-13.04-2): the loader reads `tzUtc` from the dump's `@.json`, which
+  `isolate_table_dir` now hard-links into `_bytable/<t>/` next to the table's files. The dumps `ch-mysql-resync`
+  takes never set `tzUtc`, so it is `true` and `TZ=UTC`, deterministically. Without `@.json` the loader logs a
+  WARNING and uses UTC. The bullets below up to the legacy loader record the 2.11.0 behaviour.
+- `load_schema_mysqlshell` fixed the dump zone at `'+00:00'` (`clickhouse_loader.py:347`). MySQL Shell's
   default `tzUtc` writes `TIMESTAMP` values in UTC.
 - `get_unix_timezone_from_mysql_timezone` (`:268-285`) walks `zoneinfo.available_timezones()`. That is a `set`:
   the `sorted(timezones)` call on `:271` discards its result. The function returns the **first zone in hash
@@ -536,11 +552,11 @@ The two trees differ in behaviour **only in the loader** (spec 13.04), which the
 
 | Loader function | Packaged | Legacy |
 |---|---|---|
-| `get_unix_timezone_from_mysql_timezone` | first `+00:00` zone in **hash order** of a set, so random and possibly DST (D-13.08-2) | `sorted(...)`, first match (`Africa/Abidjan`), fallback `UTC`: deterministic |
+| `get_unix_timezone_from_mysql_timezone` | identical since the D-13.08-2 fix: `+00:00` → `UTC` (on 2.11.0 the first `+00:00` zone in hash order, possibly DST) | identical (on 2.11.0 `Africa/Abidjan`) |
 | `load_data_mysqlshell` password | `args.clickhouse_password` (never set by resync), so no `--password`, and credentials come from `--config-file` | the resolved password: `--password <shlex-quoted>` **on the clickhouse-client command line** (reproduced: `--password p1`) and redacted only in the log (`redact_password`) (D-13.08-12) |
 | Config path quoting | `'<path>'` | `shlex.quote` |
 | `load_data` → `load_data_mysqlshell` | passes `dry_run=False` | passes `dry_run=dry_run`. No effect either way, because `execute_load` reads the global `args.dry_run` |
-| Binary transform, column filter, `input()` structure, `TZ`/`--use_client_time_zone` | identical (D-13.08-1 applies to both) | identical |
+| Binary transform, column filter, `input()` structure, `TZ`/`--use_client_time_zone` | identical (D-13.08-1 fixed in both) | identical |
 
 ### 3.15 Deviations from spec 11.04
 1. **Dry-run contract** (11.04 §3.1 "every read runs, every write is printed"): without `--skip-load` the
@@ -566,7 +582,7 @@ The two trees differ in behaviour **only in the loader** (spec 13.04), which the
    `DROP TABLE` candidate. That includes tables excluded by `dump --tables`, materialized views and their
    `.inner` tables (D-13.08-14).
 9. **Value rendering** (11.04 §3.6 "canary stops the run"): 11.04 does not state that binary columns are
-   loaded verbatim (D-13.08-1), that the packaged loader's `TIMESTAMP` zone is random (D-13.08-2), or that
+   loaded verbatim (D-13.08-1, now fixed), that the packaged loader's `TIMESTAMP` zone is random (D-13.08-2, now fixed), or that
    legacy-engine rows get `_sign = 0` (D-13.08-3). With no canary list these differences are installed silently.
 10. **Verify** (11.04 §3.3.8): a plain `count()` taken while the connector runs (D-13.08-18).
 11. **Workflow** (11.04 §5): only `test_mysql_resync.py` runs in `.github/workflows/spec-governance.yml`.
@@ -594,7 +610,8 @@ The two trees differ in behaviour **only in the loader** (spec 13.04), which the
   ``ALTER TABLE `db`.`t` ADD COLUMN IF NOT EXISTS `c` <type> AFTER `prev`|FIRST;  -- MySQL: <type>[ NOT NULL]``.
 - `plan_replace`: §3.7 step 4. `plain_identifiers`: §3.6.
 - `select_offset_row`, `rewind_offset_json`, `rewind_offset_sql`: §3.11.
-- `isolate_table_dir` (side effect: creates `_bytable/<t>/`, replaces symlinks, adds missing hard links. An
+- `isolate_table_dir` (hard-links the dump's `@.json`, `<schema>@<t>.sql`, `<schema>@<t>.json` and the
+  table's data files; `@.json` carries `tzUtc` for the loader's zone, Spec 13.04 §3.9. Side effect: creates `_bytable/<t>/`, replaces symlinks, adds missing hard links. An
   existing regular file is kept even if stale).
 - `data_files`: sorted `<schema>@<t>@*.tsv.zst` plus `<schema>@<t>.tsv.zst`, so `t` does not match `t_other`.
 - `dump_tables`: §3.4 step 2. File names are used as table names unchanged. MySQL Shell percent-encodes
@@ -718,8 +735,8 @@ cannot see. `patch` refuses a suffix that resolves to an existing non-scratch da
   - **Recovery**: fix the loader (render according to the connector's `binary.handling.mode`) and re-run
     `patch --apply` from the same dump. Until then, exclude binary-column tables with `--tables`.
   - **RTO**: one reload of the affected tables (unmeasured).
-  - **Test**: GAP: a loader test asserting a `blob` column is selected as the connector's representation for each `binary.handling.mode`.
-  - **DEFECT**: D-13.08-1. Binary columns are loaded verbatim, not in the connector's representation.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestBinaryRepresentation::test_base64_mode_keeps_bit_and_spatial_hex`
+  - **FIXED**: D-13.08-1 (= D-13.04-3). The loader renders binary, BIT and spatial values as the connector does; resync gets the default (`bytes`, lower-case hex), and a connector running `binary.handling.mode=base64` needs `--loader-cmd "python -m ch_sink_tools.db_load.clickhouse_loader --binary_handling_mode base64"`.
 
 - **FM-13.08-4 TIMESTAMP values shifted by a randomly chosen DST zone**
   - **Trigger**: the packaged loader runs on a date when DST zones are at `+00:00` (northern winter), and the
@@ -733,8 +750,8 @@ cannot see. `patch` refuses a suffix that resolves to an existing non-scratch da
   - **Recovery**: re-load with the legacy loader (`--loader-cmd`, deterministic zone; beware D-13.08-12) or
     with `PYTHONHASHSEED` fixed to a value that picks a UTC zone, after fixing the code.
   - **RTO**: one reload (unmeasured).
-  - **Test**: GAP: a loader test that pins "now" to January and asserts the returned zone has no DST for every hash seed.
-  - **DEFECT**: D-13.08-2. The dump zone is picked from an unordered set and may be a DST zone.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestDumpTimezoneMapping::test_deterministic_across_hash_seeds`
+  - **FIXED**: D-13.08-2 (= D-13.04-2). `+00:00` maps to `UTC` independent of the date and hash seed, and the zone comes from `@.json` `tzUtc`, which `isolate_table_dir` now hard-links into each per-table directory.
 
 - **FM-13.08-5 Legacy-engine table: reloaded rows get `_sign = 0`**
   - **Trigger**: the live table uses the legacy layout `ReplacingMergeTree(_version)` with `_sign Int8` (no default).
@@ -950,15 +967,15 @@ cannot see. `patch` refuses a suffix that resolves to an existing non-scratch da
   - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestRewindAfterFailover::test_rewind_carries_the_captured_gtid_set` (skipped). GAP for the other three.
   - **DEFECT**: D-13.08-9, D-13.08-16, D-13.08-17 and D-13.08-28. The rewind's safety rests on unchecked manual preconditions.
 
-Summary: 22 failure modes, 18 DEFECT, 19 GAP.
+Summary: 22 failure modes, 16 DEFECT, 17 GAP.
 
 ---
 
 ## 7. Defect Register
 | ID | Severity | Copy (legacy/packaged/both) | Location | Evidence | Summary |
 |---|---|---|---|---|---|
-| D-13.08-1 | S1 | both (loader) | `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py:399` (legacy same branch), reached from `mysql_resync.py:353` | reproduced (loader `main()` with resync's argv: `` `b` ``,`` `vb` ``,`` `bt` `` selected verbatim) | Binary columns are loaded as the dump's text, never as the connector's `bytes`-mode lower-case hex. Base64-mode agreement depends on MySQL Shell line wrapping (unverified) |
-| D-13.08-2 | S1 | packaged (loader) | `ch_sink_tools/db_load/clickhouse_loader.py:268-285,347,517` | reproduced (9/30 hash seeds pick a DST zone in January) | `TIMESTAMP` parse zone is the first `+00:00` zone in set hash order. Summer values are shifted 1–2 h when a DST zone is picked |
+| D-13.08-1 | S1 | both (loader) | `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py:399` (legacy same branch), reached from `mysql_resync.py:353` | reproduced (loader `main()` with resync's argv: `` `b` ``,`` `vb` ``,`` `bt` `` selected verbatim) | FIXED (with D-13.04-3): rendered as the connector stores them; default `bytes` (lower-case hex), other modes via `--loader-cmd ... --binary_handling_mode`. Test `test_loader_s1_fixes.py::TestBinaryRepresentation`. Was: binary columns loaded as the dump's base64 text |
+| D-13.08-2 | S1 | packaged (loader) | `ch_sink_tools/db_load/clickhouse_loader.py:268-285,347,517` | reproduced (9/30 hash seeds pick a DST zone in January) | FIXED (with D-13.04-2): deterministic `UTC` for a `tzUtc` dump; `@.json` linked into the per-table directory. Test `test_loader_s1_fixes.py::TestDumpTimezoneMapping`. Was: the first `+00:00` zone in set hash order, shifting summer values 1–2 h when a DST zone was picked |
 | D-13.08-3 | S1 | both | `mysql_resync.py:353` (loader skips `_sign`) + connector DDL `_sign Int8` with no default | code-read | Legacy-engine tables: reloaded rows get `_sign = 0` and vanish from `_sign > 0` readers (including the checksum) while the tool reports `REPLACED_OK` |
 | D-13.08-4 | S1 | packaged (tool) | `mysql_resync.py:507,519` | reproduced (1000/1000 plus 0/5 → all `REPLACED_OK`, exit 0) | Canary threshold applies to the pooled ratio, so a table whose rows all differ passes |
 | D-13.08-5 | S1 | packaged | `mysql_resync.py:536-550` | code-read | No check that the connector is at or past the recorded position before `REPLACE`. A lagging connector's older after-images outrank the `_version = 0` reloaded rows and undo the repair |
