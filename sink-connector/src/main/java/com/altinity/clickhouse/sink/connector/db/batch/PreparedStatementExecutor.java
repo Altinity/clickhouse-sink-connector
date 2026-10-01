@@ -284,6 +284,12 @@ public class PreparedStatementExecutor {
         // the driver renders a whole chunk as SQL text in memory before it is
         // sent, so on a wide-row table the row count alone bounds nothing.
         long maxBytesInBatch = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_BYTES.toString());
+        // A chunk whose rendered text would be large is streamed to a spill file
+        // and sent from disk instead of being rendered in memory by the driver
+        // (spec 03.06 section 3.4): a row bigger than the heap can render then
+        // costs disk, not an OutOfMemoryError and a crash loop (FM-03.06-5).
+        long spillThreshold = config.getLong(ClickHouseSinkConnectorConfigVariables.INSERT_SPILL_THRESHOLD_BYTES.toString());
+        String spillDirectory = config.getString(ClickHouseSinkConnectorConfigVariables.INSERT_SPILL_DIRECTORY.toString());
         List<ClickHouseStruct> failedRecords = new ArrayList<>();
 
         BatchChunker.chunk(entry.getValue(), maxRecordsInBatch, maxBytesInBatch).forEach(batch -> {
@@ -295,7 +301,8 @@ public class PreparedStatementExecutor {
             if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
                 replicationHistoryHandler = new ReplicationHistoryHandler(config, this.serverTimeZone, metadata);
             }
-            try (PreparedStatement ps = metadata.getPreparedStatement(conn, insertQuery)) {
+            try (PreparedStatement ps = SpillingInsertStatement.maybeWrap(
+                    metadata.getPreparedStatement(conn, insertQuery), conn, batch, spillThreshold, spillDirectory)) {
 
                 for (ClickHouseStruct record : batch) {
                     boolean updateRecord = false;
@@ -472,7 +479,9 @@ public class PreparedStatementExecutor {
                 log.info("*************** EXECUTED BATCH Successfully " + "Records: " + batch.size() + "************** " +
                         "task(" + taskId + ")" + " Thread ID: " +
                         Thread.currentThread().getName() + " Result: " +
-                        describeBatchResult(batchResult) + " Database: "
+                        describeBatchResult(batchResult)
+                        + (SpillingInsertStatement.isSpilling(ps) ? " (sent from a spill file)" : "")
+                        + " Database: "
                         + databaseName + " Table: " + tableName);
                 result.set(true);
 

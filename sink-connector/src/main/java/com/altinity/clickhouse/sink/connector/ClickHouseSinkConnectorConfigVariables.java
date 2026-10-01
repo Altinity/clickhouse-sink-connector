@@ -93,6 +93,13 @@ public enum ClickHouseSinkConnectorConfigVariables {
     // The most estimated bytes one JDBC INSERT chunk may hold (spec 03.06
     // section 3.1); the driver renders a chunk as SQL text in memory twice.
     BUFFER_MAX_BYTES("buffer.max.bytes"),
+    // A chunk whose rendered size bound reaches this many bytes is written through
+    // the spill-to-disk INSERT path instead of being rendered in memory by the
+    // driver (spec 03.06 section 3.4). 0 = every chunk, negative = never.
+    INSERT_SPILL_THRESHOLD_BYTES("insert.spill.threshold.bytes"),
+    // Directory of the spill files (spec 03.06 section 3.4); a per-process
+    // subdirectory <pid> is created under it.
+    INSERT_SPILL_DIRECTORY("insert.spill.directory"),
     // How long a routing-mode worker may wait for more queued batches before it
     // writes a coalesced batch that is still under buffer.max.records /
     // buffer.max.bytes (spec 03.03 section 3.1.1 step 6). 0 = write at once.

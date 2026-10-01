@@ -89,6 +89,13 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     public static final long DEFAULT_BUFFER_MAX_BYTES = 256L << 20;
 
     /**
+     * Default {@code insert.spill.threshold.bytes} (spec 03.06 section 3.4):
+     * a chunk whose rendered size bound reaches 32 MiB is streamed to a spill
+     * file and sent from disk instead of being rendered in memory.
+     */
+    public static final long DEFAULT_INSERT_SPILL_THRESHOLD_BYTES = 32L << 20;
+
+    /**
      * Default {@code coalesce.max.wait.ms}: a worker writes what is queued at
      * once and never waits for more (spec 03.03 section 3.1.1 step 6).
      */
@@ -859,6 +866,34 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_BYTES.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.INSERT_SPILL_THRESHOLD_BYTES.toString(),
+                        Type.LONG,
+                        DEFAULT_INSERT_SPILL_THRESHOLD_BYTES,
+                        Importance.MEDIUM,
+                        "A JDBC INSERT chunk whose rendered size bound (strings at their length, "
+                                + "binary values at twice theirs) reaches this many bytes is written to a "
+                                + "spill file under insert.spill.directory and sent from disk, instead of "
+                                + "being rendered as SQL text in memory by the driver; a value of 64 KiB or "
+                                + "more is then streamed from the row itself. Default 32 MiB; 0 spills every "
+                                + "chunk; a negative value disables the spill path.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.INSERT_SPILL_THRESHOLD_BYTES.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.INSERT_SPILL_DIRECTORY.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.LOW,
+                        "Directory of the spill files of the spill-to-disk INSERT path; the connector "
+                                + "creates a <pid> subdirectory under it and removes the files of dead "
+                                + "processes from its siblings. Needs free space for one rendered chunk per "
+                                + "worker thread. Default: <java.io.tmpdir>/clickhouse-sink-connector-spill.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.INSERT_SPILL_DIRECTORY.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.COALESCE_MAX_WAIT_MS.toString(),
                         Type.LONG,
