@@ -106,6 +106,8 @@ SOURCE_TIMEZONE = "UTC"           # database.connectionTimeZone
 BINARY_ENCODING = "base64"        # binary.handling.mode
 OFFSET_TABLE = "altinity_sink_connector.replica_source_info"   # offset.storage.jdbc.table.name
 SNAPSHOT_DB = "pyops_snapshot"    # the fresh database clickhouse_loader fills from the dump
+FLAGS_DB = "pyflags"              # not replicated: generated bit-flag columns, snapshot path only
+FLAGS_SNAPSHOT_DB = "pyflags_snapshot"
 WINDOW_ZONE = ZoneInfo("America/Chicago")   # the bitemporal where's CONVERT_TZ zone
 
 # (database, table) seeded and replicated; ClickHouse database via ch_database().

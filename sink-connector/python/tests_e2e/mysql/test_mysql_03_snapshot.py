@@ -10,9 +10,9 @@ import shutil
 
 import pytest
 
-from mysql_e2e_support import (CH_HOST, DB, JOB_LOG_NON_PARTITIONED, JOB_LOG_PARTITIONED, MYSQL_HOST, SNAPSHOT_DB,
-                               binlog_position_key, ch_query, checksummed_tables, parse_counts, parse_verdicts,
-                               warning_lines)
+from mysql_e2e_support import (BINARY_ENCODING, CH_HOST, DB, FLAGS_DB, FLAGS_SNAPSHOT_DB, JOB_LOG_NON_PARTITIONED,
+                               JOB_LOG_PARTITIONED, MYSQL_HOST, SNAPSHOT_DB, SOURCE_TIMEZONE, binlog_position_key,
+                               ch_query, checksummed_tables, mysql_query, parse_counts, parse_verdicts, warning_lines)
 
 SNAPSHOT_TABLES = {"fills", "positions_bt", "quotes", "temp_x", "temp_events_by_days", "instruments",
                    "keyless_events", "ledger", "temp_checksum_named", "fills_p1", "heartbeat",
@@ -84,6 +84,59 @@ def test_loaded_values_equal_the_streamed_values(snapshot_load, table):
     streamed = rows(DB)
     assert len(streamed) > 0
     assert rows(SNAPSHOT_DB) == streamed
+
+
+FLAG_COLUMNS = "id, attrs, is_reversal, is_pending, is_manual"
+# MySQL's values: (attrs & (1 << n)) > 0 for n = 0, 2, 4, over unsigned 64-bit integers; NULL for a NULL attrs.
+EXPECTED_FLAGS = [(1, 5, 1, 1, 0), (2, None, None, None, None), (3, 16, 0, 0, 1), (4, -1, 1, 1, 1),
+                  (5, 0, 0, 0, 0), (6, 21, 1, 1, 1)]
+
+
+@pytest.fixture(scope="module")
+def flags_load(ws):
+    """The snapshot path on pyflags.trade_flags (generated bit-flag columns, two VIRTUAL and one STORED):
+    mysql_dumper, then clickhouse_loader into a fresh database with the connector's settings."""
+    dump_dir = ws.ws / f"dump_{FLAGS_DB}"
+    dump = ws.py("db_dump/mysql_dumper.py", "--mysql_host", MYSQL_HOST, "--mysql_database", FLAGS_DB,
+                 "--defaults_file", ".my.cnf", "--dump_dir", dump_dir, "--threads", "2")
+    assert dump.returncode == 0, dump
+    # DESTRUCTIVE: drops only the suite's own scratch database (pyflags_snapshot) on the disposable
+    # e2e ClickHouse, so the loader fills a FRESH database; nothing else is touched.
+    ch_query(f"DROP DATABASE IF EXISTS `{FLAGS_SNAPSHOT_DB}`")
+    loader = ["db_load/clickhouse_loader.py"]
+    argv = loader + ["--clickhouse_host", CH_HOST, "--clickhouse_config_file", "clickhouse-client.xml",
+                     "--clickhouse_database", FLAGS_SNAPSHOT_DB, "--mysql_source_database", FLAGS_DB,
+                     "--dump_dir", dump_dir, "--threads", "2", "--mysqlshell", "--rmt_delete_support",
+                     "--clickhouse_datetime_timezone", SOURCE_TIMEZONE]
+    if ws.supports("--binary_handling_mode", *loader):
+        argv += ["--binary_handling_mode", BINARY_ENCODING]
+    return ws.py(*argv)
+
+
+def test_loader_computes_generated_bit_flag_columns(flags_load):
+    """The dump carries no generated values: the loaded rows get them from DEFAULT expressions translated
+    from MySQL's (bitAnd/bitShiftLeft for & and <<), equal to MySQL's own values (spec 13.04 D-13.04-33)."""
+    assert flags_load.returncode == 0, flags_load
+    kinds = dict(ch_query(f"SELECT name, default_kind FROM system.columns WHERE database = '{FLAGS_SNAPSHOT_DB}' "
+                          "AND table = 'trade_flags' AND name IN ('is_reversal', 'is_pending', 'is_manual')"))
+    assert kinds == {"is_reversal": "DEFAULT", "is_pending": "DEFAULT", "is_manual": "DEFAULT"}, kinds
+    loaded = [tuple(r) for r in ch_query(f"SELECT {FLAG_COLUMNS} FROM `{FLAGS_SNAPSHOT_DB}`.trade_flags FINAL "
+                                         "WHERE is_deleted = 0 ORDER BY id")]
+    source = [tuple(r) for r in mysql_query(f"SELECT {FLAG_COLUMNS} FROM `{FLAGS_DB}`.trade_flags ORDER BY id")]
+    assert source == EXPECTED_FLAGS, source
+    assert loaded == source, loaded
+
+
+def test_production_job_matches_the_loaded_generated_columns(ws, flags_load):
+    """The production job compares MySQL's generated values with the loaded table (database_override_map
+    pyflags:pyflags_snapshot): MATCH."""
+    assert flags_load.returncode == 0, flags_load
+    config = ws.write_job_config("top_level_table_checksum_flags.yaml", databases=[FLAGS_DB],
+                                 override_map=f"{FLAGS_DB}:{FLAGS_SNAPSHOT_DB}", ignored_columns=[], where_overrides={})
+    result = ws.run_job([ws.job_command(config, partitioned=False)])
+    assert result.returncode == 0, result
+    assert warning_lines(result.all_logs) == [], result
+    assert parse_verdicts(result.log(JOB_LOG_NON_PARTITIONED)) == {f"{FLAGS_DB}.trade_flags": "MATCH"}, result
 
 
 COUNT_TABLES = ["fills", "positions_bt", "quotes", "instruments", "keyless_events", "ledger"]

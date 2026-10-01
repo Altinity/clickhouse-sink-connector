@@ -38,8 +38,15 @@ only the PostgreSQL dumper consumes today. The most consequential findings:
 - **Other S1 defects (fixed).** A `-` in a mydumper `--dump_dir` no longer hides the data files. A source
   column named `_sign` or `_is_deleted` is loaded, and a source column that collides with an appended
   bookkeeping column is refused loudly. A lower-case `null` modifier is recorded as nullable.
-- **Divergence from the streaming connector (S2).** Generated columns become `MATERIALIZED`, which the
-  connector's own inserts then fail on (Spec 06.06). ENUM becomes `Enum8` (the stream uses `String`), and
+- **Generated columns (S1, fixed).** The MySQL expression used to be copied verbatim as `MATERIALIZED`, so a
+  bit operator (`&`, `<<`, which ClickHouse lacks) failed the CREATE and the whole load (`Code: 62`, observed
+  on a real schema). A generated column is now `DEFAULT <expression>` (as in the streaming DDL path). The
+  expression is passed through as written, except the constructs ClickHouse rejects, which are translated on the
+  parse tree with MySQL's value: charset introducers, the bit operators (with MySQL precedence),
+  `CONVERT(... USING ...)` and `IFNULL`/`COALESCE` of a string and a number or date. Where ClickHouse would
+  compute a different value (a bit operator on a non-integer operand, CONVERT/IFNULL text of a floating-point
+  column) the table is refused loudly (D-13.04-33, §3.16).
+- **Divergence from the streaming connector (S2).** ENUM becomes `Enum8` (the stream uses `String`), and
   DATETIME/TIMESTAMP carry no zone (the stream uses `'UTC'`). BIT(1) became `String` (the stream uses
   `Bool`); that part is fixed.
 - **Destructive and credential defects (S2).** `--truncate_tables` truncates
@@ -305,7 +312,9 @@ Every value except `TIMESTAMP` columns is parsed as `String` and converted by Cl
 - A column is kept when `is_loaded_column`: `(source_column or name not in virtual_columns) and not generated`.
   Every ANTLR column dict carries `source_column: True`, because the ANTLR translator's `columns_map` holds
   only MySQL columns (the bookkeeping columns are appended to the DDL, never to the map). So:
-  - Generated columns are always excluded. They are `MATERIALIZED` in the target and cannot be inserted.
+  - Generated columns are always excluded: the MySQL Shell dump carries no generated values. The target
+    declares them `DEFAULT <translated expression>` (§3.16), so each loaded row gets the value computed from
+    its columns.
   - The bookkeeping columns `_version`, `is_deleted`/`_is_deleted` and `_sign` are never in the INSERT, so
     the target defaults apply (§3.11).
   - A **source** column is always loaded whatever its name: `is_deleted`, `_sign` (with
@@ -691,7 +700,7 @@ exact emitted text by a server was **not** verified offline.
 | `NULL`, any case (`null`, `Null`) | appended verbatim. `nullable=True` (case-insensitive test `text.upper() == "NULL"`). Before the fix only the exact upper-case text matched, and a lower-case `null` fell into the NOT branch with `nullable=False`, so the load structure declared `String` (D-13.04-7, fixed). | kept. `nullable=True`. |
 | no modifier | ` NULL` appended. `nullable=True`. MySQL columns are nullable by default; ClickHouse columns are not. | `DEFAULT NULL` appended on lines without `NULL`/`DEFAULT`, but the type is **not** made Nullable |
 | `DEFAULT <expr>`, `ON UPDATE`, `AUTO_INCREMENT`, `COMMENT`, `INVISIBLE`, `SRID` | dropped (never copied). The target has no defaults except the bookkeeping columns. | `\bDEFAULT\b.*,` removes up to the **last comma on the line**. `AUTO_INCREMENT` removed. |
-| `GENERATED ALWAYS AS (expr) VIRTUAL\|STORED` | `<type> NULL MATERIALIZED <expr>`. The MySQL expression is copied verbatim after `re.sub(r"\b_.*?'", "'", text)` strips charset introducers (`_utf8mb4'x'` → `'x'`). That regex also deletes any text from a word starting with `_` up to the next quote, e.g. `` if((`_x` > 0),'pos','neg') `` → `` if((`'pos','neg') `` (reproduced, D-13.04-23). VIRTUAL and STORED both become MATERIALIZED (D-13.04-9). | the column line is deleted |
+| `GENERATED ALWAYS AS (expr) VIRTUAL\|STORED` | `<type> NULL DEFAULT <translated expr>` for VIRTUAL and STORED alike, as the streaming DDL path does (`DEFAULT`, never `MATERIALIZED`, which rejects the values the connector streams). The expression is rendered from the parse tree (`GeneratedExpressionTranslator`, after every column's type is known) token by token with its original spacing, so anything ClickHouse already accepted (functions such as `concat`/`ifnull`/`coalesce`/`if`, CASE, string literals, comparisons, arithmetic, AND/OR/NOT, IS [NOT] NULL) is passed through unchanged; if ClickHouse rejects such an expression, the CREATE fails loudly with ClickHouse's error, as before. Changes, all limited to constructs ClickHouse rejects: charset-introducer tokens (`_utf8mb4'x'` → `'x'`) are dropped; `CONVERT(expr USING charset)` becomes `toString(expr)`, as the streaming connector renders it (ClickHouse strings are bytes; NULL stays NULL), `toDecimalString(col, scale)` for a DECIMAL column (toString drops the trailing zeros MySQL prints: `1.50` → `1.5`), refused for a floating-point column (MySQL writes `1e20`, toString `100000000000000000000`) or a BIT/BINARY/BLOB column; `IFNULL`/`COALESCE` over a string and a column of another type, which MySQL turns into the column's text but ClickHouse rejects (`Code: 386`, no common type for String and a number or date), get that column as `toString(col)` (integer, date, datetime, timestamp) or `toDecimalString(col, scale)` (decimal), refused for a floating-point or BIT(1) (Bool) column; arguments of one kind or of unknown type are passed through; numbers MySQL writes as text (CONCAT and CONCAT_WS arguments, and the whole expression of a string-typed generated column) keep MySQL's text: a DECIMAL-valued expression (decimal and integer columns and literals combined with `+ - * /`) becomes `toDecimalString(<exact decimal value>, <MySQL scale>)` (`+ -` keep the larger scale, `*` adds the scales, `/` has the dividend's scale plus div_precision_increment 4, at most 30, computed with `divideDecimal` and rounded half away from zero, NULL for a zero or NULL divisor: `3/2` → `1.5000` where ClickHouse writes `1.5`), CONCAT_WS with a string-literal separator becomes `arrayStringConcat(arrayFilter(__v -> __v IS NOT NULL, [texts]), sep)` because MySQL skips NULL values where ClickHouse returns NULL; a FLOAT/DOUBLE or BIT(1) column, or a quotient the loader cannot model, written as text loaded before and still loads unchanged, with a WARNING naming the table, the column and the divergence; a DECIMAL-valued expression stored in a DECIMAL(p, s) generated column is computed with the same exact decimal arithmetic and rounded half away from zero to s digits, as MySQL's assignment rounds (`round(<exact value>, s)`): ClickHouse alone computes `/` as a Float64 and the cast to the column truncates (`2/3` into decimal(10,4): `0.6666`, MySQL `0.6667`; `0.15` into one decimal: `0.1`, MySQL `0.2`), and a zero divisor raised `Code: 153` at insert where MySQL gives NULL; integer-only expressions are exact and passed through; and the bit operators ClickHouse lacks are translated: `& \| ^ << >>` as `bitAnd`/`bitOr`/`bitXor`/`bitShiftLeft`/`bitShiftRight` on `toUInt64` operands (MySQL computes bit operations on unsigned 64-bit integers), a shift by 64 or more giving 0 as in MySQL (`if(toUInt64(n) >= 64, bitAnd(toUInt64(a), 0), ...)`; ClickHouse's own result there depends on the code path), `~a` as `bitNot(toUInt64(a))`. A bit/arithmetic chain that holds a bit operator is regrouped by MySQL precedence (`^`, then `* / % DIV MOD`, then `+ -`, then `<< >>`, then `&`, then `\|`): the grammar gives every bit operator one level above every arithmetic operator, so its tree cannot be copied; chains without a bit operator are passed through and ClickHouse applies the same precedence. A NULL operand gives NULL as in MySQL. A bit operator on a known non-integer operand (a column of a non-integer type, a decimal, string, hexadecimal or bit literal) raises `UnsafeTableDefinitionError` naming the table and the column: MySQL rounds such an operand to an integer (`2.5 & 3` = 3) where `toUInt64` truncates (`clickhouse local`: `bitAnd(toUInt64(toDecimal64(2.5, 1)), toUInt64(3))` = 2), and evaluates binary strings bytewise; these expressions never loaded before (no `&` in ClickHouse), so the refusal breaks nothing. Before the fix the expression was copied verbatim as `MATERIALIZED <expr>` after a charset-introducer strip that also cut `_`-prefixed identifiers, so `&`/`<<` failed the CREATE with `Code: 62` (D-13.04-33, -9, -23, fixed). | refused: `UnsafeTableDefinitionError` (it deleted the column line, D-13.04-33) |
 | `CHARACTER SET` / `COLLATE` | `CHARACTER SET x [COLLATE y]` stripped. A bare `COLLATE y` is kept. | both stripped |
 | Indexes, `UNIQUE`, `FOREIGN KEY`, `CHECK`, `CONSTRAINT`, `FULLTEXT` | ignored | lines containing `KEY`, `UNIQUE`, `CONSTRAINT`, `foreign` (case-sensitive words) are deleted. A column line containing upper-case `KEY` is deleted with them. |
 | Table options (`ENGINE=InnoDB`, charset, row format, comments) | ignored | `ENGINE=InnoDB[^;]*` is replaced by the ClickHouse engine clause. Other engines (`MyISAM`) are left in. |
@@ -709,7 +718,9 @@ The substitutions are applied in this order to the whole statement text:
    timestamp rules (unreachable), `\spoint\s` → Point, `\sgeometry\s` → Geometry.
 5. `\bDEFAULT\b.*,` → `,`.
 6. Strip COLLATE and CHARACTER SET.
-7. Delete generated-column lines and `VIRTUAL`.
+7. Delete generated-column lines and `VIRTUAL`. Unreachable since D-13.04-33: a statement with
+   `GENERATED ALWAYS` is refused before any substitution, because deleting the line would silently drop a
+   MySQL column.
 8. Delete CONSTRAINT/PRIMARY KEY/UNIQUE/KEY/foreign lines.
 9. Insert the bookkeeping columns before `) ENGINE` and replace `ENGINE=InnoDB...`.
 10. Line loop: append ` DEFAULT NULL` to lines lacking NULL/DEFAULT. Match `^\s*(`.*?`)\s+(.*?)\s+` to record
@@ -737,8 +748,11 @@ on both copies. The output is identical in both except where §3.15 notes otherw
 | `` CREATE TABLE `order` (`select` int NOT NULL, `from` varchar(10) NOT NULL, `My Col` int ..., PRIMARY KEY (`select`,`from`)) `` | `` CREATE TABLE `order` (`select` int NOT NULL, `from` varchar(10) NOT NULL, `My Col` int NULL, ... order by (`select`,`from`) ``. Backticks preserved, reserved words and spaces safe. |
 | keyless table `a int NOT NULL, msg varchar(20) NOT NULL, UNIQUE KEY u (msg(10),a)` | `... engine=ReplacingMergeTree(_version,is_deleted)  order by (`msg`,`a`)` |
 | keyless table `a int DEFAULT NULL, b varchar(10) NOT NULL, g int GENERATED ... VIRTUAL` | `... order by (`a`,`b`) SETTINGS allow_nullable_key=1` |
-| `` `b` int GENERATED ALWAYS AS ((`a` * 2)) VIRTUAL `` | `` `b` int NULL MATERIALIZED (`a` * 2) `` |
-| `` `c` varchar(20) GENERATED ALWAYS AS (concat(_utf8mb4'x_', `a`)) STORED `` | `` `c` varchar(20) NULL MATERIALIZED concat('x_', `a`) `` |
+| `` `b` int GENERATED ALWAYS AS ((`a` * 2)) VIRTUAL `` | `` `b` int NULL DEFAULT (`a` * 2) `` (was `MATERIALIZED (`a` * 2)`) |
+| `` `c` varchar(20) GENERATED ALWAYS AS (concat(_utf8mb4'x_', `a`)) STORED `` | `` `c` varchar(20) NULL DEFAULT concat('x_', `a`) `` (was `MATERIALIZED concat('x_', `a`)`) |
+| `` `f` int GENERATED ALWAYS AS (((`attrs` & (1 << 2)) > 0)) VIRTUAL `` | `` `f` int NULL DEFAULT ((bitAnd(toUInt64(`attrs`), toUInt64((if(toUInt64(2) >= 64, bitAnd(toUInt64(1), 0), bitShiftLeft(toUInt64(1), toUInt64(2))))))) > 0) `` (was `MATERIALIZED` with `&` and `<<`, `Code: 62`) |
+| `` `k` varchar(200) GENERATED ALWAYS AS (concat(`id`,_latin1'-',convert(ifnull(`n`,_utf8mb4'') using latin1),_latin1'-',ifnull(`p`,_latin1''))) STORED `` with `n int`, `p decimal(12,4)` | `` `k` varchar(200) NULL DEFAULT concat(`id`,'-',toString(ifnull(toString(`n`),'')),'-',ifnull(toDecimalString(`p`, 4),'')) `` (was a `Code: 62` at `using`, then `Code: 386`) |
+| `` `p` bigint GENERATED ALWAYS AS (`a` + `b` & `c`) VIRTUAL `` | `` `p` bigint NULL DEFAULT bitAnd(toUInt64((`a` + `b`)), toUInt64(`c`)) `` (MySQL precedence: `+` before `&`) |
 | `/*!50500 PARTITION BY RANGE COLUMNS(d) (...) */` | `engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY d order by (`id`,`d`)` |
 | `/*!50100 PARTITION BY RANGE (year(`d`)) ... */` | no PARTITION BY |
 | `PRIMARY KEY (`name`(10))` | `order by (`name`(10))` |
@@ -891,7 +905,7 @@ This is D-13.04-26.
 |---|---|---|
 | INV-13.04-1 | Every loaded row carries `_version = 0` and `is_deleted = 0` (or `_sign = 1`), strictly below every streamed version, so streaming changes after the dump point always win and never tie. | **Holds** (§3.11) |
 | INV-13.04-2 | A table is created as `ReplacingMergeTree` keyed so that distinct source rows stay distinct. | **Holds** for keyless tables (keyed like the stream, §3.12; rows identical in every column still collapse, as on the stream). **Violated** for prefix PKs (D-13.04-16) |
-| INV-13.04-3 | Column types equal the types the streaming DDL path would declare for the same source column. | **Violated** for ENUM, DATETIME/TIMESTAMP zone, generated columns, overrides (D-13.04-9/10/27). BIT(1) holds since the fix (`Bool`) |
+| INV-13.04-3 | Column types equal the types the streaming DDL path would declare for the same source column. | **Violated** for ENUM, DATETIME/TIMESTAMP zone, overrides (D-13.04-10/27). BIT(1) holds since the fix (`Bool`); generated columns are `DEFAULT` like the streaming path since D-13.04-33 (the expression is translated, where the streaming path copies it) |
 | INV-13.04-4 | Values are stored in the same canonical rendering the streaming writer stores. | **Holds** for binary/BIT(n>1)/spatial when `--binary_handling_mode`/`--persist_raw_bytes` match the connector (§3.7.1). **Holds** for BIT(1) since the fix. **Violated** for TIME(0) (D-13.04-10). TIMESTAMP and DATETIME(6) values of a MySQL Shell dump loaded with `--clickhouse_datetime_timezone UTC` equal the streamed values (verified end to end, connector `database.connectionTimeZone: UTC`); other zones unverified. |
 | INV-13.04-5 | Every source row in the dump is loaded, or the loader exits non-zero. | **Violated** only by chunk files the glob does not find and the absent count check (D-13.04-19). D-13.04-4/5/6 are fixed. |
 | INV-13.04-6 | A failed chunk makes the run fail (non-zero exit). | **Holds** (clickhouse-client, decompressor and `sed` failures, §3.10) |
@@ -943,6 +957,43 @@ it is not installed):
 - `TestMydumperDataFileDiscovery`: D-13.04-5. `test_resync_isolated_table_dir_carries_the_dump_metadata`:
   the `@.json` hand-off to `ch-mysql-resync` loads.
 
+`sink-connector/python/db_load/tests/test_loader_generated_columns.py` covers generated columns in both copies
+(D-13.04-33, -9, -23; the value checks run the translated DDL in `clickhouse local`, skipped when it is not
+installed; with it the offline suites give 653 passed, 4 skipped):
+
+- `TestBitFlagColumns`: the real-schema columns `((attrs & (1 << n)) > 0)` (two VIRTUAL, one STORED) become
+  `DEFAULT` expressions, stay out of the INSERT, and give MySQL's values for 5, NULL, 16, -1 and 0.
+- `TestPrecedenceAndOperators`: unparenthesised chains regrouped by MySQL precedence, values equal to a model of
+  MySQL's unsigned 64-bit bit operations for ten expressions over six rows, a shift by 64 or more giving 0 on
+  both ClickHouse code paths, `_`-prefixed identifiers kept.
+- `TestPassThrough`: expressions ClickHouse already accepted (IS [NOT] NULL, CASE, arithmetic, `/`, AND,
+  `coalesce`, `ifnull`, `concat`, `if`, string comparisons) are emitted exactly as before except `DEFAULT` for
+  `MATERIALIZED`, and load in `clickhouse local` (they also loaded with the pre-fix loader); a STORED
+  `concat(id,'-',ifnull(account,''),'-',ifnull(book,''))` key loads with MySQL's values; `concat(_code,'x')`
+  keeps `_code` (D-13.01-3).
+- `TestNonIntegerBitOperands`: a bit operator on a decimal, floating-point or string column or a decimal literal
+  raises `UnsafeTableDefinitionError` naming the table and the column, with the `clickhouse local` evidence that
+  `toUInt64` truncates where MySQL rounds.
+- `TestConvertUsingAndMixedIfnull`: a STORED key with `CONVERT(... USING latin1)` and `IFNULL` of an integer, a
+  date and a decimal with `''` loads with MySQL's values (NULL propagation of CONVERT and CONCAT included);
+  `COALESCE` of a number and a string; same-kind `IFNULL`/`COALESCE` unchanged; CONVERT/IFNULL over a
+  floating-point, binary or BIT(1) column refused, with the `clickhouse local` texts that differ from MySQL's.
+- `TestNumbersWrittenAsText`: a decimal column in CONCAT, quotients and decimal sums and products in string-typed
+  columns, and CONCAT_WS give MySQL's text for six rows (negative, zero divisor, NULL, empty string) against a
+  model of MySQL's precision rules; a numeric column is untouched; FLOAT/DOUBLE and BIT(1) in CONCAT and an
+  unmodelled quotient still load, with a WARNING naming the table, the column and the divergence.
+- `TestDecimalColumns`: quotients, a decimal product, a quotient plus a decimal and an integer product stored in
+  DECIMAL generated columns of other scales give MySQL's values for seven rows (2/3 → 0.6667, negative halves,
+  zero and NULL divisors) against a Python `Decimal` model of MySQL's scale and rounding rules, with the
+  `clickhouse local` evidence that the untranslated cast truncates.
+- `TestRegexpFallback`: the regexp fallback refuses generated columns.
+
+A throwaway sweep (outside the repository) translated, the way the loader does, every table with generated
+columns in the DDL of a production-shaped sandbox (5 distinct tables, 12 generated columns, 9 distinct
+expressions: bit flags `((x & (1 << n)) > 0)`, an `IS NOT NULL ... AND ...` chain, and one concatenated key with
+19 `CONVERT ... USING`, 32 `IFNULL` and 64 charset introducers) and executed each CREATE plus an INSERT in
+`clickhouse local`: 2.11.0 creates 3 of 5 (`Code: 62` at `&` and at `using`), the fix creates 5 of 5.
+
 No test covers the type mapping table, overrides or the reconciler. BIT(1) is covered by
 `sink-connector/python/db_load/tests/test_loader_bit1_bool.py` (both copies: `Bool` declared, true/false
 loaded under every binary mode, values checked with `clickhouse local`).
@@ -960,6 +1011,10 @@ settings of the connector that streams the same tables, and verifies it with the
 - `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_loader_fails_loudly_on_a_corrupt_dump_chunk` (D-13.04-4)
 - `sink-connector/python/tests_e2e/mysql/test_mysql_05_justification.py::test_loader_loads_a_table_with_a_dollar_in_its_name`
   (strict xfail, D-13.04-32)
+- `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_loader_computes_generated_bit_flag_columns`
+  and `::test_production_job_matches_the_loaded_generated_columns` (D-13.04-33: a table with VIRTUAL and STORED
+  bit-flag columns in a database the connector does not replicate, dumped and loaded, values equal to MySQL's,
+  the production job MATCH)
 - the packaged loader through `ch-mysql-resync patch` (Spec 13.08):
   `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_unlogged_change_is_reported_then_repaired_by_resync`
 
@@ -978,7 +1033,8 @@ writes `DEFAULT NULL` in upper case, so a lower-case `null` never reaches the lo
    **Covered**. An empty chunk is refused unless the dump metadata says the chunk is empty: GAP (D-13.04-19).
 5. The mydumper data glob is independent of `-` in `--dump_dir`. **Covered**.
 6. `--truncate_tables` targets `--clickhouse_database`.
-7. Generated columns are emitted as `DEFAULT (expr)`, matching Spec 06.06.
+7. Generated columns are emitted as `DEFAULT (expr)`, matching Spec 06.06. **Covered** (D-13.04-33, §5.1), with
+   the expression translated rather than copied.
 8. The type mapping in §3.15 equals the streaming DDL path's mapping for every row marked as divergent.
 9. After loading, `count()` per table equals the dump's row count, or the loader exits non-zero.
 10. The packaged loader redacts credentials in logs and exceptions, and quotes them with `shlex.quote`.
@@ -1093,15 +1149,16 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Test**: GAP.
   - **DEFECT**: D-13.04-8.
 
-- **FM-13.04-9 Generated columns become MATERIALIZED and the stream stalls**
-  - **Trigger**: a table with `GENERATED ALWAYS AS` columns is created by the loader and then streamed.
-  - **Behaviour**: `<type> NULL MATERIALIZED <mysql expr>` (`CreateTableMySQLParserListener.py:93-105`). The connector inserts generated values, which ClickHouse rejects for MATERIALIZED columns (Code 44, Spec 06.06 §3.1). MySQL-only functions in the expression make the CREATE itself fail.
-  - **Detection**: connector insert errors and growing lag on that table, or a CREATE error at load.
-  - **Blast radius**: replication of the table, and the batch it shares.
-  - **Recovery**: `ALTER TABLE ... MODIFY COLUMN c <type> DEFAULT <expr>` (metadata only), then resume the connector.
-  - **RTO**: unmeasured (no server). One ALTER plus connector catch-up.
-  - **Test**: GAP.
-  - **DEFECT**: D-13.04-9.
+- **FM-13.04-9 Generated columns break the load or the stream**
+  - **Trigger**: a table with `GENERATED ALWAYS AS` columns is created by the loader, and then streamed.
+  - **Behaviour** (before the fix): `<type> NULL MATERIALIZED <mysql expr>`, the MySQL expression copied verbatim. An operator ClickHouse lacks (`&`, `|`, `^`, `<<`, `>>`, `~`) or a MySQL-only function fails the CREATE (`Code: 62` at `&` on a real schema with bit-flag columns), so the table, and with it the load, fails (loader exit 1). A valid expression gives a MATERIALIZED column, which rejects the values the connector streams (Code 44, Spec 06.06 §3.1).
+  - **Detection**: a CREATE error at load (loud); connector insert errors and growing lag on the table.
+  - **Blast radius**: every table with such a column; the batch it shares with the connector.
+  - **Recovery**: create the table by hand with `DEFAULT <ClickHouse expression>` columns, then run `--data_only`.
+  - **RTO**: unmeasured. Manual DDL time.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_generated_columns.py::TestBitFlagColumns::test_loaded_rows_get_mysql_values`;
+    end to end `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_loader_computes_generated_bit_flag_columns`.
+  - **FIXED**: D-13.04-33, D-13.04-9. `DEFAULT <expression>`, passed through except for charset introducers and the translated bit operators; a bit operator on a non-integer operand refuses the table with `UnsafeTableDefinitionError` naming it.
 
 - **FM-13.04-10 Snapshot types or renderings differ from the stream's**
   - **Trigger**: ENUM, BIT(1), SET, DATETIME/TIMESTAMP, TIME(0) or JSON columns.
@@ -1160,14 +1217,14 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **DEFECT**: D-13.04-14.
 
 - **FM-13.04-14 Emitted DDL is rejected by ClickHouse**
-  - **Trigger**: ZEROFILL, SET, a column-level COLLATE, float dimensions, prefix-length PK, multi-column RANGE COLUMNS, or a generated expression with `_`-prefixed identifiers.
+  - **Trigger**: ZEROFILL, SET, a column-level COLLATE, float dimensions, prefix-length PK, multi-column RANGE COLUMNS. (A generated expression with `_`-prefixed identifiers was one; generated expressions are translated or refused since D-13.04-33.)
   - **Behaviour**: the text is passed verbatim (§3.15, §3.12). The first rejected CREATE aborts the schema phase (exit 1). Later tables are not created.
   - **Detection**: an exception from the driver at CREATE TABLE.
   - **Blast radius**: the schema phase stops at the first bad table.
   - **Recovery**: create the offending tables by hand with corrected DDL, then run `--data_only`.
   - **RTO**: unmeasured (no server). Manual DDL time.
   - **Test**: GAP (needs a server-backed test, §5.2 item 11).
-  - **DEFECT**: D-13.04-15, D-13.04-16, D-13.04-17, D-13.04-23.
+  - **DEFECT**: D-13.04-15, D-13.04-16, D-13.04-17. (D-13.04-23 is fixed.)
 
 - **FM-13.04-15 Raw partition key creates too many partitions**
   - **Trigger**: MySQL `PARTITION BY RANGE COLUMNS(<date or datetime column>)`.
@@ -1278,7 +1335,7 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Test**: GAP.
   - **DEFECT**: D-13.04-27.
 
-Summary: 26 failure modes, 17 DEFECT, 17 GAP.
+Summary: 26 failure modes, 16 DEFECT, 16 GAP (FM-13.04-9 fixed by D-13.04-33).
 
 ---
 
@@ -1294,7 +1351,7 @@ Summary: 26 failure modes, 17 DEFECT, 17 GAP.
 | D-13.04-6 | S1 | both | `db_load/clickhouse_loader.py:388,528,612` (P389,496,580); `CreateTableMySQLParserListener.py:159-167` | reproduced (`r4_pure.py` D: `_sign` dropped from the load list; `_version` duplicated in DDL) | FIXED: every ANTLR source column is loaded (`source_column`); a collision with an appended bookkeeping column (`_version`; `_sign` without `--rmt_delete_support`; `_is_deleted` next to a source `is_deleted`) raises `UnsafeTableDefinitionError`. Test `test_loader_s1_fixes.py::TestSourceColumnsNamedLikeBookkeeping`. Was: such columns silently excluded (NULL), `_version` duplicated. |
 | D-13.04-7 | S1 | both | `CreateTableMySQLParserListener.py:64-89` | reproduced (`r1_translate.py lower_null`: `` `a` varchar(10) null `` gives `nullable False`) | FIXED: case-insensitive `NULL` test. Test `test_loader_s1_fixes.py::TestColumnModifiers::test_lower_case_null_is_nullable`. Was: a lower-case `null` was recorded as NOT NULL, so the load structure declared `String` and NULLs became `''`. |
 | D-13.04-8 | S2 | both | `db_load/clickhouse_loader.py:518-521`; `ch_sink_tools/db_load/clickhouse_loader.py:486-489` | reproduced (`r2_flow.py mysqlsh`: `truncate table mydb.t1`, target `mydb_ch`) | `--truncate_tables` truncates `<mysql_source_database>.<table>`, potentially the live replica, never the target. |
-| D-13.04-9 | S2 | both | `CreateTableMySQLParserListener.py:93-105` | reproduced (DDL `MATERIALIZED (`a` * 2)`); stream rejection per Spec 06.06 §3.1 (code-read) | Generated columns are emitted as `MATERIALIZED <MySQL expr>`. The connector's inserts into them fail (Code 44). The streaming DDL path uses `DEFAULT`. |
+| D-13.04-9 | S2 | both | `CreateTableMySQLParserListener.py:93-105` | reproduced (DDL `MATERIALIZED (`a` * 2)`); stream rejection per Spec 06.06 §3.1 (code-read) | FIXED with D-13.04-33: generated columns are `DEFAULT <translated expression>`, as in the streaming DDL path. Test `test_loader_generated_columns.py::TestBitFlagColumns::test_repro_columns_become_default_expressions`. Was: `MATERIALIZED <MySQL expr>`, into which the connector's inserts fail (Code 44). |
 | D-13.04-10 | S2 | both | `CreateTableMySQLParserListener.py:33-54`; `db_load/clickhouse_loader.py:159-167` | reproduced (DDL in §3.15); streaming types from Specs 07.03/07.04/08.05 and `DataTypeConverter.java` (code-read) | Type/rendering divergence from the streaming path: ENUM to Enum8, zone-less DateTime64, TIME(0) text, legacy `_sign` engine by default. Enum inserts of new labels fail, and other values compare unequal. BIT(1) part FIXED (found end to end: the production job reported every snapshot table with a BIT(1) column DIFFERENT): the ANTLR translator declares `Bool` and the MySQL Shell path loads true/false. Test: `test_loader_bit1_bool.py::test_bit1_columns_are_declared_bool`; e2e `tests_e2e/mysql/test_mysql_03_snapshot.py::test_production_job_matches_the_loaded_snapshot`. Was: BIT(1) to `String` holding `01`/`00`. |
 | D-13.04-11 | S2 | packaged | `ch_sink_tools/db_load/clickhouse_loader.py:421,424,445,466,469` | reproduced (`r2_flow.py packaged mysqlsh`: password in log output True; `--password 'pa'ss word'`) | The password is logged in clear text, and single-quote wrapping without escaping breaks or injects into the shell command (FM-11.05-1). |
 | D-13.04-12 | S2 | both | `db_load/clickhouse_loader.py:482-483`; `ch_sink_tools/db_load/clickhouse_loader.py:451-452` | reproduced (`r2_flow.py legacy mysqlsh_fail`: exception contains `--password 'pa'"'"'ss`) | A failed load raises `AssertionError` with the unredacted command, so the password reaches the traceback (FM-11.05-2). |
@@ -1308,7 +1365,7 @@ Summary: 26 failure modes, 17 DEFECT, 17 GAP.
 | D-13.04-20 | S3 | both | `db_load/clickhouse_loader.py:296-303,339-344`; `CreateTableMySQLParserListener.py:158` | reproduced (`r2_flow.py`: `CREATE DATABASE ... `mydb`` with target `mydb_ch`; ANTLR DDL lacks `IF NOT EXISTS`) | The schema phase is not idempotent. mydumper creates the source-named database. A mysqlshell database-create error is swallowed. |
 | D-13.04-21 | S3 | both | `db_load/clickhouse_loader.py:589-590`; `ch_sink_tools/db_load/clickhouse_loader.py:557-558` | reproduced (`--clickhouse_secure False` gives `'False'`, then `--secure`) | `--clickhouse_secure` is an untyped string. Any value, including `False`, enables TLS. |
 | D-13.04-22 | S3 | packaged | `ch_sink_tools/db/mysql.py:10-17` | reproduced (`r4_pure.py` E/F: `enum('bit','byte')` gives `String`; `geometrycollection` verbatim) | The packaged `is_binary_datatype` uses substring and case-sensitive matching, so the packaged DDL differs from the legacy DDL. |
-| D-13.04-23 | S3 | both | `CreateTableMySQLParserListener.py:98` | reproduced (`r4_pure.py` H: `` if((`'pos','neg') ``) | The charset-introducer strip `\b_.*?'` deletes text in generated expressions that reference `_`-prefixed identifiers. |
+| D-13.04-23 | S3 | both | `CreateTableMySQLParserListener.py:98` | reproduced (`r4_pure.py` H: `` if((`'pos','neg') ``) | FIXED with D-13.04-33: the expression is translated on the parse tree, with no text substitution. Test `test_loader_generated_columns.py::TestPrecedenceAndOperators::test_underscore_identifiers_are_kept`. Was: the charset-introducer strip `\b_.*?'` deleted text in generated expressions that reference `_`-prefixed identifiers. |
 | D-13.04-24 | S3 | packaged | `ch_sink_tools/config/column_type_overrides.py:254` | reproduced (`r3_overrides.py` 1: `Decimal(18`) | The CLI override string is split on every comma, so parameterised types and expressions are cut. |
 | D-13.04-25 | S3 | packaged | `ch_sink_tools/config/column_type_overrides.py:138-155,186-197` | reproduced (`r3_overrides.py` 2: singular `None`, plural match) | `get_direct_override` ignores db-specific/schema-wildcard (and similar) entries that `get_direct_overrides` matches, so CREATE and reconciliation disagree. |
 | D-13.04-26 | S3 | packaged | `ch_sink_tools/config/override_reconciler.py:153-183,258-279` | reproduced with mocked `system.columns` (`r3_overrides.py` 5-7) | The reconciler compares type/expression strings exactly and column names case-sensitively: false mismatches, missed mismatches, and a needless ALTER on every run. |
@@ -1318,3 +1375,4 @@ Summary: 26 failure modes, 17 DEFECT, 17 GAP.
 | D-13.04-30 | S4 | both | `db_load/clickhouse_loader.py:255-256,410-411,597-600,605-606` (P similar) | code-read | Flags declared but ignored or mis-declared: `--use_regexp_parser`, `--debug`, `--threads` (required although it has a default; ignored by the mydumper path), the `load_data` `dry_run` parameter. `load_data` falls through after the mysqlshell load. |
 | D-13.04-31 | S4 | both | `db_load/clickhouse_loader.py:1`; `ch_sink_tools/db_load/postgres_type_mapper.py:8`; `ch_sink_tools/config/column_type_overrides.py:17-18`; `Dockerfile_db_load` | code-read | Doc drift. The usage header names a nonexistent script and flags. The PostgreSQL mapper claims a `--source postgres` loader flag. The override docstring uses dashed flag names (the dumper uses underscores). The `db_load` image contains no loader. Unit tests cover the legacy copy only. |
 | D-13.04-32 | S3 | both | `db_load/clickhouse_loader.py` (`load_data_mysqlshell`: table name from the data file name, unquoted `INSERT INTO {ch_schema}.{table_name}`); packaged equivalent | reproduced end to end (`temp_fx$rates` dumped as `pyops@temp_fx%24rates@@0.tsv.zst`; `INSERT INTO pyops_snapshot.temp_fx%24rates(...)` → Code 62 syntax error at `%`, loader exit 1) | A table name MySQL Shell percent-encodes in file names (`$` and similar) is used encoded and unquoted in the data phase, so the load of the whole dump fails. Pinned by the strict xfail `tests_e2e/mysql/test_mysql_05_justification.py::test_loader_loads_a_table_with_a_dollar_in_its_name`. |
+| D-13.04-33 | S1 | both | `db_load/mysql_parser/CreateTableMySQLParserListener.py` (`translateColumnDefinition`, generated branch); `db_load/clickhouse_loader.py` (`convert_to_clickhouse_table_regexp`, generated-column deletion); same files in `ch_sink_tools/` | reproduced in a production-shaped sandbox (`mysql_dumper` then `clickhouse_loader --mysqlshell --binary_handling_mode base64` on a real schema with `int GENERATED ALWAYS AS (((attrs & (1 << 0)) > 0)) VIRTUAL` columns: `Code: 62` syntax error at `&`, loader exit 1, on 2.11.0 and on the branch); offline `Code: 62` from `clickhouse local` on the translated DDL | FIXED: a generated column becomes `<type> NULL DEFAULT <expression>`. The expression is passed through as written (every expression ClickHouse accepted before loads unchanged), except for the constructs ClickHouse rejects, translated on the parse tree: charset introducers dropped; the bit operators as `bitAnd`/`bitOr`/`bitXor`/`bitShiftLeft`/`bitShiftRight`/`bitNot` on unsigned 64-bit operands (a shift by 64 or more giving 0, MySQL precedence for chains that hold a bit operator, NULL propagated); `CONVERT(expr USING cs)` as `toString(expr)` (`toDecimalString` for a decimal column); `IFNULL`/`COALESCE` of a string and a number, date or decimal column with that column as text (a second real schema: `Code: 62` at `using`, then `Code: 386` no common type). Numbers written as text (CONCAT/CONCAT_WS arguments, string-typed columns) keep MySQL's text: decimals with their scale, `/` with MySQL's result scale, CONCAT_WS skipping NULL values; a FLOAT/DOUBLE or BIT(1) column or an unmodelled quotient written as text keeps loading with a WARNING. A decimal result stored in a DECIMAL generated column is computed exactly and rounded half away from zero to the column's scale, as MySQL stores it (ClickHouse alone truncates a Float64 quotient: 2/3 → 0.6666 instead of 0.6667). Where ClickHouse would compute a different value it refuses with `UnsafeTableDefinitionError` naming the table and the column (a bit operator on a non-integer operand; CONVERT or a mixed IFNULL over a floating-point, binary or BIT(1) column); none of these ever loaded. The regexp fallback refuses generated columns instead of deleting them (§3.16, §3.17). A sweep of every generated column in a production-shaped sandbox's DDL creates 5 of 5 tables in `clickhouse local` (2.11.0: 3 of 5) (§5.1). Tests: `test_loader_generated_columns.py::TestBitFlagColumns`, `::TestPrecedenceAndOperators`, `::TestPassThrough`, `::TestNonIntegerBitOperands`, `::TestConvertUsingAndMixedIfnull`, `::TestRegexpFallback` (both copies, values via `clickhouse local`); e2e `tests_e2e/mysql/test_mysql_03_snapshot.py::test_loader_computes_generated_bit_flag_columns`, `::test_production_job_matches_the_loaded_generated_columns`. Was: the MySQL expression was copied verbatim as `MATERIALIZED <expr>`, so a bit operator (no `&`/`<<` in ClickHouse) failed the CREATE and with it the whole load, and the regexp fallback silently dropped generated columns. The streaming connector copies generated expressions verbatim as well (outside the Python tools). |

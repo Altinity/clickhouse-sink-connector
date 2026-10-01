@@ -147,6 +147,12 @@ def convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete
         raise UnsafeTableDefinitionError(
             f"Table {table_name} has no PRIMARY KEY and the ANTLR translator failed on its DDL; the regexp fallback "
             f"cannot derive a sorting key that keeps distinct rows distinct. Refusing ORDER BY tuple().")
+    if re.search(r'\bGENERATED\s+ALWAYS\b', source, flags=re.IGNORECASE):
+        # This fallback deletes generated-column lines, so the replica would silently lack those MySQL columns
+        # (Spec 13.04 D-13.04-33). Only the ANTLR translator can translate their expressions.
+        raise UnsafeTableDefinitionError(
+            f"Table {table_name} has generated columns and the ANTLR translator failed on its DDL; the regexp "
+            f"fallback cannot translate generation expressions and would drop those columns. Refusing.")
 
     settings = "index_granularity = 8192"
 

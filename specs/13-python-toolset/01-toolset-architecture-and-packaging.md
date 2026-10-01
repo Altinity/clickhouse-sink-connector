@@ -276,7 +276,7 @@ Wrapper-level defects in the listener, all present in **both** copies and reprod
 
 - Line 37 (fixed): `re.sub("CHARSET.*", '', dataTypeText, flags=re.IGNORECASE)`. On 2.11.0 the flag was passed as `count`, so `varchar(10) charset latin1` reached ClickHouse verbatim (D-13.01-15).
 - Lines 77-89 (fixed): the `NULL` modifier test is case-insensitive (`text.upper() == "NULL"`). On 2.11.0 a lower-case `null` fell into the `NOT` branch with `notSymbol` pre-set to `True`, so `columns_map` said `nullable: False` and the loader declared the column `String` instead of `Nullable(String)` in `input()` (D-13.01-16).
-- Line 98: the collation-introducer strip `re.sub(r"\b_.*?'", "'", text)` also deletes any identifier that starts with `_`, up to the next quote. `GENERATED ALWAYS AS (concat(_code, 'x'))` becomes `MATERIALIZED concat('x')`, silently (D-13.01-3).
+- Line 98: the collation-introducer strip `re.sub(r"\b_.*?'", "'", text)` also deletes any identifier that starts with `_`, up to the next quote. `GENERATED ALWAYS AS (concat(_code, 'x'))` becomes `MATERIALIZED concat('x')`, silently (D-13.01-3, fixed with spec 13.04 D-13.04-33: no text substitution any more; this expression is now `DEFAULT concat(`_code`,'x')`).
 
 ### 3.9 PostgreSQL DDL parser package (packaged only)
 
@@ -594,7 +594,8 @@ Offline reproductions run for this spec. Python 3.12.11 venv with the dependenci
   - `e enum('orbit','x')`: legacy `e enum('orbit','x') NOT NULL`, packaged `e String NOT NULL`.
   - `v varchar(10) charset latin1`: both keep `charset latin1`.
   - `v int null`: both emit `v int null` but map `('v','int',False)`.
-  - `g ... GENERATED ALWAYS AS (concat(_code, 'x'))`: both emit `MATERIALIZED concat('x')`.
+  - `g ... GENERATED ALWAYS AS (concat(_code, 'x'))`: both emitted `MATERIALIZED concat('x')`; both emit
+    `DEFAULT concat(`_code`,'x')` since spec 13.04 D-13.04-33.
   - `SELECT ... OVER (PARTITION BY d)`: `AttributeError: 'PartitionClauseContext' object has no attribute 'partitionTypeDef'`.
   - `PARTITION BY RANGE COLUMNS(d)`: no `partition by` emitted.
 - **R9 PostgreSQL parser.** Outputs as in §3.9. The method-presence check lists the 11 missing lexer-base methods and `ParseRoutineBody`.
@@ -666,8 +667,11 @@ The component is the delivery layer: which code runs, under which interpreter an
   - **Blast radius**: that column on every row of the table.
   - **Recovery**: `ALTER TABLE ... MODIFY COLUMN <col> <type> MATERIALIZED <correct expr>` and `ALTER TABLE ... MATERIALIZE COLUMN <col>` on the replica, or recreate the table from the connector's DDL and reload.
   - **RTO**: one column rewrite or reload (unmeasured).
-  - **Test**: GAP: G9.
-  - **DEFECT**: D-13.01-3, the collation-introducer regex is not anchored to an introducer.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_generated_columns.py::TestPassThrough::test_underscore_identifier_in_a_function_is_kept`
+    and `::TestPrecedenceAndOperators::test_underscore_identifiers_are_kept`.
+  - **FIXED**: D-13.01-3 (with spec 13.04 D-13.04-33). The regex is gone: the expression is rendered from the
+    parse tree, dropping only the charset-introducer tokens, so `concat(_code, 'x')` stays
+    `DEFAULT concat(`_code`,'x')`.
 
 - **FM-13.01-4 The installed copy leaks credentials or executes `--where`**
   - **Trigger**: any `ch-mysql-dump`, `ch-mysql-load`, `ch-ch-checksum` or `ch-mysql-checksum` run with a password on the command line or at DEBUG. Or any packaged checksum/count run whose `--where` contains `{partition_expression}`, including `--partition_date` runs of `ch-mysql-checksum`.
@@ -818,7 +822,7 @@ The component is the delivery layer: which code runs, under which interpreter an
   - **Test**: GAP: G1, G2, G4, G7 as workflow steps.
   - **DEFECT**: D-13.01-24, no CI job builds or imports what users install (extends FM-11.05-3).
 
-Summary: 17 failure modes, 13 DEFECT, 13 GAP.
+Summary: 17 failure modes, 12 DEFECT, 12 GAP (FM-13.01-3 fixed by spec 13.04 D-13.04-33).
 
 ## 7. Defect Register
 
@@ -826,7 +830,7 @@ Summary: 17 failure modes, 13 DEFECT, 13 GAP.
 |---|---|---|---|---|---|
 | D-13.01-1 | S1 | packaged | `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py:266-284` | reproduced (R14: four hash seeds, four different zones for `+01:00`, `Japan`/`Europe/Lisbon`/... for an unmatched offset; legacy stable and `UTC`) | FIXED (with D-13.04-2): deterministic mapping in both copies, UTC + WARNING when undeterminable. Test `test_loader_s1_fixes.py::TestDumpTimezoneMapping`. Was: dump time zone resolved by unordered set iteration, last zone returned when nothing matched; affected `ch-mysql-load` and `ch-mysql-resync`. |
 | D-13.01-2 | S1 | packaged | `sink-connector/python/ch_sink_tools/db_compare/top_level_table_checksum.py:159,186` | reproduced (R12: empty cwd → both sides `None` → `No difference for t1`, pipeline rc 0) | FIXED (same fix as D-13.06-1): sides run as `<sys.executable> -m ch_sink_tools.db_compare.<side>` without a shell; a failed side is `ERROR`, exit 1. Test: `test_packaged_checksum_verdicts.py::TestPackagedSidesAndFailures::test_side_module_starts_from_a_foreign_cwd_without_pythonpath`. Was: `ch-mysql-checksum` spawned cwd-relative side scripts under `set -e pipefail`; installed use reported equality without comparing. |
-| D-13.01-3 | S1 | both | `sink-connector/python/db_load/mysql_parser/CreateTableMySQLParserListener.py:98` (same line in packaged) | reproduced (R8: `concat(_code, 'x')` → `MATERIALIZED concat('x')`) | Introducer-strip regex deletes identifiers starting with `_`, silently changing MATERIALIZED expressions. |
+| D-13.01-3 | S1 | both | `sink-connector/python/db_load/mysql_parser/CreateTableMySQLParserListener.py:98` (same line in packaged) | reproduced (R8: `concat(_code, 'x')` → `MATERIALIZED concat('x')`) | FIXED with spec 13.04 D-13.04-33: generated expressions are rendered from the parse tree (only charset-introducer tokens dropped, no text substitution). Tests `db_load/tests/test_loader_generated_columns.py::TestPassThrough::test_underscore_identifier_in_a_function_is_kept`, `::TestPrecedenceAndOperators::test_underscore_identifiers_are_kept`. Was: the introducer-strip regex deleted identifiers starting with `_`, silently changing MATERIALIZED expressions. |
 | D-13.01-4 | S2 | packaged | `sink-connector/python/ch_sink_tools/db_compare/mysql_table_count.py:44-46`, `.../mysql_table_checksum.py:168-170`, `.../clickhouse_table_checksum.py:218-220`, `sink-connector/python/ch_sink_tools/db_dump/mysql_dumper.py` `run_command`/`generate_mysqlsh_command`, `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py` `execute_load`, `sink-connector/python/ch_sink_tools/db/clickhouse.py:68`; `release-notes/2.10.0.md:11` | reproduced (R6: `{__import__('os').getpid() > 0}` evaluated to `True`); code-read for the log lines (§3.14.2) | The installed copy keeps `eval()` of `--where` and logs passwords; release notes claim both fixed in `ch_sink_tools`. |
 | D-13.01-5 | S3 | packaged | `sink-connector/python/pyproject.toml:23-30`, `sink-connector/python/ch_sink_tools/db/mysql.py:8` | reproduced (R2: `No module named 'pandas'` under `[mysql]`) | `[mysql]` extra omits pandas, a top-level import of every MySQL tool; README promises `[mysql]` suffices. |
 | D-13.01-6 | S3 | both | `sink-connector/python/pyproject.toml:10`; `ch_sink_tools/config/column_type_overrides.py:24`; `ch_sink_tools/db_load/clickhouse_loader.py:19`; `ch_sink_tools/db_load/mysql_resync.py:33`; `ch_sink_tools/db_load/postgres_parser/postgres_parser.py:127`; packaged `fstr` `@staticmethod`; `db/checksum_common.py:10` | reproduced (R3 on 3.6.8; R6 `TypeError` on 3.9.7) | `requires-python >=3.6` while the real floor is 3.10. |

@@ -182,6 +182,21 @@ run the non-partitioned job over `pyref` (`test_clean_data_passes_the_job` and t
 `test_mysql_06_null_flags.py`, while both sides still declare the columns nullable, so their pre-fix outcomes
 above are unchanged.
 
+### Generated bit-flag columns in the snapshot path (`test_mysql_03_snapshot.py`, added after the observed runs above)
+
+`pyflags.trade_flags` has two VIRTUAL and one STORED generated column of the form
+`((attrs & (1 << n)) > 0)` over a nullable `BIGINT`. The connector copies a generated expression verbatim, and
+ClickHouse has no `&` or `<<` operators, so it cannot create that table (a failed DDL halts its pipeline):
+`pyflags` is outside its `database.include.list`, and the tests compare the loaded table with MySQL itself
+rather than with a streamed copy. These tests were not part of the three observed runs; the defect was observed
+in a production-shaped sandbox run, where the snapshot load of a real schema with such columns failed on both
+2.11.0 and the tree before the fix.
+
+| Test | Pre-fix (expected) | Observed | Fixed | Justifies |
+|---|---|---|---|---|
+| `test_loader_computes_generated_bit_flag_columns` | FAIL: the loader's CREATE TABLE carries `MATERIALIZED ((`attrs` & (1 << 0)) > 0)` verbatim, ClickHouse rejects it (`Code: 62` syntax error at `&`) and the loader exits 1. Had the expression been valid ClickHouse, the column would still be `MATERIALIZED`, which rejects the values the connector streams | observed in a production-shaped sandbox run (`Code: 62`, loader exit 1) | PASS: `DEFAULT` columns with `bitAnd`/`bitShiftLeft`, values equal to MySQL's, NULL for a NULL `attrs` | D-13.04-33 (and D-13.04-9) |
+| `test_production_job_matches_the_loaded_generated_columns` | FAIL: no loaded table to compare | as above | PASS | D-13.04-33 |
+
 ## Fixes this suite forced (mandatory use cases blocked end to end)
 
 | Defect | What the suite saw | Fix | Offline test |

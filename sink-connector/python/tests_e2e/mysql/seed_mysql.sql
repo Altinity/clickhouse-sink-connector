@@ -13,17 +13,20 @@
 -- Shapes covered: keyless table, BINARY/VARBINARY/BLOB, BIT(1)/BIT(16),
 -- DATETIME(6)/TIMESTAMP(6), DECIMAL, JSON (ignored column), FLOAT (not compared),
 -- NULLs including a lower-case `null` column definition, a source column named
--- _sign, a nullable STORED generated column, and tables the jobs exclude (temp_*, heartbeat, *_p<digit>). The temp_*
+-- _sign, a nullable STORED generated column, generated bit-flag columns in a database the
+-- connector does not replicate (pyflags, snapshot path only), and tables the jobs exclude (temp_*, heartbeat, *_p<digit>). The temp_*
 -- tables also carry shapes that dedicated runs exercise: a `$` in a table name,
 -- "checksum" in column names, a TO_DAYS() partition expression.
 
 SET SESSION time_zone = '+00:00';
--- DESTRUCTIVE: drops the suite's own two databases on the disposable e2e MySQL (compose or
+-- DESTRUCTIVE: drops the suite's own three databases on the disposable e2e MySQL (compose or
 -- external test stack) so the seed is reproducible; no other database is touched.
 DROP DATABASE IF EXISTS pyops;
 DROP DATABASE IF EXISTS pyref;
+DROP DATABASE IF EXISTS pyflags;
 CREATE DATABASE pyops;
 CREATE DATABASE pyref;
+CREATE DATABASE pyflags;
 USE pyops;
 
 -- ---------------------------------------------------------------- date-partitioned tables
@@ -253,3 +256,18 @@ INSERT INTO daily_marks VALUES
   (1, '${Y}', 101.250000, X'4D31'),
   (2, '${Y}', 99.000000, NULL),
   (1, '${T}', 102.000000, X'4D32');
+
+-- ---------------------------------------------------------------- third database, not replicated
+-- Generated columns over a bit-flag column (two VIRTUAL, one STORED). The connector copies a generated
+-- expression verbatim and ClickHouse has no & or << operators, so it cannot create this table; pyflags is
+-- outside its database.include.list and only the snapshot path (dump, load, checksum) uses it
+-- (test_mysql_03_snapshot, spec 13.04 D-13.04-33).
+USE pyflags;
+CREATE TABLE trade_flags (
+  id INT NOT NULL PRIMARY KEY,
+  attrs BIGINT DEFAULT '0',
+  is_reversal INT GENERATED ALWAYS AS (((attrs & (1 << 0)) > 0)) VIRTUAL,
+  is_pending INT GENERATED ALWAYS AS (((attrs & (1 << 2)) > 0)) VIRTUAL,
+  is_manual TINYINT(1) GENERATED ALWAYS AS (((attrs & (1 << 4)) > 0)) STORED
+);
+INSERT INTO trade_flags (id, attrs) VALUES (1, 5), (2, NULL), (3, 16), (4, -1), (5, 0), (6, 21);
