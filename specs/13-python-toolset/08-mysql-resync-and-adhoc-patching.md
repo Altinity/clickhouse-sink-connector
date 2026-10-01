@@ -806,8 +806,26 @@ the 2.11.0 behaviour before the S1 fixes; the tests listed above pin the fixed b
    `MODIFY COMMENT` on a scratch copy, an INSERT that omits `_sign`, then `REPLACE PARTITION ID 'all'` into
    the live table: the live rows carry `_sign = 1` and the comment reads back verbatim from `system.tables`.
 
-Acceptance criteria still open (each is a GAP test in §6): binary and `TIMESTAMP` values reloaded by `patch`
-hash-equal the connector's for the configured `binary.handling.mode`. Met by the S1 fixes: the legacy-engine
+End-to-end tests (`sink-connector/python/tests_e2e/mysql`, CI job `python-toolset-e2e-mysql`): the tool runs
+from a copy of the tool tree (`python -m ch_sink_tools.db_load.mysql_resync`) against a real MySQL (MySQL Shell
+dumps), ClickHouse and connector (`binary.handling.mode: base64`, offsets in
+`altinity_sink_connector.replica_source_info`):
+- `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_unlogged_change_is_reported_then_repaired_by_resync`:
+  a change made with `sql_log_bin=0` is reported by the production checksum job (`Checksum difference`, job
+  fails); `dump --consistent`, then `patch --apply --offset-table --offset-key --loader-cmd "... --binary_handling_mode base64"`
+  gives `REPLACED_OK`, and the job passes again (binary, BIT, TIMESTAMP(6) and DATETIME(6) columns of the
+  repaired table compared by value).
+- `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_patch_refuses_to_replace_while_the_connector_is_behind_the_dump` (D-13.08-5)
+- `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_patch_skip_load_refuses_a_scratch_table_it_did_not_load` (D-13.08-8)
+- `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_rewind_sql_requires_the_connector_stopped_attestation` (D-13.08-9)
+- `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_rewind_sql_refuses_a_forward_rewind` (D-13.08-6)
+- `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_rewind_sql_accepts_the_dumper_snapshot_position`
+  (`mysql_dumper`'s `snapshot_position.json` as `--position-file`)
+- `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_z_patch_refuses_an_empty_restore_suffix` (D-13.08-11)
+
+Acceptance criteria: binary and `TIMESTAMP` values reloaded by `patch` hash-equal the connector's for the
+configured `binary.handling.mode` (met end to end for `base64` with `--loader-cmd`, test above; the default
+loader command renders `bytes` mode). Met by the S1 fixes: the legacy-engine
 `_sign` equals 1; every canary table must pass on its own; `rewind-sql` refuses a forward move and a key it
 cannot see; `patch` refuses a suffix that names a selected schema and never recreates an unmarked table under
 the scratch name.
@@ -910,7 +928,7 @@ the scratch name.
   - **Blast radius**: none on live tables. The repair is postponed.
   - **Recovery**: let the connector catch up past the dump position (`show_replica_status`, spec 10.03), then re-run `patch --apply --skip-load`.
   - **RTO**: the connector catch-up plus the `REPLACE` time (unmeasured).
-  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestConnectorPositionGate::test_connector_behind_the_dump_position_refuses_every_replace` (also `...::test_connector_at_or_past_the_dump_position_allows_the_replace`, `...::test_apply_without_offset_table_or_with_unknown_key_refuses`, `...::test_explicit_override_skips_the_check_with_a_warning`).
+  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestConnectorPositionGate::test_connector_behind_the_dump_position_refuses_every_replace` (also `...::test_connector_at_or_past_the_dump_position_allows_the_replace`, `...::test_apply_without_offset_table_or_with_unknown_key_refuses`, `...::test_explicit_override_skips_the_check_with_a_warning`); end to end `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_patch_refuses_to_replace_while_the_connector_is_behind_the_dump`.
   - **FIXED**: D-13.08-5. `patch` refuses to replace unless the connector's durable offset is at or past the dump position.
 
 - **FM-13.08-8 `rewind-sql` asked to move the offset forward**
@@ -925,7 +943,7 @@ the scratch name.
   - **Blast radius**: none: no SQL is printed.
   - **Recovery**: none needed. A connector behind the dump position needs no rewind; let it catch up.
   - **RTO**: n/a.
-  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestRewindGuards::test_forward_move_is_refused` (also `...::test_forward_move_with_override_is_emitted_with_a_warning`, `...::test_backward_or_equal_move_is_emitted`).
+  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestRewindGuards::test_forward_move_is_refused` (also `...::test_forward_move_with_override_is_emitted_with_a_warning`, `...::test_backward_or_equal_move_is_emitted`); end to end `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_rewind_sql_refuses_a_forward_rewind`.
   - **FIXED**: D-13.08-6. A forward move is refused unless `--allow-forward-rewind`.
 
 - **FM-13.08-9 `rewind-sql` with a key the offset table does not hold**
@@ -953,7 +971,7 @@ the scratch name.
   - **Blast radius**: none.
   - **Recovery**: re-run without `--skip-load`.
   - **RTO**: one reload (unmeasured).
-  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestSkipLoadStampMarker::test_skip_load_refuses_a_scratch_table_from_another_dump` (also `...::test_load_marks_the_scratch_table_with_stamp_and_dump_rows`, `...::test_skip_load_replaces_from_a_scratch_table_of_this_dump`).
+  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestSkipLoadStampMarker::test_skip_load_refuses_a_scratch_table_from_another_dump` (also `...::test_load_marks_the_scratch_table_with_stamp_and_dump_rows`, `...::test_skip_load_replaces_from_a_scratch_table_of_this_dump`); end to end `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_patch_skip_load_refuses_a_scratch_table_it_did_not_load`.
   - **FIXED**: D-13.08-8. `--skip-load` replaces only from a scratch table marked with the same source table, stamp and dump row count.
 
 - **FM-13.08-11 Empty or colliding `--restore-suffix`**
@@ -967,7 +985,7 @@ the scratch name.
   - **Blast radius**: none.
   - **Recovery**: choose another `--restore-suffix`; remove a stale unmarked scratch table (one made by an older release) by hand.
   - **RTO**: minutes.
-  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestRestoreSuffixGuard::test_empty_or_colliding_suffix_is_refused_before_any_statement` (also `...::test_existing_unmarked_table_in_the_scratch_database_is_not_recreated`, `...::test_marked_scratch_table_is_recreated`).
+  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestRestoreSuffixGuard::test_empty_or_colliding_suffix_is_refused_before_any_statement` (also `...::test_existing_unmarked_table_in_the_scratch_database_is_not_recreated`, `...::test_marked_scratch_table_is_recreated`); end to end `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_z_patch_refuses_an_empty_restore_suffix`.
   - **FIXED**: D-13.08-11. A colliding suffix is refused at start, and an unmarked table under the scratch name is never recreated.
 
 - **FM-13.08-12 Partial apply: replaced tables left regressed, rewind withheld**
@@ -1095,7 +1113,7 @@ the scratch name.
   - **Blast radius**: dump-window changes missing from the patched tables.
   - **Recovery**: as in FM-11.04-4 to FM-11.04-7 (`sink-connector-client update_binlog` with the connector stopped, or a new dump).
   - **RTO**: a connector restart plus the replay, or a full redo.
-  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestRewindGuards::test_running_connector_is_refused` (running connector); `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestRewindAfterFailover::test_rewind_carries_the_captured_gtid_set` (skipped). GAP for purged binlogs and KeeperMap.
+  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestRewindGuards::test_running_connector_is_refused` (running connector); end to end (no `--connector-stopped`) `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_rewind_sql_requires_the_connector_stopped_attestation`; `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestRewindAfterFailover::test_rewind_carries_the_captured_gtid_set` (skipped). GAP for purged binlogs and KeeperMap.
   - **FIXED**: D-13.08-9. The connector must be attested stopped and its offset row idle.
   - **DEFECT**: D-13.08-16, D-13.08-17 and D-13.08-28. Failover safety, binlog retention and KeeperMap support remain unchecked.
 

@@ -34,6 +34,11 @@ DB = "appdb"
 
 
 class FakeResult(list):
+    """The subset of a SQLAlchemy result the dumper reads: rows by name through mappings()."""
+
+    def mappings(self):
+        return self
+
     def fetchall(self):
         return list(self)
 
@@ -337,6 +342,8 @@ import importlib
 md = importlib.import_module(sys.argv[1])
 scenario = sys.argv[2]
 class R(list):
+    def mappings(self):
+        return self
     def fetchall(self):
         return list(self)
 md.check_program_exists = lambda name: scenario != "no_mysqlsh"

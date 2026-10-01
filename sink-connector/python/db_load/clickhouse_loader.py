@@ -436,6 +436,7 @@ def is_loaded_column(column, virtual_columns):
         and not column['generated']
 
 
+BIT1_MYSQL_DATATYPE = re.compile(r"bit\s*(\(\s*1\s*\))?$", re.IGNORECASE)
 SPATIAL_DATATYPES = ('geometry', 'point', 'linestring', 'polygon', 'multipoint', 'multilinestring', 'multipolygon',
                      'geometrycollection', 'geomcollection')
 
@@ -498,6 +499,10 @@ def mysqlshell_column_expression(column, column_name, decode_columns, binary_han
         raise ValueError(f"Column {bare_name}: unknown MySQL Shell decode function {encoding}")
     if kind == 'spatial':
         raw = f"substring({raw}, 5)"
+    if kind == 'bit' and BIT1_MYSQL_DATATYPE.match((mysql_datatype or '').strip()):
+        # BIT(1) is a Bool column, as on the streaming path (Debezium emits BOOLEAN): its one byte as
+        # true/false, under every binary mode (spec 13.04 D-13.04-10).
+        return f"({raw}) != char(0)"
     if kind == 'binary' and binary_handling_mode == 'base64':
         return f"base64Encode({raw})"
     if kind == 'binary' and binary_handling_mode == 'hex':

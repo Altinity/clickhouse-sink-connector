@@ -660,7 +660,9 @@ def run_config(config):
                 table_include_list = [t for t in mysql_table_include_list if t.startswith(f"{database}.")] if mysql_table_include_list else []
                 # --no_wc: get_tables_from_regex returns [[<tables_regex>]], the table name
                 # itself, not a result set (spec 13.06 D-13.06-26).
-                table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.fetchall()
+                # Rows by column name through mappings(): a SQLAlchemy 2.x Row is a
+                # tuple, so row['table_name'] raised TypeError (spec 13.06 D-13.06-9).
+                table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.mappings().fetchall()
                 for table_row in table_rows:
                     table = table_row['table_name']
                     table_name = f"{database}.{table}"

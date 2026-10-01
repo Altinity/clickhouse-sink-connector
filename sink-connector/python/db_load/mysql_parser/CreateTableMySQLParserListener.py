@@ -5,6 +5,9 @@ from db.mysql import is_binary_datatype
 import re
 import logging
 
+# MySQL BIT(1), also written BIT (the length defaults to 1).
+BIT1_DATATYPE = re.compile(r"^\s*bit\s*(\(\s*1\s*\))?\s*$", re.IGNORECASE)
+
 
 class UnsafeTableDefinitionError(ValueError):
     """The translator refuses a table it cannot create faithfully (Spec 13.04 sections 3.11, 3.12).
@@ -55,6 +58,10 @@ class CreateTableMySQLParserListener(MySqlParserListener):
             elif dataType.TIME():
                 dataTypeText = "String"
 
+        if BIT1_DATATYPE.match(dataTypeText):
+            # Debezium emits BIT(1) as BOOLEAN and the streaming DDL path declares Bool; a String
+            # column holding '01'/'00' made every such table DIFFERENT from MySQL (spec 13.04 D-13.04-10).
+            return 'Bool'
         if (isinstance(dataType, MySqlParser.SpatialDataTypeContext) and dataType.JSON()) or is_binary_datatype(dataTypeText):
             dataTypeText = 'String'
 

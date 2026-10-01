@@ -100,6 +100,13 @@ def mysql_column_expression(column, options, binary_encoding, same_charset, boun
         # Debezium emits BIT(1) as BOOLEAN and the connector stores Bool;
         # ClickHouse renders it as 1 / 0 (toUInt8), so render the bit as an integer.
         return f"{column_name}+0"
+    if data_type == 'bit':
+        # BIT(n>1): the connector stores lower-case hex text under every
+        # binary.handling.mode (base64 applies to BINARY/VARBINARY/BLOB only), and
+        # with --binary_encoding raw the ClickHouse side hexes the raw bytes. A
+        # base64 rendering made every table with a BIT(n>1) column DIFFERENT on
+        # clean data (spec 13.06 D-13.06-38).
+        return "lower(hex(cast(" + column_name + " as binary)))"
     if is_binary_datatype(data_type):
         if binary_encoding == 'base64':
             return "replace(to_base64(cast(" + column_name + " as binary)),'\\n','')"

@@ -26,9 +26,10 @@ defect. Do not read it as a design. The main conclusions:
   partition filter no explicit partition list is passed, so whole tables are dumped. After the dump a fresh
   listing is compared with the tables in the dump metadata, and any in-scope source table missing from the
   dump fails the run. This was the S1 defect D-13.03-2 (fixed).
-- **The tool cannot run on SQLAlchemy 2.x**, which the declared dependency `sqlalchemy>=1.4` installs by
-  default: rows are indexed by column name and that raises `TypeError` before mysqlsh is called (D-13.03-3,
-  reproduced).
+- **The tool now runs on SQLAlchemy 2.x**, which the declared dependency `sqlalchemy>=1.4` installs by
+  default: rows were indexed by column name and that raised `TypeError` before mysqlsh was called (D-13.03-3,
+  reproduced, and again end to end by `sink-connector/python/tests_e2e/mysql`; fixed: rows are read through
+  `mappings()`).
 - **Password mode is broken and leaks the password.** Both copies pass `--password <pw>` with a space, which
   MySQL Shell does not read as a password. The password is visible on the process command line. The packaged
   copy wraps it in double quotes, so the shell runs any command substitution in it, and it logs the password in
@@ -622,7 +623,8 @@ return dicts), and naming collisions or malformed placeholders. These tests do n
 1. `main()` with mocked connection rows. One case per row of the scope table in 3.4. Assert `tables_to_dump`
    and `partitions` for both copies.
 2. The `main()` row loop is fed real SQLAlchemy `Row` objects (`sqlalchemy.engine.result.result_tuple`) under
-   the installed SQLAlchemy major version.
+   the installed SQLAlchemy major version. Done:
+   `sink-connector/python/db_compare/tests/test_sqlalchemy_rows.py::test_dumper_selects_tables_from_real_rows`.
 3. The shell string from `generate_mysqlsh_command` is tokenised by `shlex.split` (or by `/bin/sh` with a
    printer) and asserted to contain no password token. The password must be supplied by stdin or by an
    option file.
@@ -635,7 +637,24 @@ return dicts), and naming collisions or malformed placeholders. These tests do n
    `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestSnapshotPositionHandoff`.
 7. Naming: a collision between two work items is detected and refused.
 
-### 5.3 Offline reproduction scripts used by this spec
+### 5.3 End-to-end tests (real MySQL, ClickHouse and connector)
+
+`sink-connector/python/tests_e2e/mysql` (CI job `python-toolset-e2e-mysql`) runs `db_dump/mysql_dumper.py` from
+a copy of the tool tree, as the snapshot procedure does (consistent MySQL Shell dump, `.my.cnf`), then loads the
+dump with `clickhouse_loader` and verifies it with the scheduled checksum job (Spec 13.06):
+- `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_dumper_hands_over_a_verified_snapshot_position`:
+  exit 0; `snapshot_position.json` names a binlog position between the source positions read just before
+  and just after the dump, with the dumped tables (D-13.03-1, D-13.03-3).
+- `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_dumper_fails_loudly_when_mysql_shell_fails`:
+  MySQL Shell refuses the non-empty dump directory, the dumper exits non-zero and leaves the existing handoff
+  file alone (D-13.03-12).
+- `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_production_job_matches_the_loaded_snapshot`:
+  the dump, loaded into a fresh database, matches MySQL for every table the job covers.
+- `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_rewind_sql_accepts_the_dumper_snapshot_position`:
+  `ch-mysql-resync rewind-sql --position-file snapshot_position.json` emits the rewind to the dump's position
+  (the handoff of 3.8).
+
+### 5.4 Offline reproduction scripts used by this spec
 
 All under the throwaway repro directory (not part of the repo), run with the toolset venv Python:
 `r1_shell_argv.py` (shell tokenisation, tilde), `r2_main_flow.py` (scopes, `--where`, `--dry_run`,
@@ -666,7 +685,8 @@ statement quoting). Key outputs are quoted with each defect.
     offset to that point (Spec 09.03), and replay (idempotent under ReplacingMergeTree). If the binlog has
     been purged, resynchronise with `ch-mysql-resync` (Spec 11.04), which captures its own position.
   - **RTO**: unmeasured (no database offline). Bounded by the replay length, or by a full resync.
-  - **Test**: `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestSnapshotPositionHandoff::test_position_written_and_logged_after_successful_dump`
+  - **Test**: `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestSnapshotPositionHandoff::test_position_written_and_logged_after_successful_dump`;
+    end to end `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_dumper_hands_over_a_verified_snapshot_position`
   - **FIXED**: after the dump both copies read `binlogFile`/`binlogPosition`/`gtidExecuted` from `@.json`, exit 1 if absent, incomplete or not consistent, log them at INFO and write `snapshot_position.json` (3.8); seeding the connector from it stays an operator step (D-13.03-1).
 
 - **FM-13.03-2 A table or partition appears between selection and snapshot**
@@ -703,8 +723,11 @@ statement quoting). Key outputs are quoted with each defect.
   - **Recovery**: pin `sqlalchemy<2` in the tool's environment, or use `row._mapping[...]` / `.mappings()`
     (as `db_compare/mysql_table_checksum.py:460` already does).
   - **RTO**: minutes (reinstall). Unmeasured.
-  - **Test**: `GAP: main() row loop fed real SQLAlchemy Row objects`
-  - **DEFECT**: name-indexed row access incompatible with SQLAlchemy 2.x (D-13.03-3).
+  - **Test**: `sink-connector/python/db_compare/tests/test_sqlalchemy_rows.py::test_dumper_selects_tables_from_real_rows`
+    (both copies, real SQLAlchemy results); end to end
+    `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_dumper_hands_over_a_verified_snapshot_position`
+    (the dumper from a fresh `install.sh`, SQLAlchemy 2.x).
+  - **FIXED**: both copies read the table and partition rows through `mappings()` (D-13.03-3, with D-13.06-9).
 
 - **FM-13.03-4 Password mode: mysqlsh never receives the password, and the password is exposed**
   - **Trigger**: `--mysql_user u --mysql_password pw`.
@@ -845,7 +868,9 @@ statement quoting). Key outputs are quoted with each defect.
   - **Recovery**: move the partial directory aside, fix the cause, and re-run (mysqlsh requires an empty
     directory).
   - **RTO**: unmeasured. A full re-dump.
-  - **Test**: `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestSnapshotPositionHandoff::test_mysqlsh_failure_exits_one_without_handoff`
+  - **Test**: `sink-connector/python/db_dump/tests/test_mysql_dumper_snapshot.py::TestSnapshotPositionHandoff::test_mysqlsh_failure_exits_one_without_handoff`;
+    end to end (real MySQL Shell refusing a non-empty directory)
+    `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_dumper_fails_loudly_when_mysql_shell_fails`
 
 - **FM-13.03-14 Identifiers or paths containing quotes or shell metacharacters**
   - **Trigger**: `--mysql_database` or `--dump_dir` containing `'`, or host, user or defaults path containing
@@ -911,7 +936,7 @@ statement quoting). Key outputs are quoted with each defect.
   - **Test**: `GAP: legacy script starts from an arbitrary working directory`
   - **DEFECT**: path set-up after the import (D-13.03-18).
 
-Summary: 18 failure modes, 13 DEFECT, 13 GAP.
+Summary: 18 failure modes, 12 DEFECT, 12 GAP.
 
 ## 7. Defect Register
 
@@ -921,7 +946,7 @@ Locations are relative to `sink-connector/python/` in the 2.11.0 tree.
 |---|---|---|---|---|---|
 | D-13.03-1 | S1 | both | `db_dump/mysql_dumper.py:184-323`, `ch_sink_tools/db_dump/mysql_dumper.py:148-283`; loader `ch_sink_tools/db_load/clickhouse_loader.py:470-480` | code-read (absence: no `SHOW MASTER STATUS`, GTID or metadata read anywhere in the dumpers, connection layers or loaders; contrast `mysql_resync.py:275-287`) | FIXED: after a successful dump both copies read `binlogFile`/`binlogPosition`/`gtidExecuted` from `@.json`, exit 1 when `@.done.json` is missing, `consistent` is not true, `gtidExecutedInconsistent` is true or the position is absent, log the position at INFO and write `snapshot_position.json` (3.8). Test: `db_dump/tests/test_mysql_dumper_snapshot.py::TestSnapshotPositionHandoff`. Was: the initial snapshot captures, logs and persists no binlog position or GTID set and hands none to the connector. The position exists only inside MySQL Shell's metadata, which nothing reads or checks (and which lacks it without `REPLICATION CLIENT`). Any connector start not seeded by hand loses the gap silently. |
 | D-13.03-2 | S1 | both | `db_dump/mysql_dumper.py:255-289` (L128-129 clause), `ch_sink_tools/db_dump/mysql_dumper.py:216-250` (P95-96) | code-read, with vendor semantics: listed partitions only, empty list ignored, missing partition rejected | FIXED: without `--include_partitions_regex` no `partitions` option is passed (whole tables), and after the dump a fresh listing over a new connection is compared with `tables` of the schema's dump metadata; any in-scope source table missing from the dump exits 1. Residual: matching partitions created in the window under `--include_partitions_regex` are not detected. Test: `db_dump/tests/test_mysql_dumper_snapshot.py::TestTableAndPartitionScope`. Was: the table list and the full per-table partition list are resolved over a separate connection **before** mysqlsh takes its snapshot. The partition list is passed even when no partition filter was requested. Tables created, or partitions added or renamed, in the window are silently left out. |
-| D-13.03-3 | S3 | both | `db_dump/mysql_dumper.py:273-274,278-280`, `ch_sink_tools/db_dump/mysql_dumper.py:234-235,239-241` | reproduced (`r4_sqlalchemy_row.py`, SQLAlchemy 2.1.1: `TypeError ... not str`, exit 1, mysqlsh never invoked) | `row['col']` on SQLAlchemy Rows. The tool cannot run on SQLAlchemy 2.x although `sqlalchemy>=1.4` allows it. |
+| D-13.03-3 | S3 | both | `db_dump/mysql_dumper.py:273-274,278-280`, `ch_sink_tools/db_dump/mysql_dumper.py:234-235,239-241` | reproduced (`r4_sqlalchemy_row.py`, SQLAlchemy 2.1.1: `TypeError ... not str`, exit 1, mysqlsh never invoked) | FIXED: the table and partition rows are read through `mappings()` in both copies. Test: `test_sqlalchemy_rows.py::test_dumper_selects_tables_from_real_rows`; e2e `tests_e2e/mysql/test_mysql_03_snapshot.py::test_dumper_hands_over_a_verified_snapshot_position`. Was: `row['col']` on SQLAlchemy Rows, so the tool could not run on SQLAlchemy 2.x although `sqlalchemy>=1.4` allows it. |
 | D-13.03-4 | S3 | both | `db_dump/mysql_dumper.py:159`, `ch_sink_tools/db_dump/mysql_dumper.py:124` | code-read with MySQL Shell docs ("with a space ... not interpreted as a password"); argv reproduced (`'--password', 's3cret'`) | Password mode emits `--password <pw>`, which mysqlsh does not read as a password, so password-mode dumps prompt or fail. |
 | D-13.03-5 | S2 | both | `db_dump/mysql_dumper.py:159,180,87-90`, `ch_sink_tools/db_dump/mysql_dumper.py:124,144,55-58` | reproduced (argv printer shows the password token) | The password is on the `sh -c` and `mysqlsh` command lines, visible to any local user through `ps` or `/proc`. |
 | D-13.03-6 | S2 | packaged | `ch_sink_tools/db_dump/mysql_dumper.py:124` | reproduced (`pw$(echo INJECTED)` becomes `pwINJECTED`; `"` gives a shell syntax error) | Password wrapped in double quotes in a `shell=True` string: command substitution and variable expansion run, and quotes break the command. |

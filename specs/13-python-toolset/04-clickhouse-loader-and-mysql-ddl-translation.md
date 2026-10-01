@@ -39,9 +39,9 @@ only the PostgreSQL dumper consumes today. The most consequential findings:
   column named `_sign` or `_is_deleted` is loaded, and a source column that collides with an appended
   bookkeeping column is refused loudly. A lower-case `null` modifier is recorded as nullable.
 - **Divergence from the streaming connector (S2).** Generated columns become `MATERIALIZED`, which the
-  connector's own inserts then fail on (Spec 06.06). ENUM becomes `Enum8` (the stream uses `String`), BIT(1)
-  becomes `String` (the stream uses `Bool`), and DATETIME/TIMESTAMP carry no zone (the stream uses
-  `'UTC'`).
+  connector's own inserts then fail on (Spec 06.06). ENUM becomes `Enum8` (the stream uses `String`), and
+  DATETIME/TIMESTAMP carry no zone (the stream uses `'UTC'`). BIT(1) became `String` (the stream uses
+  `Bool`); that part is fixed.
 - **Destructive and credential defects (S2).** `--truncate_tables` truncates
   `<mysql_source_database>.<table>`, not the target database. Credentials leak in three ways: the packaged
   copy logs the password and breaks on a quote in it (FM-11.05-1), the legacy copy puts it in the failure
@@ -341,8 +341,10 @@ Every value except `TIMESTAMP` columns is parsed as `String` and converted by Cl
   Spec 07.06 §3.2), so they ignore `--binary_handling_mode`. A NULL needs no special case: the input
   structure declares a nullable column `Nullable(String)` and every function propagates NULL. A column the
   metadata lists as encoded whose MySQL type has no rule (e.g. `VECTOR`) raises `ValueError`. BIT(1) is
-  loaded as hex (`01`/`00`) into the `String` column the loader creates; the stream binds a Boolean there,
-  which stays divergent until the type itself is aligned (D-13.04-10). The values of the default rendering
+  declared `Bool` and loaded as `(<decoded byte>) != char(0)` (true/false) under every mode, as the stream
+  stores it. Before the fix it was loaded as hex (`01`/`00`) into a `String` column, so the production
+  checksum job reported every snapshot table with a BIT(1) column DIFFERENT (BIT(1) part of D-13.04-10, found
+  end to end). The values of the default rendering
   (varbinary, a 60-byte blob with a wrapped base64 line, BIT(16), POINT, NULL) are checked with
   `clickhouse local` in `test_loader_s1_fixes.py::TestBinaryRepresentation::test_values_match_the_connector_rendering`.
 - **mydumper (`transform=True`, `mysqlshell=False`)**: unchanged. `is_binary_datatype(datatype)` tests the
@@ -640,7 +642,8 @@ ANTLR `convertDataType` (LS33-54) handles types as follows:
 3. `DATE` becomes `Date32`.
 4. `DATETIME`/`TIMESTAMP` become `DateTime64(<fsp or 0>)[,'tz']`.
 5. `TIME` becomes `String`.
-6. `JSON`, or any type for which `is_binary_datatype(text)` holds, becomes `String`.
+6. `BIT(1)` (also written `BIT`) becomes `Bool`, as on the streaming path (BIT(1) part of D-13.04-10, fixed).
+   `JSON`, or any other type for which `is_binary_datatype(text)` holds, becomes `String`.
 7. **Everything else is passed through verbatim.** ClickHouse then resolves the MySQL spelling through its
    MySQL-compatibility aliases.
 
@@ -668,7 +671,7 @@ exact emitted text by a server was **not** verified offline.
 | `timestamp`, `timestamp(p)` | `DateTime64(0)` / `DateTime64(p)`, `+ ,'tz'` with the option | **`String`**: `\stime(.*?)\s` runs before the timestamp rule | zone-less | `DateTime64(p,'UTC')` | zone (D-13.04-10); regexp type (D-13.04-18) |
 | `time`, `time(p)` | `String` | `String` | String | `String`, always 6 fractional digits (Spec 07.03 §3.2) | value text: MySQL Shell writes `12:00:00` for TIME(0) where the stream writes `12:00:00.000000` (D-13.04-10) |
 | `year` | verbatim `year` | verbatim | `YEAR` alias (22.5+) → UInt16 | `UInt16`/`Int32` | minor |
-| `bit(1)` | `String` | `String` | String | `Bool` (Spec 07.04 §3.1) | **type** (D-13.04-10); value loaded as hex `01`/`00` (§3.7.1) |
+| `bit(1)` | `Bool` | `String` | String | `Bool` (Spec 07.04 §3.1) | none in the ANTLR translator since the fix (BIT(1) part of D-13.04-10): declared `Bool`, value loaded as true/false (§3.7.1). Was `String` holding hex `01`/`00`. The regexp fallback still emits `String` |
 | `bit(n>1)` | `String` | `String` | String | `String` (hex) | none since the D-13.04-3 fix (§3.7.1) |
 | `enum('a','b,c','it''s')` | verbatim | verbatim | `ENUM` → Enum8/Enum16 with auto-numbered values. `''` escaping and commas inside labels survive. | `String` (`Types.CHAR`) | **type** (D-13.04-10) |
 | `set('x','y')` | verbatim | `String` | `SET` alias (22.5+) is an integer type: CREATE with string arguments expected to fail | `String` | D-13.04-15 |
@@ -888,8 +891,8 @@ This is D-13.04-26.
 |---|---|---|
 | INV-13.04-1 | Every loaded row carries `_version = 0` and `is_deleted = 0` (or `_sign = 1`), strictly below every streamed version, so streaming changes after the dump point always win and never tie. | **Holds** (§3.11) |
 | INV-13.04-2 | A table is created as `ReplacingMergeTree` keyed so that distinct source rows stay distinct. | **Holds** for keyless tables (keyed like the stream, §3.12; rows identical in every column still collapse, as on the stream). **Violated** for prefix PKs (D-13.04-16) |
-| INV-13.04-3 | Column types equal the types the streaming DDL path would declare for the same source column. | **Violated** for ENUM, BIT(1), DATETIME/TIMESTAMP zone, generated columns, overrides (D-13.04-9/10/27) |
-| INV-13.04-4 | Values are stored in the same canonical rendering the streaming writer stores. | **Holds** for binary/BIT(n>1)/spatial when `--binary_handling_mode`/`--persist_raw_bytes` match the connector (§3.7.1). **Violated** for BIT(1) and TIME(0) (D-13.04-10). Unverified for TIMESTAMP zone handling. |
+| INV-13.04-3 | Column types equal the types the streaming DDL path would declare for the same source column. | **Violated** for ENUM, DATETIME/TIMESTAMP zone, generated columns, overrides (D-13.04-9/10/27). BIT(1) holds since the fix (`Bool`) |
+| INV-13.04-4 | Values are stored in the same canonical rendering the streaming writer stores. | **Holds** for binary/BIT(n>1)/spatial when `--binary_handling_mode`/`--persist_raw_bytes` match the connector (§3.7.1). **Holds** for BIT(1) since the fix. **Violated** for TIME(0) (D-13.04-10). TIMESTAMP and DATETIME(6) values of a MySQL Shell dump loaded with `--clickhouse_datetime_timezone UTC` equal the streamed values (verified end to end, connector `database.connectionTimeZone: UTC`); other zones unverified. |
 | INV-13.04-5 | Every source row in the dump is loaded, or the loader exits non-zero. | **Violated** only by chunk files the glob does not find and the absent count check (D-13.04-19). D-13.04-4/5/6 are fixed. |
 | INV-13.04-6 | A failed chunk makes the run fail (non-zero exit). | **Holds** (clickhouse-client, decompressor and `sed` failures, §3.10) |
 | INV-13.04-7 | Generated columns are not inserted. | **Holds** (§3.7.1) |
@@ -940,7 +943,28 @@ it is not installed):
 - `TestMydumperDataFileDiscovery`: D-13.04-5. `test_resync_isolated_table_dir_carries_the_dump_metadata`:
   the `@.json` hand-off to `ch-mysql-resync` loads.
 
-No test covers the type mapping table, overrides or the reconciler.
+No test covers the type mapping table, overrides or the reconciler. BIT(1) is covered by
+`sink-connector/python/db_load/tests/test_loader_bit1_bool.py` (both copies: `Bool` declared, true/false
+loaded under every binary mode, values checked with `clickhouse local`).
+
+End to end, `sink-connector/python/tests_e2e/mysql` (CI job `python-toolset-e2e-mysql`) loads a real
+consistent MySQL Shell dump (`db_dump/mysql_dumper.py`) into a fresh database with `db_load/clickhouse_loader.py
+--mysqlshell --rmt_delete_support --binary_handling_mode base64 --clickhouse_datetime_timezone UTC`, the
+settings of the connector that streams the same tables, and verifies it with the production checksum job:
+- `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_loader_fills_a_fresh_database`
+- `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_production_job_matches_the_loaded_snapshot`
+  (every table MATCH; BIT(1) part of D-13.04-10)
+- `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_keyless_table_keeps_every_row_after_optimize_final` (D-13.04-1)
+- `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_loaded_values_equal_the_streamed_values`
+  (TIMESTAMP(6), DATETIME(6), BINARY/VARBINARY/BLOB, BIT(1), BIT(16) equal to the streamed rows; D-13.04-2, -3)
+- `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_loader_fails_loudly_on_a_corrupt_dump_chunk` (D-13.04-4)
+- `sink-connector/python/tests_e2e/mysql/test_mysql_05_justification.py::test_loader_loads_a_table_with_a_dollar_in_its_name`
+  (strict xfail, D-13.04-32)
+- the packaged loader through `ch-mysql-resync patch` (Spec 13.08):
+  `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_unlogged_change_is_reported_then_repaired_by_resync`
+
+Not reachable end to end with MySQL Shell dumps: D-13.04-5 (mydumper layout) and D-13.04-7 (`SHOW CREATE TABLE`
+writes `DEFAULT NULL` in upper case, so a lower-case `null` never reaches the loader).
 
 ### 5.2 Acceptance criteria (each is a test to add; GAP until added)
 
@@ -948,7 +972,8 @@ No test covers the type mapping table, overrides or the reconciler.
 2. `get_unix_timezone_from_mysql_timezone` is deterministic across `PYTHONHASHSEED` values, returns `UTC` for
    `None` or unknown offsets, and never returns a DST zone for a fixed offset (packaged). **Covered**.
 3. For a MySQL Shell dump with a `varbinary` and a `bit(1)` column, the rendered INSERT applies the binary
-   transform that matches the configured connector rendering. **Covered** (BIT(1) type still D-13.04-10).
+   transform that matches the configured connector rendering. **Covered**, BIT(1) included
+   (`sink-connector/python/db_load/tests/test_loader_bit1_bool.py::test_bit1_values_are_true_false_under_every_binary_mode`).
 4. A data pipeline whose decompressor fails makes the loader exit non-zero (`set -o pipefail` or equivalent).
    **Covered**. An empty chunk is refused unless the dump metadata says the chunk is empty: GAP (D-13.04-19).
 5. The mydumper data glob is independent of `-` in `--dump_dir`. **Covered**.
@@ -990,7 +1015,8 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Blast radius**: all rows of every keyless table, silently, after the first merge.
   - **Recovery**: drop and recreate the table with a sorting key of all columns (as the connector does) or a declared identity, then reload.
   - **RTO**: unmeasured (no server). The time to recreate and reload the table.
-  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestKeylessSortingKey::test_no_key_uses_every_stored_column_and_allows_nullable_key`
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestKeylessSortingKey::test_no_key_uses_every_stored_column_and_allows_nullable_key`;
+    end to end `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_keyless_table_keeps_every_row_after_optimize_final`
   - **FIXED**: D-13.04-1. The listener keys a keyless table like the streaming DDL path (NOT NULL UNIQUE key, else all stored columns with `allow_nullable_key=1` when needed, §3.12); the regexp fallback refuses it.
 
 - **FM-13.04-2 Packaged loader interprets TIMESTAMP text in a random zone**
@@ -1010,7 +1036,9 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Blast radius**: every binary-family value in snapshot rows. Rows streamed later use the connector's rendering, so one column mixes two renderings.
   - **Recovery**: transform in place with `ALTER TABLE ... UPDATE col = lower(hex(base64Decode(col)))` on snapshot rows (`_version = 0`), or reload after a fix.
   - **RTO**: unmeasured (no server). The duration of one mutation per affected table.
-  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestBinaryRepresentation::test_values_match_the_connector_rendering`
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestBinaryRepresentation::test_values_match_the_connector_rendering`;
+    end to end (connector `binary.handling.mode: base64`, loader `--binary_handling_mode base64`)
+    `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_loaded_values_equal_the_streamed_values`
   - **FIXED**: D-13.04-3. The transform classifies by the MySQL type, decodes as the dump metadata says, and renders per `--binary_handling_mode`/`--persist_raw_bytes` (connector defaults: lower-case hex, §3.7.1).
 
 - **FM-13.04-4 Decompressor failure is invisible and the chunk is loaded partially or not at all**
@@ -1020,7 +1048,9 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Blast radius**: the rows of the affected chunk. Exit code 0.
   - **Recovery**: re-dump or repair the chunk. Truncate the target table and reload it.
   - **RTO**: unmeasured (no server). Reload time of one table.
-  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestPipelineFailure::test_truncated_mysqlshell_chunk_fails_the_load`
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestPipelineFailure::test_truncated_mysqlshell_chunk_fails_the_load`;
+    end to end (a real dump with a chunk zstd cannot decode)
+    `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_loader_fails_loudly_on_a_corrupt_dump_chunk`
   - **FIXED**: D-13.04-4. Pipelines run under `bash -o pipefail`, so a failing decompressor or `sed` fails the load (exit 1, §3.10).
 
 - **FM-13.04-5 mydumper dump directory containing `-` loads nothing**
@@ -1080,8 +1110,25 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Blast radius**: affected columns of affected tables. ENUM failures stall replication.
   - **Recovery**: `ALTER TABLE ... MODIFY COLUMN` to the streaming type, then fix the renderings by mutation or reload.
   - **RTO**: unmeasured (no server). ALTER and mutation duration.
-  - **Test**: GAP.
-  - **DEFECT**: D-13.04-10.
+  - **Test**: BIT(1): `sink-connector/python/db_load/tests/test_loader_bit1_bool.py::test_bit1_columns_are_declared_bool`
+    and, end to end, `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_production_job_matches_the_loaded_snapshot`.
+    ENUM, SET, TIME(0), zones: GAP.
+  - **DEFECT**: D-13.04-10 (its BIT(1) part is fixed: `Bool`, loaded as true/false).
+
+- **FM-13.04-26 A table whose name MySQL Shell percent-encodes aborts the whole load**
+  - **Trigger**: a MySQL Shell dump of a table whose name contains a character MySQL Shell encodes in file
+    names, for example `$` (`temp_fx$rates` is written as `pyops@temp_fx%24rates@@0.tsv.zst`).
+  - **Behaviour**: the data phase takes the table name from the data file name without decoding it and pastes
+    it unquoted into `INSERT INTO <db>.temp_fx%24rates`; ClickHouse rejects the statement (Code 62, syntax
+    error at `%`), `execute_load` raises and the loader exits 1 after the other chunks finished.
+  - **Detection**: loud (exit 1, `command ... failed`).
+  - **Blast radius**: no snapshot of the database that holds such a table (the other tables may be loaded
+    partially).
+  - **Recovery**: dump such tables apart (`--exclude_tables_regex` for the main dump) and load them by hand.
+  - **RTO**: unmeasured.
+  - **Test**: `sink-connector/python/tests_e2e/mysql/test_mysql_05_justification.py::test_loader_loads_a_table_with_a_dollar_in_its_name`
+    (strict xfail pinning the defect).
+  - **DEFECT**: D-13.04-32.
 
 - **FM-13.04-11 Credentials exposed**
   - **Trigger**: a run with `--clickhouse_password` (packaged), a failing load (legacy), or any legacy run with config-file credentials.
@@ -1231,7 +1278,7 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Test**: GAP.
   - **DEFECT**: D-13.04-27.
 
-Summary: 25 failure modes, 16 DEFECT, 17 GAP.
+Summary: 26 failure modes, 17 DEFECT, 17 GAP.
 
 ---
 
@@ -1248,7 +1295,7 @@ Summary: 25 failure modes, 16 DEFECT, 17 GAP.
 | D-13.04-7 | S1 | both | `CreateTableMySQLParserListener.py:64-89` | reproduced (`r1_translate.py lower_null`: `` `a` varchar(10) null `` gives `nullable False`) | FIXED: case-insensitive `NULL` test. Test `test_loader_s1_fixes.py::TestColumnModifiers::test_lower_case_null_is_nullable`. Was: a lower-case `null` was recorded as NOT NULL, so the load structure declared `String` and NULLs became `''`. |
 | D-13.04-8 | S2 | both | `db_load/clickhouse_loader.py:518-521`; `ch_sink_tools/db_load/clickhouse_loader.py:486-489` | reproduced (`r2_flow.py mysqlsh`: `truncate table mydb.t1`, target `mydb_ch`) | `--truncate_tables` truncates `<mysql_source_database>.<table>`, potentially the live replica, never the target. |
 | D-13.04-9 | S2 | both | `CreateTableMySQLParserListener.py:93-105` | reproduced (DDL `MATERIALIZED (`a` * 2)`); stream rejection per Spec 06.06 §3.1 (code-read) | Generated columns are emitted as `MATERIALIZED <MySQL expr>`. The connector's inserts into them fail (Code 44). The streaming DDL path uses `DEFAULT`. |
-| D-13.04-10 | S2 | both | `CreateTableMySQLParserListener.py:33-54`; `db_load/clickhouse_loader.py:159-167` | reproduced (DDL in §3.15); streaming types from Specs 07.03/07.04/08.05 and `DataTypeConverter.java` (code-read) | Type/rendering divergence from the streaming path: ENUM to Enum8, BIT(1) to String, zone-less DateTime64, TIME(0) text, legacy `_sign` engine by default. Enum inserts of new labels fail, and other values compare unequal. |
+| D-13.04-10 | S2 | both | `CreateTableMySQLParserListener.py:33-54`; `db_load/clickhouse_loader.py:159-167` | reproduced (DDL in §3.15); streaming types from Specs 07.03/07.04/08.05 and `DataTypeConverter.java` (code-read) | Type/rendering divergence from the streaming path: ENUM to Enum8, zone-less DateTime64, TIME(0) text, legacy `_sign` engine by default. Enum inserts of new labels fail, and other values compare unequal. BIT(1) part FIXED (found end to end: the production job reported every snapshot table with a BIT(1) column DIFFERENT): the ANTLR translator declares `Bool` and the MySQL Shell path loads true/false. Test: `test_loader_bit1_bool.py::test_bit1_columns_are_declared_bool`; e2e `tests_e2e/mysql/test_mysql_03_snapshot.py::test_production_job_matches_the_loaded_snapshot`. Was: BIT(1) to `String` holding `01`/`00`. |
 | D-13.04-11 | S2 | packaged | `ch_sink_tools/db_load/clickhouse_loader.py:421,424,445,466,469` | reproduced (`r2_flow.py packaged mysqlsh`: password in log output True; `--password 'pa'ss word'`) | The password is logged in clear text, and single-quote wrapping without escaping breaks or injects into the shell command (FM-11.05-1). |
 | D-13.04-12 | S2 | both | `db_load/clickhouse_loader.py:482-483`; `ch_sink_tools/db_load/clickhouse_loader.py:451-452` | reproduced (`r2_flow.py legacy mysqlsh_fail`: exception contains `--password 'pa'"'"'ss`) | A failed load raises `AssertionError` with the unredacted command, so the password reaches the traceback (FM-11.05-2). |
 | D-13.04-13 | S2 | both (legacy: both paths; packaged: mydumper path) | `db_load/clickhouse_loader.py:418-421,494-498`; `ch_sink_tools/db_load/clickhouse_loader.py:418-421` | reproduced (`r2_flow.py legacy cfg`: `-uloader --password cfgsecret`) | A password read from the config file is put on the `clickhouse-client` argv (visible via `ps`/`/proc`), defeating the config-file option. |
@@ -1270,3 +1317,4 @@ Summary: 25 failure modes, 16 DEFECT, 17 GAP.
 | D-13.04-29 | S4 | both | `CreateTableMySQLParserListener.py:148-154,189-282`; `db_load/clickhouse_loader.py:28-44`; `mysql_parser.py:26` | code-read (grammar rule `partitionClause` is the window clause; `translateFieldDefinition` undefined); stderr noise reproduced | Dead code: `exitPartitionClause`, `exitAlterList` (calls an undefined method), `run_command`. antlr4's default console error listener stays installed. |
 | D-13.04-30 | S4 | both | `db_load/clickhouse_loader.py:255-256,410-411,597-600,605-606` (P similar) | code-read | Flags declared but ignored or mis-declared: `--use_regexp_parser`, `--debug`, `--threads` (required although it has a default; ignored by the mydumper path), the `load_data` `dry_run` parameter. `load_data` falls through after the mysqlshell load. |
 | D-13.04-31 | S4 | both | `db_load/clickhouse_loader.py:1`; `ch_sink_tools/db_load/postgres_type_mapper.py:8`; `ch_sink_tools/config/column_type_overrides.py:17-18`; `Dockerfile_db_load` | code-read | Doc drift. The usage header names a nonexistent script and flags. The PostgreSQL mapper claims a `--source postgres` loader flag. The override docstring uses dashed flag names (the dumper uses underscores). The `db_load` image contains no loader. Unit tests cover the legacy copy only. |
+| D-13.04-32 | S3 | both | `db_load/clickhouse_loader.py` (`load_data_mysqlshell`: table name from the data file name, unquoted `INSERT INTO {ch_schema}.{table_name}`); packaged equivalent | reproduced end to end (`temp_fx$rates` dumped as `pyops@temp_fx%24rates@@0.tsv.zst`; `INSERT INTO pyops_snapshot.temp_fx%24rates(...)` → Code 62 syntax error at `%`, loader exit 1) | A table name MySQL Shell percent-encodes in file names (`$` and similar) is used encoded and unquoted in the data phase, so the load of the whole dump fails. Pinned by the strict xfail `tests_e2e/mysql/test_mysql_05_justification.py::test_loader_loads_a_table_with_a_dollar_in_its_name`. |

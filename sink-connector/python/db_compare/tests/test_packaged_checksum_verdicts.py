@@ -57,7 +57,7 @@ def run_driver(side_outputs, tables=("orders",), config=CONFIG, json_columns=(),
     """Run the packaged run_config() with the real command builders and verdict
     logic; ``side_outputs(cmd)`` gives each side's (rc, stdout)."""
     table_rows = MagicMock()
-    table_rows.fetchall.return_value = [{"table_name": t} for t in tables]
+    table_rows.mappings.return_value.fetchall.return_value = [{"table_name": t} for t in tables]
     patches = [
         patch.object(pt, "args", driver_args(**arg_overrides), create=True),
         patch.object(pt, "resolve_credentials_from_config", return_value=("u", "p")),
@@ -330,13 +330,20 @@ def parsed_defaults(module, argv):
     return module.args
 
 
+class MappingRows(list):
+    """The subset of a SQLAlchemy result the packaged MySQL side reads: rows by name through mappings()."""
+
+    def mappings(self):
+        return iter(self)
+
+
 def mysql_select_for(columns, args_overrides=None):
     """The packaged MySQL side's row expression for (name, column_type, is_nullable, collation) rows."""
     values = dict(mysql_database="shop", min_date_value="1900-01-01", max_date_value="2299-12-31",
                   min_datetime_value="1900-01-01 00:00:00", max_datetime_value="2299-12-31 23:59:59")
     values.update(args_overrides or {})
     pm.args = argparse.Namespace(**values)
-    rows = [{"column_name": n, "data_type": t, "is_nullable": nl, "collation": c} for (n, t, nl, c) in columns]
+    rows = MappingRows({"column_name": n, "data_type": t, "is_nullable": nl, "collation": c} for (n, t, nl, c) in columns)
     with patch.object(pm, "execute_mysql", return_value=(rows, -1)):
         (query, select, order_by, external) = pm.get_table_checksum_query("orders", MagicMock(), "hex", None, [], False, False)
     return select

@@ -65,6 +65,14 @@ space-separated words or comma lists alike on both sides, the ClickHouse count w
 `--include_partitions_regex`, and `--debug_output`, which writes the per-row files and still prints the
 checksum line.
 
+**Fixed by the end-to-end suite** (`sink-connector/python/tests_e2e/mysql`, which runs the scheduled job, the
+manual recipes, the snapshot path and ch-mysql-resync against a real MySQL, ClickHouse and connector): D-13.06-9
+(every runner reads catalog rows by name through `mappings()`, so the tools run on the SQLAlchemy 2.x that a
+fresh `install.sh` installs), D-13.06-38 (BIT(n>1) is rendered as lower-case hex under every
+`--binary_encoding`, as the connector stores it; with `--binary_encoding base64` every table with such a column
+was DIFFERENT on clean data) and D-13.06-39 (`install.sh` can be sourced by the job's `set -euo pipefail`
+script).
+
 ## 2. Codebase Mapping on 2.11.0
 
 | Concern | Legacy copy | Packaged copy |
@@ -198,6 +206,12 @@ from `sink-connector/python` with that directory on `PYTHONPATH` (§3.1). A miss
 The packaged driver (PT404-445) has the same flags **minus** `--source_timezone`, `--binary_encoding`, the two
 include flags, `--lock_wait_timeout` and `--fail_on_lock_timeout`. It has `--fail_on_empty`. Their effects
 differ as described in §3.6.2, §3.7.2 and §3.16.
+
+The scheduled job runs the legacy driver from a bash script with `set -euo pipefail` that sources
+`install.sh` (a venv with `requirements.txt`, then `PYTHONPATH="${PYTHONPATH:-}":.`), runs the partitioned and
+the non-partitioned command through `tee`, and fails when any line of the two logs contains WARNING.
+`install.sh` read `"${PYTHONPATH}"` unguarded, so with `PYTHONPATH` unset `set -u` aborted the job before any
+checksum (D-13.06-39, fixed).
 
 Environment: neither driver reads environment variables. The legacy children inherit the environment,
 including `PATH` (which supplies `python`) and `PYTHONPATH`. The packaged children inherit it with the package
@@ -441,7 +455,7 @@ Outcome table (`exit` is the process exit code of the driver):
 | Unexpected exception | `Exception in main thread` + traceback, exit 1 | same (`os` and `traceback` are now imported, D-13.06-14 fixed) |
 | Ctrl-C | `Received interrupt`, `os._exit(1)` | same |
 | Invalid YAML or config | exit 1 | same |
-| SQLAlchemy 2.x installed | TypeError at the first table, exit 1 (D-13.06-9) | same (via `get_table_partition_key`) |
+| SQLAlchemy 2.x installed | normal verdicts: catalog rows are read by name through `mappings()` (before the fix: TypeError at the first table, exit 1, D-13.06-9) | same (before the fix: via `get_table_partition_key`) |
 
 **Can a run end with exit 0 while a table was skipped, errored or compared zero rows?** Only in these cases:
 
@@ -592,7 +606,7 @@ equal values give byte-identical text (expressions compared, not executed).
 | `time(p)` → `String` (`[-]HH:MM:SS.ffffff`) | `cast(c as time(6))` | `toString("c")` | yes | `substr(cast(c as time(6)),1,length(c))`: `time(3)` gives 12 characters | `toString("c")` (26 characters stored) | no (noise, D-13.06-20) |
 | `year` → `Int32`/`UInt16` | `` `c` `` | `toString("c")` | yes for 1901-2155. `YEAR` 0 (`0000` against `0`) **not determined** | same | same | same |
 | `bit(1)` → `Bool` / `Nullable(Bool)` | `` `c`+0 `` | `toString(toUInt8("c"))` | yes | `replace(to_base64(cast(c as binary)),'\n','')` (packaged `is_binary_datatype` substring `bit`) | `Bool` exact: `toUInt8`. `Nullable(Bool)`: `toString` = `true`/`false` | no (noise, D-13.06-20) |
-| `bit(n>1)` → `String` | `lower(hex(cast(c as binary)))` (hex/raw) or base64 | `toString` (raw: `lower(hex(c))` if listed) | yes when `--binary_encoding` matches the connector (11.02 §3.6) | base64 (driver-forced) | `toString` | only when the connector stores base64 |
+| `bit(n>1)` → `String` | `lower(hex(cast(c as binary)))` under every `--binary_encoding`: the connector stores BIT(n>1) as lower-case hex text under every `binary.handling.mode` (base64 applies to binary/varbinary/blob only; observed end to end). Before the fix `--binary_encoding base64` rendered base64 (D-13.06-38) | `toString` (raw: `lower(hex(c))` if listed) | yes | base64 (driver-forced) | `toString` | only when the connector stores base64 |
 | `enum('float','x')` → `String` | `` `c` `` (classified on `DATA_TYPE`) | `toString` | yes | **skipped** (`'float' in COLUMN_TYPE`) | `toString` | no (column sets differ, noise, D-13.06-20) |
 | `set('realtime','b')` → `String` | `` `c` `` | `toString` | yes | **skipped** (`'real'` substring) | `toString` | no |
 | `json` → `String` | skipped unless opted in. Opt-in: eleven `REGEXP_REPLACE`s over `json_pretty` | skipped if listed in `--json_columns` (the driver derives the list) | not compared by default | skipped by default with a WARNING (`--include_json_columns` now defaults to False). Opt-in: the same regexes | skipped by default with a WARNING: native JSON types and the `--json_columns` the packaged driver derives from MySQL. Opt-in: `toString` (stored text) | not compared by default, as in legacy. Before the fix JSON was always compared with one-sided normalisation, so `{"a": 1.0}` against `{"a":1}` compared EQUAL (D-13.06-7) |
@@ -689,8 +703,9 @@ Behaviour per table:
 
 Faults:
 
-- `partitions.fetchall()` followed by `row['partition_name']` (LMC67-70, PMC67-70) and `tables.fetchall()`
-  followed by `table['table_name']` (LMC215, PMC213) crash on SQLAlchemy 2.x (D-13.06-9).
+- Fixed: `partitions.fetchall()` followed by `row['partition_name']` (LMC67-70, PMC67-70) and `tables.fetchall()`
+  followed by `table['table_name']` (LMC215, PMC213) crashed on SQLAlchemy 2.x (D-13.06-9); the rows are now
+  read through `mappings()`.
 - A sub-partitioned table has one `information_schema.partitions` row per **sub**partition with a repeated
   `PARTITION_NAME`. Each row counts the whole partition, so the total is multiplied by the number of
   subpartitions (code-read, D-13.06-19).
@@ -894,6 +909,12 @@ The suite was run on 2026-10-01 from `sink-connector/python` with the toolset ve
     WARNING and exits 0; a difference logs exactly the `Checksum difference` WARNING)
   - `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py` (`--no_wc`, `--exclude_columns` forms, the ClickHouse count,
     `--debug_output`; both copies)
+- Defects found by the end-to-end suite (§5.3; with them the four suites give 550 passed, 4 skipped):
+  - `sink-connector/python/db_compare/tests/test_sqlalchemy_rows.py` (real SQLAlchemy rows from an in-memory
+    SQLite database through both drivers, both MySQL count runners, the packaged MySQL side and both dumpers;
+    D-13.06-9, D-13.03-3; passes on SQLAlchemy 1.4 and 2.x)
+  - `sink-connector/python/db_compare/tests/test_scheduled_job_findings.py` (BIT(n>1) rendering, D-13.06-38;
+    `install.sh` under `set -euo pipefail` with stand-in `python3`/`pip`, D-13.06-39)
 - Where quoting (§3.13):
   - `sink-connector/python/db_compare/tests/test_top_level_where_quoting.py::ClickHouseWhereQuotingTestCase::test_partition_date_uses_plain_quotes`
   - `sink-connector/python/db_compare/tests/test_top_level_where_quoting.py::WhereOverrideNormalizationTestCase::test_legacy_escaped_quotes_are_folded`
@@ -929,7 +950,16 @@ These tests do not run in CI (FM-11.05-3).
    logs no WARNING at all. Covered:
    `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestSideWarningsReachTheDriverLog::test_side_warnings_are_logged_by_the_driver`
    and `sink-connector/python/db_compare/tests/test_checksum_job_log_contract.py::TestScheduledJobLogContract::test_clean_run_with_empty_table_and_side_notes_logs_no_warning`.
-7. The driver row loop runs over real SQLAlchemy `Row` objects of the installed major version.
+7. The driver row loop runs over real SQLAlchemy `Row` objects of the installed major version. Covered:
+   `sink-connector/python/db_compare/tests/test_sqlalchemy_rows.py::TestDriversReadRealRows::test_legacy_driver_compares_a_table_listed_by_sqlalchemy`
+   (and the packaged, count-runner and dumper tests of that file), end to end by
+   `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_clean_data_passes_the_job`.
+12. With the connector's `binary.handling.mode` base64, a table with a BIT(n>1) column is equal on clean data.
+    Covered: `sink-connector/python/db_compare/tests/test_scheduled_job_findings.py::TestBitColumnRendering::test_bit_n_is_lower_hex_under_every_encoding`,
+    end to end by `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_clean_data_passes_the_job`.
+13. The scheduled job's `set -euo pipefail` script can source `install.sh` with `PYTHONPATH` unset. Covered:
+    `sink-connector/python/db_compare/tests/test_scheduled_job_findings.py::TestInstallShUnderStrictMode::test_sources_with_pythonpath_unset`,
+    end to end by `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_job_sources_install_sh_under_set_euo_pipefail`.
 8. A packaged-copy test, or the removal of the packaged MySQL runners, pins which copy `ch-mysql-checksum`
    executes. The driver must not depend on the cwd. Covered:
    `sink-connector/python/db_compare/tests/test_packaged_checksum_verdicts.py::TestPackagedSidesAndFailures::test_side_module_starts_from_a_foreign_cwd_without_pythonpath`.
@@ -941,7 +971,50 @@ These tests do not run in CI (FM-11.05-3).
     `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestNoWc::test_legacy_driver` and
     `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestDebugOutput::test_legacy_mysql_side` (and the other tests of both classes).
 
-### 5.3 Offline reproduction scripts used by this spec
+### 5.3 End-to-end tests (real MySQL, ClickHouse and connector)
+
+`sink-connector/python/tests_e2e/mysql` (CI: `.github/workflows/python-toolset-e2e-mysql.yml`, job
+`python-toolset-e2e-mysql`) runs the tools from a copy of the tool tree with `.my.cnf` and
+`clickhouse-client.xml`, against a connector with `binary.handling.mode: base64`,
+`database.connectionTimeZone: UTC` and a database override map. Its JUSTIFICATION.md maps each test to the fix
+it proves (pre-fix tree d42a8740 against this branch).
+
+- The scheduled job, exactly (`set -euo pipefail`, `source ./install.sh`, both commands through `tee`, the
+  WARNING scan):
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_job_sources_install_sh_under_set_euo_pipefail` (D-13.06-39)
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_clean_data_passes_the_job` (two databases, `database_override_map`, `ignored_columns`, excluded tables; D-13.06-9, D-13.06-38)
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_bitemporal_where_selects_the_trading_day_window`
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_debug_run_passes_the_job`
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_single_database_run_passes_the_job`
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_table_include_list_restricts_the_job`
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_empty_partition_does_not_fail_the_job`
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_empty_partition_is_reported_empty_not_matched` (D-13.06-5)
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_side_notes_reach_the_job_log_below_warning` (D-13.06-8)
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_planted_difference_fails_the_job`
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_planted_difference_in_the_renamed_database_fails_the_job`
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_difference_in_an_ignored_column_passes_the_job`
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_clickhouse_side_failure_fails_the_job`
+- The manual recipes (side scripts with `--no_wc --debug_output`, sorted diff, count runners):
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_02_manual_recipes.py::test_manual_checksum_recipe_is_equal_on_clean_data` (D-13.06-17, -26, -27)
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_02_manual_recipes.py::test_manual_checksum_recipe_with_the_connector_binary_encoding`
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_02_manual_recipes.py::test_manual_checksum_recipe_names_the_diverged_row`
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_02_manual_recipes.py::test_mysql_count_agrees_with_real_counts`
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_02_manual_recipes.py::test_clickhouse_count_agrees_with_real_counts` (D-13.06-18)
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_clickhouse_count_agrees_between_the_live_and_the_restored_copy`
+- Dedicated runs of the false-match shapes:
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_05_justification.py::test_checksum_in_column_names_does_not_confuse_the_verdict` (D-13.06-2)
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_05_justification.py::test_dollar_table_is_compared_under_its_own_name` (D-13.06-3)
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_05_justification.py::test_equal_mysql_and_clickhouse_host_strings_still_give_verdicts` (D-13.06-4)
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_05_justification.py::test_function_partition_expression_reaches_the_sides` (D-13.06-10)
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_05_justification.py::test_packaged_driver_run_from_another_directory_reports_a_difference` (D-13.06-1)
+
+What they established about the deployment: the connector stores BIT(n>1) as hex under base64 mode (the origin
+of D-13.06-38); a bitemporal `where` that hides `CONVERT_TZ` from ClickHouse in `/*!50000 */` comments selects
+the same rows on both sides only because the ClickHouse server zone is the conversion's source zone
+(America/Chicago); a table name containing `temp` (for example `positions_bitemporal`) is silently dropped by
+the jobs' `--exclude_tables_regex "(temp|...)"`.
+
+### 5.4 Offline reproduction scripts used by this spec
 
 All scripts live in a throwaway repro directory (not part of the repo) and run with the toolset venv Python. No
 database or network is contacted. Side scripts are stubbed, or the shell runs a stand-in `python`.
@@ -1095,8 +1168,10 @@ cross-referenced where this spec adds a trigger or corrects them.
     `.mappings()`).
   - **Recovery**: pin `sqlalchemy<2` in the tool's environment.
   - **RTO**: one reinstall plus a re-run (unmeasured).
-  - **Test**: GAP: acceptance criterion 7.
-  - **DEFECT**: D-13.06-9 (same class as D-13.03-3).
+  - **Test**: `sink-connector/python/db_compare/tests/test_sqlalchemy_rows.py::TestDriversReadRealRows::test_legacy_driver_compares_a_table_listed_by_sqlalchemy`;
+    end to end `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_clean_data_passes_the_job`
+    (the scheduled job on a fresh `install.sh`, SQLAlchemy 2.x).
+  - **FIXED**: D-13.06-9 (with D-13.03-3). Every runner reads catalog rows through `mappings()`, which SQLAlchemy 1.4 and 2.x both provide.
 
 - **FM-13.06-10 A function-partitioned MySQL table aborts the run**
   - **Trigger**: a table partitioned by an expression with parentheses (`TO_DAYS(dt)`, `YEAR(dt)`) or with
@@ -1264,7 +1339,32 @@ cross-referenced where this spec adds a trigger or corrects them.
     `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestDebugOutput::test_legacy_mysql_side`.
   - **DEFECT**: D-13.06-28, -31, -32, -22, -23. (D-13.06-26 and -27 are fixed.)
 
-Summary: 21 failure modes, 11 DEFECT, 11 GAP.
+- **FM-13.06-22 BIT(n>1) columns are DIFFERENT on clean data under base64**
+  - **Trigger**: `--binary_encoding base64` (the connector runs `binary.handling.mode: base64`) on a table with a
+    `bit(n)` column, n > 1.
+  - **Behaviour**: the connector stores BIT(n>1) as lower-case hex text under every binary mode; the MySQL side
+    rendered it with `to_base64`, the ClickHouse side the stored hex (LM `mysql_column_expression`).
+  - **Detection**: `Checksum difference` on equal data, so the scheduled job fails every day.
+  - **Blast radius**: noise on every table with such a column; a real divergence there is hidden in the noise.
+  - **Recovery**: `ignored_columns` for the BIT columns, or the manual recipe with `--binary_encoding hex`.
+  - **RTO**: one re-run (unmeasured).
+  - **Test**: `sink-connector/python/db_compare/tests/test_scheduled_job_findings.py::TestBitColumnRendering::test_bit_n_is_lower_hex_under_every_encoding`;
+    end to end `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_clean_data_passes_the_job`.
+  - **FIXED**: D-13.06-38. BIT(n>1) is rendered `lower(hex(cast(c as binary)))` under every encoding.
+
+- **FM-13.06-23 The scheduled job dies sourcing install.sh**
+  - **Trigger**: the job script's `set -euo pipefail`, then `source ./install.sh`, with `PYTHONPATH` unset.
+  - **Behaviour**: `export PYTHONPATH="${PYTHONPATH}":.` is an unbound variable under `set -u`; the script exits 1
+    before any checksum.
+  - **Detection**: loud (`install.sh: line 4: PYTHONPATH: unbound variable`, exit 1).
+  - **Blast radius**: no verification that day.
+  - **Recovery**: export `PYTHONPATH=` before sourcing.
+  - **RTO**: one re-run.
+  - **Test**: `sink-connector/python/db_compare/tests/test_scheduled_job_findings.py::TestInstallShUnderStrictMode::test_sources_with_pythonpath_unset`;
+    end to end `sink-connector/python/tests_e2e/mysql/test_mysql_01_production_job.py::test_job_sources_install_sh_under_set_euo_pipefail`.
+  - **FIXED**: D-13.06-39. `install.sh` reads `${PYTHONPATH:-}`.
+
+Summary: 23 failure modes, 10 DEFECT, 10 GAP.
 
 ## 7. Defect Register
 
@@ -1281,7 +1381,7 @@ LCC/PCC the ClickHouse count runners.
 | D-13.06-6 | S1 | packaged | `ch_sink_tools/db_compare/top_level_table_checksum.py:159,186`; `ch_sink_tools/db_compare/mysql_table_checksum.py:102-107`; `ch_sink_tools/db_compare/clickhouse_table_checksum.py:165-168` | reproduced (R01 expressions plus R08 evaluation model: `1950-05-05` and `1961-01-01` both render `1969-12-31 18:00:00`) | FIXED: both sides get the DateTime64 range `1900-01-01 00:00:00` .. `2299-12-31 23:59:59`; the packaged side defaults agree. Test: `test_packaged_checksum_verdicts.py::TestPackagedDatetimeBounds::test_driver_passes_identical_full_range_bounds_to_both_sides`. Was: the clamp was narrowed to `1969-12-31 18:00:00` .. `2299-12-31 00:00:00`, so divergent values outside it compared EQUAL. |
 | D-13.06-7 | S1 | packaged | `ch_sink_tools/db_compare/mysql_table_checksum.py:86-101,379-380`; `ch_sink_tools/db_compare/clickhouse_table_checksum.py:139-142,366-367` | code-read (R01 shows the expressions; masking per 11.02 §3.9) | FIXED: JSON excluded on both packaged sides by default with a WARNING (as in legacy); the driver passes the MySQL JSON columns as `--json_columns`. Test: `test_packaged_checksum_verdicts.py::TestPackagedJsonCoverage::test_driver_derives_json_columns_for_the_clickhouse_side`. Was: `--include_json_columns` defaulted to True and JSON was always compared with one-sided regex normalisation, masking `1.0` against `1` and whitespace differences. |
 | D-13.06-8 | S2 | both | `db_compare/top_level_table_checksum.py:265,321,571-584`; `ch_sink_tools/db_compare/top_level_table_checksum.py:159,186` | reproduced (R11: side WARNING present, absent after grep/awk) | FIXED: both drivers relay every side ERROR/CRITICAL line at ERROR (that side gives no result) and every side WARNING line at INFO as a side note (§3.17). Test: `test_checksum_verdicts.py::TestSideWarningsReachTheDriverLog::test_side_warnings_are_logged_by_the_driver`. Was: the side scripts' coverage and clamp WARNINGs were dropped by the grep pipeline, so EQUAL verdicts hid skipped columns and clamped values. |
-| D-13.06-9 | S3 | both | `db_compare/top_level_table_checksum.py:500-501`; `db_compare/mysql_table_count.py:67-70,215`; `ch_sink_tools/db_compare/mysql_table_count.py:67-70,213`; `ch_sink_tools/db_compare/top_level_table_checksum.py:313-314`; `ch_sink_tools/db_compare/mysql_table_checksum.py:70-78,417-419`; `ch_sink_tools/db/mysql.py:77-80` | reproduced (R04, SQLAlchemy 2.1.1: `TypeError ... not str`, exit 1) | Rows from `fetchall()` are indexed by name, so the driver, both count runners and the packaged MySQL paths fail on SQLAlchemy 2.x, which `>=1.4` allows. |
+| D-13.06-9 | S3 | both | `db_compare/top_level_table_checksum.py:500-501`; `db_compare/mysql_table_count.py:67-70,215`; `ch_sink_tools/db_compare/mysql_table_count.py:67-70,213`; `ch_sink_tools/db_compare/top_level_table_checksum.py:313-314`; `ch_sink_tools/db_compare/mysql_table_checksum.py:70-78,417-419`; `ch_sink_tools/db/mysql.py:77-80` | reproduced (R04, SQLAlchemy 2.1.1: `TypeError ... not str`, exit 1; end to end: the scheduled job on a fresh `install.sh` (SQLAlchemy 2.0) exited 1 at the first table) | FIXED: every runner reads catalog rows through `mappings()` (both copies; the dumpers too, D-13.03-3). Test: `test_sqlalchemy_rows.py::TestDriversReadRealRows::test_legacy_driver_compares_a_table_listed_by_sqlalchemy`; e2e `tests_e2e/mysql/test_mysql_01_production_job.py::test_clean_data_passes_the_job`. Was: rows from `fetchall()` were indexed by name, so the driver, both count runners and the packaged MySQL paths failed on SQLAlchemy 2.x, which `>=1.4` allows. |
 | D-13.06-10 | S3 | both | `db_compare/top_level_table_checksum.py:295-297`; `ch_sink_tools/db_compare/top_level_table_checksum.py:183-185` | reproduced (R03: `syntax error near unexpected token '('`; a space splits argv) | FIXED (by the argv change of D-13.06-3): the partition expression is one argv word. Test: `test_checksum_verdicts.py::TestArgumentsReachTheSideUnchanged::test_clickhouse_side_receives_table_where_and_function_partition_key`. Was: pasted unquoted as `--partition_key` for every partitioned table, so function or space partitions aborted the run. |
 | D-13.06-11 | S3 | both | `db_compare/mysql_table_checksum.py:311-317`; `ch_sink_tools/db_compare/mysql_table_checksum.py:273-279` | code-read (the placeholder is kept when `get_table_partition_key` returns None) | `--partition_date` with an unpartitioned table sends `{partition_expression}=YYYYMMDD` to MySQL, and the run aborts. |
 | D-13.06-12 | S3 | legacy | `db_compare/top_level_table_checksum.py:496-551` | reproduced (R12: tables b, c, d computed after the failure, no verdicts, exit 1) | A raise inside the executor block waits for every submitted table to finish (locks, load), then discards their results. FM-11.02-3 wrongly says they are skipped. |
@@ -1310,3 +1410,5 @@ LCC/PCC the ClickHouse count runners.
 | D-13.06-35 | S4 | both | `db_compare/mysql_table_checksum.py:137-138`; `ch_sink_tools/db_compare/mysql_table_checksum.py:72-73`; specs 11.02 §3.9, §3.10, §6 item 2, FM-11.02-3, FM-11.02-9 | reproduced (R01: two same-collation columns get `convert()`) and code-read | `same_charset` counts columns, not distinct collations (harmless). Spec 11.02 drifts from the code: MySQL errors rather than wraps on overflow; the ClickHouse side does not split multi-token exclusions; failed runs do not skip pending tables; the FM-11.02-9 recipe uses space-separated exclusions; coverage warnings are dropped by the driver. |
 | D-13.06-36 | S3 | both | `db_compare/top_level_table_checksum.py:160-199`; `ch_sink_tools/db_compare/top_level_table_checksum.py:319-326` | code-read (no position, GTID or connector-offset read anywhere in the runners) | "Replica caught up" is never established. The only mechanism is a fixed sleep after locking, so lag is reported as a difference indistinguishable from divergence. |
 | D-13.06-37 | S4 | both | `db_compare/top_level_table_checksum.py:203`; `db/mysql.py:46-47` | code-read | The driver's `--include_partitions_regex` filters tables but checksums them whole. The name suggests a partition-restricted comparison. |
+| D-13.06-38 | S2 | legacy | `db_compare/mysql_table_checksum.py` (`mysql_column_expression`, binary branch) | reproduced end to end (connector `binary.handling.mode: base64`: ClickHouse holds `abcd` for `b'1010101111001101'`, the MySQL side rendered `q80=`; the scheduled job reported `Checksum difference` for every table with a BIT(16) column on clean data) | FIXED: BIT(n>1) is rendered `lower(hex(cast(c as binary)))` under every `--binary_encoding`. Test: `test_scheduled_job_findings.py::TestBitColumnRendering::test_bit_n_is_lower_hex_under_every_encoding`; e2e `tests_e2e/mysql/test_mysql_01_production_job.py::test_clean_data_passes_the_job`. Was: base64 with `--binary_encoding base64`, while the connector applies base64 to binary/varbinary/blob only. |
+| D-13.06-39 | S2 | legacy | `install.sh:4` | reproduced end to end (`install.sh: line 4: PYTHONPATH: unbound variable` under the job's `set -euo pipefail`) | FIXED: `export PYTHONPATH="${PYTHONPATH:-}":.`. Test: `test_scheduled_job_findings.py::TestInstallShUnderStrictMode::test_sources_with_pythonpath_unset`; e2e `tests_e2e/mysql/test_mysql_01_production_job.py::test_job_sources_install_sh_under_set_euo_pipefail`. Was: a job sourcing `install.sh` after `set -u` with `PYTHONPATH` unset died before any checksum. |

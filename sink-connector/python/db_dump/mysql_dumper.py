@@ -238,12 +238,13 @@ def select_tables(conn, args):
 
     tables_to_dump = []
     if not args.partitioned_tables_only:
-      for table in tables.fetchall():
+      # rows by column name through mappings(): SQLAlchemy 2.x rows are tuples (spec 13.03 D-13.03-3)
+      for table in tables.mappings().fetchall():
           logging.debug(table['table_name'])
           tables_to_dump.append(table['table_name'])
 
     partition_map = {}
-    for partition in partitions.fetchall():
+    for partition in partitions.mappings().fetchall():
         schema = partition['table_schema']
         table = partition['table_name']
         partition_name = partition['partition_name']

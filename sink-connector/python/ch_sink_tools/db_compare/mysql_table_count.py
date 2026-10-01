@@ -64,7 +64,8 @@ def select_table_statements(conn, table):
                                            non_partitioned_tables_only=args.non_partitioned_tables_only)
 
 
-    partitions = partitions.fetchall()
+    # by column name through mappings() (SQLAlchemy 2.x rows are tuples, spec 13.06 D-13.06-9)
+    partitions = partitions.mappings().fetchall()
     if len(partitions) > 0:
         for partition in partitions:
             partition_name = partition['partition_name']
@@ -212,7 +213,7 @@ def main():
             futures = []
             # --no_wc: get_tables_from_regex returns [[<include_tables_regex>]], the table name
             # itself, not a result set (spec 13.06 D-13.06-26).
-            table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.fetchall()
+            table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.mappings().fetchall()
             for table in table_rows:
                 futures.append(executor.submit(
                     calculate_table_count, table['table_name'], mysql_user, mysql_password))

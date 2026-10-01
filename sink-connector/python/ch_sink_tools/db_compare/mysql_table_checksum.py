@@ -65,7 +65,8 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     min_date_value = args.min_date_value
     max_date_value = args.max_date_value
     max_datetime_value = args.max_datetime_value
-    row_list = [row for row in rowset]
+    # by column name through mappings() (SQLAlchemy 2.x rows are tuples, spec 13.06 D-13.06-9)
+    row_list = [row for row in rowset.mappings()]
     same_charset = True
     collations = [row['collation'] for row in row_list if row['collation'] is not None]
     same_charset = len(collations) <= 1
@@ -417,7 +418,7 @@ def main():
             future_to_table = {}
             # --no_wc: get_tables_from_regex returns [[<tables_regex>]], the table name
             # itself, not a result set (spec 13.06 D-13.06-26).
-            table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.fetchall()
+            table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.mappings().fetchall()
             for table in table_rows:
                 future = executor.submit(
                     calculate_checksum, table['table_name'], mysql_user, mysql_password, args.exclude_columns, args.include_floating_point_columns, args.include_json_columns)
