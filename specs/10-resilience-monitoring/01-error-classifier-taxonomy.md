@@ -103,3 +103,47 @@ never re-enters this path (spec 09.01 §3.2).
 - `ClickHouseErrorClassifierTest.valueOutOfRangeIsFatalRegardlessOfCode()` — `DebeziumConverter.ValueOutOfRangeException` classifies FATAL as the root exception and when wrapped two levels deep, with no error code extractable; a plain `RuntimeException` chain without a code stays UNKNOWN.
 - `WorkerDeathIsLoudTest` — a FATAL-killed worker stops the engine loudly (spec 03.01).
 - `ClickHouseErrorClassifierTest.testClassifyRetriable()` / `testClassifyUnknownAndNull()` / `testIsFatal()` / `testExtractErrorCode()`.
+
+---
+
+## 6. Failure Modes & Recovery
+Classification chooses between two recoveries: FATAL ends in a loud process exit (code 3) within one Debezium batch and a supervisor restart; everything else enters an unbounded retry that self-heals within 30 s of the cause being removed. The second is the right recovery for conditions an operator fixes on the ClickHouse side, but it is the one that can outlast the RTO while the process reports itself healthy.
+
+- **FM-10.01-1 A transient server condition**
+  - **Trigger**: 252 TOO_MANY_PARTS, 241 MEMORY_LIMIT_EXCEEDED under concurrent load, 242 TABLE_IS_READ_ONLY (a Replicated table lost its Keeper session), 999 KEEPER_EXCEPTION, 243 NOT_ENOUGH_SPACE, 202 TOO_MANY_SIMULTANEOUS_QUERIES, 159/209/210 timeouts and network errors, or a connection error with no code.
+  - **Behaviour**: RETRIABLE (code not in `FATAL_ERROR_CODES`) or UNKNOWN (no code); `ClickHouseBatchRunnable.run` keeps `currentBatch` and sleeps the backoff (spec 10.02); the same batch is retried until it succeeds.
+  - **Detection**: ERROR `******* ERROR inserting Batch Database(%s), Table(%s) *****************` (insert-stage failures), ERROR `ClickHouseBatchRunnable exception - Task(%s)`, WARN `Retriable ClickHouse error (Code: {}, Category: {}) -- the same batch will be retried in {} ms (consecutive failures: {}). Every table hashed to this worker waits behind it until it succeeds.` per attempt; `clickhouse_sink_topics_error_records_total` increments for insert-stage failures.
+  - **Blast radius**: head-of-line blocking on the worker (spec 10.02 FM-10.02-2); no loss, no duplication beyond an idempotent re-insert.
+  - **Recovery**: self-heals when the server condition clears (merges catch up, Keeper returns, disk is freed).
+  - **RTO**: <= `batch.retry.backoff.max.ms` (30 s) + `buffer.flush.time.ms` after the condition clears, plus the backlog; unmeasured.
+  - **Test**: `ClickHouseErrorClassifierFailureModesTest.selfHealingServerConditionsAreRetriable()`, `ClickHouseErrorClassifierTest.testTooManyPartsIsRetriableBackpressure()`, `ClickHouseErrorClassifierTest.testMemoryLimitExceededIsRetriable()`.
+
+- **FM-10.01-2 A deterministic error outside the FATAL set is retried forever**
+  - **Trigger**: 164 READONLY or 291 DATABASE_ACCESS_DENIED (a revoked grant, a `readonly` profile), a single batch larger than the memory budget (241 on every attempt), or one of the connector's own refusals, which carry no code: `MissingTargetColumnException` (spec 08.04), the `IllegalStateException` of a refused ReplacingMergeTree target or delete marker (spec 08.01 section 3.2), `StaleSchemaCacheException`.
+  - **Behaviour**: RETRIABLE or UNKNOWN, retried with backoff indefinitely (spec 10.02 section 3.3); the engine never fails, so the retry budget and the terminal exit of spec 10.04 are never reached. The only process-level stop is the handoff cap (spec 01.05): after `sink.connector.handoff.wait.timeout.ms` (600 s) with 500,000 rows outstanding the engine stops and is retried 10 times before exit 3 -- and only if the source produces that many rows.
+  - **Detection**: the per-attempt lines of FM-10.01-1 (the connector's refusals log their own message in the ERROR stack). No metric for failures before the INSERT; `/status` reports `Replica_Running=true` with a frozen `Seconds_Behind_Source` and the Prometheus lag gauge is frozen (spec 10.03 FM-10.03-2, FM-10.03-4); only `show_replica_status.seconds_behind_source` grows (MySQL sources).
+  - **Blast radius**: the worker's tables stall, then the whole pipeline once queues fill; no loss.
+  - **Recovery**: fix the cause on the ClickHouse side (restore the grant, clear `readonly`, add the column, fix the table) -- picked up on the next attempt without a restart; for a batch above the memory budget lower `buffer.max.records` / `buffer.max.bytes` and restart.
+  - **RTO**: <= 30 s after the fix; time to detection is unbounded; unmeasured.
+  - **Test**: `ClickHouseErrorClassifierFailureModesTest.privilegeErrorsOutsideTheFatalSetAreRetried()`, `ClickHouseErrorClassifierFailureModesTest.connectorRefusalsAreUnknownAndRetried()`.
+  - **DEFECT**: a deterministic failure classified RETRIABLE/UNKNOWN has no bounded detection: no metric, no status change and no exit within any stated time.
+
+- **FM-10.01-3 A FATAL error stops the process**
+  - **Trigger**: a code in `FATAL_ERROR_CODES` (516, 497, 50, 53, 60, 81, 16, 396, 27, 33, 69, 349) or `DebeziumConverter.ValueOutOfRangeException` anywhere in the cause chain.
+  - **Behaviour**: the worker rethrows with `currentBatch` kept (its unit stays outstanding); `DebeziumChangeEventCapture.failIfWorkerDied` raises on the next Debezium batch; `handleEngineCompletion` sees `isDeterministicFailure` (or `hasDeadWorker`) and exits through `terminalFailureHook` with code 3 without spending the retry budget.
+  - **Detection**: ERROR `FATAL ClickHouse error (Code: {}) -- this batch will never succeed. Stopping this worker; ...`, ERROR `Sink worker %d of %d is dead: ...`, ERROR `Engine stopped with a FATAL (deterministic) failure; not retrying: ...`, FATAL `Replication is STOPPED: ...`, exit code 3; within one Debezium batch (heartbeats every 5 s by default).
+  - **Blast radius**: every table stops; nothing is committed past the failing batch.
+  - **Recovery**: fix the cause (grant, table, column type, `clamp.out.of.range`); systemd restarts the service every 30 s and gives up after 5 starts in 300 s (spec 10.04 FM-10.04-6), after which `systemctl reset-failed <unit>` and `systemctl start <unit>`.
+  - **RTO**: detection <= 5 s; restart 30 s + engine start + re-apply of the outstanding batch after the fix; unmeasured.
+  - **Test**: `TerminalFailureExitTest.fatalErrorCodeIsNotRetried()`, `TerminalFailureExitTest.fatalTerminalTypeIsNotRetried()`, `WorkerDeathIsLoudTest.deadWorkerFailsTheNextBatchLoudly()`, `ClickHouseErrorClassifierTest.testClassifyFatal()`.
+
+- **FM-10.01-4 A transient condition classified FATAL**
+  - **Trigger**: a FATAL code raised by a passing condition: 33 CANNOT_READ_ALL_DATA when the insert stream is cut mid-send, 60/81 when a load balancer routes the INSERT to a replica that has not yet applied an `ON CLUSTER` CREATE.
+  - **Behaviour**: as FM-10.01-3: exit 3 and a supervisor restart, which heals it (the restart re-reads the metadata and redelivers the batch).
+  - **Detection**: as FM-10.01-3.
+  - **Blast radius**: a full restart of the connector for a condition a retry would have cleared; no loss.
+  - **Recovery**: automatic via the supervisor.
+  - **RTO**: 30 s `RestartSec` + engine start + redelivery; unmeasured.
+  - **Test**: `ClickHouseErrorClassifierTest.testIsFatal()` pins the set; GAP: a test separating a truncated-stream 33 from a malformed-data 33 (the code alone cannot).
+
+Summary: 4 failure modes, 1 DEFECT, 1 GAP.

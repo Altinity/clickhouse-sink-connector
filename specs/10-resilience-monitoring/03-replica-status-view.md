@@ -70,3 +70,67 @@ The Prometheus registry (`Metrics`, `sink-connector/src/main/java/com/altinity/c
 - `MetricsLifecycleTest` — §3.4: three DDL events with distinct statements and timestamps register one `clickhouse.sink.ddl` series per `fail` value, never one per event (`ddlCounterHasFixedCardinality`); the binlog position gauge keeps one child across a file rotation (`binlogPositionKeepsOneChildAcrossRotation`); `stop()` closes the registry and a second `initialize()` closes the previous one before opening a new one (`registryIsReleasedOnStopAndOnReinitialize`); a counter update issued after `stop()` is dropped without a throw and the next `initialize()` counts again from zero (`counterUpdatesAfterStopAreDroppedNotThrown`, item 4 — goes red with `NullPointerException` the moment the registry check is removed from the three counter updates).
 - `ClickHouseBatchRunnableCloseConnectionsTest` — spec 01.01 §3.3 step 4a: `closeConnections()` closes the per-database and system connections the worker holds and forgets them; a connection that fails to close is skipped, and a second call is a no-op (`closeConnectionsClosesAndForgetsEverything`).
 - Verification: unit coverage of `createViewForShowReplicaStatus` itself (skip when unconfigured, skip when existing, name parsing) is not yet covered by an automated test (gap).
+
+---
+
+## 6. Failure Modes & Recovery
+Of the connector's three lag signals only one sees a stall: `show_replica_status.seconds_behind_source` is computed at query time from the committed offset, so it grows whenever the committed position stands still. The Prometheus gauge `clickhouse_sink_db_lag` and the REST `/status` `Seconds_Behind_Source` are stored values written on progress and frozen without it; the shipped PostgreSQL view reads a field PostgreSQL offsets do not have; and a wrong or missing view is never repaired by the connector.
+
+- **FM-10.03-1 The status view is missing**
+  - **Trigger**: `replica.status.view` is absent from the properties the engine is started with (the shipped `docker/config.yml` does not set it; the `ClickHouseSinkConnectorConfig` default is not consulted, because `createViewForShowReplicaStatus` reads the raw properties), or the `CREATE VIEW` fails.
+  - **Behaviour**: no view is created and startup continues. A failed create is logged without its exception, and a create that exhausts retryable errors returns normally (spec 08.01 FM-08.01-6).
+  - **Detection**: WARN `Skipping creating view for replica_status as the query was not provided in configuration`, or ERROR `**** Error creating VIEW **** <sql>`, once at startup.
+  - **Blast radius**: no ClickHouse-side lag signal; alerts built on the view query a missing table.
+  - **Recovery**: set `replica.status.view` to the `ClickHouseSinkConnectorConfig` default SQL (it handles both `ts_sec` and `ts_usec`) and restart, or create the view by hand from that SQL.
+  - **RTO**: restart 30 s + start; unmeasured.
+  - **Test**: `ReplicaStatusViewFailureModesTest.unconfiguredViewIsSkipped()`, `ReplicaStatusViewFailureModesTest.missingViewIsCreated()`, `ReplicaStatusViewFailureModesTest.configDefDefaultReadsBothOffsetShapes()`.
+
+- **FM-10.03-2 The Prometheus lag gauge freezes during a stall**
+  - **Trigger**: every worker is retrying (spec 10.02 FM-10.02-1), ClickHouse is down, or a worker is dead and the engine has not yet stopped.
+  - **Behaviour**: `Metrics.updateMetrics` -- the only writer of `clickhouse_sink_db_lag`, `clickhouse_sink_debezium_lag`, `clickhouse_sink_binlog_pos` and `clickhouse_sink_connector_uptime` -- runs only when the INSERT stage returned without throwing (`ClickHouseBatchRunnable.flushRecordsToClickHouse`), i.e. after a batch was written. With no write, every gauge keeps its last value; the lag stays at the (small) lag of the last successful batch. In routing mode `clickhouse_sink_binlog_pos` is set by whichever worker wrote last, so it can also move backwards.
+  - **Detection**: none from the lag gauge; the alert `doc/Monitoring.md` recommends (on the Grafana lag panel, `clickhouse_sink_db_lag`) never fires. A stall is visible in Prometheus only indirectly, as `rate(clickhouse_sink_topics_num_records_total[5m]) == 0` (also true for an idle source) or a rising `clickhouse_sink_topics_error_records_total` (insert-stage failures only).
+  - **Blast radius**: monitoring blind to a stall of any length.
+  - **Recovery**: alert on `show_replica_status.seconds_behind_source` (MySQL) instead; the gauge resumes with the next written batch.
+  - **RTO**: not applicable to replication; detection unbounded; unmeasured.
+  - **Test**: `MetricsLagDuringStallTest.lagGaugeGrowsWhileNothingIsWritten()` (`@Disabled`, confirmed red on 2.11.0); `MetricsLagDuringStallTest.lagGaugeReportsTheLastWrittenBatch()` pins today's behaviour.
+  - **DEFECT**: the lag metric is a snapshot taken at the last successful write, so it reports a healthy lag for a replica that has stopped.
+
+- **FM-10.03-3 The shipped PostgreSQL view reads the wrong offset field**
+  - **Trigger**: a PostgreSQL deployment using `docker/config_postgres.yml` (or any view SQL that reads only `ts_sec`). Debezium's `PostgresOffsetContext` stores `ts_usec` (verified in `debezium-connector-postgres-3.1.3.Final.jar`); MySQL offsets carry `ts_sec` (`BinlogOffsetContext`).
+  - **Behaviour**: `JSONExtractUInt(offset_val, 'ts_sec')` is 0, so `seconds_behind_source = now() - 0`, about 1.8e9 s, permanently. Once created, the view is never replaced: `createViewForShowReplicaStatus` skips creation when `system.tables` lists it, so correcting the configuration changes nothing until the view is dropped.
+  - **Detection**: none from the connector; the view reports an absurd constant lag.
+  - **Blast radius**: a lag alert on the view is always firing and gets silenced, hiding real stalls.
+  - **Recovery**: set `replica.status.view` to the `ClickHouseSinkConnectorConfig` default SQL, `DROP VIEW <offset db>.show_replica_status` in ClickHouse, restart the service.
+  - **RTO**: restart 30 s + start; unmeasured.
+  - **Test**: `ReplicaStatusViewFailureModesTest.shippedPostgresViewReadsTsUsec()` (`@Disabled`, confirmed red on 2.11.0), `ReplicaStatusViewFailureModesTest.existingViewIsNeverReplaced()` (pinned), `ReplicaStatusViewFailureModesTest.bundledMySqlViewReadsTsSec()`.
+  - **DEFECT**: the shipped PostgreSQL configuration makes the only stall-aware lag signal permanently wrong, and a corrected definition is never applied over an existing view.
+
+- **FM-10.03-4 `/status` reports a frozen lag and a running replica during a stall**
+  - **Trigger**: the writers stall while the process is up (spec 10.02 FM-10.02-1).
+  - **Behaviour**: `Seconds_Behind_Source` in `/status` (and in `sink-connector-client show_replica_status`) is `ReplicationStatusSingleton.getReplicationLag() / 1000`, a value the Debezium thread stores when it converts a row (`now - ts_ms` at that instant) and never recomputes; it measures capture, not commit. Once the reader is paused by the handoff cap it stops changing. `Replica_Running` stays true because the engine has not failed.
+  - **Detection**: none from `/status`.
+  - **Blast radius**: an operator or probe reading `/status` sees a healthy replica.
+  - **Recovery**: read `show_replica_status` in ClickHouse; `/status` recovers with the next captured row.
+  - **RTO**: not applicable to replication; detection unbounded; unmeasured.
+  - **Test**: `StatusLagDuringStallTest.statusLagGrowsWhileNothingIsCaptured()` (`@Disabled`, confirmed red on 2.11.0); `StatusLagDuringStallTest.statusLagIsTheStoredCaptureValue()` pins today's behaviour.
+  - **DEFECT**: `/status` has no liveness content -- its lag is a capture-time snapshot and `Replica_Running` only reflects a terminal failure.
+
+- **FM-10.03-5 The metrics endpoint is down**
+  - **Trigger**: `metrics.port` is taken by another process, or the scrape thread dies.
+  - **Behaviour**: `Metrics.exposePrometheusPort` logs the `IOException` and continues; replication is unaffected and nothing retries the bind until the next engine start (`Metrics.initialize` stops the previous server and registry first).
+  - **Detection**: ERROR `Cannot start HTTP server for Prometheus on /metrics` once; the scraper sees the target down (`up == 0`).
+  - **Blast radius**: no metrics; replication continues.
+  - **Recovery**: free the port or change `metrics.port`, then restart the service (or `sink-connector-client restart`).
+  - **RTO**: restart 30 s + start; unmeasured.
+  - **Test**: `MetricsLifecycleTest.registryIsReleasedOnStopAndOnReinitialize()`, `MetricsContentTypeTest.metricsEndpointDeclaresPrometheusContentType()`; GAP: a test binding the port first and asserting replication starts and the ERROR is logged.
+
+- **FM-10.03-6 The view on an idle source**
+  - **Trigger**: the MySQL source has no writes for longer than the alert threshold.
+  - **Behaviour**: the view's lag grows unless heartbeat control-record commits (spec 09.04) store an offset whose `ts_sec` advances; whether Debezium 3.1's MySQL heartbeat offset carries a fresh `ts_sec` was not verified.
+  - **Detection**: unverified -- possibly a false stall alert on an idle source.
+  - **Blast radius**: alert noise only.
+  - **Recovery**: none for replication; combine the view with a source-activity check when alerting.
+  - **RTO**: not applicable.
+  - **Test**: GAP: an integration test that idles the source past the heartbeat interval and records `seconds_behind_source`.
+
+Summary: 6 failure modes, 3 DEFECT, 2 GAP.

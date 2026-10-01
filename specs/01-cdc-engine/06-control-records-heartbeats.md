@@ -161,3 +161,48 @@ committing a control offset past rows not yet in ClickHouse (issue #1285).
 - `ControlRecordLogLevelTest.unparseableRowRecordIsTerminal` — INVERTED from `unparseableRowRecordStillWarns`: a record WITH `op` for which `parse` returns null is terminal, not a WARN skip.
 - `UnparseableRecordProgressIT` — end to end: the control records a real pipeline produces (transaction markers, heartbeats) are skipped at DEBUG and rows keep landing; its former "WARN row-record skip" leg is removed because that outcome is now a defect.
 - `DebeziumChangeEventCaptureTest.heartbeatAndTransactionMetadataDoNotTouchTheSequenceState` — a heartbeat-only and a transaction-metadata-only batch leave the version-sequence statics unchanged (§3.1, "Version sequence").
+
+---
+
+## 6. Failure Modes & Recovery
+Control records carry no data, so their failure modes are about offsets: never committing one ahead of unwritten rows, committing it at all when the pipeline is idle, and stopping — not skipping — on a row that could not be converted. The component halts correctly on a poison row; what it lacks is a bounded way back from one.
+
+- **FM-01.06-1 A row the converter cannot represent (poison record)**
+  - **Trigger**: a row event the parser throws on or returns `null` for (a converter gap, a value outside every ClickHouse type, a `binlog_row_image` other than FULL on that event), or a record value that is not a Struct.
+  - **Behaviour**: `processEveryChangeRecord` raises `RecordReplicationException` ahead of its catch-all; `handleChangeEventBatch` refuses to treat the record as a control record (§3.1); nothing in the batch is acknowledged; the engine stops. The completion callback classifies the exception UNKNOWN (only `DebeziumConverter.ValueOutOfRangeException` in the cause chain is FATAL), so the same record is redelivered and refused `errors.max.retries` times (10 × 13–19 s) before exit 3 — and again after every systemd restart, forever.
+  - **Detection**: ERROR `Row record (op present) could not be converted to a ClickHouse row; stopping the pipeline rather than acknowledging its offset and silently dropping it. Topic(<topic>) Record(<record>)` (or `Record could not be converted to a ClickHouse row (parser threw); ...`, or `Record value is a <class>, not a Struct: ...`) at the record; `Engine stopped with an error:` per attempt; FATAL `Replication is STOPPED ...` and exit 3 after ≈ 2–3 min.
+  - **Blast radius**: all tables stop at the record; no loss, no acknowledgement past it.
+  - **Recovery**: if the cause is fixable (converter upgrade, a value the type mapping should accept), fix and restart: the record replays. If the event itself is unusable (logged with a MINIMAL row image, corrupt), skip it knowingly: take its position from `Record(...)`, stop the connector, `sink-connector-client change_replication_source --binlog_file <f> --binlog_position <next transaction>` (or `--gtid` with a set that includes the transaction), start, then `ch-mysql-resync` (spec 11.04) the table named in `Topic(...)`.
+  - **RTO**: fixable: 30 s + start after the fix; skip: operator time + one table resync — not bounded by the connector; unmeasured.
+  - **Test**: `UnparseableRowRecordIsTerminalTest.insertWhoseParserThrowsIsTerminal()`, `UnparseableRowRecordIsTerminalTest.updateWhoseParserReturnsNullIsTerminal()`, `EngineFailureClassificationTest.unconvertibleRowIsTerminalAtOnce()` (disabled, fails on 2.11.0: the engine is recreated).
+  - **DEFECT**: a deterministic refusal is retried as if transient, and there is no bounded in-product path past a genuinely unusable event.
+
+- **FM-01.06-2 Heartbeats disabled: the snapshot's completion is never committed**
+  - **Trigger**: `heartbeat.interval.ms: 0` in the configuration with `snapshot.mode: initial` on a source that goes idle after the snapshot (the ansible default `snapshot.mode` is `schema_only`, which has no data snapshot).
+  - **Behaviour**: `ensureHeartbeatInterval` keeps the explicit value; no control record follows the last snapshot row, so `snapshot_completed=true` never reaches the offset store and every restart re-runs the whole snapshot (§3.0).
+  - **Detection**: INFO only, at start: `Heartbeat interval is set to 0ms by configuration; leaving it unchanged. Note that a value of 0 disables heartbeats, and on a source that goes idle after the initial snapshot the snapshot's completed state will then never be committed (issue #1379).`; `show_replica_status` keeps `snapshot_completed=false`.
+  - **Blast radius**: every restart re-reads every table (hours on large sources); no loss.
+  - **Recovery**: remove `heartbeat.interval.ms` (default 5000) and restart; the snapshot runs once more and then commits.
+  - **RTO**: one full snapshot; unmeasured.
+  - **Test**: `HeartbeatIntervalDefaultTest.testExplicitZeroIsHonoured()` pins that 0 is kept; `ControlRecordOffsetCommitTest.heartbeatOnlyBatchCommitsItsOffset()` pins the commit once heartbeats flow.
+  - **DEFECT**: a setting that turns every restart into a full re-snapshot is reported at INFO and accepted.
+
+- **FM-01.06-3 A control offset committed ahead of unwritten rows**
+  - **Trigger**: a heartbeat or transaction marker arrives while rows of this or an earlier batch are queued, in flight or parked.
+  - **Behaviour**: `commitControlRecordOffset` commits only when `handedOffRows == false` and `isPipelineQuiescent()` (both queues empty and `!DebeziumOffsetManagement.hasUnwrittenBatches()`); otherwise the rows' own acknowledgements carry the offset (§3.2, §3.3).
+  - **Detection**: none needed — prevented by construction.
+  - **Blast radius**: none.
+  - **Recovery**: none needed.
+  - **RTO**: 0.
+  - **Test**: `ControlRecordOffsetCommitTest.heartbeatIsNotCommittedAheadOfUnwrittenRows()`, `UnparseableRowRecordIsTerminalTest.heartbeatBeforeBadRowIsNotCommittedEither()`.
+
+- **FM-01.06-4 The offset store cannot take the control record's offset**
+  - **Trigger**: ClickHouse (the `offset.storage.jdbc.url` target) is down, slow or read-only when a quiescent control record is committed.
+  - **Behaviour**: the commit goes through the engine's committer (`markBatchFinished`, `OffsetCommitPolicy.always()`); Debezium's `EmbeddedEngine` logs a flush timeout or failure and carries on, so the durable offset stands still while replication continues and a restart redelivers from the older offset (idempotent). If the failed flush leaves the offset writer "already flushing", the next acknowledgement throws: on the Debezium thread it leaves `handleChangeEventBatch` and the engine is recreated with a new writer; in a worker it is the FATAL stop of `ClickHouseBatchRunnable.isOffsetWriterPoisoned` (spec 09.03 §6).
+  - **Detection**: ERROR `Timed out waiting to flush <n> offsets to storage` or `Failed to flush <n> offsets to storage:` (Debezium `EmbeddedEngine`, read in the bytecode), at the commit.
+  - **Blast radius**: rows keep landing; only the durable position lags; a crash meanwhile costs extra redelivery, never loss.
+  - **Recovery**: restore the offset store; the next successful flush catches up.
+  - **RTO**: next flush after the store returns (`offset.flush.interval.ms`, 5000 in the ansible template); unmeasured.
+  - **Test**: GAP: a control-record commit against an offset store whose flush fails.
+
+Summary: 4 failure modes, 2 DEFECT, 1 GAP.

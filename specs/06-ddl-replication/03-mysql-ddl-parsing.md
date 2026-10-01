@@ -61,3 +61,47 @@ All lookups against ClickHouse `system.columns` (nullability fallback, sorting-k
 - `MySqlDDLParserListenerImplTest` (the full class; the tests named in Specs 06.04, 06.05, 06.07 are the regression pins for the rules above).
 - `DdlReplayIdempotencyTest` (replay safety of every emitted statement shape).
 - `formal_specs/lean/Replication/DdlTranslation.lean`: `no_bare_alter`, `wider_key_change_rebuilds`, `primary_key_change_rebuilds`, `add_columns_preserved` (zero `sorry`, standard axioms only).
+
+---
+
+## 6. Failure Modes & Recovery
+The parser is pure and deterministic: the same statement always yields the same translation or the same exception, so a parser failure never heals by retry. What matters is that every statement ends in exactly one of three outcomes: a translation, a loud refusal that stops the pipeline, or an empty translation that is provably loss-free. FM-06.03-2 is a statement class that breaks that rule.
+
+- **FM-06.03-1 Statement the grammar cannot parse**
+  - **Trigger**: MySQL syntax newer than the bundled Debezium `MySqlParser.g4`, vendor extensions, a comment/charset form the lexer rejects.
+  - **Behaviour**: Debezium parses the statement with the same generated grammar first; with `schema.history.internal.skip.unparseable.ddl=false` (the default in `deploy/ansible-systemd/defaults/main.yml`) a rejected statement stops Debezium itself before the sink sees it (Debezium behaviour, not verified in its source here). When it does reach the sink, `ErrorListenerImpl.syntaxError()` throws `RuntimeException("Error parsing DDL")` out of `MySQLDDLParserService.parseSql()`, before the retry loop of `performDDLOperation()`; the DDL branch wraps it in `DDLReplicationException`. Nothing is executed, the offset is not acknowledged. The exception carries no error code, so `handleEngineCompletion()` restarts the engine up to `errors.max.retries` (10) times, each re-delivering the same statement, then stops terminally.
+  - **Detection**: ERROR `Error parsing` (no position, no statement), then `Engine stopped with an error: ...DDL replication failed for [<DDL>]; stopping the pipeline rather than advancing offsets past an unapplied schema change...`, `Restarting the engine - retry n of 10`, finally FATAL `Replication is STOPPED...` and exit code 3. First line within milliseconds; terminal after about 10 x 15-20 s.
+  - **Blast radius**: all replication stops at the statement; nothing lost.
+  - **Recovery**: take the statement from the `DDL replication failed for [...]` line. Apply the equivalent ClickHouse DDL by hand (the `sink-connector-client ddl_translate` command helps for the parts that do translate), so the replica matches MySQL. Add an `ignore.ddl.regex` entry matching exactly that statement, restart (`sink-connector-client restart` reloads the configuration), confirm in `show_replica_status` that the position moved past it, then remove the entry.
+  - **RTO**: operator time + one restart; unmeasured. Detection to terminal stop takes about 3 min of futile engine restarts.
+  - **Test**: `DdlTranslationFailureModesTest.unparseableStatementThrows()`, `DdlFailureModesTest.unparseableDdlHaltsWithoutAcknowledging()`.
+
+- **FM-06.03-2 Data-changing partition or tablespace operation skipped as loss-free**
+  - **Trigger**: `ALTER TABLE t DROP PARTITION p`, `TRUNCATE PARTITION p`, `EXCHANGE PARTITION p WITH TABLE t2`, `DISCARD/IMPORT [PARTITION] TABLESPACE`. MySQL removes or replaces rows; the binlog carries only the statement, never row events.
+  - **Behaviour**: `MySqlDDLParserListenerImpl.isNoOpSpecification()` classifies every `AlterPartitionContext`, `AlterByDiscardTablespaceContext` and `AlterByImportTablespaceContext` as "not representable, loss-free" (§3.2); `enterAlterTable()` emits nothing, the empty translation is skipped by `executeDDL` and the offset is acknowledged.
+  - **Detection**: INFO `ALTER TABLE clause [<clause>] is not representable in ClickHouse; skipping clause`. Nothing else; the divergence is found only by a value/count comparison (spec 11.02).
+  - **Blast radius**: the replica keeps every row the source dropped or truncated (or lacks the rows swapped in), permanently; later events for other rows replicate normally.
+  - **Recovery**: re-synchronise the table from MySQL with `ch-mysql-resync` (spec 11.04): it replaces the affected partitions atomically after count reconciliation and rewinds the connector to the captured binlog position.
+  - **RTO**: table re-synchronisation, proportional to the table size; unmeasured.
+  - **Test**: `DdlTranslationFailureModesTest.dataChangingPartitionOperationIsLoud()` (disabled; fails on 2.11.0: the statements translate to nothing). Control: `DdlTranslationFailureModesTest.dataPreservingPartitionOperationIsSkipped()`.
+  - **DEFECT**: row-removing partition/tablespace operations are silently skipped; they must be refused with `DDLReplicationException` naming the table re-synchronisation (or translated to the equivalent ClickHouse row removal).
+
+- **FM-06.03-3 Statement kind without a listener callback**
+  - **Trigger**: `CREATE/DROP VIEW`, `CREATE/DROP INDEX`, routines and other statements the listener does not override.
+  - **Behaviour**: the walk emits nothing; `performDDLOperation()` logs INFO `Executed Source DB DDL: <DDL>` (before, and regardless of, execution), `executeDDL` skips the empty string and the offset is acknowledged. These statements hold no rows, so nothing diverges.
+  - **Detection**: the misleading INFO line only; acceptable because nothing is lost.
+  - **Blast radius**: none on data.
+  - **Recovery**: none.
+  - **RTO**: 0.
+  - **Test**: `DdlTranslationFailureModesTest.nonReplicatedStatementKindsTranslateToNothing()`.
+
+- **FM-06.03-4 Target-schema lookup fails during translation**
+  - **Trigger**: ClickHouse briefly unreachable, a `system.columns` query timeout, a missing privilege, while an ALTER is translated.
+  - **Behaviour**: `MetadataTargetSchemaLookup` and `DBMetadata.getSortingKeyColumns()` log and answer "empty", which the translator cannot distinguish from "no lookup available" (§3.4): nullability falls back to `Nullable`, the sorting key to "unknown". Consequences are specified where they bite: spec 06.05 §6 FM-06.05-2 and spec 06.07 §6 FM-06.07-3.
+  - **Detection**: ERROR `Error retrieving NULL column schema of <db>.<t> from ClickHouse` / `Error retrieving sorting key columns for <db>.<t>`; the statement then proceeds.
+  - **Blast radius**: see the two referenced entries.
+  - **Recovery**: see the two referenced entries.
+  - **RTO**: see the two referenced entries.
+  - **Test**: `DdlTranslationFailureModesTest.failedSortingKeyLookupSkipsPrimaryKeyChangeToday()`, `DdlTranslationFailureModesTest.failedNullabilityLookupYieldsNullableToday()`.
+
+Summary: 4 failure modes, 1 DEFECT, 0 GAP.

@@ -202,6 +202,8 @@ rewind is possible.
 | One bad table aborting a 400-table schema | per-table isolated loader runs and per-table status |
 | A source column the replica lacks | `SCHEMA_DRIFT`: skipped with a DDL suggestion, never a silent partial row |
 
+These are design guards. Section 6 gives the Detection, Recovery and RTO of each failure the tool itself can meet.
+
 ---
 
 ## 4. Invariants Preserved
@@ -263,3 +265,97 @@ run by `python3 -m unittest` in `.github/workflows/spec-governance.yml`):
   followed by the spec 11.02 checksum reporting equality for every patched
   table, and `REPLACE PARTITION ID 'all' FROM <empty scratch>` verified to empty
   an unpartitioned `ReplacingMergeTree` on `clickhouse local`.
+
+---
+
+## 6. Failure Modes & Recovery
+`ch-mysql-resync` is the declared repair of Invariant I15 item 2: moving an offset past a transaction is valid only when it is followed by this procedure. It changes a live table in exactly one place, the per-partition atomic `REPLACE PARTITION`, so every interruption leaves each partition either fully old or fully replaced. The scratch copies survive, and the procedure is resumable. Its time bound is its weak point: the unit of repair is a whole table and the rewind replays from the dump start, so the RTO is proportional to table size and dump duration, not to the one in-flight transaction.
+
+- **FM-11.04-1 `patch --apply` interrupted in phase 2**
+  - **Trigger**: the tool is killed, the ClickHouse connection is cut, or one `REPLACE PARTITION` fails. For example, ClickHouse refuses it because the connector applied a DDL to the live table after the scratch copy was created with `CREATE TABLE ... AS`, so the structures differ.
+  - **Behaviour**: `ClickHouse._run()` raises `RuntimeError("clickhouse-client rc=...")`, which nothing in `cmd_patch()` catches. The process exits with a traceback and writes no `report_<ts>.tsv`. Partitions replaced before the failure hold the dump's state. The rest still hold the live state. The scratch tables `S<suffix>.t` are untouched: `REPLACE PARTITION ... FROM` copies parts and leaves the source table intact. The connector keeps writing. Rows it wrote into an already-replaced partition after the dump started are absent until the rewind replays them. They stay recoverable as long as the source keeps the binlog from the captured position.
+  - **Detection**: non-zero exit with the traceback, immediately. The last `[APPLY] ALTER TABLE ... REPLACE PARTITION ...` line in `<dump-base>/patch_<stamp>/patch_<ts>.log` shows how far it got.
+  - **Blast radius**: the table is transiently regressed to dump state in the replaced partitions. Nothing is lost that the rewind cannot replay. Other tables are unaffected.
+  - **Recovery**: re-run the same command with `--skip-load` and the same `--stamp`. It re-reconciles the scratch counts, re-issues every `REPLACE PARTITION` (idempotent) and verifies `REPLACED_OK`. After a structure mismatch, re-run without `--skip-load` so the scratch copy is recreated from the current live structure. Then run `rewind-sql` (FM-11.04-4 for its limits).
+  - **RTO**: the re-run is metadata-only per partition, about seconds per partition (unmeasured), plus the replay of the binlog from the captured position (proportional to the time since the dump started).
+  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestInterruptedPatch::test_interruption_leaves_scratch_tables_and_a_resume_completes`.
+
+- **FM-11.04-2 `dump` interrupted half way**
+  - **Trigger**: mysqlsh is killed, the source restarts, or the disk fills during `util.dumpTables`.
+  - **Behaviour**: `cmd_dump()` logs `FAILED <schema> rc=...` and returns 1. On the next run the kept `binlog_position_<stamp>.json` is not re-captured (`binlog position already captured`), because it must predate the first read. A complete schema is skipped (`SKIP <schema>: already complete`). A directory without `@.done.json` is refused (`ERROR <schema>: <dir> exists but is incomplete -- move it away and rerun`), never resumed or overwritten.
+  - **Detection**: exit 1 and the lines above, on the run that failed and on every re-run until the directory is moved.
+  - **Blast radius**: nothing is written to ClickHouse by `dump`.
+  - **Recovery**: move the incomplete `<schema>_<stamp>` directory away and re-run `dump` with the same `--stamp`. The kept position only lengthens the later replay.
+  - **RTO**: re-dump of that schema (unmeasured, proportional to its size; mysqlsh `--threads`).
+  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestDumpRerun::test_rerun_keeps_the_position_skips_complete_and_refuses_incomplete`.
+
+- **FM-11.04-3 A huge table: the unit of repair is the whole table**
+  - **Trigger**: an unlogged change touched a few rows or one partition of a table of hundreds of GB.
+  - **Behaviour**: `dump` exports every `BASE TABLE` in full (`util.dumpTables` with no `where` or partition filter). `patch` loads it all into the scratch table and counts it (`exact_dump_rows()`: `zstd -dc | wc -l` per file, serially). With a canary, it hash-joins the whole table (`canary_ratio()`). Every ClickHouse call has a 3600 s `max_execution_time`, and the subprocess timeout is 3660 s (`ClickHouse._run()`). A longer count or canary raises `RuntimeError` in phase 1, before any REPLACE. The rewind then replays everything binlogged since the dump started.
+  - **Detection**: none for the duration. A call past 3600 s fails loudly (traceback, exit 1, nothing replaced).
+  - **Blast radius**: the divergence persists for the whole dump, load and replay. The source carries the dump read load.
+  - **Recovery**: none bounded in the tool. Narrow with `--tables`. There is no partition- or key-range-scoped resync.
+  - **RTO**: unmeasured, proportional to table size (dump plus load plus count plus canary) plus replay of the dump window. Hours on large tables, far above the Invariant I15 target.
+  - **Test**: GAP: a `patch` test with a partition-scoped dump asserting only the dumped partitions are replaced and no other live partition is listed as replica-only.
+  - **DEFECT**: a repair that needs one partition costs a full-table reload (Invariant I15 item 3). The fix is to pass a `where`/`partitions` option through to `util.dumpTables` and restrict `plan_replace()` to the partitions in scope.
+
+- **FM-11.04-4 Rewind after a source failover, or with a dump taken from another server**
+  - **Trigger**: the MySQL primary fails over between `dump` and `rewind-sql`, or the dump was taken from a replica while the connector reads the primary.
+  - **Behaviour**: `rewind_offset_json()` writes `{"ts_sec","file","pos","row":0,"server_id","event":0}` only. The captured `gtid_executed` is printed as a comment but not stored as `gtids`. The file and position name a binlog of the server the dump ran on. What the connector does with a file/pos from another server is Debezium's behaviour (not verified here).
+  - **Detection**: none from the tool. The printed `source_host` comment can be compared by hand with the connector's `database.hostname`.
+  - **Blast radius**: the replay starts at a wrong position or not at all. Rows binlogged during the dump window can be lost, or the connector fails at start.
+  - **Recovery**: with the connector stopped (`sink-connector-client stop_replica`), set the position by GTID: `sink-connector-client update_binlog --gtid <gtid_executed from binlog_position_<stamp>.json>` (stored as `gtids` by `DebeziumOffsetStorage.updateBinLogInformation`). Then `start_replica` and re-run the checksum.
+  - **RTO**: a connector restart plus replay of the dump window.
+  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestRewindAfterFailover::test_rewind_carries_the_captured_gtid_set` (skipped, DEFECT). The file/pos form is pinned by `...::test_rewind_points_at_the_captured_file_and_position`.
+  - **DEFECT**: the rewind ignores the GTID set the dump recorded, so it is not failover-safe.
+
+- **FM-11.04-5 The binlog at the captured position is purged before the rewind**
+  - **Trigger**: the dump and patch take longer than the source's binlog retention (`binlog_expire_logs_seconds`).
+  - **Behaviour**: nothing in `patch` or `rewind-sql` checks retention. `rewind-sql` only prints `check SHOW BINARY LOGS before starting the connector`. The connector then cannot read from the position.
+  - **Detection**: at connector start, in the Debezium MySQL connector's binlog-availability error (library behaviour, not verified here). Until then, none.
+  - **Blast radius**: the patched tables miss every change binlogged since the dump started, and the rewind cannot supply them.
+  - **Recovery**: start over with a new `--stamp`: new position, new dump, new patch.
+  - **RTO**: a second full dump and patch. Unbounded relative to the target.
+  - **Test**: GAP: a `rewind-sql` test with a stubbed `SHOW BINARY LOGS` that lacks the captured file, expecting a refusal.
+  - **DEFECT**: retention is checked by nobody, and a purge is discovered only after the patch has been applied.
+
+- **FM-11.04-6 The rewind INSERT runs while the connector is running**
+  - **Trigger**: the printed INSERT is executed without stopping that connector first.
+  - **Behaviour**: the rewind row wins only until the connector's next offset flush inserts a newer row for the same `offset_key` (`_version` is `now64()` at insert). The rewind is silently undone.
+  - **Detection**: none from the tool. After a correct restart, `show_replica_status` shows the captured file and position (spec 10.03). A position past it means the rewind was lost.
+  - **Blast radius**: the patched tables miss the dump-window changes, which is a silent divergence.
+  - **Recovery**: stop the connector (`sink-connector-client stop_replica`, or stop the service). Re-run the INSERT and check `SELECT offset_val FROM <offset table> FINAL WHERE offset_key = '<key>'` before starting.
+  - **RTO**: a connector restart plus the replay of the dump window.
+  - **Test**: GAP: an operator-procedure check is not unit-testable in this tool. A `rewind-sql --apply` mode that refuses while `/status` reports the connector running would make it testable.
+  - **DEFECT**: the correctness of the rewind depends on an unenforced manual step.
+
+- **FM-11.04-7 KeeperMap offset store**
+  - **Trigger**: the connector's offset table is a KeeperMap table (spec 09.03).
+  - **Behaviour**: `cmd_rewind_sql()` reads `SELECT offset_key, offset_val FROM <table> FINAL`, and the generated INSERT reads `FROM <table> FINAL`. A KeeperMap table rejects `FINAL` (stated in `DebeziumOffsetStorage.offsetValueQuery`).
+  - **Detection**: loud. `RuntimeError: clickhouse-client rc=...` from `rewind-sql`, or the INSERT's error when run by hand.
+  - **Blast radius**: nothing is changed.
+  - **Recovery**: use `sink-connector-client update_binlog --binlog_file <file> --binlog_position <pos>` or `--gtid <set>` with the connector stopped.
+  - **RTO**: minutes plus the replay of the dump window.
+  - **Test**: GAP: a `rewind-sql` test against a KeeperMap-declared offset table.
+
+- **FM-11.04-8 `patch` without a canary list: a loader rendering difference is installed silently**
+  - **Trigger**: `--canary-list` is omitted and the loader renders some type or zone differently from the connector (spec 11.05 §6).
+  - **Behaviour**: the count reconciliation passes and `REPLACE PARTITION` installs the differently rendered values. The warning `a canary list was given but none of its tables was loaded` fires only when a list was given.
+  - **Detection**: none from `patch`. Only the post-patch checksum (spec 11.02) reports `Checksum difference`.
+  - **Blast radius**: every patched table can diverge in the affected columns.
+  - **Recovery**: re-run the checksum. On a difference, fix the loader rendering and re-run `patch --apply` from the same dump (with a canary list).
+  - **RTO**: a second load and replace of the affected tables (proportional to their size).
+  - **Test**: GAP: a `patch --apply` test without `--canary-list` expecting a warning that rendering is unverified.
+  - **DEFECT**: the absence of any rendering check is silent.
+
+- **FM-11.04-9 `patch` pointed at a replication-history database**
+  - **Trigger**: `--schemas` names the history database of a mode-2 connector (spec 12.01).
+  - **Behaviour**: SCD2 tables are `ReplacingMergeTree`, so they pass the engine check. `_valid_from`, `_valid_to` and `_operation` are reported as "ClickHouse-only columns (kept, filled with defaults)". The loaded rows get the sentinel `_valid_from`, the default `_version`, and fall into the `2100-01-01` partition. Replacing it would overwrite every open row and delete marker with those rows, while the closed-version partitions are listed as replica-only. A canary, if given, fails because the history columns are inside its hash.
+  - **Detection**: `CANARY_FAILED` when a canary list is given. Otherwise none.
+  - **Blast radius**: the current-state view of every patched SCD2 table is rewritten with corrupt history metadata.
+  - **Recovery**: do not use `patch` on SCD2 tables. The history repair procedure is spec 12.03 §7.
+  - **RTO**: see spec 12.03 §7.
+  - **Test**: GAP: a `patch` test on a table carrying `_valid_to` expecting a refusal.
+  - **DEFECT**: the tool does not refuse SCD2 tables.
+
+Summary: 9 failure modes, 6 DEFECT, 6 GAP.

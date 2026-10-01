@@ -142,3 +142,39 @@ fix is the one the banner names. Formalised as `sorting_key_nonempty`,
 - §3.6: `MySqlDDLParserListenerImplTest.testCreateTableKeylessOrdersByAllColumns()` (no `PRIMARY KEY`, no `UNIQUE`: `ORDER BY (every column)` plus `SETTINGS allow_nullable_key=1`, never `ORDER BY tuple()`; pre-fix code emits `ORDER BY tuple()`), `MySqlDDLParserListenerImplTest.testAutoIncrementColumnIsNotNull()` (`id INT AUTO_INCREMENT UNIQUE` is `NOT NULL` and becomes the sorting key), `CreateTableNoKeySortKeyTest` (the keyless shapes: single-column, multi-column, GIPK table; the PK/UNIQUE cases untouched), `CreateTableUniqueKeySortKeyTest` (a nullable `UNIQUE` key falls through to the all-columns key with the setting; a `NOT NULL` one is adopted without it).
 - Formal: `wider_key_change_rebuilds` in `formal_specs/lean/Replication/DdlTranslation.lean`; `Replication.CreateTable.sorting_key_nonempty`, `Replication.CreateTable.primary_key_wins`, `Replication.CreateTable.fallback_key_is_every_stored_column`, `Replication.CreateTable.declared_key_never_needs_nullable_setting` in `formal_specs/lean/Replication/CreateTable.lean`.
 - `RecordSchemaVsDdlTypeAgreementTest.bothPathsDeclareTheSameType()` — §3.4.1.
+
+---
+
+## 6. Failure Modes & Recovery
+Every rule of this spec exists to keep ClickHouse from refusing an ALTER (Code 36, 44, 524) or from silently changing a type. The rules depend on reading the existing ClickHouse column (`TargetSchemaLookup`); their failure modes are a lookup that answers wrongly, a change that can only be applied by a rebuild, and a table whose identity is every column.
+
+- **FM-06.05-1 Key-column change that needs a rebuild, with the rebuild disabled**
+  - **Trigger**: `MODIFY`/`CHANGE`/`RENAME` of a sorting-key column to a wider or non-comparable type, or a rename, with `ddl.primary.key.rebuild=false`.
+  - **Behaviour**: `MySqlDDLParserListenerImpl.keyColumnNotRepresentable()` raises `DDLReplicationException`; nothing is emitted; engine restarts `errors.max.retries` times, then terminal stop (exit code 3). With the default `true` the clause is deferred to a rebuild instead (spec 06.09).
+  - **Detection**: ERROR `Sorting-key column <db>.<t>.<c> ... (existing ClickHouse type <T>, requested <T'>). ClickHouse fixes the sorting key at CREATE TABLE and rejects this with Code: 524 ... Manual rebuild required: re-create ... and re-snapshot the table. Source DDL: [...]`; immediate.
+  - **Blast radius**: all replication stops at the statement; nothing lost.
+  - **Recovery**: either set `ddl.primary.key.rebuild=true` and restart (the re-delivered statement is rebuilt automatically, spec 06.09), or rebuild the table by hand with the new column type, re-synchronise it (`ch-mysql-resync`, spec 11.04), add `ignore.ddl.regex` for the statement and restart.
+  - **RTO**: config change + restart + online rebuild (spec 06.09 §6); the manual path is proportional to the table size; unmeasured.
+  - **Test**: `MySqlDDLParserListenerImplTest.testKeyColumnChangeIsLoudWhenRebuildDisabled()`.
+
+- **FM-06.05-2 Nullability lookup fails and the MODIFY falls back to Nullable**
+  - **Trigger**: ClickHouse briefly unreachable or `system.columns` slow while `MODIFY/CHANGE COLUMN c T NOT NULL` of an existing non-Nullable column is translated.
+  - **Behaviour**: `MetadataTargetSchemaLookup.columnNullability()` catches the error and answers an empty map, which §3.2 treats as "unknown schema": `MODIFY COLUMN c Nullable(T')` is emitted. ClickHouse applies it (a data change of that column on every part; cost not measured here), and the replica now declares `Nullable` where the source declares `NOT NULL`. On a sorting-key column the same fallback also loses the key check (spec 06.07 §6 FM-06.07-3), the `MODIFY` is refused with Code 524, and that refusal is swallowed (spec 06.08 §6 FM-06.08-2).
+  - **Detection**: ERROR `Error retrieving NULL column schema of <db>.<t> from ClickHouse`; the statement then proceeds and is acknowledged.
+  - **Blast radius**: one column's declared type diverges; values are preserved (`Nullable(T')` holds every value); a column data change runs on ClickHouse.
+  - **Recovery**: the values are preserved, so the replica stays value-equal; to restore the declared type run `ALTER TABLE <db>.<t> MODIFY COLUMN c T' DEFAULT <literal>` by hand (ClickHouse refuses the Nullable to non-Nullable conversion without a `DEFAULT`, §3.1; the `DEFAULT` never changes a replicated value, spec 04.03).
+  - **RTO**: operator time + the ClickHouse column rewrite; unmeasured.
+  - **Test**: `DdlTranslationFailureModesTest.failedNullabilityLookupIsLoudNotNullable()` (disabled; fails on 2.11.0), `DdlTranslationFailureModesTest.failedNullabilityLookupYieldsNullableToday()`.
+  - **DEFECT**: a transient lookup failure changes the replica's column type; a failed lookup must stop the DDL (retryable, loud), not be read as "unknown".
+
+- **FM-06.05-3 Keyless table: identical rows collapse, and every key-column widening rebuilds the table**
+  - **Trigger**: a source table with neither `PRIMARY KEY` nor a `NOT NULL` `UNIQUE` key (§3.6).
+  - **Behaviour**: `enterColumnCreateTable()` keys the replica on every stored column and logs `KeylessTableWarning.banner()`. Two source rows identical in every column collapse to one; every later widening `MODIFY` of any column is a key-column change and plans a same-identity rebuild that copies the whole table (spec 06.09 §3.1.2).
+  - **Detection**: the ERROR banner once, at CREATE; nothing when rows collapse.
+  - **Blast radius**: row-count divergence on duplicate rows (value-level equal otherwise); rebuild load per widening ALTER.
+  - **Recovery**: give the source table an identity (`ALTER TABLE t ADD COLUMN my_row_id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT INVISIBLE PRIMARY KEY`); the connector rebuilds the replica under it (spec 06.09), reading the new key values from the source. Then verify with spec 11.02.
+  - **RTO**: one online rebuild of the table (spec 06.09 §6); unmeasured.
+  - **Test**: `MySqlDDLParserListenerImplTest.testCreateTableKeylessOrdersByAllColumns()`.
+  - **DEFECT**: rows identical in every column silently collapse on the replica until the source declares an identity.
+
+Summary: 3 failure modes, 2 DEFECT, 0 GAP.

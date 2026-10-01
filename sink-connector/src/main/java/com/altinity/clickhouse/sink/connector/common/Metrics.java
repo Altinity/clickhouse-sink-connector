@@ -128,6 +128,8 @@ public class Metrics {
     private static Gauge binlogTransactionCompressionGauge;
     private static Gauge binlogTransactionCompressionLevelGauge;
     private static Gauge binlogPayloadDecoderOkGauge;
+    private static Gauge binlogConnectionLostGauge;
+    private static Gauge binlogXaRollbackAfterPrepareGauge;
 
     /**
      * HTTP server used to expose Prometheus metrics.
@@ -265,6 +267,16 @@ public class Metrics {
         binlogPayloadDecoderOkGauge = Gauge.build()
                 .name(MetricsConstants.CLICKHOUSE_SINK_BINLOG_PAYLOAD_DECODER_OK)
                 .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_BINLOG_PAYLOAD_DECODER_OK))
+                .register(collectorRegistry);
+
+        binlogConnectionLostGauge = Gauge.build()
+                .name(MetricsConstants.CLICKHOUSE_SINK_BINLOG_CONNECTION_LOST)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_BINLOG_CONNECTION_LOST))
+                .register(collectorRegistry);
+
+        binlogXaRollbackAfterPrepareGauge = Gauge.build()
+                .name(MetricsConstants.CLICKHOUSE_SINK_BINLOG_XA_ROLLBACK_AFTER_PREPARE)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_BINLOG_XA_ROLLBACK_AFTER_PREPARE))
                 .register(collectorRegistry);
 
         partitionOffsetCounter = Gauge.build().
@@ -476,6 +488,22 @@ public class Metrics {
         binlogTransactionCompressionGauge.set(sourceState);
         binlogTransactionCompressionLevelGauge.set(zstdLevel);
         binlogPayloadDecoderOkGauge.set(decoderOk);
+    }
+
+    /** One more binlog connection found dead by the connection guard (spec 01.09). */
+    public static void incrementBinlogConnectionLost() {
+        if (!enableMetrics || collectorRegistry == null || binlogConnectionLostGauge == null) {
+            return;
+        }
+        binlogConnectionLostGauge.inc();
+    }
+
+    /** One more XA transaction rolled back on the source after XA PREPARE (spec 01.10). */
+    public static void incrementBinlogXaRollbackAfterPrepare() {
+        if (!enableMetrics || collectorRegistry == null || binlogXaRollbackAfterPrepareGauge == null) {
+            return;
+        }
+        binlogXaRollbackAfterPrepareGauge.inc();
     }
 
     public static void updateCounters(String topicName, int numRecords) {

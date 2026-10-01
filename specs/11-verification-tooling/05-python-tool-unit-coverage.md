@@ -103,3 +103,67 @@ invocation as the existing suite in `.github/workflows/spec-governance.yml`:
   falling back to `String`.
 - `TestFilterTablesByRegex` — the Postgres dumper's include/exclude regex
   table filter, singly and combined, and the no-pattern passthrough.
+
+## 6. Failure Modes & Recovery
+The component here is the offline test layer and the logic it pins. A failure of the layer does not stop replication. It lets a broken dumper or loader reach production, where the damage is either a leaked credential or a reload that renders values differently from the connector. The spec 11.04 canary and the spec 11.02 checksum catch the second kind, but only after a load. The entries below are ordered by how silently they fail.
+
+- **FM-11.05-1 The packaged loader has no redaction, and the tests cover the other copy**
+  - **Trigger**: the packaged loader (`python -m ch_sink_tools.db_load.clickhouse_loader`, the `ch-mysql-resync` default and the `pyproject.toml` entry point) is run with `--clickhouse_password`.
+  - **Behaviour**: `ch_sink_tools/db_load/clickhouse_loader.py` `load_data_mysqlshell()` builds `--password '<password>'` from `args.clickhouse_password` (single quotes, not `shlex.quote`). Its `execute_load()` logs the whole command with `logging.info(cmd)`, and it has no `register_secret` / `redact_password`. A password containing `'` breaks the shell command, and the load fails. `ch-mysql-resync` itself passes only `--clickhouse_config_file`, so on that path no password reaches the command line. The unit tests of §5 import only the legacy `db_load/clickhouse_loader.py`, which does redact its log line.
+  - **Detection**: none. The redaction contract of §3.1 is green because it tests the other copy.
+  - **Blast radius**: the ClickHouse password is in plain text in the loader log of every such run.
+  - **Recovery**: rotate the password and scrub the logs. Run the packaged loader only with `--clickhouse_config_file`.
+  - **RTO**: a credential rotation (operator-dependent, unmeasured).
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestPackagedLoaderRedaction::test_logged_command_is_redacted` (skipped, DEFECT).
+  - **DEFECT**: the packaged loader logs the password, and the coverage this spec declares pins a different file.
+
+- **FM-11.05-2 The legacy loader leaks the password when a load fails**
+  - **Trigger**: any failing insert. ClickHouse can be down or read-only, a value can fail to parse, or `TOO_MANY_PARTS` can appear. This includes `ch-mysql-resync --loader-cmd` runs that select this legacy copy.
+  - **Behaviour**: the legacy `load_data_mysqlshell()` puts the password resolved from `--clickhouse_config_file` on the command line (`--password <shlex-quoted>`), where it is visible in the process list during each insert. `execute_load()` logs the redacted command. On failure, however, it raises `AssertionError("command " + cmd + " failed")` with the raw command, so the traceback prints `--password <secret>`. `run_quick_command()` also logs `"cmd " + cmd` unredacted at DEBUG.
+  - **Detection**: loud about the failure (`command failed : terminating`, traceback, non-zero exit). Silent about the leak.
+  - **Blast radius**: the password appears in every failure log of a load (for resync, `load_<schema>.<table>.log`).
+  - **Recovery**: rotate the password and scrub the logs. The fix is to raise with `redact_password(cmd)`.
+  - **RTO**: a credential rotation (unmeasured).
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestLegacyLoaderFailurePath::test_failure_message_is_redacted` (skipped, DEFECT). The redacted INFO line and the loud failure are pinned by `...::TestLegacyLoaderFailurePath::test_logged_command_is_redacted`.
+  - **DEFECT**: redaction is applied to the log line but not to the exception.
+
+- **FM-11.05-3 The tests this spec declares never run in CI**
+  - **Trigger**: any change to `db_dump/`, `db_load/`, `ch_sink_tools/` or `db_compare/`.
+  - **Behaviour**: §5 says the tests are "run by the same pytest invocation as the existing suite in `.github/workflows/spec-governance.yml`". That workflow runs only `scripts/tests` and `db_load/tests/test_mysql_resync.py`. `db_load/tests/test_clickhouse_loader_unit.py` does not even import without the `antlr4` runtime (`ModuleNotFoundError: No module named 'antlr4'`), and `test_postgres_type_mapper_unit.py` needs `psycopg2`. The workflow installs neither. The spec 11.02 checksum tests are not run either.
+  - **Detection**: none. A regression merges green.
+  - **Blast radius**: every contract of §3, and all of spec 11.02 §5, is unenforced between manual runs.
+  - **Recovery**: run the suite locally before a tooling change: `pip install -r sink-connector/python/requirements.txt`, then `python3 -m pytest db_compare/tests db_load/tests db_dump/tests` from `sink-connector/python`. The fix is a workflow step doing exactly that.
+  - **RTO**: about 5 s for the offline suite (measured: 154 tests of `db_compare/tests`, `db_dump/tests` and the resync and failure-mode files in 5.3 s on the dev host, 2026-09-30), plus the install.
+  - **Test**: GAP: a workflow step (not a unit test) that runs the whole offline Python suite with the requirements installed.
+  - **DEFECT**: §5's claim that CI runs these tests is false.
+
+- **FM-11.05-4 A dump time zone is mapped to the wrong zone, silently**
+  - **Trigger**: a dump whose `SET TIME_ZONE='<offset>'` matches no IANA zone's offset today, or matches only zones whose offset differs on other dates.
+  - **Behaviour**: `get_unix_timezone_from_mysql_timezone()` compares the offset with each zone's offset at `datetime.now()`, returns the first match in alphabetical order, and falls back to `"UTC"` without a warning. The load runs under `export TZ=<zone>`. `TIMESTAMP` values of dates with a different offset, or all values after the fallback, are shifted.
+  - **Detection**: none. Per-zone lines are logged at DEBUG only.
+  - **Blast radius**: every `TIMESTAMP` column of the loaded tables can be shifted by the offset difference.
+  - **Recovery**: the spec 11.04 canary (`CANARY_FAILED`) or the spec 11.02 checksum exposes it. Reload with the zone given explicitly.
+  - **RTO**: a reload of the affected tables (proportional to size).
+  - **Test**: `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestUnixTimezoneFromMysqlTimezone::test_unknown_offset_falls_back_to_utc` pins the silent fallback.
+  - **DEFECT**: an unmatched or date-dependent offset is resolved without a warning.
+
+- **FM-11.05-5 The ANTLR translator fails and the regexp translator is used silently**
+  - **Trigger**: a `CREATE TABLE` the ANTLR grammar cannot translate (a new MySQL syntax).
+  - **Behaviour**: `convert_to_clickhouse_table()` catches every exception from `convert_to_clickhouse_table_antlr`, logs `Use regexp DDL converter` at INFO and returns `convert_to_clickhouse_table_regexp(...)`. That path is not covered by §5 and may map types differently.
+  - **Detection**: an INFO line only.
+  - **Blast radius**: tables created by an initial load (schema phase) can get a shape different from what the connector would create. `ch-mysql-resync` is not affected: it loads with `--data_only` into `CREATE TABLE ... AS <live>`.
+  - **Recovery**: compare the created DDL with `SHOW CREATE TABLE` of a connector-created table. Recreate the table from the connector's DDL and reload.
+  - **RTO**: a reload of that table.
+  - **Test**: GAP: a loader test feeding a DDL the grammar rejects and asserting a WARNING and the regexp output's column types.
+  - **DEFECT**: a translator switch that can change column types is logged at INFO.
+
+- **FM-11.05-6 One data file of a table fails to load**
+  - **Trigger**: an insert of one `*.tsv.zst` chunk fails. Causes include ClickHouse down, `MEMORY_LIMIT_EXCEEDED`, or a parse error.
+  - **Behaviour**: `execute_load()` raises. `load_data_mysqlshell()` re-raises the first failed future, and the loader exits non-zero with a traceback. Other chunks of the same table may already be inserted, so the target is partial.
+  - **Detection**: loud. `command failed : terminating`, traceback, non-zero exit. `ch-mysql-resync` records `LOAD_FAILED` and replaces nothing.
+  - **Blast radius**: under `ch-mysql-resync`, only the scratch table is partial. A standalone load into a live table leaves it partial with no reconciliation.
+  - **Recovery**: under `ch-mysql-resync`, re-run `patch --apply`. It drops and recreates only the scratch copy and reloads. For a standalone load, reload into an empty table and compare counts with the dump.
+  - **RTO**: a reload of that table (proportional to size).
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestLegacyLoaderFailurePath::test_logged_command_is_redacted` (a failing insert raises).
+
+Summary: 6 failure modes, 5 DEFECT, 2 GAP.

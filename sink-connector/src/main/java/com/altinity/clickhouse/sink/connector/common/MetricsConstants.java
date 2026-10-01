@@ -97,6 +97,22 @@ public class MetricsConstants {
             "clickhouse_sink_binlog_payload_decoder_ok";
 
     /**
+     * Metric name for the binlog connections the connection guard found dead
+     * since start: closed by the source, or silent past the read timeout
+     * (spec 01.09). Each one restarts the engine from the committed offset.
+     */
+    public static final String CLICKHOUSE_SINK_BINLOG_CONNECTION_LOST =
+            "clickhouse_sink_binlog_connection_lost";
+
+    /**
+     * Metric name for XA transactions rolled back on the source after XA
+     * PREPARE since start (spec 01.10): their rows were replicated and must be
+     * repaired by re-synchronising the tables named in the ERROR line.
+     */
+    public static final String CLICKHOUSE_SINK_BINLOG_XA_ROLLBACK_AFTER_PREPARE =
+            "clickhouse_sink_binlog_xa_rollback_after_prepare";
+
+    /**
      * A map that stores the descriptions of the metrics.
      */
     private static final Map<String, String> metricsToHelp;
@@ -126,6 +142,10 @@ public class MetricsConstants {
                 "MySQL source binlog_transaction_compression_level_zstd, -1 unknown");
         metricsToHelp.put(CLICKHOUSE_SINK_BINLOG_PAYLOAD_DECODER_OK,
                 "1 when the Transaction_payload zstd decoder self-test passed at start, 0 otherwise");
+        metricsToHelp.put(CLICKHOUSE_SINK_BINLOG_CONNECTION_LOST,
+                "Binlog connections found dead since start (closed by the source, or silent past binlog.read.timeout.ms)");
+        metricsToHelp.put(CLICKHOUSE_SINK_BINLOG_XA_ROLLBACK_AFTER_PREPARE,
+                "XA transactions rolled back after XA PREPARE since start; their replicated rows need a re-synchronisation");
     }
 
     /**

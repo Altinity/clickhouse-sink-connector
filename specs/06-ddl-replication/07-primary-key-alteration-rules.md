@@ -52,3 +52,49 @@ A statement consisting only of skipped key/index clauses never reaches ClickHous
 - `AlterTableModifyColumnIT.testAlterAddPrimaryKeyAndModifyNotNull()`
 - `MySqlDDLParserListenerImplTest.testAlterAddPrimaryKeyOnlyIsSkipped()`, `testAlterAddPrimaryKeyFirstNoLeadingComma()`, `testAlterAddColumnThenAddPrimaryKey()`, `testAlterDropPrimaryKeyOnlyIsSkipped()` (unknown key: skipped), `testAlterDropPrimaryKeyModifyKeyAddColumnAddPrimaryKey()` (known key `id`, new key `ref_id`: rebuild planned, `ADD COLUMN` emitted; unknown key: unchanged), `testAddPrimaryKeyThatChangesIdentityPlansRebuild()` (restatement skipped; different set / superset / column-level PRIMARY KEY plan a rebuild and emit their other clauses), `testDropPrimaryKeyPlansRebuild()` (lone DROP plans the all-columns key; `DROP ..., ADD PRIMARY KEY (same)` skipped), `testPrimaryKeyChangeIsLoudWhenRebuildDisabled()` (`ddl.primary.key.rebuild=false`: loud, nothing emitted).
 - Formal: `no_bare_alter`, `wider_key_change_rebuilds`, `primary_key_change_rebuilds`, `rebuild_never_bare`, `rebuild_only_when_not_loud` in `formal_specs/lean/Replication/DdlTranslation.lean`.
+
+---
+
+## 6. Failure Modes & Recovery
+The policy is only as good as its knowledge of the replica's current sorting key: with the key known, an identity change is rebuilt (spec 06.09) or refused; with the key "unknown" it is skipped, and a skipped identity change is a silent, count-clean collapse of rows. The failure modes are the paths that end in "unknown" when the key is in fact knowable, and the loud refusal.
+
+- **FM-06.07-1 Identity change refused (rebuild disabled or not possible)**
+  - **Trigger**: `ADD PRIMARY KEY` of another column set, or `DROP PRIMARY KEY` without replacement, with `ddl.primary.key.rebuild=false`, or with a rebuild precondition unmet (spec 06.09 §3.2).
+  - **Behaviour**: `MySqlDDLParserListenerImpl.enforcePrimaryKeyPolicy()` raises `DDLReplicationException` (or `PrimaryKeyRebuild.refuse()` does, spec 06.09); nothing of the statement is emitted; engine restarts `errors.max.retries` times, then terminal stop.
+  - **Detection**: ERROR naming the table, the existing sorting key, the requested key and `Manual rebuild required: re-create ... with ORDER BY matching the new key and re-snapshot the table`; exit code 3 after the restarts.
+  - **Blast radius**: all replication stops at the statement; nothing lost.
+  - **Recovery**: when disabled by configuration, set `ddl.primary.key.rebuild=true` and restart (the re-delivered statement is rebuilt online). Otherwise rebuild by hand: create `<t>_new` with the new `ORDER BY`, load it from MySQL (`ch-mysql-resync`, spec 11.04), count-reconcile, `EXCHANGE TABLES` (ON CLUSTER in replicated mode), apply the statement's other clauses by hand, add `ignore.ddl.regex` for the statement, restart, remove the entry.
+  - **RTO**: restart + online rebuild when enabled (spec 06.09 §6); otherwise proportional to the table size; unmeasured.
+  - **Test**: `MySqlDDLParserListenerImplTest.testPrimaryKeyChangeIsLoudWhenRebuildDisabled()`.
+  - **DEFECT**: when the automatic rebuild cannot run, recovery is a manual reload of the table, beyond the I15 RTO.
+
+- **FM-06.07-2 Identity change on a table whose key reads as empty (`ORDER BY tuple()`)**
+  - **Trigger**: a replica table created with `ORDER BY tuple()` (by a version before spec 06.05 §3.6, or by hand), then a source `ADD PRIMARY KEY`.
+  - **Behaviour**: `TargetSchemaLookup.sortingKeyTypes` returns empty for `ORDER BY tuple()`; §3.1 rule 1 treats it as unknown: the key clauses are skipped at INFO and the rest of the statement is emitted. The replica keeps `ORDER BY tuple()`, under which `ReplacingMergeTree` keeps one row for the whole table.
+  - **Detection**: INFO only (the skipped clause is logged); no ERROR.
+  - **Blast radius**: that table holds one row per merge, permanently; row counts diverge.
+  - **Recovery**: rebuild the table by hand with the source key (as in FM-06.07-1) and re-synchronise it (`ch-mysql-resync`, spec 11.04).
+  - **RTO**: table rebuild, proportional to its size; unmeasured.
+  - **Test**: `MySqlDDLParserListenerImplTest.testAlterAddPrimaryKeyOnlyIsSkipped()` (unknown key: skipped).
+  - **DEFECT**: an `ORDER BY tuple()` replica is indistinguishable from "unknown" and the identity change that would repair it is skipped silently; `system.tables.sorting_key = ''` should be read explicitly and refused or rebuilt.
+
+- **FM-06.07-3 Sorting-key lookup fails and the identity change is skipped**
+  - **Trigger**: ClickHouse briefly unreachable, a `system.columns` timeout or a missing privilege while `ALTER TABLE ... DROP PRIMARY KEY, ADD PRIMARY KEY (...)` is translated.
+  - **Behaviour**: `DBMetadata.getSortingKeyColumns()` catches the error and returns an empty list; `MetadataTargetSchemaLookup.sortingKeyTypes()` answers empty; `enforcePrimaryKeyPolicy()` applies rule 1 (unknown): no rebuild plan, key clauses skipped, statement acknowledged. The same fallback lets a key-column `MODIFY` through as an ordinary clause, which ClickHouse refuses with Code 524 and which is then swallowed (spec 06.08 §6 FM-06.08-2).
+  - **Detection**: ERROR `Error retrieving sorting key columns for <db>.<t>`, then INFO for the skipped clauses; nothing afterwards.
+  - **Blast radius**: the replica keeps the old identity; rows the source now keeps distinct collapse (or a relocated row is not retired), count-clean and permanently.
+  - **Recovery**: rebuild the table under the new key (FM-06.07-1 manual procedure, or re-deliver the statement: rewind to it with `sink-connector-client change_replication_source` to the binlog position/GTID before the DDL, which the rebuild then applies, followed by the spec 11.04 reconciliation of the table as I15 requires for any offset move).
+  - **RTO**: rebuild + reconciliation of the table; unmeasured.
+  - **Test**: `DdlTranslationFailureModesTest.failedSortingKeyLookupIsLoudNotUnknown()` (disabled; fails on 2.11.0), `DdlTranslationFailureModesTest.failedSortingKeyLookupSkipsPrimaryKeyChangeToday()`.
+  - **DEFECT**: a transient failure of the key lookup turns an identity change into a silent no-op; the lookup must distinguish "query failed" (retry/halt) from "no key".
+
+- **FM-06.07-4 Identity change re-delivered after it was applied**
+  - **Trigger**: crash after the rebuild's swap and before the DDL offset was committed; or an operator rewind over the statement.
+  - **Behaviour**: the replica's sorting key now equals the declared key, so rule 2 (restatement) applies: no second rebuild; the statement's other clauses are guarded and idempotent (spec 06.04 §6 FM-06.04-2).
+  - **Detection**: INFO for the skipped key clauses; none needed.
+  - **Blast radius**: none.
+  - **Recovery**: self-heals; a pending backfill is resumed from the retired table (spec 06.09 §6 FM-06.09-3).
+  - **RTO**: restart + re-delivery; unmeasured.
+  - **Test**: `MySqlDDLParserListenerImplTest.testRedeliveredPrimaryKeyChangeIsRestatement()`.
+
+Summary: 4 failure modes, 3 DEFECT, 0 GAP.

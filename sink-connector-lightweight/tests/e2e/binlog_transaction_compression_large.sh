@@ -138,7 +138,11 @@ if [ "$OLD_SOURCE" = 1 ]; then
   start_connector; sleep 45
   if connector_log_has 'REFUSING TO START'; then ok "require mode refused to start on the pre-8.0.34 source"; else bad "require mode did not refuse on the pre-8.0.34 source"; fi
   if grep -q -e '8.0.34' "$WORK/connector.log"; then ok "the refusal names the 8.0.34 floor"; else bad "the refusal does not name 8.0.34"; fi
-  expect "require mode replicated nothing" "$(chq "SELECT count() FROM test.l_after FINAL WHERE is_deleted=0" | sed 's/^$/0/')" "0"
+  # Nothing replicated: the replica table was never created, or it exists and holds no live row.
+  t=$(chq "SELECT count() FROM system.tables WHERE database='test' AND name='l_after'")
+  if [ "$t" = "0" ]; then ok "require mode replicated nothing (replica table never created)"
+  elif [ "$t" = "1" ]; then expect "require mode replicated nothing" "$(chq "SELECT count() FROM test.l_after FINAL WHERE is_deleted=0")" "0"
+  else bad "require mode: the replica could not be queried (system.tables answered [$t])"; fi
   docker rm -f $CC >/dev/null 2>&1
   sed -i 's/binlog.transaction.compression.check: "require"/binlog.transaction.compression.check: "auto"/' "$WORK/config.yml"
   start_connector

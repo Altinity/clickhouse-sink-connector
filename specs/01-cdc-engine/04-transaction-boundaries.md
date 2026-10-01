@@ -74,3 +74,38 @@ The `diff > 1` reset does not cover it: a 1 ms advance yields `diff == 0`, so th
 - `SequenceSeedOverflowTest.testNewerPostResumeEventCurrentlyRanksBelowOlderPreRestartEvent()` — the unseeded carry of §4.1; `DebeziumChangeEventCaptureTest.newerEventOneMillisecondAfterSeededRestartRanksAboveOlderPreRestartEvent()` — the same 1 ms scenario through the real statics with the seeded floor; `DebeziumChangeEventCaptureTest.newerEventAfterSeededRestartRanksAboveOlderPreRestartEvent()` — the seeded restart on a lagging source.
 - Lean: `Replication.VersionFloor.restart_boundary`, `Replication.VersionFloor.dispatch_control_preserves_state` (§4.3); `Replication.Proofs.version_strictly_monotonic` covers only the coordinate encoding.
 - Verification: a GTID-mode end-to-end late-commit test (`LateCommitVersionOrderIT` runs with `gtid_mode=OFF` only) is not yet covered by an automated test (gap).
+
+---
+
+## 7. Failure Modes & Recovery
+Transaction boundaries bound what a restart costs: the durable offset inside a transaction is the transaction's BEGIN plus the events and rows already acknowledged, so a restart re-reads the in-flight transaction and nothing older (Invariant I15's "one in-flight transaction"). Version order survives source clock steps by the floor; it does not survive a start whose floor could not be seeded, nor a stale in-memory mark (spec 01.02 FM-01.02-2).
+
+- **FM-01.04-1 Restart inside a very large transaction**
+  - **Trigger**: any engine restart (spec 01.01 FM-01.01-1/-5, spec 01.07 FM-01.07-1) while a multi-GB or multi-million-row transaction is being applied.
+  - **Behaviour**: Debezium records the offset as `{file, pos=<BEGIN>, event=N, row=M}` (spec 01.07 §3.5); the restart re-streams the transaction from its BEGIN and skips the acknowledged events by count, then delivers the rest; rows handed off but not acknowledged are rewritten and collapse under ReplacingMergeTree (their versions are clamped above the previous run by the seeded floor, spec 02.02 §3.5). The skip costs a binlog read and decode of the acknowledged prefix, no ClickHouse writes; for a compressed payload see spec 01.08 §3.3. Each further restart re-reads the prefix again — the cost is per fault, not cumulative.
+  - **Detection**: INFO `Resume replay in progress: N previously processed binlog event(s) skipped so far ...` once per 60 s, then INFO `Resume replay done (<reason>): skipped N previously processed binlog event(s) ...` (`ResumeReplayLogSummary`).
+  - **Blast radius**: all tables wait for the replay; no loss; duplicates collapse.
+  - **Recovery**: automatic. Avoid causing restarts during it: the restart monitor restarts a connector whose rows are older than its timeout (spec 01.01 FM-01.01-3).
+  - **RTO**: restart + re-read of the acknowledged prefix (proportional to the transaction's size) + rewrite of at most the unacknowledged tail (≤ the hard cap); measured only as convergence: spec 01.08 §5 L3 kills the connector during a 2.4 GB compressed transaction and it converges value-exact, the time is not recorded; unmeasured for uncompressed multi-GB transactions.
+  - **Test**: `ResumeReplayLogSummaryTest.longReplayReportsProgress()`, `DebeziumChangeEventCaptureTest.replayAfterSeededRestartIsClampedAboveTheOldRun()`; GAP: no harness records the replay rate or the time to converge after a kill inside a multi-GB transaction.
+
+- **FM-01.04-2 Source clock step**
+  - **Trigger**: an NTP step, a manual clock change, or a failover to a host whose clock is off, moving `source.ts_ms` backward or forward while the binlog keeps commit order.
+  - **Behaviour**: `nextVersionAssignment` clamps every first delivery to `sequenceMaxSourceTs`, so a backward step is absorbed; a forward excursion raises the floor, rows after the correction are versioned at the excursion's timestamp until the source clock passes it, and order holds. Bound from the formula: an inversion would need more than 2·10^9 rows versioned inside one clamped two-second anchor window (the counter carrying past a reset to `SEQUENCE_START`).
+  - **Detection**: none needed — ordering is preserved; the floor is visible as the horizon INFO of `VersionHighWaterMark`.
+  - **Blast radius**: none.
+  - **Recovery**: none needed.
+  - **RTO**: 0.
+  - **Test**: `SourceClockStepVersionTest.backwardStepIsClamped()`, `SourceClockStepVersionTest.forwardExcursionAndCorrectionStayMonotonic()`, `CommitOrderVersionClampTest.lateCommitWithOlderStatementTimestampRanksAboveEarlierWrite()`.
+
+- **FM-01.04-3 Unseeded start: the durable high-water mark cannot be read**
+  - **Trigger**: at `setupDebeziumEventCapture` the mark table is unreadable (no system connection, the ClickHouse node or the table unavailable, permissions), or `offset.storage.jdbc.table.name` is unset.
+  - **Behaviour**: `seedVersionFloorFromDurableMark` catches the failure and the start continues unseeded; the first handoff's `VersionHighWaterMark.cover` persists a horizon (or fails the batch loudly after its write attempts) but never raises the floor. The restart window of §4.1 reopens for this run: a first delivery within ~500 ms of source time after the previous run's last write of the same key ranks below it (`SEQUENCE_START_INITIAL` vs `SEQUENCE_START`). Every completion-callback retry re-attempts the seed.
+  - **Detection**: ERROR `Could not establish the version high-water mark in <table>; this start is unseeded and the first handoff will retry the mark before any row is written` (or ERROR `... is not set; the version floor cannot be persisted or seeded ...`), at start.
+  - **Blast radius**: possible silent loss of an update or delete written in the first second of source time after the restart; row counts intact.
+  - **Recovery**: make the mark table readable and restart the process so the floor is seeded (INFO `Version floor seeded to <ms> ms from <source>`); check keys written around the restart with the checksum job and `ch-mysql-resync` (spec 11.04) any diverged table.
+  - **RTO**: restart once noticed; unmeasured.
+  - **Test**: `VersionHighWaterMarkTest.horizonWriteFailureIsLoud()` pins the write side; GAP: a start whose mark cannot be read must refuse (or retry) before streaming.
+  - **DEFECT**: an unseeded start streams anyway and reopens the restart inversion window with only an ERROR line.
+
+Summary: 3 failure modes, 1 DEFECT, 2 GAP.

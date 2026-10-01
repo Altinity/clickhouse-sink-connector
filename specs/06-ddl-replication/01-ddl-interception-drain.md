@@ -231,3 +231,48 @@ decision: its flag is computed by the parser, after the drain, and a suppressed
 - `DdlFailureLoudTest.drainIsNoOpWhenExecutorIsNull` — single-threaded mode.
 - Mutation check: reverting step 1 to `while (!records.isEmpty())` turns the
   three new tests red; restoring it turns them green.
+
+---
+
+## 6. Failure Modes & Recovery
+The barrier trades availability for correctness on purpose: while it is held, NO table replicates, and it is released only when every pre-DDL row is in ClickHouse or the attempt aborts without applying the DDL. Recovery is therefore always "remove the cause, let the barrier drain or restart and let the DDL be re-delivered"; the DDL's offset is never committed by a failed attempt (spec 06.08 §3.1).
+
+- **FM-06.01-1 Barrier held by a live but failing writer**
+  - **Trigger**: a pre-DDL batch keeps failing with a retriable ClickHouse error while the DDL waits: `TOO_MANY_PARTS` (252), `MEMORY_LIMIT_EXCEEDED` (241), ClickHouse restarting, a replica read-only after Keeper loss, a network cut.
+  - **Behaviour**: `DebeziumChangeEventCapture.awaitPipelineQuiescent()` (step 1 of `drainBeforeDDL()`) polls `isPipelineQuiescent()` every 50 ms with no time limit; the worker retries the batch forever with the 500 ms to 30 s backoff of spec 10.02. The Debezium thread is blocked in the drain, so no event of any table is read; a long block lets the binlog client's keepalive declare the source connection lost and reconnect (§3.5 measured a 6 min 28 s drain doing exactly this).
+  - **Detection**: WARN every `ddlDrainWarnIntervalMs` (60 s) `Pipeline drain: <n> legacy queue batch(es), <n> routed queue batch(es), unacknowledged handed-off batches: yes still pending after <ms> ms; the writers are alive, so the backlog is a slow or retrying batch, not a dead one.` plus the worker's own retry ERRORs. No ERROR from the barrier itself and no metric names the stalled barrier; replication lag in `show_replica_status` grows.
+  - **Blast radius**: every table stops; nothing is lost, duplicated or reordered (offsets stay behind the unwritten batch).
+  - **Recovery**: remove the ClickHouse-side cause (merges catch up, memory freed, Keeper back, replica writable). Self-heals: the next retry lands within the 30 s backoff cap, the drain completes and the DDL is applied. No operator step on the connector.
+  - **RTO**: cause removal + at most 30 s (backoff cap, spec 10.02) + write of the queued backlog; unmeasured end to end.
+  - **Test**: `DdlDrainDeadlockTest.testUndrainableQueueWithLiveWorkersKeepsWaiting()` (waits past several warn intervals, logs the WARN, discards nothing).
+  - **DEFECT**: the stalled barrier is reported only at WARN, with no ERROR line and no metric, so a stall of every table on a still-failing ClickHouse satisfies neither half of I15 property 1.
+
+- **FM-06.01-2 A worker dies while the barrier waits for its backlog**
+  - **Trigger**: a worker's scheduled task terminates (FATAL batch error, `Error`, bug) while batches are queued for it or dequeued and unacknowledged.
+  - **Behaviour**: `failIfWorkerDiedDuringDrain()` on the next 50 ms poll turns `failIfWorkerDied()`'s exception into `IllegalStateException`; the DDL branch of `processEveryChangeRecord()` wraps it in `DDLReplicationException`; the pool is resumed in `finally`; `handleEngineCompletion()` sees `hasDeadWorker()` and stops terminally without drawing on the retry budget.
+  - **Detection**: ERROR `Sink worker <i> of <n> is dead: its scheduled task has terminated...`, then `DDL drain: a worker died while <backlog>; that backlog can never drain...Aborting this DDL attempt.`, then `Engine stopped while a sink worker is dead; not retrying...` and FATAL `Replication is STOPPED...`; process exit code 3 (`exit.on.terminal.failure=true`, default). Within 50 ms of the worker's death.
+  - **Blast radius**: all replication stops; the DDL is not applied; no data lost (offsets behind the backlog).
+  - **Recovery**: fix what killed the worker (its cause is in the first ERROR); restart the process (systemd / supervisor, or `sink-connector-client restart`). It resumes from the last committed offset, re-writes the backlog (ReplacingMergeTree collapses the duplicates) and re-delivers the DDL.
+  - **RTO**: process restart + replay from the last committed offset to the DDL; unmeasured.
+  - **Test**: `DdlDrainDeadlockTest.testStuckQueueWithDeadWorkerAborts()`, `DdlDrainDeadlockTest.testUndrainableRoutedQueueWithDeadWorkerAborts()`.
+
+- **FM-06.01-3 Barrier attempt interrupted or failed (shutdown, stop_replica, engine close)**
+  - **Trigger**: the engine is closed or the Debezium thread interrupted while the drain waits.
+  - **Behaviour**: the 50 ms sleep throws; `awaitPipelineQuiescent()` raises `IllegalStateException("Pipeline drain interrupted before the writer was quiescent.")`, wrapped in `DDLReplicationException`; `finally` calls `executor.resume()`; the DDL offset is not acknowledged.
+  - **Detection**: ERROR `Engine stopped with an error: ...DDL replication failed for [<DDL>]...` (or a clean stop when the operator stopped it); immediate.
+  - **Blast radius**: none beyond the stop; the pending batch is kept and written by the resumed pool.
+  - **Recovery**: none needed; on the next start Debezium re-delivers the DDL from the last committed offset.
+  - **RTO**: engine restart (~15-20 s, spec 10.04 measured 13-19 s between restarts) + re-delivery of the DDL; unmeasured here.
+  - **Test**: `DdlFailureModesTest.failedDdlLeavesThePoolResumed()` (pool not left paused, batch not discarded, offset not acknowledged), `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()`.
+
+- **FM-06.01-4 DDL storm (hundreds of ALTERs)**
+  - **Trigger**: a migration or ORM issues hundreds of `ALTER TABLE` statements interleaved with DML.
+  - **Behaviour**: every applied DDL pays, on the single Debezium thread and with every table stopped: a full drain of the DML queued since the previous DDL, `pause()`/`awaitQuiescent()`, two `system.columns` reads by the translator (`TargetSchemaLookup`), the ALTER round trip (for `Replicated*` tables through Keeper), and `DDLSchemaChangeWaiter.waitForSchemaVisibility()`: a fixed 500 ms sleep (`5 x ddl.schema.change.poll.interval.ms`) for any statement without `ADD`/`DROP COLUMN`, polling up to `ddl.schema.change.timeout.ms` (30 s) for those with. 300 `MODIFY COLUMN` statements therefore cost at least 150 s of pure sleep. Ignored statements take none of this (§3.5).
+  - **Detection**: INFO `***** DDL received, Flush all existing records` and `ClickHouse DDL: <stmt>` per statement; lag grows. No metric counts DDLs usefully: `clickhouse.sink.ddl` is incremented by the elapsed time of `updateMetrics()` itself (about 0) under the tag `fail=true` on SUCCESS (`DebeziumChangeEventCapture.updateMetrics`, `Metrics.updateDdlMetrics`).
+  - **Blast radius**: throughput collapse and lag for all tables; no loss.
+  - **Recovery**: self-heals when the storm ends. Mitigation: `ignore.ddl.regex` for statements that need not be replicated (no drain for them), `ddl.schema.change.poll.interval.ms` lower.
+  - **RTO**: proportional to the storm: >= 0.5 s x statements + ALTER latency; unmeasured.
+  - **Test**: GAP: a unit test that feeds N applied DDLs through processEveryChangeRecord with a recording connection and asserts the per-DDL fixed cost (drains, sleeps, metadata queries) stays within a stated bound.
+  - **DEFECT**: the DDL metric `clickhouse.sink.ddl` is recorded only on success, tagged `fail=true`, and incremented by about 0, so neither DDL volume nor DDL failures are observable from metrics.
+
+Summary: 4 failure modes, 2 DEFECT, 1 GAP.

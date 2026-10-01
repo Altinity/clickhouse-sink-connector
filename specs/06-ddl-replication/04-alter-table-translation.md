@@ -144,3 +144,58 @@ Clauses in the skip class of Spec 06.03 §3.2 (indexes, keys, foreign keys, `ADD
 - `MySqlDDLParserListenerImplTest`: `testAlterDatabaseAddColumn`, `testDropColumn`, `testAlterAddColumnsParenthesisedList`, `testAlterAddDefinitionsSkipsEmbeddedIndex`, `testChangeColumn`, `testChangeColumnSameNameEmitsNoRename`, `testAlterAddColumnThenRenameToKeepsBothStatements`, `testAlterRenameToQualifiedTarget`, `testCreateTableLike`, `testCreateTableLikeQualifiedSource`, `dropTable`, `renameTable`, `testCreateTablePrimaryKeyWithSortOrder`, `testDecimalPrecisionWithoutScale`, `testAddColumnLiteralDefaultIsKept`, `testBitStringAndHexDefaultsAreTranslated`, `testAddColumnCurrentTimestampBackfillsLiteral`, `testAddEnumNotNullDefaultsToFirstMember`, `testAlterDatabaseAddColumnEnum` (flipped: `ENUM NOT NULL` now gets `DEFAULT '<first member>'`), `testAddColumnExpressionDefaultIsLoud`, `testModifyColumnDefaultCurrentTimestampIsDropped` (the former `testAddColumnDefaultCurrentTimestampIsDropped`, which pinned the dropped back-fill, is split into these), `testAddCheckConstraintIsSkipped` (`ADD CHECK`, `ADD CONSTRAINT ... CHECK ... NOT ENFORCED`, `DROP CONSTRAINT`, `DROP CHECK` emit nothing alone and never drop a neighbouring `ADD COLUMN`; pre-fix code echoed them), `testDropContraints`, `testAddConstraintsWithAnd`, `testAlterTableAddConstraint` (flipped from echo to skip).
 - `DdlReplayIdempotencyTest`: `testChangeColumnModifyHalfIsGuarded`, `testCreateTableLikeIsGuarded`, `testRenameTableIsGuarded`, `testDropTableIsAlwaysGuarded`, `testModifyColumnIsDeliberatelyNotGuarded`.
 - Formal: `no_bare_alter`, `add_columns_preserved` in `DdlTranslation.lean`.
+
+---
+
+## 6. Failure Modes & Recovery
+The translation is designed so that the ONE DDL that can be in flight at a crash (the DDL thread applies statements one at a time and acknowledges each before reading the next) can be re-applied safely: every emitted statement whose replay could fail carries a guard. The failure modes are the statements for which a guard is not enough (renames that form a cycle, replicated targets), the statements the translator refuses, and schema drift that a guard hides.
+
+- **FM-06.04-1 Translator refuses a statement it cannot represent loss-free**
+  - **Trigger**: `ADD COLUMN ... DEFAULT (expr)` / `CAST(...)` / other non-literal default (§3.2.2 rule 3); `DEFAULT CURRENT_TIMESTAMP` with no event timestamp; key-column changes with `ddl.primary.key.rebuild=false` (spec 06.05 §3.4, 06.07 §3.1).
+  - **Behaviour**: `MySqlDDLParserListenerImpl` raises `DDLReplicationException` during the walk; nothing is emitted, the offset is not acknowledged; the exception carries no ClickHouse FATAL code, so the engine is restarted `errors.max.retries` (10) times on the same statement before the terminal stop (exit code 3).
+  - **Detection**: ERROR naming table, column, default and remedy (e.g. the §3.2.2 message), then `Restarting the engine - retry n of 10`, then FATAL `Replication is STOPPED...`. Immediate; terminal after about 10 x 15-20 s.
+  - **Blast radius**: all replication stops at the statement; nothing lost.
+  - **Recovery**: apply the column on ClickHouse by hand with the values the source holds (or re-synchronise the table with `ch-mysql-resync`, spec 11.04), add `ignore.ddl.regex` matching exactly that statement, restart, and remove the entry once `show_replica_status` shows the position past it.
+  - **RTO**: operator time + one restart (+ the table re-synchronisation when chosen); unmeasured.
+  - **Test**: `MySqlDDLParserListenerImplTest.testAddColumnExpressionDefaultIsLoud()`.
+
+- **FM-06.04-2 Crash between execution and acknowledgement (replay of the in-flight DDL)**
+  - **Trigger**: kill -9, OOM kill or host loss after `executeDDL` returned and before `DebeziumOffsetManagement.acknowledgeRecords()` (a window that includes the 500 ms schema-visibility sleep, spec 06.01 §6 FM-06.01-4).
+  - **Behaviour**: the restart re-delivers the DDL. `ADD COLUMN IF NOT EXISTS`, `DROP COLUMN IF EXISTS`, the `MODIFY COLUMN IF EXISTS` half of `CHANGE`, `RENAME COLUMN IF EXISTS`, `RENAME TABLE IF EXISTS`, `DROP TABLE IF EXISTS` and `CREATE TABLE IF NOT EXISTS ... AS` are no-ops the second time; an unguarded `MODIFY` re-states the same type.
+  - **Detection**: none needed; the replay logs the usual `ClickHouse DDL: <stmt>` INFO.
+  - **Blast radius**: none.
+  - **Recovery**: self-heals on restart.
+  - **RTO**: process restart + re-delivery from the last committed offset; unmeasured.
+  - **Test**: `DdlReplayIdempotencyTest.testChangeColumnModifyHalfIsGuarded()`, `DdlReplayIdempotencyTest.testRenameTableIsGuarded()`, `DdlReplayIdempotencyTest.testDropTableIsAlwaysGuarded()`, `DdlReplayIdempotencyTest.testCreateTableLikeIsGuarded()`, `DdlReplayIdempotencyTest.testModifyColumnIsDeliberatelyNotGuarded()`.
+
+- **FM-06.04-3 Replay of a RENAME that swaps or cycles tables**
+  - **Trigger**: FM-06.04-2's crash window on `RENAME TABLE a TO tmp, b TO a, tmp TO b` (a swap), or on a shadow-table cut-over `RENAME TABLE t TO _t_old, _t_new TO t` (gh-ost, pt-online-schema-change).
+  - **Behaviour**: `enterRenameTable()` emits one `RENAME TABLE IF EXISTS ...` statement. `IF EXISTS` makes a replay safe only when the source names are gone; after a swap or cut-over they exist again under the new meaning: the swap is executed a second time (tables swapped back), and the cut-over replay renames the NEW `t` to `_t_old`, which already exists (ClickHouse `TABLE_ALREADY_EXISTS`, Code 57, non-retryable), so every re-delivery fails the same way (ClickHouse behaviour inferred, not measured).
+  - **Detection**: swap replay: none (tables silently hold each other's rows). Cut-over replay: ERROR `DDL failed and ddl.retry is not enabled...` with the Code 57 cause, engine restarts, exit code 3.
+  - **Blast radius**: swap: two tables' contents exchanged under their names, count-clean to a per-table count check that expects the swapped counts. Cut-over: all replication stops.
+  - **Recovery**: compare `SHOW CREATE TABLE`/row counts of the involved tables with MySQL, rename them back by hand on ClickHouse to match the source, add `ignore.ddl.regex` for the statement, restart, remove the entry.
+  - **RTO**: operator time + restart; unmeasured.
+  - **Test**: GAP: an integration test that kills the connector between execution and acknowledgement of a swap RENAME and asserts the replica's table names match MySQL after restart.
+  - **DEFECT**: a replayed swap RENAME is silently applied twice; replay safety of RENAME needs a target-state check (skip when the post-rename state already holds), not only `IF EXISTS`.
+
+- **FM-06.04-4 Replicated target: table-level statements run on one replica only**
+  - **Trigger**: `auto.create.tables.replicated=true` (tables created `ON CLUSTER` as `ReplicatedReplacingMergeTree`), and a source `RENAME TABLE`, `DROP TABLE`, `CREATE TABLE ... LIKE` or `DROP DATABASE`.
+  - **Behaviour**: only `enterCreateDatabase()` and `enterColumnCreateTable()` append `ON CLUSTER {cluster}`; `enterRenameTable()`, `enterDropTable()`, `enterCopyCreateTable()`, `enterDropDatabase()` and `enterTruncateTable()` do not. On an Atomic database a RENAME/DROP without `ON CLUSTER` runs on the connector's server only (ClickHouse distributed-DDL semantics, not measured here); the other replicas keep the old name or the dropped table, and a later `CREATE TABLE IF NOT EXISTS ... ON CLUSTER` is a no-op on them. `CREATE TABLE ... AS` of a table whose engine path uses `{uuid}` is refused outside `ON CLUSTER` (the Code 36 measured in spec 06.09 §3.3.1, inferred for `AS`), which is retried and then swallowed (spec 06.08 §6 FM-06.08-2). `ALTER TABLE` column changes need no `ON CLUSTER` on a `Replicated*` table (replicated through Keeper within the shard); `TRUNCATE` of a `Replicated*` table is replicated too.
+  - **Detection**: none from the connector (it writes to one server only, which is consistent). Readers of the other replicas see stale or orphaned tables.
+  - **Blast radius**: replicas of the cluster diverge in table names and contents; replication through the connector's server continues.
+  - **Recovery**: on every other replica apply the same RENAME/DROP by hand (or re-issue it `ON CLUSTER`), compare `system.tables` across the cluster, restart nothing.
+  - **RTO**: operator time; unmeasured.
+  - **Test**: `DdlTranslationFailureModesTest.replicatedModeTableStatementsRunOnCluster()` (disabled; fails on 2.11.0), `DdlTranslationFailureModesTest.replicatedModeOnlyCreateCarriesOnClusterToday()`.
+  - **DEFECT**: in replicated mode RENAME TABLE, DROP TABLE, CREATE TABLE ... LIKE and DROP DATABASE are not issued `ON CLUSTER`, so the cluster's replicas silently diverge.
+
+- **FM-06.04-5 Out-of-band schema drift hidden by a guard**
+  - **Trigger**: someone altered the ClickHouse table by hand (column added with another type, column dropped or renamed), then the source issues a DDL on the same column.
+  - **Behaviour**: `ADD COLUMN IF NOT EXISTS c <type>` on an existing `c` of a different type is a silent no-op (the replica keeps the hand-made type); `RENAME COLUMN IF EXISTS` on a missing column is a no-op; an unguarded `MODIFY` of a missing column is refused with Code 10, which is retryable and therefore swallowed (spec 06.08 §6 FM-06.08-2), defeating the §3.1 rationale for leaving `MODIFY` unguarded.
+  - **Detection**: none for the ADD/RENAME no-ops; a later row carrying a column absent from ClickHouse fails loudly at write time (`MissingTargetColumnException`, spec 08.04), a type mismatch may not.
+  - **Blast radius**: that table's column diverges in type or value; others unaffected.
+  - **Recovery**: make the ClickHouse column match `SHOW CREATE TABLE` on MySQL by hand, then re-synchronise the table if values were affected (`ch-mysql-resync`, spec 11.04).
+  - **RTO**: operator time + table re-synchronisation; unmeasured.
+  - **Test**: GAP: a unit test with a target-schema lookup reporting an existing column of another type, asserting that `ADD COLUMN` of it is refused loudly rather than emitted with `IF NOT EXISTS`.
+  - **DEFECT**: `IF NOT EXISTS`/`IF EXISTS` turn a type or name conflict with the existing replica column into a silent no-op.
+
+Summary: 5 failure modes, 3 DEFECT, 2 GAP.

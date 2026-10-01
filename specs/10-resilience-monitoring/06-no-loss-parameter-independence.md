@@ -180,3 +180,47 @@ Reviewed Immutability), not a silent regression.
   (`ClickHouseSinkConnectorConfig` or `java.util.Properties`), i.e. on a tuning
   parameter. It asserts the decision API still exists first, so a rename cannot
   make it pass vacuously — a rename must revisit this spec.
+
+---
+
+## 6. Failure Modes & Recovery
+No parameter value moves the durable offset past an unwritten row, so every abrupt stop recovers by redelivery. What parameters do change is the RTO -- how much is redelivered and how soon a failure is detected -- and one value, `errors.max.retries <= 0`, silently disables every catalog statement the connector issues. The guarantee of section 3.1 holds; the recovery-time half of Invariant I15 is parameter-dependent.
+
+- **FM-10.06b-1 The process dies at an arbitrary instant**
+  - **Trigger**: `kill -9`, the kernel OOM killer, a host crash, or systemd's `SIGKILL` after `TimeoutStopSec`.
+  - **Behaviour**: only offsets staged by `DebeziumOffsetManagement.acknowledgeRecords` (written rows, in handoff order) or quiescent control commits can have reached `replica_source_info`; the next start resumes at or before the first unwritten row and redelivers. Redelivery is bounded by the units handed off and not yet acknowledged -- at most `sink.connector.handoff.max.outstanding.records` (500,000) rows or `sink.connector.handoff.max.outstanding.bytes` (a quarter of the heap) -- plus acknowledged offsets not yet flushed (the engine runs with `OffsetCommitPolicy.always()`; Debezium's flush timing was not re-read in this run).
+  - **Detection**: the supervisor sees the process exit (`Restart=always`); on restart INFO `Version floor seeded to {} ms from {}` and the resumed binlog position in the log.
+  - **Blast radius**: redelivered rows are rewritten with the same data and collapse under `_version`; no loss.
+  - **Recovery**: automatic (systemd restart after `RestartSec=30`).
+  - **RTO**: 30 s + engine start + re-apply of at most the handoff cap (500,000 rows; seconds at production write rates) and the in-flight source transaction; unmeasured here (spec 01.08 section 6 owns the chaos harness).
+  - **Test**: `OffsetNoLossParameterIndependenceTest.killAtAnyPointNeverAcknowledgesUnwrittenRows()`, `OffsetNoLossParameterIndependenceTest.redeliveryAfterAbruptStopIsAtLeastOnceNeverAGap()`, `OffsetNoLossParameterIndependenceTest.flushCannotStageAnUnwrittenRowAtAnyTimeout()`.
+
+- **FM-10.06b-2 An offset flush times out and poisons the offset writer**
+  - **Trigger**: a flush to `replica_source_info` exceeds `offset.flush.timeout.ms` (ClickHouse slow or unreachable); Debezium leaves its `OffsetStorageWriter` in the "already flushing" state.
+  - **Behaviour**: the next acknowledgement throws; `ClickHouseBatchRunnable.isOffsetWriterPoisoned` recognises the message before classification and rethrows as a FATAL worker stop; the dead worker makes the engine failure terminal (spec 10.04 FM-10.04-2); the process exits 3 and redelivers from the last durable offset.
+  - **Detection**: ERROR `FATAL: the Debezium OffsetStorageWriter is stuck in the 'already flushing' state -- Task({}). ...`, ERROR `Sink worker %d of %d is dead: ...`, FATAL `Replication is STOPPED: ...`, exit code 3; within one Debezium batch.
+  - **Blast radius**: all replication stops; rows written after the last durable offset are redelivered; no loss.
+  - **Recovery**: automatic via the supervisor once ClickHouse accepts writes to the offset table again.
+  - **RTO**: 30 s + engine start + redelivery (FM-10.06b-1); unmeasured.
+  - **Test**: `DeadWorkerRetryIsTerminalTest.deadWorkerIsTerminalAtOnce()` (the terminal path the poisoned writer takes), `OffsetNoLossParameterIndependenceTest.flushCannotStageAnUnwrittenRowAtAnyTimeout()`.
+
+- **FM-10.06b-3 Parameters that stretch the RTO without risking loss**
+  - **Trigger**: `sink.connector.handoff.max.outstanding.records=0` and `...bytes=0` (caps disabled), very large caps or `buffer.max.records`, `heartbeat.interval.ms=0`, or a large `batch.retry.backoff.max.ms`.
+  - **Behaviour**: with the caps disabled the redelivery after FM-10.06b-1 is everything outstanding (bounded only by the heap) and the hard-cap stop of spec 10.04 FM-10.04-4 never happens; with heartbeats off, an idle source commits no control records, a dead worker is detected only at the next source event, and a finished snapshot is not committed (issue #1379); a larger backoff cap delays noticing a fixed cause. None of them can advance the offset past an unwritten row.
+  - **Detection**: INFO at start for the heartbeat setting (`Heartbeat interval is set to {}ms by configuration; ... a value of 0 disables heartbeats ...`); none for the caps.
+  - **Blast radius**: longer redelivery and slower detection; no loss.
+  - **Recovery**: restore the defaults and restart.
+  - **RTO**: grows with the configured values; unmeasured.
+  - **Test**: `OffsetCommitDecisionParameterFreeTest.noMethodTouchesConfiguration()` (the commit decision reads no parameter), `HandoffHardCapBackpressureTest.zeroDisablesTheCap()`; GAP: a test that relates the configured caps to a stated maximum redelivery and rejects values that exceed the RTO.
+
+- **FM-10.06b-4 `errors.max.retries <= 0` disables every catalog statement**
+  - **Trigger**: `errors.max.retries=0` (or negative); `ClickHouseSinkConnectorConfig` declares it with no lower bound, and `DebeziumChangeEventCapture.setup` copies it into `DBMetadata.MAX_RETRIES` and the engine budget.
+  - **Behaviour**: every `while (retryCount < MAX_RETRIES)` loop in `DBMetadata` runs zero times: `executeSystemQuery` executes nothing and returns null (a replicated DDL, `CREATE TABLE`, `ADD COLUMN` all "succeed" without running), `getColumnsDataTypesForTable` returns an empty map (every writer is refused its metadata), and `handleEngineCompletion` treats the first engine failure as terminal. A DDL that arrives while nothing is outstanding is acknowledged without having been applied.
+  - **Detection**: ERROR `*** TABLE METADATA not retrieved for Database(%s), table(%s), retrying on next attempt` for every table on every attempt; for a DDL only WARN `Timeout ({}ms) waiting for columns to appear in {}.{}: ...` from `DDLSchemaChangeWaiter` when it adds or drops columns, nothing otherwise.
+  - **Blast radius**: rows stall loudly; DDL applied at the source during the window is lost from ClickHouse and later rows of those tables diverge (silently for a type change).
+  - **Recovery**: set `errors.max.retries` to a positive value (default 10) and restart; apply each DDL acknowledged during the window by hand (`sink-connector-client ddl_translate`) and re-synchronise the affected tables (spec 11.04).
+  - **RTO**: restart 30 s + start for the stall; the lost DDL is unbounded (silent); unmeasured.
+  - **Test**: `DBMetadataRetryExhaustionTest.zeroRetryBudgetStillExecutesOnce()` (`@Disabled`, confirmed red on 2.11.0).
+  - **DEFECT**: a configuration value accepted without validation turns every catalog DDL, including replicated DDL, into a silent no-op.
+
+Summary: 4 failure modes, 1 DEFECT, 1 GAP.

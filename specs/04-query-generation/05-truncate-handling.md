@@ -52,3 +52,48 @@ There is **no schema-cache invalidation step** on this path: a TRUNCATE does not
 - `DBMetadataStatementFailureTest.truncateFailureIsRethrownAfterRetries()`, `DBMetadataStatementFailureTest.preparedStatementFailureIsRethrownNotNull()` — `truncateTable` throws after `MAX_RETRIES` refused attempts; `getPreparedStatement` throws instead of returning `null`.
 - `TruncateTableIT.testIsDeleted()` — a TRUNCATE on MySQL empties the ClickHouse table.
 - `TruncateTableIT.testRowsInsertedAfterTruncateSurvive()` — rows following the TRUNCATE in the same batch are retained.
+
+---
+
+## 6. Failure Modes & Recovery
+
+Recovery posture: a replicated TRUNCATE is applied at its binlog position or the batch fails (§3.2); a refused TRUNCATE is retried with the batch and heals once ClickHouse accepts it, a TRUNCATE of a missing table is terminal. Because the statement is destructive, its blast radius is the whole target table, including rows that did not come from the truncated source table. Procedures P-FIX-TYPE / P-SKIP / P-RESYNC and the retry-vs-stop rule are defined in spec 07.01 §6.
+
+- **FM-04.05-1 ClickHouse refuses the TRUNCATE transiently**
+  - **Trigger**: ClickHouse unreachable, restarting, a `ReplicatedMergeTree` table read-only after Keeper loss (`Code: 242`), a socket timeout on a large table.
+  - **Behaviour**: `DBMetadata.truncateTable` tries `MAX_RETRIES` (10) times back to back — no delay between attempts, reconnecting when pooling is enabled — then throws `SQLException` with the last refusal as cause; `PreparedStatementExecutor.addToPreparedStatementBatch` rethrows `RuntimeException("Truncation failed for <db>.<t>")`. The runnable classifies by the cause's code: 242, 999, timeouts and codeless connection errors are RETRIABLE/UNKNOWN, so the batch is retained and retried with backoff (500 ms doubling to 30 s) until ClickHouse accepts it. A TRUNCATE that completed server-side while the client timed out is simply repeated on retry (idempotent on the then-empty table; the rows behind it in the batch are in later segments and not yet written).
+  - **Detection**: 10 × ERROR `*** Error: Truncate table statement error, retry attempt (<n>/10) failed` with stack traces in well under a second, then ERROR `ClickHouseBatchRunnable exception - Task(<id>)` (`TRUNCATE TABLE <db>.<t> failed on all 10 attempts; the replicated TRUNCATE was NOT applied and this batch must not be acknowledged.`) and WARN `Retriable ClickHouse error (Code: <n>, Category: <c>)` every ≤ 30 s; no metric (the TRUNCATE branch does not call `Metrics.updateErrorCounters`); no exit.
+  - **Blast radius**: the worker's tables stop and offsets freeze until ClickHouse accepts; the pre-TRUNCATE segments of the batch are re-inserted on each retry (they are truncated again by the retry, so the end state is correct); nothing lost.
+  - **Recovery**: self-heals when ClickHouse accepts the statement (Keeper back, server up); no operator step.
+  - **RTO**: outage + ≤ 30 s backoff + re-apply of the batch; unmeasured.
+  - **Test**: `DBMetadataStatementFailureTest.truncateFailureIsRethrownAfterRetries()`, `PreparedStatementExecutorTruncateTest.truncateRefusedByClickHouseFailsTheBatch()`.
+
+- **FM-04.05-2 TRUNCATE of a table that does not exist on ClickHouse**
+  - **Trigger**: the source table was never replicated to ClickHouse (created with `sql_log_bin=0`, filtered, or dropped out of band on ClickHouse) and a TRUNCATE of it arrives.
+  - **Behaviour**: every attempt fails with `Code: 60 UNKNOWN_TABLE`; 60 is in `FATAL_ERROR_CODES`, so the worker dies, the engine stops on the next source batch and the process exits 3. The batch is not acknowledged.
+  - **Detection**: the 10 ERROR attempt lines, ERROR `FATAL ClickHouse error (Code: 60) -- this batch will never succeed.`, FATAL `Replication is STOPPED: ...`, exit 3 within ≤ 5 s; systemd restarts every 30 s and gives up after 5 starts in 300 s.
+  - **Blast radius**: the whole connector stops; nothing lost.
+  - **Recovery**: create the table on ClickHouse (`sink-connector-client ddl_translate` of the source `SHOW CREATE TABLE`, or enable `auto.create.tables`) and restart; the TRUNCATE then empties the new table, and `ch-mysql-resync` (spec 11.04) back-fills it if earlier rows of it were never replicated.
+  - **RTO**: create + restart ≈ 1–2 min + re-apply of the in-flight transaction (+ resync if the table must be back-filled); unmeasured.
+  - **Test**: `ClickHouseErrorClassifierTest.testClassifyWrappedCause()` (a wrapped `Code: 60` is FATAL), `TerminalFailureExitTest.fatalErrorCodeIsNotRetried()`.
+
+- **FM-04.05-3 TRUNCATE of a target table shared by two source databases**
+  - **Trigger**: `clickhouse.database.override.map` maps two source databases to the same target database (e.g. `shard1:app,shard2:app`) and both hold a table of the same name; one source truncates its table.
+  - **Behaviour**: `Utils.parseSourceToDestinationDatabaseMap` rejects a duplicated source name but not a duplicated destination, so the map is accepted; `DBMetadata.truncateTable` truncates the resolved target table, which also holds the other source's rows.
+  - **Detection**: none. DEFECT.
+  - **Blast radius**: data loss on the replica for every row of the other source database's table; the loss persists (no later event re-sends those rows).
+  - **Recovery**: P-RESYNC the other source database's table (`ch-mysql-resync`, spec 11.04), then remove the N:1 mapping.
+  - **RTO**: resync proportional to the table size; unmeasured.
+  - **Test**: `DatabaseOverrideMapFanInTest.fanInToOneTargetDatabaseIsRefused()` (disabled, fails on 2.11.0), `DatabaseOverrideMapFanInTest.oneToOneMapIsAccepted()` (the correct half).
+  - **DEFECT**: an N:1 database mapping is accepted although a replicated TRUNCATE on one source (and, not verified here, a replicated DROP TABLE) destroys the other source's replica rows.
+
+- **FM-04.05-4 Batch fails after the TRUNCATE was applied**
+  - **Trigger**: a later segment of the same batch (rows inserted after the TRUNCATE) fails.
+  - **Behaviour**: the batch is retained and re-executed from its first segment: the pre-TRUNCATE rows are inserted again, the TRUNCATE runs again, then the later segments (§3.2). Between the failure and the successful retry, ClickHouse readers see the table empty or holding only part of the post-TRUNCATE rows. History mode applies a bulk close instead of a TRUNCATE; its replay is spec 12.03.
+  - **Detection**: the later segment's ERROR and the retry WARN; the transient empty state itself: none.
+  - **Blast radius**: transient: readers see an emptier table than the source for up to the retry delay; the final state converges on `ReplacingMergeTree`.
+  - **Recovery**: self-heals on the successful retry.
+  - **RTO**: ≤ 30 s backoff per attempt + the cause of the later failure; unmeasured.
+  - **Test**: `PreparedStatementExecutorTruncateTest.truncateIsAppliedAtItsBinlogPositionForBothHashOrders()` pins the order within one execution; GAP: a test that re-executes the batch after a failure behind the TRUNCATE and asserts the converged table.
+
+Summary: 4 failure modes, 1 DEFECT, 1 GAP.

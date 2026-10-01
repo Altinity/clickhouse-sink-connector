@@ -139,3 +139,72 @@ Schema evolution, DDL handling, the DDL barrier, TRUNCATE, keyless tables, offse
   - `preflightSeesTheStreamingDecoder()` — §3.4: the marker read reflectively is this connector's, and the self-test passes through the streaming decoder.
 - Lean (`formal_specs/lean/Replication/PayloadStream.lean`, §3.2.1): `Replication.PayloadStream.step_encode` — one read step recovers an event from its own prefix and leaves exactly the encoding of the rest; `Replication.PayloadStream.step_retains_only_rest` — a step's result is the event read plus the unread suffix (nothing of an earlier event is retained); `Replication.PayloadStream.decode_encode` / `Replication.PayloadStream.decode_encode_full` — for every list of events, of any count and size (no bound: sizes are unbounded naturals, the analogue of the 64-bit header field), the streaming decoder returns exactly the encoded events in order; `Replication.PayloadStream.encode_length` — the decoded byte count is the sum of the event sizes, the quantity the end-of-pass check compares; `Replication.PayloadStream.step_short_fails` — an event announcing more bytes than remain is refused, never returned truncated; `Replication.PayloadStream.decode_fuel_mono` — once a pass has produced a result, more fuel yields the same result (the decoded stream depends on the retained bytes alone, not on how far the reader was allowed to run); `Replication.PayloadStream.decode_short_fails` — a stream whose first event announces more bytes than remain is refused by the whole decoder at every fuel. That repeated Java passes re-read the same retained bytes is established by `passesAreLazyAndRepeatable()`; the pure model cannot express a destructive read and does not claim it.
 - End-to-end, large transactions (`sink-connector-lightweight/tests/e2e/binlog_transaction_compression_large.sh`, MySQL 8.0 with compression on, GTID on and off, ClickHouse 24.8, connector heap 2 GiB, `binlog.transaction.compression.check=require`, value-level comparison of every table): L1 one transaction of 2,395,580,867 bytes uncompressed (1.3M rows × ~1.8 KB) with an UPDATE and a DELETE at its tail; L2 one transaction of 4,606,880,870 bytes uncompressed (2.5M rows, past 2^32); L3 kill -9 while an L1-sized payload is being applied (248,218 and 311,705 of 1.3M rows applied at the kill), then restart and converge; L4 compressed and session-uncompressed transactions after the large ones (the stream continues); L5 one transaction of 160,000 rows x 8 KiB of `RANDOM_BYTES` (1.3 GB, incompressible), whose compressed payload would exceed 1 GiB, with an UPDATE and a DELETE at its tail: the source writes it uncompressed (asserted: `Write_rows` and no `Transaction_payload` at the start of its binlog file, and the growth of the `NONE` row of `binary_log_transaction_compression_stats`), the connector replicates it value-exact (MD5 per row), and a compressed transaction after it is replicated as a payload again; plus the source-side proof (`SHOW BINLOG EVENTS`: ONE `Transaction_payload` per large transaction with `decompressed_size` above 2^31 and 2^32) and a scan of the connector log for decode failures and `OutOfMemoryError`. 17/17 with GTID on, 17/17 with GTID off. `OLD_SOURCE=1` with a source older than 8.0.34 (`MYSQL_IMAGE=docker.io/percona/percona-server:8.0.32-24`) is the version-floor control: a `require`-mode connector refuses to start naming 8.0.34 and replicates nothing, and an `auto`-mode connector starts with the WARN banner and replicates. With the stock 2.11.0 build, L1 stops the connector with `Stumbled upon long even though int expected` and the replica receives none of the transaction (the harness's negative control, `EXPECT_STOCK_FAILURE=1`: 4/4). The pre-existing compression harnesses pass unchanged on the streaming build: `binlog_transaction_compression.sh` 26/26 (GTID on and off), `binlog_transaction_compression_hard.sh` 49/49 (GTID on and off).
+- Chaos, stress and recovery time (`sink-connector-lightweight/tests/e2e/binlog_transaction_compression_chaos.sh`, §6): eight concurrent writer sessions replay a generated mix of compressed, session-uncompressed, varying-level (1-22), savepoint, rollback, two-table-transfer, wide-row and JSON transactions (`tests/e2e/chaos/gen_workload.py`) for the whole run, a big-transaction writer commits ~1.5 GB (800,000-row) payloads, and each phase injects one fault through a TCP fault proxy (`tests/e2e/fault_proxy/FaultProxy.java`) or the containers, then measures the time until a marker committed on the source after the fault is visible in ClickHouse. Final: every table compared value by value, the transfer invariant on the replica, the source-side proof of payloads, no decode failure, no `OutOfMemoryError`. 30/30 with GTID on and 30/30 with GTID off on the head carrying spec 01.09 (the measured table is §6).
+- Edge cases (`sink-connector-lightweight/tests/e2e/binlog_transaction_compression_edge.sh`, §6): E1 initial snapshot while compressed transactions (one 300k-row) commit; E2 partial JSON updates (the documented limitation of spec 01.10, reproduced); E3 XA transactions with a rollback after PREPARE (reported, spec 01.10); E4 one payload touching 300 tables; E5 one 256 MiB row inside a payload; E6 160,000 single-row payloads from 16 sessions; E7 a payload mixing an included and an excluded database; E8 binlog purged while the connector is down, and the reposition-and-resynchronise recovery. Through the source with GTID on, and through a MySQL replica hop (`VIA_REPLICA=1`, whose binlog carries the source's payloads as received).
+
+---
+
+## 6. Failure Modes & Recovery
+Compression changes the transport, not the pipeline: every failure below recovers through the same durable-offset restart as an uncompressed stream, with ONE compression-specific cost -- a restart inside a payload redelivers the whole transaction (§3.3), so the re-apply part of the recovery time is proportional to the in-flight payload's UNCOMPRESSED size (measured: 2.4 GB in 37 s, 4.6 GB in 54 s, §3.1 item 4). Measured recovery times come from the chaos harness (§5), run on the 2.11.0 head plus spec 01.09, MySQL 8.0.46, ClickHouse 24.8, connector heap 4 GiB, eight writers plus a ~1.5 GB payload writer; the value is the time from the fault's removal until a marker committed on the source after it is in ClickHouse -- restart, redelivery and the catch-up of everything written during the fault. Objective (Invariant I15): 300 s plus the re-apply of the in-flight transaction.
+
+```
+phase  fault (under load)                          GTID on   GTID off   before spec 01.09
+I0     source idle 200 s (> read timeout)          3 s, 0 restarts   3 s, 0 restarts   -
+F1     kill -9 of the connector mid-payload        18 s      18 s       17 s
+F2     RST on the binlog connection                18 s      19 s       18 s
+F3     partition until the source gives up         14 s      14 s       never (300 s window)
+F4     ClickHouse stopped 60 s                     191 s     188 s      191 s
+F5     ClickHouse frozen 150 s                     21 s      21 s       21 s
+F6     MySQL clean restart                         5 s       5 s        5 s
+F7     mysqld kill -9 while a payload commits      10 s      5 s        never (421 s window)
+F8     GLOBAL compression toggled 12x under load   0 s       1 s        -
+F9     five kill -9 of the connector, 20 s apart   1 s       3 s        16 s
+F10    3 MB/s link while a payload streams         3 s       2 s        3 s
+F11    20 ADD/DROP COLUMN rounds under inserts     1 s       2 s        1 s
+```
+
+- **FM-01.08-1 Connector killed or restarted inside a payload**.
+  - **Detection**: the process exit (supervisor) or "Engine stopped with an error"; on restart "Skip 0 events / Skip k rows on streaming start".
+  - **Blast radius**: none lost; the whole in-flight transaction is redelivered and deduplicated by version (§3.3, §3.5).
+  - **Recovery**: automatic (in-process restart, or the supervisor's process restart).
+  - **RTO**: measured 17-18 s with a ~1.5 GB payload in flight (F1), 1-16 s after the fifth of five kills 20 s apart (F9); plus the re-apply of the payload (~12 s per GB uncompressed).
+  - **Test**: chaos F1, F9; large L3; hard H9.
+- **FM-01.08-2 Binlog connection closed by the source, or dead behind a partition, while payloads stream**.
+  - **Detection**: the binlog connection guard's ERROR and metric (spec 01.09).
+  - **Blast radius**: none lost.
+  - **Recovery**: automatic (spec 01.09).
+  - **RTO**: measured 5-10 s after mysqld came back from kill -9 (F7), 14 s after a partition healed (F3), 18-19 s after an RST (F2). Before spec 01.09, F3 and F7 never recovered by themselves.
+  - **Test**: chaos F2, F3, F7; `BinlogConnectionGuardTest.aPeerCloseOnARealSocketThrows()`, `BinlogConnectionGuardTest.aSilentPeerFailsTheClientWithinTheTimeout()`.
+- **FM-01.08-3 ClickHouse down or frozen while payloads are applied**.
+  - **Detection**: WARN "Retriable ClickHouse error ... retried in N ms" per batch (backoff to 30 s), then ERROR "Could not persist the version high-water horizon ... (attempt 30/30)" and an engine stop.
+  - **Blast radius**: replication pauses; nothing lost.
+  - **Recovery**: automatic once ClickHouse answers.
+  - **RTO**: 21 s after a 150 s freeze (F5); 188-191 s after a 60 s stop (F4). F4 is dominated by the engine stop the connector starts when the high-water horizon cannot be persisted: Debezium waits out its coordinator shutdown (90 s) and its executor shutdown (90 s) while the event thread is held, then the engine restarts. Within the objective; GAP: the engine stop could release the event thread at once and cut F4 to about the ClickHouse outage plus 20 s.
+  - **Test**: chaos F4, F5.
+- **FM-01.08-4 Compression switched on and off at run time; mixed and varying-level streams**.
+  - **Detection**: nothing to detect -- decoding is per event type (§3.1 item 3).
+  - **Blast radius**: none.
+  - **Recovery**: none needed.
+  - **RTO**: 0-1 s (F8, 12 GLOBAL toggles under load; session-level OFF and levels 1-22 throughout the writer mix).
+  - **Test**: chaos F8 and the writer mix; hard H6.
+- **FM-01.08-5 A single row too large for the connector's heap** (a LONGBLOB/LONGTEXT/JSON value of hundreds of MiB inside a payload -- the decoder holds one inner event, §3.2.1, but the row is then materialised by Debezium and the writer several times over).
+  - **Detection**: the JVM exits on `OutOfMemoryError` ("Terminating due to java.lang.OutOfMemoryError: Java heap space" with `-XX:+ExitOnOutOfMemoryError`, exit code 3); without that flag, a GC-bound JVM that makes no progress.
+  - **Blast radius**: replication stops at the transaction; nothing is acknowledged past it; the supervisor's restart re-reads it.
+  - **Recovery**: a restart recovers when the heap is marginal (measured E5, 256 MiB row, 4 GiB heap: four of six runs exited on OOM; of the two restarts checked, one applied the row value-exact and the other exited on OOM again -- a crash loop); otherwise the restart loops on the same row until the heap is raised (`-Xmx`; 4 GiB is marginal for a 256 MiB value, so size the heap at well over 16x the largest row).
+  - **RTO**: one restart when marginal; operator-bound otherwise (a heap change and a restart).
+  - **DEFECT**: the per-row heap amplification (a 256 MiB value exhausts a 4 GiB heap in most runs; the copies involved -- the binary value, its hex text, the row structs, the JDBC buffer -- are inferred from the code path, not measured one by one) is unbounded by any connector setting and the failure is a crash loop, not a named refusal.
+  - **Test**: edge E5.
+- **FM-01.08-6 Binlog purged past the connector's offset while it was down**.
+  - **Detection**: ERROR "Engine stopped with an error: cause: Cannot replicate because the source purged required binary logs..." within 5 s of the start (edge E8, GTID on), then the retry budget and a terminal exit; nothing is skipped silently.
+  - **Blast radius**: replication stops; the purged transactions are gone from the source's binlog.
+  - **Recovery**: reposition to the source's current position and re-synchronise every captured table from MySQL (`ch-mysql-resync`, spec 11.04). A reposition of an EXISTING replica must run with `enable.snapshot.ddl=false` (the production template's value): with `true` (this repository's docker default) the schema-only start executes Debezium's `DROP TABLE IF EXISTS` + `CREATE TABLE` for every captured table and EMPTIES the replica (measured E8: 300,339 live rows to 0).
+  - **RTO**: the re-synchronisation of the captured tables (spec 11.04). Measured E8 for one small table: 176 s wall time from the stop to convergence, of which up to 130 s is the harness's own fixed settle wait; the reposition kept the replica's 300,339 existing rows with `enable.snapshot.ddl=false`.
+  - **Test**: edge E8.
+- **FM-01.08-7 A payload the decoder refuses** (corrupt, truncated, size mismatch, ZSTD without an uncompressed size, nested payload; a pre-8.0.34 source's oversized payload the server cannot send).
+  - **Detection**: `PayloadEventDecodingException` in "Engine stopped with an error", terminal after the retry budget; for the oversized pre-8.0.34 payload, the source's `ERROR 1236`/"Event too big" and the preflight's WARN/refusal at start (§3.4).
+  - **Blast radius**: replication stops at the payload; nothing after it is acknowledged; nothing is partially applied (§3.2.1 item 5).
+  - **Recovery**: fix the cause; if the transaction cannot be read at all, move past it (`sink-connector-client change_replication_source` to the next transaction -- see spec 09.03 for the state of that command) and re-synchronise the tables it touched (spec 11.04).
+  - **RTO**: operator-bound (a stop that needs a decision); the re-synchronisation of the touched tables.
+  - **Test**: `StreamingTransactionPayloadTest.sizeMismatchFailsLoudly()`, `StreamingTransactionPayloadTest.truncatedFrameFailsLoudly()`, `StreamingTransactionPayloadTest.zstdPayloadWithoutUncompressedSizeIsRefused()`, `BinlogTransactionCompressionPreflightTest.sourceOnBefore8034WarnsInAutoAndRefusesInRequire()`.
+
+Summary: 7 failure modes, 1 DEFECT, 1 GAP.

@@ -363,6 +363,70 @@ class StreamingTransactionPayloadTest {
         assertThrows(PayloadEventDecodingException.class, () -> dispatch(data));
     }
 
+    /** A QUERY event body as MySQL writes it: thread id, exec time, db length, error code, no status vars, db, sql. */
+    private static byte[] queryEvent(String db, String sql) {
+        ByteArrayOutputStream b = new ByteArrayOutputStream();
+        b.writeBytes(new byte[] {1, 0, 0, 0});       // thread id
+        b.writeBytes(new byte[] {0, 0, 0, 0});       // exec time
+        b.write(db.length());
+        b.writeBytes(new byte[] {0, 0});             // error code
+        b.writeBytes(new byte[] {0, 0});             // status vars length
+        b.writeBytes(db.getBytes(StandardCharsets.UTF_8));
+        b.write(0);
+        b.writeBytes(sql.getBytes(StandardCharsets.UTF_8));
+        return PayloadFixtures.event(2, b.toByteArray()); // QUERY_EVENT
+    }
+
+    @Test
+    @DisplayName("The body of a compressed XA transaction reaches the XA audit exactly once (spec 01.10)")
+    void compressedXaBodyReachesTheAudit() throws IOException {
+        // With compression on, XA START, its TABLE_MAPs and XA END are inside the payload; only XA_PREPARE and
+        // the later XA ROLLBACK are outer events. Measured E3 before this feed: the rollback was reported with its
+        // tables UNKNOWN. Mutation-checked: removing the observeInner calls in StreamedPayloadEvents fails this test.
+        org.apache.logging.log4j.core.Logger logger = (org.apache.logging.log4j.core.Logger)
+                org.apache.logging.log4j.LogManager.getLogger(com.altinity.clickhouse.debezium.embedded.cdc.BinlogEventAudit.class);
+        List<String> errors = new java.util.concurrent.CopyOnWriteArrayList<>();
+        org.apache.logging.log4j.core.appender.AbstractAppender appender =
+                new org.apache.logging.log4j.core.appender.AbstractAppender("xa-capture", null, null, true,
+                        org.apache.logging.log4j.core.config.Property.EMPTY_ARRAY) {
+                    @Override
+                    public void append(org.apache.logging.log4j.core.LogEvent event) {
+                        if (event.getLevel() == org.apache.logging.log4j.Level.ERROR) {
+                            errors.add(event.getMessage().getFormattedMessage());
+                        }
+                    }
+                };
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            com.github.shyiko.mysql.binlog.BinaryLogClient client =
+                    new com.github.shyiko.mysql.binlog.BinaryLogClient("127.0.0.1", 1, "u", "p");
+            com.altinity.clickhouse.debezium.embedded.cdc.BinlogEventAudit.install(client);
+            byte[] inner = concat(queryEvent("test", "XA START X'42',X'',1"), PayloadFixtures.tableMap(77),
+                    queryEvent("test", "XA END X'42',X'',1"));
+            TransactionPayloadEventData data = decode(PayloadFixtures.zstdBody(inner), new HashMap<>());
+            for (int pass = 0; pass < 3; pass++) {   // two registration passes and the dispatch pass
+                dispatch(data);
+            }
+            com.github.shyiko.mysql.binlog.event.XAPrepareEventData prepare = new com.github.shyiko.mysql.binlog.event.XAPrepareEventData();
+            prepare.setOnePhase(false);
+            EventHeaderV4 h1 = new EventHeaderV4();
+            h1.setEventType(EventType.XA_PREPARE);
+            com.github.shyiko.mysql.binlog.event.QueryEventData rollback = new com.github.shyiko.mysql.binlog.event.QueryEventData();
+            rollback.setSql("XA ROLLBACK X'42',X'',1");
+            EventHeaderV4 h2 = new EventHeaderV4();
+            h2.setEventType(EventType.QUERY);
+            for (com.github.shyiko.mysql.binlog.BinaryLogClient.EventListener l : client.getEventListeners()) {
+                l.onEvent(new Event(h1, prepare));
+                l.onEvent(new Event(h2, rollback));
+            }
+            assertEquals(1, errors.size(), errors.toString());
+            assertTrue(errors.get(0).contains("[big.t]"), errors.get(0));
+        } finally {
+            logger.removeAppender(appender);
+        }
+    }
+
     @Test
     @DisplayName("A body that does not parse fails loudly on getData(), never skipped")
     void unparseableBodyFailsOnGetData() throws IOException {

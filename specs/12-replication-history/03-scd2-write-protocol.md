@@ -481,3 +481,100 @@ G-12.04-2).
 | S10 | `ReplicationHistoryHandler.historyVersion`, `PreparedStatementFieldMapper.handleVersionColumn`, `DebeziumChangeEventCapture.executeHistoryBulkCloses` | (first iteration of this change) the raw standard version as `V`: on a GTID-less source the 2.11.0 open rows and markers at `(k, S)` (`≈ 2.1·10^18`) outranked every sequence version (`≈ 1.8·10^18`) — every key a 2.11.0 connector had updated or deleted froze at the upgrade, and a re-insert after a 2.11.0 delete stayed hidden | every row of an SCD2 table carries the snowflake encoding of the event's ordering key (§3.5.1); upgrade and downgrade on the same tables without migration | `Replication.History.snowflake_encode_strict_mono`, `Replication.History.legacy_open_row_superseded_by_later_event`, `Replication.History.fixed_open_row_superseded_by_later_legacy_event` | `Replication.History.old_raw_sequence_version_loses_to_legacy_open_row`; `ReplicationHistoryVersionDomainTest.legacyOpenRowIsSupersededOnUpgrade()` (the raw sequence loses); the upgrade / downgrade end-to-end suite fails at the first hop without GTIDs |
 | G-12.03-5 | `PreparedStatementFieldMapper` unknown-column branch | every unknown column bound to NULL in history mode | only `_valid_from` / `_valid_to` / `_operation` deferred; every other unknown column is the loud `StaleSchemaCacheException` of 08.03 (S9) | — (statement-level rule) | — |
 | G-12.03-6 | `PreparedStatementExecutor` TRUNCATE segment; `MySqlDDLParserListenerImpl` TRUNCATE / DROP TABLE | the SCD2 table was truncated / dropped, closed versions included | bulk close on both paths (§3.4): every open row closed, one marker per row, nothing destroyed | `Replication.History.bulk_close_hides_every_open_row`, `Replication.History.bulk_close_preserves_history` | — (the old behaviour was the plain `TRUNCATE TABLE` of 04.05) |
+
+---
+
+## 7. Failure Modes & Recovery
+The standard protocol recovers by replay: at-least-once delivery plus `ReplacingMergeTree` versions converge the replica. The SCD2 protocol **does not**. Each UPDATE, DELETE and bulk close reads the current open row back out of the target and derives its rows from it, so replaying an event against a later state writes different rows than the first delivery did. The current-state view (open rows) still converges after a replay. The closed versions do not: a replay can overwrite them, and **MySQL holds no history, so they cannot be re-synchronised from the source**. The only other record of past versions is the audit table of 12.04, which keeps `replication.history.ttl` days. Every failure that ends in a replay therefore has a permanent history cost, and the repair is the bounded, key-scoped procedure of FM-12.03-8. Throughput is the second weak point: one round trip per UPDATE or DELETE.
+
+- **FM-12.03-1 In-run batch retry re-applies UPDATEs, and the pre-update version is lost**
+  - **Trigger**: a batch fails after some of its SCD2 statements have run. A later statement hits a retriable ClickHouse error (`TOO_MANY_PARTS` 252, `MEMORY_LIMIT_EXCEEDED` 241, a timeout or reset), a `StaleSchemaCacheException`, or `processRecordsByTopic` returns false. `ClickHouseBatchRunnable` keeps `currentBatch` and re-runs `processBatch` on the same `ClickHouseStruct` objects.
+  - **Behaviour**: `PreparedStatementExecutor` executes each UPDATE and DELETE history statement immediately (`flushStagedRows`, then `executeHistoryUpdate`), so the retry executes again the statements that had succeeded. The version is the same, because `resolveVersion` keeps the record's version.
+    - A re-applied UPDATE's close SELECT now reads the open row the first attempt wrote: the after image, with `_valid_from = ts`. It inserts that row closed at `(k, ts)` with version `V`.
+    - That is the same sorting key and the same version as the first attempt's close row (the before image, `[t0, ts)`). `FINAL` keeps the later-inserted row, so the pre-update version is replaced by a zero-length copy of the after image.
+    - §3.9 item 0 says the retry leaves "a zero-length version" and that "no version is lost". The first half is right, the second is wrong. The theorem `Replication.History.closed_row_visible_at_close_key` excludes exactly this case through its `hfresh` hypothesis.
+    - A re-applied DELETE writes nothing, which is correct: its own marker hides the key.
+  - **Detection**: none for the loss. The retry itself logs `Retriable ClickHouse error (Code: ...)` or `Batch not written to ClickHouse; retrying the same batch in ... ms`.
+  - **Blast radius**: the current state converges when the retry succeeds. One closed version per re-applied UPDATE is lost for good.
+  - **Recovery**: the current state heals by itself. The lost versions can be restored only from the audit table, within its TTL (FM-12.03-8, scoped to the keys the batch updated).
+  - **RTO**: current state, the retry backoff of spec 10.02. History, manual and unmeasured.
+  - **Test**: GAP: an integration test (ClickHouse container) that fails a batch after its first UPDATE statement, lets the retry succeed, and asserts that the pre-update version is still visible at `(k, ts)` under `FINAL`.
+  - **DEFECT**: a retried batch silently destroys the closed versions of the UPDATEs it re-applies.
+
+- **FM-12.03-2 Restart redelivery re-applies the unacknowledged window against a later state**
+  - **Trigger**: `kill -9`, OOM, a host crash, or an engine recreation while written batches are not yet acknowledged. Debezium re-publishes them from the last committed offset.
+  - **Behaviour**: redelivered events are versioned above everything the previous run wrote (spec 02.04 §3.2). A redelivered UPDATE of key `k` closes the key's current open row, which is possibly the after image of a later event of the same window that is already applied. It closes it at `(k, ts_event)` with the higher version, which supersedes the original close row at that sorting key. The result is a closed row whose `_valid_from` is later than its `_valid_to`, and the original closed version is gone. The redelivered after row then makes the older image current again until the later events of the window are replayed. Redelivered INSERTs likewise re-open a key until its later DELETE is replayed. Bulk closes re-close rows opened after them.
+  - **Detection**: none. Damage query: `SELECT count() FROM <history db>.<t> WHERE _valid_from > _valid_to`. The redelivered coordinates also appear twice in the audit table (12.04 §7 FM-12.04-2).
+  - **Blast radius**: the current state regresses transiently during the replay and converges when it ends. For every key updated in the window, the version before its first redelivered event is lost and inverted rows are left behind.
+  - **Recovery**: the current state heals by the replay. History: FM-12.03-8, scoped to the window between the last committed offset (`show_replica_status`) and the crash.
+  - **RTO**: current state, a restart (about 20 s) plus the replay of the unacknowledged batches. History, manual and unmeasured.
+  - **Test**: GAP: a crash-restart integration test asserting that no closed version is lost and no `_valid_from > _valid_to` row appears (spec 02.04 §5 notes that no crash-restart test exists).
+  - **DEFECT**: history mode is not idempotent under the at-least-once delivery the connector provides.
+
+- **FM-12.03-3 One round trip and new parts per UPDATE or DELETE: huge transactions do not drain**
+  - **Trigger**: a bulk `UPDATE` or `DELETE` of millions of rows (a multi-GB transaction), or a sustained high update rate.
+  - **Behaviour**: for every UPDATE and DELETE record, `PreparedStatementExecutor` flushes the staged INSERTs and runs one `INSERT ... SELECT ... FROM t FINAL WHERE <key> ...` of its own. Each such statement is one round trip plus a `FINAL` read, and it writes new parts in partition `toDate(ts)` (close row) and `2100-01-01` (after row or marker). With `routing.by.primary.key` (spec 03.07) the rows spread over `thread.pool.size` workers. Without it they stay on one worker. Either way, a 180 M-row UPDATE is 180 M statements, at most `thread.pool.size` of them in flight at once. The part count grows faster than merges, until ClickHouse throttles and then refuses with `TOO_MANY_PARTS` (252, retriable). The retry then triggers FM-12.03-1.
+  - **Detection**: `seconds_behind_source` grows (spec 10.03). The INFO `EXECUTED BATCH` rate drops, and `Retriable ClickHouse error (Code: 252 ...)` WARN lines appear.
+  - **Blast radius**: every table on that worker lags for the duration. Each 252 retry damages history (FM-12.03-1).
+  - **Recovery**: none inside the connector. Let it drain, and relieve ClickHouse: raise `parts_to_delay_insert` and `parts_to_throw_insert` for the history tables as an owner-approved server setting, and reduce concurrent load. Do **not** skip the transaction: Invariant I15 item 2 allows that only with a re-synchronisation, and an SCD2 table cannot be re-synchronised from MySQL.
+  - **RTO**: rows × (one statement round trip plus part creation) ÷ the workers in flight. Unmeasured, because no history-mode throughput harness exists. Even at an optimistic 1 ms per statement and 10 workers, 180 M rows take about 5 h, far beyond the target.
+  - **Test**: GAP: a history-mode throughput harness measuring statements per second and parts per UPDATE.
+  - **DEFECT**: history-mode cost is linear in rows with a per-row round trip, so a large transaction cannot be applied within any bounded RTO.
+
+- **FM-12.03-4 More than 4,194,303 records in one sequence window: every later record is refused, forever**
+  - **Trigger**: on the sequence version path (every row of a GTID-less source, and the snapshot rows of any source; §3.5.1), more than `2^22 − 1` records share one counter window. A window resets only when the effective time advances by at least 2000 ms (spec 02.03 §3.2), and every row of one large statement carries the same event timestamp. One UPDATE of more than about 4.2 M rows on a GTID-less source is enough.
+  - **Behaviour**: `ReplicationHistoryHandler.historyVersion` throws `IllegalStateException("History version for topic ... cannot be encoded: sequence ... yields counter ..., outside the 22-bit discriminator field (Spec 12.03 section 3.5.1)")` for the 4,194,304th record and every later one of the window. The batch fails and is classified `UNKNOWN` (FM-12.03-5), so it is retried forever. After a restart the same window is redelivered and the counter overflows again at the same row.
+  - **Detection**: an ERROR `ClickHouseBatchRunnable exception` carrying that message, then a repeating WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN)`, from the first refused batch.
+  - **Blast radius**: every table on that worker stops permanently. The offset holds, so nothing is lost, but nothing moves either.
+  - **Recovery**: none declared on 2.11.0. Enabling GTIDs on the source moves new transactions to the GTID path, which has no counter. The stuck transaction can only be skipped (`sink-connector-client update_binlog` past it while stopped), and then every SCD2 table it touched must have its current state repaired (FM-12.03-8). Its versions are missing from history.
+  - **RTO**: unbounded.
+  - **Test**: `ReplicationHistoryVersionDomainTest.underivableOrUnencodableVersionsAreRefused()` pins the refusal. GAP: a test that encodes a 5 M-row single-window transaction.
+  - **DEFECT**: a transaction size that is routine in production stops a mode-2 connector on a GTID-less source with no recovery path.
+
+- **FM-12.03-5 A deterministic refusal is retried forever instead of stopping**
+  - **Trigger**: an UPDATE or DELETE on a table without a primary key (`History mode cannot close the previous row for topic ...: the record carries no primary key`), a record with neither image, an underivable version, an event millisecond not after the snowflake epoch, or the overflow of FM-12.03-4.
+  - **Behaviour**: `IllegalStateException` from `buildUpdateQueryParams` / `historyVersion`. `PreparedStatementExecutor` logs `******* ERROR inserting Batch Database(...), Table(...) *****************` and rethrows it wrapped. `ClickHouseBatchRunnable.run()` classifies it with `ClickHouseErrorClassifier`, finds no ClickHouse code and no terminal cause, and gets `UNKNOWN`. It retries the same batch with `RetryBackoff`, which has no attempt cap. The worker never stops, so the loud FATAL path of spec 03.01 is never taken.
+  - **Detection**: the ERROR above within one batch, then a WARN per retry. No exit, and `/status` keeps reporting the connector running.
+  - **Blast radius**: every table hashed to that worker stalls indefinitely. Other workers continue. Nothing is lost.
+  - **Recovery**: remove the cause, then restart. For a keyless table, add a primary key on the source (spec 01.01, GIPK) or remove the table from the history connector's `table.include.list`. For the others, see FM-12.03-4.
+  - **RTO**: unbounded until an operator acts, then a restart plus the retry of the batch.
+  - **Test**: `ReplicationHistoryPoisonEventTest.unencodableHistoryVersionStopsTheWorker()` and `ReplicationHistoryPoisonEventTest.updateWithoutPrimaryKeyStopsTheWorker()` (disabled, DEFECT). The refusal itself is pinned by `ReplicationHistoryPoisonEventTest.unencodableHistoryVersionIsRefusedLoudly()` and `ReplicationHistoryHandlerTest.underivableVersionIsRefused()`.
+  - **DEFECT**: refusals that can never succeed are classified retriable (spec 10.01 taxonomy), so the pipeline stalls silently instead of failing.
+
+- **FM-12.03-6 No open row is visible: a DELETE writes nothing, an UPDATE writes no close row, silently**
+  - **Trigger**: the key's open row is not visible to the open-row predicate. Causes include a zone mismatch (12.02 §7 FM-12.02-1), a key never loaded after a mode change (12.01 §7 FM-12.01-2), a partial bulk close (FM-12.03-7), and out-of-band edits.
+  - **Behaviour**: the close and marker SELECTs return no rows. `executeHistoryUpdate` returns `batchResult.length > 0`, which is true for any one-element answer, and `PreparedStatementExecutor` ignores the value. The only trace is DEBUG `Replication history delete executed successfully`. An UPDATE's after row is still written.
+  - **Detection**: none.
+  - **Blast radius**: a deleted source row stays current in ClickHouse forever. An update leaves a gap in the history.
+  - **Recovery**: find the keys with the open-row checksum (spec 11.02 §7 FM-11.02-9), then repair them (FM-12.03-8, current-state step).
+  - **RTO**: unbounded until checked, then the key repair.
+  - **Test**: GAP: a test in which the statement reports zero written rows for a DELETE and a loud failure is expected. This depends on the JDBC driver reporting written rows for `INSERT ... SELECT`, which is not verified here.
+  - **DEFECT**: a lost DELETE is indistinguishable from a successful one.
+
+- **FM-12.03-7 The bulk close of a large table fails half way**
+  - **Trigger**: a source `TRUNCATE TABLE` / `DROP TABLE` of a table with many open rows (DDL path `executeHistoryBulkCloses`, or record path `op = t`). The statement meets a memory limit, a timeout or a connection loss.
+  - **Behaviour**: one `INSERT ... SELECT * REPLACE ... FROM t FINAL ... UNION ALL ...` reads every open row twice and writes two rows per open row. Its run time is proportional to the open rows. ClickHouse does not make a multi-block `INSERT ... SELECT` atomic (server behaviour, not verified here), so a failure can leave some close rows and some markers written.
+    - On the DDL path the failure propagates into the `ddl.retry` loop: `MAX_RETRIES` attempts 10 s apart, then a terminal `DDLReplicationException`.
+    - On the record path it logs `Replication-history bulk close for a replicated truncation failed for <db>.<t>` and the batch retries without a cap.
+    - A retry re-closes rows whose marker is missing, identically at the same `ts` and `V`, so they collapse. A key whose marker was written without its close row has lost its last closed version: the marker hides the open row from the retry.
+  - **Detection**: DDL path, `Error executing DDL` and an error-table row per attempt, then the terminal exception. Record path, the ERROR above.
+  - **Blast radius**: replication waits at the DDL barrier until the close succeeds. Some keys may lose their last closed version.
+  - **Recovery**: relieve the cause (memory, load), then let the retry run or restart. Repair lost versions with FM-12.03-8, scoped to that table and the event's `ts`.
+  - **RTO**: proportional to the open rows (unmeasured), plus up to the retry budget (10 × 10 s by default) per failure.
+  - **Test**: `ReplicationHistoryHandlerTest.bulkCloseUsesEventTimeAndVersion()` pins the statement. GAP: a partial-failure test.
+  - **DEFECT**: the run time is proportional to the table size, and a partial failure can silently drop closed versions.
+
+- **FM-12.03-8 An SCD2 table has diverged: the bounded repair (MySQL holds no history)**
+  - **Trigger**: any failure above, or 12.01 §7 / 12.02 §7, left open rows or closed versions wrong.
+  - **Behaviour**: MySQL holds only current rows. `ch-mysql-resync` must not be used (spec 11.04 §6 FM-11.04-9), and a re-snapshot rewrites open rows while leaving damaged history in place. The past versions exist only in the SCD2 table itself, in the audit table (every DML event's `before`/`after` image with binlog coordinates, for `replication.history.ttl` days, 12.04), and in the source binlog within its retention.
+  - **Detection**: current state, the open-row checksum (spec 11.02 §7 FM-11.02-9). History, `WHERE _valid_from > _valid_to` rows, and per-key version counts compared with the audit table's UPDATE/DELETE rows for the same window.
+  - **Blast radius**: bounded by the affected keys and the time window. The rest of the table is untouched by the repair.
+  - **Recovery** (operator-run SQL, reviewed by the table owner; no tool exists):
+    1. **Scope.** Fix the window `[T1, T2]` from the incident (restart time and committed `ts_sec`, or the time of the zone or mode change) and the affected keys (the failing checksums, then the keys the audit table shows changing in the window). Stop the connector for the repair, so no event interleaves.
+    2. **Current state.** For each key whose open row differs from MySQL, write what the connector's UPDATE would have written (§3.2): the wrong open row closed at `_valid_to = now()`, plus the MySQL row at `(k, 2100-01-01 00:00:00)` with `_operation = 'U'` and `_version = max(_version) + 1` of that key. For a key MySQL no longer has, write a delete marker instead (§3.3). The next real event's version, a snowflake of a later millisecond, still ranks above it.
+    3. **History, only within the audit TTL.** Rebuild the closed versions of the affected keys from the audit rows of the window, taken in `(logfile, position, row)` order. Each UPDATE or DELETE row's `before` image is the version it closed, valid until its `_time` (in seconds). Insert each as a close row at `(k, _time)` with a version above the damaged row at that sorting key. Remove the inverted rows of the keys in scope with a scoped `ALTER TABLE ... DELETE WHERE _valid_from > _valid_to AND <key predicate>` (a destructive mutation, limited to the rows in scope). Versions older than the audit TTL cannot be recovered; record that in the incident.
+  - **RTO**: unmeasured. It is proportional to the affected keys and the window, not to the table size. Manual work is required.
+  - **Test**: GAP: a repair tool implementing steps 1–3, with offline tests of the statements it emits.
+  - **DEFECT**: there is no tooling for the only repair of an SCD2 table, and damage older than the audit TTL is permanent.
+
+Summary: 8 failure modes, 8 DEFECT, 7 GAP.
