@@ -731,8 +731,11 @@ after the exit status has been read.
   `INSERT ... SELECT`.
 - An empty unquoted CSV field becomes NULL through
   `format_csv_null_representation=''`, and a quoted `""` stays an empty string.
-  This relies on ClickHouse CSV parsing semantics, which were **not executed**
-  offline (no ClickHouse in the harness; GAP in §5).
+  This relies on ClickHouse CSV parsing semantics. They were not executed in
+  the offline harness; the end-to-end suite runs them against PostgreSQL 15 and
+  ClickHouse 24.8
+  (`sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_values_round_trip_exactly`:
+  NULL and `''` stay distinct in a `Nullable(String)` column).
 - Single quotes inside column names are not escaped in the `input('...')`
   structure literal (D-13.05-22).
 - `--throw_if_no_data_to_insert=0` makes an empty stream (zero rows) a
@@ -771,16 +774,16 @@ described behaviour that the trailing `rm` defeated (D-13.05-1, FIXED).
 
 | Value | Snapshot result | Evidence |
 |---|---|---|
-| `timestamptz 'infinity'` / `'-infinity'` | the DateTime64 bounds `2299-12-31 23:59:59` / `1900-01-01 00:00:00` UTC, as CDC stores them (07.03 §3.3 rule 4) | `clickhouse local` round trip in `TestTemporalConversionClickHouseLocal::test_round_trip` |
-| `date 'infinity'`, BC `date`/`timestamp`, values outside the Date32/DateTime64 range | saturated to the type bounds (CDC default `clamp.out.of.range=true`) | same test |
+| `timestamptz 'infinity'` / `'-infinity'` | the DateTime64 bounds `2299-12-31 23:59:59` / `1900-01-01 00:00:00` UTC, as CDC stores them (07.03 §3.3 rule 4) | `clickhouse local` round trip in `TestTemporalConversionClickHouseLocal::test_round_trip`; end to end in `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_special_dates_saturate_to_the_type_bounds` |
+| `date 'infinity'`, BC `date`/`timestamp`, values outside the Date32/DateTime64 range | saturated to the type bounds (CDC default `clamp.out.of.range=true`). `ch-checksum` does not yet render the source value the same way, so such a table verifies as MISMATCH (D-13.07-30) | same tests (`infinity` / `-infinity` of `date`, `timestamp` and `timestamptz` end to end) |
 | BC `timestamptz` | the INSERT fails (`throwIf`), as CDC refuses it (FM-07.03-6) | `::test_bc_timestamptz_fails_the_insert` |
 | any other temporal text that does not parse | the INSERT fails with `ch-pg-dump: column <c> holds a temporal value with no ClickHouse representation` | `::test_unparseable_value_fails_the_insert` |
 | `DateStyle` set to `SQL`, `Postgres` or `German` on the server | no effect: the session pins `ISO, YMD` | `TestSessionSettings` |
 | `numeric 'NaN'` / `'Infinity'` into `Decimal(p,s)` | the INSERT fails, and the job fails | code-read |
 | float `NaN` / `±Infinity` | expected to parse into Float32/64 (07.02 measured that these are valid values); String-cast parsing not executed offline | GAP |
-| `bytea` | hex text `\x..` stored verbatim in `String` | code-read |
+| `bytea` | hex text `\x..` stored verbatim in `String` | `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_values_round_trip_exactly` |
 | `money` | locale text | code-read |
-| text containing a newline, tab, comma or `"` | safe under CSV quoting | code-read |
+| text containing a newline, tab, comma or `"` | safe under CSV quoting | `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_values_round_trip_exactly` |
 
 ### 3.10 Privilege validator (`validate_postgres_privileges`, `:1254-1514`)
 
@@ -1127,6 +1130,76 @@ skipped when the binary is absent), in `sink-connector/python/db_dump/tests/test
 Each was mutation-checked: reverting the corresponding fix makes at least one of
 its tests fail.
 
+End-to-end tests (real PostgreSQL 15 with `wal_level=logical` and ClickHouse
+24.8 from `sink-connector-lightweight/docker/docker-compose-postgres.yml`; CI job
+`python-toolset-e2e-postgres` in `.github/workflows/python-toolset-e2e-postgres.yml`;
+seed `sink-connector/python/tests_e2e/postgres/sql/seed_postgres.sql`). The
+suite creates the connector's logical slot the way the connector does
+(`pg_create_logical_replication_slot(<slot.name>, <plugin.name>)`) and hands
+`ch-pg-dump` the stack's connector config (`config_postgres.yml`, endpoints,
+`schema.include.list`, `slot.name`, `name` and the offset table overridden), so
+the slot name, connector name and offset table all come from the connector's
+own keys (§3.3). Each test asserts the exit status and the tool's output:
+
+- `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_dump_exits_zero_and_loads_every_table`:
+  exit 0, `Replication slot '<slot>' OK`, `postgres_dumper finished successfully`,
+  and `count() FINAL` equals the source `count(*)` for every table.
+- `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_keyless_table_is_sorted_by_every_column`:
+  sorting key `event_time, kind, qty`, `allow_nullable_key = 1`, the
+  `KEYLESS TABLE` ERROR line, and no distinct row collapsed (FM-13.05-4).
+- `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_values_round_trip_exactly`:
+  every row of a table with `numeric(12,4)`, `numeric(10,2)`, `bytea`, `uuid`,
+  `jsonb`, `timestamp(6)`, `timestamptz(6)`, `date`, `text` (NULL, `''`, quotes,
+  newline, tab) and `boolean` reads back equal (§3.8, §3.9.2, §3.9.4).
+- `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_special_dates_saturate_to_the_type_bounds`:
+  `infinity` / `-infinity` of `date`, `timestamp` and `timestamptz` are stored as
+  the type bounds (FM-13.05-8).
+- `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_numeric_scale_values_are_loaded_exactly`.
+- `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_offset_row_records_the_snapshot_lsn`:
+  one offset row with the connector's `offset_key`, `lsn = lsn_proc`, at or
+  after the slot's creation LSN and before the end of the run (§3.5 Step 5,
+  §3.14).
+- `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_slot_is_left_in_place_for_the_connector`:
+  the slot is still logical, `pgoutput`, inactive.
+- `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_missing_slot_fails_before_touching_clickhouse`
+  (negative): with `slot.name` naming an absent slot the run exits 1 with the
+  `does not exist on the source` message, before Step 3, and neither the target
+  database nor the offset database exists in ClickHouse (FM-13.05-2).
+
+Fix witnesses in `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py`.
+Each fails when the suite runs the pre-fix tools (`PYTOOLS_E2E_TOOLS_ROOT`
+pointing at the 2.11.0 tree) and passes on the fixed tools. The before/after
+matrix is in `sink-connector/python/tests_e2e/postgres/JUSTIFICATION.md`:
+
+- `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_failed_clickhouse_insert_fails_the_run_and_writes_no_offset`
+  (D-13.05-1, -2). The existing target lacks a column, so ClickHouse rejects
+  the INSERT. Exit 1, `FAILED tables`, no offset. Before the fix: exit 0 with
+  an offset row.
+- `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_skip_existing_refuses_a_partly_loaded_table`
+  (D-13.05-4). Before the fix: the partial table was skipped, exit 0, offset
+  written.
+- `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_two_source_tables_never_share_a_clickhouse_table`
+  (D-13.05-7). Before the fix: exit 0, two schemas merged into one table.
+- `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_schema_include_list_is_anchored`,
+  `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_table_include_list_keeps_its_schema_and_is_anchored`
+  (D-13.05-6). Before the fix: `pye2e` also selected schema `pye2e_b`, and
+  `pye2e.t_orders` also selected `x_t_orders_old`.
+- `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_zone_less_timestamp_keeps_its_wall_clock_in_a_non_utc_zone`
+  (D-13.05-8, server TimeZone America/Chicago via `PGTZ`). Before the fix:
+  every value was shifted by 6 h.
+- `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_session_datestyle_cannot_change_loaded_values`
+  (D-13.05-10, `PGDATESTYLE=SQL, DMY`). Before the fix: dates were silently
+  NULL.
+- `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_overridden_column_is_loaded_as_overridden`
+  (D-13.05-11). Before the fix: `infinity` reached the `String` column as `''`.
+- `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_pgdump_strategy_is_refused_before_touching_anything`
+  (D-13.05-12). Exit 2, no ClickHouse database. Before the fix: the strategy
+  ran.
+
+The slot check (D-13.05-3), keyless key (D-13.05-5) and saturation
+(D-13.05-9) are witnessed by the snapshot tests above. D-13.05-17 is
+unreachable from `main` and so is not exercised end to end.
+
 Offline reproductions used for this spec (on 2.11.0, before the fixes). They are throwaway harnesses, not
 committed, and each is described so that it can be rebuilt as a unit test:
 
@@ -1171,14 +1244,26 @@ Acceptance criteria. Met by the S1 fixes (tests above):
 - `--skip_existing` neither skips partially loaded tables nor writes a newer LSN
   than the oldest loaded data.
 
+Met end to end (tests above):
+
+- After a load, per-table `count()` equals the source `count(*)`
+  (`test_dump_exits_zero_and_loads_every_table`), and the spec 13.07 tools
+  verify the loaded data: `ch-checksum` PASS, `ch-pg-checksum` and `ch-pg-count`
+  agree (`sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_ch_checksum_passes_on_dumped_data`,
+  `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_pg_checksum_and_pg_count_agree`).
+  The dumper itself still performs no post-load count check (§4).
+- ClickHouse-side CSV NULL / empty-string handling and the SELECT conversions of
+  the seeded types (`numeric(p,s)`, `bytea`, `uuid`, `jsonb`, `timestamp`,
+  `timestamptz`, `date` incl. `infinity`, `text`, `boolean`) run against a real
+  ClickHouse in CI (`test_values_round_trip_exactly`,
+  `test_special_dates_saturate_to_the_type_bounds`).
+
 Still GAP:
 
-- After load, per-table `count()` equals the source `count(*)` read in the same
-  snapshot (spec 13.07 provides the verification tools).
 - `pg_type_to_ch` has its own unit tests; one mapper serves both DDL and parser.
-- ClickHouse-side CSV NULL / empty-string handling and every SELECT conversion
-  in §3.8 are exercised against a real ClickHouse (`clickhouse local`) in CI
-  (the temporal conversions and the NULL row are, when the binary is installed).
+- The remaining §3.8 conversions (`money`, `interval`, arrays, enums and other
+  `USER-DEFINED` types, geometric, network, bit, range, float `NaN`/`Infinity`,
+  unconstrained `numeric`) against a real ClickHouse.
 
 ## 6. Failure Modes & Recovery
 
@@ -1189,7 +1274,7 @@ Still GAP:
   - **Blast radius**: the failed tables or segments are partial in ClickHouse; no offset is written, so CDC is not started over the gap.
   - **Recovery**: fix the cause, rerun with `--truncate` (or `--drop_existing`) for the affected tables (`--tables '^t$'`) while the connector is stopped, write the offset again, then verify counts.
   - **RTO**: unmeasured (no live databases in the offline harness); dominated by the reload time of the affected tables.
-  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestLoadExitStatus::test_failing_psql_is_a_failed_load`
+  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestLoadExitStatus::test_failing_psql_is_a_failed_load`, `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_failed_clickhouse_insert_fails_the_run_and_writes_no_offset` (end to end)
   - **FIXED**: D-13.05-1 and D-13.05-2: the pipe status decides success (no trailing `rm -f`; `ON_ERROR_STOP=1`; `pipefail`).
 
 - **FM-13.05-2 No replication slot exists when the dump starts**
@@ -1199,7 +1284,7 @@ Still GAP:
   - **Blast radius**: none (nothing written on either side, apart from the coordinator's open transaction, which ends at exit).
   - **Recovery**: start the connector once so it creates the slot (or create it with `pg_create_logical_replication_slot`), stop the connector, rerun the dump with `--replication_slot <name>` if it is not `debezium`, then start the connector.
   - **RTO**: unmeasured; minutes (create the slot, rerun).
-  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestSnapshotAndSlot::test_main_refuses_to_dump_without_the_slot`
+  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestSnapshotAndSlot::test_main_refuses_to_dump_without_the_slot`, `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_missing_slot_fails_before_touching_clickhouse` (end to end)
   - **FIXED**: D-13.05-3: one exported snapshot for every reader, LSN read just before it, the connector's slot verified at or before the LSN first.
 
 - **FM-13.05-3 Rerun after a partial failure with `--skip_existing`**
@@ -1209,7 +1294,7 @@ Still GAP:
   - **Blast radius**: none silent; the hand-off is withheld until the operator supplies the right LSN.
   - **Recovery**: rerun the affected tables with `--truncate`, and write an offset no newer than the start LSN of the oldest kept load (the LSN from the earlier run's log).
   - **RTO**: unmeasured; equals the reload time of the affected tables.
-  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestSkipExisting::test_partly_loaded_table_fails_loudly`
+  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestSkipExisting::test_partly_loaded_table_fails_loudly`, `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_skip_existing_refuses_a_partly_loaded_table` (end to end)
   - **FIXED**: D-13.05-4: only count-proven tables are skipped, and a run that skipped any table writes no offset and exits 1.
 
 - **FM-13.05-4 Source table without a primary key**
@@ -1219,7 +1304,7 @@ Still GAP:
   - **Blast radius**: byte-identical duplicate rows of that table only.
   - **Recovery**: create the table by hand with a real key (a unique NOT NULL column set, or all columns) or as a plain MergeTree, then reload with `--data_only`.
   - **RTO**: unmeasured; equals the table reload time.
-  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestKeylessSortingKey::test_all_columns_key`
+  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestKeylessSortingKey::test_all_columns_key`, `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_keyless_table_is_sorted_by_every_column` (end to end)
   - **FIXED**: D-13.05-5: all-columns sorting key (plus `allow_nullable_key = 1`) instead of `ORDER BY tuple()`.
 
 - **FM-13.05-5 Table filters taken from the connector config**
@@ -1229,7 +1314,7 @@ Still GAP:
   - **Blast radius**: none beyond a regex that is itself wrong in the connector config.
   - **Recovery**: pass explicit anchored `--tables` / `--exclude_tables` (PostgreSQL ARE) instead of the config lists, then load the missed tables with the slot precautions of FM-13.05-2.
   - **RTO**: unmeasured.
-  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestConnectorLists::test_exclude_keeps_schema_and_is_anchored`
+  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestConnectorLists::test_exclude_keeps_schema_and_is_anchored`, `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_table_include_list_keeps_its_schema_and_is_anchored` (end to end)
   - **FIXED**: D-13.05-6: connector lists keep the schema and are anchored; database lists are enforced.
 
 - **FM-13.05-6 Same table name in two schemas mapped to one ClickHouse database**
@@ -1239,7 +1324,7 @@ Still GAP:
   - **Blast radius**: none (nothing written).
   - **Recovery**: use `--ch_table_template '{{ schema }}___{{ table }}'` or a schema-aware database template (without a literal `--ch_database`) and rerun.
   - **RTO**: unmeasured.
-  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestTargetCollisions::test_main_refuses_colliding_targets`
+  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestTargetCollisions::test_main_refuses_colliding_targets`, `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_two_source_tables_never_share_a_clickhouse_table` (end to end)
   - **FIXED**: D-13.05-7: target-name collisions stop the run before any write.
 
 - **FM-13.05-7 Source server `TimeZone` is not UTC and a table has `timestamp without time zone`**
@@ -1249,7 +1334,7 @@ Still GAP:
   - **Blast radius**: none.
   - **Recovery**: none needed.
   - **RTO**: unmeasured.
-  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestTemporalConversionClickHouseLocal::test_round_trip`
+  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestTemporalConversionClickHouseLocal::test_round_trip`, `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_zone_less_timestamp_keeps_its_wall_clock_in_a_non_utc_zone` (end to end)
   - **FIXED**: D-13.05-8: zone-less text is parsed in the column's zone.
 
 - **FM-13.05-8 Special or non-ISO temporal text**
@@ -1259,7 +1344,7 @@ Still GAP:
   - **Blast radius**: the table whose value cannot be represented is not loaded (loudly).
   - **Recovery**: map the column to `String` with a direct override (the load honours it, FM-13.05-9) and rerun that table with `--truncate`.
   - **RTO**: unmeasured.
-  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestTemporalConversionClickHouseLocal::test_unparseable_value_fails_the_insert`
+  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestTemporalConversionClickHouseLocal::test_unparseable_value_fails_the_insert`, `sink-connector/python/tests_e2e/postgres/test_pg_snapshot_dump.py::test_special_dates_saturate_to_the_type_bounds` (end to end)
   - **FIXED**: D-13.05-9 and D-13.05-10: special values saturate like CDC, unrepresentable values fail loudly, session settings are pinned.
 
 - **FM-13.05-9 Column type overrides configured**
@@ -1269,7 +1354,7 @@ Still GAP:
   - **Blast radius**: overridden columns of every table.
   - **Recovery**: add alias columns by hand (`ALTER TABLE ... ADD COLUMN ... ALIAS`), and reload overridden columns through a corrected path.
   - **RTO**: unmeasured.
-  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestLoadHonoursOverrides::test_overridden_column_is_loaded_as_overridden`; GAP: alias lookup must use the PG table name (D-13.05-18)
+  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestLoadHonoursOverrides::test_overridden_column_is_loaded_as_overridden`, `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_overridden_column_is_loaded_as_overridden` (end to end); GAP: alias lookup must use the PG table name (D-13.05-18)
   - **FIXED**: D-13.05-11: the load SELECT is built from override-applied types.
   - **DEFECT**: D-13.05-18.
 
@@ -1280,7 +1365,7 @@ Still GAP:
   - **Blast radius**: no data moves (for `psql-copy`, empty tables are created).
   - **Recovery**: use `--strategy streaming`.
   - **RTO**: minutes (a rerun with a different flag); unmeasured.
-  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestPgdumpStrategyRefused::test_main_refuses_before_touching_anything`; GAP: main() smoke test for `--strategy psql-copy`
+  - **Test**: `sink-connector/python/db_dump/tests/test_postgres_dumper_unit.py::TestPgdumpStrategyRefused::test_main_refuses_before_touching_anything`, `sink-connector/python/tests_e2e/postgres/test_pg_dump_fixes.py::test_pgdump_strategy_is_refused_before_touching_anything` (end to end); GAP: main() smoke test for `--strategy psql-copy`
   - **FIXED**: D-13.05-12 (the corrupting converter is refused, not run) and D-13.05-17 (`pipefail` on the psql-copy dump pipe).
   - **DEFECT**: D-13.05-15, D-13.05-16 (pgdump stays unusable, now by refusal; latent: D-13.05-14).
 
