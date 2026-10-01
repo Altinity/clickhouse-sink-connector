@@ -191,9 +191,17 @@ class TestSnapshotPositionHandoff:
         fake = FakeMysqlsh(dump_dir, ["t1"])
         assert run_main(md, monkeypatch, tmp_path, fake, Source(["t1"])) == 0
         capsys.readouterr()
+        # rewind-sql reads the offset table (key, direction, idle check); the connector is stopped at a later position
+        ch_config = tmp_path / "client.xml"
+        ch_config.write_text("<config/>")
+        current = json.dumps({"ts_sec": 1, "file": "binlog.000050", "pos": 4, "row": 0, "server_id": 7, "event": 0},
+                             separators=(",", ":"))
+        monkeypatch.setattr(mysql_resync, "ClickHouse", lambda *a, **k: object())
+        monkeypatch.setattr(mysql_resync, "read_offset_rows", lambda ch, table: [["connector1", current, "600"]])
         rc = mysql_resync.main(["rewind-sql", "--dump-base", dump_dir,
                                 "--position-file", os.path.join(dump_dir, "snapshot_position.json"),
-                                "--offset-table", "sink.replica_source_info", "--offset-key", "connector1"])
+                                "--offset-table", "sink.replica_source_info", "--offset-key", "connector1",
+                                "--ch-host", "ch.example", "--ch-config", str(ch_config), "--connector-stopped"])
         out = capsys.readouterr().out
         assert rc == 0
         assert '"file":"binlog.000042","pos":157' in out
