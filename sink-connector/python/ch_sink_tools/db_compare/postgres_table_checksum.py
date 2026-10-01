@@ -592,12 +592,15 @@ def calculate_checksum(table_name, pg_host, pg_user, pg_password, pg_port,
     Entry point for one table — opens its own connection, discovers columns
     and PK, then calls get_postgres_table_checksum().
     Thread-safe: each invocation uses its own psycopg2 connection.
+
+    Returns True when the table was checksummed (or deliberately ignored),
+    False when it failed or yielded no checksum.
     """
     if args.ignore_tables_regex:
         rex = re.compile(args.ignore_tables_regex, re.IGNORECASE)
         if rex.match(table_name):
             logging.info(f"Ignoring {table_name} due to ignore_tables_regex")
-            return
+            return True
 
     conn = get_postgres_connection(pg_host, pg_user, pg_password, pg_port, pg_database)
     try:
@@ -608,7 +611,7 @@ def calculate_checksum(table_name, pg_host, pg_user, pg_password, pg_port,
         for col in excluded_columns:
             parsed_excluded.extend(col.split(','))
 
-        get_postgres_table_checksum(
+        checksum = get_postgres_table_checksum(
             conn=conn,
             table_name=table_name,
             columns_meta=columns_meta,
@@ -629,9 +632,14 @@ def calculate_checksum(table_name, pg_host, pg_user, pg_password, pg_port,
             pg_database=pg_database,
             threads_per_table=threads_per_table,
         )
+        if checksum is None and not debug_output:
+            logging.error(f"No checksum computed for {pg_schema}.{table_name}")
+            return False
+        return True
     except Exception as e:
         logging.error(f"Error checksumming {pg_schema}.{table_name}: {e}")
         logging.error(traceback.format_exc())
+        return False
     finally:
         conn.close()
 
@@ -740,6 +748,7 @@ Uses the same 4-bucket MD5 accumulation as mysql_table_checksum.py.
             logging.error(f"Could not resolve credentials from {pgpass_file}")
             sys.exit(1)
 
+    failed_tables = []
     try:
         conn = get_postgres_connection(
             args.pg_host, pg_user, pg_password, args.pg_port, args.pg_database)
@@ -781,6 +790,8 @@ Uses the same 4-bucket MD5 accumulation as mysql_table_checksum.py.
                 if future.exception() is not None:
                     logging.error(f"Exception in table {future_to_table[future]}")
                     raise future.exception()
+                if future.result() is False:
+                    failed_tables.append(future_to_table[future])
 
     except (KeyboardInterrupt, SystemExit):
         logging.info("Received interrupt")
@@ -790,6 +801,9 @@ Uses the same 4-bucket MD5 accumulation as mysql_table_checksum.py.
         logging.error(traceback.format_exc())
         sys.exit(1)
 
+    if failed_tables:
+        logging.error(f"{len(failed_tables)} table(s) failed: {sorted(failed_tables)}")
+        sys.exit(1)
     logging.debug("Exiting Main Thread")
     sys.exit(0)
 
