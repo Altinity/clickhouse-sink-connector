@@ -46,7 +46,10 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
     else:
         logging.info("Skipping writing to file")
     try:
-        for sql in statements:
+        # statements[0] is the aggregate; with --debug_output the per-row
+        # query follows it, so the checksum line is printed as well as the
+        # debug file (spec 13.06 D-13.06-27).
+        for position, sql in enumerate(statements):
             (result, rowcount) = execute_sql(conn, sql)
             if rowcount != -1:
                 logging.debug("Rows affected "+str(rowcount))
@@ -55,7 +58,7 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
 
                 md5_sum = ""
                 cnt = -1
-                if args.debug_output:
+                if position > 0:
                     for line in x:
                         if isinstance(line, bytes):
                             debug_out.write(line.decode('utf-8'))
@@ -98,8 +101,9 @@ def get_primary_key_columns(conn, table_schema, table_name):
 
 
 def get_table_checksum_query(conn, table):
-    excluded_columns = "','".join(args.exclude_columns)
-    excluded_columns = [f'{column}' for column in excluded_columns.split(',')]
+    # 'a b' (space-separated words) and 'a,b' name the same columns, as on the
+    # MySQL side (spec 13.06 D-13.06-17).
+    excluded_columns = [name.strip() for token in (args.exclude_columns or []) for name in str(token).split(',') if name.strip()]
     logging.info(f"Excluded columns, {excluded_columns}")
     excluded_columns_str = ','.join((f"'{col}'" for col in excluded_columns))
     checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' order by position"
@@ -259,9 +263,11 @@ def select_table_statements(table, query, select_query, order_by, external_colum
       from {schema}.{table} final where {where} /*order by {order_by}*/ {limit}
 
 	  ) as t settings do_not_merge_across_partitions_select_final=1 {memory_setting}"""
-    if args.debug_output:
-        sql = f"""select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit} settings do_not_merge_across_partitions_select_final=1"""
     statements.append(sql)
+    if args.debug_output:
+        # The per-row strings, written to out.<table>.ch.txt by
+        # compute_checksum after the aggregate (spec 13.06 D-13.06-27).
+        statements.append(f"""select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit} settings do_not_merge_across_partitions_select_final=1""")
     return statements
 
 

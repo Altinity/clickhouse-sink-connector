@@ -253,16 +253,21 @@ class TestEmptyOnBothSides(unittest.TestCase):
     def outputs(self, cmd):
         return "0", side_output("shop.orders", MD5_EMPTY, 0)
 
-    def test_empty_is_a_warning_and_exit_zero_by_default(self):
+    def test_empty_is_logged_at_info_and_exit_zero_by_default(self):
+        # INFO, not WARNING: scheduled jobs fail on any WARNING line, and that
+        # word is reserved for "Checksum difference" (spec 13.06 section 3.8).
         code, logs = run_driver(self.outputs)
         self.assertEqual(code, 0)
         self.assertFalse(any("No difference" in line for line in logs), logs)
-        self.assertTrue(any("WARNING" in line and "EMPTY on both sides for shop.orders" in line for line in logs), logs)
-        self.assertTrue(any("WARNING" in line and "EMPTY on both sides: 1 table(s)" in line for line in logs), logs)
+        self.assertIn("INFO:root:EMPTY on both sides for shop.orders: 0 rows compared (empty table, or a filter "
+                      "or --partition_date that matched nothing)", logs)
+        self.assertTrue(any(line.startswith("INFO:") and "EMPTY on both sides: 1 table(s)" in line for line in logs), logs)
+        self.assertFalse(any("WARNING" in line for line in logs), logs)
 
     def test_fail_on_empty_makes_it_non_zero(self):
-        code, _ = run_driver(self.outputs, fail_on_empty=True)
+        code, logs = run_driver(self.outputs, fail_on_empty=True)
         self.assertEqual(code, 1)
+        self.assertTrue(any(line.startswith("ERROR:") and "EMPTY on both sides: 1 table(s)" in line for line in logs), logs)
 
     def test_fail_on_empty_flag_exists(self):
         with patch.object(sys, "argv", ["x", "--config_file", "/nonexistent.yaml", "--fail_on_empty"]), \
@@ -280,7 +285,8 @@ class TestEmptyOnBothSides(unittest.TestCase):
 
 
 class TestSideWarningsReachTheDriverLog(unittest.TestCase):
-    """FM-13.06-8: coverage and clamp WARNINGs of the sides are relayed."""
+    """FM-13.06-8: coverage and clamp WARNINGs of the sides are relayed, at INFO
+    as side notes without the word WARNING (spec 13.06 section 3.17)."""
 
     def test_side_warnings_are_logged_by_the_driver(self):
         coverage = "Not compared in table shop.orders: floating point columns ['ratio'] (pass --include_floating_point_columns ...)"
@@ -288,9 +294,21 @@ class TestSideWarningsReachTheDriverLog(unittest.TestCase):
         def outputs(cmd):
             return "0", side_output("shop.orders", MD5_A, 2, (side_line("WARNING", coverage), side_line("WARNING", clamp)))
         code, logs = run_driver(outputs)
-        self.assertTrue(any(line.startswith("WARNING") and coverage in line for line in logs), logs)
-        self.assertTrue(any(line.startswith("WARNING") and clamp in line for line in logs), logs)
+        self.assertEqual(code, 0)
+        self.assertTrue(any(line.startswith("INFO:") and "side note" in line and coverage in line for line in logs), logs)
+        self.assertTrue(any(line.startswith("INFO:") and "side note" in line and clamp in line for line in logs), logs)
         self.assertTrue(any("No difference for shop.orders" in line for line in logs), logs)
+        self.assertFalse(any("WARNING" in line for line in logs), logs)
+
+    def test_side_error_line_fails_the_table_even_with_exit_zero(self):
+        def outputs(cmd):
+            extra = (side_line("ERROR", "Exception in table orders"),) if is_mysql_side(cmd) else ()
+            return "0", side_output("shop.orders", MD5_A, 2, extra)
+        code, logs = run_driver(outputs)
+        self.assertEqual(code, 1)
+        self.assertTrue(any(line.startswith("ERROR:") and "Exception in table orders" in line for line in logs), logs)
+        self.assertTrue(any("Checksum ERROR for shop.orders" in line for line in logs), logs)
+        self.assertFalse(any("No difference" in line for line in logs), logs)
 
 
 if __name__ == "__main__":

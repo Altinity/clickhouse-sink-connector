@@ -1004,8 +1004,9 @@ Acceptance criteria for a fixed layer. Each one is a GAP test today:
   - **Blast radius**: the flag is unusable.
   - **Recovery**: use `--tables_regex '^name$'` instead.
   - **RTO**: unmeasured (minutes).
-  - **Test**: `GAP: no_wc path through each caller`
-  - **DEFECT**: the return type differs by branch (D-13.02-13).
+  - **Test**: `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestNoWc::test_legacy_driver` (and the other tests of that class: both copies of the
+    driver, the MySQL side and both count runners).
+  - **FIXED**: every caller takes the `[[regex]]` list of `--no_wc` as the one named table (spec 13.06 D-13.06-26).
 
 - **FM-13.02-14 A `:word` inside a literal passed through `execute_mysql`**
   - **Trigger**: a `--where` or per-table YAML `where` containing, for example,
@@ -1202,7 +1203,7 @@ Acceptance criteria for a fixed layer. Each one is a GAP test today:
   - **RTO**: unmeasured (minutes).
   - **Test**: `GAP: assert the exception text of a mocked auth failure contains no password, for each factory`
 
-Summary: 25 failure modes, 23 DEFECT, 23 GAP.
+Summary: 25 failure modes, 22 DEFECT, 22 GAP.
 
 ## 7. Defect Register
 
@@ -1220,7 +1221,7 @@ Summary: 25 failure modes, 23 DEFECT, 23 GAP.
 | D-13.02-10 | S2 | both (factory) / packaged (effect) | `db/mysql.py:32`; `ch_sink_tools/db/mysql.py:24`; `ch_sink_tools/db_compare/mysql_table_checksum.py:174`, `:111` | code-read (no `time_zone` in the factory; the packaged checksum renders TIMESTAMP with `cast(... as char)` in the session zone) | The session time zone is never pinned by the factory. The packaged checksum depends on the server zone, while the legacy one pins UTC. |
 | D-13.02-11 | S2 | both | `db_compare/top_level_table_checksum.py:265`, `:321`, `:450-452`; `ch_sink_tools/db_compare/top_level_table_checksum.py:159`, `:186`, `:264-266` | code-read (child command templates) | The orchestrator does not forward `--mysql_port`, `--clickhouse_port`, `--secure`, `--clickhouse_config_file` or `--clickhouse_user` to the children, and `--mysql_user` is overwritten. |
 | D-13.02-12 | S3 | both | `ch_sink_tools/db/mysql.py:77-81`; callers listed in FM-13.02-12 | reproduced (real `execute_mysql` + fake DBAPI under SQLAlchemy 2.1.1: `TypeError`) | Rows from `execute_mysql` are indexed by name at twelve call sites, which crashes under the allowed SQLAlchemy 2.x. |
-| D-13.02-13 | S3 | both | `db/mysql.py:54-55`; `ch_sink_tools/db/mysql.py:46-47` | reproduced (returns `[['orders']]`, no `fetchall`/`mappings`) | `get_tables_from_regex(no_wc=True)` returns a list that no caller can consume. |
+| D-13.02-13 | S3 | both | `db/mysql.py:54-55`; `ch_sink_tools/db/mysql.py:46-47` | reproduced (returns `[['orders']]`, no `fetchall`/`mappings`) | FIXED (spec 13.06 D-13.06-26): the callers (driver, MySQL side, both count runners, both copies) take the list as the one named table; the return type still differs by branch. Test: `test_manual_runner_recipes.py::TestNoWc::test_legacy_driver`. Was: `get_tables_from_regex(no_wc=True)` returned a list that no caller could consume. |
 | D-13.02-14 | S3 | both | `db/mysql.py:118`; `ch_sink_tools/db/mysql.py:110` | reproduced (`text("... 'a :b'")` binds `b`) | Raw SQL passes through `sqlalchemy.text()`, so `:word` inside literals becomes a bind parameter. |
 | D-13.02-15 | S3 | both | `db/mysql.py:41-49`, `:76`, `:143`, `:151`, `:163-166`, `:177`, `:188`, `:221`; `ch_sink_tools/db/mysql.py` same builders; `db/clickhouse.py:33`; `ch_sink_tools/db/clickhouse.py:30`; `ch_sink_tools/db/postgres.py:303-311`, `:360-361`, `:411-412`, `:427-428`, `:583`, `:604` | reproduced (generated SQL shown in 3.4/3.7) | Identifiers and values are interpolated into catalog SQL and DDL without escaping. |
 | D-13.02-16 | S3 | both | `db/mysql.py:84`; `ch_sink_tools/db/mysql.py:76` | reproduced (regex semantics: `price$hist` matches nothing, `a.c` matches `abc`) | The partition-key lookup uses the table name as a regex. |

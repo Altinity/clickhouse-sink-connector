@@ -210,7 +210,10 @@ def main():
         tables = get_tables_from_regexp(conn, args.include_tables_regex)
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
-            for table in tables.fetchall():
+            # --no_wc: get_tables_from_regex returns [[<include_tables_regex>]], the table name
+            # itself, not a result set (spec 13.06 D-13.06-26).
+            table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.fetchall()
+            for table in table_rows:
                 futures.append(executor.submit(
                     calculate_table_count, table['table_name'], mysql_user, mysql_password))
             for future in concurrent.futures.as_completed(futures):

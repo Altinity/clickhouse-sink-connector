@@ -111,12 +111,14 @@ For every table selected by `--tables_regex` (and the optional
 4. Parses the single line `Checksum for table <db>.<table> = <md5> count <n>`
    from each process (`parse_checksum()`). The side commands are argv lists
    run without a shell; the raw output is matched line by line, exactly one
-   such message naming the expected `<db>.<table>` must be present, and every
-   side WARNING/ERROR line is relayed into the driver log (spec 13.06 §3.2,
-   §3.8). Other lines may contain the word "checksum".
+   such message naming the expected `<db>.<table>` must be present. A side
+   ERROR line is relayed at ERROR and that side gives no result; a side WARNING
+   line is relayed at INFO as a side note, so the driver log keeps WARNING for
+   differences (spec 13.06 §3.2, §3.8, §3.17). Other lines may contain the
+   word "checksum".
 5. `analyze_differences()` gives each table a verdict: a mismatch is logged as
    `WARNING Checksum difference : ...`; agreement as `INFO No difference for
-   <table>`; agreement on zero rows as `WARNING EMPTY on both sides ...`; a
+   <table>`; agreement on zero rows as `INFO EMPTY on both sides ...`; a
    failed or unparseable side as `ERROR`, which makes the run exit 1 (spec
    13.06 §3.8).
 
@@ -374,7 +376,8 @@ A column the tool does not compare is a hole in the only value-level proof,
 so it is never silent. Per table, each side logs **one `WARNING`** naming the
 skipped columns (`Not compared in table <db>.<table>: floating point columns
 [...]` / `... JSON columns [...]`; the line does not contain the word
-"checksum", §3.2 step 4). Compared by default: every type in the §3.3 table,
+"checksum", §3.2 step 4). The driver relays it at INFO as a side note
+(spec 13.06 §3.17). Compared by default: every type in the §3.3 table,
 §3.4 temporal, §3.6 binary, `Bool`/`bit(1)`. Not compared by default:
 
 - **Floating point** (`float`, `double` / `Float32`, `Float64`), unless
@@ -435,8 +438,9 @@ who would rather have the run fail than run with a gap pass
   `{partition_expression}` substitution it carried remains.
 - `--exclude_columns` takes `nargs='+'` on both sides (the replica side had
   `nargs='*'`, so a bare `--exclude_columns` silently replaced the default
-  list of connector metadata columns with nothing). Both sides split each
-  token on commas.
+  list of connector metadata columns with nothing). Both sides accept
+  space-separated words and comma-separated lists alike
+  (`parse_exclude_columns`, spec 13.06 D-13.06-17).
   (`test_checksum_fidelity.py::TestRemovedDeadPaths`)
 
 ---

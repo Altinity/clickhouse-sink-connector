@@ -84,8 +84,15 @@ def validate_config(config):
 # column name containing "checksum" in any other log line is never taken for a
 # result (spec 13.06 FM-13.06-2).
 CHECKSUM_LINE = re.compile(r" - INFO - .* - Checksum for table (?P<table>\S.*) = (?P<checksum>[0-9a-f]{32}) count (?P<count>\d+)\s*$")
-SIDE_MESSAGE_LEVELS = ((" - CRITICAL - ", logging.ERROR), (" - ERROR - ", logging.ERROR),
-                       (" - WARNING - ", logging.WARNING))
+# A side ERROR or CRITICAL line means the side did not produce a trustworthy
+# result: it is relayed at ERROR and the table gets no verdict. A side WARNING
+# (columns not compared, clamped values, SQL or client-library warnings)
+# qualifies the verdict without failing it: it is relayed at INFO as a "side
+# note", without the level word. WARNING in the driver log is reserved for
+# "Checksum difference" -- scheduled jobs fail on any line containing WARNING
+# (spec 13.06 section 3.17).
+SIDE_ERROR_MARKERS = (" - CRITICAL - ", " - ERROR - ")
+SIDE_WARNING_MARKER = " - WARNING - "
 SIDE_OUTPUT_TAIL_LINES = 20
 
 VERDICT_MATCH = "MATCH"
@@ -122,15 +129,25 @@ def parse_checksum(data, table, expected_name=None):
     return (name, match.group('checksum'), int(match.group('count')))
 
 
+def side_note_text(line):
+    """A side output line without the word WARNING (its level or any other
+    occurrence), as the driver relays or dumps it below WARNING."""
+    return line.strip().replace(SIDE_WARNING_MARKER, " - ").replace("WARNING", "warning")
+
+
 def relay_side_messages(data, host, table):
-    """Re-log the side script's WARNING/ERROR/CRITICAL lines (columns not
-    compared, SQL warnings) in the driver log: they qualify the verdict (spec
-    13.06 FM-13.06-8)."""
+    """Re-log the side script's ERROR/CRITICAL lines at ERROR and its WARNING
+    lines (columns not compared, clamped values, SQL warnings) at INFO as side
+    notes: they qualify the verdict (spec 13.06 FM-13.06-8). Returns True when
+    the side logged an ERROR or CRITICAL line."""
+    side_failed = False
     for line in side_output_text(data).splitlines():
-        for marker, level in SIDE_MESSAGE_LEVELS:
-            if marker in line:
-                logging.log(level, f"{host} {table} side: {line.strip()}")
-                break
+        if any(marker in line for marker in SIDE_ERROR_MARKERS):
+            logging.error(f"{host} {table} side: {line.strip()}")
+            side_failed = True
+        elif SIDE_WARNING_MARKER in line:
+            logging.info(f"{host} {table} side note: {side_note_text(line)}")
+    return side_failed
 
 
 def log_side_output_tail(data, host, table):
@@ -157,7 +174,11 @@ def run_quick_safe_checksum(cmd, host, table):
     start = time.perf_counter()
     (rc, stdout) = run_quick_safe_command(cmd)
     duration = time.perf_counter() - start
-    relay_side_messages(stdout, host, table)
+    side_failed = relay_side_messages(stdout, host, table)
+    if rc == '0' and side_failed:
+        logging.error(f"{command_text(cmd)}. logged an ERROR although it exited 0: no result from {host} for {table}")
+        log_side_output_tail(stdout, host, table)
+        return None
     if rc == '0':
         (table, checksum, count) = parse_checksum(stdout, table, expected_side_name(cmd, table))
         if checksum is None:
@@ -352,8 +373,10 @@ def analyze_differences(results, mysql_host, replica_hosts, table_name=None):
     if is_difference:
         return VERDICT_DIFFERENT
     if mysql_count == 0:
-        logging.warning(f"EMPTY on both sides for {source_result[1]}: 0 rows compared "
-                        "(empty table, or a filter or --partition_date that matched nothing)")
+        # INFO, not WARNING: empty partitions are normal in date-partitioned
+        # runs, and WARNING is reserved for "Checksum difference".
+        logging.info(f"EMPTY on both sides for {source_result[1]}: 0 rows compared "
+                     "(empty table, or a filter or --partition_date that matched nothing)")
         return VERDICT_EMPTY
     logging.info(f"No difference for {source_result[1]}")
     return VERDICT_MATCH
@@ -373,11 +396,14 @@ def report_run_summary(verdicts, fail_on_empty):
     exit_code = 0
     empty = by_verdict.get(VERDICT_EMPTY, [])
     if empty:
-        logging.warning(f"EMPTY on both sides: {len(empty)} table(s) compared 0 rows"
-                        f"{' (failing the run: --fail_on_empty)' if fail_on_empty else ' (pass --fail_on_empty to fail the run)'}: "
-                        + ", ".join(empty))
+        message = (f"EMPTY on both sides: {len(empty)} table(s) compared 0 rows"
+                   f"{' (failing the run: --fail_on_empty)' if fail_on_empty else ' (pass --fail_on_empty to fail the run)'}: "
+                   + ", ".join(empty))
         if fail_on_empty:
+            logging.error(message)
             exit_code = 1
+        else:
+            logging.info(message)
     errors = by_verdict.get(VERDICT_ERROR, [])
     if errors:
         logging.error(f"{len(errors)} table(s) have NO verdict (a side failed or its output could not be parsed): "
@@ -496,7 +522,10 @@ def run_config(config):
                 future_to_table = {}
                 future_to_conn = {}
                 table_include_list = [t for t in mysql_table_include_list if t.startswith(f"{database}.")] if mysql_table_include_list else [] 
-                for table_row in tables.fetchall():
+                # --no_wc: get_tables_from_regex returns [[<tables_regex>]], the table name
+                # itself, not a result set (spec 13.06 D-13.06-26).
+                table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.fetchall()
+                for table_row in table_rows:
                     table = table_row['table_name']
                     table_name = f"{database}.{table}"
                     if len(table_include_list)>0 and not match_table_include_list(database, table, table_include_list):  
@@ -572,8 +601,10 @@ def run_quick_safe_command(cmd):
         return "127", str(e).encode('utf-8')
     stdout, stderr = process.communicate()
     rc = str(process.poll())
-    if stdout:
-        logging.debug(str(stdout).strip())
+    # Line by line and without the word WARNING (side_note_text), so --debug
+    # adds no WARNING line to a clean run's log.
+    for line in side_output_text(stdout).splitlines():
+        logging.debug(f"side output: {side_note_text(line)}")
     logging.debug("return code = " + rc)
     if rc != "0":
         logging.error("command failed : terminating")
@@ -645,7 +676,7 @@ def main():
                         help='Lock the table on the source so that source and target are in sync ...', required=False)
     parser.add_argument('--sleep_after_lock', type=int, help='When locking, sleeping n seconds', default=3)
     parser.add_argument('--fail_on_empty', action='store_true', default=False,
-                        help='Exit non-zero when a table compared 0 rows on both sides (verdict EMPTY). Default: EMPTY is a WARNING and the run exits 0, since empty partitions are normal in date-partitioned runs.')
+                        help='Exit non-zero when a table compared 0 rows on both sides (verdict EMPTY). Default: EMPTY is logged at INFO and the run exits 0, since empty partitions are normal in date-partitioned runs.')
 
     global args
     args = parser.parse_args()

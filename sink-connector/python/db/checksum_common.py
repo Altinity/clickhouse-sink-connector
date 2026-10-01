@@ -143,6 +143,21 @@ def warn_not_compared(database, table, skipped, warned):
             logging.warning(f"Not compared in table {database}.{table}: {kind} columns {names} (pass {NOT_COMPARED_HINTS[kind]})")
 
 
+def parse_exclude_columns(tokens):
+    """The column names given to ``--exclude_columns``, as space-separated
+    words, comma-separated lists or both: ``['a', 'b']``, ``['a,b']`` and
+    ``['a, b']`` all give ``['a', 'b']``. Both sides parse the option with this
+    function, so both forms exclude the same columns (spec 13.06 D-13.06-17).
+    Order is kept, duplicates are dropped."""
+    names = []
+    for token in tokens or []:
+        for name in str(token).split(","):
+            name = name.strip()
+            if name and name not in names:
+                names.append(name)
+    return names
+
+
 def parse_column_list(text):
     """``'a, b,'`` -> ``{'a', 'b'}``; ``None``/``''`` -> empty set."""
     return set(name.strip() for name in (text or "").split(",") if name.strip())

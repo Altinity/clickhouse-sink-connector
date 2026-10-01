@@ -171,8 +171,11 @@ class TestPackagedParsingQuotingAndVerdicts(unittest.TestCase):
         code, logs = run_driver(outputs)
         self.assertTrue(any("Checksum difference" in line for line in logs), logs)
         self.assertFalse(any("No difference" in line for line in logs), logs)
-        self.assertTrue(any(line.startswith("WARNING") and "checksum_ratio" in line for line in logs),
-                        "side WARNINGs must reach the driver log")
+        self.assertTrue(any(line.startswith("INFO:") and "side note" in line and "checksum_ratio" in line for line in logs),
+                        "side WARNINGs must reach the driver log as side notes")
+        self.assertEqual([line for line in logs if "WARNING" in line],
+                         [f"WARNING:root:Checksum difference : ('{CH_HOST}', 'shop.orders', '{MD5_B}', 2) to "
+                          f"('{MYSQL_HOST}', 'shop.orders', '{MD5_A}', 2)"])
 
     def test_dollar_table_name_and_where_are_passed_verbatim(self):
         where = "`status` = 'A' and note <> '$HOME'"
@@ -203,9 +206,20 @@ class TestPackagedParsingQuotingAndVerdicts(unittest.TestCase):
         code, logs = run_driver(outputs)
         self.assertEqual(code, 0)
         self.assertFalse(any("No difference" in line for line in logs), logs)
-        self.assertTrue(any("EMPTY on both sides for shop.orders" in line for line in logs), logs)
+        self.assertTrue(any(line.startswith("INFO:") and "EMPTY on both sides for shop.orders" in line for line in logs), logs)
+        self.assertTrue(any(line.startswith("INFO:") and "EMPTY on both sides: 1 table(s)" in line for line in logs), logs)
+        self.assertFalse(any("WARNING" in line for line in logs), logs)
         code, _ = run_driver(outputs, fail_on_empty=True)
         self.assertEqual(code, 1)
+
+    def test_side_error_line_fails_the_table_even_with_exit_zero(self):
+        def outputs(cmd):
+            extra = (side_line("ERROR", "Exception in main thread : boom"),) if not is_mysql_side(cmd) else ()
+            return "0", side_output("shop.orders", MD5_A, 2, extra)
+        code, logs = run_driver(outputs)
+        self.assertEqual(code, 1)
+        self.assertTrue(any("Checksum ERROR for shop.orders" in line for line in logs), logs)
+        self.assertFalse(any("No difference" in line for line in logs), logs)
 
 
 class TestPackagedDatetimeBounds(unittest.TestCase):
