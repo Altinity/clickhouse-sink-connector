@@ -10,21 +10,56 @@ so the same tests run against:
   1543 dumper, plus the fixes this suite itself forced, listed at the end).
 
 CI runs the fixed tree only (`.github/workflows/python-toolset-e2e-mysql.yml`, job `python-toolset-e2e-mysql`).
-The pre-fix run is the local procedure below.
+The pre-fix run is the local procedure below; its observed results are in the next section.
 
-## Status of the two runs (read this first)
+## Observed runs (read this first)
 
-- **fixed**: every test below was run locally against a real stack (MySQL 8.0, ClickHouse 24.8, connector image
-  of PR 1437 in a pod) module by module, with the tools installed by `source ./install.sh` (SQLAlchemy 2.0).
-  Result per module: 01 13 passed; 02 5 passed; 03 10 passed; 04 7 passed (6 in one run, the seventh after a
-  fix of the test itself); 05 5 passed, 1 xfailed (strict, D-13.04-32). A single uninterrupted run of the
-  whole directory, and the runs with SQLAlchemy 1.4, were not completed locally: the host's command guard
-  started refusing the test runs part-way through the work. The CI job is the first full run.
-- **pre-fix**: **not executed** for the same reason. The pre-fix column gives the outcome each test is expected
-  to have on `d42a8740`, with the evidence it rests on: *observed* means the pre-fix behaviour was seen in this
-  suite's runs (the code path is unchanged between `d42a8740` and the branch base, checked by diff), *spec
-  repro* names the offline reproduction recorded in the owning spec. Run the procedure below to replace the
-  expected outcomes by observed ones.
+All three runs used one local stack (MySQL 8.0, ClickHouse 24.8, the lightweight connector, external-stack mode,
+`pytest tests_e2e/mysql/` run in the stack's network namespace), recreated before each run:
+
+| Run | Tools | SQLAlchemy | Result |
+|---|---|---|---|
+| fixed | this branch | 2.0 (what `source ./install.sh` installs from PyPI) | 40 passed, 1 xfailed |
+| fixed, production interpreter | this branch | 1.4 (the scheduled jobs install 1.4.43 from their package mirror) | 40 passed, 1 xfailed |
+| pre-fix | 2.11.0 tools (`d42a8740`, specs only on top of 2.11.0) | 1.4 | 37 failed, 2 passed, 1 xfailed, 1 error |
+
+The pre-fix tools run on SQLAlchemy 1.4 because they cannot run on 2.x at all (D-13.06-9, D-13.03-3); 1.4 is also
+what production uses, so the pre-fix column shows each defect rather than that one crash.
+
+Observed pre-fix outcome per test, and the fix that turns it green:
+
+| Test | Pre-fix (observed) | Fixed | Justifies |
+|---|---|---|---|
+| `test_job_sources_install_sh_under_set_euo_pipefail` | FAIL: `install.sh: line 4: PYTHONPATH: unbound variable` | PASS | this PR, D-13.06-39 |
+| `test_clean_data_passes_the_job` | FAIL: `Checksum difference` for `pyops.fills` on clean data (BIT(16)), the job verdict fails | PASS | this PR, D-13.06-38 |
+| `test_bitemporal_where_selects_the_trading_day_window`, `test_debug_run_passes_the_job`, `test_single_database_run_passes_the_job`, `test_table_include_list_restricts_the_job`, `test_planted_difference_fails_the_job`, `test_planted_difference_in_the_renamed_database_fails_the_job`, `test_difference_in_an_ignored_column_passes_the_job`, `test_side_notes_reach_the_job_log_below_warning` | FAIL: the same clean-data `Checksum difference` on the BIT(16) table fails every job run, so these cannot pass whatever else they check | PASS | this PR, D-13.06-38 (each test's own assertion is a regression guard) |
+| `test_empty_partition_does_not_fail_the_job` | PASS (2.11.0 logs an empty table as `No difference` at INFO) | PASS | regression guard for PR 1539 `73e92977` (no WARNING for EMPTY) |
+| `test_empty_partition_is_reported_empty_not_matched` | FALSE MATCH: `No difference for pyref.daily_marks` with 0 rows on both sides, exit 0 | PASS | PR 1539 D-13.06-5 |
+| `test_clickhouse_side_failure_fails_the_job` | FAIL: the driver dies with `TypeError: 'NoneType' object is not subscriptable`, no table gets a verdict | PASS | PR 1539 D-13.06-1 |
+| `test_manual_checksum_recipe_is_equal_on_clean_data`, `test_manual_checksum_recipe_with_the_connector_binary_encoding`, `test_manual_checksum_recipe_names_the_diverged_row` | FAIL: `--no_wc` crashes the MySQL side (`'list' object has no attribute 'mappings'`) | PASS | PR 1539 `73e92977` D-13.06-26 (then -17, -27) |
+| `test_mysql_count_agrees_with_real_counts` | FAIL: `--no_wc` crashes the count (`'list' object has no attribute 'fetchall'`) | PASS | PR 1539 `73e92977` D-13.06-26 |
+| `test_clickhouse_count_agrees_with_real_counts` | FAIL: every table counted 0 without `--include_partitions_regex` | PASS | PR 1539 `73e92977` D-13.06-18 |
+| `test_dumper_hands_over_a_verified_snapshot_position` | FAIL: exit 0 but no `snapshot_position.json`, the binlog position is not handed over | PASS | PR 1543 D-13.03-1 |
+| `test_loader_fills_a_fresh_database` | FAIL: the load aborts on the table whose source has a `_sign` column (the loader drops that column, the TSV still carries it) | PASS | PR 1538 D-13.04-6 |
+| `test_production_job_matches_the_loaded_snapshot`, `test_keyless_table_keeps_every_row_after_optimize_final`, `test_loaded_values_equal_the_streamed_values[fills\|instruments\|keyless_events]`, `test_clickhouse_count_agrees_between_the_live_and_the_restored_copy` | FAIL: blocked by the same aborted load | PASS | PR 1538 (the individual defects D-13.04-1, -3 and -10 are shown by their offline tests and Spec 13.04) |
+| `test_loader_fails_loudly_on_a_corrupt_dump_chunk` | PASS: the legacy loader asserts on the failed pipeline, so D-13.04-4 is not reproduced through this entry point | PASS | regression guard |
+| `test_dumper_fails_loudly_when_mysql_shell_fails` | FAIL: `FileNotFoundError` inside the test before the exit status is checked; not attributable to one defect | PASS | none claimed |
+| `test_unlogged_change_is_reported_then_repaired_by_resync` | FAIL: the resync load fails (pre-fix loader), exit 1 | PASS | PR 1538 via the loader resync runs |
+| `test_patch_refuses_to_replace_while_the_connector_is_behind_the_dump` | FAIL: the REPLACE runs and overwrites the planted ClickHouse row, exit 0 | PASS | PR 1542 D-13.08-5 |
+| `test_patch_skip_load_refuses_a_scratch_table_it_did_not_load` | FAIL: `--skip-load` installs the stale scratch rows (`stale`), exit 0 | PASS | PR 1542 D-13.08-8 |
+| `test_rewind_sql_requires_the_connector_stopped_attestation` | FAIL: the rewind INSERT is printed, exit 0 | PASS | PR 1542 D-13.08-9 |
+| `test_rewind_sql_refuses_a_forward_rewind` | FAIL: the forward rewind INSERT is printed, exit 0 | PASS | PR 1542 D-13.08-6 |
+| `test_rewind_sql_accepts_the_dumper_snapshot_position` | FAIL: no `snapshot_position.json` to read | PASS | PR 1543 D-13.03-1 |
+| `test_z_patch_refuses_an_empty_restore_suffix` | ERROR at setup: the stale rows the pre-fix `--skip-load` installed are still there; not attributable | PASS | none claimed (D-13.08-11 is shown by its offline test) |
+| `test_checksum_in_column_names_does_not_confuse_the_verdict` | FALSE MATCH: `No difference` for a table whose outputs could not be parsed, exit 0 | PASS | PR 1539 D-13.06-2 |
+| `test_function_partition_expression_reaches_the_sides` | FAIL: the driver dies with `TypeError: 'NoneType' object is not subscriptable` | PASS | PR 1539 D-13.06-10 |
+| `test_dollar_table_is_compared_under_its_own_name` | FAIL: the driver dies with the same `TypeError` | PASS | PR 1539 D-13.06-3 |
+| `test_equal_mysql_and_clickhouse_host_strings_still_give_verdicts` | FAIL: exit 0 with no verdict line | PASS | PR 1539 D-13.06-4 |
+| `test_packaged_driver_run_from_another_directory_reports_a_difference` | FALSE MATCH: both sides fail to start, `(None, None)` on both, `No difference for accounts` for the planted difference | PASS | PR 1539 D-13.06-1, D-13.01-2 |
+| `test_loader_loads_a_table_with_a_dollar_in_its_name` | XFAIL | XFAIL (strict) | open defect D-13.04-32 |
+
+The expected-outcome matrix below was written before these runs; where it differs from the table above, the
+table above is what was observed.
 
 ## Local procedure (pre-fix against fixed)
 
@@ -49,7 +84,7 @@ PYTOOLS_E2E_TOOLS_ROOT="$SCRATCH/sink-connector/python" PYTOOLS_E2E_PYTHON="$SCR
 With an external stack (`PYTOOLS_E2E_EXTERNAL_STACK=1`, see `mysql_e2e_support.py`) recreate the stack between
 the two runs.
 
-## Matrix
+## Expected matrix (written before the observed runs)
 
 Pre-fix outcome legend: FAIL = an assertion fails (wrong verdict, wrong exit code, wrong data); FALSE MATCH =
 the tool reports equality or success for data that differs; PASS = passes on both trees.
