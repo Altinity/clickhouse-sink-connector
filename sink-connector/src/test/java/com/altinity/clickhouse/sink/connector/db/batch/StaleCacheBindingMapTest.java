@@ -31,8 +31,10 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -50,6 +52,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * {@code NullPointerException}: the first batch after every such re-read
  * failed. Each test here groups with the cached map and executes with the
  * same cached map, exactly as the runnable does.</p>
+ *
+ * <p>Spec 08.04 section 3.4: with that fixed, workers converting the same
+ * MATERIALIZED column at once raced each other. A worker whose column-map
+ * read preceded another worker's ALTER, and whose default_kind read followed
+ * it, saw {@code DEFAULT} and reported the column as missing from ClickHouse;
+ * one whose enforcement re-read the kind after another worker's ALTER
+ * returned "no longer MATERIALIZED" and failed the batch. The interleavings
+ * are reproduced deterministically by landing the other worker's conversion
+ * between two reads of the fake catalog.</p>
  *
  * <p>JDBC objects are JDK proxies: an in-memory {@code system.columns} for the
  * metadata reads and DDL, {@link RecordingJdbc} for the INSERT statements
@@ -77,8 +88,64 @@ public class StaleCacheBindingMapTest {
     private static final class FakeClickHouse {
         /** rows of (name, type, default_kind) */
         final List<String[]> columns = new ArrayList<>();
-        final List<String> executed = new ArrayList<>();
+        final List<String> executed = Collections.synchronizedList(new ArrayList<>());
         final RecordingJdbc inserts = new RecordingJdbc();
+
+        /**
+         * Another worker's conversion, landing at a chosen point: runs once,
+         * right after the first column listing (or default_kind lookup) has
+         * been answered, so the reader saw the state BEFORE it.
+         */
+        Runnable afterFirstListing;
+        Runnable afterFirstKindRead;
+
+        /**
+         * When set, a MODIFY COLUMN waits until this many default_kind lookups
+         * have answered MATERIALIZED, or {@link #alterGateMillis} elapse -- so
+         * every worker that is not serialised has read MATERIALIZED before any
+         * conversion lands.
+         */
+        int alterGateReads = 0;
+        long alterGateMillis = 0;
+        private int materializedReads = 0;
+
+        /** Another worker's MATERIALIZED to DEFAULT conversion of {@code name}. */
+        synchronized void convert(String name) {
+            String[] c = find(name);
+            if (c != null) {
+                c[2] = "DEFAULT";
+            }
+        }
+
+        synchronized long alters() {
+            long n = 0;
+            for (String sql : new ArrayList<>(executed)) {
+                if (sql.toUpperCase().contains("MODIFY COLUMN")) {
+                    n++;
+                }
+            }
+            return n;
+        }
+
+        private List<String[]> answerAndRunHooks(String sql) {
+            List<String[]> rows = answer(sql);
+            Runnable hook = null;
+            synchronized (this) {
+                if (afterFirstListing != null
+                        && sql.startsWith("SELECT name, type, default_kind FROM system.columns")) {
+                    hook = afterFirstListing;
+                    afterFirstListing = null;
+                } else if (afterFirstKindRead != null
+                        && sql.startsWith("SELECT default_kind FROM system.columns")) {
+                    hook = afterFirstKindRead;
+                    afterFirstKindRead = null;
+                }
+            }
+            if (hook != null) {
+                hook.run();
+            }
+            return rows;
+        }
         private final Connection insertConnection = inserts.connection();
 
         FakeClickHouse() {
@@ -101,7 +168,7 @@ public class StaleCacheBindingMapTest {
             return sql.substring(start, sql.indexOf("')", start));
         }
 
-        private List<String[]> answer(String sql) {
+        private synchronized List<String[]> answer(String sql) {
             if (sql.contains("default_kind='ALIAS' or default_kind='MATERIALIZED'")) {
                 List<String[]> rows = new ArrayList<>();
                 for (String[] c : columns) {
@@ -112,7 +179,13 @@ public class StaleCacheBindingMapTest {
                 return rows;
             }
             if (sql.startsWith("SELECT name, type, default_kind FROM system.columns")) {
-                return new ArrayList<>(columns);
+                // Copies: a conversion landing after this read must not show
+                // through rows already handed to the reader.
+                List<String[]> rows = new ArrayList<>();
+                for (String[] c : columns) {
+                    rows.add(c.clone());
+                }
+                return rows;
             }
             if (sql.startsWith("SELECT type FROM system.columns")) {
                 String[] c = find(quotedName(sql));
@@ -123,22 +196,34 @@ public class StaleCacheBindingMapTest {
             }
             if (sql.startsWith("SELECT default_kind FROM system.columns")) {
                 String[] c = find(quotedName(sql));
+                if (c != null && "MATERIALIZED".equals(c[2])) {
+                    materializedReads++;
+                    notifyAll();
+                }
                 return c == null ? Collections.emptyList() : Collections.singletonList(new String[]{c[2]});
             }
             throw new IllegalStateException("unexpected query: " + sql);
         }
 
         /** {@code MODIFY COLUMN `c` <type> DEFAULT <expr>}: the conversion takes effect. */
-        private void execute(String sql) {
+        private void execute(String sql) throws InterruptedException {
             executed.add(sql);
             String upper = sql.toUpperCase();
             if (upper.startsWith("ALTER TABLE") && upper.contains("MODIFY COLUMN `")
                     && upper.contains(" DEFAULT ")) {
                 int nameStart = upper.indexOf("MODIFY COLUMN `") + "MODIFY COLUMN `".length();
-                String[] c = find(sql.substring(nameStart, sql.indexOf('`', nameStart)));
-                if (c != null) {
-                    c[2] = "DEFAULT";
+                String name = sql.substring(nameStart, sql.indexOf('`', nameStart));
+                synchronized (this) {
+                    long deadline = System.currentTimeMillis() + alterGateMillis;
+                    while (materializedReads < alterGateReads) {
+                        long left = deadline - System.currentTimeMillis();
+                        if (left <= 0) {
+                            break;
+                        }
+                        wait(left);
+                    }
                 }
+                convert(name);
             }
         }
 
@@ -179,7 +264,7 @@ public class StaleCacheBindingMapTest {
             final String[] header = {"name", "type", "default_kind"};
             InvocationHandler statement = (proxy, method, args) -> {
                 if ("executeQuery".equals(method.getName())) {
-                    return resultSet(answer((String) args[0]), header);
+                    return resultSet(answerAndRunHooks((String) args[0]), header);
                 }
                 return defaultFor(method.getReturnType());
             };
@@ -201,7 +286,7 @@ public class StaleCacheBindingMapTest {
                                 return false;
                             }
                             if ("executeQuery".equals(m.getName())) {
-                                return resultSet(answer(sql), header);
+                                return resultSet(answerAndRunHooks(sql), header);
                             }
                             return defaultFor(m.getReturnType());
                         };
@@ -389,5 +474,91 @@ public class StaleCacheBindingMapTest {
         assertTrue(e.getMessage().contains("key_col"), e.getMessage());
         assertTrue(ch.inserts.ofKind(RecordingJdbc.ADD_BATCH).isEmpty(),
                 "nothing is staged with an unbound parameter: " + ch.inserts.events);
+    }
+
+    // ---- Spec 08.04 section 3.4: concurrent conversion of the same column ----
+
+    @Test
+    @DisplayName("the column map read races another worker's conversion: the column is re-read and bound, not "
+            + "reported missing")
+    public void conversionLandingBetweenMapReadAndKindReadIsReReadAndBound() throws Exception {
+        FakeClickHouse ch = new FakeClickHouse();
+        ch.columns.add(1, new String[]{"key_col", "String", "MATERIALIZED"});
+        // This worker's column listing still sees MATERIALIZED (so the writable
+        // map lacks key_col); another worker's ALTER lands right after it, so
+        // the default_kind lookup that follows reads DEFAULT.
+        ch.afterFirstListing = () -> ch.convert("key_col");
+
+        groupAndExecute(ch, new ArrayList<>(Arrays.asList(insert(POST, 1), insert(POST, 2))));
+
+        assertEquals(0, ch.alters(), "the other worker converted the column; no second ALTER: " + ch.executed);
+        assertKeyColBound(assertEveryPlaceholderBound(ch, 2));
+    }
+
+    @Test
+    @DisplayName("enforcement finds the column already converted by another worker: re-read and bound, no ALTER")
+    public void enforcementFindingTheColumnAlreadyConvertedReReadsAndBinds() throws Exception {
+        FakeClickHouse ch = new FakeClickHouse();
+        ch.columns.add(1, new String[]{"key_col", "String", "MATERIALIZED"});
+        // The caller's default_kind lookup reads MATERIALIZED; another worker's
+        // ALTER lands before enforcement re-reads the kind.
+        ch.afterFirstKindRead = () -> ch.convert("key_col");
+
+        groupAndExecute(ch, new ArrayList<>(Arrays.asList(insert(POST, 1), insert(POST, 2))));
+
+        assertEquals(0, ch.alters(), "the other worker converted the column; no second ALTER: " + ch.executed);
+        assertKeyColBound(assertEveryPlaceholderBound(ch, 2));
+    }
+
+    @Test
+    @DisplayName("workers that see the same MATERIALIZED column at once issue one ALTER and all succeed")
+    public void concurrentWorkersIssueOneConversionAndAllSucceed() throws Exception {
+        final int workers = 5;
+        final FakeClickHouse ch = new FakeClickHouse();
+        ch.columns.add(1, new String[]{"key_col", "String", "MATERIALIZED"});
+        // An ALTER is held until every worker has read MATERIALIZED twice (its
+        // own lookup and enforcement's), or 2 s pass: unserialised workers all
+        // reach their ALTER before any conversion lands.
+        ch.alterGateReads = 2 * workers;
+        ch.alterGateMillis = 2000;
+
+        final CountDownLatch start = new CountDownLatch(1);
+        final List<Throwable> failures = Collections.synchronizedList(new ArrayList<>());
+        final List<String> templates = Collections.synchronizedList(new ArrayList<>());
+        List<Thread> threads = new ArrayList<>();
+        for (int w = 0; w < workers; w++) {
+            final int id = w + 1;
+            Thread t = new Thread(() -> {
+                try {
+                    start.await();
+                    List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> segments =
+                            new ArrayList<>();
+                    new GroupInsertQueryWithBatchRecords("_version", null, "is_deleted").groupQueryWithRecords(
+                            new ArrayList<>(Collections.singletonList(insert(POST, id))), segments,
+                            new HashMap<TopicPartition, Long>(), config(), TABLE, DB, ch.connection(),
+                            cachedWithoutKeyCol());
+                    for (MutablePair<String, Map<String, Integer>> key : segments.get(0).keySet()) {
+                        templates.add(key.getLeft());
+                    }
+                } catch (Throwable e) {
+                    failures.add(e);
+                }
+            }, "worker-" + id);
+            threads.add(t);
+            t.start();
+        }
+        start.countDown();
+        for (Thread t : threads) {
+            t.join(30_000);
+            assertFalse(t.isAlive(), t.getName() + " did not finish");
+        }
+
+        assertTrue(failures.isEmpty(), "every worker's batch is grouped; none reports the converted column "
+                + "as missing: " + failures);
+        assertEquals(1, ch.alters(), "one conversion per table, not one per worker: " + ch.executed);
+        assertEquals(workers, templates.size());
+        for (String sql : templates) {
+            assertTrue(sql.contains("`key_col`"), "every worker binds the converted column: " + sql);
+        }
     }
 }
