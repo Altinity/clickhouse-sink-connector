@@ -52,12 +52,18 @@ Main conclusions (2.11.0):
   contradicts 11.02 §3.9.
 
 **Fixed since 2.11.0** (this spec's section 3 describes the fixed behaviour; the conclusions above describe
-2.11.0): D-13.06-1 to -8, -10, -14 and -25. Both drivers now run their side scripts as argv lists without a
-shell, parse the side output in Python (exactly one `Checksum for table` line for the expected table), relay
-every side WARNING/ERROR line, give every table an explicit verdict (`MATCH`, `DIFFERENT`, `EMPTY` or
-`ERROR`) and exit 1 when any table has no verdict. `EMPTY` (zero rows on both sides) is a WARNING with exit 0
-unless `--fail_on_empty` is passed. The packaged driver runs the packaged side modules with its own
-interpreter, passes the full DateTime64 range to both sides, and excludes JSON on both sides by default.
+2.11.0): D-13.06-1 to -8, -10, -14, -17, -18 and -25 to -27. Both drivers now run their side scripts as argv
+lists without a shell, parse the side output in Python (exactly one `Checksum for table` line for the expected
+table), relay every side ERROR line (that side then gives no result) and every side WARNING line (at INFO, as a
+side note), give every table an explicit verdict (`MATCH`, `DIFFERENT`, `EMPTY` or `ERROR`) and exit 1 when
+any table has no verdict. `EMPTY` (zero rows on both sides) is logged at INFO with exit 0 unless
+`--fail_on_empty` is passed: in the driver log, WARNING is reserved for `Checksum difference`, the line
+scheduled jobs scan for (§3.17). The packaged driver runs the packaged side modules with its own interpreter,
+passes the full DateTime64 range to both sides, and excludes JSON on both sides by default. The manual paths
+work in both copies: `--no_wc` (driver, MySQL side, both count runners), `--exclude_columns` as
+space-separated words or comma lists alike on both sides, the ClickHouse count without
+`--include_partitions_regex`, and `--debug_output`, which writes the per-row files and still prints the
+checksum line.
 
 ## 2. Codebase Mapping on 2.11.0
 
@@ -144,10 +150,13 @@ Each side script writes its log to **stdout** (`logging.StreamHandler(sys.stdout
 code is the side script's own `str(process.poll())`. A side that cannot be started (`OSError`) gives rc `127`.
 `run_quick_safe_checksum` then:
 
-- relays every side line containing ` - WARNING - `, ` - ERROR - ` or ` - CRITICAL - ` into the driver log at
-  the same level, prefixed with host and table (`relay_side_messages`);
-- on rc 0, parses the output with `parse_checksum` (§3.8). An unparseable output logs the last 20 side lines at
-  ERROR and returns `(host, table, None, None)`;
+- relays every side line containing ` - ERROR - ` or ` - CRITICAL - ` at ERROR, and every side line containing
+  ` - WARNING - ` at INFO as `<host> <table> side note: <line>`, with the level word removed and any other
+  `WARNING` lowered (`relay_side_messages`, `side_note_text`, §3.17);
+- on rc 0 when the side logged an ERROR or CRITICAL line, logs `<argv>. logged an ERROR although it exited 0`
+  and the last 20 side lines at ERROR, and returns `None`, so the table is `ERROR`;
+- otherwise on rc 0, parses the output with `parse_checksum` (§3.8). An unparseable output logs the last 20 side
+  lines at ERROR and returns `(host, table, None, None)`;
 - on rc ≠ 0, logs `<argv>. failed with return code <rc>` and the last 20 side lines at ERROR, and returns
   `None`.
 
@@ -173,9 +182,9 @@ from `sink-connector/python` with that directory on `PYTHONPATH` (§3.1). A miss
 | `--threads_per_table` | int, 1 | Forwarded to the MySQL side (PK-range chunks, §3.9) | yes |
 | `--chunk_size` | int, 10000 | Not forwarded (the MySQL side uses its own default 10000) | **ignored** |
 | `--threads` | int, 1 | Size of the per-table pool, i.e. the number of tables, and therefore of **locks**, in flight. Also forwarded as `--threads=N` to both sides, where it sizes a per-table pool over the one matched table | yes |
-| `--debug` | flag | Root logger DEBUG. Logs each command and the raw captured stdout | yes |
-| `--debug_output` | flag | Forwarded to both sides, which then print **no** checksum line, so every table fails (D-13.06-27) | yes, breaks the run |
-| `--no_wc` | flag | `get_tables_from_regex` returns `[[regex]]`. `run_config` then calls `.fetchall()` on a list: AttributeError, exit 1 (D-13.06-26) | crashes |
+| `--debug` | flag | Root logger DEBUG. Logs each command and the captured side output line by line, through the same WARNING filter as the side notes (§3.17) | yes |
+| `--debug_output` | flag | Forwarded to both sides, which write their per-row strings to `out.<table>.mysql.txt` / `out.<table>.ch.txt` in the cwd and still print the checksum line, so the verdict is unaffected. Before the fix they printed no checksum line and every table failed (D-13.06-27, fixed) | yes |
+| `--no_wc` | flag | `--tables_regex` is the table name: `get_tables_from_regex` returns `[[regex]]` and `run_config` takes it as that one table. Before the fix it called `.fetchall()` on the list: AttributeError, exit 1 (D-13.06-26, fixed) | yes |
 | `--where` | str | ANDed into both sides' where, inside a double-quoted shell word (§3.13) | yes |
 | `--lock_tables_on_source` | flag | §3.7 | yes |
 | `--sleep_after_lock` | int, 3 | Seconds slept after the lock, before the sides start | yes |
@@ -184,7 +193,7 @@ from `sink-connector/python` with that directory on `PYTHONPATH` (§3.1). A miss
 | `--include_floating_point_columns`, `--include_json_columns` | flag | Forwarded to both sides | yes |
 | `--lock_wait_timeout` | int, 30 | `SET SESSION lock_wait_timeout` before `LOCK TABLES` | yes |
 | `--fail_on_lock_timeout` | flag | A lock timeout aborts the run instead of skip-and-warn | yes |
-| `--fail_on_empty` | flag | A table with verdict `EMPTY` (zero rows on both sides) makes the run exit 1. Default: WARNING only, exit 0 (§3.8) | yes |
+| `--fail_on_empty` | flag | A table with verdict `EMPTY` (zero rows on both sides) makes the run exit 1. Default: INFO only, exit 0 (§3.8) | yes |
 
 The packaged driver (PT404-445) has the same flags **minus** `--source_timezone`, `--binary_encoding`, the two
 include flags, `--lock_wait_timeout` and `--fail_on_lock_timeout`. It has `--fail_on_empty`. Their effects
@@ -394,19 +403,20 @@ logs the table's verdict:
   order (the packaged `compute_checksum` now also keeps submission order). The source is identified by that
   **position**, never by its host string, so equal MySQL and replica host strings still get a verdict
   (D-13.06-4, fixed).
-- `ERROR`: the number of results is not `1 + len(replica_hosts)`, or any result is `None` (side failed) or
-  has a `None` md5 or count (unparseable output). Logged at ERROR as `Checksum ERROR for <db.t>: ...; no
+- `ERROR`: the number of results is not `1 + len(replica_hosts)`, or any result is `None` (side failed,
+  including a side that logged an ERROR line while exiting 0) or has a `None` md5 or count (unparseable output). Logged at ERROR as `Checksum ERROR for <db.t>: ...; no
   verdict`. A failed side is never compared, so `(None, None)` can no longer equal `(None, None)`
   (D-13.06-1, fixed).
 - `DIFFERENT`: some replica's `(md5, count)` differs from the source's (`!=`). Logged as
   `WARNING Checksum difference : <replica tuple> to <source tuple>`, as before.
-- `EMPTY`: all equal and the count is 0. Logged as `WARNING EMPTY on both sides for <db.t>: 0 rows compared
-  ...` (D-13.06-5, fixed).
+- `EMPTY`: all equal and the count is 0. Logged as `INFO EMPTY on both sides for <db.t>: 0 rows compared
+  ...` (D-13.06-5, fixed). INFO, not WARNING: empty partitions are normal in date-partitioned runs, and WARNING
+  is reserved for `Checksum difference` (§3.17).
 - `MATCH`: all equal with rows. Logged as `INFO No difference for <db.t>`, as before.
 
 At the end of the run `report_run_summary` logs `Run summary: N table(s) verified: a MATCH, b DIFFERENT,
-c EMPTY, d ERROR`, then a WARNING `EMPTY on both sides: <n> table(s) compared 0 rows ...: <tables>` when any
-table is EMPTY, and an ERROR `<n> table(s) have NO verdict ...: <tables>` when any is ERROR. It returns the
+c EMPTY, d ERROR`, then `EMPTY on both sides: <n> table(s) compared 0 rows ...: <tables>` when any table is
+EMPTY (at INFO; at ERROR with `--fail_on_empty`, which fails the run), and an ERROR `<n> table(s) have NO verdict ...: <tables>` when any is ERROR. It returns the
 exit code: 1 when any table is `ERROR`, or when any is `EMPTY` and `--fail_on_empty` is set; otherwise 0. A
 lock-timeout skip keeps its own `COVERAGE GAP` summary (legacy).
 
@@ -418,10 +428,13 @@ Outcome table (`exit` is the process exit code of the driver):
 | A replica differs | `WARNING Checksum difference`, exit 0 (FM-11.02-1, unchanged) | same |
 | One side script exits non-zero (connection refused, SQL error, script or module not found) | `ERROR` for that table, the other tables still get verdicts, exit 1 | same (before the fix: `Checksum difference`, exit 0) |
 | **Both** sides fail | `ERROR`, exit 1 | same (before the fix: **`No difference`, exit 0**, D-13.06-1) |
-| Side exits 0 but prints no checksum line (table missing on the replica, `--debug_output`) | `ERROR`, exit 1 (before the fix the legacy driver reported `Checksum difference`, exit 0, for a missing replica table) | same |
+| Side exits 0 but prints no checksum line (table missing on the replica) | `ERROR`, exit 1 (before the fix the legacy driver reported `Checksum difference`, exit 0, for a missing replica table) | same |
+| Side logs an ERROR or CRITICAL line but exits 0 | `ERROR`, exit 1 | same |
+| Side logs a WARNING (columns not compared, clamped values, SQL or client-library warnings) | INFO side note, verdict unchanged | same |
+| `--debug_output` | normal verdict, per-row files written by both sides (before the fix: `ERROR` for every table, D-13.06-27) | same |
 | A name containing "checksum" in other side log lines | parsed correctly, normal verdict | same |
 | MySQL host string equals a replica host | normal verdict | same |
-| Filter matches 0 rows on both sides | `EMPTY` WARNING plus summary WARNING, exit 0; exit 1 with `--fail_on_empty` | same |
+| Filter matches 0 rows on both sides | `EMPTY` at INFO plus an INFO summary line, exit 0; exit 1 (summary at ERROR) with `--fail_on_empty` | same |
 | Table name contains `$` | that table is compared (`^orders[$]archive$`) | same |
 | Source lock timeout | `COVERAGE GAP` WARNINGs, exit 0, or 1 with `--fail_on_lock_timeout` | waits for the server `lock_wait_timeout`, then `Exception in main thread`, exit 1 |
 | Partition expression with `(` or a space | passed as one argv word; the side runs | same |
@@ -433,7 +446,7 @@ Outcome table (`exit` is the process exit code of the driver):
 **Can a run end with exit 0 while a table was skipped, errored or compared zero rows?** Only in these cases:
 
 - lock-timeout skip (designed, named in the log and in the `COVERAGE GAP` summary);
-- zero rows on both sides without `--fail_on_empty` (named in the `EMPTY` WARNINGs and the summary);
+- zero rows on both sides without `--fail_on_empty` (named in the `EMPTY` lines and the summary);
 - `--ignore_tables_regex`, which is not reachable from the driver;
 - a table missing on MySQL, which is never enumerated.
 
@@ -450,15 +463,15 @@ Outcome table (`exit` is the process exit code of the driver):
 | `--where` | none | aggregate where, `{partition_expression}` substituted (§3.13) | yes |
 | `--order_by` | none | parsed, never used | ignored |
 | `--ignore_tables_regex` | none | `re.match(..., IGNORECASE)`. A matched table prints nothing and exits 0 | yes |
-| `--no_wc` | flag | `[[regex]]` then `.mappings()` → AttributeError, exit 1 | crashes |
-| `--debug_output` | flag | Writes the per-row strings to `out.<table>.mysql.txt` and prints **no** checksum | yes |
+| `--no_wc` | flag | `--tables_regex` is the table name, no catalog query. Before the fix `.mappings()` on the `[[regex]]` list raised AttributeError, exit 1 (D-13.06-26, fixed) | yes |
+| `--debug_output` | flag | Also writes the per-row strings to `out.<table>.mysql.txt` (truncated per run, appended per chunk; `--debug_limit` applies to this query only). The checksum line is still printed. Before the fix it printed **no** checksum (D-13.06-27, fixed) | yes |
 | `--debug_limit` | none | `limit N` on the debug query only | yes |
 | `--binary_encoding` | `hex` (choices) | §3.11 | yes |
 | `--min_date_value` / `--max_date_value` | `1900-01-01` / `2299-12-31` | DATE clamp (not counted or warned, D-13.06-34) | yes |
 | `--source_timezone` | `UTC` | DATETIME clamp bounds shifted into the zone | yes |
 | `--min_datetime_value` / `--max_datetime_value` | `DATETIME_MIN` / `DATETIME_MAX` | canonicalised and confined (11.02 §3.4) | yes |
 | `--debug` | flag | DEBUG logging | yes |
-| `--exclude_columns` | `nargs='+'`, `[]` | Each token is split on `,` (LM287-288) | yes |
+| `--exclude_columns` | `nargs='+'`, `[]` | Space-separated words and comma-separated lists alike: each token is split on `,` and stripped (`parse_exclude_columns`, the same parser as the ClickHouse side, D-13.06-17) | yes |
 | `--threads_per_table` | 1 | > 1 with an integer PK: PK-range chunks in parallel | yes |
 | `--chunk_size` | 10000 | rows per chunk, estimated from `EXPLAIN` rows | yes |
 | `--threads` | 1 | tables in parallel | yes |
@@ -517,10 +530,10 @@ argparse errors. A credential `assert` failure exits 1 with a raw traceback, out
 | `--order_by` | none | parsed, unused | ignored |
 | `--ignore_tables_regex` | none | `re.match` IGNORECASE → table skipped silently | yes |
 | `--no_wc` | flag | `--tables_regex` is used as the table name | yes |
-| `--debug_output` / `--debug_limit` | flag / none | Per-row strings to `out.<table>.ch.txt`, **no** checksum line | yes |
+| `--debug_output` / `--debug_limit` | flag / none | Per-row strings to `out.<table>.ch.txt` (`--debug_limit` applies to that query only), and the checksum line is still printed. Before the fix there was **no** checksum line (D-13.06-27, fixed) | yes |
 | `--binary_encoding` | `hex` (choices) | §3.11 | yes |
 | `--hex_columns` | `nargs='+'`, `[]` | Joined with `,` and split again. Requires `raw`, else ValueError (exit 1) | yes |
-| `--exclude_columns` | `nargs='+'`, `['_sign,_version,is_deleted,_is_deleted']` | Parsed as `"','".join(tokens).split(',')` (LC241-242). Correct for **one** comma-separated token. With several tokens the names get stray quotes and nothing is excluded (reproduced, D-13.06-17) | one token only |
+| `--exclude_columns` | `nargs='+'`, `['_sign,_version,is_deleted,_is_deleted']` | `parse_exclude_columns`: space-separated words and comma-separated lists alike, as on the MySQL side. Before the fix it was `"','".join(tokens).split(',')`, so several tokens got stray quotes and nothing was excluded (D-13.06-17, fixed) | yes |
 | `--threads` | 1 | tables in parallel | yes |
 | `--source_timezone`, `--timestamp_columns` | `UTC`, `''` | 11.02 §3.4 | yes |
 | `--min_datetime_value` / `--max_datetime_value` | `DATETIME_MIN` / `DATETIME_MAX` | 11.02 §3.4 | yes |
@@ -617,7 +630,7 @@ both copies.
   - Result: very large tables give a loud MySQL failure or a DIFFERENT, never a false match. Spec 11.02 §6
     item 2 ("two's complement in both engines") is inaccurate for MySQL (D-13.06-35).
 - An empty result is `md5('0#0#0#0#0#') count 0` on both sides. Nothing distinguishes "empty table" from
-  "filter matched nothing", so the driver reports both as verdict `EMPTY` with a WARNING, never as a match
+  "filter matched nothing", so the driver reports both as verdict `EMPTY` (logged at INFO), never as a match
   (§3.8, D-13.06-5 fixed).
 
 ### 3.13 `--where`, `--partition_date` and `{partition_expression}` handling
@@ -648,7 +661,7 @@ both copies.
      item 5).
   3. A `KEY`, `HASH` or `LIST` partition on an integer column gives `id=20260928` on MySQL and
      `id=toDate('2026-09-28')` on ClickHouse. Both typically select zero rows, which is now verdict `EMPTY`
-     with a WARNING (exit 1 with `--fail_on_empty`) instead of "No difference" (D-13.06-5).
+     (exit 1 with `--fail_on_empty`) instead of "No difference" (D-13.06-5).
 - **Quoting.** No shell is involved (§3.6.1).
 
 ### 3.14 Count runners
@@ -663,8 +676,8 @@ table, `Count for table <db>.<table> = <n>`, and the operator compares the lines
 - `--include_tables_regex` (default `.`; note the name differs from the ClickHouse runner's `--tables_regex`),
   `--exclude_tables_regex`, `--include_partitions_regex`, `--non_partitioned_tables_only`, `--where`;
 - `--threads` (tables), `--threads_per_table` (partitions in parallel);
-- `--order_by`, `--no_wc`, `--debug_output`, `--debug_limit` and `--exclude_columns` are parsed and unused.
-  `--no_wc` crashes.
+- `--no_wc` takes `--include_tables_regex` as the table name (it crashed before, D-13.06-26, fixed);
+  `--order_by`, `--debug_output`, `--debug_limit` and `--exclude_columns` are parsed and unused.
 
 Behaviour per table:
 
@@ -685,20 +698,24 @@ Faults:
 
 **ClickHouse count** (`clickhouse_table_count.py`, both copies, identical apart from imports). Flags:
 `--clickhouse_host`, `--clickhouse_database` and `--tables_regex` (all required), the connection flags,
-`--include_partitions_regex`, `--where`, `--ignore_tables_regex`, `--no_wc`, `--debug` and `--threads`.
+`--include_partitions_regex`, `--where`, `--ignore_tables_regex`, `--no_wc`, `--debug` and `--threads`. No
+option compares two hosts (there is no `--dr_host`): run the runner once per host and compare the lines.
 
 Behaviour per table:
 
-1. Read `select distinct partition from system.parts where ... active and
-   match(partition,'<include_partitions_regex>')`.
-2. For each partition, run `select count(*) cnt from <db>.<table> final where 1=1 [and <partition_key> =
-   '<partition>'] [and <where>] settings do_not_merge_across_partitions_select_final=1`, then sum.
+1. Without `--include_partitions_regex`: one `select count(*) cnt from <db>.<table> final where 1=1 [and
+   <where>] settings do_not_merge_across_partitions_select_final=1` over the whole table.
+2. With it: read `select distinct partition from system.parts where ... active and
+   match(partition,'<include_partitions_regex>')`, run the same count per partition with `and <partition_key> =
+   '<partition>'` (no filter when the partition key is empty), then sum. With `--no_wc` (`--tables_regex` is
+   the table name) the partition key is read from `system.tables`.
 
 Faults:
 
-- With the default `--include_partitions_regex` (None), the f-string emits `match(partition,'None')`. No
-  partition matches, so **every table prints `Count for table ... = 0`** (reproduced for both copies,
-  D-13.06-18).
+- Fixed: with the default `--include_partitions_regex` (None) the f-string emitted `match(partition,'None')`.
+  No partition matched, so **every table printed `Count for table ... = 0`** (reproduced for both copies,
+  D-13.06-18). The table is now counted whole. `--no_wc` raised IndexError (its `[[regex]]` row has no
+  partition key) and now counts the named table.
 - The partition filter is added only when a regex is given and the table is partitioned. If the regex matched
   partitions without a filter, each partition would count the whole table.
 - The per-partition-`FINAL` setting is always on (11.02 §3.7 explains why that over-counts rows moved between
@@ -711,7 +728,9 @@ Faults:
   §3.9: `checksum_from_aggregate`, `canonical_datetime_bound`, `datetime_bounds`, `clamp_datetime_expression`,
   `clamped_datetime_flag`, `clamped_count_expression`, `validate_timezone`, `shift_datetime_bounds`,
   `warn_not_compared` and `parse_column_list`. Nothing to add, except that the WARNINGs of `warn_not_compared`
-  and the clamp WARNING are now relayed into the driver log by both drivers (D-13.06-8, fixed).
+  and the clamp WARNING are now relayed into the driver log by both drivers, at INFO as side notes (D-13.06-8,
+  fixed; §3.17). `parse_exclude_columns` (added with D-13.06-17) turns the `--exclude_columns` words into one
+  list of names for both legacy sides; the packaged sides inline the same rule.
 - **`db/mysql.py` / `ch_sink_tools/db/mysql.py`** (Spec 13.02). Used here:
   - `get_mysql_connection`. Legacy URL-encodes with `quote_plus`, so a password containing a space arrives as
     `+` after SQLAlchemy decoding (reproduced: `'a b'` → `'a+b'`). Packaged does not encode, so `p@ss:w/rd`
@@ -797,9 +816,21 @@ Faults:
 
 - **Log record factory.** Every runner installs a log-record factory that sets `record.user = "me"` at import
   time, which is a global side effect.
-- **Side output.** The driver relays every side WARNING, ERROR and CRITICAL line, logs the last 20 side lines
-  at ERROR when a side fails or its output cannot be parsed, and logs the command and the whole side output at
-  DEBUG.
+- **Log-level contract (both drivers).** In the driver log, WARNING is reserved for `Checksum difference`,
+  whose message format is unchanged. Scheduled jobs tee the driver's stdout to a file and fail when any line
+  contains the word WARNING; that scan exists to catch differences. So everything a clean run logs is INFO or
+  below: `No difference`, `EMPTY on both sides`, the run summary and the side notes. A side WARNING (columns not
+  compared, clamped values, SQL or client-library warnings) is relayed at INFO as `<host> <table> side note:
+  ...`, with the level word removed and any other `WARNING` lowered (`side_note_text`). A side ERROR or
+  CRITICAL line is relayed at ERROR and voids that side's result, so the table is `ERROR` and the run exits 1.
+  `--debug` dumps the side output line by line through the same filter. Pre-existing driver WARNINGs are
+  unchanged: the lock-timeout `COVERAGE GAP` lines, `Failed to close connection`, and the `SQL warnings` that
+  `execute_mysql` logs when the client library raises a Python warning on the driver's own catalog or lock
+  queries. Side scripts run standalone still log their notices at WARNING. Pinned by
+  `sink-connector/python/db_compare/tests/test_checksum_job_log_contract.py::TestScheduledJobLogContract`.
+- **Side output.** The driver relays side ERROR and CRITICAL lines at ERROR and side WARNING lines at INFO
+  (above), logs the last 20 side lines at ERROR when a side fails or its output cannot be parsed, and logs the
+  command and the side output at DEBUG.
 - **Resources.** Per table, the legacy driver holds:
   - one lock connection (when locking);
   - one metadata connection per database, never closed;
@@ -815,8 +846,8 @@ Faults:
   is the operational definition of "same value". The structural false matches D-13.06-1 to -7 are fixed. The
   packaged copy still does not preserve I7 (its renderings report DIFFERENT for equal values, D-13.06-20).
 - **I9 (Loud Failure)**. Violated: a difference exits 0 (FM-11.02-1). Preserved since the fixes: failed or
-  unparseable sides are `ERROR` with exit 1 (D-13.06-1, -2), side WARNINGs are relayed (D-13.06-8), and
-  zero-row comparisons are an explicit `EMPTY` WARNING, exit 1 with `--fail_on_empty` (D-13.06-5).
+  unparseable sides are `ERROR` with exit 1 (D-13.06-1, -2), side WARNINGs are relayed as side notes (D-13.06-8),
+  and zero-row comparisons are an explicit `EMPTY` verdict, exit 1 with `--fail_on_empty` (D-13.06-5).
 - **I14 (Bounded Bookkeeping)**. Not applicable. These are operator tools that scan replicated data on purpose,
   outside the connector.
 - **I15 (Bounded, Declared Recovery)**. Every failure mode below declares Detection, Recovery and RTO. Most
@@ -837,7 +868,7 @@ The suite was run on 2026-10-01 from `sink-connector/python` with the toolset ve
   - `sink-connector/python/db_compare/tests/test_checksum_fidelity.py::TestInstantComparison::test_driver_resolves_the_source_zone_from_mysql`
   - `sink-connector/python/db_compare/tests/test_checksum_fidelity.py::TestBinaryEncoding::test_driver_passes_the_encoding_to_both_sides_and_raw_columns_only_in_raw_mode`
   - `sink-connector/python/db_compare/tests/test_checksum_fidelity.py::TestEndToEndChecksum::test_flipped_clickhouse_value_reports_different`
-  - `sink-connector/python/db_compare/tests/test_checksum_fidelity.py::TestRemovedDeadPaths::test_exclude_columns_nargs_match_on_both_sides`. It checks `nargs` only, not the multi-token parse of D-13.06-17.
+  - `sink-connector/python/db_compare/tests/test_checksum_fidelity.py::TestRemovedDeadPaths::test_exclude_columns_nargs_match_on_both_sides`. It checks `nargs` only. The multi-token parse of D-13.06-17 is covered by `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestExcludeColumnsForms`.
 - Lock lifecycle (§3.7.1):
   - `sink-connector/python/db_compare/tests/test_table_locking.py::TestComputeChecksumLockLifecycle::test_lock_released_on_mysql_checksum_exception`
   - `sink-connector/python/db_compare/tests/test_table_locking.py::TestLockHoldDuration::test_lock_held_during_both_checksums`
@@ -852,12 +883,17 @@ The suite was run on 2026-10-01 from `sink-connector/python` with the toolset ve
   - `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestRunExitCode::test_lock_timeout_skips_the_table_and_names_it_in_the_summary`
   - `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestVerdictOnUnparseableOutput::test_parse_checksum_refuses_more_than_one_line`
   - `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestVerdictOnUnparseableOutput::test_both_sides_unparseable_is_never_reported_equal`
-- Fixed false-match paths (added with the fixes; the suite then gives 271 passed, 4 skipped over
-  `db_compare/tests db_load/tests db_dump/tests tests`):
+- Fixed false-match paths and manual paths (added with the fixes; the suite then gives 296 passed, 4 skipped
+  over `db_compare/tests db_load/tests db_dump/tests tests`):
   - `sink-connector/python/db_compare/tests/test_checksum_verdicts.py` (legacy driver: failed sides, "checksum"
-    in names, argv quoting with a stand-in `python`, equal host strings, `EMPTY`, relayed WARNINGs)
+    in names, argv quoting with a stand-in `python`, equal host strings, `EMPTY`, side notes, side ERROR lines)
   - `sink-connector/python/db_compare/tests/test_packaged_checksum_verdicts.py` (packaged driver and sides:
     side modules from a foreign cwd, verdicts, datetime bounds, JSON coverage, read-only ClickHouse side)
+  - `sink-connector/python/db_compare/tests/test_checksum_job_log_contract.py` (the legacy driver's main() with the scheduled jobs' flags and real
+    side processes against a stand-in `python`: a clean run with an `EMPTY` table and side notes logs no
+    WARNING and exits 0; a difference logs exactly the `Checksum difference` WARNING)
+  - `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py` (`--no_wc`, `--exclude_columns` forms, the ClickHouse count,
+    `--debug_output`; both copies)
 - Where quoting (§3.13):
   - `sink-connector/python/db_compare/tests/test_top_level_where_quoting.py::ClickHouseWhereQuotingTestCase::test_partition_date_uses_plain_quotes`
   - `sink-connector/python/db_compare/tests/test_top_level_where_quoting.py::WhereOverrideNormalizationTestCase::test_legacy_escaped_quotes_are_folded`
@@ -867,9 +903,8 @@ The suite was run on 2026-10-01 from `sink-connector/python` with the toolset ve
 What the tests do **not** reach:
 
 - the packaged renderings against the fidelity fixtures, and the packaged count runners;
-- both count runners;
+- the MySQL count runner;
 - SQLAlchemy `Row` objects (every fake returns dicts);
-- the multi-token `--exclude_columns`;
 - `database_override_map` whitespace;
 - the YAML `ignored_columns` and `table_include_list` parsing.
 
@@ -881,22 +916,30 @@ These tests do not run in CI (FM-11.05-3).
    `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestFailedSidesAreErrors::test_both_sides_failing_exits_non_zero_and_never_reports_equal`.
 2. `analyze_differences` logs an explicit verdict, or raises, when the source host string is also a replica
    host. Covered: `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestSameHostString::test_equal_host_strings_still_get_a_difference_verdict`.
-3. A zero count on both sides is logged as a WARNING ("compared 0 rows"). Covered:
-   `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestEmptyOnBothSides::test_empty_is_a_warning_and_exit_zero_by_default`.
+3. A zero count on both sides is logged as the verdict `EMPTY on both sides` ("0 rows compared"), at INFO so
+   that scheduled jobs failing on WARNING keep passing. Covered:
+   `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestEmptyOnBothSides::test_empty_is_logged_at_info_and_exit_zero_by_default`.
 4. The driver command line, executed with a stand-in `python` that prints its argv, delivers
    `--tables_regex`, `--where` and `--partition_key` byte-identical to their inputs for `$`, backticks, quotes
    and parentheses. Covered (argv list, no shell):
    `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestArgumentsReachTheSideUnchanged::test_clickhouse_side_receives_table_where_and_function_partition_key`.
 5. A table, database or column name containing `checksum` still yields one parsed result per side. Covered:
    `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestChecksumWordInNames::test_differing_data_with_checksum_named_column_reports_a_difference`.
-6. The driver surfaces every side-script WARNING line (coverage, clamp). Covered:
-   `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestSideWarningsReachTheDriverLog::test_side_warnings_are_logged_by_the_driver`.
+6. The driver surfaces every side-script WARNING line (coverage, clamp) as an INFO side note, and a clean run
+   logs no WARNING at all. Covered:
+   `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestSideWarningsReachTheDriverLog::test_side_warnings_are_logged_by_the_driver`
+   and `sink-connector/python/db_compare/tests/test_checksum_job_log_contract.py::TestScheduledJobLogContract::test_clean_run_with_empty_table_and_side_notes_logs_no_warning`.
 7. The driver row loop runs over real SQLAlchemy `Row` objects of the installed major version.
 8. A packaged-copy test, or the removal of the packaged MySQL runners, pins which copy `ch-mysql-checksum`
    executes. The driver must not depend on the cwd. Covered:
    `sink-connector/python/db_compare/tests/test_packaged_checksum_verdicts.py::TestPackagedSidesAndFailures::test_side_module_starts_from_a_foreign_cwd_without_pythonpath`.
-9. The ClickHouse count with no `--include_partitions_regex` counts the whole table.
-10. `--exclude_columns a b` and `--exclude_columns a,b` exclude the same columns.
+9. The ClickHouse count with no `--include_partitions_regex` counts the whole table. Covered:
+   `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestClickHouseCount::test_legacy` (and `::test_packaged`).
+10. `--exclude_columns a b` and `--exclude_columns a,b` exclude the same columns. Covered:
+    `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestExcludeColumnsForms::test_legacy_clickhouse_side_space_separated_recipe`.
+11. `--no_wc` and `--debug_output` work in every runner that has them. Covered:
+    `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestNoWc::test_legacy_driver` and
+    `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestDebugOutput::test_legacy_mysql_side` (and the other tests of both classes).
 
 ### 5.3 Offline reproduction scripts used by this spec
 
@@ -997,9 +1040,9 @@ cross-referenced where this spec adds a trigger or corrects them.
   - **Recovery**: check the counts in the per-host INFO lines. Re-run with a corrected filter, or without
     `--partition_date` for non-date-partitioned tables.
   - **RTO**: one re-run (unmeasured).
-  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestEmptyOnBothSides::test_empty_is_a_warning_and_exit_zero_by_default`
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestEmptyOnBothSides::test_empty_is_logged_at_info_and_exit_zero_by_default`
     (and `...::test_fail_on_empty_makes_it_non_zero`).
-  - **FIXED**: D-13.06-5. Verdict `EMPTY on both sides` with a per-table and a summary WARNING; exit 0 by default, exit 1 with `--fail_on_empty`.
+  - **FIXED**: D-13.06-5. Verdict `EMPTY on both sides`, logged per table and in the run summary at INFO (WARNING is reserved for `Checksum difference`, §3.17); exit 0 by default, exit 1 with `--fail_on_empty`.
 
 - **FM-13.06-6 Packaged driver hides every pre-1969 datetime difference**
   - **Trigger**: any packaged-driver run on a table with `DATETIME` values before `1969-12-31 18:00:00`.
@@ -1039,7 +1082,7 @@ cross-referenced where this spec adds a trigger or corrects them.
   - **Recovery**: run the side scripts standalone for tables with float, JSON or out-of-range datetime columns.
   - **RTO**: one standalone pair per table (unmeasured).
   - **Test**: `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestSideWarningsReachTheDriverLog::test_side_warnings_are_logged_by_the_driver`.
-  - **FIXED**: D-13.06-8. Both drivers relay every side WARNING/ERROR/CRITICAL line into their log.
+  - **FIXED**: D-13.06-8. Both drivers relay every side ERROR/CRITICAL line at ERROR (that side gives no result) and every side WARNING line at INFO as a side note (§3.17).
 
 - **FM-13.06-9 The tools crash on SQLAlchemy 2.x**
   - **Trigger**: a fresh install from `requirements.txt` or `pyproject.toml` (`sqlalchemy>=1.4` resolves to
@@ -1150,8 +1193,9 @@ cross-referenced where this spec adds a trigger or corrects them.
   - **Blast radius**: noise. The FM-11.02-9 history-table recovery cannot work as written.
   - **Recovery**: pass one comma-separated token (`--exclude_columns a,b`).
   - **RTO**: one re-run.
-  - **Test**: GAP: acceptance criterion 10.
-  - **DEFECT**: D-13.06-17.
+  - **Test**: `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestExcludeColumnsForms::test_legacy_clickhouse_side_space_separated_recipe`
+    (and the packaged and MySQL-side tests of that class).
+  - **FIXED**: D-13.06-17. Both sides parse `--exclude_columns` words and comma lists alike (`parse_exclude_columns` in the legacy copy).
 
 - **FM-13.06-17 Count runners print wrong counts**
   - **Trigger**: `clickhouse_table_count.py` without `--include_partitions_regex`; `mysql_table_count.py` on a
@@ -1163,8 +1207,9 @@ cross-referenced where this spec adds a trigger or corrects them.
   - **Recovery**: pass `--include_partitions_regex .` to the ClickHouse count. For sub-partitioned MySQL tables,
     use `select count(*)` directly.
   - **RTO**: one re-run (seconds to minutes, unmeasured).
-  - **Test**: GAP: acceptance criterion 9, and a sub-partition fixture for the MySQL count.
-  - **DEFECT**: D-13.06-18 and D-13.06-19.
+  - **Test**: GAP: a sub-partition fixture for the MySQL count. The ClickHouse half (D-13.06-18, fixed) is
+    pinned by `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestClickHouseCount::test_legacy`.
+  - **DEFECT**: D-13.06-19. (D-13.06-18 is fixed: without `--include_partitions_regex` the ClickHouse count counts the whole table.)
 
 - **FM-13.06-18 Packaged renderings report DIFFERENT for equal tables**
   - **Trigger**: packaged sides, or the packaged driver's flags, on tables with `bit(1)`, `time`, `timestamp`
@@ -1214,10 +1259,12 @@ cross-referenced where this spec adds a trigger or corrects them.
   - **Blast radius**: no verdict. No false result.
   - **Recovery**: avoid the flag, fix the entry, or checksum the table standalone.
   - **RTO**: one re-run (unmeasured).
-  - **Test**: GAP: one parser or driver test per trigger.
-  - **DEFECT**: D-13.06-26, -27, -28, -31, -32, -22, -23.
+  - **Test**: GAP: one parser or driver test per remaining trigger. The `--no_wc` and `--debug_output` triggers
+    (D-13.06-26, -27, fixed) are pinned by `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestNoWc::test_legacy_driver` and
+    `sink-connector/python/db_compare/tests/test_manual_runner_recipes.py::TestDebugOutput::test_legacy_mysql_side`.
+  - **DEFECT**: D-13.06-28, -31, -32, -22, -23. (D-13.06-26 and -27 are fixed.)
 
-Summary: 21 failure modes, 12 DEFECT, 12 GAP.
+Summary: 21 failure modes, 11 DEFECT, 11 GAP.
 
 ## 7. Defect Register
 
@@ -1230,10 +1277,10 @@ LCC/PCC the ClickHouse count runners.
 | D-13.06-2 | S1 | both | `db_compare/top_level_table_checksum.py:265,321,99-113,343-355`; side log lines `db/checksum_common.py:142`, `db_compare/clickhouse_table_checksum.py:243,260,268,395` | reproduced (R07: different data, verdict `No difference for t1`) | FIXED: per-line parse of exactly one `Checksum for table <expected db.table>` message; anything else is `ERROR`. Test: `test_checksum_verdicts.py::TestChecksumWordInNames::test_differing_data_with_checksum_named_column_reports_a_difference`. Was: a column name containing `checksum` (not only a database or table name, as in FM-11.02-2) made both outputs unparseable and the verdict "No difference". |
 | D-13.06-3 | S1 | both | `db_compare/top_level_table_checksum.py:240-245,265,273-284,321`; `ch_sink_tools/db_compare/top_level_table_checksum.py:140-145,159,166-172,186` | reproduced (R03: `orders$archive` → `ARG<^orders$>`; backticks executed, `$HOME` expanded) | FIXED: argv lists without a shell; literal table regex (`^orders[$]archive$`). Test: `test_checksum_verdicts.py::TestArgumentsReachTheSideUnchanged::test_mysql_side_receives_table_and_where_byte_for_byte`. Was: the table name and where clause went into a double-quoted `sh -c` word; `$` expansion compared a different table or subset under a green verdict, and backticks ran commands. |
 | D-13.06-4 | S1 | both | `db_compare/top_level_table_checksum.py:344-355`; `ch_sink_tools/db_compare/top_level_table_checksum.py:191-202` | reproduced (R03: nothing logged for differing checksums) | FIXED: the source is identified by position; a table without a verdict is `ERROR`, exit 1. Test: `test_checksum_verdicts.py::TestSameHostString::test_run_with_equal_host_strings_logs_a_verdict`. Was: with the MySQL host string equal to a replica host there were two "source" results, no verdict, exit 0. |
-| D-13.06-5 | S1 | both | `db_compare/mysql_table_checksum.py:342-351`; `db_compare/clickhouse_table_checksum.py:327-344`; `db_compare/top_level_table_checksum.py:343-355` | reproduced (R03: count 0 on both sides → `No difference`) plus code-read (`--partition_date` on KEY/HASH partitions) | FIXED: verdict `EMPTY on both sides` with per-table and summary WARNINGs; exit 0 by default, exit 1 with `--fail_on_empty`. Test: `test_checksum_verdicts.py::TestEmptyOnBothSides::test_empty_is_a_warning_and_exit_zero_by_default`. Was: zero rows on both sides was reported as "No difference" with no warning. |
+| D-13.06-5 | S1 | both | `db_compare/mysql_table_checksum.py:342-351`; `db_compare/clickhouse_table_checksum.py:327-344`; `db_compare/top_level_table_checksum.py:343-355` | reproduced (R03: count 0 on both sides → `No difference`) plus code-read (`--partition_date` on KEY/HASH partitions) | FIXED: verdict `EMPTY on both sides`, logged per table and in the summary at INFO (WARNING is reserved for `Checksum difference`, §3.17); exit 0 by default, exit 1 with `--fail_on_empty`. Test: `test_checksum_verdicts.py::TestEmptyOnBothSides::test_empty_is_logged_at_info_and_exit_zero_by_default`. Was: zero rows on both sides was reported as "No difference" with no warning. |
 | D-13.06-6 | S1 | packaged | `ch_sink_tools/db_compare/top_level_table_checksum.py:159,186`; `ch_sink_tools/db_compare/mysql_table_checksum.py:102-107`; `ch_sink_tools/db_compare/clickhouse_table_checksum.py:165-168` | reproduced (R01 expressions plus R08 evaluation model: `1950-05-05` and `1961-01-01` both render `1969-12-31 18:00:00`) | FIXED: both sides get the DateTime64 range `1900-01-01 00:00:00` .. `2299-12-31 23:59:59`; the packaged side defaults agree. Test: `test_packaged_checksum_verdicts.py::TestPackagedDatetimeBounds::test_driver_passes_identical_full_range_bounds_to_both_sides`. Was: the clamp was narrowed to `1969-12-31 18:00:00` .. `2299-12-31 00:00:00`, so divergent values outside it compared EQUAL. |
 | D-13.06-7 | S1 | packaged | `ch_sink_tools/db_compare/mysql_table_checksum.py:86-101,379-380`; `ch_sink_tools/db_compare/clickhouse_table_checksum.py:139-142,366-367` | code-read (R01 shows the expressions; masking per 11.02 §3.9) | FIXED: JSON excluded on both packaged sides by default with a WARNING (as in legacy); the driver passes the MySQL JSON columns as `--json_columns`. Test: `test_packaged_checksum_verdicts.py::TestPackagedJsonCoverage::test_driver_derives_json_columns_for_the_clickhouse_side`. Was: `--include_json_columns` defaulted to True and JSON was always compared with one-sided regex normalisation, masking `1.0` against `1` and whitespace differences. |
-| D-13.06-8 | S2 | both | `db_compare/top_level_table_checksum.py:265,321,571-584`; `ch_sink_tools/db_compare/top_level_table_checksum.py:159,186` | reproduced (R11: side WARNING present, absent after grep/awk) | FIXED: both drivers relay every side WARNING/ERROR/CRITICAL line. Test: `test_checksum_verdicts.py::TestSideWarningsReachTheDriverLog::test_side_warnings_are_logged_by_the_driver`. Was: the side scripts' coverage and clamp WARNINGs were dropped by the grep pipeline, so EQUAL verdicts hid skipped columns and clamped values. |
+| D-13.06-8 | S2 | both | `db_compare/top_level_table_checksum.py:265,321,571-584`; `ch_sink_tools/db_compare/top_level_table_checksum.py:159,186` | reproduced (R11: side WARNING present, absent after grep/awk) | FIXED: both drivers relay every side ERROR/CRITICAL line at ERROR (that side gives no result) and every side WARNING line at INFO as a side note (§3.17). Test: `test_checksum_verdicts.py::TestSideWarningsReachTheDriverLog::test_side_warnings_are_logged_by_the_driver`. Was: the side scripts' coverage and clamp WARNINGs were dropped by the grep pipeline, so EQUAL verdicts hid skipped columns and clamped values. |
 | D-13.06-9 | S3 | both | `db_compare/top_level_table_checksum.py:500-501`; `db_compare/mysql_table_count.py:67-70,215`; `ch_sink_tools/db_compare/mysql_table_count.py:67-70,213`; `ch_sink_tools/db_compare/top_level_table_checksum.py:313-314`; `ch_sink_tools/db_compare/mysql_table_checksum.py:70-78,417-419`; `ch_sink_tools/db/mysql.py:77-80` | reproduced (R04, SQLAlchemy 2.1.1: `TypeError ... not str`, exit 1) | Rows from `fetchall()` are indexed by name, so the driver, both count runners and the packaged MySQL paths fail on SQLAlchemy 2.x, which `>=1.4` allows. |
 | D-13.06-10 | S3 | both | `db_compare/top_level_table_checksum.py:295-297`; `ch_sink_tools/db_compare/top_level_table_checksum.py:183-185` | reproduced (R03: `syntax error near unexpected token '('`; a space splits argv) | FIXED (by the argv change of D-13.06-3): the partition expression is one argv word. Test: `test_checksum_verdicts.py::TestArgumentsReachTheSideUnchanged::test_clickhouse_side_receives_table_where_and_function_partition_key`. Was: pasted unquoted as `--partition_key` for every partitioned table, so function or space partitions aborted the run. |
 | D-13.06-11 | S3 | both | `db_compare/mysql_table_checksum.py:311-317`; `ch_sink_tools/db_compare/mysql_table_checksum.py:273-279` | code-read (the placeholder is kept when `get_table_partition_key` returns None) | `--partition_date` with an unpartitioned table sends `{partition_expression}=YYYYMMDD` to MySQL, and the run aborts. |
@@ -1242,8 +1289,8 @@ LCC/PCC the ClickHouse count runners.
 | D-13.06-14 | S3 | packaged | `ch_sink_tools/db_compare/top_level_table_checksum.py:6-10,357,360` | reproduced (R06: `NameError name 'traceback' is not defined`) | FIXED: `os` and `traceback` are imported. Test: `test_packaged_checksum_verdicts.py::TestPackagedSidesAndFailures::test_unexpected_exception_is_logged_and_exits_one`. Was: not imported, so every error and interrupt path raised NameError instead of logging. |
 | D-13.06-15 | S2 | both | `db_compare/top_level_table_checksum.py:265,321,614-635`; `ch_sink_tools/db_compare/top_level_table_checksum.py:159,186,409-430` | code-read (templates omit `--mysql_port` and every `--clickhouse_*` flag) | The driver's `--mysql_port`, `--mysql_user`, `--clickhouse_user/config_file/database/port`, `--secure` and `--chunk_size` are not forwarded. The sides use defaults and may compare a different instance. |
 | D-13.06-16 | S2 | both | `db_compare/top_level_table_checksum.py:148-156`; `ch_sink_tools/db_compare/top_level_table_checksum.py:108-116` | reproduced (R10: `db1:ch_db1, db2:ch_db2` → database `db2`) | `database_override_map` uses a substring test and exact unstripped pairs. A space or partial match silently falls back to the MySQL name. A pair without `:` aborts the run. |
-| D-13.06-17 | S2 | both | `db_compare/clickhouse_table_checksum.py:241-242`; `ch_sink_tools/db_compare/clickhouse_table_checksum.py:101-102` | reproduced (R05: `["_version'", "'is_deleted"]`, columns kept) | Space-separated `--exclude_columns` (as the help text and the FM-11.02-9 recipe use) excludes nothing. 11.02 §3.10's "both sides split each token on commas" is false for the ClickHouse side. |
-| D-13.06-18 | S2 | both | `db_compare/clickhouse_table_count.py:60`; `ch_sink_tools/db_compare/clickhouse_table_count.py:64` | reproduced (R05: `match(partition,'None')` → `= 0`, both copies) | The ClickHouse count without `--include_partitions_regex` prints 0 for every table. |
+| D-13.06-17 | S2 | both | `db_compare/clickhouse_table_checksum.py:241-242`; `ch_sink_tools/db_compare/clickhouse_table_checksum.py:101-102` | reproduced (R05: `["_version'", "'is_deleted"]`, columns kept) | FIXED: both sides parse space-separated words and comma lists alike (`parse_exclude_columns`; inlined in the packaged sides). Test: `test_manual_runner_recipes.py::TestExcludeColumnsForms::test_legacy_clickhouse_side_space_separated_recipe`. Was: space-separated `--exclude_columns` (as the help text and the FM-11.02-9 recipe use) excluded nothing on the ClickHouse side, and `a, b` kept ` b` on the MySQL side. |
+| D-13.06-18 | S2 | both | `db_compare/clickhouse_table_count.py:60`; `ch_sink_tools/db_compare/clickhouse_table_count.py:64` | reproduced (R05: `match(partition,'None')` → `= 0`, both copies) | FIXED: without `--include_partitions_regex` the table is counted whole; `--no_wc` counts the named table (it raised IndexError). Test: `test_manual_runner_recipes.py::TestClickHouseCount::test_legacy`. Was: the ClickHouse count without `--include_partitions_regex` printed 0 for every table. No `--dr_host` (prod against DR) option exists in either copy. |
 | D-13.06-19 | S2 | both | `db_compare/mysql_table_count.py:59-78`; `ch_sink_tools/db_compare/mysql_table_count.py:59-78` | code-read (`information_schema.partitions` has one row per subpartition; each issues `count(*) ... partition(p)`) | The MySQL count multiplies sub-partitioned tables by their subpartition count. |
 | D-13.06-20 | S2 | packaged | `ch_sink_tools/db_compare/mysql_table_checksum.py:82-128`; `ch_sink_tools/db_compare/clickhouse_table_checksum.py:128-192` | reproduced (R01: `enum('float','x')` and `set('realtime','b')` skipped on MySQL only, `bit(1)` base64 against `Nullable(Bool)` `toString`, `time(3)` substr, timestamp in the session zone, trailing `\|\|'#'`) | Packaged renderings are pre-11.02 and report DIFFERENT for equal tables on common types. (The trailing `\|\|'#'` after a skipped last column is fixed, §3.11; the other renderings remain.) |
 | D-13.06-21 | S2 | both | `db_compare/top_level_table_checksum.py:240-245,273-284`; `db_compare/mysql_table_checksum.py:210` | code-read (the same literal is compared with a wall clock on MySQL and parsed in the column zone on ClickHouse) | `DATETIME` filters select different rows on the two sides in a non-UTC deployment. |
@@ -1251,8 +1298,8 @@ LCC/PCC the ClickHouse count runners.
 | D-13.06-23 | S3 | packaged | same lines as D-13.06-22; `pyproject.toml` `requires-python` | reproduced (Python 3.9: `TypeError 'staticmethod' object is not callable`) | The module-level `@staticmethod fstr` is uncallable on Python < 3.10, while the package declares `>=3.6`. |
 | D-13.06-24 | S2 | packaged | `ch_sink_tools/db/clickhouse.py:68` | reproduced (R09: `clickhouse_password S3cret!`) | ClickHouse password logged in clear at DEBUG (`ch-ch-checksum --debug`, `ch-ch-count --debug`). |
 | D-13.06-25 | S3 | packaged | `ch_sink_tools/db_compare/clickhouse_table_checksum.py:291-310,331,400` | code-read (`execute_sql` returns one row for `count(*)`; DDL before any table) | FIXED (needed once the packaged driver runs this side, D-13.06-1): both removed, as in legacy. Test: `test_packaged_checksum_verdicts.py::TestPackagedClickHouseSideIsReadOnly::test_main_runs_no_ddl`. Was: `CREATE FUNCTION` on every run (needs the DDL privilege) and a dead count pre-check that would print `md5('')`. |
-| D-13.06-26 | S3 | both | `db_compare/top_level_table_checksum.py:500`; `db_compare/mysql_table_checksum.py:460`; `db_compare/mysql_table_count.py:215`; packaged equivalents; `db/mysql.py:54-55` | reproduced (R04: `'list' object has no attribute 'fetchall'`) | `--no_wc` returns a list where a result object is expected. |
-| D-13.06-27 | S3 | both | `db_compare/top_level_table_checksum.py:252-254,292-293`; `db_compare/mysql_table_checksum.py:337-339`; `db_compare/clickhouse_table_checksum.py:53-59` | code-read (debug mode prints no checksum line, so the pipeline fails) | The driver's `--debug_output` makes every table fail. |
+| D-13.06-26 | S3 | both | `db_compare/top_level_table_checksum.py:500`; `db_compare/mysql_table_checksum.py:460`; `db_compare/mysql_table_count.py:215`; packaged equivalents; `db/mysql.py:54-55` | reproduced (R04: `'list' object has no attribute 'fetchall'`) | FIXED: the driver, the MySQL side and both count runners (both copies) take the `[[regex]]` list as the one named table. Test: `test_manual_runner_recipes.py::TestNoWc::test_legacy_driver`. Was: `--no_wc` returned a list where a result object was expected (AttributeError, exit 1). |
+| D-13.06-27 | S3 | both | `db_compare/top_level_table_checksum.py:252-254,292-293`; `db_compare/mysql_table_checksum.py:337-339`; `db_compare/clickhouse_table_checksum.py:53-59` | code-read (debug mode prints no checksum line, so the pipeline fails) | FIXED: both sides (both copies) run the aggregate and then the per-row query, write `out.<table>.<side>.txt` and print the checksum line. Test: `test_manual_runner_recipes.py::TestDebugOutput::test_legacy_mysql_side`. Was: the driver's `--debug_output` made every table fail. |
 | D-13.06-28 | S3 | both | `db_compare/mysql_table_checksum.py:238`; `db_compare/clickhouse_table_checksum.py:342`; packaged PM200, PC254; count runners LMC76, LCC68 | code-read | `<db>.<table>` is unquoted in every aggregate and count statement (the lock path quotes it). Reserved words and `-` fail. Embedded backticks and double quotes in column names are not escaped. |
 | D-13.06-29 | S3 | legacy | `db_compare/clickhouse_table_checksum.py:107,127-138,188-191` | code-read | ClickHouse types are classified by substring of the full type (`Enum8('Float'=1)` matches `Float`), the bug class 11.02 fixed on the MySQL side. |
 | D-13.06-30 | S3 | legacy | `Dockerfile_mysql_checksum:20`; `Dockerfile_clickhouse_checksum:20` | code-read (exec-form `ENTRYPOINT` performs no variable expansion) | The container images pass `"$MYSQL_HOST"` and similar strings literally. The password is meant for argv. |
