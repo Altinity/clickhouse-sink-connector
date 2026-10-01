@@ -2,6 +2,7 @@
 from subprocess import Popen, PIPE
 import shlex
 from db.mysql import is_binary_datatype
+from db.checksum_common import DATETIME_MIN, DATETIME_MAX
 import argparse
 import sys
 import logging
@@ -460,6 +461,31 @@ def mysqlshell_binary_kind(mysql_datatype):
     return None
 
 
+MYSQL_DATETIME_DATATYPE = re.compile(r"\s*datetime\b", re.IGNORECASE)
+DATETIME64_PRECISION = re.compile(r"\s*DateTime64\(\s*(\d+)")
+
+
+def datetime_clamp_expression(column, column_name):
+    """A MySQL DATETIME field of the dump (text, input() declares it String), saturated as the streaming connector
+    saturates it (Spec 13.04 D-13.04-34): above 2299-12-31 23:59:59 the instant 2299-12-31 23:59:59 UTC, below
+    1900-01-01 00:00:00 the instant 1900-01-01 00:00:00 UTC (DataTypeRange.DATETIME64_MAX/MIN, clamp.out.of.range;
+    the checksum tools' DATETIME_MIN/DATETIME_MAX). The bounds are instants, so the column or server zone cannot
+    move them; ClickHouse left alone keeps the fraction (2299-12-31 23:59:59.999999) or, parsing in another zone,
+    stores another instant. A value equal to a bound takes the bound too (the same instant, whatever the zone);
+    any other value is cast to the column type exactly as the INSERT cast it before. The dump writes
+    'YYYY-MM-DD HH:MM:SS[.ffffff]', so text order is time order: '>= max' catches the bound and anything later,
+    '< min + 1 microsecond' the bound written with or without a fraction and anything earlier."""
+    target = column['datatype'].strip()
+    precision = DATETIME64_PRECISION.match(target)
+    precision = precision.group(1) if precision else '6'
+    if column.get('nullable'):
+        target = f"Nullable({target})"
+    (low, high) = (DATETIME_MIN[:19], DATETIME_MAX[:19])
+    return (f"multiIf({column_name} >= '{high}', CAST(toDateTime64('{high}', {precision}, 'UTC') AS {target}), "
+            f"{column_name} < '{low}.000001', CAST(toDateTime64('{low}', {precision}, 'UTC') AS {target}), "
+            f"CAST({column_name} AS {target}))")
+
+
 def read_mysqlshell_decode_columns(table_metadata_path):
     """{column: 'FROM_BASE64' | 'UNHEX'} from MySQL Shell's per-table metadata <db>@<table>.json
     (options.decodeColumns: how each encoded column must be decoded), {} when no column is encoded, None when the
@@ -492,6 +518,8 @@ def mysqlshell_column_expression(column, column_name, decode_columns, binary_han
         encoding = decode_columns.get(bare_name)
     if kind is None:
         if encoding is None:
+            if MYSQL_DATETIME_DATATYPE.match(mysql_datatype or ''):
+                return datetime_clamp_expression(column, column_name)
             return column_name
         raise ValueError(f"Column {bare_name} ({mysql_datatype}) is encoded in the dump ({encoding}) but the loader "
                          f"has no rule for the representation the connector stores for that type")
