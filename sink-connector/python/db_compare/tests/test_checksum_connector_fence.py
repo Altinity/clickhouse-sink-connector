@@ -344,6 +344,33 @@ class TestSlices(unittest.TestCase):
         self.assertIn("about 90000 rows from a sample of 5625 keys, 90 slice(s)", log)
         self.assertEqual(sum(self.rows_per_slice(conditions, self.DENSE)), len(self.DENSE))
 
+    def test_samples_get_sparser_until_one_is_below_its_limit(self):
+        # Review: a sample that stops at its LIMIT holds the first keys in scan
+        # order only; its quantiles would leave most rows in the last slice.
+        # The estimates say 200 rows for 90000: samples at rates 1, 1/16 and
+        # 1/256 all fill the limit of 300; 1/4096 gives 22 keys.
+        source = FakeSource(self.DENSE, explain_rows=200, partition_rows=200)
+        with patch.object(tl, "SLICE_SAMPLE_MAX_KEYS", 300):
+            (conditions, log) = self.slices(source, slice_rows=100, min_slices=1)
+        samples = [sql for sql in source.sql if "rand()" in sql]
+        self.assertEqual(len(samples), 4, "three full samples, then one below the limit")
+        counts = self.rows_per_slice(conditions, self.DENSE)
+        self.assertEqual(sum(counts), len(self.DENSE))
+        self.assertLessEqual(counts[-1], 0.05 * len(self.DENSE), counts)
+        self.assertIn("fewer than", log, "22 sampled keys cannot make the 902 slices the count asks for")
+
+    def test_partition_statistics_without_a_row_count_as_zero(self):
+        import pandas as pd
+        source = FakeSource(self.DENSE, explain_rows=7, partition_rows=0)
+        def no_statistics_row(conn, sql):
+            if "information_schema.PARTITIONS" in sql:
+                return pd.DataFrame(columns=["table_rows"])
+            return source(conn, sql)
+        import db.mysql as dbm
+        with patch.object(tl, "mysql_execute_df", side_effect=no_statistics_row), \
+                patch.object(dbm, "mysql_execute_df", side_effect=no_statistics_row):
+            self.assertEqual(tl.filtered_row_estimate(MagicMock(), "orders", "id", "1=1", 1, 9), (7, 0))
+
     def test_slices_start_at_the_smallest_key_and_stay_open_above(self):
         # Every slice is bounded below: an open lower end made the replica scan its
         # whole history (28.9 billion rows of an unpartitioned replica on the first

@@ -521,12 +521,15 @@ writes, not for a whole-table scan.
      rows' keys, index-only when an index holds the filter's columns (InnoDB secondary indexes hold the primary
      key, which holds the partition column): 14 s for the 90.3 million rows above, against 1605 s for the
      MySQL side to checksum them, and it replaces one probe query per chunk of the even split. A full
-     sample means the estimates were far too low; it is taken again 16 times sparser, at most twice. The
+     sample stopped at its LIMIT in scan order, so it is not representative and means the estimates were far
+     too low; it is taken again 16 times sparser until one ends below the limit (rate floor 1e-12). The
      sample gives the row count (`keys / rate`), the slice count `ceil(rows / --snapshot_slice_rows)`, raised to
      `--threads_per_table` when it is above one, and the boundaries: the sample's quantiles, so each slice
-     holds about the same number of rows however the keys are spread. An INFO line `Slices of <t>: estimate
+     holds about the same number of rows however the keys are spread. A key column with fewer distinct sampled
+     values above the smallest than the count asks for (a repeated first column of a composite key) gives
+     fewer slices, and the INFO line says so (`fewer than n: ...`). An INFO line `Slices of <t>: estimate
      ... rows (EXPLAIN ..., partition statistics ...), about ... rows from a sample of ... keys, n slice(s)` (or
-     `..., one slice`) records the inputs. An even split of the key range (`divide_table_into_even_chunks`,
+     `..., one slice`) records the inputs. A missing statistics row counts as 0. An even split of the key range (`divide_table_into_even_chunks`,
      used before) cannot do this: that day's keys sit in the top 0.08% of the filtered key range, so even with
      the right count (90 chunks) all but 15,425 of the 90.3 million rows fall in one slice; the dev run read it
      on one connection in 1605 s. With the sample the same day gives 91 slices of 0.99 million rows, and the
@@ -1108,6 +1111,7 @@ The suite was run on 2026-10-01 from `sink-connector/python` with the toolset ve
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_partition_statistics_lift_a_low_explain_estimate`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_a_table_above_one_slice_gets_at_least_threads_per_table_slices`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_a_small_table_is_one_slice_without_a_sample`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_samples_get_sparser_until_one_is_below_its_limit`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_difference_read_again_and_gone_is_a_match`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_persistent_difference_warns_with_the_slice`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_keys_changed_after_the_floor_are_left_out_on_both_sides`

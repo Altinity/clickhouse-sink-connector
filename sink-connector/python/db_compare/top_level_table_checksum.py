@@ -875,6 +875,8 @@ def mysql_where_for_slicing(where, partition_key):
 # sample may return (a larger table is sampled more sparsely).
 SLICE_SAMPLE_KEYS_PER_SLICE = 1000
 SLICE_SAMPLE_MAX_KEYS = 1000000
+# Below this rate even 10^15 filtered rows give a sample under the limit.
+SLICE_SAMPLE_MIN_RATE = 1e-12
 
 
 def quote_mysql_string(value):
@@ -897,7 +899,9 @@ def filtered_row_estimate(conn, table, pk, mysql_where, min_pk, max_pk):
     if isinstance(partitions, str) and partitions:
         names = ",".join(quote_mysql_string(name.strip()) for name in partitions.split(","))
         sql += f" and (PARTITION_NAME in ({names}) or concat(PARTITION_NAME, '_', SUBPARTITION_NAME) in ({names}))"
-    partition_rows = int(mysql_execute_df(conn, sql)['table_rows'].iloc[0] or 0)
+    statistics = mysql_execute_df(conn, sql)
+    # An aggregate without GROUP BY returns one row; a missing row counts as 0.
+    partition_rows = int(statistics['table_rows'].iloc[0] or 0) if len(statistics.index) else 0
     return (int(explain_rows or 0), partition_rows)
 
 
@@ -932,10 +936,10 @@ def slice_starts(conn, table, pk, mysql_where, slice_rows, min_slices, min_pk, m
         return [min_pk]
     rate = min(1.0, SLICE_SAMPLE_KEYS_PER_SLICE / slice_rows, SLICE_SAMPLE_MAX_KEYS / estimate)
     keys = sample_keys(conn, table, pk, mysql_where, rate, SLICE_SAMPLE_MAX_KEYS)
-    for _ in range(2):
-        # A full sample means the estimates were far too low: sample sparser.
-        if len(keys) < SLICE_SAMPLE_MAX_KEYS:
-            break
+    while len(keys) >= SLICE_SAMPLE_MAX_KEYS and rate / 16 >= SLICE_SAMPLE_MIN_RATE:
+        # A full sample stopped at its LIMIT in scan order, so it is not
+        # representative: the estimates were far too low. Sample sparser until
+        # a sample ends below the limit (16 times fewer keys each time).
         rate /= 16
         keys = sample_keys(conn, table, pk, mysql_where, rate, SLICE_SAMPLE_MAX_KEYS)
     sampled_rows = round(len(keys) / rate)
@@ -947,9 +951,11 @@ def slice_starts(conn, table, pk, mysql_where, slice_rows, min_slices, min_pk, m
     for i in range(1, count):
         if bounds and bounds[(i * len(bounds)) // count] > starts[-1]:
             starts.append(bounds[(i * len(bounds)) // count])
+    fewer = (f" (fewer than {count}: the sample holds {len(bounds)} distinct key(s) above the smallest)"
+             if len(starts) < count else "")
     logging.info(f"Slices of {table}: estimate {estimate} rows (EXPLAIN {explain_rows}, partition statistics "
                  f"{partition_rows}), about {sampled_rows} rows from a sample of {len(keys)} keys, "
-                 f"{len(starts)} slice(s)")
+                 f"{len(starts)} slice(s){fewer}")
     return starts
 
 
