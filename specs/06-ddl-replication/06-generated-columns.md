@@ -10,7 +10,9 @@ Specifies the translation of MySQL generated columns (`GENERATED ALWAYS AS (expr
 - **Both paths** must handle the generated-column clause via a
   `GeneratedColumnConstraintContext` branch: the CREATE TABLE column loop
   (`parseColumnDefinitions`) AND the ALTER TABLE ADD/MODIFY loop. Both extract the
-  expression with the shared `extractGeneratedExpression` helper.
+  expression with the shared `extractGeneratedExpression` helper (the CREATE
+  path duplicated the extraction inline until §3.4 made it call the helper).
+- **Bit-operator translation (§3.4)**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/GeneratedExpressionBitOperators.java`
 - **Formal model**: `formal_specs/lean/Replication/GeneratedColumn.lean`.
 
 ---
@@ -47,6 +49,52 @@ of `ADD COLUMN c Int32 DEFAULT a+b`. The fix adds the missing branch (setting a
 `DEFAULT <expr>` modifier via `Constants.GENERATED_COLUMN_KIND`) so the ALTER path
 matches the CREATE path.
 
+### 3.4 MySQL bit operators are translated; everything else is copied
+ClickHouse has no `&`, `|`, `^`, `<<`, `>>` or `~` operator, so a generated
+column such as `flag TINYINT GENERATED ALWAYS AS ((attrs & (1 << 2)) > 0)`
+copied verbatim made ClickHouse refuse the replicated `CREATE TABLE` or
+`ALTER TABLE ... ADD COLUMN` with a syntax error (Code 62), halting the
+pipeline on a statement MySQL accepted (spec 06.08 FM-06.08-1). Rules
+(`GeneratedExpressionBitOperators.render`, called by `extractGeneratedExpression`
+on both paths):
+
+1. **Operators.** `a & b` -> `bitAnd(toUInt64(a), toUInt64(b))`; `|` ->
+   `bitOr`; `^` -> `bitXor`; `~a` -> `bitNot(toUInt64(a))`. MySQL evaluates
+   bit operators on `BIGINT UNSIGNED`; `toUInt64` wraps a negative value the
+   way MySQL's conversion does (`-1 & 3` = 3).
+2. **Shifts.** `a << b` -> `if(toUInt64(b) >= 64, bitAnd(toUInt64(a),
+   toUInt64(0)), bitShiftLeft(toUInt64(a), toUInt64(b)))`, `>>` likewise with
+   `bitShiftRight`: MySQL yields 0 for a count of 64 or more (a negative count
+   converts to a huge unsigned one), ClickHouse takes the count modulo 64
+   (`bitShiftLeft(1, 64)` = 1 on 24.8).
+3. **NULL.** A NULL operand yields NULL, as in MySQL: the functions propagate
+   NULL, the 0 of rule 2 is `bitAnd(a, 0)` so a NULL `a` stays NULL, and a NULL
+   count makes the condition NULL (false) and the shift NULL. No `ifNull` is
+   added.
+4. **Precedence.** The grammar gives every bit operator one precedence,
+   above arithmetic, so its tree is not MySQL's for a mixed chain. A chain of
+   binary operators that contains a bit operator is flattened in source order
+   and re-associated with MySQL's precedence: `^`, then `* / % DIV MOD`, then
+   `+ -`, then `<< >>`, then `&`, then `|`, each left-associative; unary
+   operators bind tightest. Arithmetic inside such a chain is emitted
+   parenthesised (`(b + 1)`).
+5. **Literals.** An operation whose operands are all unsigned integer
+   literals is folded with MySQL's semantics (`1 << 2` -> `4`, `1 << 64` -> `0`).
+6. **Everything else is copied unchanged.** A subtree without a bit operator
+   renders exactly as before (ANTLR `getText()`), so no expression that
+   translated before translates differently; nothing new is refused. A chain
+   that mixes bit operators with an operator the translation does not know is
+   copied verbatim with a WARN, and ClickHouse refuses it as before.
+7. The column kind is still `DEFAULT` (§3.2).
+
+Example: `(attrs & (1 << 2)) > 0` -> `DEFAULT (bitAnd(toUInt64(attrs),
+toUInt64((4))))>0`.
+
+Known residuals: MySQL rounds a fractional operand to the nearest integer,
+`toUInt64` truncates it; a binary-string operand is bitwise over bytes in
+MySQL and numeric here. Both are outside the integer flag/mask expressions
+this exists for.
+
 ---
 
 ## 4. Invariants Preserved
@@ -60,6 +108,18 @@ matches the CREATE path.
 - `Replication.GeneratedColumn.type_is_never_expression` — the type is never the generation expression.
 - `Replication.GeneratedColumn.generated_has_default` — a generated column always produces a `DEFAULT`.
 - `AlterTableGeneratedColumnTest` — `ADD COLUMN ... GENERATED ALWAYS AS`/`AS` keeps the type and emits `DEFAULT` (mutation-checked).
+- `GeneratedColumnBitOperatorTest.createTableFlagColumnIsTranslated()`,
+  `GeneratedColumnBitOperatorTest.alterAddColumnFlagColumnIsTranslated()` —
+  §3.4 on both paths: `(attrs & (1 << 2)) > 0` becomes
+  `(bitAnd(toUInt64(attrs), toUInt64((4))))>0` and no MySQL bit operator
+  reaches ClickHouse (pre-fix code copies `(attrs&(1<<2))>0` verbatim).
+- `GeneratedColumnBitOperatorTest.eachOperatorMapsToItsFunction()`,
+  `GeneratedColumnBitOperatorTest.mysqlPrecedenceIsApplied()`,
+  `GeneratedColumnBitOperatorTest.literalOperationsAreFolded()`,
+  `GeneratedColumnBitOperatorTest.nestedBitOperatorsAreTranslatedInPlace()` —
+  §3.4 rules 1, 2, 4, 5.
+- `GeneratedColumnBitOperatorTest.expressionsWithoutBitOperatorsAreUnchanged()`
+  — §3.4 rule 6.
 
 ---
 
@@ -95,4 +155,13 @@ A generated column's value always arrives in the row image for every row written
   - **Test**: GAP: a translation test asserting that `ADD COLUMN ... GENERATED ALWAYS AS (expr) STORED` on a table the lookup reports as non-empty is refused (or flagged for re-synchronisation) the way spec 06.04 §3.2.2 rule 3 refuses other non-literal defaults.
   - **DEFECT**: pre-existing rows of an added STORED generated column are back-filled with ClickHouse's evaluation of a MySQL expression, silently.
 
-Summary: 3 failure modes, 2 DEFECT, 2 GAP.
+- **FM-06.06-4 Generation expression with MySQL bit operators**
+  - **Trigger**: a replicated `CREATE TABLE` or `ALTER TABLE ... ADD/MODIFY COLUMN` with a generated column over `&`, `|`, `^`, `<<`, `>>` or `~` (flag columns over a bit mask: `(attrs & (1 << 2)) > 0`).
+  - **Behaviour**: since §3.4 the operators are translated to ClickHouse bit functions and the statement is accepted. Before §3.4 the expression was copied verbatim (`DEFAULT (attrs&(1<<2))>0`) and ClickHouse refused the statement with a syntax error (Code 62, non-retryable): the pipeline halted (spec 06.08 FM-06.08-1). A chain mixing bit operators with an operator the translation does not know is still copied verbatim (WARN `Generation expression ... mixes MySQL bit operators with operator ...`) and halts the same way.
+  - **Detection**: residual case only: the WARN above, then ERROR `DDL failed and ddl.retry is not enabled, so it is not retried; halting the pipeline rather than skipping the schema change: [<DDL>]`; exit code 3.
+  - **Blast radius**: residual case only: all replication stops at the statement; nothing lost.
+  - **Recovery**: residual case only: create or alter the column by hand with a ClickHouse-equivalent `DEFAULT`, add `ignore.ddl.regex` matching exactly that statement, restart, remove the entry once past it.
+  - **RTO**: 0 for translated expressions; operator time + one restart for the residual case; unmeasured.
+  - **Test**: `GeneratedColumnBitOperatorTest.createTableFlagColumnIsTranslated()`, `GeneratedColumnBitOperatorTest.alterAddColumnFlagColumnIsTranslated()`, `GeneratedColumnBitOperatorTest.mysqlPrecedenceIsApplied()`.
+
+Summary: 4 failure modes, 2 DEFECT, 2 GAP.
