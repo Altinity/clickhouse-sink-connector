@@ -114,6 +114,49 @@ public class PreparedStatementExecutorSortingKeyTombstoneTest {
     }
 
     /**
+     * Spec 05.01 section 3.2: the comparison must read the STORED value, never
+     * the Connect-schema default.
+     *
+     * <p>Debezium propagates the MySQL column {@code DEFAULT} into the Connect
+     * schema, and {@code Struct.get} answers that default for a stored NULL.
+     * For a sorting-key column declared {@code DEFAULT 'x'}, an UPDATE from
+     * NULL to 'x' then compared 'x' with 'x', was judged an in-place update,
+     * and the pre-update row at the NULL key was never tombstoned.</p>
+     */
+    @Test
+    public void testNullToSchemaDefaultInSortingKeyIsAChange() {
+        Schema schemaWithDefault = SchemaBuilder.struct()
+                .field("id", Schema.OPTIONAL_INT32_SCHEMA)
+                .field("val", SchemaBuilder.string().optional().defaultValue("x").build())
+                .build();
+        Struct beforeNull = new Struct(schemaWithDefault).put("id", 1);
+        Struct afterDefault = new Struct(schemaWithDefault).put("id", 1).put("val", "x");
+        Assert.assertEquals("precondition: Struct.get substitutes the schema default for a stored NULL",
+                "x", beforeNull.get("val"));
+
+        PreparedStatementExecutor executor = executorWithSortingKey(Arrays.asList("id", "val"));
+
+        ClickHouseStruct nullToDefault = new ClickHouseStruct();
+        nullToDefault.setBeforeStruct(beforeNull);
+        nullToDefault.setAfterStruct(afterDefault);
+        Assert.assertTrue("NULL -> 'x' under DEFAULT 'x' changes the stored sorting key; "
+                        + "comparing Struct.get values hides it and strands the old row",
+                executor.updateRelocatesSortingKey(nullToDefault));
+
+        ClickHouseStruct defaultToNull = new ClickHouseStruct();
+        defaultToNull.setBeforeStruct(afterDefault);
+        defaultToNull.setAfterStruct(beforeNull);
+        Assert.assertTrue("'x' -> NULL under DEFAULT 'x' is the same change in reverse",
+                executor.updateRelocatesSortingKey(defaultToNull));
+
+        ClickHouseStruct nullToNull = new ClickHouseStruct();
+        nullToNull.setBeforeStruct(beforeNull);
+        nullToNull.setAfterStruct(new Struct(schemaWithDefault).put("id", 1));
+        Assert.assertFalse("NULL -> NULL is not a change even when the schema carries a default",
+                executor.updateRelocatesSortingKey(nullToNull));
+    }
+
+    /**
      * An unknown or empty sorting key must degrade to the previous behaviour
      * rather than emit a speculative tombstone.
      */

@@ -15,7 +15,7 @@ CREATE TABLE project.items
   `name` String,
   `_id` String,
   `uuid` String,
-  `_sign` Int8,
+  `is_deleted` UInt8,
   `_version` UInt64
 )
 ENGINE = ReplacingMergeTree(_version)
@@ -28,10 +28,10 @@ CREATE TABLE public.protocol_test
   `consultation_id` Int64,
   `recomendation` Nullable(String),
 `create_date` DateTime64(6),
-`_sign` Int8,
+`is_deleted` UInt8 DEFAULT 0,
 `_version` UInt64
 )
-ENGINE = ReplacingMergeTree(_version)
+ENGINE = ReplacingMergeTree(_version, is_deleted)
 ORDER BY id;
 
 CREATE DATABASE altinity_sink_connector;

@@ -31,16 +31,57 @@ public class DDLBaseIT {
             .withInitScript("init_clickhouse_it.sql")
             .withUsername("ch_user")
             .withPassword("password")
-            .withExposedPorts(8123);
+            .withExposedPorts(8123)
+            // Explicit readiness probe with a generous startup timeout. Under
+            // CI load the default timeout is occasionally too short and the
+            // container is not yet started when a test calls getMappedPort,
+            // which surfaces as the intermittent
+            // "Mapped port can only be obtained after the container is started"
+            // IllegalStateException. Waiting on ClickHouse's own /ping endpoint
+            // (returns 200 "Ok.") and allowing up to 5 minutes makes container
+            // start reliable on slow runners.
+            .waitingFor(org.testcontainers.containers.wait.strategy.Wait
+                    .forHttp("/ping")
+                    .forPort(8123)
+                    .forStatusCode(200)
+                    .withStartupTimeout(java.time.Duration.ofMinutes(5)));
+
+    /**
+     * Starts the shared ClickHouse container if it is not running.
+     *
+     * <p>{@link #stopContainers()} stops the static {@code clickHouseContainer}
+     * after EVERY test, but the Testcontainers extension starts a static
+     * {@code @Container} only once per class. In a class with two tests the
+     * second one therefore ran against a stopped container and failed with
+     * "Mapped port can only be obtained after the container is started" at its
+     * first {@code getMappedPort} call (observed on
+     * {@code AlterTableModifyColumnIT.testAlterAddPrimaryKeyAndModifyNotNull}).
+     * Restarting here gives each test a fresh container (the init script runs
+     * again), which is also what the per-test MySQL container provides.</p>
+     *
+     * <p>Subclasses that override {@link #startContainers()} must call this
+     * themselves.</p>
+     */
+    protected static void ensureClickHouseContainerStarted() {
+        if (clickHouseContainer != null && !clickHouseContainer.isRunning()) {
+            clickHouseContainer.start();
+        }
+    }
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
+        ensureClickHouseContainerStarted();
         mySqlContainer = new MySQLContainer<>(DockerImageName.parse(MYSQL_DOCKER_IMAGE)
                 .asCompatibleSubstituteFor("mysql"))
                 .withDatabaseName("employees").withUsername("root").withPassword("adminpass")
                 .withInitScript("alter_ddl_add_column.sql")
                 .withExtraHost("mysql-server", "0.0.0.0")
-                .waitingFor(new HttpWaitStrategy().forPort(3306));
+                // MySQL does not speak HTTP, so an HttpWaitStrategy on 3306 is
+                // the wrong readiness probe; wait for the port to accept TCP
+                // connections instead (with a generous timeout for slow runners).
+                .waitingFor(org.testcontainers.containers.wait.strategy.Wait
+                        .forListeningPort()
+                        .withStartupTimeout(java.time.Duration.ofMinutes(5)));
 
         BasicConfigurator.configure();
         mySqlContainer.start();

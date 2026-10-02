@@ -96,7 +96,7 @@ offset.storage.jdbc.user: "root"
 # offset.storage.jdbc.password: The password of the database user to be used when connecting to the database where connector offsets are to be stored.
 offset.storage.jdbc.password: "root"
 
-# offset.storage.jdbc.offset.table.ddl: The DDL statement used to create the database table where connector offsets are to be stored.(Advanced)
+# offset.storage.jdbc.table.ddl: The DDL statement used to create the database table where connector offsets are to be stored.(Advanced)
 offset.storage.jdbc.table.ddl: "CREATE TABLE if not exists %s
 (
     `id` String,
@@ -109,7 +109,7 @@ offset.storage.jdbc.table.ddl: "CREATE TABLE if not exists %s
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY offset_key
 SETTINGS index_granularity = 8192"
-# offset.storage.jdbc.offset.table.delete: The DML statement used to delete the database table where connector offsets are to be stored.(Advanced)
+# offset.storage.jdbc.table.delete: The DML statement used to delete the database table where connector offsets are to be stored.(Advanced)
 offset.storage.jdbc.table.delete: "select * from %s"
 
 offset.storage.jdbc.table.select: "SELECT id, offset_key, offset_val FROM %s FINAL ORDER BY record_insert_ts, record_insert_seq"
@@ -126,11 +126,11 @@ schema.history.internal.jdbc.user: "root"
 # schema.history.internal.jdbc.password: The password of the database user to be used when connecting to the database where connector schema history is to be stored.
 schema.history.internal.jdbc.password: "root"
 
-# schema.history.internal.jdbc.schema.history.table.ddl: The DDL statement used to create the database table where connector schema history is to be stored.(Advanced)
+# schema.history.internal.jdbc.table.ddl: The DDL statement used to create the database table where connector schema history is to be stored.(Advanced)
 schema.history.internal.jdbc.table.ddl: "CREATE TABLE if not exists %s
 (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
 
-# schema.history.internal.jdbc.schema.history.table.name: The name of the database table where connector schema history is to be stored.
+# schema.history.internal.jdbc.table.name: The name of the database table where connector schema history is to be stored.
 schema.history.internal.jdbc.table.name: "altinity_sink_connector.replicate_schema_history"
 
 # enable.snapshot.ddl: If set to true, the connector will parse the DDL statements from the initial load
@@ -143,14 +143,19 @@ enable.snapshot.ddl: "true"
 #                      MySQL x'0102030405' becomes the 10-character string
 #                      "0102030405", so hex(col) in ClickHouse returns
 #                      30313032303330343035 (the hex OF THAT TEXT), not
-#                      0102030405. A byte-for-byte comparison against the
-#                      source therefore does not match, and the column takes
-#                      twice the space. The value is recoverable with
-#                      unhex(col).
+#                      0102030405; the column takes twice the space and the
+#                      value is recoverable with unhex(col). The db_compare
+#                      checksum tools compare this shape with their default
+#                      --binary_encoding hex (the MySQL side renders
+#                      lower(hex(col)), the ClickHouse side the stored text).
 #   true            -- the raw bytes are stored unchanged, so the column is
 #                      byte-identical to MySQL and hex(col) matches HEX(col)
-#                      on the source. Use this when binary values are compared
-#                      against MySQL, e.g. by the db_compare checksum jobs.
+#                      on the source. Checksum such tables with
+#                      --binary_encoding raw on both sides (the top-level
+#                      driver then tells the ClickHouse side which columns
+#                      to hex via --hex_columns).
+#   With binary.handling.mode=base64 (below) the stored text is base64;
+#   checksum with --binary_encoding base64 on both sides.
 #
 # The default stays false for backward compatibility: flipping it changes the
 # stored representation, so existing tables would need to be rewritten.

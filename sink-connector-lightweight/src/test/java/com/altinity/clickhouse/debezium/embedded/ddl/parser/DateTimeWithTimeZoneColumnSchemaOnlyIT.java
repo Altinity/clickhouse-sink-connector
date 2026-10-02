@@ -13,6 +13,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
+import java.sql.Statement;
 import org.testcontainers.clickhouse.ClickHouseContainer;
 import org.testcontainers.containers.MySQLContainer;
 import org.testcontainers.containers.wait.strategy.HttpWaitStrategy;
@@ -132,6 +133,36 @@ public class DateTimeWithTimeZoneColumnSchemaOnlyIT  {
         Thread.sleep(10000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
+
+        // Poll until the temporal_types_DATETIME table exists in ClickHouse
+        boolean tableExists = false;
+        for (int retry = 0; retry < 20; retry++) {
+            try (Statement checkStmt = writer.getConnection().createStatement()) {
+                ResultSet checkRs = checkStmt.executeQuery(
+                    "SELECT count(*) as cnt FROM system.tables WHERE database = 'employees' AND name = 'temporal_types_DATETIME'");
+                if (checkRs.next() && checkRs.getInt("cnt") > 0) {
+                    tableExists = true;
+                    break;
+                }
+            }
+            Thread.sleep(3000);
+        }
+        Assert.assertTrue("temporal_types_DATETIME table should exist in ClickHouse employees database", tableExists);
+
+        // Poll until data is replicated
+        boolean dataExists = false;
+        for (int retry = 0; retry < 10; retry++) {
+            try (Statement checkStmt = writer.getConnection().createStatement()) {
+                ResultSet checkRs = checkStmt.executeQuery(
+                    "SELECT count(*) as cnt FROM employees.temporal_types_DATETIME");
+                if (checkRs.next() && checkRs.getInt("cnt") > 0) {
+                    dataExists = true;
+                    break;
+                }
+            }
+            Thread.sleep(3000);
+        }
+        Assert.assertTrue("temporal_types_DATETIME should have data in ClickHouse", dataExists);
 
         ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME", writer.getConnection());
 

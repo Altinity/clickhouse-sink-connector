@@ -611,15 +611,15 @@ RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_NullableDefault_Tru
 
 RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_NullableDefault_False = Requirement(
     name="RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False",
-    version="1.0",
+    version="2.0",
     priority=None,
     group=None,
     type=None,
     uid=None,
     description=(
-        "[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `false` (or omitted) for MySQL columns that have a `DEFAULT` constraint.\n"
+        "[Altinity Sink Connector] SHALL accept the `non.default.value` configuration property set to `false` for backward compatibility, and SHALL treat it as deprecated with no effect.\n"
         "\n"
-        "When `non.default.value` is set to `false` (or is omitted, as `false` is the default) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate the column's specified `DEFAULT` value instead of `NULL` in the corresponding ClickHouse column.\n"
+        "When `non.default.value` is set to `false` (or omitted) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL still replicate the value as `NULL` in the corresponding ClickHouse `Nullable` column; the column's `DEFAULT` value SHALL never be substituted for a source `NULL`. The connector SHALL log a deprecation warning once when the property is explicitly set to `false`.\n"
         "\n"
     ),
     link=None,
@@ -4361,15 +4361,15 @@ clickhouse-sink-connector:
 | `offset.storage.jdbc.url`                                | The JDBC URL for the database where connector offsets are to be stored.                                                                                                                                                                                                                                 |
 | `offset.storage.jdbc.user`                               | The name of the database user to be used when connecting to the database where connector offsets are to be stored.                                                                                                                                                                                      |
 | `offset.storage.jdbc.password`                           | The password of the database user to be used when connecting to the database where connector offsets are to be stored.                                                                                                                                                                                  |
-| `offset.storage.jdbc.offset.table.ddl`                   | The DDL statement used to create the database table where connector offsets are to be stored.(Advanced)                                                                                                                                                                                                 |
-| `offset.storage.jdbc.offset.table.delete`                | The DML statement used to delete the database table where connector offsets are to be stored.(Advanced)                                                                                                                                                                                                 |
-| `offset.storage.jdbc.offset.table.select`                |                                                                                                                                                                                                                                                                                                         |
+| `offset.storage.jdbc.table.ddl`                   | The DDL statement used to create the database table where connector offsets are to be stored.(Advanced)                                                                                                                                                                                                 |
+| `offset.storage.jdbc.table.delete`                | The DML statement used to delete the database table where connector offsets are to be stored.(Advanced)                                                                                                                                                                                                 |
+| `offset.storage.jdbc.table.select`                |                                                                                                                                                                                                                                                                                                         |
 | `schema.history.internal`                                | The Java class that implements the schema history strategy. This must be set to io.debezium.storage.jdbc.history.JdbcSchemaHistory.                                                                                                                                                                     |
 | `schema.history.internal.jdbc.url`                       | The JDBC URL for the database where connector schema history is to be stored.                                                                                                                                                                                                                           |
 | `schema.history.internal.jdbc.user`                      | The name of the database user to be used when connecting to the database where connector schema history is to be stored.                                                                                                                                                                                |
 | `schema.history.internal.jdbc.password`                  | The password of the database user to be used when connecting to the database where connector schema history is to be stored.                                                                                                                                                                            |
-| `schema.history.internal.jdbc.schema.history.table.ddl`  | The DDL statement used to create the database table where connector schema history is to be stored.(Advanced)                                                                                                                                                                                           |
-| `schema.history.internal.jdbc.schema.history.table.name` | The name of the database table where connector schema history is to be stored.                                                                                                                                                                                                                          |
+| `schema.history.internal.jdbc.table.ddl`  | The DDL statement used to create the database table where connector schema history is to be stored.(Advanced)                                                                                                                                                                                           |
+| `schema.history.internal.jdbc.table.name` | The name of the database table where connector schema history is to be stored.                                                                                                                                                                                                                          |
 | `enable.snapshot.ddl`                                    | If set to true, the connector will parse the DDL statements from the initial load.                                                                                                                                                                                                                      |
 | `persist.raw.bytes`                                      | If set to true, the connector will persist raw bytes as received in a String column.                                                                                                                                                                                                                    |
 | `auto.create.tables`                                     | If set to true, the connector will create tables in the target based on the schema received in the incoming message.                                                                                                                                                                                    |
@@ -4735,11 +4735,11 @@ version: 1.0
 When `non.default.value` is set to `true` and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate this value as `NULL` in the corresponding ClickHouse `Nullable` column.
 
 #### RQ.SRS-030.ClickHouse.MySQLToClickHouseReplication.DataTypes.NullableDefault.False
-version: 1.0
+version: 2.0
 
-[Altinity Sink Connector] SHALL support the `non.default.value` configuration property set to `false` (or omitted) for MySQL columns that have a `DEFAULT` constraint.
+[Altinity Sink Connector] SHALL accept the `non.default.value` configuration property set to `false` for backward compatibility, and SHALL treat it as deprecated with no effect.
 
-When `non.default.value` is set to `false` (or is omitted, as `false` is the default) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL replicate the column's specified `DEFAULT` value instead of `NULL` in the corresponding ClickHouse column.
+When `non.default.value` is set to `false` (or omitted) and a `NULL` value is inserted into a MySQL column with a `DEFAULT` value, the connector SHALL still replicate the value as `NULL` in the corresponding ClickHouse `Nullable` column; the column's `DEFAULT` value SHALL never be substituted for a source `NULL`. The connector SHALL log a deprecation warning once when the property is explicitly set to `false`.
 
 ### Enum
 

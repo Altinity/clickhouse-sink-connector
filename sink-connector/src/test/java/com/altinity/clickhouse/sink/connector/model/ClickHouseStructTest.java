@@ -43,6 +43,71 @@ public class ClickHouseStructTest {
 
     }
 
+    /**
+     * MySQL 8.3+ tagged GTIDs are {@code uuid:tag:n}; the transaction number is
+     * the LAST colon-separated segment (spec 02.01 §3.1). Parsing only the
+     * two-segment form left {@code gtid} unset for every tagged transaction, which
+     * silently dropped it into the sequence-number version domain while its
+     * untagged neighbours stayed in the snowflake domain -- it then lost every
+     * merge against them. A colon-less value (MariaDB {@code domain-server-seq})
+     * still leaves {@code gtid} unset.
+     */
+    @Test
+    public void taggedGtidIsParsed() {
+        String keyField = "customer";
+        Schema basicKeySchema = SchemaBuilder.struct().field(keyField, Schema.STRING_SCHEMA).build();
+        Schema sourceSchema = SchemaBuilder.struct().field("gtid", Schema.STRING_SCHEMA).build();
+
+        Map<String, Object> tagged = new HashMap<>();
+        tagged.put("source", new Struct(sourceSchema).put("gtid", "3e11fa47-71ca-11e1-9e33-c80aa9429562:tag:42"));
+        ClickHouseStruct taggedRecord = new ClickHouseStruct(10, "topic_1", new Struct(basicKeySchema), 100,
+                12322323L, new Struct(basicKeySchema), new Struct(basicKeySchema),
+                tagged, ClickHouseConverter.CDC_OPERATION.CREATE);
+        assertEquals(42L, taggedRecord.getGtid(), "the transaction number is the last segment of a tagged GTID");
+
+        Map<String, Object> classic = new HashMap<>();
+        classic.put("source", new Struct(sourceSchema).put("gtid", "3e11fa47-71ca-11e1-9e33-c80aa9429562:7"));
+        ClickHouseStruct classicRecord = new ClickHouseStruct(10, "topic_1", new Struct(basicKeySchema), 100,
+                12322323L, new Struct(basicKeySchema), new Struct(basicKeySchema),
+                classic, ClickHouseConverter.CDC_OPERATION.CREATE);
+        assertEquals(7L, classicRecord.getGtid(), "the classic form is unchanged");
+
+        Map<String, Object> mariaDb = new HashMap<>();
+        mariaDb.put("source", new Struct(sourceSchema).put("gtid", "0-1-5"));
+        ClickHouseStruct mariaDbRecord = new ClickHouseStruct(10, "topic_1", new Struct(basicKeySchema), 100,
+                12322323L, new Struct(basicKeySchema), new Struct(basicKeySchema),
+                mariaDb, ClickHouseConverter.CDC_OPERATION.CREATE);
+        assertEquals(-1L, mariaDbRecord.getGtid(), "a colon-less value is not a MySQL GTID and leaves gtid unset");
+    }
+
+    /**
+     * The GTID version uses the floored {@code versionTs} when the lightweight
+     * dispatch loop set one, and the raw {@code source.ts_ms} otherwise -- the
+     * Kafka Connect path never sets {@code versionTs}, so its versions are
+     * unchanged (spec 02.01 §3.1).
+     */
+    @Test
+    public void versionTsFallsBackToTsMsWhenUnset() {
+        final long sourceTs = 1_757_900_000_000L;
+        ClickHouseStruct record = new ClickHouseStruct();
+        record.setTs_ms(sourceTs);
+        record.setGtid(4242L);
+
+        record.calculateVersion(true);
+        assertEquals(com.altinity.clickhouse.sink.connector.common.SnowFlakeId.generate(sourceTs, 4242L, false),
+                record.getVersion(), "without a versionTs the raw source timestamp feeds the snowflake");
+
+        record.setVersion(-1L);
+        record.setVersionTs(sourceTs + 5_000);
+        record.calculateVersion(true);
+        assertEquals(com.altinity.clickhouse.sink.connector.common.SnowFlakeId.generate(sourceTs + 5_000, 4242L, false),
+                record.getVersion(), "a floored versionTs replaces the raw timestamp in the snowflake");
+
+        record.setVersion(-1L);
+        record.calculateVersion(false);
+        assertEquals(4242L, record.getVersion(), "snowflake.id=false still binds the raw GTID");
+    }
+
     @Test
     public void testSourceRecordToJson() throws Exception {
         // Create a real SourceRecord for testing

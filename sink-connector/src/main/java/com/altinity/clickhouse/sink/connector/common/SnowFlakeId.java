@@ -26,9 +26,17 @@ public class SnowFlakeId {
 
     /**
      * The epoch used for Snowflake ID generation (starting point for the timestamp).
-     * This is the timestamp when Twitter's Snowflake was created.
+     * This is the timestamp when Twitter's Snowflake was created. Public so that the
+     * startup version-floor seeding can decode the timestamp field of a stored
+     * snowflake version ({@code (version >>> GTID_FIELD_BITS) + SNOWFLAKE_EPOCH}).
      */
-    private static final long SNOWFLAKE_EPOCH = 1288834974657L;
+    public static final long SNOWFLAKE_EPOCH = 1288834974657L;
+
+    /**
+     * Width of the transaction-number field below the timestamp in a generated id
+     * (bits 0..21); the timestamp occupies bits 22..62.
+     */
+    public static final int GTID_FIELD_BITS = 22;
 
     /**
      * Generates a Snowflake ID using the provided timestamp and GTID.
