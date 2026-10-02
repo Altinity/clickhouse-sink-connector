@@ -331,6 +331,8 @@ class TestSlices(unittest.TestCase):
         self.assertIn("one slice", log)
         source = FakeSource(list(range(7, 50007)), explain_rows=50000, partition_rows=50000)
         self.assertEqual(self.slices(source, slice_rows=0)[0], ["`id` >= 7"], "0 means one slice per table")
+        self.assertFalse([sql for sql in source.sql if not sql.startswith("select min(")],
+                         "with 0 nothing but the smallest key is read")
 
     def test_a_full_sample_is_taken_again_sparser(self):
         # The estimates say 2000 rows; the table holds 90000: the first sample

@@ -928,9 +928,12 @@ def slice_starts(conn, table, pk, mysql_where, slice_rows, min_slices, min_pk, m
     keys are spread. An even split of the key range does not: a day partition
     whose keys sit in a narrow band at the top of the range gets almost all its
     rows in one slice."""
+    if slice_rows <= 0:
+        logging.info(f"Slices of {table}: --snapshot_slice_rows 0, one slice")
+        return [min_pk]
     (explain_rows, partition_rows) = filtered_row_estimate(conn, table, pk, mysql_where, min_pk, max_pk)
     estimate = max(explain_rows, partition_rows)
-    if slice_rows <= 0 or estimate <= slice_rows:
+    if estimate <= slice_rows:
         logging.info(f"Slices of {table}: estimate {estimate} rows (EXPLAIN {explain_rows}, partition statistics "
                      f"{partition_rows}), one slice")
         return [min_pk]
