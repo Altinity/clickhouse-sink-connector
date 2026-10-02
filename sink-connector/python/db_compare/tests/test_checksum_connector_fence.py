@@ -358,7 +358,8 @@ class TestMySQLSideExclusionLine(unittest.TestCase):
         self.assertIsNone(self.read('{"column": null, "keys": []}\n'))
 
     def test_malformed_or_missing_answers_are_errors(self):
-        for text in ("", '{"column": "id; DROP", "keys": [1]}\n', '{"column": "id", "keys": ["1"]}\n'):
+        for text in ("", '{"column": "id; DROP", "keys": [1]}\n', '{"column": "id", "keys": ["1"]}\n',
+                     '{"column": "id\\n", "keys": [1]}\n', '{"column": "id", "keys": [true]}\n'):
             with self.subTest(text=text), self.assertRaises(RuntimeError):
                 self.read(text)
 

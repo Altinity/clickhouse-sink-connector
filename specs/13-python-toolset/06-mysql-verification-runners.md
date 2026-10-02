@@ -428,7 +428,8 @@ offset past it; when the end of the source binary log is still the target and th
 gives up with an INFO line `did NOT reach`; the comparison still runs and can only produce a difference, never
 a false match. That connector is then marked behind (`ConnectorFence.behind`): its later waits in the run check
 the offset once instead of sleeping the timeout again, so a lagging connector costs one timeout per run rather
-than one per slice and pass; the first target it reaches clears the mark. An unreadable offset (missing table, zero or several offset rows) or an unreadable binlog
+than one per slice and pass; the first target it reaches clears the mark. While marked, a wait ends after its
+single check, before the idle test can apply (`did NOT reach ... in one check (it is behind)`). An unreadable offset (missing table, zero or several offset rows) or an unreadable binlog
 position makes that table `ERROR` (`ConnectorFenceError`, `BinlogPositionError`); the other tables still get
 verdicts. Without `offset_table` on every replica the run exits 1 before the first table.
 
@@ -512,8 +513,10 @@ writes, not for a whole-table scan.
    snapshot, logs `INFO Snapshot of <db.t> slice [...] at <file>:<pos> (<kind>)` (the side's own lines reach
    the driver log only at DEBUG) and waits on every replica's connector up to the position
    (`wait_for_connectors`, the fence of §3.7.1). The idle test reads the source head through one shared,
-   locked connection per table. If the wait raises, the side's stdin is closed (it exits with an error) and the
-   table gets no verdict.
+   locked connection per table. If the wait raises (`ConnectorFenceError`, `BinlogPositionError`), the side's
+   stdin is closed (it exits with an error) and the exception reaches `run_config`, which makes that table
+   `ERROR` as in §3.7.1; the other tables still get verdicts. The exclusion is ANDed onto the side's filter in
+   parentheses (`(<where>) and ...`), the same shape as on the ClickHouse side.
 3a. **Version fence.** The connector keeps applying writes after the position, so when ClickHouse reads the
    slice it can hold a later state of some keys than the snapshot. Connector versions grow in binlog order
    (spec 02.02 §3.3, §3.5): every transaction after the snapshot position is versioned above the floor read in

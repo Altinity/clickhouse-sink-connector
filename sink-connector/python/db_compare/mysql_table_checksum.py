@@ -302,7 +302,7 @@ def snapshot_binlog_position(conn):
     return (binlog_file, binlog_position, 'upper_bound')
 
 
-EXCLUDED_KEY_COLUMN = re.compile(r"^[A-Za-z0-9_$]+$")
+EXCLUDED_KEY_COLUMN = re.compile(r"[A-Za-z0-9_$]+")  # used with fullmatch: no trailing newline slips through
 
 
 def read_excluded_keys(stream):
@@ -318,7 +318,7 @@ def read_excluded_keys(stream):
     column = payload.get("column")
     if not keys:
         return None
-    if not isinstance(column, str) or not EXCLUDED_KEY_COLUMN.match(column):
+    if not isinstance(column, str) or not EXCLUDED_KEY_COLUMN.fullmatch(column):
         raise RuntimeError(f"--exclude_keys_from_stdin: invalid key column {column!r}")
     if not all(isinstance(key, int) and not isinstance(key, bool) for key in keys):
         raise RuntimeError("--exclude_keys_from_stdin: keys must be integers")
@@ -356,7 +356,9 @@ def calculate_sql_checksum(conn, table, where, excluded_columns,  include_floati
                 # and answers with the keys changed since (version fence).
                 exclusion = read_excluded_keys(sys.stdin)
                 if exclusion:
-                    where = f"{where} and {exclusion}"
+                    # Parenthesised like the ClickHouse side's filter, so an OR in
+                    # the table's where cannot bind the exclusion differently.
+                    where = f"({where}) and {exclusion}" if where else exclusion
         (query, select_query, distributed_by,
          external_table_types, clamped_expression) = get_table_checksum_query(table, conn, args.binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns)
         statements = select_table_statements(

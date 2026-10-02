@@ -785,8 +785,10 @@ class ConnectorFence:
                              f"wrote nothing after {target[0]}:{target[1]} for {label}: nothing is in flight")
                 return (True, offset)
             if now - start >= timeout_seconds:
+                waited_for = ("in one check (it is behind)" if self.behind
+                              else f"within {self.timeout_seconds} s")
                 logging.info(f"Connector on {self.replica_host} did NOT reach {target[0]}:{target[1]} for {label} "
-                             f"within {timeout_seconds} s (offset {offset[0]}:{offset[1]}); comparing anyway"
+                             f"{waited_for} (offset {offset[0]}:{offset[1]}); comparing anyway"
                              f"{'' if self.behind else '; later waits of this run check the offset once until it catches up'}")
                 self.behind = True
                 return (False, offset)
