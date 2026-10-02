@@ -59,6 +59,7 @@ from ch_sink_tools.db.postgres import (
     get_standby_lsn,
     get_server_timezone,
     build_ch_create_table_ddl,
+    execute_pg,
 )
 from ch_sink_tools.db.clickhouse import clickhouse_connection, clickhouse_execute_conn
 from ch_sink_tools.db_dump.naming import validate_template, resolve_ch_names
@@ -79,6 +80,34 @@ runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 # Heartbeat table used to keep CDC offsets fresh during idle periods
 HEARTBEAT_TABLE = "public.sink_connector_heartbeat"
+
+# Debezium's default for the PostgreSQL connector property slot.name.
+DEFAULT_REPLICATION_SLOT = "debezium"
+
+# Settings pinned at the start of every psql session that reads table data,
+# so the text the converters in postgres_type_mapper receive does not depend
+# on server, role or database defaults:
+#   TimeZone            timestamptz printed in UTC ('+00')
+#   DateStyle           ISO, year first ('2024-03-10', '0044-03-15 BC')
+#   IntervalStyle       ISO-8601 ('P1DT2H'), the form Debezium's string
+#                       interval mode emits
+#   extra_float_digits  exact float text on every server version
+#   bytea_output        hex ('\x48656c6c6f')
+#   lc_monetary         'C', so money text is locale independent
+#   client_encoding     UTF-8, what ClickHouse String expects
+#   statement_timeout   0, a long COPY must not be cancelled mid-stream
+PG_SESSION_SETTINGS = (
+    ("TimeZone", "UTC"),
+    ("DateStyle", "ISO, YMD"),
+    ("IntervalStyle", "iso_8601"),
+    ("extra_float_digits", "3"),
+    ("bytea_output", "hex"),
+    ("lc_monetary", "C"),
+    ("client_encoding", "UTF8"),
+    ("statement_timeout", "0"),
+)
+
+_SNAPSHOT_ID_RE = re.compile(r'^[0-9A-Fa-f]+(-[0-9A-Fa-f]+)+$')
 
 # ---------------------------------------------------------------------------
 # PG binary resolution  (supports --pg_bin_dir / PG_BIN_DIR env var)
@@ -308,10 +337,51 @@ def get_pk_type_is_segmentable(pg_conn, pg_schema, table_name, pk_columns):
 # Per-table COPY → clickhouse-client pipe
 # ---------------------------------------------------------------------------
 
+def build_copy_session_sql(copy_sql, snapshot_id=None):
+    """
+    Wrap one COPY statement in the session script every data-reading psql
+    session runs: the pinned PG_SESSION_SETTINGS, then (when *snapshot_id*
+    is given) a REPEATABLE READ READ ONLY transaction that imports the
+    snapshot exported by the coordinator (open_snapshot_coordinator), so
+    every table and every segment is read from the same point in time.
+    """
+    lines = [f"SET {name} = '{value}';" for name, value in PG_SESSION_SETTINGS]
+    if snapshot_id is not None:
+        if not _SNAPSHOT_ID_RE.match(str(snapshot_id)):
+            raise ValueError(f"Invalid exported snapshot identifier: {snapshot_id!r}")
+        lines.append("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY;")
+        lines.append(f"SET TRANSACTION SNAPSHOT '{snapshot_id}';")
+        lines.append(f"{copy_sql};")
+        lines.append("COMMIT;")
+    else:
+        lines.append(f"{copy_sql};")
+    return "\n".join(lines) + "\n"
+
+
+def build_psql_base_cmd(pg_host, pg_port, pg_user, pg_password, pg_database):
+    """
+    psql invocation for a data-reading session.  -X ignores ~/.psqlrc,
+    -q suppresses command tags (BEGIN, SET, COPY n, COMMIT) that would
+    otherwise reach clickhouse-client on stdout as malformed CSV, and
+    ON_ERROR_STOP=1 makes psql exit non-zero when any statement fails
+    (without it, psql -f exits 0 after a failed COPY).
+    """
+    # PGTZ=UTC ensures that timestamptz values are output in UTC,
+    # matching what Debezium CDC sends to ClickHouse.
+    return (
+        f"PGPASSWORD='{pg_password}' PGTZ=UTC {pg_bin('psql')}"
+        f" -X -q -v ON_ERROR_STOP=1"
+        f" -h {pg_host}"
+        f" -p {pg_port}"
+        f" -U {pg_user}"
+        f" -d \"{pg_database}\""
+    )
+
+
 def build_psql_copy_cmd(pg_host, pg_port, pg_user, pg_password,
                         pg_database, pg_schema, table_name,
                         column_names, batch_size=None,
-                        where_clause=None):
+                        where_clause=None, snapshot_id=None):
     """
     Build the psql command that streams CSV rows for *table_name* to stdout.
 
@@ -335,6 +405,8 @@ def build_psql_copy_cmd(pg_host, pg_port, pg_user, pg_password,
     where_clause : Optional SQL WHERE clause (without the WHERE keyword) to
                    filter rows.  Used for PK-range segmented loading.
                    Example: '"request_id" >= 'abc' AND "request_id" < 'def''
+    snapshot_id  : exported snapshot to import (SET TRANSACTION SNAPSHOT);
+                   None reads at the session's own point in time.
 
     Returns (cmd, tmp_file_path) — the caller must clean up the temp file.
     """
@@ -345,24 +417,19 @@ def build_psql_copy_cmd(pg_host, pg_port, pg_user, pg_password,
         f"COPY (SELECT {col_list} FROM \"{pg_schema}\".\"{table_name}\"{where_part}) "
         f"TO STDOUT WITH (FORMAT CSV, HEADER false, FORCE_QUOTE *)"
     )
+    session_sql = build_copy_session_sql(copy_sql, snapshot_id=snapshot_id)
 
     # Write COPY SQL to a temp file to preserve double-quote identifiers
     qfile = tempfile.NamedTemporaryFile(
         mode='w', suffix='.sql', prefix='pg_copy_',
         delete=False, dir='/tmp'
     )
-    qfile.write(copy_sql)
+    qfile.write(session_sql)
     qfile.close()
 
-    # PGTZ=UTC ensures that timestamptz values are output in UTC,
-    # matching what Debezium CDC sends to ClickHouse.
     cmd = (
-        f"PGPASSWORD='{pg_password}' PGTZ=UTC {pg_bin('psql')}"
-        f" -h {pg_host}"
-        f" -p {pg_port}"
-        f" -U {pg_user}"
-        f" -d \"{pg_database}\""
-        f" -f {qfile.name}"
+        build_psql_base_cmd(pg_host, pg_port, pg_user, pg_password, pg_database)
+        + f" -f {qfile.name}"
     )
     return cmd, qfile.name
 
@@ -378,6 +445,11 @@ def build_ch_insert_cmd(ch_host, ch_port, ch_user, ch_password,
     NOTE: The INSERT query is written to a temp file and passed via
     --queries-file to avoid bash backtick command substitution that would
     strip quoted column names when --query "..." is used in a shell pipeline.
+
+    Returns (cmd, tmp_file_path).  The command is a single clickhouse-client
+    invocation, so a pipeline ending in it exits with its status; the caller
+    removes the temp file in Python AFTER reading that status (a trailing
+    shell '; rm -f' used to replace every load's exit status with rm's 0).
     """
     import tempfile
     structure = build_insert_structure(columns_meta)
@@ -423,9 +495,21 @@ def build_ch_insert_cmd(ch_host, ch_port, ch_user, ch_password,
         f" --throw_if_no_data_to_insert=0"
         f" --max_partitions_per_insert_block=1000"
         f" --queries-file {qfile.name}"
-        f"; rm -f {qfile.name}"
     )
-    return cmd
+    return cmd, qfile.name
+
+
+def _remove_temp_files(*paths):
+    """Remove the temp SQL files this module created under /tmp."""
+    for path in paths:
+        if not path:
+            continue
+        try:
+            # Removes only the NamedTemporaryFile this run created for the
+            # command text (pg_copy_*/ch_insert_*/pg_dump_copy_*.sql); never data.
+            os.unlink(path)
+        except OSError:
+            pass
 
 
 def load_table(
@@ -438,11 +522,14 @@ def load_table(
     ch_table_name=None,
     where_clause=None,
     segment_label=None,
+    override_config=None,
+    snapshot_id=None,
 ):
     """
     Stream one table (or a segment of it) from PostgreSQL COPY to ClickHouse
     INSERT via a shell pipe.
-    Returns (label, rows_estimated, elapsed_seconds, success).
+    Returns (label, rows_estimated, elapsed_seconds, success).  success is
+    True only when the whole pipe (psql and clickhouse-client) exited 0.
 
     Parameters
     ----------
@@ -453,6 +540,9 @@ def load_table(
                      rows.  Used for PK-range segmented loading of large tables.
     segment_label  : Human-readable label for this segment (e.g. "seg 1/4").
                      Used in log messages.
+    override_config: column type overrides; the load SELECT is built from the
+                     same override-applied types as the CREATE TABLE.
+    snapshot_id    : exported snapshot the COPY session imports.
     """
     # Resolve CH table name — default to PG table name for backward compat
     if ch_table_name is None:
@@ -463,12 +553,20 @@ def load_table(
 
     t_start = time.time()
     success = False
+    approx_rows = -1
+    pg_tmp_file = None
+    ch_tmp_file = None
 
     try:
         # We need a fresh PG connection per thread (psycopg2 is not thread-safe)
         pg_conn = get_postgres_connection(pg_host, pg_user, pg_password,
                                           pg_port, pg_database)
-        columns_meta = get_table_columns(pg_conn, pg_schema, table_name, pg_server_timezone=pg_server_timezone)
+        columns_meta = get_table_columns(
+            pg_conn, pg_schema, table_name,
+            pg_server_timezone=pg_server_timezone,
+            override_config=override_config,
+            pg_database=pg_database,
+        )
         pk_cols = get_table_pk(pg_conn, pg_schema, table_name)
         approx_rows = get_table_row_count(pg_conn, pg_schema, table_name)
         if where_clause:
@@ -482,9 +580,9 @@ def load_table(
         psql_cmd, pg_tmp_file = build_psql_copy_cmd(
             pg_host, pg_port, pg_user, pg_password,
             pg_database, pg_schema, table_name, column_names, batch_size,
-            where_clause=where_clause,
+            where_clause=where_clause, snapshot_id=snapshot_id,
         )
-        ch_cmd = build_ch_insert_cmd(
+        ch_cmd, ch_tmp_file = build_ch_insert_cmd(
             ch_host, ch_port, ch_user, ch_password,
             ch_database, ch_table_name, column_names, columns_meta,
             ch_config_file=ch_config_file, ch_secure=ch_secure,
@@ -493,7 +591,8 @@ def load_table(
         # Use 'set -o pipefail' so that a failure in psql (left side of
         # the pipe) propagates as the exit code.  Without this, only the
         # exit code of the last command (clickhouse-client) is returned,
-        # masking psql COPY errors.
+        # masking psql COPY errors.  Nothing may follow the pipe in the
+        # command string: the pipe's status IS the command's status.
         pipe_cmd = f"set -o pipefail; {psql_cmd} | {ch_cmd}"
         if approx_rows >= 0:
             logging.info(f"[{label}] Starting load (~{approx_rows:,} rows)")
@@ -502,14 +601,7 @@ def load_table(
         logging.debug(f"[{label}] pipe cmd: {pipe_cmd}")
 
         if not dry_run:
-            try:
-                rc = run_command(pipe_cmd)
-            finally:
-                # Clean up the psql temp SQL file
-                try:
-                    os.unlink(pg_tmp_file)
-                except OSError:
-                    pass
+            rc = run_command(pipe_cmd)
             if rc != "0":
                 raise RuntimeError(
                     f"Pipe command failed for {label} (rc={rc})"
@@ -532,6 +624,8 @@ def load_table(
             f"[{label}] FAILED after {elapsed:.1f}s: {e}"
         )
         logging.error(traceback.format_exc())
+    finally:
+        _remove_temp_files(pg_tmp_file, ch_tmp_file)
 
     return (label, approx_rows, time.time() - t_start, success)
 
@@ -651,17 +745,15 @@ def psqlcopy_dump_table(table_name, column_names, pg_host, pg_port, pg_user,
         mode='w', suffix='.sql', prefix='pg_dump_copy_',
         delete=False, dir='/tmp'
     )
-    qfile.write(copy_sql)
+    qfile.write(build_copy_session_sql(copy_sql))
     qfile.close()
 
+    # pipefail: a failing psql must fail the dump, not leave a short .csv.gz
     cmd = (
-        f"PGPASSWORD='{pg_password}' PGTZ=UTC {pg_bin('psql')}"
-        f" -h {pg_host}"
-        f" -p {pg_port}"
-        f" -U {pg_user}"
-        f" -d \"{pg_database}\""
-        f" -f {qfile.name}"
-        f" | gzip -1 > {csv_file}"
+        "set -o pipefail; "
+        + build_psql_base_cmd(pg_host, pg_port, pg_user, pg_password, pg_database)
+        + f" -f {qfile.name}"
+        + f" | gzip -1 > {csv_file}"
     )
 
     t0 = time.time()
@@ -676,10 +768,7 @@ def psqlcopy_dump_table(table_name, column_names, pg_host, pg_port, pg_user,
         logging.debug(line.decode().strip())
     process.wait()
 
-    try:
-        os.unlink(qfile.name)
-    except OSError:
-        pass
+    _remove_temp_files(qfile.name)
 
     if process.returncode != 0:
         raise RuntimeError(
@@ -709,9 +798,10 @@ def psqlcopy_load_table(table_name, csv_file, ch_host, ch_port, ch_user,
     label = ch_table_name or table_name
     t_start = time.time()
     success = False
+    ch_tmp_file = None
 
     try:
-        ch_cmd = build_ch_insert_cmd(
+        ch_cmd, ch_tmp_file = build_ch_insert_cmd(
             ch_host, ch_port, ch_user, ch_password,
             ch_database, ch_table_name or table_name, column_names, columns_meta,
             ch_config_file=ch_config_file, ch_secure=ch_secure,
@@ -742,6 +832,8 @@ def psqlcopy_load_table(table_name, csv_file, ch_host, ch_port, ch_user,
         elapsed = time.time() - t_start
         logging.error(f"[{label}] psql-copy load FAILED after {elapsed:.1f}s: {e}")
         logging.error(traceback.format_exc())
+    finally:
+        _remove_temp_files(ch_tmp_file)
 
     return (label, -1, time.time() - t_start, success)
 
@@ -800,83 +892,23 @@ def pgdump_load_table(table_name, dump_dir, ch_host, ch_port, ch_user,
                       column_names, columns_meta,
                       ch_config_file=None, ch_secure=False,
                       dry_run=False, approx_rows=-1):
-    """Load a single table from a pg_dump directory into ClickHouse.
+    """Phase 2 of the 'pgdump' strategy — DISABLED.
 
-    Phase 2 of the 'pgdump' strategy.  Uses pg_restore to extract COPY-text
-    data, then pipes through a Python transform to clickhouse-client.
-
-    pg_restore COPY-text format:
-      - Tab-separated fields
-      - \\N for NULL
-      - No header line
-
-    Returns (label, rows_loaded, elapsed_seconds, success).
+    The converter this function used (pg_restore | awk | clickhouse-client)
+    did not decode COPY-text escapes ('\\n', '\\t', '\\\\' arrived literally)
+    and dropped every data row starting with 'COPY ', 'SET ', 'SELECT ',
+    '--' or '\\.', or that was empty.  It is refused rather than run: a
+    correct load path is the streaming strategy.
     """
-    label = ch_table_name or table_name
-    t_start = time.time()
-    success = False
-    row_count = 0
+    raise RuntimeError(PGDUMP_DISABLED_MESSAGE)
 
-    try:
-        ch_cmd = build_ch_insert_cmd(
-            ch_host, ch_port, ch_user, ch_password,
-            ch_database, ch_table_name or table_name, column_names, columns_meta,
-            ch_config_file=ch_config_file, ch_secure=ch_secure,
-        )
 
-        # pg_restore outputs COPY-text (tab-separated).
-        # We need to convert to CSV for our clickhouse-client INSERT.
-        # Use a shell pipeline: pg_restore | python csv-converter | ch-client
-        #
-        # For simplicity, we use a helper script approach:
-        # pg_restore --data-only -t table dump_dir → pipe to clickhouse-client
-        # with TabSeparated format instead of CSV.
-
-        # Build a simpler approach: pipe pg_restore output through awk to convert
-        # tab-separated COPY-text to CSV, filtering out SQL lines.
-        pg_restore_cmd = (
-            f"{pg_bin('pg_restore')} --data-only -t {table_name} {dump_dir}"
-        )
-
-        # Extract only data lines (skip COPY/SQL lines), convert TSV to CSV
-        # This awk script:
-        #  - Skips lines starting with COPY or ending with \.
-        #  - Skips SET/SELECT/-- lines
-        #  - Converts tab-separated COPY-text to CSV
-        #  - Handles NULL (\N) → empty unquoted field
-        convert_cmd = (
-            f"{pg_restore_cmd} 2>/dev/null"
-            f" | awk -F'\\t' '"
-            f"   /^COPY /{{next}} /^\\\\\\./{{next}} /^SET /{{next}} /^SELECT /{{next}} /^--/{{next}} /^$/{{next}}"
-            f"   {{for(i=1;i<=NF;i++){{"
-            f"     if($i==\"\\\\N\")printf \"\"; "
-            f"     else{{gsub(/\"/,\"\\\"\\\"\",$i); printf \"\\\"%s\\\"\",$i}}"
-            f"     if(i<NF)printf \",\"; else print \"\""
-            f"   }}}}'"
-        )
-
-        pipe_cmd = f"set -o pipefail; {convert_cmd} | {ch_cmd}"
-
-        logging.info(f"[{label}] pgdump Phase 2: loading from {dump_dir}")
-        logging.debug(f"[{label}] pipe cmd: {pipe_cmd}")
-
-        if not dry_run:
-            rc = run_command(pipe_cmd)
-            if rc != "0":
-                raise RuntimeError(
-                    f"pgdump load failed for {label} (rc={rc})"
-                )
-
-        elapsed = time.time() - t_start
-        logging.info(f"[{label}] Loaded in {elapsed:.1f}s")
-        success = True
-
-    except Exception as e:
-        elapsed = time.time() - t_start
-        logging.error(f"[{label}] pgdump load FAILED after {elapsed:.1f}s: {e}")
-        logging.error(traceback.format_exc())
-
-    return (label, approx_rows, time.time() - t_start, success)
+PGDUMP_DISABLED_MESSAGE = (
+    "--strategy pgdump is disabled: its pg_restore-to-CSV converter corrupts "
+    "escaped values (newline, tab, backslash) and drops rows whose first "
+    "field starts with 'COPY ', 'SET ', 'SELECT ', '--' or '\\.'. "
+    "Use --strategy streaming (the default)."
+)
 
 
 # ---------------------------------------------------------------------------
@@ -989,6 +1021,7 @@ def run_benchmark(args, pg_user, pg_password, ch_user, ch_password,
                 ch_secure=args.ch_secure,
                 pg_server_timezone=pg_server_timezone,
                 ch_table_name=bench_table,
+                override_config=override_config,
             )
             total_elapsed = time.time() - t0
             results[strategy] = {
@@ -1089,6 +1122,143 @@ def run_benchmark(args, pg_user, pg_password, ch_user, ch_password,
             f"WINNER: {winner} ({valid[winner]['total_time']:.1f}s total, "
             f"{rate:.0f} rows/s)"
         )
+
+
+# ---------------------------------------------------------------------------
+# Consistent snapshot and replication-slot anchor
+# ---------------------------------------------------------------------------
+
+def lsn_to_int(lsn_str):
+    """'HI/LO' hex LSN text -> 64-bit integer (same encoding as get_standby_lsn)."""
+    hi_str, lo_str = str(lsn_str).split('/')
+    return int(hi_str, 16) * 4294967296 + int(lo_str, 16)
+
+
+def open_snapshot_coordinator(pg_conn):
+    """
+    Read the start LSN, then open a REPEATABLE READ READ ONLY transaction on
+    *pg_conn* (an autocommit connection dedicated to this purpose) and export
+    its snapshot.  Every COPY session imports it (SET TRANSACTION SNAPSHOT),
+    so all tables and segments are read at one point in time.  *pg_conn* must
+    stay open, with the transaction idle, until every reader has started.
+
+    The LSN is read BEFORE the snapshot is taken, so a change that is not
+    visible in the snapshot commits after the LSN and CDC started from the
+    LSN replays it.  Changes that are both in the snapshot and after the LSN
+    are replayed too; snapshot rows carry _version = 0 and lose to them.
+    Residual: a transaction whose commit record is already in the WAL but
+    which is not yet visible when the snapshot is taken (it is still waiting,
+    e.g. for a synchronous standby) is in neither; only a snapshot exported
+    by CREATE_REPLICATION_SLOT ... EXPORT_SNAPSHOT closes that window.
+
+    Returns (lsn_str, lsn_int, snapshot_id).
+    """
+    (lsn_str, lsn_int) = get_standby_lsn(pg_conn)
+    execute_pg(pg_conn, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY")
+    rows = execute_pg(pg_conn, "SELECT pg_export_snapshot() AS snapshot_id")
+    snapshot_id = rows[0]['snapshot_id'] if rows else None
+    if not snapshot_id or not _SNAPSHOT_ID_RE.match(str(snapshot_id)):
+        raise RuntimeError(
+            f"pg_export_snapshot() returned an unusable identifier: {snapshot_id!r}"
+        )
+    return lsn_str, lsn_int, snapshot_id
+
+
+def verify_replication_slot(pg_conn, slot_name, pg_database, lsn_str, lsn_int):
+    """
+    Refuse to dump unless the connector's logical replication slot already
+    exists and retains WAL from the recorded LSN: its confirmed_flush_lsn
+    and restart_lsn must be at or before *lsn_int*.  PostgreSQL decodes from
+    the slot's position, so a slot created after the snapshot LSN never
+    delivers the changes committed in between.  Raises RuntimeError.
+    """
+    rows = execute_pg(
+        pg_conn,
+        "SELECT slot_name, slot_type, database, active, "
+        "restart_lsn::text AS restart_lsn, "
+        "confirmed_flush_lsn::text AS confirmed_flush_lsn "
+        "FROM pg_replication_slots WHERE slot_name = %s",
+        (slot_name,),
+    )
+    if not rows:
+        raise RuntimeError(
+            f"Replication slot '{slot_name}' does not exist on the source. "
+            f"The connector must create its logical replication slot BEFORE the "
+            f"snapshot is taken, otherwise every change committed between the "
+            f"snapshot LSN ({lsn_str}) and the slot's creation is lost. Start the "
+            f"connector once so it creates the slot (or create it with "
+            f"pg_create_logical_replication_slot), stop the connector, then rerun "
+            f"ch-pg-dump. Pass the slot name with --replication_slot (or slot.name "
+            f"in the connector config)."
+        )
+    slot = rows[0]
+    if slot.get('slot_type') != 'logical':
+        raise RuntimeError(
+            f"Replication slot '{slot_name}' is a {slot.get('slot_type')} slot; the "
+            f"connector needs a logical slot."
+        )
+    if slot.get('database') != pg_database:
+        raise RuntimeError(
+            f"Replication slot '{slot_name}' belongs to database "
+            f"'{slot.get('database')}', not '{pg_database}'."
+        )
+    restart = slot.get('restart_lsn')
+    confirmed = slot.get('confirmed_flush_lsn')
+    if not restart:
+        raise RuntimeError(
+            f"Replication slot '{slot_name}' has no restart_lsn (invalidated or "
+            f"not reserving WAL); it cannot replay the WAL after {lsn_str}."
+        )
+    for label, value in (('restart_lsn', restart), ('confirmed_flush_lsn', confirmed)):
+        if value and lsn_to_int(value) > lsn_int:
+            raise RuntimeError(
+                f"Replication slot '{slot_name}' {label} {value} is beyond the "
+                f"snapshot LSN {lsn_str}: the WAL between them would never be "
+                f"delivered to the connector. Recreate the slot before the dump."
+            )
+    if slot.get('active'):
+        logging.warning(
+            f"Replication slot '{slot_name}' is active: a connector is consuming it "
+            f"while the snapshot is loaded."
+        )
+    logging.info(
+        f"Replication slot '{slot_name}' OK: restart_lsn={restart}, "
+        f"confirmed_flush_lsn={confirmed}, snapshot LSN={lsn_str}"
+    )
+
+
+def _pg_ident(name):
+    return '"' + str(name).replace('"', '""') + '"'
+
+
+def get_source_row_count(pg_conn, pg_schema, table_name):
+    """Exact count(*) of a source table, in pg_conn's (snapshot) transaction."""
+    rows = execute_pg(
+        pg_conn,
+        f"SELECT count(*) AS n FROM {_pg_ident(pg_schema)}.{_pg_ident(table_name)}",
+    )
+    return int(rows[0]['n'])
+
+
+def get_ch_final_row_count(ch_conn, ch_database, table_name):
+    """Logical row count of a ReplacingMergeTree table (count() ... FINAL)."""
+    result = clickhouse_execute_conn(
+        ch_conn, f"SELECT count() FROM `{ch_database}`.`{table_name}` FINAL"
+    )
+    return int(result[0][0])
+
+
+def find_target_collisions(work_items):
+    """
+    Return {(ch_database, ch_table): ['schema.table', ...]} for every
+    ClickHouse target that more than one source table maps to.
+    """
+    targets = {}
+    for schema_name, table_name, ch_database, ch_table in work_items:
+        targets.setdefault((ch_database, ch_table), []).append(
+            f"{schema_name}.{table_name}"
+        )
+    return {k: v for k, v in targets.items() if len(v) > 1}
 
 
 # ---------------------------------------------------------------------------
@@ -1522,47 +1692,44 @@ logger = logging.getLogger(__name__)
 
 
 def _debezium_list_to_regex(value: str) -> str:
-    """Convert a Debezium comma-separated list to a regex pattern.
+    """Convert a Debezium include/exclude list to one anchored regex.
 
-    If the value looks like a plain comma-separated list (no regex metacharacters),
-    convert 'a,b,c' to 'a|b|c'. For fully-qualified names like 'schema.table',
-    extract the table part.
-
-    If the value already contains regex metacharacters, return as-is.
+    Debezium treats each comma-separated entry of table.include.list /
+    table.exclude.list as a regular expression matched against the WHOLE
+    fully-qualified identifier (``schema.table``).  The entries are kept
+    verbatim (schema qualification included) and joined into
+    ``^(?:e1|e2|...)$``, to be matched against ``schema.table``
+    (filter_tables_by_qualified_regex).  Valid as a Python regex and as a
+    PostgreSQL ARE.
     """
-    regex_chars = {'.*', '^', '$', '[', ']', '(', ')', '+', '?'}
-    if any(ch in value for ch in regex_chars):
-        return value  # Already a regex
-
-    # Split by comma, strip whitespace
-    parts = [p.strip() for p in value.split(',') if p.strip()]
-
-    # If parts contain dots (schema.table), extract the last component
-    extracted = []
-    for part in parts:
-        if '.' in part:
-            extracted.append(part.split('.')[-1])  # Take table name only
-        else:
-            extracted.append(part)
-
-    return '|'.join(extracted)
+    parts = [p.strip() for p in str(value).split(',') if p.strip()]
+    return '^(?:' + '|'.join(parts) + ')$'
 
 
 def _debezium_schema_list_to_regex(value: str) -> str:
-    """Convert a Debezium comma-separated schema list to a regex pattern.
+    """Convert a Debezium schema include/exclude list to one anchored regex.
 
-    Similar to _debezium_list_to_regex but keeps full values since
-    schema names are simple identifiers (no dotted notation).
-
-    If the value already contains regex metacharacters, return as-is.
+    Same rule as _debezium_list_to_regex: each entry must match the whole
+    schema name (so ``public`` does not also select ``public_archive``).
     """
-    regex_chars = {'.*', '^', '$', '[', ']', '(', ')', '+', '?'}
-    if any(ch in value for ch in regex_chars):
-        return value  # Already a regex
+    return _debezium_list_to_regex(value)
 
-    # Split by comma, strip whitespace
-    parts = [p.strip() for p in value.split(',') if p.strip()]
-    return '|'.join(parts)
+
+def filter_tables_by_qualified_regex(schema_name, tables, include_pattern=None,
+                                     exclude_pattern=None):
+    """Filter table names of *schema_name* by Debezium-style list regexes.
+
+    The patterns (from _debezium_list_to_regex) are matched in full against
+    ``schema.table``, so ``public.log`` neither selects ``audit_log`` nor a
+    ``log`` table of another schema.
+    """
+    if include_pattern:
+        include_re = re.compile(include_pattern)
+        tables = [t for t in tables if include_re.fullmatch(f"{schema_name}.{t}")]
+    if exclude_pattern:
+        exclude_re = re.compile(exclude_pattern)
+        tables = [t for t in tables if not exclude_re.fullmatch(f"{schema_name}.{t}")]
+    return tables
 
 
 def parse_sink_connector_config(config: dict) -> dict:
@@ -1617,21 +1784,26 @@ def parse_sink_connector_config(config: dict) -> dict:
         mapping['pg_schema_exclude'] = _debezium_schema_list_to_regex(
             str(config['schema.exclude.list']))
 
-    # Table filtering
+    # Table filtering: Debezium semantics (anchored, schema-qualified),
+    # applied to "schema.table" by filter_tables_by_qualified_regex.
     if 'table.include.list' in config:
-        mapping['pg_table_include'] = _debezium_list_to_regex(
+        mapping['table_include_list'] = _debezium_list_to_regex(
             str(config['table.include.list']))
     if 'table.exclude.list' in config:
-        mapping['pg_table_exclude'] = _debezium_list_to_regex(
+        mapping['table_exclude_list'] = _debezium_list_to_regex(
             str(config['table.exclude.list']))
 
-    # Database filtering
+    # Database filtering: checked against --pg_database in main()
     if 'database.include.list' in config:
-        mapping['pg_database_include'] = _debezium_list_to_regex(
+        mapping['database_include_list'] = _debezium_list_to_regex(
             str(config['database.include.list']))
     if 'database.exclude.list' in config:
-        mapping['pg_database_exclude'] = _debezium_list_to_regex(
+        mapping['database_exclude_list'] = _debezium_list_to_regex(
             str(config['database.exclude.list']))
+
+    # Logical replication slot the connector streams from
+    if 'slot.name' in config:
+        mapping['replication_slot'] = str(config['slot.name'])
 
     # ClickHouse database prefix / schema suffix (naming convention)
     # These config keys control how the Java connector builds its CH database
@@ -1800,6 +1972,19 @@ def main():
                         help='Regex pattern to include tables (e.g., "users|orders")')
     parser.add_argument('--pg_table_exclude', type=str, default=None,
                         help='Regex pattern to exclude tables (e.g., "temp_.*|_backup$")')
+    parser.add_argument('--table_include_list', type=str, default=None,
+                        help=('Regex matched in full against "schema.table" '
+                              '(Debezium table.include.list semantics; set from '
+                              'the connector config)'))
+    parser.add_argument('--table_exclude_list', type=str, default=None,
+                        help=('Regex matched in full against "schema.table" '
+                              '(Debezium table.exclude.list semantics)'))
+    parser.add_argument('--database_include_list', type=str, default=None,
+                        help=('Regex that --pg_database must match in full, else '
+                              'the run stops (connector database.include.list)'))
+    parser.add_argument('--database_exclude_list', type=str, default=None,
+                        help=('Regex that --pg_database must not match in full '
+                              '(connector database.exclude.list)'))
 
     # -- Naming templates -----------------------------------------------------
     parser.add_argument('--ch_database_template', type=str, default='{{ database }}',
@@ -1834,7 +2019,10 @@ def main():
                         help='Truncate existing CH tables instead of dropping them')
     parser.add_argument('--skip_existing', dest='skip_existing',
                         action='store_true', default=False,
-                        help='Skip tables that already have data in ClickHouse')
+                        help=('Skip tables that already have data in ClickHouse, '
+                              'only when count() FINAL equals the source count in '
+                              'this run\'s snapshot (else the run fails). A run that '
+                              'skips a table writes no LSN offset and exits 1.'))
     parser.add_argument('--order_by_size', dest='order_by_size',
                         action='store_true', default=True,
                         help='Sort tables by approx row count ascending (small first, default: True)')
@@ -1903,6 +2091,13 @@ def main():
                             'Used to build the correct offset_key for the CDC hand-off. '
                             'E.g. "sink-connector-dev". '
                             'Must match exactly or the Java connector will re-snapshot.'
+                        ))
+    parser.add_argument('--replication_slot', required=False, default=None,
+                        help=(
+                            'Logical replication slot of the connector (slot.name in '
+                            'its config; default: "debezium", Debezium\'s default). '
+                            'It must exist before the dump, with restart_lsn and '
+                            'confirmed_flush_lsn at or before the snapshot LSN.'
                         ))
 
     # -- Misc -----------------------------------------------------------------
@@ -1991,6 +2186,29 @@ def main():
             f"{', '.join(missing)}"
         )
 
+    if args.strategy == 'pgdump':
+        parser.error(PGDUMP_DISABLED_MESSAGE)
+
+    # -- Connector database lists (Debezium semantics: full match) -----------
+    if args.database_include_list and not re.fullmatch(
+            args.database_include_list, args.pg_database):
+        logging.error(
+            f"Database '{args.pg_database}' is not in the connector's "
+            f"database.include.list ({args.database_include_list}); refusing to "
+            f"snapshot a database the connector does not replicate."
+        )
+        sys.exit(1)
+    if args.database_exclude_list and re.fullmatch(
+            args.database_exclude_list, args.pg_database):
+        logging.error(
+            f"Database '{args.pg_database}' is excluded by the connector's "
+            f"database.exclude.list ({args.database_exclude_list}); refusing to "
+            f"snapshot a database the connector does not replicate."
+        )
+        sys.exit(1)
+
+    replication_slot = args.replication_slot or DEFAULT_REPLICATION_SLOT
+
     # -- Dependency checks ----------------------------------------------------
     assert check_program_exists(pg_bin('psql')), \
         f"psql should be in the PATH (looked for: {pg_bin('psql')})"
@@ -2055,7 +2273,25 @@ def main():
         pg_conn_main = get_postgres_connection(
             args.pg_host, pg_user, pg_password, args.pg_port, args.pg_database
         )
-        (lsn_str, lsn_int) = get_standby_lsn(pg_conn_main)
+        pg_conn_snap = None
+        snapshot_id = None
+        if args.schema_only:
+            # No data is read and no offset is written.
+            (lsn_str, lsn_int) = get_standby_lsn(pg_conn_main)
+        else:
+            # One coordinating REPEATABLE READ transaction exports the
+            # snapshot every COPY session imports; it stays open (on its own
+            # connection) until the load phase has finished.
+            pg_conn_snap = get_postgres_connection(
+                args.pg_host, pg_user, pg_password, args.pg_port, args.pg_database
+            )
+            (lsn_str, lsn_int, snapshot_id) = open_snapshot_coordinator(pg_conn_snap)
+            logging.info(f"Exported snapshot {snapshot_id} (all tables are read in it)")
+            # The connector's slot must already retain WAL from the LSN.
+            verify_replication_slot(
+                pg_conn_snap, replication_slot, args.pg_database,
+                lsn_str, lsn_int,
+            )
         logging.info(f"Pre-snapshot LSN: {lsn_str}  (integer: {lsn_int})")
 
         # Detect PG server timezone once for explicit CH column type annotation
@@ -2102,6 +2338,12 @@ def main():
                 include_pattern=args.pg_table_include,
                 exclude_pattern=args.pg_table_exclude,
             )
+            # Connector table lists: anchored, schema-qualified
+            schema_tables = filter_tables_by_qualified_regex(
+                schema_name, schema_tables,
+                include_pattern=args.table_include_list,
+                exclude_pattern=args.table_exclude_list,
+            )
 
             for table_name in schema_tables:
                 # Resolve ClickHouse database name
@@ -2130,6 +2372,23 @@ def main():
             logging.error(
                 f"No tables found in schemas {schemas} "
                 f"matching '{args.tables}'"
+            )
+            pg_conn_main.close()
+            sys.exit(1)
+
+        # Two source tables must never share one ClickHouse table: their rows
+        # would merge (and --drop_existing would drop the first one's table).
+        collisions = find_target_collisions(work_items)
+        if collisions:
+            for (c_db, c_table), sources in sorted(collisions.items()):
+                logging.error(
+                    f"ClickHouse target {c_db}.{c_table} would receive "
+                    f"{len(sources)} source tables: {sources}"
+                )
+            logging.error(
+                "Aborting: target-name collision. Make the names unique, e.g. "
+                "--ch_table_template '{{ schema }}___{{ table }}' or a database "
+                "template containing {{ schema }} (and no literal --ch_database)."
             )
             pg_conn_main.close()
             sys.exit(1)
@@ -2307,10 +2566,20 @@ def main():
         # Step 4: Load data in parallel (with PK-range segmentation for
         # large tables)
         # --------------------------------------------------------------------
+        # Tables kept by --skip_existing: their data came from an EARLIER run's
+        # snapshot, whose LSN this run does not know, so no offset may be
+        # written for this run (Step 5).
+        skipped_tables = []
+        # Set only after a load phase reports every table/segment OK.
+        load_completed = False
         if not args.schema_only:
             strategy = args.strategy
 
             # -- Skip-existing: filter out tables that already have data -----
+            # A table is skipped only when it is provably complete with
+            # respect to this run's snapshot: count() FINAL in ClickHouse
+            # equals count(*) in the exported snapshot.  Anything else
+            # (a partial load, rows changed since) stops the run.
             if args.skip_existing:
                 ch_conn_check = clickhouse_connection(
                     args.ch_host,
@@ -2320,6 +2589,7 @@ def main():
                     port=args.ch_port,
                     secure=args.ch_secure,
                 )
+                mismatched = []
                 try:
                     filtered_items = []
                     for item in work_items:
@@ -2328,14 +2598,44 @@ def main():
                             ch_conn_check, ch_database, ch_table
                         )
                         if exists and row_count > 0:
-                            logging.info(
-                                f"[{ch_table}] Skipping — already has "
-                                f"{row_count:,} rows in CH (--skip_existing)"
+                            source_count = get_source_row_count(
+                                pg_conn_snap, schema_name, table_name
                             )
+                            ch_count = get_ch_final_row_count(
+                                ch_conn_check, ch_database, ch_table
+                            )
+                            if source_count == ch_count:
+                                logging.info(
+                                    f"[{ch_table}] Skipping — {ch_count:,} rows "
+                                    f"in CH equal the source count "
+                                    f"(--skip_existing)"
+                                )
+                                skipped_tables.append(
+                                    f"{schema_name}.{table_name}"
+                                )
+                            else:
+                                mismatched.append(
+                                    (ch_database, ch_table, ch_count, source_count)
+                                )
                         else:
                             filtered_items.append(item)
                 finally:
                     ch_conn_check.close()
+
+                if mismatched:
+                    for (m_db, m_table, m_ch, m_src) in mismatched:
+                        logging.error(
+                            f"[{m_db}.{m_table}] --skip_existing: ClickHouse "
+                            f"has {m_ch:,} rows (FINAL) but the source has "
+                            f"{m_src:,} in this snapshot — partially loaded "
+                            f"or changed since it was loaded"
+                        )
+                    logging.error(
+                        "Aborting: --skip_existing only skips tables proven "
+                        "complete. Reload the tables above (select them with "
+                        "--tables) using --truncate."
+                    )
+                    sys.exit(1)
 
                 skipped = len(work_items) - len(filtered_items)
                 if skipped > 0:
@@ -2347,8 +2647,8 @@ def main():
 
                 if not work_items:
                     logging.info("All tables already have data — nothing to load")
-                    # Jump directly to Step 5 (offset writing)
                     strategy = None  # signal to skip loading
+                    load_completed = True
 
             # ================================================================
             # Strategy: pgdump (two-phase: pg_dump → disk → clickhouse-client)
@@ -2452,6 +2752,7 @@ def main():
                         f"All tables loaded successfully "
                         f"(~{total_rows:,} rows total)"
                     )
+                    load_completed = True
 
             # ================================================================
             # Strategy: psql-copy (two-phase: psql COPY → gzip → disk → CH)
@@ -2598,6 +2899,7 @@ def main():
                         f"All tables loaded successfully "
                         f"(~{total_rows:,} rows total)"
                     )
+                    load_completed = True
 
             # ================================================================
             # Strategy: streaming (default — existing behavior)
@@ -2671,6 +2973,8 @@ def main():
                                     'batch_size': args.batch_size,
                                     'pg_server_timezone': pg_server_timezone,
                                     'ch_table_name': ch_table,
+                                    'override_config': override_config,
+                                    'snapshot_id': snapshot_id,
                                     'where_clause': where,
                                     'segment_label': (
                                         f"seg {seg_idx}/{len(boundaries)}"
@@ -2707,6 +3011,8 @@ def main():
                         'batch_size': args.batch_size,
                         'pg_server_timezone': pg_server_timezone,
                         'ch_table_name': ch_table,
+                        'override_config': override_config,
+                        'snapshot_id': snapshot_id,
                     })
 
                 logging.info(
@@ -2776,14 +3082,38 @@ def main():
                     f"All tables loaded successfully "
                     f"(~{total_rows:,} rows total)"
                 )
+                load_completed = True
+
+        # Every reader has finished: end the snapshot transaction.
+        if pg_conn_snap is not None:
+            pg_conn_snap.close()
 
         # --------------------------------------------------------------------
         # Step 5: Write LSN offset so CDC connector starts from right position
         # NOTE: clickhouse_driver Connection is NOT a context manager.
         # Connect to 'default' first because the offset database may not
         # exist yet — we create it (and the offset table) before writing.
+        # The offset is written only when every table of this run loaded
+        # successfully (any failure exits above) and no table was kept from
+        # an earlier run.
         # --------------------------------------------------------------------
-        if args.offset_table and not args.schema_only:
+        if not args.schema_only and skipped_tables:
+            logging.error(
+                f"No LSN offset written: --skip_existing kept "
+                f"{len(skipped_tables)} table(s) loaded by an earlier run "
+                f"({skipped_tables}). Their data reflects that run's snapshot, "
+                f"so this run's LSN {lsn_str} would skip every change made to "
+                f"them in between. Write the offset from the LSN logged by the "
+                f"earliest run whose data is kept (the replication slot must be "
+                f"at or before it), or reload them with --truncate."
+            )
+            sys.exit(1)
+        if not args.schema_only and not load_completed:
+            logging.warning(
+                "No data was loaded into ClickHouse in this run (--dump_only); "
+                "the LSN offset is not written."
+            )
+        elif args.offset_table and not args.schema_only:
             logging.info("=== Step 5: Writing WAL LSN offset to ClickHouse ===")
             ch_conn_offset = clickhouse_connection(
                 args.ch_host,
