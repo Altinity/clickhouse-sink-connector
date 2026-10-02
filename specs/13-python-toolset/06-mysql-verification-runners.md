@@ -207,6 +207,12 @@ from `sink-connector/python` with that directory on `PYTHONPATH` (§3.1). A miss
 | `--fail_on_empty` | flag | A table with verdict `EMPTY` (zero rows on both sides) makes the run exit 1. Default: INFO only, exit 0 (§3.8) | yes |
 | `--recheck_differences` | int ≥ 0, 1 | How many more times a `DIFFERENT` table is checksummed before its difference is reported; 0 restores the single pass (§3.7.3) | yes |
 | `--recheck_delay_seconds` | int ≥ 0, 60 | Seconds slept before each re-check (§3.7.3) | yes |
+| `--wait_for_connector` | flag | Before the sides run, wait until every replica's connector has applied the source binlog up to the head read at the start of the table; under `--lock_tables_on_source` the head is read under the lock and replaces the fixed sleep (§3.7.1) | yes |
+| `--consistent_snapshot` | flag | No lock: PK-range slices, each read on MySQL in one consistent snapshot, the connector awaited up to that snapshot's binlog position, then the replica read; differing slices are read again (§3.7.4). Refused with `--lock_tables_on_source` or `--debug_output` | yes |
+| `--snapshot_slice_rows` | int ≥ 0, 1000000 | Approximate rows per slice (`divide_table_into_even_chunks`); `--threads_per_table` slices run at once | yes |
+| `--fence_timeout_seconds` | int ≥ 0, 300 | Longest wait for a connector; after it the comparison runs and a difference names the connector position | yes |
+| `--fence_poll_seconds` | int ≥ 0, 1 | Seconds between reads of the connector offset | yes |
+| `--fence_idle_seconds` | int ≥ 0, 10 | The source wrote nothing after the target and the offset has not moved for this long: the wait ends | yes |
 
 The packaged driver (PT404-445) has the same flags **minus** `--source_timezone`, `--binary_encoding`, the two
 include flags, `--lock_wait_timeout` and `--fail_on_lock_timeout`. It has `--fail_on_empty`. Their effects
@@ -239,7 +245,14 @@ replicas:
   - clickhouse:
       host: ch-host                       # required
       database_override_map: "db1:ch_db1,db2:ch_db2"
+      offset_table: altinity_sink_connector.replica_source_info   # legacy: needed by --wait_for_connector / --consistent_snapshot
+      offset_key_contains: "staging"      # legacy, optional: picks one offset row when the table holds several
 ```
+
+- `offset_table` is the connector's `offset.storage.jdbc.table.name`. It must be `<database>.<table>` of
+  letters, digits and underscores (`OFFSET_TABLE_NAME`), else the run exits 1 before any table. It is read with
+  the driver's `--clickhouse_config_file` credentials and `--clickhouse_port` (§3.7.1). The packaged driver
+  ignores both keys.
 
 Parsing rules as built:
 
@@ -369,16 +382,18 @@ The questions this spec must answer:
 - **When is the lock released relative to the ClickHouse read?** After it. The ClickHouse query starts while
   the lock is held, and the lock is released only when every side has finished. The hold time is unbounded,
   because no side has a timeout (FM-11.02-4).
-- **Relative to the streaming offset?** Not related at all. The driver reads no binlog position (`SHOW BINARY
-  LOG STATUS` / `SHOW MASTER STATUS`, `@@gtid_executed`) and no connector offset or replica-status table. The
-  lock freezes the table's **future** writes on that server. Events committed before the lock but not yet
-  flushed by the connector are still in flight.
-- **Can the ClickHouse side be compared while the connector is still behind the locked position?** Yes. The
-  only "catch-up" is the fixed sleep (default 3 s). The ClickHouse `SELECT ... FINAL` reads the parts that
+- **Relative to the streaming offset?** Without `--wait_for_connector`, not related at all. The driver then reads
+  no binlog position (`SHOW BINARY LOG STATUS` / `SHOW MASTER STATUS`, `@@gtid_executed`) and no connector
+  offset or replica-status table. The lock freezes the table's **future** writes on that server. Events
+  committed before the lock but not yet flushed by the connector are still in flight. With
+  `--wait_for_connector` see the paragraph after this list.
+- **Can the ClickHouse side be compared while the connector is still behind the locked position?** Without
+  `--wait_for_connector`, yes. The only "catch-up" is then the fixed sleep (default 3 s). The ClickHouse `SELECT ... FINAL` reads the parts that
   exist when it starts. Rows the connector inserts afterwards are not seen. A lag therefore yields
   `Checksum difference`, not a false match: the replica shows an older state of the same table, which equals
   the current state only if the pending events did not change the table (FM-11.02-6).
-- **How is "replica caught up" established?** It is not. This is recorded as D-13.06-36 (S3): a lag produces
+- **How is "replica caught up" established?** By `--wait_for_connector` and `--consistent_snapshot` (below and
+  §3.7.4). Without either it is not. This is recorded as D-13.06-36 (S3): a lag produces
   noise that looks exactly like a real divergence. Three effects compound it, all code-read:
   1. The lock is taken on `source.mysql.host`. If the connector reads a different server's binlog, for
      example the primary while the config names a replica, writes continue upstream. ClickHouse may then be
@@ -391,6 +406,28 @@ The questions this spec must answer:
 Without `--lock_tables_on_source`, nothing is frozen. With `--threads_per_table > 1`, the MySQL side reads its
 PK chunks over separate connections at different moments, so a written table gives noise. A pass that differs
 is checksummed again before it is reported (§3.7.3).
+
+**With `--wait_for_connector`** (`ConnectorFence`, `compute_checksum`) the catch-up is established instead of
+slept on. Under `--lock_tables_on_source`, after `LOCK TABLES ... READ` the lock session reads the end of the
+source binary log (`source_binary_log_head`: `SHOW BINARY LOG STATUS` from MySQL 8.2, `SHOW MASTER STATUS`
+before, chosen from `@@version`; REPLICATION CLIENT needed). Every write to the table is before that position,
+because the lock blocks the later ones. Each replica's connector is then awaited up to it and only then do the
+sides start; `--sleep_after_lock` is not used. The comparison is therefore exact: the MySQL side reads the frozen
+table and ClickHouse holds every one of its writes and no later one. The cost is the lock: writers of that table
+on the source wait for the fence plus the slowest side. On a replica source a READ lock also stalls the applier
+(effect 2 above), so this mode is for a primary. Without the lock, the head read when the table starts is the
+target; later writes can still make one pass differ (§3.7.3 re-checks it).
+
+The fence (`ConnectorFence.wait`) reads the replica's `offset_table` (§3.4) every `--fence_poll_seconds`: the
+one row whose `offset_val` JSON has `file` and `pos` (Debezium records the start of the transaction it is
+in, plus event and row counts). It is reached when `(file sequence, pos)` is at or past the target, which means
+every transaction before the target is applied. A source that writes nothing after the target never moves the
+offset past it; when the end of the source binary log is still the target and the offset has not moved for
+`--fence_idle_seconds`, nothing is in flight and the wait ends too. After `--fence_timeout_seconds` the wait
+gives up with an INFO line `did NOT reach`; the comparison still runs and can only produce a difference, never
+a false match. An unreadable offset (missing table, zero or several offset rows) or an unreadable binlog
+position makes that table `ERROR` (`ConnectorFenceError`, `BinlogPositionError`); the other tables still get
+verdicts. Without `offset_table` on every replica the run exits 1 before the first table.
 
 #### 3.7.2 Packaged (`run_config`, PT319-353)
 
@@ -442,6 +479,45 @@ thread, not `MainThread`.
 `recheck_settings(options)` reads both values with `getattr`. The command line defaults to one re-check after
 60 s, and `--recheck_differences 0` restores the single pass. A caller that builds its own
 `argparse.Namespace` without these attributes keeps the single pass it had before they existed.
+
+#### 3.7.4 Consistent snapshots per slice (legacy, `--consistent_snapshot`, `verify_table_in_slices`)
+
+A lock-free comparison that is consistent per slice, for tables of any size. No table or global lock is taken;
+each InnoDB read view on the source lives only while one slice is read, so undo history is held for seconds of
+writes, not for a whole-table scan.
+
+1. **Slices.** On its own connection the worker splits the table on the first integer primary-key column
+   (`mysql_pk_columns(..., is_integer=True)`) with `divide_table_into_even_chunks` and
+   `--snapshot_slice_rows`, over the MySQL filter with `{partition_expression}` resolved
+   (`mysql_where_for_slicing`). The slice conditions are `pk < b1`, `b1 <= pk < b2`, ..., `pk >= bn`
+   (`snapshot_slices`): open at both ends, so rows inserted during the run belong to a slice. A table without
+   an integer key, or with one chunk, is one slice (`all rows`).
+2. **One slice, one snapshot.** The MySQL side runs with `--threads_per_table 1 --consistent_snapshot` and the
+   slice condition ANDed onto the table's `where`. It issues `START TRANSACTION WITH CONSISTENT SNAPSHOT`, then
+   reads the snapshot's binlog position (`snapshot_binlog_position`): on Percona Server the session variables
+   `Binlog_snapshot_file` / `Binlog_snapshot_position`, the position of the snapshot itself (kind `exact`);
+   elsewhere the end of the binary log read right after the snapshot started (kind `upper_bound`, which can
+   include a transaction committed between the two statements; that only makes the slice differ and be read
+   again). It logs `INFO Snapshot position for table <db.t> = <file> <pos> <kind>` and computes the checksum in
+   the same transaction. `--consistent_snapshot` with `--threads_per_table > 1` is refused by the side.
+3. **Wait.** The driver parses that line (`parse_snapshot_position`; none or another table makes the slice
+   `ERROR`) and waits on every replica's connector up to the position (`wait_for_connectors`, the fence of
+   §3.7.1). The idle test reads the source head through one shared, locked connection per table.
+4. **Replica read.** The ClickHouse sides read the same slice condition.
+5. **Verdict per slice** (`compare_slice`): equal results are a slice match (INFO `Slice match in <db.t> slice
+   [...]`); a failed side is `ERROR`. A difference is read again from step 2 with a fresh snapshot, up to
+   `--recheck_differences` more times, without the §3.7.3 delay (the fence replaces it). On the last pass it is
+   `WARNING Checksum difference : <replica tuple> to <source tuple> in slice [<condition>]`, followed by the
+   connectors that had not reached the position, if any.
+6. **Table verdict.** Any slice `ERROR` gives `Checksum ERROR for <db.t>: n of m slice(s) have no verdict`; any
+   slice `DIFFERENT` gives `DIFFERENT` (the WARNINGs are already logged); zero rows in total give the usual
+   `EMPTY on both sides for <db.t>`; otherwise an INFO summary and `No difference for <db.t>`.
+
+`--threads_per_table` slices of a table run at once, each with its own connection and snapshot. The mode needs
+`offset_table` on every replica and REPLICATION CLIENT on the source (the fence's idle test reads the binary log
+head; off Percona the snapshot position is the head too), and is refused with `--lock_tables_on_source` and with `--debug_output`. A
+slice written continuously can still differ on every pass; it is then reported with its key range, never as a
+match. The packaged driver has no snapshot mode.
 
 ### 3.8 Output parsing, verdict and exit codes
 
@@ -533,6 +609,7 @@ Outcome table (`exit` is the process exit code of the driver):
 | `--debug` | flag | DEBUG logging | yes |
 | `--exclude_columns` | `nargs='+'`, `[]` | Space-separated words and comma-separated lists alike: each token is split on `,` and stripped (`parse_exclude_columns`, the same parser as the ClickHouse side, D-13.06-17) | yes |
 | `--threads_per_table` | 1 | > 1 with an integer PK: PK-range chunks in parallel | yes |
+| `--consistent_snapshot` | off | `START TRANSACTION WITH CONSISTENT SNAPSHOT` before the checksum query and `INFO Snapshot position for table <db.t> = <file> <pos> exact\|upper_bound` (`snapshot_binlog_position`, §3.7.4); refused with `--threads_per_table > 1` | yes |
 | `--chunk_size` | 10000 | rows per chunk, estimated from `EXPLAIN` rows | yes |
 | `--threads` | 1 | tables in parallel | yes |
 | `--include_floating_point_columns`, `--include_json_columns` | False | 11.02 §3.9. The JSON WARNING also says what a standalone run must pass to the ClickHouse side, which cannot tell a JSON-origin String from any other String: `...; pass --json_columns <list> to clickhouse_table_checksum.py so both row strings skip them)` (both copies). The drivers forward that list themselves and drop the hint from the side note they relay, so the job log is unchanged (D-13.06-41, fixed) | yes |
@@ -944,6 +1021,17 @@ The suite was run on 2026-10-01 from `sink-connector/python` with the toolset ve
   - `sink-connector/python/db_compare/tests/test_checksum_recheck.py::TestScheduledJobRecheck::test_difference_seen_again_logs_exactly_one_warning`
   - `sink-connector/python/db_compare/tests/test_checksum_recheck.py::TestScheduledJobRecheck::test_recheck_zero_reports_the_first_difference`
   - `sink-connector/python/db_compare/tests/test_checksum_recheck.py::TestVerifyTableBothCopies::test_error_on_recheck_is_an_error`
+- Waiting for the connector and per-slice snapshots (§3.7.1, §3.7.4), offline:
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestConnectorWait::test_reached_when_offset_is_at_or_past_the_target`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestConnectorWait::test_idle_source_ends_the_wait`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestConnectorWait::test_busy_source_behind_connector_times_out_and_says_so`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestConnectorOffset::test_no_or_several_offsets_are_errors`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestLockAndWait::test_wait_replaces_the_fixed_sleep_and_happens_under_the_lock`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_slices_cover_every_key_with_open_ends`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_difference_read_again_and_gone_is_a_match`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_persistent_difference_warns_with_the_slice`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestMySQLSideSnapshotPosition::test_percona_snapshot_variables_are_exact`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestMySQLSideSnapshotPosition::test_other_servers_use_the_binary_log_head_as_an_upper_bound`
 - Bounded lock:
   - `sink-connector/python/db_compare/tests/test_bounded_source_lock.py::TestIsLockWaitTimeout::test_does_not_match_table_name_containing_1205`
   - `sink-connector/python/db_compare/tests/test_bounded_source_lock.py::TestLockTables::test_sets_session_timeout_before_lock`
@@ -1079,6 +1167,12 @@ it proves (pre-fix tree d42a8740 against this branch).
   - `sink-connector/python/tests_e2e/mysql/test_mysql_06_null_flags.py::test_manual_recipe_is_equal_for_a_replica_with_non_nullable_twins` (D-13.06-40)
   - `sink-connector/python/tests_e2e/mysql/test_mysql_06_null_flags.py::test_planted_difference_in_a_replica_with_non_nullable_twins_fails_the_job`
   - `sink-connector/python/tests_e2e/mysql/test_mysql_06_null_flags.py::test_null_against_the_non_nullable_default_fails_the_job`
+- A table written by a background writer during the comparison (close-and-insert transactions and plain
+  updates), compared with the two consistent modes (§3.7.1, §3.7.4):
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_07_consistent_checksum.py::test_lock_and_wait_matches_while_the_table_is_written` (`--lock_tables_on_source --wait_for_connector`, no re-check)
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_07_consistent_checksum.py::test_consistent_snapshot_matches_while_the_table_is_written` (no lock, `upper_bound` positions on `mysql:8.0`)
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_07_consistent_checksum.py::test_both_modes_report_a_real_divergence`
+  - `sink-connector/python/tests_e2e/mysql/test_mysql_07_consistent_checksum.py::test_consistent_snapshot_on_an_idle_source_needs_no_writes`
 
 What they established about the deployment: the connector stores BIT(n>1) as hex under base64 mode (the origin
 of D-13.06-38); a bitemporal `where` that hides `CONVERT_TZ` from ClickHouse in `/*!50000 */` comments selects
@@ -1497,7 +1591,7 @@ LCC/PCC the ClickHouse count runners.
 | D-13.06-33 | S4 | both | `db_compare/top_level_table_checksum.py:499,503`; `ch_sink_tools/db_compare/top_level_table_checksum.py:312,316` | reproduced (R10: `db1\.orders` → all tables) | `table_include_list` patterns are pre-filtered by the literal prefix `<db>.`. Regex-style patterns are dropped and the include list silently turns off. |
 | D-13.06-34 | S4 | both | `db_compare/mysql_table_checksum.py:100-102`; `ch_sink_tools/db_compare/mysql_table_checksum.py:113-115` | code-read | The DATE clamp (`1900-01-01`..`2299-12-31`) is neither counted nor warned, unlike the datetime clamp. |
 | D-13.06-35 | S4 | both | `db_compare/mysql_table_checksum.py:137-138`; `ch_sink_tools/db_compare/mysql_table_checksum.py:72-73`; specs 11.02 §3.9, §3.10, §6 item 2, FM-11.02-3, FM-11.02-9 | reproduced (R01: two same-collation columns get `convert()`) and code-read | `same_charset` counts columns, not distinct collations (harmless). Spec 11.02 drifts from the code: MySQL errors rather than wraps on overflow; the ClickHouse side does not split multi-token exclusions; failed runs do not skip pending tables; the FM-11.02-9 recipe uses space-separated exclusions; coverage warnings are dropped by the driver. |
-| D-13.06-36 | S3 | both | `db_compare/top_level_table_checksum.py:160-199`; `ch_sink_tools/db_compare/top_level_table_checksum.py:319-326` | code-read (no position, GTID or connector-offset read anywhere in the runners) | "Replica caught up" is never established. The only mechanism is a fixed sleep after locking, so lag is reported as a difference indistinguishable from divergence. Mitigated, not fixed: a `DIFFERENT` table is checksummed again after `--recheck_delay_seconds` and reported only if it still differs (§3.7.3). |
+| D-13.06-36 | S3 | both | `db_compare/top_level_table_checksum.py:160-199`; `ch_sink_tools/db_compare/top_level_table_checksum.py:319-326` | code-read (no position, GTID or connector-offset read anywhere in the runners) | "Replica caught up" is never established. The only mechanism is a fixed sleep after locking, so lag is reported as a difference indistinguishable from divergence. Mitigated, not fixed: a `DIFFERENT` table is checksummed again after `--recheck_delay_seconds` and reported only if it still differs (§3.7.3). Fixed (legacy) for `--lock_tables_on_source --wait_for_connector` (exact) and `--consistent_snapshot` (per slice): the connector offset is awaited up to a source binlog position (§3.7.1, §3.7.4). Still open for the default single pass and for the packaged driver. |
 | D-13.06-37 | S4 | both | `db_compare/top_level_table_checksum.py:203`; `db/mysql.py:46-47` | code-read | The driver's `--include_partitions_regex` filters tables but checksums them whole. The name suggests a partition-restricted comparison. |
 | D-13.06-38 | S2 | legacy | `db_compare/mysql_table_checksum.py` (`mysql_column_expression`, binary branch) | reproduced end to end (connector `binary.handling.mode: base64`: ClickHouse holds `abcd` for `b'1010101111001101'`, the MySQL side rendered `q80=`; the scheduled job reported `Checksum difference` for every table with a BIT(16) column on clean data) | FIXED: BIT(n>1) is rendered `lower(hex(cast(c as binary)))` under every `--binary_encoding`. Test: `test_scheduled_job_findings.py::TestBitColumnRendering::test_bit_n_is_lower_hex_under_every_encoding`; e2e `tests_e2e/mysql/test_mysql_01_production_job.py::test_clean_data_passes_the_job`. Was: base64 with `--binary_encoding base64`, while the connector applies base64 to binary/varbinary/blob only. |
 | D-13.06-39 | S2 | legacy | `install.sh:4` | reproduced end to end (`install.sh: line 4: PYTHONPATH: unbound variable` under the job's `set -euo pipefail`) | FIXED: `export PYTHONPATH="${PYTHONPATH:-}":.`. Test: `test_scheduled_job_findings.py::TestInstallShUnderStrictMode::test_sources_with_pythonpath_unset`; e2e `tests_e2e/mysql/test_mysql_01_production_job.py::test_job_sources_install_sh_under_set_euo_pipefail`. Was: a job sourcing `install.sh` after `set -u` with `PYTHONPATH` unset died before any checksum. |
