@@ -74,7 +74,8 @@ def get_partitions_from_regex(conn, mysql_database, include_tables_regex, exclud
 
 def get_table_partition_key(conn, database, table):
     partitions = get_partitions_from_regex(conn,  database, '^'+table+'$', limit=1)
-    partitions = partitions.fetchall()
+    # by column name through mappings() (SQLAlchemy 2.x rows are tuples, spec 13.06 D-13.06-9)
+    partitions = partitions.mappings().fetchall()
     if len(partitions) > 0:
         for partition in partitions:
             partition_name = partition['partition_name']

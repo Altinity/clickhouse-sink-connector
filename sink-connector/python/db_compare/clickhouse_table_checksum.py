@@ -19,7 +19,8 @@ import concurrent.futures
 from db.clickhouse import *
 from db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
                                 clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
-                                validate_timezone, shift_datetime_bounds, parse_column_list, warn_not_compared)
+                                validate_timezone, shift_datetime_bounds, parse_column_list, warn_not_compared,
+                                parse_exclude_columns)
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
@@ -43,14 +44,17 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
     else:
         logging.info("Skipping writing to file")
     try:
-        for sql in statements:
+        # statements[0] is the aggregate; with --debug_output the per-row
+        # query follows it, so the checksum line is printed as well as the
+        # debug file (spec 13.06 D-13.06-27).
+        for position, sql in enumerate(statements):
             (result, rowcount) = execute_sql(conn, sql)
             if rowcount != -1:
                 logging.debug("Rows affected "+str(rowcount))
             if result != None and rowcount > 0:
                 x = [element for tupl in result for element in tupl]
 
-                if args.debug_output:
+                if position > 0:
                     for line in x:
                         if isinstance(line, bytes):
                             debug_out.write(line.decode('utf-8'))
@@ -152,9 +156,16 @@ def build_clickhouse_row_expression(columns_metadata, options):
     JSON) must contribute neither a value nor a separator, otherwise a table
     whose last column is a skipped Float64 hashes ``1#bob#`` here against
     ``1#bob`` from MySQL's concat_ws (spec 11.02 section 3.3).
+
+    The null flags are one trailing part with one flag per compared column,
+    Nullable or not (a non-Nullable column yields '0'), so a column declared
+    nullable on MySQL and non-Nullable here gives the same flags for equal
+    values (spec 13.06 D-13.06-40). ``nullables`` lists the compared columns
+    declared Nullable (the ones whose value has the NULL guard).
     """
     parts = []
     nullables = []
+    compared = []
     columns = []
     data_types = {}
     clamped_flags = []
@@ -199,10 +210,11 @@ def build_clickhouse_row_expression(columns_metadata, options):
             nullables.append(column_name)
             expression = "case when " + column_name + " is null then '' else " + expression + " end"
         parts.append(expression)
+        compared.append(column_name)
     logging.debug(str(nullables))
-    if len(nullables) > 0:
+    if len(compared) > 0:
         parts.append(" || ".join(
-            "case when " + nullable + " is null then '1' else '0' end" for nullable in nullables))
+            "case when " + compared_column + " is null then '1' else '0' end" for compared_column in compared))
     select = "||'#'||".join(parts)
     return (select, nullables, columns, data_types, clamped_count_expression(clamped_flags), skipped)
 
@@ -238,8 +250,9 @@ def partition_key_within_sorting_key(columns_metadata):
 
 
 def get_table_checksum_query(conn, table):
-    excluded_columns = "','".join(args.exclude_columns)
-    excluded_columns = [f'{column}' for column in excluded_columns.split(',')]
+    # 'a b' (space-separated words) and 'a,b' name the same columns, as on the
+    # MySQL side (spec 13.06 D-13.06-17).
+    excluded_columns = parse_exclude_columns(args.exclude_columns)
     logging.info(f"Excluded columns, {excluded_columns}")
     checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale, is_in_partition_key, is_in_sorting_key from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' order by position"
     (rowset, rowcount) = execute_sql(conn, checksum_query)
@@ -342,9 +355,11 @@ def select_table_statements(table, query, select_query, order_by, external_colum
       from {schema}.{table} final where {where} /*order by {order_by}*/ {limit}
 
 	  ) as t{settings_clause}"""
-    if args.debug_output:
-        sql = f"""select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit}{settings_clause}"""
     statements.append(sql)
+    if args.debug_output:
+        # The per-row strings, written to out.<table>.ch.txt by
+        # compute_checksum after the aggregate (spec 13.06 D-13.06-27).
+        statements.append(f"""select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit}{settings_clause}""")
     return statements
 
 
