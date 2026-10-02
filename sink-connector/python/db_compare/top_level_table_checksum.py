@@ -249,8 +249,11 @@ def run_snapshot_side(cmd, host, table, on_position):
             # Close the pipe explicitly: left to the garbage collector it raises a
             # ResourceWarning, which execute_mysql's catch_warnings records and
             # logs as "SQL warnings" at WARNING -- and a scheduled job fails on
-            # any WARNING line.
-            process.stdout.close()
+            # any WARNING line. Guarded like stdin above, so wait() always runs.
+            try:
+                process.stdout.close()
+            except OSError:
+                pass
             process.wait()
     stdout = b"".join(head) + rest
     for line in side_output_text(stdout).splitlines():
