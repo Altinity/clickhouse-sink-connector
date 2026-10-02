@@ -77,7 +77,8 @@ class ChecksumResult(object):
     """Holds the comparison result for a single table."""
     def __init__(self, table, tier, pg_count, ch_count, count_delta,
                  count_delta_pct, checksum_match, pg_checksum, ch_checksum,
-                 pg_max_pk, ch_max_pk, pg_max_ts, ch_max_ts, status, detail=''):
+                 pg_max_pk, ch_max_pk, pg_max_ts, ch_max_ts, status, detail='',
+                 missing_ch_columns=None):
         self.table = table
         self.tier = tier
         self.pg_count = pg_count
@@ -91,8 +92,12 @@ class ChecksumResult(object):
         self.ch_max_pk = ch_max_pk
         self.pg_max_ts = pg_max_ts
         self.ch_max_ts = ch_max_ts
-        self.status = status   # 'PASS', 'WARN', 'FAIL', 'MISSING', 'ERROR'
+        # 'PASS', 'WARN', 'FAIL', 'MISSING', 'EXTRA' (ClickHouse-only table),
+        # 'ERROR'
+        self.status = status
         self.detail = detail
+        # PG columns (not in the skip list) that do not exist in ClickHouse
+        self.missing_ch_columns = list(missing_ch_columns or [])
 
 
 # ---------------------------------------------------------------------------
@@ -389,6 +394,9 @@ def get_ch_columns(ch_conn, ch_database: str, table_name: str,
     """
     Return the ordered list of column names for a ClickHouse table,
     excluding CDC-internal columns (_version, is_deleted, etc.).
+
+    A query error is raised, not turned into an empty list: an empty list
+    would read as "every PostgreSQL column is missing in ClickHouse".
     """
     sql = f"""
         SELECT name
@@ -403,7 +411,124 @@ def get_ch_columns(ch_conn, ch_database: str, table_name: str,
         return [r[0] for r in rows]
     except Exception as e:
         logging.error(f"Error getting CH columns for {ch_database}.{table_name}: {e}")
-        return []
+        raise
+
+
+def get_pg_unreadable_columns(pg_conn, pg_schema: str, table_name: str) -> List[str]:
+    """
+    Return the columns of a PostgreSQL table that the current user cannot
+    SELECT.
+
+    information_schema.columns lists only columns the user holds some
+    privilege on, so such columns would otherwise vanish from the comparison.
+    pg_catalog lists every column regardless of privileges.
+    """
+    sql = """
+        SELECT a.attname AS column_name
+        FROM pg_catalog.pg_attribute a
+        JOIN pg_catalog.pg_class c ON c.oid = a.attrelid
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = %s
+          AND c.relname = %s
+          AND a.attnum > 0
+          AND NOT a.attisdropped
+          AND NOT has_column_privilege(c.oid, a.attnum, 'SELECT')
+        ORDER BY a.attnum
+    """
+    rows = execute_pg(pg_conn, sql, (pg_schema, table_name))
+    return [r['column_name'] for r in rows]
+
+
+def get_pg_hidden_tables(pg_conn, pg_schema: str, include_regex: Optional[str],
+                         visible_tables: List[str]) -> List[Tuple[str, bool]]:
+    """
+    Return (table_name, can_select) for every ordinary or partitioned table of
+    *pg_schema* matching *include_regex* that table discovery
+    (information_schema.tables, which shows only objects the user holds a
+    privilege on) did not return.
+
+    Partitions and inheritance children are not reported: their rows are read
+    (and privilege-checked) through the parent, which is reported itself if
+    it is hidden.
+    """
+    sql = """
+        SELECT c.relname AS table_name,
+               has_table_privilege(c.oid, 'SELECT') AS can_select
+        FROM pg_catalog.pg_class c
+        JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = %s
+          AND c.relkind IN ('r', 'p')
+          AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i
+                          WHERE i.inhrelid = c.oid)
+    """
+    params = [pg_schema]
+    if include_regex:
+        sql += "  AND c.relname ~ %s\n"
+        params.append(include_regex)
+    sql += "        ORDER BY c.relname"
+    rows = execute_pg(pg_conn, sql, tuple(params))
+    visible = set(visible_tables)
+    return [(r['table_name'], bool(r['can_select'])) for r in rows
+            if r['table_name'] not in visible]
+
+
+def get_ch_only_tables(ch_conn, ch_database: str, pg_conn,
+                       include_regex: Optional[str],
+                       pg_tables: List[str]) -> List[str]:
+    """
+    Return the MergeTree-family tables of *ch_database* that match
+    *include_regex* and have no PostgreSQL twin in *pg_tables*.
+
+    The regex is evaluated by PostgreSQL (``~``), the same operator table
+    discovery uses, so both sides are filtered with one regex dialect.
+    """
+    sql = f"""
+        SELECT name
+        FROM system.tables
+        WHERE database = '{ch_database}'
+          AND engine LIKE '%MergeTree'
+          AND NOT startsWith(name, '.inner')
+        ORDER BY name
+    """
+    (rows, cnt) = execute_sql(ch_conn, sql)
+    pg_set = set(pg_tables)
+    candidates = [r[0] for r in rows if r[0] not in pg_set]
+    if not candidates or not include_regex:
+        return candidates
+    matched = execute_pg(
+        pg_conn,
+        "SELECT t AS table_name FROM unnest(%s::text[]) AS t WHERE t ~ %s ORDER BY t",
+        (candidates, include_regex))
+    return [r['table_name'] for r in matched]
+
+
+def _coverage_results(hidden_pg_tables: List[Tuple[str, bool]],
+                      ch_only_tables: List[str], pg_schema: str,
+                      ch_database: str) -> List['ChecksumResult']:
+    """Build the ERROR / EXTRA rows for tables present on one side only."""
+    out = []
+    for (tbl, can_select) in hidden_pg_tables:
+        out.append(ChecksumResult(
+            table=tbl, tier=0, pg_count=-1, ch_count=-1, count_delta=0,
+            count_delta_pct=0.0, checksum_match=None, pg_checksum=None,
+            ch_checksum=None, pg_max_pk=None, ch_max_pk=None, pg_max_ts=None,
+            ch_max_ts=None, status='ERROR',
+            detail=(f'{pg_schema}.{tbl} exists in PostgreSQL but is not visible '
+                    f'to the checksum user (SELECT privilege: '
+                    f'{"yes" if can_select else "no"}); not compared'),
+        ))
+    for tbl in ch_only_tables:
+        out.append(ChecksumResult(
+            table=tbl, tier=0, pg_count=-1, ch_count=-1, count_delta=0,
+            count_delta_pct=0.0, checksum_match=None, pg_checksum=None,
+            ch_checksum=None, pg_max_pk=None, ch_max_pk=None, pg_max_ts=None,
+            ch_max_ts=None, status='EXTRA',
+            detail=(f'{ch_database}.{tbl} exists in ClickHouse but has no '
+                    f'visible PostgreSQL table in schema {pg_schema}'),
+        ))
+    for r in out:
+        logging.error(f"[{r.table}] {r.status}: {r.detail}")
+    return out
 
 
 def get_ch_columns_meta(ch_conn, ch_database: str, table_name: str,
@@ -744,6 +869,44 @@ def get_ch_checksum(ch_conn, ch_database: str, table_name: str,
         return None
 
 
+def find_coverage_gaps(pg_conn, ch_conn, pg_schema: str, ch_database: str,
+                       table_filter: Optional[str], pg_tables: List[str],
+                       skip_tables: set, offset_db: str = '',
+                       offset_table: str = '') -> List['ChecksumResult']:
+    """
+    Report tables that table discovery cannot pair: PostgreSQL tables hidden
+    from the checksum user (ERROR) and ClickHouse-only tables (EXTRA), both
+    restricted to the configured include regex and minus skip_tables.
+    """
+    hidden = [(t, sel) for (t, sel) in get_pg_hidden_tables(
+        pg_conn, pg_schema, table_filter, pg_tables) if t not in skip_tables]
+    ignore = set(skip_tables)
+    if offset_table and offset_db == ch_database:
+        ignore.add(offset_table)
+    ch_only = [t for t in get_ch_only_tables(
+        ch_conn, ch_database, pg_conn, table_filter, pg_tables) if t not in ignore]
+    return _coverage_results(hidden, ch_only, pg_schema, ch_database)
+
+
+def begin_repeatable_read_snapshot(pg_conn) -> None:
+    """
+    Put *pg_conn* into a read-only REPEATABLE READ transaction and verify it.
+
+    psycopg2 sends its own BEGIN before the first statement of a transaction
+    when autocommit is off, so an explicit "BEGIN ... REPEATABLE READ" would
+    be ignored by PostgreSQL (nested BEGIN, WARNING only) and the transaction
+    would run at the default isolation level.  set_session() makes psycopg2
+    emit "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" itself.
+    """
+    pg_conn.set_session(isolation_level='REPEATABLE READ', readonly=True,
+                        autocommit=False)
+    rows = execute_pg(pg_conn, 'SHOW transaction_isolation')
+    level = rows[0]['transaction_isolation'] if rows else None
+    if level != 'repeatable read':
+        raise RuntimeError(
+            f"snapshot transaction isolation is {level!r}, expected 'repeatable read'")
+
+
 # ---------------------------------------------------------------------------
 # Per-table comparison logic
 # ---------------------------------------------------------------------------
@@ -851,11 +1014,40 @@ def compare_table(table_name: str,
                     f"[{table_name}] Skipping columns from checksum: {sorted(skip_set)}"
                 )
 
+            # Columns the checksum user cannot SELECT are hidden from
+            # information_schema and would silently vanish from the
+            # comparison: fail the table loudly instead.
+            unreadable_cols = [c for c in get_pg_unreadable_columns(
+                pg_conn, pg_schema, table_name) if c not in skip_set]
+            if unreadable_cols:
+                detail = (f'checksum user lacks SELECT privilege on PostgreSQL '
+                          f'columns {unreadable_cols}; not compared')
+                logging.error(f"[{table_name}] {detail}")
+                return ChecksumResult(
+                    table=table_name, tier=0,
+                    pg_count=-1, ch_count=-1, count_delta=0,
+                    count_delta_pct=0.0, checksum_match=None,
+                    pg_checksum=None, ch_checksum=None,
+                    pg_max_pk=None, ch_max_pk=None,
+                    pg_max_ts=None, ch_max_ts=None,
+                    status='ERROR', detail=detail,
+                )
+
             # For checksum, use only columns that exist in BOTH PG and CH,
-            # and not in the per-table skip list.
+            # and not in the per-table skip list.  A PG column missing from
+            # CH (and not skip-listed) is a column-set mismatch: the table
+            # FAILs whatever the checksum over the shared columns says.
             pg_col_names = [c['column_name'] for c in columns_meta]
+            ch_col_set = set(ch_col_names)
             shared_col_names = [c for c in pg_col_names
-                                if c in set(ch_col_names) and c not in skip_set]
+                                if c in ch_col_set and c not in skip_set]
+            missing_ch_cols = [c for c in pg_col_names
+                               if c not in ch_col_set and c not in skip_set]
+            if missing_ch_cols:
+                logging.error(
+                    f"[{table_name}] PostgreSQL columns missing in ClickHouse "
+                    f"{ch_database}.{table_name}: {missing_ch_cols}"
+                )
 
             logging.info(
                 f"[{table_name}] TIER={tier} approx_rows={approx_rows:,} "
@@ -924,6 +1116,8 @@ def compare_table(table_name: str,
             pg_checksum = None
             ch_checksum = None
             checksum_match = None
+
+            checksum_error = None
 
             if not no_checksum:
                 # --- PG checksum ---
@@ -1020,16 +1214,45 @@ def compare_table(table_name: str,
                     checksum_match = (pg_checksum == ch_checksum)
                 else:
                     checksum_match = None
+                    # A checksum was requested but not computed: never a PASS.
+                    if not pg_included_cols:
+                        checksum_error = ('no comparable column (all excluded by '
+                                          'type or skip list); checksum not computed')
+                    else:
+                        failed = [side for (side, v) in (('PostgreSQL', pg_checksum),
+                                                         ('ClickHouse', ch_checksum))
+                                  if v is None]
+                        checksum_error = (f"{' and '.join(failed)} checksum not "
+                                          f"computed (see errors above)")
 
             # --- Determine status ---
-            if checksum_match is False or count_fail:
+            # ERROR : a number needed for the verdict could not be obtained
+            # FAIL  : a definite difference (checksum, count beyond thresholds,
+            #         PG columns missing in CH)
+            # WARN  : counts differ within the thresholds, checksums equal or
+            #         not requested
+            details = []
+            if missing_ch_cols:
+                details.append(f'columns missing in ClickHouse: {missing_ch_cols}')
+            if ch_cnt < 0:
+                status = 'ERROR'
+                details.append('ClickHouse count query failed')
+            elif checksum_match is False or count_fail or missing_ch_cols:
                 status = 'FAIL'
-            elif count_delta != 0 or checksum_match is False:
+            elif checksum_error:
+                status = 'ERROR'
+            elif count_delta != 0:
                 status = 'WARN'
             else:
                 status = 'PASS'
+            if checksum_error:
+                details.append(checksum_error)
+                logging.error(f"[{table_name}] {checksum_error}")
 
-            cksum_label = 'MATCH' if checksum_match else ('MISMATCH' if checksum_match is False else 'SKIP')
+            if missing_ch_cols:
+                cksum_label = 'MISMATCH'
+            else:
+                cksum_label = 'MATCH' if checksum_match else ('MISMATCH' if checksum_match is False else 'SKIP')
             logging.info(
                 f"[{table_name}] TIER={tier} PG={pg_cnt:,} CH={ch_cnt:,} "
                 f"DELTA={count_delta} DELTA_PCT={count_delta_pct:.4%} "
@@ -1045,7 +1268,8 @@ def compare_table(table_name: str,
                 pg_max_pk=None, ch_max_pk=None,
                 pg_max_ts=None, ch_max_ts=None,
                 status=status,
-                detail='',
+                detail='; '.join(details),
+                missing_ch_columns=missing_ch_cols,
             )
 
         finally:
@@ -1070,10 +1294,31 @@ def compare_table(table_name: str,
 # Summary printing
 # ---------------------------------------------------------------------------
 
+FAILURE_STATUSES = ('FAIL', 'MISSING', 'EXTRA', 'ERROR')
+
+
+def verdict_exit_code(results: List[ChecksumResult],
+                      allow_count_delta_warn: bool = False) -> int:
+    """
+    Exit code of a ch-checksum run.
+
+    1 when any table is FAIL, MISSING, EXTRA or ERROR, or when any table is
+    WARN and checksum.allow_count_delta_warn is not true; 0 otherwise.
+    """
+    for r in results:
+        if r.status in FAILURE_STATUSES:
+            return 1
+        if r.status == 'WARN' and not allow_count_delta_warn:
+            return 1
+    return 0
+
+
 def print_summary(results: List[ChecksumResult], run_start: datetime,
                    run_end: datetime, lsn_str: str, lsn_int: int,
-                   pg_database: str, ch_database: str) -> None:
-    """Print a formatted summary table to stdout."""
+                   pg_database: str, ch_database: str,
+                   allow_count_delta_warn: bool = False,
+                   no_checksum: bool = False) -> int:
+    """Print a formatted summary table to stdout; return the exit code."""
     HEADER = (
         f"\n{'='*80}\n"
         f"=== PostgreSQL → ClickHouse Checksum Summary ===\n"
@@ -1096,17 +1341,19 @@ def print_summary(results: List[ChecksumResult], run_start: datetime,
     print(hdr)
     print(sep)
 
-    fail_count = 0
+    status_counts: Dict[str, int] = {}
     for r in sorted(results, key=lambda x: x.table):
         ck = 'N/A'
         if r.tier == 3:
             ck = 'N/A'
+        elif r.missing_ch_columns:
+            ck = 'MISMATCH'
         elif r.checksum_match is True:
             ck = 'MATCH'
         elif r.checksum_match is False:
             ck = 'MISMATCH'
-        elif r.status == 'MISSING':
-            ck = 'MISSING'
+        elif r.status in ('MISSING', 'EXTRA'):
+            ck = r.status
         else:
             ck = 'SKIP'
 
@@ -1119,19 +1366,38 @@ def print_summary(results: List[ChecksumResult], run_start: datetime,
             f"{r.table:<{col_w}} {r.tier:>4}  {pg_c:>12}  {ch_c:>12}  "
             f"{delta:>8}  {pct:>8}  {ck:>10}  {r.status:>6}"
         )
-        if r.status in ('FAIL', 'MISSING', 'ERROR'):
-            fail_count += 1
+        status_counts[r.status] = status_counts.get(r.status, 0) + 1
         if r.detail:
             print(f"  ↳ {r.detail}")
 
     print(sep)
     total = len(results)
-    if fail_count == 0:
-        print(f"\nRESULT: PASS — all {total} tables match")
-    else:
-        print(f"\nRESULT: FAIL — {fail_count} of {total} tables have mismatches")
+    order = ('PASS', 'WARN', 'FAIL', 'MISSING', 'EXTRA', 'ERROR')
+    counts_text = ', '.join(f"{st}={status_counts.get(st, 0)}" for st in order)
+    print(f"\nTables: {total} ({counts_text})")
+    if no_checksum:
+        print("Checksums: not compared (--no-checksum); verdicts rest on row counts only")
 
-    print(f"Exit code: {'1' if fail_count > 0 else '0'}\n")
+    exit_code = verdict_exit_code(results, allow_count_delta_warn)
+    n_fail = sum(status_counts.get(st, 0) for st in FAILURE_STATUSES)
+    n_warn = status_counts.get('WARN', 0)
+    if exit_code != 0:
+        problems = n_fail + (0 if allow_count_delta_warn else n_warn)
+        print(f"RESULT: FAIL — {problems} of {total} tables are not verified "
+              f"equal (FAIL/MISSING/EXTRA/ERROR"
+              f"{'' if allow_count_delta_warn else '/WARN'})")
+    elif n_warn:
+        print(f"RESULT: PASS WITH WARNINGS — {n_warn} of {total} tables have "
+              f"row-count deltas within the alert thresholds "
+              f"(allowed by checksum.allow_count_delta_warn)")
+    elif no_checksum:
+        print(f"RESULT: PASS — all {total} tables have equal row counts "
+              f"(checksums not compared)")
+    else:
+        print(f"RESULT: PASS — all {total} tables match")
+
+    print(f"Exit code: {exit_code}\n")
+    return exit_code
 
 
 # ---------------------------------------------------------------------------
@@ -1231,6 +1497,9 @@ def run_config(config: dict, args) -> None:
     lsn_poll_interval = int(cksum_cfg.get('lsn_wait_poll_interval_seconds', 10))
     alert_count_delta_pct = float(cksum_cfg.get('alert_count_delta_pct', 0.0001))
     alert_count_delta_abs = int(cksum_cfg.get('alert_count_delta_abs', 100))
+    # WARN (count delta within the thresholds above) fails the run unless the
+    # operator explicitly accepts it.
+    allow_count_delta_warn = cksum_cfg.get('allow_count_delta_warn', False) is True
     skip_tables = set(cksum_cfg.get('skip_tables', []))
     include_floating_point = bool(cksum_cfg.get('include_floating_point_columns', False))
     include_json = bool(cksum_cfg.get('include_json_columns', False))
@@ -1419,11 +1688,9 @@ def run_config(config: dict, args) -> None:
             )
             pg_snapshot_conn = get_postgres_connection(
                 pg_host, pg_user, pg_password, pg_port, pg_database)
-            pg_snapshot_conn.autocommit = False
             try:
-                with pg_snapshot_conn.cursor() as cur:
-                    cur.execute("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-                logging.info("PG REPEATABLE READ transaction started")
+                begin_repeatable_read_snapshot(pg_snapshot_conn)
+                logging.info("PG REPEATABLE READ (read-only) transaction started")
             except Exception as e:
                 logging.error(
                     f"Could not start REPEATABLE READ transaction: {e}; aborting"
@@ -1476,6 +1743,10 @@ def run_config(config: dict, args) -> None:
                 user=ch_user, password=ch_password,
                 port=ch_port, secure=ch_secure,
             )
+
+            coverage_results = find_coverage_gaps(
+                pg_snapshot_conn, ch_conn, pg_schema, ch_database,
+                table_filter, tables, skip_tables, offset_db, offset_table)
 
             if offset_table and lsn_int > 0:
                 if wal_was_paused_by_us:
@@ -1975,10 +2246,10 @@ def run_config(config: dict, args) -> None:
             exclude_regex=None,
         )
         tables = [t for t in tables if t not in skip_tables]
-        pg_conn.close()
 
         logging.info(f"Found {len(tables)} tables to compare")
         if not tables:
+            pg_conn.close()
             logging.error("No tables found — check your config and table_include_list")
             sys.exit(1)
 
@@ -1989,6 +2260,11 @@ def run_config(config: dict, args) -> None:
             user=ch_user, password=ch_password,
             port=ch_port, secure=ch_secure,
         )
+
+        coverage_results = find_coverage_gaps(
+            pg_conn, ch_conn, pg_schema, ch_database,
+            table_filter, tables, skip_tables, offset_db, offset_table)
+        pg_conn.close()
 
         if offset_table and lsn_int > 0:
             logging.info(f"Waiting for CH offset table {offset_db}.{offset_table} to reach LSN {lsn_int}")
@@ -2060,11 +2336,13 @@ def run_config(config: dict, args) -> None:
     # -------------------------------------------------------------------------
     run_end = datetime.now(timezone.utc)
 
-    print_summary(results, run_start, run_end, lsn_str, lsn_int,
-                  pg_database, ch_database)
-
-    fail_count = sum(1 for r in results if r.status in ('FAIL', 'MISSING', 'ERROR'))
-    sys.exit(1 if fail_count > 0 else 0)
+    # Tables present on one side only (or hidden from the checksum user)
+    results.extend(coverage_results)
+    exit_code = print_summary(results, run_start, run_end, lsn_str, lsn_int,
+                              pg_database, ch_database,
+                              allow_count_delta_warn=allow_count_delta_warn,
+                              no_checksum=bool(getattr(args, 'no_checksum', False)))
+    sys.exit(exit_code)
 
 
 # ---------------------------------------------------------------------------
