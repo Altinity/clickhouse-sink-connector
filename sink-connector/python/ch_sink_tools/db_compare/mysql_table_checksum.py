@@ -25,29 +25,27 @@ runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
 def compute_checksum(table, statements, conn):
-    sql = ""
-    debug_out = None
+    """Run ``statements``; return the aggregate row as a flat list.
+
+    The first statement that returns rows is the aggregate. With
+    --debug_output, select_table_statements adds the per-row query after it:
+    its rows are appended to out.<table>.mysql.txt and the aggregate is still
+    returned, so the checksum line is printed as well (spec 13.06 D-13.06-27)."""
     result = None
-    if args.debug_output:
-        out_file = f"out.{table}.mysql.txt"
-        # logging.info(f"Debug output to {out_file}")
-        debug_out = open(out_file, 'a')
     try:
         for statement in statements:
-            sql = statement
-
-            (result, rowcount) = execute_mysql(conn, sql)
+            (rows, rowcount) = execute_mysql(conn, statement)
             if rowcount != -1:
                 logging.debug("Rows affected "+str(rowcount))
-            if result != None and result.returns_rows == True:
-                x = [element for tupl in result for element in tupl]
-                if not args.debug_output:
-                    result = x 
-                if args.debug_output:
+            if rows is None or rows.returns_rows != True:
+                continue
+            x = [element for tupl in rows for element in tupl]
+            if result is None:
+                result = x
+            else:
+                with open(f"out.{table}.mysql.txt", 'a') as debug_out:
                     for line in x:
                         debug_out.write(str(line)+'\n')
-                if args.debug_output:
-                        debug_out.close()
     finally:
         conn.close()
 
@@ -62,15 +60,26 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     logging.debug("Excluded columns: "+str(excluded_columns))
     select = ""
     nullables = []
+    # every compared column gets a value-based null flag, nullable or not, so
+    # a nullability mismatch with the replica gives the same flags for equal
+    # values (spec 13.06 D-13.06-40)
+    compared = []
     data_types = {}
     first_column = True
     min_date_value = args.min_date_value
     max_date_value = args.max_date_value
     max_datetime_value = args.max_datetime_value
-    row_list = [row for row in rowset]
+    # by column name through mappings() (SQLAlchemy 2.x rows are tuples, spec 13.06 D-13.06-9)
+    row_list = [row for row in rowset.mappings()]
     same_charset = True
     collations = [row['collation'] for row in row_list if row['collation'] is not None]
     same_charset = len(collations) <= 1
+    # A standalone run is told the exact list to pass to the ClickHouse side, which cannot tell a String column
+    # that replicates a MySQL JSON column from any other String (spec 13.06 D-13.06-41).
+    json_names = [row['column_name'] for row in row_list
+                  if row['column_name'] not in excluded_columns and 'json' in row['data_type']]
+    json_hint = (f"; pass --json_columns {','.join(json_names)} to clickhouse_table_checksum.py so both row strings "
+                 f"skip them")
     for row in row_list:
         column_name = '`'+row['column_name']+'`'
         data_type = row['data_type']
@@ -81,15 +90,19 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
             continue
         if not include_floating_point_columns:
             if 'float' in data_type or 'double' in data_type or 'real' in data_type:
-                logging.info(f"Excluding floating point column {column_name} of type {data_type}")
+                logging.warning(f"Not compared in table {args.mysql_database}.{table}: floating point column {column_name} of type {data_type} (pass --include_floating_point_columns to compare it)")
                 continue
         if not include_json_columns:
+            # Not compared by default, like the ClickHouse side (spec 13.06
+            # FM-13.06-7): the MySQL rendering below is normalised, the
+            # replica text is not, so comparing them can mask differences.
             if 'json' in data_type:
-                logging.info(f"Excluding json column {column_name} of type {data_type}")
+                logging.warning(f"Not compared in table {args.mysql_database}.{table}: JSON column {column_name} of type {data_type} (pass --include_json_columns for a best-effort comparison{json_hint})")
                 continue
         if not first_column:
             select += ","
-            
+        compared.append(column_name)
+
         if is_nullable == 'YES':
             nullables.append(column_name)
         
@@ -133,15 +146,15 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
         data_types[row['column_name']] = data_type
 
     logging.debug(str(nullables))
-    if len(nullables) > 0:
+    if len(compared) > 0:
         select += ", concat("
         first = True
-        for nullable in nullables:
+        for compared_column in compared:
             if not first:
                 select += ','
             else:
                 first = False
-            select += "ISNULL("+nullable+")"
+            select += "ISNULL("+compared_column+")"
         select += ")"
     # order is not important
     primary_key_columns = []
@@ -201,10 +214,12 @@ def select_table_statements(table, query, select_query, order_by, external_colum
          ) as t;
   """.format(select_query=select_query, schema=args.mysql_database, table=table, where=where, order_by=order_by, limit=limit)
 
-    if args.debug_output:
-        sql = """select concat_ws('#',{select_query})  as `hash`   from {schema}.{table} where  {where}  {limit}""".format(
-            select_query=select_query, schema=args.mysql_database, table=table, where=where, order_by=order_by, limit=limit)
     statements.append(sql)
+    if args.debug_output:
+        # The per-row strings, written to out.<table>.mysql.txt by
+        # compute_checksum after the aggregate (spec 13.06 D-13.06-27).
+        statements.append("""select concat_ws('#',{select_query})  as `hash`   from {schema}.{table} where  {where}  {limit}""".format(
+            select_query=select_query, schema=args.mysql_database, table=table, where=where, order_by=order_by, limit=limit))
     return statements
 
 
@@ -245,9 +260,8 @@ def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, ch
         max_pk = int(chunk['max_pk'])
         _where = f" {_where} and {pk} between {min_pk} and {max_pk}" 
 
-    parsed_excluded_columns = []
-    for col in excluded_columns:
-        parsed_excluded_columns.extend(col.split(','))  # split values with commas
+    # space-separated words and comma-separated lists alike (spec 13.06 D-13.06-17)
+    parsed_excluded_columns = [name.strip() for token in (excluded_columns or []) for name in str(token).split(',') if name.strip()]
     result = calculate_sql_checksum(conn, mysql_table, _where, parsed_excluded_columns,  include_floating_point_columns, include_json_columns)
     return result
 
@@ -297,9 +311,8 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns
                 if future.exception() is not None:
                     logging.info(f"{mysql_table}")
                     raise future.exception()
-    if args.debug_output:
-        # checksum is not output in debug_output mode
-        return
+    # With --debug_output the per-row strings are in out.<table>.mysql.txt and
+    # the checksum line is still printed (spec 13.06 D-13.06-27).
     logging.debug(str(result))
     to_add = (0,0,0,0,0)
     for r in result:
@@ -362,7 +375,7 @@ def main():
     parser.add_argument(
         '--max_date_value', help='Maximum Date32/Datetime64 date', default='2299-12-31', required=False)
     parser.add_argument(
-            '--min_datetime_value', help='Min Datetime64 datetime', default='1970-01-01 00:00:00', required=False)
+            '--min_datetime_value', help='Min Datetime64 datetime', default='1900-01-01 00:00:00', required=False)
     parser.add_argument(
             '--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59', required=False)
     parser.add_argument('--debug', dest='debug',
@@ -376,8 +389,8 @@ def main():
                         help='number of tables in parallel to compute', default=1)
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
                         help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
-    parser.add_argument('--include_json_columns', action='store_true', default=True,
-                        help='JSON data types can not easily be compared, we do not include them by default', required=False)
+    parser.add_argument('--include_json_columns', action='store_true', default=False,
+                        help='JSON data types can not easily be compared, we do not include them by default (a WARNING names them); pass it to both sides', required=False)
     global args
     args = parser.parse_args()
 
@@ -414,7 +427,10 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
             future_to_table = {}
-            for table in tables.fetchall():
+            # --no_wc: get_tables_from_regex returns [[<tables_regex>]], the table name
+            # itself, not a result set (spec 13.06 D-13.06-26).
+            table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.mappings().fetchall()
+            for table in table_rows:
                 future = executor.submit(
                     calculate_checksum, table['table_name'], mysql_user, mysql_password, args.exclude_columns, args.include_floating_point_columns, args.include_json_columns)
                 futures.append(future)

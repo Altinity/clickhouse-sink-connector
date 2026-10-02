@@ -7,12 +7,11 @@ config authors wrote ``\\' 16:30:00\\'`` in per-table ``where:`` overrides.
 When fstr() became a literal substitution the backslashes started reaching the
 servers unchanged and every partitioned table failed on the ClickHouse side
 with ``Code: 62 ... Unrecognized token: '\\'`` (first run of 2.11.0 in
-production, 2026-09-29). These tests pin the contract end to end: the shell
+production, 2026-09-29). These tests pin the contract end to end: the argv
 word the side script receives, the SQL fragment after fstr(), and -- when a
 ``clickhouse-format`` binary is available -- that ClickHouse parses it.
 """
 import os
-import shlex
 import shutil
 import subprocess
 import sys
@@ -42,12 +41,9 @@ def top_level_args(**overrides):
 
 
 def where_word(command):
-    """The single shell word that follows ``--where`` once ``sh -c`` has parsed
-    the command line the top-level builds (run_quick_safe_command uses
-    ``shell=True``, so POSIX quoting rules apply)."""
-    pipeline_head = command.split("| grep")[0]
-    words = shlex.split(pipeline_head.replace("set -eo pipefail;", "", 1))
-    return words[words.index("--where") + 1]
+    """The argv word that follows ``--where`` in the command the top-level
+    builds (an argv list run without a shell, so it reaches the side as is)."""
+    return command[command.index("--where") + 1]
 
 
 def clickhouse_parses(sql):
@@ -71,7 +67,7 @@ class ClickHouseWhereQuotingTestCase(unittest.TestCase):
                                                  partition_key="trade_date")
         value = where_word(cmd)
         self.assertEqual(value, " 1=1  and {partition_expression}=toDate('2026-09-28') ")
-        self.assertNotIn("\\", cmd, "no backslash may reach the side script")
+        self.assertNotIn("\\", " ".join(cmd), "no backslash may reach the side script")
 
     def test_fragment_after_fstr_is_valid_clickhouse(self):
         cmd = tl.get_clickhouse_checksum_command("ch1", "db1", "t1", "id", 10, where=None,
@@ -102,7 +98,7 @@ class ClickHouseWhereQuotingTestCase(unittest.TestCase):
         tl.args = top_level_args(partition_date=None)
         cmd = tl.get_clickhouse_checksum_command("ch1", "db1", "t1", "id", 10, where=None)
         self.assertEqual(where_word(cmd), " 1=1 ")
-        self.assertNotIn("{partition_expression}", cmd)
+        self.assertNotIn("{partition_expression}", " ".join(cmd))
 
 
 class MySQLWhereQuotingTestCase(unittest.TestCase):
@@ -112,7 +108,7 @@ class MySQLWhereQuotingTestCase(unittest.TestCase):
     def test_partition_date_is_a_bare_yyyymmdd_literal(self):
         cmd = tl.get_mysql_checksum_command("my1", "db1", "t1", "id", 10, where=None)
         self.assertEqual(where_word(cmd), " 1=1  and {partition_expression}=20260928")
-        self.assertNotIn("\\", cmd)
+        self.assertNotIn("\\", " ".join(cmd))
 
     def test_fragment_after_fstr(self):
         cmd = tl.get_mysql_checksum_command("my1", "db1", "t1", "id", 10, where=None)

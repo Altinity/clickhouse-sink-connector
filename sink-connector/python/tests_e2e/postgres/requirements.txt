@@ -1,0 +1,4 @@
+pytest
+psycopg2-binary
+clickhouse-driver>=0.2.9
+pyyaml

@@ -7,6 +7,7 @@ that the two sides cannot drift apart.
 import datetime
 import hashlib
 import logging
+import re
 import zoneinfo
 
 # The ClickHouse DateTime64 range the connector clamps to when it writes
@@ -130,16 +131,50 @@ NOT_COMPARED_HINTS = {
 }
 
 
-def warn_not_compared(database, table, skipped, warned):
+def json_columns_hint(names):
+    """What a standalone MySQL-side run tells the operator to pass to the
+    ClickHouse side, which cannot tell a String column that replicates a MySQL
+    JSON column from any other String (spec 13.06 D-13.06-41). The checksum
+    driver forwards --json_columns itself and drops this text from the side
+    notes it relays (``JSON_COLUMNS_HINT_RE``)."""
+    return f"pass --json_columns {','.join(names)} to clickhouse_table_checksum.py so both row strings skip them"
+
+
+# The json_columns_hint text inside a relayed side line, with its leading "; ".
+JSON_COLUMNS_HINT_RE = re.compile(r"; pass --json_columns .*? to clickhouse_table_checksum\.py so both row strings "
+                                  r"skip them")
+
+
+def warn_not_compared(database, table, skipped, warned, json_hint=False):
     """One WARNING per table and kind naming the columns the tool does not
     compare (spec 11.02 section 3.9). ``skipped`` maps a kind of
     NOT_COMPARED_HINTS to column names; ``warned`` is the caller's set of
     (database, table, kind) already reported, so chunked tables warn once. The
-    line must not contain the word "checksum" (the driver greps for it)."""
+    driver relays every side WARNING line into its own log (spec 13.06
+    FM-13.06-8). ``json_hint`` (the MySQL side) adds json_columns_hint to the
+    JSON warning."""
     for kind, names in skipped.items():
         if names and (database, table, kind) not in warned:
             warned.add((database, table, kind))
-            logging.warning(f"Not compared in table {database}.{table}: {kind} columns {names} (pass {NOT_COMPARED_HINTS[kind]})")
+            hint = NOT_COMPARED_HINTS[kind]
+            if json_hint and kind == "JSON":
+                hint += "; " + json_columns_hint(names)
+            logging.warning(f"Not compared in table {database}.{table}: {kind} columns {names} (pass {hint})")
+
+
+def parse_exclude_columns(tokens):
+    """The column names given to ``--exclude_columns``, as space-separated
+    words, comma-separated lists or both: ``['a', 'b']``, ``['a,b']`` and
+    ``['a, b']`` all give ``['a', 'b']``. Both sides parse the option with this
+    function, so both forms exclude the same columns (spec 13.06 D-13.06-17).
+    Order is kept, duplicates are dropped."""
+    names = []
+    for token in tokens or []:
+        for name in str(token).split(","):
+            name = name.strip()
+            if name and name not in names:
+                names.append(name)
+    return names
 
 
 def parse_column_list(text):

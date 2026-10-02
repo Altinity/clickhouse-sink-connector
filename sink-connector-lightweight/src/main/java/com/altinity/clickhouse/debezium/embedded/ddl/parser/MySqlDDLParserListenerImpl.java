@@ -93,7 +93,10 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * diverge: a generated column's expression must become a {@code DEFAULT}
      * expression, and must NEVER be mistaken for the column's data type. The
      * {@code IsNullPredicateContext} branch mirrors the grammar quirk the CREATE
-     * path handles for expressions such as {@code (a IS NULL)}.
+     * path handles for expressions such as {@code (a IS NULL)}. MySQL bit
+     * operators, which ClickHouse does not have, are translated to its bit
+     * functions by {@link GeneratedExpressionBitOperators}; every other token
+     * is copied as before (Spec 06.06 section 3.4).
      *
      * @param ctx the {@code GeneratedColumnConstraintContext} parse node.
      * @return the expression text (charset introducers stripped), or "" if none.
@@ -106,11 +109,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     if (exprChild instanceof MySqlParser.IsNullPredicateContext) {
                         for (ParseTree inner : ((MySqlParser.IsNullPredicateContext) exprChild).children) {
                             if (inner instanceof MySqlParser.ExpressionAtomPredicateContext) {
-                                expr = inner.getText();
+                                expr = GeneratedExpressionBitOperators.render(inner);
                             }
                         }
                     } else {
-                        expr = exprChild.getText();
+                        expr = GeneratedExpressionBitOperators.render(exprChild);
                     }
                 }
             }
@@ -1320,27 +1323,14 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                             uniqueKeyColumns.append(columnName);
                         }
                     } else if (colDefinitionChildTree instanceof MySqlParser.GeneratedColumnConstraintContext) {
-                        for (ParseTree generatedColumnTree: ((MySqlParser.GeneratedColumnConstraintContext) colDefinitionChildTree).children) {
-                            if (generatedColumnTree instanceof MySqlParser.ExpressionContext) {
-                                for(ParseTree generatedColumnTreeChildren: ((MySqlParser.ExpressionContext) generatedColumnTree).children) {
-                                    //System.out.println(generatedColumnTreeChildren.getText().trim());
-                                    // iterate over the children of the generatedColumnTreeChildren
-                                    if(generatedColumnTreeChildren instanceof MySqlParser.IsNullPredicateContext) {
-                                        for (ParseTree generatedColumnTreeChildrenChildren : ((MySqlParser.IsNullPredicateContext) generatedColumnTreeChildren).children) {
-                                            if (generatedColumnTreeChildrenChildren instanceof MySqlParser.ExpressionAtomPredicateContext) {
-                                                //System.out.println(generatedColumnTreeChildrenChildren.getText().trim());
-                                                generatedColumn = generatedColumnTreeChildrenChildren.getText();
-                                            }
-                                        }
-                                    } else {
-                                        generatedColumn = generatedColumnTreeChildren.getText();
-                                    }
-                                }
-                                isGeneratedColumn = true;
-                                generatedColumn =
-                                        stripCharsetIntroducers(generatedColumn);
-                                //generatedColumn = generatedColumnTree.getText();
-                            }
+                        // The shared helper, as on the ALTER path (Spec 06.06
+                        // section 2): the two paths cannot translate the same
+                        // expression differently.
+                        MySqlParser.GeneratedColumnConstraintContext generated =
+                                (MySqlParser.GeneratedColumnConstraintContext) colDefinitionChildTree;
+                        if (generated.expression() != null) {
+                            isGeneratedColumn = true;
+                            generatedColumn = extractGeneratedExpression(generated);
                         }
                     }
                 }
