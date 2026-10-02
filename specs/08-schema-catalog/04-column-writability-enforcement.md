@@ -28,7 +28,8 @@ After a fresh metadata read still does not produce column $C$, its
 |---|---|---|
 | `ALIAS` | not stored; nothing can diverge | ignore; `markColumnProvenAbsent` so the probe is not repeated per record |
 | `MATERIALIZED` | stored, ClickHouse-computed; shadows the source value | §3.2 convert to `DEFAULT`, re-read, bind the source value. If the conversion cannot be performed (declared type or expression unreadable, `ALTER` rejected or without effect) or the re-read still lacks the column, **fail the batch** with `MissingTargetColumnException` naming the failed remediation (§3.3); never continue without the source value |
-| `null` (no `system.columns` row: the column does not exist in ClickHouse) or `""` (a stored column the writable map still lacks) | the replica is incomplete | §3.3 |
+| `DEFAULT` or `""` (a stored column the connector can write) | the writable map read raced a concurrent change (typically another worker's §3.2 conversion) | §3.4: re-read the writable map once; if it now has $C$, bump the version and bind it; otherwise §3.3 |
+| `null` (no `system.columns` row: the column does not exist in ClickHouse) | the replica is incomplete | §3.3 |
 | `null` because the kind could not be read at all | unknown | §3.3 as well: with evolution on the `ADD COLUMN` is attempted; otherwise the batch fails and the retry re-probes. Never proven-absent. |
 
 A non-`ALIAS` miss is **never** recorded as proven-absent — not a missing
@@ -45,7 +46,7 @@ ALTER TABLE `db`.`table` MODIFY COLUMN `col` type DEFAULT (default_expression)
 ```
 - Modifies column kind in ClickHouse metadata without rewriting existing data parts.
 - Invalidates local schema cache: `CacheInvalidationManager.getInstance().invalidateTable(tableKey)`.
-- Subsequent `INSERT` statements now successfully bind MySQL values directly into the column.
+- Subsequent `INSERT` statements now successfully bind MySQL values directly into the column, starting with the batch that triggered the conversion: that batch's INSERT is built from the post-DDL re-read and bound with the same map, not with the writer's cached map (spec 04.03 §3.5).
 
 ### 3.3 Absent column: add it, or fail the batch
 The prime directive: "If a column exists in MySQL but not usefully in
@@ -70,6 +71,40 @@ side; never a log line only."
    applies it by hand or grants the privilege. Reporting is the fallback when
    enforcement fails, but reporting **and continuing** is not: the batch must
    not be written with the source value replaced by ClickHouse's computed one.
+
+### 3.4 Concurrent conversion of the same column
+Several workers routinely see the same `MATERIALIZED` column at once (one
+table, several threads, one batch each). The column map read, the
+`default_kind` read and enforcement's own `default_kind` re-read are separate
+catalog queries, and another worker's `ALTER` can land between any two of
+them. Two interleavings used to fail a batch that should have been written:
+
+- the map was read while the column was still `MATERIALIZED` (so the writable
+  map lacks it), then the kind was read as `DEFAULT`: the column was treated as
+  absent and the batch failed with a misleading "does not exist in ClickHouse
+  ... set schema.evolution" message;
+- the caller read `MATERIALIZED`, then enforcement re-read `DEFAULT`: it
+  returned "no longer MATERIALIZED" and the batch failed naming a conversion
+  that had in fact succeeded.
+
+Rules:
+1. **A writable kind is never "absent".** When the kind reads `DEFAULT` or
+   `""` (an ordinary stored column) but the writable map lacked $C$,
+   `refreshIfRecordHasUnknownColumn` re-reads the map once; if it now contains
+   $C$ it bumps the table version (`invalidateTable`) and builds the INSERT from
+   it, exactly as the §3.2 success path does. Only if the re-read still lacks
+   $C$ does §3.3 apply.
+2. **Already converted is success.** When `enforceSourceColumnIsWritable`
+   re-reads a writable kind, another worker converted the column; it issues no
+   `ALTER` and reports the column writable, and the caller re-reads the map as
+   after its own conversion (still-missing keeps the §3.3 item 3 failure).
+3. **One conversion per table at a time.** `enforceSourceColumnIsWritable` runs
+   under a per-table lock (`GroupInsertQueryWithBatchRecords.enforcementLock`,
+   one object per fully qualified table name, never shared between tables).
+   Workers that read `MATERIALIZED` together wait for the first; each re-reads
+   the kind under the lock, so one `ALTER` is issued per table instead of one
+   per worker. The lock is held only around the kind re-read and the `ALTER`
+   of that table.
 
 ---
 
@@ -98,6 +133,24 @@ side; never a log line only."
   still lacks the column: same exception, no proven-absent entry.
 - `GroupInsertQueryWithBatchRecordsTest.materializedColumnConvertedIsBoundInSameBatch()`
   — the successful conversion path binds the column in the same batch.
+- `StaleCacheBindingMapTest.materializedColumnConvertedMidBatchIsBoundInTheSameBatch()`
+  — the converted column is bound, through the executor, in the batch that
+  triggered the conversion: every placeholder set, the source value written
+  (pre-fix code builds the INSERT from the re-read map but binds with the
+  cached one, leaving the column's parameter unset).
+- `StaleCacheBindingMapTest.conversionLandingBetweenMapReadAndKindReadIsReReadAndBound()`
+  — §3.4 rule 1: another worker's conversion lands between this worker's map
+  read and kind read; the map is re-read, no `ALTER` is issued and the column
+  is bound (pre-fix code throws "does not exist in ClickHouse ... default_kind
+  'DEFAULT'").
+- `StaleCacheBindingMapTest.enforcementFindingTheColumnAlreadyConvertedReReadsAndBinds()`
+  — §3.4 rule 2: the conversion lands between the caller's kind read and
+  enforcement's; no `ALTER`, the column is bound (pre-fix code fails the batch
+  after "no longer MATERIALIZED").
+- `StaleCacheBindingMapTest.concurrentWorkersIssueOneConversionAndAllSucceed()`
+  — §3.4 rule 3: five workers see the column at once; exactly one `ALTER` is
+  issued and every worker's INSERT binds the column (pre-fix code issues one
+  `ALTER` per worker).
 - `UnwritableColumnReportingTest` — MATERIALIZED → DEFAULT conversion DDL.
 
 ---
@@ -133,4 +186,13 @@ Every non-ALIAS miss fails the batch rather than dropping the value, and the fai
   - **RTO**: <= 30 s after the redefinition for new rows; the backfill is proportional to the table; unmeasured.
   - **Test**: `GroupInsertQueryWithBatchRecordsTest.materializedColumnWhoseConversionFailsFailsBatch()`, `GroupInsertQueryWithBatchRecordsTest.materializedColumnStillMissingAfterConversionFailsBatch()`, `GroupInsertQueryWithBatchRecordsTest.materializedColumnConvertedIsBoundInSameBatch()`.
 
-Summary: 3 failure modes, 1 DEFECT, 1 GAP.
+- **FM-08.04-4 Several workers convert the same column at once**
+  - **Trigger**: a `MATERIALIZED` column the source supplies, and batches of its table arriving on several workers together (the normal case right after the column first appears in the stream).
+  - **Behaviour**: since §3.4 one worker issues the `ALTER` under the table's enforcement lock; the others find the column already writable, re-read the map and write their batches in the same attempt. Before §3.4 every racing worker issued its own `ALTER`, and a worker whose reads straddled another's `ALTER` failed its batch with `MissingTargetColumnException` ("does not exist ... default_kind 'DEFAULT'", or the failed-conversion message); the retry succeeded.
+  - **Detection**: INFO `Enforcing source conformance on <db>.<t>: ALTER TABLE ...` once per table, then INFO `Column '<c>' on <db>.<t> is already writable (default_kind 'DEFAULT'); it was converted concurrently, so no ALTER is issued here.` or `... is writable (default_kind '<k>') but was missing from the column map read just before; the table changed concurrently. Using the re-read column map.` from the other workers. If the re-read still lacks the column, the FM-08.04-1 / FM-08.04-3 lines.
+  - **Blast radius**: none when the re-read succeeds; otherwise as FM-08.04-1. The racing workers wait on the lock for at most one `ALTER` of that table.
+  - **Recovery**: none needed.
+  - **RTO**: 0 (same attempt); the lock wait is one metadata-only `ALTER`.
+  - **Test**: `StaleCacheBindingMapTest.conversionLandingBetweenMapReadAndKindReadIsReReadAndBound()`, `StaleCacheBindingMapTest.enforcementFindingTheColumnAlreadyConvertedReReadsAndBinds()`, `StaleCacheBindingMapTest.concurrentWorkersIssueOneConversionAndAllSucceed()`.
+
+Summary: 4 failure modes, 1 DEFECT, 1 GAP.

@@ -30,7 +30,7 @@ def driver_args(**overrides):
         fail_on_lock_timeout=False, no_wc=False, include_partitions_regex=None,
         exclude_tables_regex=None, non_partitioned_tables_only=False,
         include_floating_point_columns=False, include_json_columns=False, partition_date=None,
-        threads_per_table=1,
+        threads_per_table=1, fail_on_empty=False,
     )
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -39,7 +39,7 @@ def driver_args(**overrides):
 def run_driver(compute_checksum, tables=("orders",), **arg_overrides):
     """Run run_config() over stubbed catalog helpers; return (exit code, log lines)."""
     table_rows = MagicMock()
-    table_rows.fetchall.return_value = [{"table_name": t} for t in tables]
+    table_rows.mappings.return_value.fetchall.return_value = [{"table_name": t} for t in tables]
     patches = [
         patch.object(tl, "args", driver_args(**arg_overrides), create=True),
         patch.object(tl, "resolve_credentials_from_config", return_value=("u", "p")),
@@ -84,13 +84,12 @@ class TestVerdictOnUnparseableOutput(unittest.TestCase):
         self.assertIsNone(count)
         self.assertTrue(any("Invalid checksum output" in line for line in logs.output), logs.output)
 
-    @unittest.skip("DEFECT FM-11.02-2: two unparseable sides both yield (None, None) and "
-                   "analyze_differences() logs 'No difference'")
     def test_both_sides_unparseable_is_never_reported_equal(self):
         unparseable = [(MYSQL_HOST, "orders", None, None), (CH_HOST, "orders", None, None)]
         with self.assertLogs(level="INFO") as logs:
-            tl.analyze_differences(unparseable, MYSQL_HOST, [CH_HOST])
+            verdict = tl.analyze_differences(unparseable, MYSQL_HOST, [CH_HOST])
         self.assertFalse(any("No difference" in line for line in logs.output), logs.output)
+        self.assertEqual(verdict, tl.VERDICT_ERROR)
 
 
 class TestRunExitCode(unittest.TestCase):
@@ -101,14 +100,19 @@ class TestRunExitCode(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertTrue(any("No difference for orders" in line for line in logs), logs)
 
-    def test_failed_side_script_aborts_the_whole_run_non_zero(self):
-        # run_quick_safe_checksum() returns None for a side whose pipeline failed;
-        # analyze_differences() then raises, the driver logs the traceback and
-        # exits 1 -- every table after this one is left uncompared.
-        code, logs = run_driver(lambda *a, **k: [None, (CH_HOST, "orders", "abc", 10)],
-                                tables=("orders", "customers"))
+    def test_failed_side_script_fails_the_table_and_the_run_non_zero(self):
+        # run_quick_safe_checksum() returns None for a side that failed. That
+        # table's verdict is ERROR, the other tables still get theirs, and the
+        # run exits 1 naming the table without a verdict.
+        def compute(database, dom, tom, table, *a, **k):
+            if table == "orders":
+                return [None, (CH_HOST, "shop.orders", "abc", 10)]
+            return results("abc", "abc", table="shop." + table)
+        code, logs = run_driver(compute, tables=("orders", "customers"))
         self.assertEqual(code, 1)
-        self.assertTrue(any("Exception in main thread" in line for line in logs), logs)
+        self.assertTrue(any("ERROR" in line and "Checksum ERROR for shop.orders" in line for line in logs), logs)
+        self.assertTrue(any("No difference for shop.customers" in line for line in logs), logs)
+        self.assertTrue(any("1 table(s) have NO verdict" in line and "shop.orders" in line for line in logs), logs)
 
     def test_lock_timeout_skips_the_table_and_names_it_in_the_summary(self):
         def compute(database, dom, tom, table, *a, **k):

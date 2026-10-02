@@ -9,6 +9,7 @@ Specifies the critical distinction between columns that are omitted from a CDC e
 - **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/QueryFormatter.java`
 - **Method**: `getInsertQueryUsingInputFunction(...)` (builds the INSERT column list from the record's unfiltered schema)
 - **Bind-time counterpart**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/PreparedStatementFieldMapper.java` (Spec 07.07 §3.1)
+- **Binding map (§3.5)**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/PreparedStatementExecutor.java` (`requireEveryPlaceholderBindable`), `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/batch/GroupInsertQueryWithBatchRecords.java` (`InsertTemplate`, `bindingColumnMap`)
 
 ---
 
@@ -66,6 +67,35 @@ NULL (Case A). Only a column that matches no field under either comparison
 reaches the stale-cache branch, which is exactly the condition it was written
 for.
 
+### 3.5 A segment is bound with the column map its template was built from
+Membership is decided against a column map, and the grouping may replace that
+map mid-batch: the stale-cache re-read (`refreshIfRecordHasUnknownColumn`,
+FM-04.03-1), a `MATERIALIZED` column converted to `DEFAULT` (spec 08.04 §3.2)
+or schema evolution. The caller still holds the writer's cached map
+(`ClickHouseBatchRunnable.flushRecordsToClickHouse` and
+`ClickHouseBatchWriter.flushRecordsToClickHouse` pass
+`writer.getColumnNameToDataTypeMap()`). Binding a template built from the fresh
+map with the cached one walked a column set that lacks the new column, so its
+placeholder was never set and the V2 driver's `addBatch()` threw a
+`NullPointerException`: the first batch after every re-read or enforcement
+failed, and the retry through a rebuilt writer succeeded.
+
+Rule: **the map used to bind a segment's records equals the map its INSERT
+template was built from.** Every key the grouper produces
+(`GroupInsertQueryWithBatchRecords.InsertTemplate`) carries that map and
+`PreparedStatementExecutor` binds the key's records with it
+(`GroupInsertQueryWithBatchRecords.bindingColumnMap`); the caller's map binds
+only a key that carries none. Equal keys (same SQL text, same parameter-index
+map) name the same column list, so the map of the key that opened the bucket
+binds every record in it.
+
+Backstop: before any row of a template is bound,
+`PreparedStatementExecutor.requireEveryPlaceholderBindable` checks that every
+placeholder's column is in the binding map and otherwise throws
+`StaleSchemaCacheException` naming the column. A template's placeholders are
+always a subset of the map it was built from, so this fires only when the two
+maps disagree; an unbound parameter never reaches `addBatch()`.
+
 ---
 
 ## 4. Invariants Preserved
@@ -87,6 +117,17 @@ for.
   a column absent from a pre-ALTER record's schema is not a member.
 - `NullValueColumnDropTest.testSchemaDefaultIsNotSubstitutedForNull()` — §3.3:
   the Connect-schema default is never bound in place of a stored `null`.
+- `StaleCacheBindingMapTest.materializedColumnConvertedMidBatchIsBoundInTheSameBatch()`,
+  `StaleCacheBindingMapTest.columnFoundByStaleCacheReReadIsBoundInTheSameBatch()`,
+  `StaleCacheBindingMapTest.templatesBuiltBeforeAndAfterAReReadAreEachBoundWithTheirOwnMap()`
+  — §3.5: grouped and executed with the writer's cached map, as the runnable
+  does; every placeholder of every staged row is bound and the source value of
+  the re-read column is written in the same batch (pre-fix code leaves that
+  placeholder unbound).
+- `StaleCacheBindingMapTest.placeholderMissingFromTheBindingMapFailsNamingTheColumn()`
+  — §3.5 backstop: a placeholder whose column the binding map lacks throws
+  `StaleSchemaCacheException` naming it and nothing is staged (pre-fix code
+  stages the row with the parameter unset).
 - `NullColumnValueRoundTripIT.testNullOnInsertStaysNull()`,
   `NullColumnValueRoundTripIT.testUpdateToNullClearsTheStoredValue()`,
   `NullColumnValueRoundTripIT.testPreAlterRowStillReceivesTheColumnDefault()` —
@@ -110,13 +151,13 @@ Recovery posture: membership is decided from the record's schema and a disagreem
   - **DEFECT**: the condition waits for an operator indefinitely with no metric and no escalation (log lines only), while every later DDL of the connector waits behind it.
 
 - **FM-04.03-2 Index map and bound column map disagree within one batch**
-  - **Trigger**: the grouping staleness check (FM-04.03-1) returns a fresh column map mid-batch, while the executor binds against the writer's cached map (`ClickHouseBatchRunnable.flushRecordsToClickHouse` passes `writer.getColumnNameToDataTypeMap()`); or any other divergence between the map the INSERT was built from and the map the binder walks.
-  - **Behaviour**: `PreparedStatementFieldMapper.insertPreparedStatement` refuses a column that has no placeholder or no source field with `StaleSchemaCacheException` instead of binding the DEFAULT or NULL over a real value; a placeholder the stale map never visits stays unbound and the V2 driver's `addBatch` fails on it (FM-07.07-4). Either way UNKNOWN, retried. The fresh read bumped `CacheInvalidationManager` (`invalidateTable`), so the retry's `ClickHouseBatchRunnable.getDbWriterForTable` rebuilds the writer and the batch goes through on the next attempt. A divergence that does not bump the version would be retried forever; none is known on 2.11.0 (the `StaleSchemaCacheException` Javadoc's "rebuilds the writer" holds only through that version bump).
-  - **Detection**: ERROR `******* ERROR inserting Batch Database(<db>), Table(<t>)` and `ClickHouseBatchRunnable exception - Task(<id>)` with `Column <c> is present in the ClickHouse table and carried by the record, but has no placeholder in the generated INSERT. ... Failing the batch instead.` (or the NPE), WARN `Retriable ... Category: UNKNOWN`; metric `clickhouse.sink.topics.error.records`.
+  - **Trigger**: the map an INSERT template was built from and the map the binder walks disagree. The grouping staleness check (FM-04.03-1) returning a fresh column map mid-batch no longer causes this: since §3.5 each template is bound with the map it was built from, not with the writer's cached map that `flushRecordsToClickHouse` passes. Before that rule the first batch after every re-read or `MATERIALIZED` enforcement failed with a `NullPointerException` from the driver's `addBatch()` and was written on the retry. Remaining trigger: a segment key built outside the grouper (it carries no map) bound with a map that lacks one of its placeholders' columns; none is known on 2.11.0.
+  - **Behaviour**: `PreparedStatementExecutor.requireEveryPlaceholderBindable` refuses a placeholder whose column the binding map lacks with `StaleSchemaCacheException` before any row is staged, so no parameter reaches `addBatch()` unbound; `PreparedStatementFieldMapper.insertPreparedStatement` refuses a column that has no placeholder or no source field with `StaleSchemaCacheException` instead of binding the DEFAULT or NULL over a real value. Either way UNKNOWN, retried. When a fresh read bumped `CacheInvalidationManager` (`invalidateTable`), the retry's `ClickHouseBatchRunnable.getDbWriterForTable` rebuilds the writer; a divergence that does not bump the version would be retried forever; none is known on 2.11.0 (the `StaleSchemaCacheException` Javadoc's "rebuilds the writer" holds only through that version bump).
+  - **Detection**: ERROR `ClickHouseBatchRunnable exception - Task(<id>)` with `Column <c> has a placeholder in the generated INSERT but is not in the column map used to bind it, so its parameter would be left unbound. ... Failing the batch instead.`, or ERROR `******* ERROR inserting Batch Database(<db>), Table(<t>)` with `Column <c> is present in the ClickHouse table and carried by the record, but has no placeholder in the generated INSERT. ... Failing the batch instead.`; WARN `Retriable ... Category: UNKNOWN`; metric `clickhouse.sink.topics.error.records` for the second message only (the first is raised before the batch is executed).
   - **Blast radius**: one failed attempt of the worker's batch; nothing is written with a dropped value; the rows written by earlier statements of the batch are re-inserted (FM-04.01-3).
   - **Recovery**: self-heals on the next attempt (first backoff step, 500 ms); if it repeats, restart the connector (rebuilds every writer from fresh metadata).
   - **RTO**: ≤ 1 backoff step (500 ms) + re-apply of the batch; unmeasured.
-  - **Test**: `PreparedStatementFieldMapperColumnCaseTest.columnCaseMismatchIsResolvedToTheSourceField()` (a case mismatch is not mistaken for staleness), `GroupInsertQueryDdlMemoTest.staleCacheIsRefreshedOnceAndTheFreshMapKeysTheMemo()` (one re-read, fresh map keys the templates); GAP: a test that a batch whose grouping refreshed the map is written on the retry through a rebuilt writer.
+  - **Test**: `PreparedStatementFieldMapperColumnCaseTest.columnCaseMismatchIsResolvedToTheSourceField()` (a case mismatch is not mistaken for staleness), `GroupInsertQueryDdlMemoTest.staleCacheIsRefreshedOnceAndTheFreshMapKeysTheMemo()` (one re-read, fresh map keys the templates), `StaleCacheBindingMapTest.materializedColumnConvertedMidBatchIsBoundInTheSameBatch()` and `StaleCacheBindingMapTest.columnFoundByStaleCacheReReadIsBoundInTheSameBatch()` (a batch whose grouping refreshed the map is written on the first attempt), `StaleCacheBindingMapTest.placeholderMissingFromTheBindingMapFailsNamingTheColumn()` (the backstop).
 
 - **FM-04.03-3 Explicit NULL for a column ClickHouse cannot hold NULL in**
   - **Trigger**: Case A (§3.1) for a non-Nullable ClickHouse column.
@@ -127,4 +168,4 @@ Recovery posture: membership is decided from the record's schema and a disagreem
   - **RTO**: ≈ 1–2 min + re-apply of the in-flight transaction; unmeasured.
   - **Test**: `NullValueColumnDropTest.testNullColumnIsBoundOnInsert()`, `PoisonValueClassificationTest.nullIntoNonNullableColumnIsFatal()`.
 
-Summary: 3 failure modes, 1 DEFECT, 2 GAP.
+Summary: 3 failure modes, 1 DEFECT, 1 GAP.

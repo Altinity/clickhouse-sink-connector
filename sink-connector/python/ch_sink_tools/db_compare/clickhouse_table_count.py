@@ -37,7 +37,9 @@ def get_connection(clickhouse_user, clickhouse_password):
 
 def get_tables_from_regex(conn):
     if args.no_wc:
-        return [[args.tables_regex]]
+        # The regex is the table name; its partition key is read only when a
+        # partition regex needs it (calculate_table_count).
+        return [[args.tables_regex, None]]
 
     schema = args.clickhouse_database
     partition_clause = ""
@@ -61,17 +63,26 @@ def calculate_table_count(table, partition_key, clickhouse_user, clickhouse_pass
     threadID = 1
     # 
     conn = get_connection(clickhouse_user, clickhouse_password)
-    partition_query = f"select distinct partition from system.parts where database = '{args.clickhouse_database}' and table='{table}' and active and match(partition,'{args.include_partitions_regex}') order by partition"
-    (rowset, rowcount) = execute_sql(conn, partition_query)
+    if args.include_partitions_regex:
+        if partition_key is None:
+            (rowset, rowcount) = execute_sql(conn, f"select partition_key from system.tables where database = '{args.clickhouse_database}' and name = '{table}'")
+            partition_key = rowset[0][0] if rowset else ''
+        partition_query = f"select distinct partition from system.parts where database = '{args.clickhouse_database}' and table='{table}' and active and match(partition,'{args.include_partitions_regex}') order by partition"
+        (rowset, rowcount) = execute_sql(conn, partition_query)
+        partition_values = [row[0] for row in rowset]
+    else:
+        # No partition regex: one count over the whole table. The partition
+        # list used to be read with match(partition,'None'), which matches no
+        # partition, so every table printed 0 (spec 13.06 D-13.06-18).
+        partition_values = [None]
     conn.close()
     conn = get_connection(clickhouse_user, clickhouse_password)
     table_count = 0
-    for row in rowset:
-      partition_value = row[0]
-      # 
+    for partition_value in partition_values:
+      #
       sql = f"select count(*) cnt from {args.clickhouse_database}.{table} final where 1=1"
-      if args.include_partitions_regex and partition_key != '':
-          sql += f" and {partition_key} = '{partition_value}' " 
+      if partition_value is not None and partition_key != '':
+          sql += f" and {partition_key} = '{partition_value}' "
       if args.where:
           sql = sql + " and " + args.where
       sql += " settings do_not_merge_across_partitions_select_final=1"

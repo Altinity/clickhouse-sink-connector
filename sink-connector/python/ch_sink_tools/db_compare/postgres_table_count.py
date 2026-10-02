@@ -160,6 +160,7 @@ Mirrors mysql_table_count.py for the PostgreSQL→ClickHouse CDC pipeline.
             logging.error(f"Could not resolve credentials from {pgpass_file}")
             sys.exit(1)
 
+    failed_tables = []
     try:
         conn = get_postgres_connection(
             args.pg_host, pg_user, pg_password, args.pg_port, args.pg_database)
@@ -177,16 +178,19 @@ Mirrors mysql_table_count.py for the PostgreSQL→ClickHouse CDC pipeline.
         conn.close()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
-            futures = []
+            futures = {}
             for table_name in tables:
-                futures.append(executor.submit(
+                futures[executor.submit(
                     calculate_table_count,
                     args.pg_host, pg_user, pg_password, args.pg_port,
                     args.pg_database, args.pg_schema, table_name, args.where
-                ))
+                )] = table_name
             for future in concurrent.futures.as_completed(futures):
                 if future.exception() is not None:
                     raise future.exception()
+                # -1 = the count query failed (None = table excluded)
+                if future.result() == -1:
+                    failed_tables.append(futures[future])
 
     except (KeyboardInterrupt, SystemExit):
         logging.info("Received interrupt")
@@ -196,6 +200,9 @@ Mirrors mysql_table_count.py for the PostgreSQL→ClickHouse CDC pipeline.
         logging.error(traceback.format_exc())
         sys.exit(1)
 
+    if failed_tables:
+        logging.error(f"{len(failed_tables)} table(s) failed: {sorted(failed_tables)}")
+        sys.exit(1)
     logging.debug("Exiting Main Thread")
     sys.exit(0)
 
