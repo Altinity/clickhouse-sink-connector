@@ -1,0 +1,81 @@
+name: Python toolset - MySQL end-to-end tests
+
+# The MySQL tools of sink-connector/python (scheduled checksum job, manual checksum and
+# count recipes, mysql_dumper -> clickhouse_loader snapshot, ch-mysql-resync) run against
+# a real MySQL, ClickHouse and the lightweight connector:
+# sink-connector/python/tests_e2e/mysql (stack: its docker-compose.yml).
+
+on:
+  workflow_call:
+    inputs:
+      SINK_CONNECTOR_IMAGE:
+        description: "Lightweight connector docker image"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      SINK_CONNECTOR_IMAGE:
+        description: "Lightweight connector docker image"
+        required: true
+        type: string
+
+env:
+  SINK_CONNECTOR_IMAGE: ${{ inputs.SINK_CONNECTOR_IMAGE }}
+  CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE: ${{ inputs.SINK_CONNECTOR_IMAGE }}
+  # Keep the compose stack up after pytest so its logs can be collected; it is torn
+  # down explicitly in the last step.
+  KEEP_STACK: "1"
+  COMPOSE_FILE_E2E: sink-connector/python/tests_e2e/mysql/docker-compose.yml
+
+jobs:
+  python-toolset-e2e-mysql:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # For PRs from forks the image is not pushed to the registry, but the build
+      # workflow uploads it as a tar artifact. Load it so docker compose can use it.
+      - uses: actions/download-artifact@v4
+        if: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' && github.event_name != 'workflow_dispatch' }}
+        with:
+          name: clickhouse-sink-connector_${{ github.event.number }}-${{ github.sha }}-lt.tar.gz
+
+      - name: Load Docker image
+        if: ${{ github.event.pull_request.head.repo.full_name != 'Altinity/clickhouse-sink-connector' && github.event_name != 'workflow_dispatch' }}
+        run: |
+          docker load < clickhouse-sink-connector_${{ github.event.number }}-${{ github.sha }}-lt.tar.gz
+          docker image ls
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The suite installs the tools itself, as the scheduled job does (source ./install.sh
+      # in a copy of sink-connector/python). zstd is used by the loader, mysqlsh comes from
+      # the mysql:8.0 image (tests_e2e/mysql/mysqlsh-docker.sh).
+      - name: Install test dependencies
+        run: |
+          pip3 install -r sink-connector/python/tests_e2e/mysql/requirements.txt
+          pip3 install -e "sink-connector/python[all]"
+          zstd --version
+
+      - name: Run the MySQL end-to-end suite
+        run: pytest -v -s sink-connector/python/tests_e2e/mysql
+
+      - name: Dump compose logs on failure
+        if: failure()
+        run: docker compose -f "$COMPOSE_FILE_E2E" logs --no-color > python-toolset-e2e-mysql-compose-logs.txt 2>&1 || true
+
+      - name: Upload compose logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-toolset-e2e-mysql-compose-logs
+          path: python-toolset-e2e-mysql-compose-logs.txt
+          if-no-files-found: ignore
+
+      - name: Tear down compose stack
+        if: always()
+        run: docker compose -f "$COMPOSE_FILE_E2E" down -v --remove-orphans || true

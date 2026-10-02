@@ -423,9 +423,25 @@ def get_postgres_table_checksum(conn, table_name, columns_meta, pk_columns,
     Returns
     -------
     str : hex MD5 digest of the accumulated (cnt, a, b, c, d) tuple
-          None if debug_output=True
+          None if debug_output=True, or when no column is comparable
+          (table missing or hidden, or every column excluded)
     """
     excluded_cols = set(excluded_columns or [])
+
+    # No comparable column (every column excluded by type or by the caller,
+    # or no column at all: the table does not exist or is not visible to this
+    # user) means there is nothing to digest.  Return None rather than the
+    # empty-table digest md5('0#0#0#0#0#'), which would claim an empty table.
+    if tier == 1 and not debug_output and build_tier1_chunk_query(
+            table_name, schema, columns_meta, None, None, None,
+            include_floating_point=include_floating_point,
+            include_json=include_json,
+            excluded_columns=excluded_cols) is None:
+        logging.error(
+            f"No comparable column in {schema}.{table_name} (table missing, "
+            f"hidden, or every column excluded); no checksum computed"
+        )
+        return None
 
     # Use first integer PK column for chunking
     pk_col = None

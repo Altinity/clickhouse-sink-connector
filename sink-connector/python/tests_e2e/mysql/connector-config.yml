@@ -1,0 +1,82 @@
+# Lightweight connector configuration of the Python toolset MySQL e2e suite.
+#
+# Derived from sink-connector-lightweight/docker/config.yml with the settings the
+# production deployments run and the checksum jobs depend on:
+#   binary.handling.mode: base64      -> checksum with --binary_encoding base64,
+#                                         load snapshots with --binary_handling_mode base64
+#   database.connectionTimeZone: UTC  -> checksum with --source_timezone UTC
+#   clickhouse.database.override.map  -> the second MySQL database is written to
+#                                         ClickHouse under another name, so the checksum
+#                                         config needs database_override_map
+# The hostnames are the compose service names; the suite's external-stack mode
+# (PYTOOLS_E2E_EXTERNAL_STACK=1) runs the same file with the hosts substituted.
+name: "pye2e-mysql"
+topic.prefix: "pye2e-mysql"
+
+database.hostname: "mysql-master"
+database.port: "3306"
+database.user: "root"
+database.password: "root"
+database.server.id: "23456"
+database.server.name: "pye2e"
+database.include.list: "pyops,pyref"
+database.allowPublicKeyRetrieval: "true"
+database.connectionTimeZone: "UTC"
+database.ssl.mode: "disabled"
+
+clickhouse.server.url: "clickhouse"
+clickhouse.server.user: "root"
+clickhouse.server.password: "root"
+clickhouse.server.port: "8123"
+clickhouse.database.override.map: "pyref:pyref_ch"
+clickhouse.datetime.timezone: "UTC"
+clickhouse.jdbc.params: "keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
+clickhouse.jdbc.settings: "input_format_null_as_default=0,allow_experimental_object_type=1,insert_allow_materialized_columns=1"
+
+binary.handling.mode: "base64"
+persist.raw.bytes: "false"
+auto.create.tables: "true"
+enable.snapshot.ddl: "true"
+snapshot.mode: "initial"
+non.default.value: "true"
+errors.max.retries: 20
+ignore.ddl.regex: "(?i)(ANALYZE PARTITION).*"
+
+connector.class: "io.debezium.connector.mysql.MySqlConnector"
+offset.flush.interval.ms: 2000
+offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
+offset.storage.jdbc.table.name: "altinity_sink_connector.replica_source_info"
+offset.storage.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
+offset.storage.jdbc.user: "root"
+offset.storage.jdbc.password: "root"
+offset.storage.jdbc.table.ddl: "CREATE TABLE if not exists %s
+(
+    `id` String,
+    `offset_key` String,
+    `offset_val` String,
+    `record_insert_ts` DateTime,
+    `record_insert_seq` UInt64,
+    `_version` UInt64 MATERIALIZED toUnixTimestamp64Nano(now64(9))
+)
+ENGINE = ReplacingMergeTree(_version)
+ORDER BY offset_key
+SETTINGS index_granularity = 8192"
+offset.storage.jdbc.table.delete: "select * from %s"
+offset.storage.jdbc.table.select: "SELECT id, offset_key, offset_val FROM %s FINAL ORDER BY record_insert_ts, record_insert_seq"
+
+schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
+schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
+schema.history.internal.jdbc.user: "root"
+schema.history.internal.jdbc.password: "root"
+schema.history.internal.jdbc.table.ddl: "CREATE TABLE if not exists %s
+(`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
+schema.history.internal.jdbc.table.name: "altinity_sink_connector.replicate_schema_history"
+
+metrics.enable: "true"
+metrics.port: 8083
+connection.pool.disable: "true"
+use.nongraceful.disconnect: "true"
+database.keep.alive.interval.ms: "30000"
+database.connection.reconnect.backoff.ms: "1000"
+database.connection.reconnect.backoff.max.ms: "10000"
+replication.history.enable: "false"
