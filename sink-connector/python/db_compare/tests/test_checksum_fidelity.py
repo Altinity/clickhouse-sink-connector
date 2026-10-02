@@ -253,13 +253,13 @@ class TestClickHouseRowExpression(unittest.TestCase):
 
     def test_trailing_float_column_leaves_no_dangling_separator(self):
         select = self.build(CLICKHOUSE_COLUMNS)
-        self.assertEqual(select, """toString("id")||'#'||toString("name")""")
+        self.assertEqual(select, """toString("id")||'#'||toString("name")""" + clickhouse_flags("id", "name"))
 
     def test_leading_and_middle_float_columns_leave_no_double_separator(self):
         columns = [("f0", "Float32", 0, None), ("id", "Int32", 0, None),
                    ("f1", "Float64", 0, None), ("name", "String", 0, None)]
         select = self.build(columns)
-        self.assertEqual(select, """toString("id")||'#'||toString("name")""")
+        self.assertEqual(select, """toString("id")||'#'||toString("name")""" + clickhouse_flags("id", "name"))
 
     def test_nullable_flags_are_one_trailing_element(self):
         columns = [("id", "Int32", 0, None), ("name", "Nullable(String)", 1, None),
@@ -271,6 +271,7 @@ class TestClickHouseRowExpression(unittest.TestCase):
             "||'#'||"
             """case when "name" is null then '' else toString("name") end"""
             "||'#'||"
+            """case when "id" is null then '1' else '0' end || """
             """case when "name" is null then '1' else '0' end""",
         )
 
@@ -286,6 +287,127 @@ def build_mysql_select(columns, excluded_columns=(), **arg_overrides):
     return select
 
 
+def mysql_flags(*columns):
+    """The MySQL trailing null-flags element over the compared ``columns``
+    (spec 13.06 D-13.06-40), preceded by its ',' separator."""
+    return ",concat(" + ",".join("ISNULL(`" + column + "`)" for column in columns) + ")"
+
+
+def clickhouse_flags(*columns):
+    """The ClickHouse trailing null-flags element over the compared
+    ``columns`` (spec 13.06 D-13.06-40), preceded by its ||'#'|| separator."""
+    return "||'#'||" + " || ".join(
+        'case when "' + column + "\" is null then '1' else '0' end" for column in columns)
+
+
+CLICKHOUSE_FLAG_RE = re.compile(r"""^case when "(\w+)" is null then '1' else '0' end$""")
+MYSQL_FLAGS_RE = re.compile(r"concat\(((?:ISNULL\(`\w+`\),?)+)\)$")
+
+
+def clickhouse_flag_columns(select):
+    """The columns of the trailing null-flags element of a ClickHouse row
+    expression, in order; [] when the expression has no flags element."""
+    terms = select.split("||'#'||")[-1].split(" || ")
+    matches = [CLICKHOUSE_FLAG_RE.match(term) for term in terms]
+    return [m.group(1) for m in matches] if all(matches) else []
+
+
+def mysql_flag_columns(select):
+    """The columns of the trailing null-flags element of a MySQL row
+    expression, in order; [] when the expression has no flags element."""
+    m = MYSQL_FLAGS_RE.search(select)
+    return re.findall(r"ISNULL\(`(\w+)`\)", m.group(1)) if m else []
+
+
+class TestNullFlagsOverEveryComparedColumn(unittest.TestCase):
+    """The trailing null-flags element holds one value-based flag per compared
+    column, the same columns on both sides, whatever each catalog declares
+    nullable (spec 13.06 D-13.06-40, spec 11.02 section 3.3)."""
+
+    def clickhouse_select(self, columns, **arg_overrides):
+        ch.args = clickhouse_args(**arg_overrides)
+        with patch.object(ch, "execute_sql", side_effect=clickhouse_stub(columns, [])):
+            (query, select, order_by, external_types, clamped, final_per_partition) = ch.get_table_checksum_query(MagicMock(), "t1")
+        return select
+
+    def test_nullability_mismatch_gives_the_same_flags_on_both_sides(self):
+        # A generated MySQL column is declared nullable but never holds NULL;
+        # the replica declares its twin non-Nullable. Equal values must give
+        # the same flags element: one flag per compared column on each side,
+        # so a row without NULLs gives '000' on both.
+        mysql_columns = [
+            mysql_column("id", "int"),
+            mysql_column("name", "varchar", "varchar(32)", nullable="YES", collation="utf8mb4_0900_ai_ci"),
+            mysql_column("is_valid", "tinyint", "tinyint(1)", nullable="YES"),
+        ]
+        clickhouse_columns = [("id", "Int32", 0, None), ("name", "Nullable(String)", 1, None),
+                              ("is_valid", "Int8", 0, None)]
+        mysql_select = build_mysql_select(mysql_columns)
+        clickhouse_select = self.clickhouse_select(clickhouse_columns)
+        self.assertEqual(mysql_flag_columns(mysql_select), ["id", "name", "is_valid"])
+        self.assertEqual(clickhouse_flag_columns(clickhouse_select), ["id", "name", "is_valid"])
+        self.assertEqual(
+            mysql_select,
+            "`id`,ifnull(`name`,''),ifnull(`is_valid`,''),"
+            "concat(ISNULL(`id`),ISNULL(`name`),ISNULL(`is_valid`))")
+        self.assertEqual(
+            clickhouse_select,
+            'toString("id")'
+            "||'#'||"
+            """case when "name" is null then '' else toString("name") end"""
+            "||'#'||"
+            'toString("is_valid")'
+            "||'#'||"
+            """case when "id" is null then '1' else '0' end || """
+            """case when "name" is null then '1' else '0' end || """
+            """case when "is_valid" is null then '1' else '0' end""")
+
+    def test_returned_nullables_are_still_the_declared_nullable_columns(self):
+        my.args = mysql_args()
+        rows = [{"column_name": "id", "data_type": "int", "column_type": "int", "is_nullable": "NO",
+                 "collation": None, "datetime_precision": None},
+                {"column_name": "is_valid", "data_type": "tinyint", "column_type": "tinyint(1)",
+                 "is_nullable": "YES", "collation": None, "datetime_precision": None}]
+        (select, nullables, data_types, clamped, skipped) = my.build_mysql_row_expression(
+            rows, my.args, "hex", [], False, False)
+        self.assertEqual(nullables, ["`is_valid`"])
+        ch.args = clickhouse_args()
+        (select, nullables, columns, data_types, clamped, skipped) = ch.build_clickhouse_row_expression(
+            [("id", "Int32", 0, None), ("name", "Nullable(String)", 1, None)], ch.args)
+        self.assertEqual(nullables, ['"name"'])
+
+    def test_excluded_and_skipped_columns_contribute_no_flag(self):
+        mysql_columns = [
+            mysql_column("id", "int"),
+            mysql_column("f", "double", nullable="YES"),
+            mysql_column("j", "json", nullable="YES"),
+            mysql_column("secret", "varchar", "varchar(8)", nullable="YES", collation="utf8mb4_0900_ai_ci"),
+            mysql_column("name", "varchar", "varchar(32)", collation="utf8mb4_0900_ai_ci"),
+        ]
+        clickhouse_columns = [("id", "Int32", 0, None), ("f", "Nullable(Float64)", 1, None),
+                              ("j", "Nullable(String)", 1, None), ("secret", "Nullable(String)", 1, None),
+                              ("name", "String", 0, None)]
+        mysql_select = build_mysql_select(mysql_columns, excluded_columns=["secret"])
+        clickhouse_select = self.clickhouse_select(clickhouse_columns, exclude_columns=["secret"], json_columns="j")
+        self.assertEqual(mysql_flag_columns(mysql_select), ["id", "name"])
+        self.assertEqual(clickhouse_flag_columns(clickhouse_select), ["id", "name"])
+        for skipped in ("f", "j", "secret"):
+            self.assertNotIn("`" + skipped + "`", mysql_select)
+            self.assertNotIn('"' + skipped + '"', clickhouse_select)
+
+    def test_table_without_nullable_columns_gets_one_flag_per_column(self):
+        mysql_select = build_mysql_select([
+            mysql_column("id", "int"),
+            mysql_column("name", "varchar", "varchar(32)", collation="utf8mb4_0900_ai_ci"),
+        ])
+        clickhouse_select = self.clickhouse_select([("id", "Int32", 0, None), ("name", "String", 0, None)])
+        self.assertEqual(mysql_select, "`id`,`name`,concat(ISNULL(`id`),ISNULL(`name`))")
+        self.assertEqual(
+            clickhouse_select,
+            """toString("id")||'#'||toString("name")||'#'||"""
+            """case when "id" is null then '1' else '0' end || case when "name" is null then '1' else '0' end""")
+
+
 class TestMySQLColumnClassification(unittest.TestCase):
     """Columns are classified on information_schema DATA_TYPE, never by
     substring on COLUMN_TYPE (spec 11.02 section 3.3)."""
@@ -298,11 +420,11 @@ class TestMySQLColumnClassification(unittest.TestCase):
         ]
         # An enum is a string column: not skipped as float, not JSON-normalised,
         # not hex-encoded, not cast as time.
-        self.assertEqual(build_mysql_select(columns), "`id`,`kind`")
+        self.assertEqual(build_mysql_select(columns), "`id`,`kind`" + mysql_flags("id", "kind"))
 
     def test_set_labels_do_not_classify_the_column(self):
         columns = [mysql_column("flags", "set", "set('double','binary')", collation="utf8mb4_0900_ai_ci")]
-        self.assertEqual(build_mysql_select(columns), "`flags`")
+        self.assertEqual(build_mysql_select(columns), "`flags`" + mysql_flags("flags"))
 
     def test_real_types_are_still_classified(self):
         columns = [
@@ -328,7 +450,7 @@ class TestMySQLTemporalRendering(unittest.TestCase):
         for precision in (None, 0, 3, 6):
             column_type = "time" if not precision else f"time({precision})"
             select = build_mysql_select([mysql_column("t", "time", column_type, precision=precision)])
-            self.assertEqual(select, "cast(`t` as time(6))", column_type)
+            self.assertEqual(select, "cast(`t` as time(6))" + mysql_flags("t"), column_type)
 
 
 MYSQL_DATETIME_RENDERING = "date_format(`d`, '%Y-%m-%d %H:%i:%s.%f')"
@@ -356,25 +478,30 @@ class TestInstantComparison(unittest.TestCase):
     def test_mysql_datetime_uses_shifted_bounds_and_timestamp_utc_bounds(self):
         datetime_select = build_mysql_select([mysql_column("d", "datetime", precision=0)], source_timezone="Asia/Tokyo")
         self.assertEqual(datetime_select,
-                         clamp_datetime_expression(MYSQL_DATETIME_RENDERING, TOKYO_BOUNDS[0], TOKYO_BOUNDS[1], "mysql"))
+                         clamp_datetime_expression(MYSQL_DATETIME_RENDERING, TOKYO_BOUNDS[0], TOKYO_BOUNDS[1], "mysql")
+                         + mysql_flags("d"))
         timestamp_select = build_mysql_select([mysql_column("d", "timestamp", precision=0)], source_timezone="Asia/Tokyo")
         self.assertEqual(timestamp_select,
-                         clamp_datetime_expression(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "mysql"))
+                         clamp_datetime_expression(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "mysql")
+                         + mysql_flags("d"))
 
     def test_clickhouse_renders_timestamp_columns_in_utc_and_the_rest_in_the_source_zone(self):
         build = TestClickHouseRowExpression().build
         timestamp_select = build([("d", "DateTime64(6, 'UTC')", 0, None)],
                                  source_timezone="Asia/Tokyo", timestamp_columns="d,other")
         self.assertEqual(timestamp_select,
-                         clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse"))
+                         clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse")
+                         + clickhouse_flags("d"))
         datetime_select = build([("d", "DateTime64(3)", 0, None)], source_timezone="Asia/Tokyo", timestamp_columns="other")
         self.assertEqual(datetime_select,
                          clamp_datetime_expression('toString(toDateTime64("d", 6), \'Asia/Tokyo\')',
-                                                   TOKYO_BOUNDS[0], TOKYO_BOUNDS[1], "clickhouse"))
+                                                   TOKYO_BOUNDS[0], TOKYO_BOUNDS[1], "clickhouse")
+                         + clickhouse_flags("d"))
 
     def test_clickhouse_default_zone_is_utc_for_every_column(self):
         select = TestClickHouseRowExpression().build([("d", "DateTime64(3)", 0, None)])
-        self.assertEqual(select, clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse"))
+        self.assertEqual(select, clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse")
+                         + clickhouse_flags("d"))
 
     def test_driver_passes_zone_and_timestamp_columns(self):
         tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="Asia/Tokyo",
@@ -450,7 +577,8 @@ class TestDatetimeRendering(unittest.TestCase):
                 select = build_mysql_select([mysql_column("d", data_type, column_type, precision=precision)])
                 self.assertEqual(
                     select,
-                    clamp_datetime_expression(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "mysql"),
+                    clamp_datetime_expression(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "mysql")
+                    + mysql_flags("d"),
                     column_type,
                 )
 
@@ -459,7 +587,8 @@ class TestDatetimeRendering(unittest.TestCase):
             select = TestClickHouseRowExpression().build([("d", data_type, 0, None)])
             self.assertEqual(
                 select,
-                clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse"),
+                clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse")
+                + clickhouse_flags("d"),
                 data_type,
             )
 
@@ -550,11 +679,15 @@ class TestFloatAndJsonCoverage(unittest.TestCase):
 
     def test_mysql_skips_floats_and_json_by_default_and_warns_once_per_table(self):
         select, warnings = self.mysql_select_and_warnings()
-        self.assertEqual(select, "`id`")
+        self.assertEqual(select, "`id`" + mysql_flags("id"))
         self.assertEqual(len(warnings), 2, warnings)
         self.assertTrue(any("Not compared in table db1.t1: floating point columns ['f', 'g']" in w for w in warnings), warnings)
         self.assertTrue(any("Not compared in table db1.t1: JSON columns ['j']" in w for w in warnings), warnings)
-        self.assertFalse(any("checksum" in w.lower() for w in warnings), warnings)
+        # The only "checksum" is the standalone hint naming clickhouse_table_checksum.py (spec 13.06
+        # D-13.06-41), which the driver drops when it relays the note; no warning reads as a result line.
+        hint = "; pass --json_columns j to clickhouse_table_checksum.py so both row strings skip them"
+        self.assertFalse(any("checksum" in w.replace(hint, "").lower() for w in warnings), warnings)
+        self.assertFalse(any(CHECKSUM_LINE_RE.search(w) for w in warnings), warnings)
         # A second chunk of the same table does not repeat the warning.
         with self.assertLogs(level="DEBUG") as logs:
             build_mysql_select(self.MYSQL)
@@ -587,7 +720,7 @@ class TestFloatAndJsonCoverage(unittest.TestCase):
 
     def test_clickhouse_skips_floats_native_json_and_listed_json_strings_and_warns(self):
         select, warnings = self.clickhouse_select_and_warnings(json_columns="j")
-        self.assertEqual(select, 'toString("id")')
+        self.assertEqual(select, 'toString("id")' + clickhouse_flags("id"))
         self.assertEqual(len(warnings), 2, warnings)
         self.assertTrue(any("Not compared in table db1.t1: floating point columns ['f', 'g']" in w for w in warnings), warnings)
         self.assertTrue(any("Not compared in table db1.t1: JSON columns ['j', 'o']" in w for w in warnings), warnings)
@@ -597,7 +730,8 @@ class TestFloatAndJsonCoverage(unittest.TestCase):
         select, warnings = self.clickhouse_select_and_warnings(
             json_columns="j", include_floating_point_columns=True, include_json_columns=True)
         self.assertEqual(warnings, [])
-        self.assertEqual(select, 'toString("id")||\'#\'||toString("f")||\'#\'||toString("j")||\'#\'||toString("g")||\'#\'||toString("o")')
+        self.assertEqual(select, 'toString("id")||\'#\'||toString("f")||\'#\'||toString("j")||\'#\'||toString("g")||\'#\'||toString("o")'
+                         + clickhouse_flags("id", "f", "j", "g", "o"))
 
     def test_driver_passes_json_columns_and_the_include_flags(self):
         tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="UTC",
@@ -734,20 +868,22 @@ class TestBinaryEncoding(unittest.TestCase):
 
     def test_mysql_renders_hex_by_default_base64_on_request_and_hex_in_raw_mode(self):
         column = [mysql_column("b", "varbinary", "varbinary(16)")]
-        self.assertEqual(build_mysql_select(column), "lower(hex(cast(`b` as binary)))")
-        self.assertEqual(build_mysql_select(column, binary_encoding="raw"), "lower(hex(cast(`b` as binary)))")
+        self.assertEqual(build_mysql_select(column), "lower(hex(cast(`b` as binary)))" + mysql_flags("b"))
+        self.assertEqual(build_mysql_select(column, binary_encoding="raw"),
+                         "lower(hex(cast(`b` as binary)))" + mysql_flags("b"))
         self.assertEqual(build_mysql_select(column, binary_encoding="base64"),
-                         "replace(to_base64(cast(`b` as binary)),'\\n','')")
+                         "replace(to_base64(cast(`b` as binary)),'\\n','')" + mysql_flags("b"))
 
     def test_clickhouse_hexes_listed_string_columns_only_in_raw_mode(self):
         build = TestClickHouseRowExpression().build
         columns = [("b", "String", 0, None), ("flag", "Bool", 0, None), ("name", "String", 0, None)]
+        flags = clickhouse_flags("b", "flag", "name")
         self.assertEqual(build(columns, binary_encoding="raw", hex_columns=["b,flag"]),
-                         'lower(hex("b"))' "||'#'||" 'toString(toUInt8("flag"))' "||'#'||" 'toString("name")')
+                         'lower(hex("b"))' "||'#'||" 'toString(toUInt8("flag"))' "||'#'||" 'toString("name")' + flags)
         self.assertEqual(build(columns),
-                         'toString("b")' "||'#'||" 'toString(toUInt8("flag"))' "||'#'||" 'toString("name")')
+                         'toString("b")' "||'#'||" 'toString(toUInt8("flag"))' "||'#'||" 'toString("name")' + flags)
         self.assertEqual(build(columns, binary_encoding="base64"),
-                         'toString("b")' "||'#'||" 'toString(toUInt8("flag"))' "||'#'||" 'toString("name")')
+                         'toString("b")' "||'#'||" 'toString(toUInt8("flag"))' "||'#'||" 'toString("name")' + flags)
         with self.assertRaises(ValueError):
             build(columns, binary_encoding="hex", hex_columns=["b"])
 
@@ -772,7 +908,7 @@ class TestBooleanAndBit(unittest.TestCase):
 
     def test_nullable_bool_renders_through_touint8(self):
         build = TestClickHouseRowExpression().build
-        self.assertEqual(build([("b", "Bool", 0, None)]), 'toString(toUInt8("b"))')
+        self.assertEqual(build([("b", "Bool", 0, None)]), 'toString(toUInt8("b"))' + clickhouse_flags("b"))
         self.assertEqual(
             build([("b", "Nullable(Bool)", 1, None)]),
             'case when "b" is null then \'\' else toString(toUInt8("b")) end'
@@ -781,8 +917,9 @@ class TestBooleanAndBit(unittest.TestCase):
         )
 
     def test_mysql_bit1_renders_as_integer_and_wider_bits_stay_hex(self):
-        self.assertEqual(build_mysql_select([mysql_column("b", "bit", "bit(1)")]), "`b`+0")
-        self.assertEqual(build_mysql_select([mysql_column("b", "bit", "bit(8)")]), "lower(hex(cast(`b` as binary)))")
+        self.assertEqual(build_mysql_select([mysql_column("b", "bit", "bit(1)")]), "`b`+0" + mysql_flags("b"))
+        self.assertEqual(build_mysql_select([mysql_column("b", "bit", "bit(8)")]),
+                         "lower(hex(cast(`b` as binary)))" + mysql_flags("b"))
 
 
 class TestEndToEndChecksum(unittest.TestCase):

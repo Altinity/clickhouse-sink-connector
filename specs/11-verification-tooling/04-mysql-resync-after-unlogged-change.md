@@ -52,7 +52,9 @@ Three properties are required of the procedure:
   can be substituted with `--loader-cmd`.
 - **Console script**: `ch-mysql-resync` in `sink-connector/python/pyproject.toml`.
 - **Tests**: `sink-connector/python/db_load/tests/test_mysql_resync.py`
-  (offline; run by `.github/workflows/spec-governance.yml`).
+  (offline; run by `.github/workflows/spec-governance.yml`) and
+  `sink-connector/python/db_load/tests/test_resync_failure_modes.py` (offline
+  pytest suite; the failure modes of §6 and the S1 guards of spec 13.08).
 - **Related**: spec 11.02 (the checksum that detects the divergence and proves
   the repair), spec 09.03 (the offset store the rewind writes to),
   `sink-connector/python/db_compare/`.
@@ -71,8 +73,11 @@ ch-mysql-resync patch      --dump-base DIR [--stamp YYYYMMDD] --schemas S [S ...
                            [--load-parallel 2] [--load-threads 4] [--skip-load]
                            [--canary-list FILE] [--canary-threshold 0.99] [--force]
                            [--loader-cmd CMD] [--loader-cwd DIR]
-ch-mysql-resync rewind-sql --dump-base DIR [--stamp YYYYMMDD] --offset-table DB.TABLE
-                           [--ch-host HOST --ch-config client.xml]
+                           [--offset-table DB.TABLE [--offset-key KEY] | --skip-connector-position-check]
+ch-mysql-resync rewind-sql --dump-base DIR [--stamp YYYYMMDD] --offset-table DB.TABLE [--offset-key KEY]
+                           --ch-host HOST --ch-config client.xml --connector-stopped
+                           [--connector-idle-seconds 60] [--allow-forward-rewind]
+                           [--position-file FILE] [--ch-port 9000]
 ```
 The MySQL password is read from `MYSQL_PWD` and handed to `mysqlsh` on stdin
 (`--passwords-from-stdin`); it never appears on a command line. ClickHouse
@@ -80,10 +85,16 @@ credentials come from a clickhouse-client XML config (`<user>`, `<password>`),
 the same file the loader consumes. `patch` is a **dry run unless `--apply`** is
 given: every read runs, every write is printed with a `[DRY-RUN]` prefix.
 Exit code of `patch` is non-zero when any table ended in `LOAD_FAILED`,
-`COUNT_MISMATCH`, `CANARY_FAILED`, `REPLACED_VERIFY_FAIL` or a dump was
-incomplete — and, with `--apply`, when any **selected** table was left
-unrepaired (`SCHEMA_DRIFT`, `NOT_IN_CH`, `ENGINE_*`): the rewind advice is
-printed only when every selected table reached `REPLACED_OK`.
+`COUNT_MISMATCH`, `SIGN_MISMATCH`, `CANARY_FAILED`, `SCD2_REFUSED`,
+`SCRATCH_NOT_OURS`, `SCRATCH_STAMP_MISMATCH`, `CONNECTOR_BEHIND`,
+`CONNECTOR_UNVERIFIED`, `REPLACED_VERIFY_FAIL` or a dump was incomplete —
+and, with `--apply`, when any **selected** table was left unrepaired
+(`SCHEMA_DRIFT`, `NOT_IN_CH`, `ENGINE_*`): the rewind advice is printed only
+when every selected table reached `REPLACED_OK`. A `--restore-suffix` for
+which `<schema><suffix>` is a selected schema (the empty suffix included)
+exits 1 before any statement. `patch --apply` requires `--offset-table` (the
+position gate of §3.3 step 6) unless `--skip-connector-position-check` is
+given, which is logged as a `WARNING`.
 
 ### 3.2 `dump`
 1. If `binlog_position_<stamp>.json` does not exist, run `SHOW MASTER STATUS`
@@ -117,13 +128,23 @@ printed only when every selected table reached `REPLACED_OK`.
    best-effort type is written to `schema_drift_<ts>.sql` for a human to review
    and apply before re-running the table. Live-only columns are reported and
    kept (they receive their defaults). Tables missing in ClickHouse or not
-   `ReplacingMergeTree` are skipped and reported. Live tables that are not in
+   `ReplacingMergeTree` are skipped and reported. A replication-history
+   (SCD2) table — a live table carrying `_valid_from` / `_valid_to` (spec
+   12.02) that the source does not define — is refused (`SCD2_REFUSED`) before
+   anything is written for it. Live tables that are not in
    the dump are listed as commented-out `DROP TABLE` lines in the drop file;
    the tool never executes those.
 3. **Scratch table**: `DROP TABLE IF EXISTS S<suffix>.t` (the scratch copy
    only) then `CREATE TABLE S<suffix>.t AS S.t`, so the structure, sorting key,
    partition key and settings are exactly the live table's — the precondition
-   of `REPLACE PARTITION`. The loader is then run **once per table** on an
+   of `REPLACE PARTITION`. An existing `S<suffix>.t` is dropped only when its
+   comment carries the tool's scratch marker (`ch-mysql-resync scratch ...`);
+   otherwise the table is `SCRATCH_NOT_OURS` and left alone. The new scratch
+   table gets the provisional marker
+   `ch-mysql-resync scratch source=S.t stamp=<stamp> state=loading`, and on a
+   legacy-engine table (`_sign` column) `MODIFY COLUMN _sign DEFAULT 1`, the
+   value the connector writes for a live row, because the loader never writes
+   `_sign`. The loader is then run **once per table** on an
    isolated directory of hard links to that table's dump files
    (`_bytable/<table>/`; hard links because `zstd -d --stdout` refuses
    symbolic links), with `--mysqlshell --data_only --rmt_delete_support`, so
@@ -133,14 +154,22 @@ printed only when every selected table reached `REPLACED_OK`.
 4. **Reconcile**: rows in `S<suffix>.t` must equal the exact number of
    newline-terminated rows in the table's dump files (`zstd -dc | wc -l`;
    MySQL Shell escapes embedded newlines). A mismatch is `COUNT_MISMATCH` and
-   the table is not replaced.
+   the table is not replaced. On a legacy-engine table any scratch row with
+   `_sign != 1` is `SIGN_MISMATCH` and the table is not replaced. A
+   reconciled load replaces the provisional marker with the final one,
+   `... stamp=<stamp> dump_rows=<n>`. With `--skip-load` nothing is loaded,
+   so the scratch table must already carry the final marker for the same
+   source table, stamp and dump row count; otherwise it is
+   `SCRATCH_STAMP_MISMATCH` and not replaced.
 5. **Canary** (optional, `--canary-list`): for tables the operator knows to be
    unchanged (e.g. the ones whose last checksum matched), the scratch rows must
    hash-match the live rows: `countIf(r.h = l.h) / count()` over an `INNER
    JOIN` on the sorting key of `cityHash64(* EXCEPT (_version, is_deleted))`
    computed on both sides (live side with `FINAL`, `is_deleted = 0`). The
-   ratio is accumulated over **every schema of the run** and evaluated
-   **once, after phase 1 and before the first REPLACE of any schema**. A ratio
+   gate is evaluated **once, after phase 1 and before the first REPLACE of any
+   schema**, over every canary table of every schema, and **each canary table
+   is judged on its own ratio** (a large matching table never dilutes a small
+   mismatching one). Any table whose ratio is
    below `--canary-threshold` (default 0.99) means the loader renders some type
    or time zone differently from the connector: no REPLACE is issued for any
    table, every loaded table is reported `CANARY_FAILED`, the scratch tables
@@ -151,7 +180,18 @@ printed only when every selected table reached `REPLACED_OK`.
    canary list none of whose tables was loaded in the run is reported as a
    loud warning (the rendering is unverified for that run). Tables whose
    sorting key contains expressions are excluded from the canary.
-6. **Replace**: for each partition id present in the scratch table's active
+6. **Connector position gate** (once, after the canary gate, before the
+   first REPLACE): the connector's durable offset, read from `--offset-table`
+   (`--offset-key`, or the only row), must be at or past the dump position of
+   `binlog_position_<stamp>.json` (file sequence number, then position). A
+   connector behind it has not yet applied the binlog up to the dump, and the
+   events it applies after the REPLACE would carry versions far above the
+   reloaded rows' and undo the repair. Behind → every queued table is
+   `CONNECTOR_BEHIND`; no offset table, an unknown key or an unparseable
+   offset → `CONNECTOR_UNVERIFIED`; either way no REPLACE is issued.
+   `--skip-connector-position-check` skips the gate with a `WARNING`; a dry
+   run reads the offset table only when `--offset-table` is given.
+   **Replace**: for each partition id present in the scratch table's active
    parts, `ALTER TABLE S.t REPLACE PARTITION ID '<id>' FROM S<suffix>.t`. An
    unpartitioned table is the single `all` partition; replacing it from an
    **empty** scratch table yields an empty live table, which is the source
@@ -185,19 +225,45 @@ position: a new row for the same `offset_key` in the offset store
 offset store is shared by every connector that writes to the cluster, so the
 `INSERT ... SELECT` carries `WHERE offset_key = <key>`: the key comes from
 `--offset-key`, or from the table itself only when it holds exactly one row;
-zero or several candidates are an error, never a guess. Procedure printed
-with it: stop that connector, run the INSERT, start the connector, watch the
-replay, re-run the checksum. The source must still hold the binlog file
+zero or several candidates are an error, never a guess. The offset table is
+therefore always read (`--ch-host` and an existing `--ch-config` are
+required). Every refusal exits 1 and prints no SQL:
+
+- **Connector not stopped**: the operator stops the connector **first** and
+  attests it with `--connector-stopped`; without it the tool refuses. The
+  tool also refuses when the selected offset row was written less than
+  `--connector-idle-seconds` (default 60; `0` disables) ago, measured as
+  `dateDiff('second', record_insert_ts, now())` — a recent flush means the
+  connector is running. The age compares the connector's clock with the
+  ClickHouse server's, so it is supporting evidence, not proof; the
+  attestation is always required.
+- **Unknown key**: zero candidates (an empty table, a mistyped key) are
+  refused with the list of keys found.
+- **Forward move**: the recorded position must be at or before the current
+  durable offset (file sequence number, then position); otherwise the INSERT
+  would skip binlog events for every table of that connector. An offset
+  without `file`/`pos` or a different binlog base name cannot be compared and
+  is refused the same way. `--allow-forward-rewind` emits the INSERT anyway
+  with a `WARNING` on stderr and in a SQL comment.
+
+Procedure printed with it: the connector is stopped (attested), run the
+INSERT, verify with `SELECT offset_val FROM <offset table> FINAL WHERE
+offset_key = <key>`, start the connector and watch the replay, re-run the
+checksum. The source must still hold the binlog file
 (`SHOW BINARY LOGS`) — binlog retention bounds how long after the dump the
 rewind is possible.
 
 ### 3.6 Failure modes the design guards against
 | Failure | Guard |
 |---|---|
-| Truncating/replacing the live table by mistake | only the scratch copy is dropped; `REPLACE PARTITION` is the sole write to a live table; the loader's `--truncate_tables` is never used |
+| Truncating/replacing the live table by mistake | only the scratch copy is dropped, and only when it carries the scratch marker; a suffix that names a selected schema is refused; `REPLACE PARTITION` is the sole write to a live table; the loader's `--truncate_tables` is never used |
 | Replacing with a partial load | exact dump row count == scratch row count, per table, before any REPLACE |
-| Loader renders a type/time zone differently from the connector | canary hash join on known-unchanged tables stops the run |
-| Losing rows binlogged during the dump/patch window | binlog position captured before the first read; connector rewound to it |
+| Replacing from a scratch table loaded from another dump (`--skip-load`) | the scratch table must carry the final marker of the same stamp and dump row count |
+| Loader renders a type/time zone differently from the connector | canary hash join on known-unchanged tables stops the run; each canary table must pass on its own |
+| Reloaded legacy-engine rows invisible to `_sign > 0` readers | scratch `_sign` defaults to 1 (the connector's live-row value); any other value blocks the REPLACE |
+| A lagging connector undoing the repair | the connector's durable offset must be at or past the dump position before the first REPLACE |
+| Overwriting replication-history (SCD2) tables | tables with `_valid_from` / `_valid_to` are refused |
+| Losing rows binlogged during the dump/patch window | binlog position captured before the first read; connector rewound to it, never forward, with the connector stopped |
 | Dropping replica history the source purged | replica-only partitions listed, never dropped without `--drop-ch-only` |
 | One bad table aborting a 400-table schema | per-table isolated loader runs and per-table status |
 | A source column the replica lacks | `SCHEMA_DRIFT`: skipped with a DDL suggestion, never a silent partial row |
@@ -215,8 +281,10 @@ These are design guards. Section 6 gives the Detection, Recovery and RTO of each
   count-reconciled data.
 - **Fail loudly**: every table ends in an explicit status; a count mismatch, a
   loader failure or a failed canary is a non-zero exit, never a warning.
-- **Offsets are never moved backwards silently**: the rewind is an explicit,
-  printed statement the operator runs while the connector is stopped.
+- **Offsets are never moved backwards silently, and never forward without an
+  explicit override**: the rewind is an explicit, printed statement the
+  operator runs while the connector is stopped (attested, and its offset row
+  idle).
 
 ---
 
@@ -261,6 +329,16 @@ run by `python3 -m unittest` in `.github/workflows/spec-governance.yml`):
   newline-terminated rows with an escaped `\n` inside a field (requires
   `zstd`, skipped otherwise).
 - `TestIdentifiers` — backtick quoting.
+- `TestRewind` (position helpers) — §3.3 step 6 and §3.5: binlog
+  coordinates order by file sequence number, then position; different base
+  names and offsets without `file`/`pos` are refused.
+- In `sink-connector/python/db_load/tests/test_resync_failure_modes.py`
+  (offline pytest suite): `TestLegacySignTable` (§3.3 steps 3–4, `_sign = 1`),
+  `TestPerTableCanary` (§3.3 step 5, 1000/1000 plus 0/5 fails),
+  `TestConnectorPositionGate` (§3.3 step 6), `TestSkipLoadStampMarker`
+  (§3.3 step 4 markers), `TestScd2Refused` (§3.3 step 2),
+  `TestRestoreSuffixGuard` (§3.1 suffix check, §3.3 step 3 marker check) and
+  `TestRewindGuards` (§3.5 refusals).
 - Live acceptance (not automatable offline): `patch --apply` on a schema
   followed by the spec 11.02 checksum reporting equality for every patched
   table, and `REPLACE PARTITION ID 'all' FROM <empty scratch>` verified to empty
@@ -320,18 +398,18 @@ run by `python3 -m unittest` in `.github/workflows/spec-governance.yml`):
   - **DEFECT**: retention is checked by nobody, and a purge is discovered only after the patch has been applied.
 
 - **FM-11.04-6 The rewind INSERT runs while the connector is running**
-  - **Trigger**: the printed INSERT is executed without stopping that connector first.
-  - **Behaviour**: the rewind row wins only until the connector's next offset flush inserts a newer row for the same `offset_key` (`_version` is `now64()` at insert). The rewind is silently undone.
-  - **Detection**: none from the tool. After a correct restart, `show_replica_status` shows the captured file and position (spec 10.03). A position past it means the rewind was lost.
-  - **Blast radius**: the patched tables miss the dump-window changes, which is a silent divergence.
-  - **Recovery**: stop the connector (`sink-connector-client stop_replica`, or stop the service). Re-run the INSERT and check `SELECT offset_val FROM <offset table> FINAL WHERE offset_key = '<key>'` before starting.
+  - **Trigger**: the rewind is generated or executed without stopping that connector first.
+  - **Behaviour**: the rewind row would win only until the connector's next offset flush inserts a newer row for the same `offset_key` (`_version` is `now64()` at insert). `rewind-sql` therefore refuses (exit 1, no SQL) unless the operator attests `--connector-stopped`, and refuses when the selected offset row was written less than `--connector-idle-seconds` (default 60) ago — a recent flush means the connector is running. The age compares the connector's `record_insert_ts` with the ClickHouse server clock, so a clock or time-zone skew can hide a running connector; the attestation is the primary guard. A connector restarted between the printing and the INSERT is outside the tool's reach, because the tool never runs the INSERT.
+  - **Detection**: `refusing: stop THAT connector first ...` or `refusing: the offset row of <key> was written <n>s ago ...: the connector looks RUNNING`. After a correct restart, `show_replica_status` shows the captured file and position (spec 10.03).
+  - **Blast radius**: none while refused.
+  - **Recovery**: stop the connector (`sink-connector-client stop_replica`, or stop the service), wait `--connector-idle-seconds`, re-run `rewind-sql --connector-stopped`, run the INSERT and check `SELECT offset_val FROM <offset table> FINAL WHERE offset_key = '<key>'` before starting.
   - **RTO**: a connector restart plus the replay of the dump window.
-  - **Test**: GAP: an operator-procedure check is not unit-testable in this tool. A `rewind-sql --apply` mode that refuses while `/status` reports the connector running would make it testable.
-  - **DEFECT**: the correctness of the rewind depends on an unenforced manual step.
+  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestRewindGuards::test_running_connector_is_refused`.
+  - **FIXED**: `rewind-sql` requires the `--connector-stopped` attestation and refuses an offset row written within `--connector-idle-seconds` (D-13.08-9).
 
 - **FM-11.04-7 KeeperMap offset store**
   - **Trigger**: the connector's offset table is a KeeperMap table (spec 09.03).
-  - **Behaviour**: `cmd_rewind_sql()` reads `SELECT offset_key, offset_val FROM <table> FINAL`, and the generated INSERT reads `FROM <table> FINAL`. A KeeperMap table rejects `FINAL` (stated in `DebeziumOffsetStorage.offsetValueQuery`).
+  - **Behaviour**: `cmd_rewind_sql()` always reads `SELECT offset_key, offset_val, dateDiff(...) FROM <table> FINAL` (the read is mandatory since the key, direction and idle checks), and the generated INSERT reads `FROM <table> FINAL`. A KeeperMap table rejects `FINAL` (stated in `DebeziumOffsetStorage.offsetValueQuery`).
   - **Detection**: loud. `RuntimeError: clickhouse-client rc=...` from `rewind-sql`, or the INSERT's error when run by hand.
   - **Blast radius**: nothing is changed.
   - **Recovery**: use `sink-connector-client update_binlog --binlog_file <file> --binlog_position <pos>` or `--gtid <set>` with the connector stopped.
@@ -350,12 +428,12 @@ run by `python3 -m unittest` in `.github/workflows/spec-governance.yml`):
 
 - **FM-11.04-9 `patch` pointed at a replication-history database**
   - **Trigger**: `--schemas` names the history database of a mode-2 connector (spec 12.01).
-  - **Behaviour**: SCD2 tables are `ReplacingMergeTree`, so they pass the engine check. `_valid_from`, `_valid_to` and `_operation` are reported as "ClickHouse-only columns (kept, filled with defaults)". The loaded rows get the sentinel `_valid_from`, the default `_version`, and fall into the `2100-01-01` partition. Replacing it would overwrite every open row and delete marker with those rows, while the closed-version partitions are listed as replica-only. A canary, if given, fails because the history columns are inside its hash.
-  - **Detection**: `CANARY_FAILED` when a canary list is given. Otherwise none.
-  - **Blast radius**: the current-state view of every patched SCD2 table is rewritten with corrupt history metadata.
+  - **Behaviour**: SCD2 tables are `ReplacingMergeTree`, so they pass the engine check. Loaded, their rows would get the sentinel `_valid_from`, the default `_version`, and fall into the `2100-01-01` partition; replacing it would overwrite every open row and delete marker with those rows. The tool therefore refuses every live table that carries `_valid_from` or `_valid_to` (spec 12.02 §3.2) while the source DDL does not: status `SCD2_REFUSED` with the history columns, no scratch copy, no load, no REPLACE.
+  - **Detection**: `SCD2_REFUSED` in the report and a `!! ... REFUSED` log line; exit 1.
+  - **Blast radius**: none.
   - **Recovery**: do not use `patch` on SCD2 tables. The history repair procedure is spec 12.03 §7.
   - **RTO**: see spec 12.03 §7.
-  - **Test**: GAP: a `patch` test on a table carrying `_valid_to` expecting a refusal.
-  - **DEFECT**: the tool does not refuse SCD2 tables.
+  - **Test**: `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestScd2Refused::test_table_with_history_columns_is_refused`.
+  - **FIXED**: SCD2 tables are refused before anything is written for them (D-13.08-10).
 
-Summary: 9 failure modes, 6 DEFECT, 6 GAP.
+Summary: 9 failure modes, 4 DEFECT, 4 GAP.
