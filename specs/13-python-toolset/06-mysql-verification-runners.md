@@ -209,11 +209,11 @@ from `sink-connector/python` with that directory on `PYTHONPATH` (§3.1). A miss
 | `--recheck_delay_seconds` | int ≥ 0, 60 | Seconds slept before each re-check (§3.7.3) | yes |
 | `--wait_for_connector` | flag | Before the sides run, wait until every replica's connector has applied the source binlog up to the head read at the start of the table; under `--lock_tables_on_source` the head is read under the lock and replaces the fixed sleep (§3.7.1) | yes |
 | `--consistent_snapshot` | flag | No lock: PK-range slices, each read on MySQL in one consistent snapshot, the connector awaited up to that snapshot's binlog position, then the replica read; differing slices are read again (§3.7.4). Refused with `--lock_tables_on_source` or `--debug_output` | yes |
-| `--snapshot_slice_rows` | int ≥ 0, 1000000 | Approximate rows per slice (`divide_table_into_even_chunks`); `--threads_per_table` slices run at once | yes |
+| `--snapshot_slice_rows` | int ≥ 0, 1000000 | Approximate rows per slice; a table above it gets at least `--threads_per_table` slices, cut at the quantiles of a key sample; 0 gives one slice per table (§3.7.4 step 1); `--threads_per_table` slices run at once | yes |
 | `--snapshot_max_excluded_keys` | int ≥ 0, 5000 | Most keys the version fence leaves out of one slice; above it none are (§3.7.4 step 3a) | yes |
 | `--fence_timeout_seconds` | int ≥ 0, 300 | Longest wait for a connector; after it the comparison runs and a difference names the connector position | yes |
 | `--fence_poll_seconds` | int ≥ 0, 1 | Seconds between reads of the connector offset | yes |
-| `--fence_idle_seconds` | int ≥ 0, 10 | The source wrote nothing after the target and the offset has not moved for this long: the wait ends | yes |
+| `--fence_idle_seconds` | int ≥ 0, 10 | The source wrote nothing after the target and the offset has not moved for this long: the wait ends; later waits reuse that verdict at once while the source head and the offset are unchanged (§3.7.1) | yes |
 
 The packaged driver (PT404-445) has the same flags **minus** `--source_timezone`, `--binary_encoding`, the two
 include flags, `--lock_wait_timeout` and `--fail_on_lock_timeout`. It has `--fail_on_empty`. Their effects
@@ -424,7 +424,14 @@ one row whose `offset_val` JSON has `file` and `pos` (Debezium records the start
 in, plus event and row counts). It is reached when `(file sequence, pos)` is at or past the target, which means
 every transaction before the target is applied. A source that writes nothing after the target never moves the
 offset past it; when the end of the source binary log is still the target and the offset has not moved for
-`--fence_idle_seconds`, nothing is in flight and the wait ends too. After `--fence_timeout_seconds` the wait
+`--fence_idle_seconds`, nothing is in flight and the wait ends too. The fence remembers its last idle verdict
+(`ConnectorFence.idle_mark`: the source head and the offset at that moment). A later wait whose target is at
+or below that head ends at once (INFO `... since an earlier idle verdict ...`) while the head it reads is still
+exactly that head and the offset is still exactly that offset: nothing was written to the binary log since the
+verdict, so every transaction up to the head was already applied. Any write moves the head, and the next wait
+needs its own idle period; a moved offset or a target above the head is not covered either. On a quiet source
+the slices and passes of a run thus share one idle period instead of each sleeping `--fence_idle_seconds`
+(offline: 515 slices cost 10 s instead of 5150 s). After `--fence_timeout_seconds` the wait
 gives up with an INFO line `did NOT reach`; the comparison still runs and can only produce a difference, never
 a false match. That connector is then marked behind (`ConnectorFence.behind`): its later waits in the run check
 the offset once instead of sleeping the timeout again, so a lagging connector costs one timeout per run rather
@@ -491,15 +498,40 @@ each InnoDB read view on the source lives only while one slice is read, so undo 
 writes, not for a whole-table scan.
 
 1. **Slices.** On its own connection the worker splits the table on the first integer primary-key column
-   (`mysql_pk_columns(..., is_integer=True)`) with `divide_table_into_even_chunks` and
-   `--snapshot_slice_rows`, over the MySQL filter with `{partition_expression}` resolved
+   (`mysql_pk_columns(..., is_integer=True)`), over the MySQL filter with `{partition_expression}` resolved
    (`mysql_where_for_slicing`). The slice conditions are `b0 <= pk < b1`, `b1 <= pk < b2`, ..., `pk >= bn`
-   (`snapshot_slices`), where `b0` is the smallest key of the filtered rows: open above, so rows inserted with
-   higher keys during the run belong to a slice, and bounded below, because on a replica sorted by the key an
-   open lower end reads every older row of the table (on the first dev run an unpartitioned replica of a
-   date-partitioned source read 27.7 billion rows in ten minutes for the first slice while the bounded slices
-   read 0.7-8.5 million in under a second). One chunk gives the single slice `pk >= b0`. A table without an
-   integer key, or with no rows in the filter, is one slice (`all rows`).
+   (`snapshot_slices`), where `b0` is the smallest key of the filtered rows (`get_min_max_pk_value`): open
+   above, so rows inserted with higher keys during the run belong to a slice, and bounded below, because on a
+   replica sorted by the key an open lower end reads every older row of the table (on the first dev run an
+   unpartitioned replica of a date-partitioned source read 27.7 billion rows in ten minutes for the first slice
+   while the bounded slices read 0.7-8.5 million in under a second). A table without an integer key, or with no
+   rows in the filter, is one slice (`all rows`). The boundaries come from `slice_starts`:
+   - **Estimate.** The larger of two estimates that read no table data (`filtered_row_estimate`): the
+     key-range EXPLAIN of `estimate_table_count`, and the sum of `information_schema.PARTITIONS.TABLE_ROWS`
+     over the partitions that EXPLAIN of the filtered query reads (its `partitions` column, matched on
+     `PARTITION_NAME` or `<partition>_<subpartition>`; an unpartitioned table's single row). The EXPLAIN alone
+     was far too low on a date-partitioned table: on the dev source the key-range EXPLAIN of
+     a date-partitioned table for one day gave 1 row through `PRIMARY` and 44.7 million through a
+     secondary index (at the dev run's slicing, under 2 million), for 90.3 million rows; the partition's
+     `TABLE_ROWS` gave 89.5 million. At or below `--snapshot_slice_rows` (or with `--snapshot_slice_rows 0`)
+     the table is the single slice `pk >= b0` and nothing more is read.
+   - **Sample.** Otherwise one query reads a random sample of the filtered keys (`sample_keys`:
+     ``select `pk` as k from `t` where (<filter>) and rand() < <rate> limit 1000000``, about 1000 keys per
+     slice, the rate lowered so that the estimate gives at most 1000000 keys). It is one read of the filtered
+     rows' keys, index-only when an index holds the filter's columns (InnoDB secondary indexes hold the primary
+     key, which holds the partition column): 14 s for the 90.3 million rows above, against 1605 s for the
+     MySQL side to checksum them, and it replaces one probe query per chunk of the even split. A full
+     sample means the estimates were far too low; it is taken again 16 times sparser, at most twice. The
+     sample gives the row count (`keys / rate`), the slice count `ceil(rows / --snapshot_slice_rows)`, raised to
+     `--threads_per_table` when it is above one, and the boundaries: the sample's quantiles, so each slice
+     holds about the same number of rows however the keys are spread. An INFO line `Slices of <t>: estimate
+     ... rows (EXPLAIN ..., partition statistics ...), about ... rows from a sample of ... keys, n slice(s)` (or
+     `..., one slice`) records the inputs. An even split of the key range (`divide_table_into_even_chunks`,
+     used before) cannot do this: that day's keys sit in the top 0.08% of the filtered key range, so even with
+     the right count (90 chunks) all but 15,425 of the 90.3 million rows fall in one slice; the dev run read it
+     on one connection in 1605 s. With the sample the same day gives 91 slices of 0.99 million rows, and the
+     248 million rows of another table for that day 248 slices of 1.0 million (the even split gave 54
+     slices of 287 to 26.9 million rows).
 2. **One slice, one snapshot, held.** With the version fence (below) the driver first reads, per replica, the
    slice's highest `_version` over all its rows (`slice_max_version`, no `FINAL`): the floor. The MySQL side
    then runs with `--threads_per_table 1 --consistent_snapshot --exclude_keys_from_stdin` and the slice
@@ -547,7 +579,12 @@ writes, not for a whole-table scan.
    slice `DIFFERENT` gives `DIFFERENT` (the WARNINGs are already logged); zero rows in total give the usual
    `EMPTY on both sides for <db.t>`; otherwise an INFO summary and `No difference for <db.t>`.
 
-`--threads_per_table` slices of a table run at once, each with its own connection and snapshot. The mode needs
+`--threads_per_table` slices of a table run at once, each with its own connection and snapshot, so a table is
+read by at most `--threads_per_table` MySQL connections, against `--threads_per_table` PK chunks read at once
+by the MySQL side without the mode (§3.9). The default (1) is unchanged; a job that ran 16 chunks per table
+without the mode and sets 4 with it reads each large table with 4 connections instead of 16, which this mode
+does not compensate. `--threads` tables run at once, so the source sees up to `--threads x
+--threads_per_table` snapshot readers plus one slicing and one head connection per table. The mode needs
 `offset_table` on every replica and REPLICATION CLIENT on the source (the fence's idle test reads the binary log
 head; off Percona the snapshot position is the head too), and is refused with `--lock_tables_on_source` and with `--debug_output`. A
 slice written continuously is compared on its unwritten keys through the version fence; without the fence (no
@@ -913,7 +950,8 @@ Faults:
     raises ValueError (reproduced, D-13.03-19).
   - `get_tables_from_regex[_sql]`, `get_partitions_from_regex`, `get_table_partition_key` (legacy uses
     `.mappings()`, packaged `.fetchall()` + `row['...']`), `mysql_pk_columns`, `get_min_max_pk_value`,
-    `estimate_table_count`, `divide_table_into_even_chunks`, `execute_mysql` (SQL warnings are logged at WARNING
+    `estimate_table_count`, `divide_table_into_even_chunks` (MySQL side chunks; `--consistent_snapshot` slices
+    come from `slice_starts`, §3.7.4), `mysql_execute_df`, `execute_mysql` (SQL warnings are logged at WARNING
     with the first message), `resolve_credentials_from_config` and `is_binary_datatype` (legacy matches the bare
     keyword exactly, packaged matches substrings `blob`, `binary`, `varbinary`, `bit`).
   - `mysql_columns_by_data_type` and `binary_datatypes` (legacy only; the packaged list lacks `tinyblob`,
@@ -1062,7 +1100,14 @@ The suite was run on 2026-10-01 from `sink-connector/python` with the toolset ve
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestConnectorWait::test_busy_source_behind_connector_times_out_and_says_so`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestConnectorOffset::test_no_or_several_offsets_are_errors`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestLockAndWait::test_wait_replaces_the_fixed_sleep_and_happens_under_the_lock`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestIdleVerdictMemo::test_quiet_source_costs_one_idle_period_for_all_slices`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestIdleVerdictMemo::test_a_write_since_the_verdict_needs_a_new_idle_period`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestIdleVerdictMemo::test_a_moved_offset_or_a_target_above_the_head_is_not_reused`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_slices_start_at_the_smallest_key_and_stay_open_above`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_skewed_keys_get_slices_of_about_the_same_rows`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_partition_statistics_lift_a_low_explain_estimate`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_a_table_above_one_slice_gets_at_least_threads_per_table_slices`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_a_small_table_is_one_slice_without_a_sample`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_difference_read_again_and_gone_is_a_match`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_persistent_difference_warns_with_the_slice`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_keys_changed_after_the_floor_are_left_out_on_both_sides`

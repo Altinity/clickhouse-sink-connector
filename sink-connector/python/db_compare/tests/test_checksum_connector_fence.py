@@ -166,26 +166,202 @@ class TestBehindConnector(unittest.TestCase):
         self.assertIn("has caught up", log)
 
 
+class TestIdleVerdictMemo(unittest.TestCase):
+    """An idle verdict is reused while the source head and the offset are unchanged."""
+
+    TARGET = ("binlog.000005", 500)
+
+    def run_waits(self, fence, steps, idle=10):
+        """steps: [(target, offset, head)] waited one after the other; returns
+        (elapsed per wait, log)."""
+        clock = FakeClock()
+        state = {}
+        elapsed = []
+        with patch.object(fence, "offset", side_effect=lambda: state["offset"]), \
+                patch.object(tl.time, "monotonic", clock.monotonic), patch.object(tl.time, "sleep", clock.sleep), \
+                self.assertLogs(level="INFO") as logs:
+            for (n, (target, offset, head)) in enumerate(steps):
+                state["offset"] = offset
+                start = clock.now
+                (reached, _) = fence.wait(target, lambda: head, f"slice {n}")
+                self.assertTrue(reached)
+                elapsed.append(clock.now - start)
+        return elapsed, "\n".join(logs.output)
+
+    def fence(self, idle=10):
+        return tl.ConnectorFence("ch-host", "db.offsets", timeout_seconds=300, poll_seconds=1, idle_seconds=idle)
+
+    def test_quiet_source_costs_one_idle_period_for_all_slices(self):
+        # Measured on the fake clock: 515 slices (the slice count of the first dev
+        # run) on a source that writes nothing cost one idle period, not 515.
+        slices = 515
+        quiet = [(self.TARGET, ("binlog.000005", 400), self.TARGET)] * slices
+        (elapsed, log) = self.run_waits(self.fence(), quiet)
+        self.assertEqual(elapsed[0], 10, "the first wait still needs a steady offset for the idle period")
+        self.assertEqual(sum(elapsed), 10, f"{slices} slices x 10 s = {slices * 10} s without the memo")
+        self.assertEqual(log.count("since an earlier idle verdict"), slices - 1)
+
+    def test_a_write_since_the_verdict_needs_a_new_idle_period(self):
+        offset = ("binlog.000005", 400)
+        moved_head = ("binlog.000005", 600)
+        steps = [(self.TARGET, offset, self.TARGET),
+                 (moved_head, offset, moved_head),      # the source wrote after the verdict
+                 (moved_head, offset, moved_head)]      # unchanged since the second verdict
+        (elapsed, _) = self.run_waits(self.fence(), steps)
+        self.assertEqual(elapsed, [10, 10, 0])
+
+    def test_a_moved_offset_or_a_target_above_the_head_is_not_reused(self):
+        steps = [(self.TARGET, ("binlog.000005", 400), self.TARGET),
+                 (self.TARGET, ("binlog.000005", 450), self.TARGET),       # the offset moved
+                 (("binlog.000005", 700), ("binlog.000005", 450), self.TARGET)]  # target above the head
+        (elapsed, log) = self.run_waits(self.fence(), steps)
+        self.assertEqual(elapsed, [10, 10, 10])
+        self.assertNotIn("since an earlier idle verdict", log)
+
+    def test_a_reached_target_does_not_need_the_memo(self):
+        steps = [(self.TARGET, ("binlog.000005", 400), self.TARGET),
+                 (self.TARGET, ("binlog.000005", 500), self.TARGET)]
+        (elapsed, log) = self.run_waits(self.fence(), steps)
+        self.assertEqual(elapsed, [10, 0])
+        self.assertIn("reached binlog.000005:500 for slice 1", log)
+
+
+class FakeSource:
+    """mysql_execute_df stand-in for the slicing queries of one table: rows
+    with the given keys in one partition; the sample returns every
+    (1/rate)-th key, as RAND() < rate would on average."""
+
+    def __init__(self, keys, explain_rows, partition_rows, partitions="p20261001"):
+        self.keys = sorted(keys)
+        self.explain_rows = explain_rows
+        self.partition_rows = partition_rows
+        self.partitions = partitions
+        self.sql = []
+
+    def __call__(self, conn, sql):
+        import pandas as pd
+        self.sql.append(sql)
+        if sql.startswith("select min("):
+            return pd.DataFrame([(min(self.keys), max(self.keys))], columns=["min_pk", "max_pk"])
+        if sql.startswith("explain select * from `orders` where") and " between " in sql:
+            return pd.DataFrame([(1, self.explain_rows)], columns=["id", "rows"])
+        if sql.startswith("explain select * from `orders` where"):
+            return pd.DataFrame([(1, self.partitions, self.explain_rows)], columns=["id", "partitions", "rows"])
+        if sql.startswith("select coalesce(sum(TABLE_ROWS), 0)"):
+            return pd.DataFrame([(self.partition_rows,)], columns=["table_rows"])
+        if sql.startswith("select `id` as k from `orders` where"):
+            rate = float(sql.split("rand() < ")[1].split()[0])
+            limit = int(sql.rsplit("limit ", 1)[1])
+            return pd.DataFrame([(k,) for k in self.keys[::max(1, round(1 / rate))][:limit]], columns=["k"])
+        raise AssertionError(sql)
+
+
 class TestSlices(unittest.TestCase):
+
+    # The shape of a date-partitioned table for one day on the dev run, scaled
+    # down 1000 times: 15 rows spread over the low 99.9% of the key range and the
+    # rest packed in a narrow band at its top.
+    LOW = [2844900360365670400 + i * 141000000000000000 for i in range(15)]
+    DENSE = [4962465750299543713 + i for i in range(90000)]
+
+    def slices(self, source, slice_rows, min_slices=4):
+        import db.mysql as dbm
+        with patch.object(tl, "mysql_execute_df", side_effect=source), \
+                patch.object(dbm, "mysql_execute_df", side_effect=source), self.assertLogs(level="INFO") as logs:
+            conditions = tl.snapshot_slices(MagicMock(), "orders", "id", " 1=1  and `d`=20261001", slice_rows,
+                                            min_slices=min_slices)
+        return conditions, "\n".join(logs.output)
+
+    @staticmethod
+    def rows_per_slice(conditions, keys):
+        import bisect
+        keys = sorted(keys)
+        counts = []
+        for condition in conditions:
+            low = int(condition.split(">= ")[1].split()[0])
+            high = int(condition.split("< ")[1]) if " < " in condition else None
+            end = len(keys) if high is None else bisect.bisect_left(keys, high)
+            counts.append(end - bisect.bisect_left(keys, low))
+        return counts
+
+    def test_skewed_keys_get_slices_of_about_the_same_rows(self):
+        # An even split of the key range put 90.3 million of the day's 90.3
+        # million rows in one slice (1605 s on one connection); the sample's
+        # quantiles cut the dense band into slices of about slice_rows rows.
+        keys = self.LOW + self.DENSE
+        source = FakeSource(keys, explain_rows=44740, partition_rows=89480)
+        (conditions, log) = self.slices(source, slice_rows=10000)
+        counts = self.rows_per_slice(conditions, keys)
+        self.assertEqual(sum(counts), len(keys), "the slices cover every key once")
+        self.assertEqual(len(conditions), 10)
+        self.assertLessEqual(max(counts), 1.2 * 10000, counts)
+        self.assertGreaterEqual(min(counts), 0.8 * 10000, counts)
+        self.assertIn("about 90020 rows from a sample of 9002 keys, 10 slice(s)", log)
+        self.assertTrue(all(sql.startswith(("select", "explain")) for sql in source.sql), source.sql)
+
+    def test_partition_statistics_lift_a_low_explain_estimate(self):
+        # On the dev source EXPLAIN of the key range estimated 1 row for 90
+        # million: the larger estimate, the pruned partitions' TABLE_ROWS, decides.
+        source = FakeSource(self.DENSE, explain_rows=1, partition_rows=89480)
+        (conditions, _) = self.slices(source, slice_rows=10000)
+        self.assertEqual(len(conditions), 9)
+        statistics = [sql for sql in source.sql if "information_schema.PARTITIONS" in sql]
+        self.assertEqual(len(statistics), 1)
+        self.assertIn("TABLE_SCHEMA = database() and TABLE_NAME = 'orders'", statistics[0])
+        self.assertIn("PARTITION_NAME in ('p20261001')", statistics[0])
+
+    def test_unpartitioned_table_uses_its_own_statistics(self):
+        source = FakeSource(self.DENSE, explain_rows=1, partition_rows=90000, partitions=None)
+        self.slices(source, slice_rows=10000)
+        statistics = [sql for sql in source.sql if "information_schema.PARTITIONS" in sql]
+        self.assertNotIn("PARTITION_NAME in", statistics[0])
+
+    def test_a_table_above_one_slice_gets_at_least_threads_per_table_slices(self):
+        keys = list(range(1000, 1000 + 15000))
+        (conditions, _) = self.slices(FakeSource(keys, explain_rows=15000, partition_rows=15000), 10000,
+                                      min_slices=4)
+        self.assertEqual(len(conditions), 4)
+        self.assertLessEqual(max(self.rows_per_slice(conditions, keys)), 15000 / 4 * 1.1)
+
+    def test_a_small_table_is_one_slice_without_a_sample(self):
+        source = FakeSource(list(range(7, 5007)), explain_rows=5000, partition_rows=4000)
+        (conditions, log) = self.slices(source, slice_rows=10000)
+        self.assertEqual(conditions, ["`id` >= 7"])
+        self.assertFalse([sql for sql in source.sql if "rand()" in sql], "no sample of a one-slice table")
+        self.assertIn("one slice", log)
+        source = FakeSource(list(range(7, 50007)), explain_rows=50000, partition_rows=50000)
+        self.assertEqual(self.slices(source, slice_rows=0)[0], ["`id` >= 7"], "0 means one slice per table")
+
+    def test_a_full_sample_is_taken_again_sparser(self):
+        # The estimates say 2000 rows; the table holds 90000: the first sample
+        # (rate 1) fills its limit, the second is 16 times sparser.
+        source = FakeSource(self.DENSE, explain_rows=2000, partition_rows=2000)
+        with patch.object(tl, "SLICE_SAMPLE_MAX_KEYS", 6000):
+            (conditions, log) = self.slices(source, slice_rows=1000, min_slices=1)
+        samples = [sql for sql in source.sql if "rand()" in sql]
+        self.assertEqual(len(samples), 2, "the first sample was full")
+        self.assertIn("rand() < 0.062500000000 limit 6000", samples[1])
+        self.assertIn("about 90000 rows from a sample of 5625 keys, 90 slice(s)", log)
+        self.assertEqual(sum(self.rows_per_slice(conditions, self.DENSE)), len(self.DENSE))
 
     def test_slices_start_at_the_smallest_key_and_stay_open_above(self):
         # Every slice is bounded below: an open lower end made the replica scan its
         # whole history (28.9 billion rows of an unpartitioned replica on the first
         # dev run) for the first slice of a date-filtered source.
-        chunks = [{"min_pk": 68645500028, "max_pk": 1}, {"min_pk": 68646190772, "max_pk": 1},
-                  {"min_pk": 68654473943, "max_pk": 1}]
-        with patch.object(tl, "divide_table_into_even_chunks", return_value=iter(chunks)):
+        with patch.object(tl, "get_min_max_pk_value", return_value=(68645500028, 68654473999)), \
+                patch.object(tl, "slice_starts", return_value=[68645500028, 68646190772, 68654473943]):
             conditions = tl.snapshot_slices(MagicMock(), "orders", "id", " 1=1 ", 100)
         self.assertEqual(conditions, ["`id` >= 68645500028 and `id` < 68646190772",
                                       "`id` >= 68646190772 and `id` < 68654473943",
                                       "`id` >= 68654473943"])
         self.assertTrue(all(">=" in c for c in conditions), "no slice is open below")
 
-    def test_no_integer_key_or_no_rows_is_one_slice_and_one_chunk_is_bounded_below(self):
+    def test_no_integer_key_or_no_rows_is_one_slice_and_one_start_is_bounded_below(self):
         self.assertEqual(tl.snapshot_slices(MagicMock(), "orders", None, " 1=1 ", 100), [None])
-        with patch.object(tl, "divide_table_into_even_chunks", return_value=iter([])):
+        with patch.object(tl, "get_min_max_pk_value", return_value=(None, None)):
             self.assertEqual(tl.snapshot_slices(MagicMock(), "orders", "id", " 1=1 ", 100), [None])
-        with patch.object(tl, "divide_table_into_even_chunks", return_value=iter([{"min_pk": 7, "max_pk": 9}])):
+        with patch.object(tl, "get_min_max_pk_value", return_value=(7, 9)), \
+                patch.object(tl, "slice_starts", return_value=[7]):
             self.assertEqual(tl.snapshot_slices(MagicMock(), "orders", "id", " 1=1 ", 100), ["`id` >= 7"])
 
     def test_partition_placeholder_is_resolved_for_slicing(self):
