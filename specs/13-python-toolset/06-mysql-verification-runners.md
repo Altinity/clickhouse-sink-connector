@@ -210,6 +210,7 @@ from `sink-connector/python` with that directory on `PYTHONPATH` (§3.1). A miss
 | `--wait_for_connector` | flag | Before the sides run, wait until every replica's connector has applied the source binlog up to the head read at the start of the table; under `--lock_tables_on_source` the head is read under the lock and replaces the fixed sleep (§3.7.1) | yes |
 | `--consistent_snapshot` | flag | No lock: PK-range slices, each read on MySQL in one consistent snapshot, the connector awaited up to that snapshot's binlog position, then the replica read; differing slices are read again (§3.7.4). Refused with `--lock_tables_on_source` or `--debug_output` | yes |
 | `--snapshot_slice_rows` | int ≥ 0, 1000000 | Approximate rows per slice (`divide_table_into_even_chunks`); `--threads_per_table` slices run at once | yes |
+| `--snapshot_max_excluded_keys` | int ≥ 0, 5000 | Most keys the version fence leaves out of one slice; above it none are (§3.7.4 step 3a) | yes |
 | `--fence_timeout_seconds` | int ≥ 0, 300 | Longest wait for a connector; after it the comparison runs and a difference names the connector position | yes |
 | `--fence_poll_seconds` | int ≥ 0, 1 | Seconds between reads of the connector offset | yes |
 | `--fence_idle_seconds` | int ≥ 0, 10 | The source wrote nothing after the target and the offset has not moved for this long: the wait ends | yes |
@@ -425,7 +426,10 @@ every transaction before the target is applied. A source that writes nothing aft
 offset past it; when the end of the source binary log is still the target and the offset has not moved for
 `--fence_idle_seconds`, nothing is in flight and the wait ends too. After `--fence_timeout_seconds` the wait
 gives up with an INFO line `did NOT reach`; the comparison still runs and can only produce a difference, never
-a false match. An unreadable offset (missing table, zero or several offset rows) or an unreadable binlog
+a false match. That connector is then marked behind (`ConnectorFence.behind`): its later waits in the run check
+the offset once instead of sleeping the timeout again, so a lagging connector costs one timeout per run rather
+than one per slice and pass; the first target it reaches clears the mark. While marked, a wait ends after its
+single check, before the idle test can apply (`did NOT reach ... in one check (it is behind)`). An unreadable offset (missing table, zero or several offset rows) or an unreadable binlog
 position makes that table `ERROR` (`ConnectorFenceError`, `BinlogPositionError`); the other tables still get
 verdicts. Without `offset_table` on every replica the run exits 1 before the first table.
 
@@ -492,18 +496,44 @@ writes, not for a whole-table scan.
    (`mysql_where_for_slicing`). The slice conditions are `pk < b1`, `b1 <= pk < b2`, ..., `pk >= bn`
    (`snapshot_slices`): open at both ends, so rows inserted during the run belong to a slice. A table without
    an integer key, or with one chunk, is one slice (`all rows`).
-2. **One slice, one snapshot.** The MySQL side runs with `--threads_per_table 1 --consistent_snapshot` and the
-   slice condition ANDed onto the table's `where`. It issues `START TRANSACTION WITH CONSISTENT SNAPSHOT`, then
-   reads the snapshot's binlog position (`snapshot_binlog_position`): on Percona Server the session variables
-   `Binlog_snapshot_file` / `Binlog_snapshot_position`, the position of the snapshot itself (kind `exact`);
-   elsewhere the end of the binary log read right after the snapshot started (kind `upper_bound`, which can
-   include a transaction committed between the two statements; that only makes the slice differ and be read
-   again). It logs `INFO Snapshot position for table <db.t> = <file> <pos> <kind>` and computes the checksum in
-   the same transaction. `--consistent_snapshot` with `--threads_per_table > 1` is refused by the side.
-3. **Wait.** The driver parses that line (`parse_snapshot_position`; none or another table makes the slice
-   `ERROR`) and waits on every replica's connector up to the position (`wait_for_connectors`, the fence of
-   §3.7.1). The idle test reads the source head through one shared, locked connection per table.
-4. **Replica read.** The ClickHouse sides read the same slice condition.
+2. **One slice, one snapshot, held.** With the version fence (below) the driver first reads, per replica, the
+   slice's highest `_version` over all its rows (`slice_max_version`, no `FINAL`): the floor. The MySQL side
+   then runs with `--threads_per_table 1 --consistent_snapshot --exclude_keys_from_stdin` and the slice
+   condition ANDed onto the table's `where` (`run_snapshot_side`). It issues `START TRANSACTION WITH CONSISTENT
+   SNAPSHOT`, reads the snapshot's binlog position (`snapshot_binlog_position`): on Percona Server the session
+   variables `Binlog_snapshot_file` / `Binlog_snapshot_position`, the position of the snapshot itself (kind
+   `exact`); elsewhere the end of the binary log read right after the snapshot started (kind `upper_bound`,
+   which can include a transaction committed between the two statements). It logs `INFO Snapshot position for
+   table <db.t> = <file> <pos> <kind>` and, still in that snapshot, waits for one JSON line on stdin
+   (`read_excluded_keys`: `{"column": <key> | null, "keys": [<int>, ...]}`; no line, a bad column name or a
+   non-integer key is an error, the checksum is never computed without the answer). `--consistent_snapshot`
+   with `--threads_per_table > 1`, and `--exclude_keys_from_stdin` without `--consistent_snapshot`, are refused
+   by the side.
+3. **Wait.** The driver recognises that line on the side's output as it arrives and, while the side holds its
+   snapshot, logs `INFO Snapshot of <db.t> slice [...] at <file>:<pos> (<kind>)` (the side's own lines reach
+   the driver log only at DEBUG) and waits on every replica's connector up to the position
+   (`wait_for_connectors`, the fence of §3.7.1). The idle test reads the source head through one shared,
+   locked connection per table. If the wait raises (`ConnectorFenceError`, `BinlogPositionError`), the side's
+   stdin is closed (it exits with an error) and the exception reaches `run_config`, which makes that table
+   `ERROR` as in §3.7.1; the other tables still get verdicts. The exclusion is ANDed onto the side's filter in
+   parentheses (`(<where>) and ...`), the same shape as on the ClickHouse side.
+3a. **Version fence.** The connector keeps applying writes after the position, so when ClickHouse reads the
+   slice it can hold a later state of some keys than the snapshot. Connector versions grow in binlog order
+   (spec 02.02 §3.3, §3.5): every transaction after the snapshot position is versioned above the floor read in
+   step 2. The driver therefore reads, per replica, the keys of the slice with a row versioned above the floor
+   (`keys_changed_since`: inserts, updates and delete markers alike) and leaves their union out on BOTH sides:
+   it sends the list to the waiting MySQL side (`` `<key>` not in (...) `` inside the snapshot) and ANDs the same
+   filter onto the ClickHouse sides' `where`. Every other key was not written between the floor and the
+   replica read, so its snapshot state and its replica state must be equal: a difference among them is a real
+   one, and an excluded key is never counted as a match. The INFO line `Excluded <n> key(s) of <db.t> slice
+   [...] changed after its snapshot began, on both sides` and a per-table total name what was left out. The
+   fence is on when the table has an integer key and every replica table has a `_version` column
+   (`replicas_have_version_column`); otherwise an INFO line says keys written during a read are not left out.
+   More than `--snapshot_max_excluded_keys` (default 5000; the list travels on the ClickHouse side's command
+   line) changed keys in one slice: none is left out, the slice is compared as is, and a difference names the
+   cause. A real divergence written by something other than the connector (for example an `ALTER ... UPDATE`
+   on the replica) keeps its old `_version` and is not excluded.
+4. **Replica read.** The ClickHouse sides read the same slice condition, minus the excluded keys.
 5. **Verdict per slice** (`compare_slice`): equal results are a slice match (INFO `Slice match in <db.t> slice
    [...]`); a failed side is `ERROR`. A difference is read again from step 2 with a fresh snapshot, up to
    `--recheck_differences` more times, without the §3.7.3 delay (the fence replaces it). On the last pass it is
@@ -516,8 +546,9 @@ writes, not for a whole-table scan.
 `--threads_per_table` slices of a table run at once, each with its own connection and snapshot. The mode needs
 `offset_table` on every replica and REPLICATION CLIENT on the source (the fence's idle test reads the binary log
 head; off Percona the snapshot position is the head too), and is refused with `--lock_tables_on_source` and with `--debug_output`. A
-slice written continuously can still differ on every pass; it is then reported with its key range, never as a
-match. The packaged driver has no snapshot mode.
+slice written continuously is compared on its unwritten keys through the version fence; without the fence (no
+`_version`, no integer key, or over the cap) it can differ on every pass and is then reported with its key
+range, never as a match. The packaged driver has no snapshot mode.
 
 ### 3.8 Output parsing, verdict and exit codes
 
@@ -1030,6 +1061,11 @@ The suite was run on 2026-10-01 from `sink-connector/python` with the toolset ve
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_slices_cover_every_key_with_open_ends`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_difference_read_again_and_gone_is_a_match`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_persistent_difference_warns_with_the_slice`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_keys_changed_after_the_floor_are_left_out_on_both_sides`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_too_many_changed_keys_are_not_left_out_and_say_so`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSnapshotSideProtocol::test_answer_is_sent_while_the_side_waits_and_the_result_is_parsed`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSnapshotSideProtocol::test_a_failing_wait_closes_the_side_and_propagates`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestMySQLSideExclusionLine::test_malformed_or_missing_answers_are_errors`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestMySQLSideSnapshotPosition::test_percona_snapshot_variables_are_exact`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestMySQLSideSnapshotPosition::test_other_servers_use_the_binary_log_head_as_an_upper_bound`
 - Bounded lock:

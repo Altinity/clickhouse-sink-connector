@@ -12,6 +12,7 @@ import argparse
 import traceback
 import sys
 import datetime
+import json
 import re
 import os
 import concurrent.futures
@@ -301,6 +302,30 @@ def snapshot_binlog_position(conn):
     return (binlog_file, binlog_position, 'upper_bound')
 
 
+EXCLUDED_KEY_COLUMN = re.compile(r"[A-Za-z0-9_$]+")  # used with fullmatch: no trailing newline slips through
+
+
+def read_excluded_keys(stream):
+    """The row filter that leaves out the keys the driver sends on ``stream``:
+    one JSON line {"column": <integer key column> | null, "keys": [<int>, ...]}.
+    Returns None when there is nothing to leave out. A missing or malformed
+    line raises: the checksum is never computed without the driver's answer."""
+    line = stream.readline()
+    if not line:
+        raise RuntimeError("--exclude_keys_from_stdin: no exclusion line on stdin (driver gone?)")
+    payload = json.loads(line)
+    keys = payload.get("keys") or []
+    column = payload.get("column")
+    if not keys:
+        return None
+    if not isinstance(column, str) or not EXCLUDED_KEY_COLUMN.fullmatch(column):
+        raise RuntimeError(f"--exclude_keys_from_stdin: invalid key column {column!r}")
+    if not all(isinstance(key, int) and not isinstance(key, bool) for key in keys):
+        raise RuntimeError("--exclude_keys_from_stdin: keys must be integers")
+    logging.info(f"Leaving out {len(keys)} key(s) changed after the snapshot began")
+    return f"`{column}` not in ({','.join(str(key) for key in keys)})"
+
+
 def get_tables_from_regexp(conn, tables_regexp):
     return get_tables_from_regex(conn, args.no_wc, args.mysql_database, tables_regexp)
 
@@ -317,10 +342,6 @@ def calculate_sql_checksum(conn, table, where, excluded_columns,  include_floati
 
         statements = []
 
-        (query, select_query, distributed_by,
-         external_table_types, clamped_expression) = get_table_checksum_query(table, conn, args.binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns)
-        statements = select_table_statements(
-            table, query, select_query, distributed_by, external_table_types, where, clamped_expression)
         if getattr(args, "consistent_snapshot", False):
             # One InnoDB read view for the whole checksum query, and the binlog
             # position it corresponds to, so the driver can wait until the
@@ -330,6 +351,18 @@ def calculate_sql_checksum(conn, table, where, excluded_columns,  include_floati
             (binlog_file, binlog_position, kind) = snapshot_binlog_position(conn)
             logging.info(f"Snapshot position for table {args.mysql_database}.{table} = "
                          f"{binlog_file} {binlog_position} {kind}")
+            if getattr(args, "exclude_keys_from_stdin", False):
+                # Held in the snapshot: the driver now waits for the connector
+                # and answers with the keys changed since (version fence).
+                exclusion = read_excluded_keys(sys.stdin)
+                if exclusion:
+                    # Parenthesised like the ClickHouse side's filter, so an OR in
+                    # the table's where cannot bind the exclusion differently.
+                    where = f"({where}) and {exclusion}" if where else exclusion
+        (query, select_query, distributed_by,
+         external_table_types, clamped_expression) = get_table_checksum_query(table, conn, args.binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns)
+        statements = select_table_statements(
+            table, query, select_query, distributed_by, external_table_types, where, clamped_expression)
         result = compute_checksum(table, statements, conn)
     finally:
         conn.close()
@@ -472,6 +505,8 @@ def build_argument_parser():
     parser.add_argument('--chunk_size', type=int, help='Chunk size', default=10000)
     parser.add_argument('--consistent_snapshot', action='store_true', default=False,
                         help='Read the table in one START TRANSACTION WITH CONSISTENT SNAPSHOT (no lock) and log the binlog position of that snapshot. Requires --threads_per_table 1.')
+    parser.add_argument('--exclude_keys_from_stdin', action='store_true', default=False,
+                        help='With --consistent_snapshot: after logging the snapshot position, hold the snapshot and read one JSON line {"column": ..., "keys": [...]} from stdin; those keys are left out of the checksum (the driver\'s version fence).')
     parser.add_argument('--threads', type=int,
                         help='number of tables in parallel to compute', default=1)
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
@@ -490,6 +525,8 @@ def main():
     if args.consistent_snapshot and args.threads_per_table > 1:
         # PK chunks run on separate connections, each with its own read view.
         parser.error("--consistent_snapshot reads through one connection: use --threads_per_table 1")
+    if args.exclude_keys_from_stdin and not args.consistent_snapshot:
+        parser.error("--exclude_keys_from_stdin applies inside a snapshot: add --consistent_snapshot")
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
