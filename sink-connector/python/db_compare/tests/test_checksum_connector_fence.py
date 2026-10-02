@@ -339,6 +339,17 @@ class TestSnapshotSideProtocol(unittest.TestCase):
         self.assertEqual(payload, {"column": "id", "keys": [3, 4]})
         self.assertEqual(result, ("db1", "shop.orders", MD5_A, 8))
 
+    def test_no_pipe_is_left_open(self):
+        """An unclosed pipe surfaces as a ResourceWarning, which the driver's
+        execute_mysql logs at WARNING and the scheduled job fails on."""
+        import gc
+        import warnings
+        with warnings.catch_warnings(record=True) as caught, self.assertLogs(level="INFO"):
+            warnings.simplefilter("always")
+            tl.run_snapshot_side(self.cmd, "db1", "orders", lambda position: {"column": None, "keys": []})
+            gc.collect()
+        self.assertEqual([str(w.message) for w in caught if issubclass(w.category, ResourceWarning)], [])
+
     def test_a_failing_wait_closes_the_side_and_propagates(self):
         def fail(position):
             raise tl.ConnectorFenceError("offset unreadable")
