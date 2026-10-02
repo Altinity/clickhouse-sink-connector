@@ -169,11 +169,30 @@ class TestRewind(unittest.TestCase):
             mr.select_offset_row(rows, "k3")          # unknown key
         self.assertEqual(mr.select_offset_row([["only", "{}"]], None), ("only", "{}"))
 
+    def test_binlog_positions_compare_file_sequence_then_position(self):
+        """D-13.08-5/-6: the order is the file sequence number first, then the position -- never string order."""
+        self.assertEqual(mr.compare_binlog_positions("mysql-bin.000300", 4, "mysql-bin.000350", 1000), -1)
+        self.assertEqual(mr.compare_binlog_positions("mysql-bin.000350", 2000, "mysql-bin.000350", 1000), 1)
+        self.assertEqual(mr.compare_binlog_positions("mysql-bin.000350", 1000, "mysql-bin.000350", "1000"), 0)
+        self.assertEqual(mr.compare_binlog_positions("mysql-bin.1000000", 4, "mysql-bin.999999", 9), 1)
+        with self.assertRaises(ValueError):
+            mr.compare_binlog_positions("mysql-bin.000001", 4, "binary.000001", 4)   # another server's binlog
+        with self.assertRaises(ValueError):
+            mr.compare_binlog_positions("mysql-bin", 4, "mysql-bin.000001", 4)       # no sequence number
+
+    def test_offset_position_requires_file_and_pos(self):
+        self.assertEqual(mr.offset_position('{"file":"mysql-bin.000007","pos":"120","server_id":1}'), ("mysql-bin.000007", 120))
+        for bad in ("", "{}", '{"gtids":"u:1-5"}', '{"file":"mysql-bin.000007"}', "not json"):
+            with self.assertRaises(ValueError, msg=bad):
+                mr.offset_position(bad)
+
 
 class FakeClickHouse:
     """Offline stand-in for the clickhouse-client wrapper: one live table `s.t` (unpartitioned, sorting key id) whose
-    scratch copy `s_restore.t` holds 1 row and hash-matches NONE of the live rows (canary 0/10)."""
+    scratch copy `s_restore.t` holds 1 row and hash-matches NONE of the live rows (canary 0/10). The scratch copy
+    carries the marker of a load from stamp 20260928 with 1 dump row (what --skip-load requires)."""
     writes = []
+    scratch_comment = None   # set per test (setUp)
 
     def __init__(self, host, config, apply, port=9000):
         pass
@@ -190,6 +209,8 @@ class FakeClickHouse:
         return "0"
 
     def rows(self, sql, timeout=3600):
+        if "SELECT name, comment FROM system.tables" in sql:
+            return [["t", FakeClickHouse.scratch_comment]] if FakeClickHouse.scratch_comment is not None else []
         if "FROM system.tables" in sql:
             return [["t", "ReplacingMergeTree", "", "id", "10"]]
         if "SELECT name, default_kind FROM system.columns" in sql:
@@ -218,16 +239,18 @@ class TestCanaryGate(unittest.TestCase):
         open(os.path.join(self.d, "client.xml"), "w").write("<config/>")
         open(os.path.join(self.d, "canary.txt"), "w").write("s.t\n")
         FakeClickHouse.writes = []
+        FakeClickHouse.scratch_comment = mr.scratch_marker("s", "t", "20260928", 1)
 
     def tearDown(self):
         shutil.rmtree(self.d)
 
     def _args(self, **over):
         from types import SimpleNamespace
+        # The connector-position gate (D-13.08-5) has its own tests; these cases are about the canary.
         base = dict(ch_config=os.path.join(self.d, "client.xml"), dump_base=self.d, stamp="20260928", schemas=["s"],
                     restore_suffix="_restore", ch_host="ch.example", ch_port=9000, apply=True, canary_list=os.path.join(self.d, "canary.txt"),
                     tables=".*", skip_load=True, drop_ch_only=False, load_parallel=1, load_threads=1, loader_cmd=None, loader_cwd=None,
-                    canary_threshold=0.99, force=False)
+                    canary_threshold=0.99, force=False, offset_table=None, offset_key=None, skip_connector_position_check=True)
         base.update(over)
         return SimpleNamespace(**base)
 

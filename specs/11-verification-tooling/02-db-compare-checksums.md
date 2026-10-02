@@ -109,13 +109,18 @@ For every table selected by `--tables_regex` (and the optional
    `finally` block; the lock connection is closed even if `UNLOCK TABLES`
    fails (`test_table_locking.py`).
 4. Parses the single line `Checksum for table <db>.<table> = <md5> count <n>`
-   from each process (`parse_checksum()`; the shell pipeline is
-   `set -eo pipefail; ... | grep -i checksum | awk '{print $11" "$13" "$15}'`,
-   so no other line printed by the side scripts may contain the word
-   "checksum").
-5. `analyze_differences()` compares each replica's `(md5, count)` with the
-   source's. A mismatch is logged as `WARNING Checksum difference : ...`;
-   agreement as `INFO No difference for <table>`.
+   from each process (`parse_checksum()`). The side commands are argv lists
+   run without a shell; the raw output is matched line by line, exactly one
+   such message naming the expected `<db>.<table>` must be present. A side
+   ERROR line is relayed at ERROR and that side gives no result; a side WARNING
+   line is relayed at INFO as a side note, so the driver log keeps WARNING for
+   differences (spec 13.06 §3.2, §3.8, §3.17). Other lines may contain the
+   word "checksum".
+5. `analyze_differences()` gives each table a verdict: a mismatch is logged as
+   `WARNING Checksum difference : ...`; agreement as `INFO No difference for
+   <table>`; agreement on zero rows as `INFO EMPTY on both sides ...`; a
+   failed or unparseable side as `ERROR`, which makes the run exit 1 (spec
+   13.06 §3.8).
 
 ### 3.3 Canonical row string
 Both sides render every compared column to text and join the pieces with the
@@ -149,10 +154,16 @@ single character `#`:
 - A `NULL` value renders as the empty string on both sides
   (`ifnull(expr, '')` / `case when col is null then '' else expr end`), and
   the nullability of the row is carried by one extra trailing element: the
-  concatenation, in column order, of `1` (NULL) or `0` (not NULL) for every
-  nullable compared column (`concat(ISNULL(a), ISNULL(b))` /
+  concatenation, in column order, of `1` (NULL) or `0` (not NULL) for
+  **every** compared column, whether or not its catalog declares it nullable
+  (`concat(ISNULL(a), ISNULL(b))` /
   `case when a is null then '1' else '0' end || ...`). This keeps `NULL`
-  distinguishable from `''`.
+  distinguishable from `''`. The flags are value-based over the same columns
+  on both sides, so a column declared nullable on MySQL and non-Nullable on
+  ClickHouse (a stored generated column, for instance) gives the same flags
+  for equal values, while a MySQL NULL against the ClickHouse default still
+  differs in its flag (spec 13.06 D-13.06-40,
+  `test_checksum_fidelity.py::TestNullFlagsOverEveryComparedColumn`).
 - Per-type rendering (both sides must produce byte-identical text for equal
   values):
 
@@ -371,7 +382,8 @@ A column the tool does not compare is a hole in the only value-level proof,
 so it is never silent. Per table, each side logs **one `WARNING`** naming the
 skipped columns (`Not compared in table <db>.<table>: floating point columns
 [...]` / `... JSON columns [...]`; the line does not contain the word
-"checksum", §3.2 step 4). Compared by default: every type in the §3.3 table,
+"checksum", §3.2 step 4). The driver relays it at INFO as a side note
+(spec 13.06 §3.17). Compared by default: every type in the §3.3 table,
 §3.4 temporal, §3.6 binary, `Bool`/`bit(1)`. Not compared by default:
 
 - **Floating point** (`float`, `double` / `Float32`, `Float64`), unless
@@ -432,8 +444,9 @@ who would rather have the run fail than run with a gap pass
   `{partition_expression}` substitution it carried remains.
 - `--exclude_columns` takes `nargs='+'` on both sides (the replica side had
   `nargs='*'`, so a bare `--exclude_columns` silently replaced the default
-  list of connector metadata columns with nothing). Both sides split each
-  token on commas.
+  list of connector metadata columns with nothing). Both sides accept
+  space-separated words and comma-separated lists alike
+  (`parse_exclude_columns`, spec 13.06 D-13.06-17).
   (`test_checksum_fidelity.py::TestRemovedDeadPaths`)
 
 ---
@@ -458,11 +471,15 @@ connect to a database.
 - `sink-connector/python/db_compare/tests/test_checksum_fidelity.py`
   - `TestClickHouseRowExpression.test_trailing_float_column_leaves_no_dangling_separator`
     — §3.3: with `execute_sql` stubbed to describe `(id Int32, name String,
-    f Float64)`, the built expression is exactly
-    `toString("id")||'#'||toString("name")`; the pre-fix code produced
+    f Float64)`, the values part of the built expression is exactly
+    `toString("id")||'#'||toString("name")`, followed only by the null-flags
+    element over `id` and `name`; the pre-fix code produced
     `toString("id")||'#'||toString("name")||'#'`.
   - `TestClickHouseRowExpression.test_nullable_flags_are_one_trailing_element`
     — §3.3 nullability element.
+  - `TestNullFlagsOverEveryComparedColumn` — §3.3: one null flag per compared
+    column on both sides, the same columns whatever each catalog declares
+    nullable; excluded and skipped columns flag nothing.
   - `TestEndToEndChecksum.test_equal_fixtures_report_equal` — §3.5: both side
     scripts, driven through their real `compute_checksum` /
     `calculate_checksum` paths with stubbed engines, print the same checksum
@@ -603,17 +620,17 @@ connect to a database.
   - **Blast radius**: that table is reported equal without having been compared.
   - **Recovery**: treat any `Invalid checksum output` as a failed run. Compare the table standalone: run the two side scripts by hand and read their `Checksum for table` lines.
   - **RTO**: one standalone run per affected table.
-  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestVerdictOnUnparseableOutput::test_both_sides_unparseable_is_never_reported_equal` (skipped, DEFECT). The refusal of multi-line output is pinned by `...::test_parse_checksum_refuses_more_than_one_line`.
-  - **DEFECT**: a double parse failure is reported as equality.
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestVerdictOnUnparseableOutput::test_both_sides_unparseable_is_never_reported_equal`. The refusal of multi-line output is pinned by `...::test_parse_checksum_refuses_more_than_one_line`.
+  - **FIXED**: an unparseable side is verdict `ERROR` (exit 1), and the output is parsed per line so other lines naming "checksum" are ignored (spec 13.06 D-13.06-2).
 
-- **FM-11.02-3 One side script fails: the whole run aborts**
-  - **Trigger**: the side script exits non-zero. Causes include a refused connection, `MEMORY_LIMIT_EXCEEDED` on the `FINAL` read, a table missing on the replica (no checksum line, so `grep` exits 1 under `set -eo pipefail`), or a bad `--where`.
-  - **Behaviour**: `run_quick_safe_checksum()` logs `command failed : terminating` and `<cmd>. failed`, then returns `None`. `analyze_differences()` then raises `TypeError` on the `None` result, and `run_config()` logs `Exception in main thread : 'NoneType' object is not subscriptable` with a traceback and exits 1. Tables not yet compared are skipped.
-  - **Detection**: loud, but the ERROR names the symptom (`NoneType`) rather than the cause. The cause is in the preceding `<cmd>. failed` line, and in the side script's own output under `--debug`.
-  - **Blast radius**: no false verdict. Coverage of every later table is lost for this run.
-  - **Recovery**: fix the cause, or exclude the table with `--exclude_tables_regex`. Then re-run only the remaining tables (`--tables_regex`). Tables already done appear as `No difference for <t>` / `Checksum difference`.
-  - **RTO**: time to re-run the remaining tables (unmeasured — proportional to their size).
-  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestRunExitCode::test_failed_side_script_aborts_the_whole_run_non_zero`.
+- **FM-11.02-3 One side script fails: that table has no verdict and the run exits 1**
+  - **Trigger**: the side script exits non-zero, or exits 0 without a checksum line. Causes include a refused connection, `MEMORY_LIMIT_EXCEEDED` on the `FINAL` read, a table missing on the replica (no checksum line), or a bad `--where`.
+  - **Behaviour**: `run_quick_safe_checksum()` logs `<argv>. failed with return code <rc>` and the last 20 side lines, then returns `None` (or a result with `None` md5 and count for a missing checksum line). `analyze_differences()` logs `Checksum ERROR for <db.t>: ...; no verdict`, the remaining tables are still compared, and the run ends with `<n> table(s) have NO verdict ...` and exit 1 (spec 13.06 §3.8).
+  - **Detection**: loud: the ERROR names the table, and the side's own error lines are in the driver log.
+  - **Blast radius**: no false verdict. Only the failed tables are unverified.
+  - **Recovery**: fix the cause, or exclude the table with `--exclude_tables_regex`, then re-run the tables named in the summary (`--tables_regex`).
+  - **RTO**: time to re-run the failed tables (unmeasured — proportional to their size).
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestRunExitCode::test_failed_side_script_fails_the_table_and_the_run_non_zero`.
 
 - **FM-11.02-4 A huge table: no time bound, and the source lock is held throughout**
   - **Trigger**: a multi-hundred-GB table, or a slow replica under `FINAL` over a whole table.
@@ -672,4 +689,4 @@ connect to a database.
   - **Test**: GAP: a replica-script test asserting the open-row filter and the history-column exclusions produce the source's checksum for a fixture with closed versions.
   - **DEFECT**: the driver cannot verify a replication-history replica.
 
-Summary: 9 failure modes, 5 DEFECT, 4 GAP.
+Summary: 9 failure modes, 4 DEFECT, 4 GAP.
