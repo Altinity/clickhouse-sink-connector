@@ -559,20 +559,30 @@ writes, not for a whole-table scan.
 3a. **Version fence.** The connector keeps applying writes after the position, so when ClickHouse reads the
    slice it can hold a later state of some keys than the snapshot. Connector versions grow in binlog order
    (spec 02.02 §3.3, §3.5): every transaction after the snapshot position is versioned above the floor read in
-   step 2. The driver therefore reads, per replica, the keys of the slice with a row versioned above the floor
-   (`keys_changed_since`: inserts, updates and delete markers alike) and leaves their union out on BOTH sides:
-   it sends the list to the waiting MySQL side (`` `<key>` not in (...) `` inside the snapshot) and ANDs the same
-   filter onto the ClickHouse sides' `where`. Every other key was not written between the floor and the
-   replica read, so its snapshot state and its replica state must be equal: a difference among them is a real
-   one, and an excluded key is never counted as a match. The INFO line `Excluded <n> key(s) of <db.t> slice
-   [...] changed after its snapshot began, on both sides` and a per-table total name what was left out. The
-   fence is on when the table has an integer key and every replica table has a `_version` column
+   step 2. The connector also keeps writing while the slice is compared, so the replica read itself must leave
+   out every key versioned above the floor as of that read. Still inside the snapshot, after the wait, the
+   driver therefore first runs the ClickHouse sides with the filter `changed_keys_filter` ANDed onto their
+   `where`: `` `<key>` not in (select `<key>` from <db>.<t> where (<slice>) and _version > <floor>) ``, all
+   versions, evaluated in the replica's own query. Only then does it read, per replica, the keys of the slice
+   with a row versioned above the floor (`keys_changed_since`: inserts, updates and delete markers alike) and
+   send their union to the waiting MySQL side (`` `<key>` not in (...) `` inside the snapshot). Keys only gain
+   rows above the floor, so that list holds every key the replica read left out, or more. The same keys on
+   both sides: every other key was not written between the floor and the replica read, so its snapshot state
+   and its replica state must be equal, a difference among them is a real one, and an excluded key is never
+   counted as a match. A key changed between the replica read and the list is left out on MySQL only: the
+   counts differ and the slice is read again, never a false match. (Listing the keys before a later replica
+   read, as first built, missed every key the connector wrote in between: in the end-to-end suite every slice
+   of the written table differed on all four passes, with equal counts.) The INFO line `Excluded <n> key(s) of
+   <db.t> slice [...] changed after its snapshot began, on both sides` and a per-table total name what was left
+   out. The fence is on when the table has an integer key and every replica table has a `_version` column
    (`replicas_have_version_column`); otherwise an INFO line says keys written during a read are not left out.
-   More than `--snapshot_max_excluded_keys` (default 5000; the list travels on the ClickHouse side's command
-   line) changed keys in one slice: none is left out, the slice is compared as is, and a difference names the
-   cause. A real divergence written by something other than the connector (for example an `ALTER ... UPDATE`
-   on the replica) keeps its old `_version` and is not excluded.
-4. **Replica read.** The ClickHouse sides read the same slice condition, minus the excluded keys.
+   More than `--snapshot_max_excluded_keys` (default 5000) changed keys in one slice: none is left out, the
+   replicas are read again without the filter, the slice is compared as is, and a difference names the cause.
+   A real divergence written by something other than the connector (for example an `ALTER ... UPDATE` on the
+   replica) keeps its old `_version` and is not excluded.
+4. **Replica read.** The ClickHouse sides read the same slice condition, minus the keys changed after the
+   floor: with the fence while the snapshot is held (step 3a), before the MySQL side computes; without it after
+   the MySQL side.
 5. **Verdict per slice** (`compare_slice`): equal results are a slice match (INFO `Slice match in <db.t> slice
    [...]`); a failed side is `ERROR`. A difference is read again from step 2 with a fresh snapshot, up to
    `--recheck_differences` more times, without the §3.7.3 delay (the fence replaces it). On the last pass it is
@@ -1115,6 +1125,7 @@ The suite was run on 2026-10-01 from `sink-connector/python` with the toolset ve
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_difference_read_again_and_gone_is_a_match`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_persistent_difference_warns_with_the_slice`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_keys_changed_after_the_floor_are_left_out_on_both_sides`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_a_key_changed_after_the_replica_read_makes_the_counts_differ`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_too_many_changed_keys_are_not_left_out_and_say_so`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSnapshotSideProtocol::test_answer_is_sent_while_the_side_waits_and_the_result_is_parsed`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSnapshotSideProtocol::test_a_failing_wait_closes_the_side_and_propagates`

@@ -413,22 +413,34 @@ class TestOneSlice(unittest.TestCase):
         changed = list(changed)
         payloads = []
 
+        self.order = []
+
         def snapshot_side(cmd, host, table, on_position):
             (md5, count, position) = mysql_passes.pop(0)
             if position is None:
                 return (None, b"", None, None)
             payload = on_position(position)
             payloads.append(payload)
+            self.order.append("mysql side computes")
             return ((host, "shop.orders", md5, count), b"", position, payload)
+
+        def replica_read(cmd, host, table):
+            self.order.append(("replica read", cmd[1]))
+            return ch_results.pop(0)
+
+        def keys_listed(*a):
+            self.order.append("keys listed")
+            return changed.pop(0)
 
         fence = MagicMock()
         fence.wait.return_value = (reached, ("binlog.000005", 100))
-        commands_for = MagicMock(side_effect=lambda condition, extra=None: (MYSQL_CMD, [("ch-host", ["ch", extra])]))
+        commands_for = MagicMock(side_effect=lambda condition, extra=None: (
+            MYSQL_CMD, [("ch-host", ["ch", extra("ch-host") if callable(extra) else extra])]))
         floors = list(floors)
         with patch.object(tl, "run_snapshot_side", side_effect=snapshot_side), \
-                patch.object(tl, "run_quick_safe_checksum", side_effect=lambda cmd, host, table: ch_results.pop(0)), \
+                patch.object(tl, "run_quick_safe_checksum", side_effect=replica_read), \
                 patch.object(tl, "slice_max_version", side_effect=lambda *a: floors.pop(0)), \
-                patch.object(tl, "keys_changed_since", side_effect=lambda *a: changed.pop(0)), \
+                patch.object(tl, "keys_changed_since", side_effect=keys_listed), \
                 self.assertLogs(level="INFO") as logs:
             outcome = tl.checksum_one_slice("shop.orders", "orders", "`id` < 101", commands_for, "db1", ["ch-host"],
                                             {"ch-host": fence}, lambda: ("binlog.000005", 900), recheck, exclusion)
@@ -487,17 +499,36 @@ class TestOneSlice(unittest.TestCase):
             exclusion=self.EXCLUSION, floors=[1000], changed=[{42, 7}])
         self.assertEqual(outcome, (tl.VERDICT_MATCH, 3, 2))
         self.assertEqual(payloads, [{"column": "id", "keys": [7, 42]}], "the MySQL side gets the keys in its snapshot")
-        self.assertEqual(commands_for.call_args_list[-1], call("`id` < 101", "`id` not in (7,42)"),
-                         "the ClickHouse side leaves the same keys out")
+        # e2e: the connector kept writing between the key list and a later replica
+        # read, so keys changed in between were in neither list and every slice of
+        # a written table differed. The replica now leaves out, in its own query,
+        # every key versioned above the floor; the list for the MySQL side is read
+        # after that query, so it holds those keys or more.
+        changed_filter = "`id` not in (select `id` from `shop`.`orders` where (`id` < 101) and _version > 1000)"
+        self.assertEqual(self.order, [("replica read", changed_filter), "keys listed", "mysql side computes"])
         self.assertIn("Excluded 2 key(s) of shop.orders slice [`id` < 101] changed after its snapshot began", log)
+
+    def test_a_key_changed_after_the_replica_read_makes_the_counts_differ(self):
+        # The replica read left out key 7 only; key 42 changed right after it and
+        # is listed too, so the MySQL side leaves out one row more: the counts
+        # differ and the slice is read again (here it then matches).
+        (outcome, _, log, _, _) = self.run_slice(
+            [(MD5_A, 2, self.POS), (MD5_B, 3, self.POS)],
+            [("ch-host", "shop.orders", MD5_B, 3), ("ch-host", "shop.orders", MD5_B, 3)], recheck=1,
+            exclusion=self.EXCLUSION, floors=[1000, 1100], changed=[{7, 42}, {7}])
+        self.assertEqual(outcome, (tl.VERDICT_MATCH, 3, 1))
+        self.assertIn("Checksum mismatch on pass 1 of 2", log)
+        self.assertNotIn("WARNING", log)
 
     def test_too_many_changed_keys_are_not_left_out_and_say_so(self):
         (outcome, _, log, payloads, commands_for) = self.run_slice(
-            [(MD5_A, 3, self.POS)], [("ch-host", "shop.orders", MD5_B, 3)], recheck=0,
-            exclusion=self.EXCLUSION, floors=[1000], changed=[{1, 2, 3, 4}])
+            [(MD5_A, 3, self.POS)], [("ch-host", "shop.orders", MD5_B, 3), ("ch-host", "shop.orders", MD5_B, 3)],
+            recheck=0, exclusion=self.EXCLUSION, floors=[1000], changed=[{1, 2, 3, 4}])
         self.assertEqual(outcome[0], tl.VERDICT_DIFFERENT)
         self.assertEqual(payloads, [{"column": "id", "keys": []}])
         self.assertEqual(commands_for.call_args_list[-1], call("`id` < 101", None))
+        self.assertEqual(self.order[-2:], [("replica read", None), "mysql side computes"],
+                         "the replicas are read again without leaving any key out")
         self.assertIn("more than 3 keys changed while the slice was read", log)
 
 

@@ -301,7 +301,8 @@ def side_commands(mysql_database, database_override_map, table, mysql_host, repl
                   binary_columns=(), json_columns=(), mysql_threads_per_table=None, mysql_extra_flags=(),
                   ch_extra_where=None):
     """(MySQL side argv, [(replica host, ClickHouse side argv)]) for one table and ``where``.
-    ``ch_extra_where`` is ANDed onto the ClickHouse sides' filter only."""
+    ``ch_extra_where`` is ANDed onto the ClickHouse sides' filter only; it is a
+    filter, or a function of the replica host that returns one."""
     # Build MySQL checksum command
     mysql_cmd = get_mysql_checksum_command(mysql_host, mysql_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file, threads_per_table=mysql_threads_per_table)
     if mysql_extra_flags:
@@ -312,8 +313,9 @@ def side_commands(mysql_database, database_override_map, table, mysql_host, repl
     for replica_host in replica_hosts:
         replica_database = replica_database_for(replica_host, mysql_database, database_override_map)
         replica_where = where
-        if ch_extra_where:
-            replica_where = f"({where}) and {ch_extra_where}" if where else ch_extra_where
+        extra_where = ch_extra_where(replica_host) if callable(ch_extra_where) else ch_extra_where
+        if extra_where:
+            replica_where = f"({where}) and {extra_where}" if where else extra_where
         cmd = get_clickhouse_checksum_command(replica_host, replica_database, table, pk, max_pk, where=replica_where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns)
         ch_commands.append((replica_host, cmd))
     return (mysql_cmd, ch_commands)
@@ -1024,7 +1026,14 @@ def checksum_one_slice(table_name, table, condition, commands_for, mysql_host, r
     turns on the version fence: keys a replica changed after the slice's
     highest _version read before the snapshot are left out on both sides, so a
     slice written while it is read compares only the keys whose state the
-    snapshot and the replica can share (spec 13.06 section 3.7.4)."""
+    snapshot and the replica can share (spec 13.06 section 3.7.4). The
+    connector keeps writing while the slice is compared, so the replicas are
+    read first, while the snapshot is held, each leaving out in the same query
+    every key with a row versioned above its floor; the keys are listed only
+    after that read, so the list the MySQL side leaves out holds at least
+    every key the replica read left out. A key changed in between is left out
+    on MySQL only: the counts differ and the slice is read again, never a
+    false match."""
     label = f"{table_name} slice [{condition or 'all rows'}]"
     passes = 1 + recheck_differences
     for pass_number in range(1, passes + 1):
@@ -1037,7 +1046,13 @@ def checksum_one_slice(table_name, table, condition, commands_for, mysql_host, r
             floors = {host: slice_max_version(fences[host], exclusion["databases"][host], table, condition)
                       for host in replica_hosts}
         (mysql_cmd, _) = commands_for(condition)
-        state = {"notes": [], "keys": [], "too_many": 0}
+        state = {"notes": [], "keys": [], "too_many": 0, "replicas": None}
+
+        def read_replicas(extra_where):
+            (_, ch_commands) = commands_for(condition, extra_where)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(ch_commands))) as executor:
+                futures = [executor.submit(run_quick_safe_checksum, cmd, host, table) for (host, cmd) in ch_commands]
+                return [future.result() for future in futures]
 
         def on_position(position):
             # The side's own line reaches this log only at DEBUG; the position
@@ -1049,7 +1064,13 @@ def checksum_one_slice(table_name, table, condition, commands_for, mysql_host, r
                               for host, (reached, offset) in waited.items() if not reached]
             if floors is not None:
                 # Keys the replicas changed after the floor: the snapshot cannot
-                # hold their later state, so they are left out on both sides.
+                # hold their later state, so they are left out on both sides. The
+                # replicas are read now, leaving them out as of their own read
+                # (the connector keeps writing), and listed afterwards for the
+                # MySQL side, which leaves out that list or more.
+                state["replicas"] = read_replicas(
+                    lambda host: changed_keys_filter(exclusion["databases"][host], table, exclusion["column"],
+                                                     condition, floors[host]))
                 keys = set()
                 for host in replica_hosts:
                     keys |= keys_changed_since(fences[host], exclusion["databases"][host], table,
@@ -1059,6 +1080,7 @@ def checksum_one_slice(table_name, table, condition, commands_for, mysql_host, r
                     state["notes"].append(f"more than {exclusion['cap']} keys changed while the slice was read "
                                           "(--snapshot_max_excluded_keys); none were left out")
                     keys = set()
+                    state["replicas"] = read_replicas(None)
                 state["keys"] = sorted(keys)
                 if keys:
                     logging.info(f"Excluded {len(keys)} key(s) of {label} changed after its snapshot began, "
@@ -1070,15 +1092,10 @@ def checksum_one_slice(table_name, table, condition, commands_for, mysql_host, r
             logging.error(f"Checksum ERROR in {label}: the MySQL side printed no snapshot position")
             return (VERDICT_ERROR, 0, 0)
         if mysql_result is None or mysql_result[2] is None:
-            logging.error(f"Checksum ERROR in {label}: no valid checksum from {mysql_host}; the replicas were not read")
+            logging.error(f"Checksum ERROR in {label}: no valid checksum from {mysql_host}"
+                          f"{'; the replicas were not read' if state['replicas'] is None else ''}")
             return (VERDICT_ERROR, 0, 0)
-        ch_extra_where = None
-        if state["keys"]:
-            ch_extra_where = f"`{exclusion['column']}` not in ({','.join(str(key) for key in state['keys'])})"
-        (_, ch_commands) = commands_for(condition, ch_extra_where)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(ch_commands))) as executor:
-            futures = [executor.submit(run_quick_safe_checksum, cmd, host, table) for (host, cmd) in ch_commands]
-            ch_results = [future.result() for future in futures]
+        ch_results = state["replicas"] if state["replicas"] is not None else read_replicas(None)
         note = None if last else f"on pass {pass_number} of {passes}, reading the slice again"
         verdict = compare_slice([mysql_result] + ch_results, mysql_host, replica_hosts, table_name, condition,
                                 recheck_note=note, fence_notes=state["notes"])
@@ -1105,6 +1122,15 @@ def keys_changed_since(fence, database, table, column, condition, version, cap):
                        f"{quote_clickhouse_identifier(database)}.{quote_clickhouse_identifier(table)} "
                        f"WHERE ({condition or '1'}) AND _version > {int(version)} LIMIT {int(cap) + 1}")
     return {int(row[0]) for row in rows}
+
+
+def changed_keys_filter(database, table, column, condition, version):
+    """ClickHouse row filter that leaves out, as of the query that applies it,
+    every key of the slice with a row versioned above ``version`` (the same
+    keys keys_changed_since lists, read in the replica's own query)."""
+    key = quote_clickhouse_identifier(column)
+    return (f"{key} not in (select {key} from {quote_clickhouse_identifier(database)}."
+            f"{quote_clickhouse_identifier(table)} where ({condition or '1'}) and _version > {int(version)})")
 
 
 def replicas_have_version_column(fences, databases, table):
@@ -1595,7 +1621,7 @@ def main():
     parser.add_argument('--snapshot_slice_rows', type=non_negative_int, default=1000000,
                         help='Approximate rows per slice under --consistent_snapshot (default 1000000; 0 = one slice per table); a slice holds its read view only while it is read. A table with more rows gets at least --threads_per_table slices, cut at the quantiles of a sample of its keys. Slices run --threads_per_table at a time.')
     parser.add_argument('--snapshot_max_excluded_keys', type=non_negative_int, default=5000,
-                        help='Under --consistent_snapshot, keys a replica changed while their slice was read are left out on both sides (version fence, needs _version on the replica table); above this many in one slice none are left out and the slice is compared as is (default 5000; the list is passed on the ClickHouse side\'s command line).')
+                        help='Under --consistent_snapshot, keys a replica changed while their slice was read are left out on both sides (version fence, needs _version on the replica table); above this many in one slice none are left out and the slice is compared as is (default 5000; the list is sent to the MySQL side, the replica leaves the same keys out by a subquery on _version).')
     parser.add_argument('--fence_timeout_seconds', type=non_negative_int, default=300,
                         help='Longest wait for a connector to reach a position (default 300); after it the comparison runs anyway and a difference names the connector position.')
     parser.add_argument('--fence_poll_seconds', type=non_negative_int, default=1,
