@@ -133,7 +133,11 @@ public class PreparedStatementExecutor {
      * @param config Connector configuration.
      * @param conn The database connection.
      * @param tableName The name of the target table.
-     * @param columnToDataTypeMap A map of column names to their data types.
+     * @param columnToDataTypeMap A map of column names to their data types (the
+     *                            writer's cached map). A template built by
+     *                            {@link GroupInsertQueryWithBatchRecords} is
+     *                            bound with the map it was built from instead;
+     *                            this map binds only keys that carry none.
      * @param engine The table engine to use.
      * @return true if all queries are successfully executed; false otherwise.
      * @throws Exception if an error occurs during execution.
@@ -223,10 +227,16 @@ public class PreparedStatementExecutor {
                 // Per-batch progress line: INFO by design (spec 03.06 section 3.3) --
                 // operators read the connector's progress from the log.
                 log.info(String.format("*** INSERT QUERY for Database(%s) ***: %s", databaseName, insertQuery));
+                // Bind with the column map the template was built from, not
+                // the writer's cached map: the grouping may have re-read the
+                // table mid-batch (Spec 04.03 section 3.5).
+                Map<String, String> bindingColumnMap =
+                        GroupInsertQueryWithBatchRecords.bindingColumnMap(entry.getKey(), columnToDataTypeMap);
+                requireEveryPlaceholderBindable(entry.getKey().getRight(), bindingColumnMap, tableName);
                 // Create Hashmap of PreparedStatement(Query) -> Set of records
                 // because the data will contain a mix of SQL statements(multiple columns)
                 if (!executePreparedStatement(insertQuery, topicName, entry, bmd, config,
-                        conn, tableName, columnToDataTypeMap, engine)) {
+                        conn, tableName, bindingColumnMap, engine)) {
                     log.error(String.format("**** ERROR: executing prepared statement for Database(%s), " +
                             "table(%s), Query(%s) ****", databaseName, tableName, insertQuery));
                     return false;
@@ -241,6 +251,40 @@ public class PreparedStatementExecutor {
         }
 
         return result;
+    }
+
+    /**
+     * Refuses a template that has a placeholder the binder can never set
+     * (Spec 04.03 section 3.5).
+     *
+     * <p>{@code PreparedStatementFieldMapper.insertPreparedStatement} binds
+     * the columns of the map it walks; a placeholder whose column is not in
+     * that map is never visited, and every handler after the loop is guarded
+     * by the same map. The parameter stays unset and the driver's
+     * {@code addBatch()} dereferences it -- a {@code NullPointerException}
+     * that names nothing. A template's placeholders are always a subset of the
+     * map it was built from, so this only fires when the binding map is a
+     * different view of the table than the template's. Checked once per
+     * template, before any row is bound.</p>
+     *
+     * @throws StaleSchemaCacheException naming the first such column.
+     */
+    private void requireEveryPlaceholderBindable(Map<String, Integer> parameterIndexMap,
+                                                 Map<String, String> bindingColumnMap,
+                                                 String tableName) {
+        if (parameterIndexMap == null) {
+            return;
+        }
+        for (String column : parameterIndexMap.keySet()) {
+            if (bindingColumnMap == null || !bindingColumnMap.containsKey(column)) {
+                throw new StaleSchemaCacheException(String.format(
+                        "Column %s has a placeholder in the generated INSERT but is not in the column "
+                                + "map used to bind it, so its parameter would be left unbound. The "
+                                + "INSERT was built from a different view of the table than the binder's. "
+                                + "Failing the batch instead. Database(%s), Table(%s)",
+                        column, databaseName, tableName));
+            }
+        }
     }
 
     /**
