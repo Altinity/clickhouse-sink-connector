@@ -20,6 +20,7 @@ import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static com.altinity.clickhouse.sink.connector.db.batch.CdcOperation
         .getCdcSectionBasedOnOperation;
@@ -36,6 +37,10 @@ public class GroupInsertQueryWithBatchRecords {
 
     private static final Logger log =
             LogManager.getLogger(GroupInsertQueryWithBatchRecords.class);
+
+    /** See {@link #enforcementLock(String)}. */
+    private static final ConcurrentHashMap<String, Object> ENFORCEMENT_LOCKS =
+            new ConcurrentHashMap<>();
 
     /**
      * The target table's resolved ReplacingMergeTree version column
@@ -128,6 +133,53 @@ public class GroupInsertQueryWithBatchRecords {
             return map == columnNameToDataTypeMap
                     && (map == null ? 0 : map.hashCode()) == columnMapFingerprint;
         }
+    }
+
+    /**
+     * A segment key for an INSERT template: the SQL text and the parameter
+     * index map (equality is unchanged, inherited from {@code Pair}: text
+     * and index map), plus the ClickHouse column map the template was built
+     * from (Spec 04.03 section 3.5).
+     *
+     * <p>The executor must bind a template with the map it was built from.
+     * The grouper may replace its column map mid-batch -- a stale-cache
+     * re-read, a MATERIALIZED column converted to DEFAULT, schema evolution --
+     * while the caller still holds the writer's cached map. Binding with the
+     * cached map walks a column set that lacks the new column, so its
+     * placeholder is never bound and the driver's {@code addBatch()} fails
+     * on the null parameter. Two keys that are equal (same text, same index
+     * map) name the same column list, so the map of the key that opened the
+     * bucket binds every record in it.</p>
+     */
+    static final class InsertTemplate extends MutablePair<String, Map<String, Integer>> {
+        private static final long serialVersionUID = 1L;
+
+        /** The column map the template was built from; never serialised. */
+        private final transient Map<String, String> columnNameToDataTypeMap;
+
+        InsertTemplate(String insertQuery, Map<String, Integer> parameterIndexMap,
+                       Map<String, String> columnNameToDataTypeMap) {
+            super(insertQuery, parameterIndexMap);
+            this.columnNameToDataTypeMap = columnNameToDataTypeMap;
+        }
+    }
+
+    /**
+     * The column map a segment key must be bound with: the map its template
+     * was built from when the key was produced by this grouper, otherwise
+     * {@code fallback} (a key built elsewhere carries no map).
+     *
+     * @param template the segment key.
+     * @param fallback the map to use for a key that carries none.
+     * @return the map to bind the key's records with.
+     */
+    static Map<String, String> bindingColumnMap(MutablePair<String, Map<String, Integer>> template,
+                                                Map<String, String> fallback) {
+        if (template instanceof InsertTemplate
+                && ((InsertTemplate) template).columnNameToDataTypeMap != null) {
+            return ((InsertTemplate) template).columnNameToDataTypeMap;
+        }
+        return fallback;
     }
 
     /**
@@ -520,10 +572,14 @@ public class GroupInsertQueryWithBatchRecords {
         }
         String insertQueryTemplate = response.getKey();
 
-        MutablePair<String, Map<String, Integer>> mp =
-                new MutablePair<>();
-        mp.setLeft(insertQueryTemplate);
-        mp.setRight(response.getValue());
+        // The key carries the column map the template was built from, so the
+        // executor binds the segment with THAT map (Spec 04.03 section 3.5).
+        // It may differ from the writer's cached map the caller passed in:
+        // refreshIfRecordHasUnknownColumn or schema evolution can replace the
+        // map mid-batch, and binding a template built from the fresh map with
+        // the stale one leaves the new column's placeholder unbound.
+        MutablePair<String, Map<String, Integer>> mp = new InsertTemplate(
+                insertQueryTemplate, response.getValue(), columnNameToDataTypeMap);
 
         if (!queryToRecordsMap.containsKey(mp)) {
             List<ClickHouseStruct> newList = new ArrayList<>();
@@ -666,9 +722,19 @@ public class GroupInsertQueryWithBatchRecords {
                     // is a real divergence, and the ClickHouse definition is
                     // what is wrong -- so it is corrected here rather than
                     // merely reported.
-                    if (enforceSourceColumnIsWritable(unknown, tableName,
-                            databaseName, fullyQualifiedTableName, connection,
-                            config)) {
+                    //
+                    // One conversion per table at a time: workers that saw the
+                    // same MATERIALIZED column wait here, and each re-reads
+                    // the kind under the lock, so only the first issues the
+                    // ALTER and the rest find the column already writable
+                    // (Spec 08.04 section 3.4).
+                    boolean writable;
+                    synchronized (enforcementLock(fullyQualifiedTableName)) {
+                        writable = enforceSourceColumnIsWritable(unknown, tableName,
+                                databaseName, fullyQualifiedTableName, connection,
+                                config);
+                    }
+                    if (writable) {
                         // The column is writable now. Re-read so this batch
                         // binds the source value, and bump the version so
                         // every other cached writer picks up the corrected
@@ -705,6 +771,28 @@ public class GroupInsertQueryWithBatchRecords {
                                     + "silently diverge with row counts intact; failing the batch "
                                     + "instead.",
                             unknown, databaseName, tableName, databaseName, tableName, unknown));
+                }
+
+                if (isWritableKind(kind)) {
+                    // A stored column the connector can write (DEFAULT, or an
+                    // ordinary column), yet the writable map read a moment ago
+                    // lacked it: that read raced a concurrent change -- most
+                    // often another worker converting the same MATERIALIZED
+                    // column to DEFAULT between the map read and this kind
+                    // read. The column is not absent, so re-read the map once
+                    // and use it, exactly as the conversion's success path
+                    // does. Only if it is still missing does the loud failure
+                    // below apply (Spec 08.04 section 3.4).
+                    Map<String, String> reread = new DBMetadata(config)
+                            .getColumnsDataTypesForTable(tableName, connection, databaseName);
+                    if (reread != null && containsColumn(reread, unknown)) {
+                        log.info("Column '{}' on {} is writable (default_kind '{}') but was missing "
+                                        + "from the column map read just before; the table changed "
+                                        + "concurrently. Using the re-read column map.",
+                                unknown, fullyQualifiedTableName, kind);
+                        invalidation.invalidateTable(fullyQualifiedTableName);
+                        return reread;
+                    }
                 }
 
                 // Neither ALIAS nor MATERIALIZED: the column does not exist in
@@ -830,6 +918,12 @@ public class GroupInsertQueryWithBatchRecords {
      * @param connection              connection used to read metadata and
      *                                issue the DDL.
      * @param config                  the connector configuration.
+     * <p>A kind that is already writable ({@code DEFAULT} or an ordinary
+     * column) means another worker converted the column after the caller read
+     * MATERIALIZED; no ALTER is issued and true is returned so the caller
+     * re-reads the map. The caller holds {@link #enforcementLock} for the
+     * table around this call.</p>
+     *
      * @return true when the column is now writable and the caller should
      *         re-read the schema; false when there was nothing to enforce or
      *         enforcement did not succeed.
@@ -888,10 +982,41 @@ public class GroupInsertQueryWithBatchRecords {
             return false;
         }
 
+        if (isWritableKind(kind)) {
+            // Converted (or redefined as an ordinary column) since the caller
+            // read MATERIALIZED -- typically by another worker that held the
+            // enforcement lock first. The column is writable: tell the caller
+            // to re-read the map rather than issue a second, identical ALTER.
+            log.info("Column '{}' on {} is already writable (default_kind '{}'); it was "
+                            + "converted concurrently, so no ALTER is issued here.",
+                    columnName, fullyQualifiedTableName, kind);
+            return true;
+        }
+
         log.warn("Column '{}' on {} is no longer MATERIALIZED (default_kind now {}); nothing "
                         + "to convert. The caller decides how a missing column is handled.",
                 columnName, fullyQualifiedTableName, kind == null ? "unknown" : kind);
         return false;
+    }
+
+    /**
+     * Whether a {@code default_kind} names a stored column the connector can
+     * write: {@code DEFAULT}, or an ordinary column (empty kind). Null -- no
+     * row, or the kind could not be read -- is not writable.
+     */
+    private static boolean isWritableKind(String kind) {
+        return kind != null && (kind.isEmpty() || "DEFAULT".equalsIgnoreCase(kind));
+    }
+
+    /**
+     * Per-table lock serialising the MATERIALIZED to DEFAULT conversion
+     * (Spec 08.04 section 3.4), so N workers that see the same column at once
+     * issue one ALTER instead of N. One lock object per fully qualified table
+     * name, never shared between tables; the map is bounded by the number of
+     * replicated tables, like the writer cache.
+     */
+    private static Object enforcementLock(String fullyQualifiedTableName) {
+        return ENFORCEMENT_LOCKS.computeIfAbsent(fullyQualifiedTableName, k -> new Object());
     }
 
     /**

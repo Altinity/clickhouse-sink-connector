@@ -396,19 +396,81 @@ def build_create_table(
     )
     cols_sql = ",\n    ".join(col_defs)
 
+    settings = "index_granularity = 8192"
     if pk_columns:
         order_by = ", ".join(f"`{c}`" for c in pk_columns)
     else:
-        order_by = "tuple()"
+        # Keyless source table.  ORDER BY tuple() would make every row
+        # compare equal, so ReplacingMergeTree would collapse the whole table
+        # to ONE row on merge / FINAL.  Mirror what the streaming connector
+        # creates for a keyless table: every source column (connector-managed
+        # columns excluded) is the sorting key, with allow_nullable_key = 1
+        # when any of them is Nullable (ClickHouseAutoCreateTable
+        # .keylessSortingKey; Spec 08.05 section 3.2).
+        key_columns, nullable_key = keyless_sorting_key(
+            columns, override_config=override_config, schema=schema,
+            table=table_name, database=database,
+        )
+        if not key_columns:
+            raise ValueError(
+                f"Cannot derive a sorting key for {ch_database}.{table_name}: "
+                f"the source table has no primary key and no column. Refusing to "
+                f"create a ReplacingMergeTree table with ORDER BY tuple(), which "
+                f"would collapse every row into one."
+            )
+        logging.error(
+            f"KEYLESS TABLE {schema}.{table_name}: the source table has no PRIMARY KEY. "
+            f"Using every column as the ReplacingMergeTree sorting key so distinct "
+            f"rows stay distinct; rows identical in every column will still collapse. "
+            f"Give the table a primary key at the source."
+        )
+        order_by = ", ".join(f"`{c}`" for c in key_columns)
+        if nullable_key:
+            settings += ", allow_nullable_key = 1"
 
     ddl = (
         f"CREATE TABLE IF NOT EXISTS `{ch_database}`.`{table_name}`\n"
         f"(\n    {cols_sql}\n)\n"
         f"ENGINE = ReplacingMergeTree(_version, is_deleted)\n"
         f"ORDER BY ({order_by})\n"
-        f"SETTINGS index_granularity = 8192"
+        f"SETTINGS {settings}"
     )
     return ddl
+
+
+# Columns the connector manages itself; never part of a source-derived key
+# (ClickHouseAutoCreateTable.isConnectorManagedColumn).
+_CONNECTOR_MANAGED_COLUMNS = frozenset({
+    '_version', '_sign', 'is_deleted', '_is_deleted',
+    '_valid_from', '_valid_to', '_operation',
+})
+
+
+def keyless_sorting_key(columns, override_config=None, schema=None, table=None,
+                        database=None):
+    """
+    Sorting key for a source table without a primary key: every column in
+    ordinal order, minus the connector-managed columns.  Returns
+    (key_columns, any_nullable) where any_nullable is True when one of the
+    key columns is declared Nullable(...) (after direct overrides), which
+    ClickHouse only accepts with allow_nullable_key = 1.
+    """
+    db = database or "*"
+    key_columns = []
+    any_nullable = False
+    for col in columns:
+        name = col['column_name']
+        if name.lower() in _CONNECTOR_MANAGED_COLUMNS:
+            continue
+        ch_type = col['ch_type']
+        if override_config and schema and table:
+            direct_type = override_config.get_direct_override(db, schema, table, name)
+            if direct_type:
+                ch_type = direct_type
+        if ch_type.strip().startswith('Nullable('):
+            any_nullable = True
+        key_columns.append(name)
+    return key_columns, any_nullable
 
 
 def build_insert_structure(columns) -> str:
@@ -432,21 +494,36 @@ def build_insert_structure(columns) -> str:
 def build_select_columns(columns) -> str:
     """
     Build the column list for the SELECT clause of clickhouse-client input().
-    Timestamp columns need explicit cast; all others are passed as-is.
+    Temporal columns are converted explicitly; all others are passed as-is.
 
     NOTE: Uses double-quote identifiers instead of backticks so that column
     names survive shell expansion when embedded in shell commands.
+
+    The COPY session pins TimeZone='UTC' and DateStyle='ISO, YMD'
+    (postgres_dumper.PG_SESSION_SETTINGS), so temporal text is always
+    'YYYY-MM-DD[ HH:MI:SS[.ffffff][+00]][ BC]', 'infinity' or '-infinity'.
+    The conversion mirrors what the streaming connector writes (Spec 07.03
+    section 3.3): infinity / -infinity and values outside the ClickHouse
+    range saturate to the type's bounds; a value that still does not parse
+    raises (throwIf), so the INSERT fails loudly instead of storing NULL or
+    the type default.  A BC timestamptz is refused, as the connector refuses
+    it (FM-07.03-6).  Zone-less text is parsed in the zone the COLUMN
+    declares, which is how ClickHouse reads the wall-clock digits the
+    connector binds (Spec 07.03 section 3.1.3).
     """
     parts = []
-    for col in columns:
+    for idx, col in enumerate(columns):
         name = col['column_name']
         ch_type = col['ch_type']
-        bare = ch_type.replace('Nullable(', '').rstrip(')')
-        # Cast timestamps so CH accepts them from CSV strings
-        if bare.startswith('DateTime64'):
-            parts.append(f'parseDateTime64BestEffortOrNull("{name}", 6)')
+        bare = _strip_nullable(ch_type)
+        dt64 = _DATETIME64_RE.match(bare)
+        if dt64:
+            parts.append(_datetime64_expr(
+                name, idx, int(dt64.group(1)), dt64.group(2) or None,
+                refuse_bc=(col.get('pg_type', '').lower() == 'timestamp with time zone'),
+            ))
         elif bare == 'Date32':
-            parts.append(f'toDate32OrNull("{name}")')
+            parts.append(_date32_expr(name, idx))
         elif bare == 'UInt8' and col.get('pg_type', '').lower() in ('boolean', 'bool'):
             # CSV will have 't'/'f' from PostgreSQL, convert to 0/1
             # For Nullable columns, preserve NULL (don't convert to 0)
@@ -460,6 +537,85 @@ def build_select_columns(columns) -> str:
         else:
             parts.append(f'"{name}"')
     return ", ".join(parts)
+
+
+# ClickHouse DateTime64 / Date32 range, as bounded by the streaming connector
+# (DataTypeRange.DATETIME64_MIN/MAX: 1900-01-01 00:00:00 .. 2299-12-31
+# 23:59:59 UTC; Date32 1900-01-01 .. 2299-12-31).
+_TEMPORAL_MIN_YEAR = 1900
+_TEMPORAL_MAX_YEAR = 2299
+_DATETIME64_MIN_UTC = '1900-01-01 00:00:00'
+_DATETIME64_MAX_UTC = '2299-12-31 23:59:59'
+_DATE32_MIN = '1900-01-01'
+_DATE32_MAX = '2299-12-31'
+
+_DATETIME64_RE = re.compile(r"^DateTime64\(\s*(\d+)\s*(?:,\s*'([^']*)'\s*)?\)$")
+
+
+def _strip_nullable(ch_type: str) -> str:
+    t = ch_type.strip()
+    if t.startswith('Nullable(') and t.endswith(')'):
+        return t[len('Nullable('):-1].strip()
+    return t
+
+
+def _year_expr(c: str) -> str:
+    # Leading year digits of ISO text; NULL for 'infinity' / '-infinity'.
+    return f"toInt32OrNull(substring({c}, 1, position({c}, '-') - 1))"
+
+
+def _refusal_message(name: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_ .$-]", "?", name)
+    return (f"ch-pg-dump: column {safe} holds a temporal value with no "
+            f"ClickHouse representation")
+
+
+def _guarded(name: str, idx: int, value_expr: str, extra_refusal: str = None) -> str:
+    """Wrap value_expr so a non-NULL input that converts to NULL raises."""
+    c = f'"{name}"'
+    alias = f'"_ch_pg_dump_v{idx}"'
+    refuse = f"isNull(({value_expr}) AS {alias})"
+    if extra_refusal:
+        refuse = f"({refuse} OR {extra_refusal})"
+    return (f"if(throwIf(isNotNull({c}) AND {refuse}, "
+            f"'{_refusal_message(name)}') = 0, {alias}, NULL)")
+
+
+def _datetime64_expr(name: str, idx: int, precision: int, zone, refuse_bc: bool) -> str:
+    c = f'"{name}"'
+    tz = zone or 'UTC'
+    # Bounds are the connector's UTC instants, expressed in the column zone.
+    lo = f"toTimeZone(toDateTime64('{_DATETIME64_MIN_UTC}', {precision}, 'UTC'), '{tz}')"
+    hi = f"toTimeZone(toDateTime64('{_DATETIME64_MAX_UTC}', {precision}, 'UTC'), '{tz}')"
+    year = _year_expr(c)
+    branches = [
+        f"isNull({c}), NULL",
+        f"{c} = 'infinity', {hi}",
+        f"{c} = '-infinity', {lo}",
+    ]
+    if not refuse_bc:
+        branches.append(f"endsWith({c}, ' BC'), {lo}")
+    branches += [
+        f"{year} < {_TEMPORAL_MIN_YEAR}, {lo}",
+        f"{year} > {_TEMPORAL_MAX_YEAR}, {hi}",
+        f"parseDateTime64BestEffortOrNull({c}, {precision}, '{tz}')",
+    ]
+    value = "multiIf(" + ", ".join(branches) + ")"
+    return _guarded(name, idx, value,
+                    extra_refusal=f"endsWith({c}, ' BC')" if refuse_bc else None)
+
+
+def _date32_expr(name: str, idx: int) -> str:
+    c = f'"{name}"'
+    lo = f"toDate32('{_DATE32_MIN}')"
+    hi = f"toDate32('{_DATE32_MAX}')"
+    year = _year_expr(c)
+    value = (
+        f"multiIf(isNull({c}), NULL, {c} = 'infinity', {hi}, {c} = '-infinity', {lo}, "
+        f"endsWith({c}, ' BC'), {lo}, {year} < {_TEMPORAL_MIN_YEAR}, {lo}, "
+        f"{year} > {_TEMPORAL_MAX_YEAR}, {hi}, toDate32OrNull({c}))"
+    )
+    return _guarded(name, idx, value)
 
 
 # ---------------------------------------------------------------------------
