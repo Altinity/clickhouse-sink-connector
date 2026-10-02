@@ -168,16 +168,25 @@ class TestBehindConnector(unittest.TestCase):
 
 class TestSlices(unittest.TestCase):
 
-    def test_slices_cover_every_key_with_open_ends(self):
-        chunks = [{"min_pk": 1, "max_pk": 100}, {"min_pk": 101, "max_pk": 200}, {"min_pk": 205, "max_pk": 300}]
+    def test_slices_start_at_the_smallest_key_and_stay_open_above(self):
+        # Every slice is bounded below: an open lower end made the replica scan its
+        # whole history (28.9 billion rows of an unpartitioned replica on the first
+        # dev run) for the first slice of a date-filtered source.
+        chunks = [{"min_pk": 68645500028, "max_pk": 1}, {"min_pk": 68646190772, "max_pk": 1},
+                  {"min_pk": 68654473943, "max_pk": 1}]
         with patch.object(tl, "divide_table_into_even_chunks", return_value=iter(chunks)):
             conditions = tl.snapshot_slices(MagicMock(), "orders", "id", " 1=1 ", 100)
-        self.assertEqual(conditions, ["`id` < 101", "`id` >= 101 and `id` < 205", "`id` >= 205"])
+        self.assertEqual(conditions, ["`id` >= 68645500028 and `id` < 68646190772",
+                                      "`id` >= 68646190772 and `id` < 68654473943",
+                                      "`id` >= 68654473943"])
+        self.assertTrue(all(">=" in c for c in conditions), "no slice is open below")
 
-    def test_no_integer_key_or_one_chunk_is_one_slice(self):
+    def test_no_integer_key_or_no_rows_is_one_slice_and_one_chunk_is_bounded_below(self):
         self.assertEqual(tl.snapshot_slices(MagicMock(), "orders", None, " 1=1 ", 100), [None])
-        with patch.object(tl, "divide_table_into_even_chunks", return_value=iter([{"min_pk": 1, "max_pk": 9}])):
+        with patch.object(tl, "divide_table_into_even_chunks", return_value=iter([])):
             self.assertEqual(tl.snapshot_slices(MagicMock(), "orders", "id", " 1=1 ", 100), [None])
+        with patch.object(tl, "divide_table_into_even_chunks", return_value=iter([{"min_pk": 7, "max_pk": 9}])):
+            self.assertEqual(tl.snapshot_slices(MagicMock(), "orders", "id", " 1=1 ", 100), ["`id` >= 7"])
 
     def test_partition_placeholder_is_resolved_for_slicing(self):
         with patch.object(tl, "args", argparse.Namespace(partition_date=None), create=True):

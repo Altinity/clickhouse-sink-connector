@@ -493,9 +493,13 @@ writes, not for a whole-table scan.
 1. **Slices.** On its own connection the worker splits the table on the first integer primary-key column
    (`mysql_pk_columns(..., is_integer=True)`) with `divide_table_into_even_chunks` and
    `--snapshot_slice_rows`, over the MySQL filter with `{partition_expression}` resolved
-   (`mysql_where_for_slicing`). The slice conditions are `pk < b1`, `b1 <= pk < b2`, ..., `pk >= bn`
-   (`snapshot_slices`): open at both ends, so rows inserted during the run belong to a slice. A table without
-   an integer key, or with one chunk, is one slice (`all rows`).
+   (`mysql_where_for_slicing`). The slice conditions are `b0 <= pk < b1`, `b1 <= pk < b2`, ..., `pk >= bn`
+   (`snapshot_slices`), where `b0` is the smallest key of the filtered rows: open above, so rows inserted with
+   higher keys during the run belong to a slice, and bounded below, because on a replica sorted by the key an
+   open lower end reads every older row of the table (on the first dev run an unpartitioned replica of a
+   date-partitioned source read 27.7 billion rows in ten minutes for the first slice while the bounded slices
+   read 0.7-8.5 million in under a second). One chunk gives the single slice `pk >= b0`. A table without an
+   integer key, or with no rows in the filter, is one slice (`all rows`).
 2. **One slice, one snapshot, held.** With the version fence (below) the driver first reads, per replica, the
    slice's highest `_version` over all its rows (`slice_max_version`, no `FINAL`): the floor. The MySQL side
    then runs with `--threads_per_table 1 --consistent_snapshot --exclude_keys_from_stdin` and the slice
@@ -1058,7 +1062,7 @@ The suite was run on 2026-10-01 from `sink-connector/python` with the toolset ve
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestConnectorWait::test_busy_source_behind_connector_times_out_and_says_so`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestConnectorOffset::test_no_or_several_offsets_are_errors`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestLockAndWait::test_wait_replaces_the_fixed_sleep_and_happens_under_the_lock`
-  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_slices_cover_every_key_with_open_ends`
+  - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestSlices::test_slices_start_at_the_smallest_key_and_stay_open_above`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_difference_read_again_and_gone_is_a_match`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_persistent_difference_warns_with_the_slice`
   - `sink-connector/python/db_compare/tests/test_checksum_connector_fence.py::TestOneSlice::test_keys_changed_after_the_floor_are_left_out_on_both_sides`

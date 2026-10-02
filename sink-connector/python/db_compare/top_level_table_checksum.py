@@ -853,20 +853,23 @@ def mysql_where_for_slicing(where, partition_key):
 
 def snapshot_slices(conn, table, pk, mysql_where, slice_rows):
     """Row conditions that split the table into PK-range slices of about
-    ``slice_rows`` rows. The first slice is open below and the last open above,
-    so together they cover every key, including rows inserted while the run
-    goes on. A table without an integer primary key is one slice (None)."""
+    ``slice_rows`` rows. The first slice starts at the smallest key of the
+    filtered rows and the last is open above, so together they cover every key
+    of the filtered set, including rows inserted (with higher keys) while the
+    run goes on. Every slice is bounded below: on a replica sorted by the key,
+    an open lower end would scan every older row of the table (an unpartitioned
+    replica of a date-partitioned source reads its whole history for the first
+    slice). A table without an integer primary key, or with no rows in the
+    filter, is one slice (None)."""
     if not pk or mysql_where is None:
         return [None]
     starts = [int(chunk['min_pk']) for chunk in divide_table_into_even_chunks(conn, table, slice_rows, pk, mysql_where)]
-    boundaries = starts[1:]
-    column = f"`{pk}`"
-    if not boundaries:
+    if not starts:
         return [None]
-    conditions = [f"{column} < {boundaries[0]}"]
-    conditions += [f"{column} >= {low} and {column} < {high}" for (low, high) in zip(boundaries, boundaries[1:])]
-    conditions.append(f"{column} >= {boundaries[-1]}")
-    return conditions
+    column = f"`{pk}`"
+    edges = starts + [None]
+    return [f"{column} >= {low}" + (f" and {column} < {high}" if high is not None else "")
+            for (low, high) in zip(edges, edges[1:])]
 
 
 def compare_slice(results, mysql_host, replica_hosts, table_name, condition, recheck_note=None, fence_notes=()):
