@@ -258,6 +258,49 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     return statements
 
 
+def binary_log_status_statement(version):
+    """SHOW BINARY LOG STATUS from MySQL 8.2 (8.4 removed SHOW MASTER STATUS),
+    SHOW MASTER STATUS before. Chosen from @@version, never by trying: a
+    failed statement inside the snapshot transaction is avoided."""
+    match = re.match(r"(\d+)\.(\d+)", str(version))
+    if match and (int(match.group(1)), int(match.group(2))) >= (8, 2):
+        return "SHOW BINARY LOG STATUS"
+    return "SHOW MASTER STATUS"
+
+
+def binary_log_head(conn):
+    """(file, position) of the end of the binary log. Needs the REPLICATION
+    CLIENT privilege; raises when no row comes back (binary log disabled or
+    privilege missing)."""
+    (rowset, _) = execute_mysql(conn, "SELECT @@version")
+    statement = binary_log_status_statement(rowset.fetchone()[0])
+    (rowset, _) = execute_mysql(conn, statement)
+    row = rowset.fetchone()
+    if row is None:
+        raise RuntimeError(f"Cannot read the binary log position: {statement} returned no row "
+                           "(binary log disabled, or REPLICATION CLIENT missing)")
+    return (str(row[0]), int(row[1]))
+
+
+def snapshot_binlog_position(conn):
+    """(file, position, kind) of the binary log for the consistent snapshot
+    this session just started.
+
+    Percona Server reports the position of the snapshot itself in the session
+    status variables Binlog_snapshot_file / Binlog_snapshot_position: kind
+    'exact'. Other servers have no such variables; the end of the binary log
+    read right after the snapshot started is used instead: kind 'upper_bound'
+    (it can include transactions committed between the two statements, which
+    only makes a slice differ and be checked again, never match falsely)."""
+    (rowset, _) = execute_mysql(conn, "SHOW SESSION STATUS WHERE Variable_name IN "
+                                      "('Binlog_snapshot_file', 'Binlog_snapshot_position')")
+    status = {str(row[0]): row[1] for row in rowset}
+    if status.get('Binlog_snapshot_file') and status.get('Binlog_snapshot_position') not in (None, ''):
+        return (str(status['Binlog_snapshot_file']), int(status['Binlog_snapshot_position']), 'exact')
+    (binlog_file, binlog_position) = binary_log_head(conn)
+    return (binlog_file, binlog_position, 'upper_bound')
+
+
 def get_tables_from_regexp(conn, tables_regexp):
     return get_tables_from_regex(conn, args.no_wc, args.mysql_database, tables_regexp)
 
@@ -278,6 +321,15 @@ def calculate_sql_checksum(conn, table, where, excluded_columns,  include_floati
          external_table_types, clamped_expression) = get_table_checksum_query(table, conn, args.binary_encoding, where, excluded_columns,  include_floating_point_columns, include_json_columns)
         statements = select_table_statements(
             table, query, select_query, distributed_by, external_table_types, where, clamped_expression)
+        if getattr(args, "consistent_snapshot", False):
+            # One InnoDB read view for the whole checksum query, and the binlog
+            # position it corresponds to, so the driver can wait until the
+            # connector has applied everything the view contains (spec 13.06
+            # section 3.7.4). No lock is taken.
+            execute_mysql(conn, "START TRANSACTION WITH CONSISTENT SNAPSHOT")
+            (binlog_file, binlog_position, kind) = snapshot_binlog_position(conn)
+            logging.info(f"Snapshot position for table {args.mysql_database}.{table} = "
+                         f"{binlog_file} {binlog_position} {kind}")
         result = compute_checksum(table, statements, conn)
     finally:
         conn.close()
@@ -418,6 +470,8 @@ def build_argument_parser():
     parser.add_argument('--threads_per_table', type=int,
                         help='number of parallel threads per table', default=1)
     parser.add_argument('--chunk_size', type=int, help='Chunk size', default=10000)
+    parser.add_argument('--consistent_snapshot', action='store_true', default=False,
+                        help='Read the table in one START TRANSACTION WITH CONSISTENT SNAPSHOT (no lock) and log the binlog position of that snapshot. Requires --threads_per_table 1.')
     parser.add_argument('--threads', type=int,
                         help='number of tables in parallel to compute', default=1)
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
@@ -433,6 +487,9 @@ def main():
     args = parser.parse_args()
     (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
     validate_timezone(args.source_timezone, '--source_timezone')
+    if args.consistent_snapshot and args.threads_per_table > 1:
+        # PK chunks run on separate connections, each with its own read view.
+        parser.error("--consistent_snapshot reads through one connection: use --threads_per_table 1")
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)

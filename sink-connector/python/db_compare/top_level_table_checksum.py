@@ -7,6 +7,10 @@ from db.mysql import *
 from db.checksum_common import validate_timezone, JSON_COLUMNS_HINT_RE
 import concurrent.futures
 import functools
+import json
+import threading
+from db.clickhouse import (clickhouse_connection, clickhouse_execute_conn,
+                           resolve_credentials_from_config as clickhouse_credentials)
 from datetime import datetime
 from subprocess import Popen, PIPE
 import subprocess
@@ -193,31 +197,31 @@ def expected_side_name(cmd, table):
     return None
 
 
-def run_quick_safe_checksum(cmd, host, table):
+def run_quick_safe_checksum(cmd, host, table, with_output=False):
+    """One side's (host, table, md5, count), or None when it failed. With
+    ``with_output`` returns (result, raw output)."""
     start = time.perf_counter()
     (rc, stdout) = run_quick_safe_command(cmd)
     duration = time.perf_counter() - start
     side_failed = relay_side_messages(stdout, host, table)
+    result = None
     if rc == '0' and side_failed:
         logging.error(f"{command_text(cmd)}. logged an ERROR although it exited 0: no result from {host} for {table}")
         log_side_output_tail(stdout, host, table)
-        return None
-    if rc == '0':
+    elif rc == '0':
         (table, checksum, count) = parse_checksum(stdout, table, expected_side_name(cmd, table))
         if checksum is None:
             log_side_output_tail(stdout, host, table)
         logging.info(f"{( host, table, checksum, count)} in {duration:0.3f} seconds" )
-        return ( host, table, checksum, count)
+        result = ( host, table, checksum, count)
     else:
         logging.error(f"{command_text(cmd)}. failed with return code {rc}")
         log_side_output_tail(stdout, host, table)
-        return None
+    return (result, stdout) if with_output else result
 
 
-
-def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306, timestamp_columns=(), binary_columns=(), json_columns=(), lock_wait_timeout=None):
-    table_name = f"{mysql_database}.{table}"
-    logging.info(f"Checksumming {table_name}")
+def table_where(table_name, where, table_overrides_map):
+    """``where`` with the table's config override ANDed on."""
     if table_name in table_overrides_map and 'where' in table_overrides_map[table_name]:
         if where is None:
             where =''
@@ -225,9 +229,17 @@ def compute_checksum (mysql_database, database_override_map, table_overrides_map
             where+= " and "
         logging.info(f"Where override found for {table_name}")
         where+= table_overrides_map[table_name]['where']
+    return where
 
+
+def side_commands(mysql_database, database_override_map, table, mysql_host, replica_hosts, pk, max_pk, where,
+                  ignored_columns=[], debug_output=False, defaults_file=None, partition_key=None, timestamp_columns=(),
+                  binary_columns=(), json_columns=(), mysql_threads_per_table=None, mysql_extra_flags=()):
+    """(MySQL side argv, [(replica host, ClickHouse side argv)]) for one table and ``where``."""
     # Build MySQL checksum command
-    mysql_cmd = get_mysql_checksum_command(mysql_host, mysql_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file)
+    mysql_cmd = get_mysql_checksum_command(mysql_host, mysql_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file, threads_per_table=mysql_threads_per_table)
+    if mysql_extra_flags:
+        mysql_cmd = list(mysql_cmd) + list(mysql_extra_flags)
 
     # Build ClickHouse checksum commands
     ch_commands = []
@@ -244,19 +256,40 @@ def compute_checksum (mysql_database, database_override_map, table_overrides_map
             logging.info(f"Overriding database for host {replica_host} from {mysql_database} to {replica_database}")
         cmd = get_clickhouse_checksum_command(replica_host, replica_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns)
         ch_commands.append((replica_host, cmd))
+    return (mysql_cmd, ch_commands)
+
+
+def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306, timestamp_columns=(), binary_columns=(), json_columns=(), lock_wait_timeout=None, fences=None):
+    table_name = f"{mysql_database}.{table}"
+    logging.info(f"Checksumming {table_name}")
+    where = table_where(table_name, where, table_overrides_map)
+    (mysql_cmd, ch_commands) = side_commands(
+        mysql_database, database_override_map, table, mysql_host, replica_hosts, pk, max_pk, where,
+        ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file,
+        partition_key=partition_key, timestamp_columns=timestamp_columns, binary_columns=binary_columns,
+        json_columns=json_columns)
 
     # Lock held during all checksums (MySQL source + ClickHouse replicas)
-    # to ensure a consistent comparison. The sleep_after_lock allows
-    # replication lag to settle before checksumming — unlocking early would
-    # let new writes reach ClickHouse and invalidate the comparison.
+    # to ensure a consistent comparison. Without --wait_for_connector the
+    # sleep_after_lock is the only allowance for replication lag; with it, the
+    # end of the source binary log is read under the lock -- every write to
+    # the table is before it -- and each replica's connector is awaited up to
+    # that position (spec 13.06 section 3.7.1). Unlocking early would let new
+    # writes reach ClickHouse and invalidate the comparison.
     lock_conn = None
+    head_conn = None
     try:
         if lock_enabled:
             lock_conn = get_mysql_connection(mysql_host, mysql_user,
                                              mysql_password, mysql_port, mysql_database)
             logging.info(f"Locking table {table} on source {mysql_host}")
             lock_tables(lock_conn, table, lock_wait_timeout=lock_wait_timeout)
-            time.sleep(sleep_after_lock)
+            if not fences:
+                time.sleep(sleep_after_lock)
+        if fences:
+            head_conn = lock_conn or get_mysql_connection(mysql_host, mysql_user, mysql_password, mysql_port, mysql_database)
+            target = source_binary_log_head(head_conn)
+            wait_for_connectors(fences, replica_hosts, target, lambda: source_binary_log_head(head_conn), table_name)
 
         # Run the MySQL source checksum and all ClickHouse replica checksums
         # concurrently under the lock. The lock keeps the source frozen so
@@ -280,6 +313,8 @@ def compute_checksum (mysql_database, database_override_map, table_overrides_map
             results = [future.result() for future in futures]
         return results
     finally:
+        if head_conn is not None and head_conn is not lock_conn:
+            close_connection(head_conn, table_name)
         if lock_conn:
             try:
                 unlock_tables(lock_conn, table)
@@ -335,7 +370,7 @@ def normalize_where_override(table, where):
     return where
 
 
-def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None):
+def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, threads_per_table=None):
     partition_date = args.partition_date
     where_value = " 1=1 "
     if where:
@@ -361,7 +396,7 @@ def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, i
     # script's own. Its output is parsed in Python (parse_checksum), not by
     # grep|awk, so its WARNING lines are kept (spec 13.06 FM-13.06-3, -8).
     cmd = ["python", "db_compare/mysql_table_checksum.py",
-           "--threads_per_table", str(args.threads_per_table), f"--threads={args.threads}",
+           "--threads_per_table", str(args.threads_per_table if threads_per_table is None else threads_per_table), f"--threads={args.threads}",
            "--min_date_value", "1900-01-01", "--mysql_host", str(mysql_host), "--mysql_database", str(database),
            "--tables_regex", exact_table_regex(table), "--where", where_value,
            "--source_timezone", str(args.source_timezone), "--binary_encoding", str(args.binary_encoding)]
@@ -533,6 +568,338 @@ def verify_table(checksum, mysql_host, replica_hosts, table_name, recheck_differ
         time.sleep(recheck_delay_seconds)
 
 
+# ---------------------------------------------------------------------------
+# Waiting for the connector (spec 13.06 sections 3.7.1 and 3.7.4)
+# ---------------------------------------------------------------------------
+# The MySQL side prints this INFO line under --consistent_snapshot.
+SNAPSHOT_LINE = re.compile(r" - INFO - .* - Snapshot position for table (?P<table>\S.*) = "
+                           r"(?P<file>\S+) (?P<position>\d+) (?P<kind>exact|upper_bound)\s*$")
+
+
+OFFSET_TABLE_NAME = re.compile(r"^[A-Za-z0-9_]+(\.[A-Za-z0-9_]+)?$")
+
+
+class ConnectorFenceError(Exception):
+    """The connector offset of a replica cannot be read (missing table, no
+    row, several rows): the table gets no verdict."""
+
+
+class BinlogPositionError(Exception):
+    """The source binary log position cannot be read (binary log disabled or
+    REPLICATION CLIENT missing): the table gets no verdict."""
+
+
+def binlog_position_key(file_name, position):
+    """Sortable (sequence, position) of a binlog coordinate (binlog.000042, 157)."""
+    return (int(str(file_name).rsplit(".", 1)[1]), int(position))
+
+
+def parse_snapshot_position(data, expected_name):
+    """(file, position, kind) from the MySQL side's output, else None.
+    Exactly one ``Snapshot position for table`` line naming ``expected_name``
+    must be present."""
+    matches = [m for m in (SNAPSHOT_LINE.search(line) for line in side_output_text(data).splitlines()) if m]
+    if len(matches) != 1 or matches[0].group('table') != expected_name:
+        logging.error(f"Invalid snapshot output for {expected_name}: expected one 'Snapshot position for table "
+                      f"{expected_name}' line, found {[m.group('table') for m in matches]}")
+        return None
+    match = matches[0]
+    return (match.group('file'), int(match.group('position')), match.group('kind'))
+
+
+def source_binary_log_head(conn):
+    """(file, position) of the end of the source's binary log: SHOW BINARY LOG
+    STATUS from MySQL 8.2, SHOW MASTER STATUS before (chosen from @@version).
+    Needs the REPLICATION CLIENT privilege; raises BinlogPositionError when it
+    cannot be read."""
+    try:
+        (rowset, _) = execute_mysql(conn, "SELECT @@version")
+        version = rowset.fetchone()[0]
+        match = re.match(r"(\d+)\.(\d+)", str(version))
+        modern = bool(match) and (int(match.group(1)), int(match.group(2))) >= (8, 2)
+        statement = "SHOW BINARY LOG STATUS" if modern else "SHOW MASTER STATUS"
+        (rowset, _) = execute_mysql(conn, statement)
+        row = rowset.fetchone()
+    except Exception as e:
+        raise BinlogPositionError(f"Cannot read the source binary log position: {e}") from e
+    if row is None:
+        raise BinlogPositionError(f"Cannot read the source binary log position: {statement} returned no row "
+                                  "(binary log disabled, or REPLICATION CLIENT missing)")
+    return (str(row[0]), int(row[1]))
+
+
+class ConnectorFence:
+    """Waits until the connector that writes one replica has applied the source
+    binary log up to a position.
+
+    The connector keeps its durable offset in ``offset_table`` on the replica
+    (offset.storage.jdbc.table.name): one row whose ``offset_val`` JSON holds
+    the source binlog ``file`` and ``pos``. Debezium records the start of the
+    transaction it is in, so the fence is reached when that position is at or
+    past the target: every transaction before the target is then applied. A
+    source that writes nothing after the target never moves the offset past it;
+    when the end of the source binary log is still the target and the offset
+    has not moved for ``idle_seconds``, the wait ends as well (nothing is in
+    flight). After ``timeout_seconds`` the wait gives up and says so; the
+    comparison still runs, and a difference it finds is reported with the
+    connector position."""
+
+    def __init__(self, replica_host, offset_table, offset_key_contains=None, port=9000,
+                 config_file="./clickhouse-client.xml", timeout_seconds=300, poll_seconds=1, idle_seconds=10):
+        self.replica_host = replica_host
+        self.offset_table = offset_table
+        self.offset_key_contains = offset_key_contains
+        self.port = int(port)
+        self.config_file = config_file
+        self.timeout_seconds = timeout_seconds
+        self.poll_seconds = poll_seconds
+        self.idle_seconds = idle_seconds
+
+    def offset(self):
+        """(file, position) of the connector's durable offset."""
+        (user, password) = clickhouse_credentials(self.config_file)
+        conn = clickhouse_connection(self.replica_host, user=user, password=password, port=self.port)
+        try:
+            rows = clickhouse_execute_conn(conn, f"SELECT offset_key, offset_val FROM {self.offset_table} FINAL")
+        except Exception as e:
+            raise ConnectorFenceError(f"Cannot read the connector offset from {self.offset_table} on "
+                                      f"{self.replica_host}: {e}") from e
+        finally:
+            conn.close()
+        offsets = []
+        for (key, value) in rows:
+            if self.offset_key_contains and self.offset_key_contains not in key:
+                continue
+            try:
+                parsed = json.loads(value)
+            except ValueError:
+                continue
+            if "file" in parsed and "pos" in parsed:
+                offsets.append((key, str(parsed["file"]), int(parsed["pos"])))
+        if len(offsets) != 1:
+            raise ConnectorFenceError(f"Expected one binlog offset in {self.offset_table} on {self.replica_host}"
+                                      f"{' with a key containing ' + repr(self.offset_key_contains) if self.offset_key_contains else ''}"
+                                      f", found {len(offsets)}: {[key for (key, _, _) in offsets]} "
+                                      "(set offset_key_contains in the replica config)")
+        return offsets[0][1:]
+
+    def wait(self, target, source_head, label):
+        """Return (reached, offset). ``target`` is (file, position);
+        ``source_head`` returns the end of the source binary log."""
+        target_key = binlog_position_key(*target)
+        start = time.monotonic()
+        (last_offset, last_change) = (None, start)
+        while True:
+            offset = self.offset()
+            if binlog_position_key(*offset) >= target_key:
+                logging.info(f"Connector on {self.replica_host} reached {target[0]}:{target[1]} for {label} "
+                             f"(offset {offset[0]}:{offset[1]}, waited {time.monotonic() - start:0.1f} s)")
+                return (True, offset)
+            now = time.monotonic()
+            if offset != last_offset:
+                (last_offset, last_change) = (offset, now)
+            head = source_head()
+            if binlog_position_key(*head) <= target_key and now - last_change >= self.idle_seconds:
+                logging.info(f"Connector on {self.replica_host} is idle at {offset[0]}:{offset[1]} and the source "
+                             f"wrote nothing after {target[0]}:{target[1]} for {label}: nothing is in flight")
+                return (True, offset)
+            if now - start >= self.timeout_seconds:
+                logging.info(f"Connector on {self.replica_host} did NOT reach {target[0]}:{target[1]} for {label} "
+                             f"within {self.timeout_seconds} s (offset {offset[0]}:{offset[1]}); comparing anyway")
+                return (False, offset)
+            time.sleep(self.poll_seconds)
+
+
+def build_connector_fences(config):
+    """{replica host: ConnectorFence} from each replica's ``offset_table``
+    (and optional ``offset_key_contains``). Every replica must name one."""
+    fences = {}
+    for replica in config['replicas']:
+        clickhouse = replica['clickhouse']
+        if not clickhouse.get('offset_table'):
+            logging.error(f"--wait_for_connector and --consistent_snapshot need replicas[].clickhouse.offset_table "
+                          f"(the connector's offset.storage.jdbc.table.name) for {clickhouse['host']}")
+            sys.exit(1)
+        if not OFFSET_TABLE_NAME.match(str(clickhouse['offset_table'])):
+            logging.error(f"replicas[].clickhouse.offset_table for {clickhouse['host']} must be <database>.<table> "
+                          f"(letters, digits, underscores): {clickhouse['offset_table']!r}")
+            sys.exit(1)
+        fences[clickhouse['host']] = ConnectorFence(
+            clickhouse['host'], clickhouse['offset_table'], clickhouse.get('offset_key_contains'),
+            port=args.clickhouse_port, config_file=args.clickhouse_config_file,
+            timeout_seconds=args.fence_timeout_seconds, poll_seconds=args.fence_poll_seconds,
+            idle_seconds=args.fence_idle_seconds)
+    return fences
+
+
+def wait_for_connectors(fences, replica_hosts, target, source_head, label):
+    """Wait on every replica's connector; return {replica host: (reached, offset)}."""
+    return {host: fences[host].wait(target, source_head, label) for host in replica_hosts}
+
+
+# ---------------------------------------------------------------------------
+# --consistent_snapshot: per-slice snapshots (spec 13.06 section 3.7.4)
+# ---------------------------------------------------------------------------
+def mysql_where_for_slicing(where, partition_key):
+    """The MySQL row filter of the sides (``where`` plus the --partition_date
+    predicate) with ``{partition_expression}`` resolved, or None when it
+    cannot be resolved (no partition key)."""
+    where_value = " 1=1 "
+    if where:
+        where_value += f" and {where} "
+    if args.partition_date:
+        where_value += f" and {{partition_expression}}={args.partition_date:%Y%m%d}"
+    if "{partition_expression}" in where_value:
+        if not partition_key:
+            return None
+        where_value = where_value.replace("{partition_expression}", str(partition_key))
+    return where_value
+
+
+def snapshot_slices(conn, table, pk, mysql_where, slice_rows):
+    """Row conditions that split the table into PK-range slices of about
+    ``slice_rows`` rows. The first slice is open below and the last open above,
+    so together they cover every key, including rows inserted while the run
+    goes on. A table without an integer primary key is one slice (None)."""
+    if not pk or mysql_where is None:
+        return [None]
+    starts = [int(chunk['min_pk']) for chunk in divide_table_into_even_chunks(conn, table, slice_rows, pk, mysql_where)]
+    boundaries = starts[1:]
+    column = f"`{pk}`"
+    if not boundaries:
+        return [None]
+    conditions = [f"{column} < {boundaries[0]}"]
+    conditions += [f"{column} >= {low} and {column} < {high}" for (low, high) in zip(boundaries, boundaries[1:])]
+    conditions.append(f"{column} >= {boundaries[-1]}")
+    return conditions
+
+
+def compare_slice(results, mysql_host, replica_hosts, table_name, condition, recheck_note=None, fence_notes=()):
+    """MATCH, DIFFERENT, EMPTY or ERROR for one slice. Only a difference on
+    the last pass logs the WARNING ``Checksum difference``; the table's own
+    verdict line is logged by verify_table_in_slices."""
+    label = f"{table_name} slice [{condition or 'all rows'}]"
+    expected = 1 + len(replica_hosts)
+    failed = [i for i, r in enumerate(results) if r is None or r[2] is None or r[3] is None]
+    if len(results) != expected or failed:
+        hosts = [mysql_host if i == 0 else replica_hosts[i - 1] for i in failed]
+        logging.error(f"Checksum ERROR in {label}: no valid checksum from {hosts}")
+        return VERDICT_ERROR
+    source_result = results[0]
+    differences = [r for r in results[1:] if (r[2], r[3]) != (source_result[2], source_result[3])]
+    if not differences:
+        logging.info(f"Slice match in {label}: {source_result[3]} rows")
+        return VERDICT_EMPTY if source_result[3] == 0 else VERDICT_MATCH
+    for replica_result in differences:
+        if recheck_note is None:
+            notes = "".join(f"; {note}" for note in fence_notes)
+            logging.warning(f"Checksum difference : {replica_result} to {source_result} in slice "
+                            f"[{condition or 'all rows'}]{notes}")
+        else:
+            logging.info(f"Checksum mismatch {recheck_note} in {label}: {replica_result} to {source_result}")
+    return VERDICT_DIFFERENT
+
+
+def checksum_one_slice(table_name, table, condition, commands_for, mysql_host, replica_hosts, fences, source_head,
+                       recheck_differences):
+    """Verdict and row count of one slice: the MySQL side reads it in one
+    consistent snapshot and reports the snapshot's binlog position, every
+    connector is awaited up to it, then the ClickHouse sides read the slice.
+    A difference is read again with a fresh snapshot, up to
+    ``recheck_differences`` more times."""
+    passes = 1 + recheck_differences
+    for pass_number in range(1, passes + 1):
+        last = pass_number == passes
+        (mysql_cmd, ch_commands) = commands_for(condition)
+        (mysql_result, mysql_output) = run_quick_safe_checksum(mysql_cmd, mysql_host, table, with_output=True)
+        if mysql_result is None or mysql_result[2] is None:
+            logging.error(f"Checksum ERROR in {table_name} slice [{condition or 'all rows'}]: no valid checksum "
+                          f"from {mysql_host}; the replicas were not read")
+            return (VERDICT_ERROR, 0)
+        position = parse_snapshot_position(mysql_output, expected_side_name(mysql_cmd, table))
+        if position is None:
+            logging.error(f"Checksum ERROR in {table_name} slice [{condition or 'all rows'}]: the MySQL side "
+                          "printed no snapshot position")
+            return (VERDICT_ERROR, 0)
+        waited = wait_for_connectors(fences, replica_hosts, position[:2], source_head,
+                                     f"{table_name} slice [{condition or 'all rows'}]")
+        fence_notes = [f"connector on {host} had not reached {position[0]}:{position[1]} (offset {offset[0]}:{offset[1]})"
+                       for host, (reached, offset) in waited.items() if not reached]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(ch_commands))) as executor:
+            futures = [executor.submit(run_quick_safe_checksum, cmd, host, table) for (host, cmd) in ch_commands]
+            ch_results = [future.result() for future in futures]
+        note = None if last else f"on pass {pass_number} of {passes}, reading the slice again"
+        verdict = compare_slice([mysql_result] + ch_results, mysql_host, replica_hosts, table_name, condition,
+                                recheck_note=note, fence_notes=fence_notes)
+        if verdict != VERDICT_DIFFERENT or last:
+            return (verdict, mysql_result[3] if verdict in (VERDICT_MATCH, VERDICT_EMPTY) else 0)
+
+
+def verify_table_in_slices(mysql_database, database_override_map, table_overrides_map, table, mysql_user,
+                           mysql_password, mysql_host, replica_hosts, pk, max_pk, where, fences, ignored_columns=[],
+                           defaults_file=None, partition_key=None, mysql_port=3306, timestamp_columns=(),
+                           binary_columns=(), json_columns=()):
+    """Verdict of a table compared slice by slice under --consistent_snapshot
+    (spec 13.06 section 3.7.4). No lock is taken: each slice is one InnoDB
+    read view on the source, held only while that slice is read."""
+    table_name = f"{mysql_database}.{table}"
+    logging.info(f"Checksumming {table_name}")
+    where = table_where(table_name, where, table_overrides_map)
+    conn = get_mysql_connection(mysql_host, mysql_user, mysql_password, mysql_port, mysql_database)
+    try:
+        integer_pk = mysql_pk_columns(conn, mysql_database, table, is_integer=True)
+        slice_pk = integer_pk[0] if integer_pk else None
+        conditions = snapshot_slices(conn, table, slice_pk, mysql_where_for_slicing(where, partition_key),
+                                     args.snapshot_slice_rows)
+    finally:
+        close_connection(conn, table_name)
+    logging.info(f"Consistent snapshots for {table_name}: {len(conditions)} slice(s)"
+                 f"{' on ' + slice_pk if slice_pk and conditions != [None] else ' (whole table)'}")
+
+    def commands_for(condition):
+        slice_where = where
+        if condition:
+            slice_where = f"({where}) and {condition}" if where else condition
+        return side_commands(mysql_database, database_override_map, table, mysql_host, replica_hosts, pk, max_pk,
+                             slice_where, ignored_columns=ignored_columns, defaults_file=defaults_file,
+                             partition_key=partition_key, timestamp_columns=timestamp_columns,
+                             binary_columns=binary_columns, json_columns=json_columns,
+                             mysql_threads_per_table=1, mysql_extra_flags=["--consistent_snapshot"])
+
+    (recheck_differences, _) = recheck_settings(args)
+    head_conn = get_mysql_connection(mysql_host, mysql_user, mysql_password, mysql_port, mysql_database)
+    head_lock = threading.Lock()
+
+    def source_head():
+        with head_lock:
+            return source_binary_log_head(head_conn)
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, args.threads_per_table)) as executor:
+            futures = [executor.submit(checksum_one_slice, table_name, table, condition, commands_for, mysql_host,
+                                       replica_hosts, fences, source_head, recheck_differences)
+                       for condition in conditions]
+            outcomes = [future.result() for future in futures]
+    finally:
+        close_connection(head_conn, table_name)
+    verdicts = [verdict for (verdict, _) in outcomes]
+    rows = sum(count for (_, count) in outcomes)
+    if VERDICT_ERROR in verdicts:
+        logging.error(f"Checksum ERROR for {table_name}: {verdicts.count(VERDICT_ERROR)} of {len(verdicts)} "
+                      "slice(s) have no verdict")
+        return VERDICT_ERROR
+    if VERDICT_DIFFERENT in verdicts:
+        logging.info(f"{table_name}: {verdicts.count(VERDICT_DIFFERENT)} of {len(verdicts)} slice(s) differ")
+        return VERDICT_DIFFERENT
+    if rows == 0:
+        logging.info(f"EMPTY on both sides for {table_name}: 0 rows compared "
+                     "(empty table, or a filter or --partition_date that matched nothing)")
+        return VERDICT_EMPTY
+    logging.info(f"{table_name}: {len(verdicts)} slice(s), {rows} rows, each slice in one consistent snapshot")
+    logging.info(f"No difference for {table_name}")
+    return VERDICT_MATCH
+
+
 def report_run_summary(verdicts, fail_on_empty):
     """Log the per-verdict totals; return the process exit code.
 
@@ -694,6 +1061,12 @@ def run_config(config):
             table_dict[table]['where'] = normalize_where_override(table, table_dict[table]['where'])
             table_overrides_map[table]['where'] = table_dict[table]['where']
     logging.info(f"Table overrides : {table_overrides_map}")
+    # getattr: a caller that builds its own argparse.Namespace without these
+    # options keeps the behaviour it had before they existed.
+    consistent_snapshot = getattr(args, "consistent_snapshot", False)
+    fences = None
+    if getattr(args, "wait_for_connector", False) or consistent_snapshot:
+        fences = build_connector_fences(config)
     verdicts = {}
     for database in databases:
         logging.info(f"Using MySQL database: {database}")
@@ -736,11 +1109,20 @@ def run_config(config):
                     # Lock lifecycle is now managed inside compute_checksum per table.
                     # Each future acquires its own lock, runs both MySQL and
                     # ClickHouse checksums under the lock, then releases it.
-                    checksum = functools.partial(
-                        compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns, lock_wait_timeout=args.lock_wait_timeout)
-                    future = executor.submit(
-                        verify_table, checksum, mysql_host, replica_hosts, table_name,
-                        *recheck_settings(args))
+                    if consistent_snapshot:
+                        future = executor.submit(
+                            verify_table_in_slices, database, database_override_map, table_overrides_map, table,
+                            mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where,
+                            fences, ignored_columns=ignored_columns, defaults_file=args.defaults_file,
+                            partition_key=partition_key, mysql_port=args.mysql_port,
+                            timestamp_columns=timestamp_columns, binary_columns=binary_columns,
+                            json_columns=json_columns)
+                    else:
+                        checksum = functools.partial(
+                            compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns, lock_wait_timeout=args.lock_wait_timeout, fences=fences)
+                        future = executor.submit(
+                            verify_table, checksum, mysql_host, replica_hosts, table_name,
+                            *recheck_settings(args))
                     futures.append(future)
                     future_to_table[future] = table_name
                 skipped_tables = []
@@ -760,6 +1142,13 @@ def run_config(config):
                                 "COVERAGE GAP -- skipping checksum for " + table_name +
                                 ": source lock could not be acquired: " + str(exc))
                             skipped_tables.append(table_name)
+                            continue
+                        if isinstance(exc, (ConnectorFenceError, BinlogPositionError)):
+                            # Waiting for the connector was asked for and is
+                            # impossible: this table gets no verdict, the
+                            # others still do, and the run exits 1.
+                            logging.error(f"Checksum ERROR for {table_name}: {exc}")
+                            verdicts[table_name] = VERDICT_ERROR
                             continue
                         logging.error("Exception in table " + table_name)
                         logging.error(exc)
@@ -899,9 +1288,25 @@ def main():
                         help='How many more times a table whose checksums differ is checksummed before it is reported as a "Checksum difference" (default 1, 0 disables). A table written during the run is read by each side at a different moment, so a single pass can differ although no row diverges.')
     parser.add_argument('--recheck_delay_seconds', type=non_negative_int, default=60,
                         help='Seconds to wait before each re-check of a differing table (default 60), so the connector can apply the writes the first pass raced with.')
+    parser.add_argument('--wait_for_connector', action='store_true', default=False,
+                        help='Before reading a replica, wait until its connector has applied the source binary log up to the position read at the start of the table (under --lock_tables_on_source: read under the lock, so the comparison is exact). Needs replicas[].clickhouse.offset_table in the config and REPLICATION CLIENT on the source.')
+    parser.add_argument('--consistent_snapshot', action='store_true', default=False,
+                        help='Compare each table in PK-range slices without any lock: each slice is read on MySQL in one START TRANSACTION WITH CONSISTENT SNAPSHOT, the connector is awaited up to that snapshot\'s binlog position, then the replica reads the slice; a differing slice is read again (--recheck_differences). Needs replicas[].clickhouse.offset_table. Not combinable with --lock_tables_on_source.')
+    parser.add_argument('--snapshot_slice_rows', type=non_negative_int, default=1000000,
+                        help='Approximate rows per slice under --consistent_snapshot (default 1000000); a slice holds its read view only while it is read. Slices run --threads_per_table at a time.')
+    parser.add_argument('--fence_timeout_seconds', type=non_negative_int, default=300,
+                        help='Longest wait for a connector to reach a position (default 300); after it the comparison runs anyway and a difference names the connector position.')
+    parser.add_argument('--fence_poll_seconds', type=non_negative_int, default=1,
+                        help='Seconds between reads of the connector offset (default 1).')
+    parser.add_argument('--fence_idle_seconds', type=non_negative_int, default=10,
+                        help='When the source wrote nothing after the position and the connector offset has not moved for this long, nothing is in flight and the wait ends (default 10).')
 
     global args
     args = parser.parse_args()
+    if args.consistent_snapshot and args.lock_tables_on_source:
+        parser.error("--consistent_snapshot takes no lock: do not combine it with --lock_tables_on_source")
+    if args.consistent_snapshot and args.debug_output:
+        parser.error("--debug_output writes per-row files and prints no checksum per slice: use it without --consistent_snapshot")
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)

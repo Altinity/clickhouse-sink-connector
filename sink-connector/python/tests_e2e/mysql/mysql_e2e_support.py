@@ -568,8 +568,9 @@ class Workspace:
     # --- the scheduled checksum job --------------------------------------------------------------
     def write_job_config(self, name, databases=(DB, DB2), mysql_host=MYSQL_HOST, ch_host=CH_HOST,
                          override_map=f"{DB2}:{DB2_CH}", table_include_list=None, ignored_columns=IGNORED_COLUMNS,
-                         where_overrides=None):
-        """The job's YAML config (JSON is valid YAML)."""
+                         where_overrides=None, replica_extra=None):
+        """The job's YAML config (JSON is valid YAML). ``replica_extra`` adds keys
+        to the replica entry (offset_table for --wait_for_connector / --consistent_snapshot)."""
         mysql = {"host": mysql_host, "databases": list(databases), "source_timezone": SOURCE_TIMEZONE,
                  "ignored_columns": list(ignored_columns)}
         if table_include_list:
@@ -579,6 +580,7 @@ class Workspace:
         replica = {"host": ch_host}
         if override_map:
             replica["database_override_map"] = override_map
+        replica.update(replica_extra or {})
         config = {"source": {"mysql": mysql}, "replicas": [{"clickhouse": replica}]}
         self._write(name, json.dumps(config, indent=2) + "\n")
         return name
