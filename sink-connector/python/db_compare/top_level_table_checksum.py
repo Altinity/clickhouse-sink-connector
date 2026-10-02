@@ -8,6 +8,7 @@ from db.checksum_common import validate_timezone, JSON_COLUMNS_HINT_RE
 import concurrent.futures
 import functools
 import json
+import math
 import threading
 from db.clickhouse import (clickhouse_connection, clickhouse_execute_conn,
                            resolve_credentials_from_config as clickhouse_credentials)
@@ -300,7 +301,8 @@ def side_commands(mysql_database, database_override_map, table, mysql_host, repl
                   binary_columns=(), json_columns=(), mysql_threads_per_table=None, mysql_extra_flags=(),
                   ch_extra_where=None):
     """(MySQL side argv, [(replica host, ClickHouse side argv)]) for one table and ``where``.
-    ``ch_extra_where`` is ANDed onto the ClickHouse sides' filter only."""
+    ``ch_extra_where`` is ANDed onto the ClickHouse sides' filter only; it is a
+    filter, or a function of the replica host that returns one."""
     # Build MySQL checksum command
     mysql_cmd = get_mysql_checksum_command(mysql_host, mysql_database, table, pk, max_pk, where=where, ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file, threads_per_table=mysql_threads_per_table)
     if mysql_extra_flags:
@@ -311,8 +313,9 @@ def side_commands(mysql_database, database_override_map, table, mysql_host, repl
     for replica_host in replica_hosts:
         replica_database = replica_database_for(replica_host, mysql_database, database_override_map)
         replica_where = where
-        if ch_extra_where:
-            replica_where = f"({where}) and {ch_extra_where}" if where else ch_extra_where
+        extra_where = ch_extra_where(replica_host) if callable(ch_extra_where) else ch_extra_where
+        if extra_where:
+            replica_where = f"({where}) and {extra_where}" if where else extra_where
         cmd = get_clickhouse_checksum_command(replica_host, replica_database, table, pk, max_pk, where=replica_where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns)
         ch_commands.append((replica_host, cmd))
     return (mysql_cmd, ch_commands)
@@ -716,8 +719,12 @@ class ConnectorFence:
     source that writes nothing after the target never moves the offset past it;
     when the end of the source binary log is still the target and the offset
     has not moved for ``idle_seconds``, the wait ends as well (nothing is in
-    flight). After ``timeout_seconds`` the wait gives up and says so; the
-    comparison still runs, and a difference it finds is reported with the
+    flight). The last idle verdict is remembered (``idle_mark``: the source
+    head and the connector offset at that moment): a later wait whose target is
+    at or below that head, while the head and the offset are both unchanged,
+    ends at once, because nothing was written to the binary log since the
+    earlier verdict. After ``timeout_seconds`` the wait gives up and says so;
+    the comparison still runs, and a difference it finds is reported with the
     connector position."""
 
     def __init__(self, replica_host, offset_table, offset_key_contains=None, port=9000,
@@ -731,6 +738,8 @@ class ConnectorFence:
         self.poll_seconds = poll_seconds
         self.idle_seconds = idle_seconds
         self.behind = False
+        # (source head, connector offset) of the last idle verdict, or None.
+        self.idle_mark = None
 
     def query(self, sql):
         """Rows of one read-only statement on this replica."""
@@ -790,7 +799,20 @@ class ConnectorFence:
             if offset != last_offset:
                 (last_offset, last_change) = (offset, now)
             head = source_head()
+            # An earlier idle verdict still holds while the source head and the
+            # offset are both unchanged: nothing was written to the binary log
+            # since then, so every target up to that head is already applied.
+            # One idle period per quiet stretch of the source, not one per
+            # slice and pass.
+            mark = self.idle_mark
+            if (mark is not None and head == mark[0] and offset == mark[1]
+                    and target_key <= binlog_position_key(*head)):
+                logging.info(f"Connector on {self.replica_host} is idle at {offset[0]}:{offset[1]} and the source "
+                             f"wrote nothing after {head[0]}:{head[1]} since an earlier idle verdict, for {label}: "
+                             "nothing is in flight")
+                return (True, offset)
             if binlog_position_key(*head) <= target_key and now - last_change >= self.idle_seconds:
+                self.idle_mark = (head, offset)
                 logging.info(f"Connector on {self.replica_host} is idle at {offset[0]}:{offset[1]} and the source "
                              f"wrote nothing after {target[0]}:{target[1]} for {label}: nothing is in flight")
                 return (True, offset)
@@ -851,21 +873,114 @@ def mysql_where_for_slicing(where, partition_key):
     return where_value
 
 
-def snapshot_slices(conn, table, pk, mysql_where, slice_rows):
+# Keys sampled per slice of --snapshot_slice_rows rows, and the most keys one
+# sample may return (a larger table is sampled more sparsely).
+SLICE_SAMPLE_KEYS_PER_SLICE = 1000
+SLICE_SAMPLE_MAX_KEYS = 1000000
+# Below this rate even 10^15 filtered rows give a sample under the limit.
+SLICE_SAMPLE_MIN_RATE = 1e-12
+
+
+def quote_mysql_string(value):
+    """A MySQL string literal (backslashes and quotes escaped)."""
+    return "'" + str(value).replace("\\", "\\\\").replace("'", "''") + "'"
+
+
+def filtered_row_estimate(conn, table, pk, mysql_where, min_pk, max_pk):
+    """(EXPLAIN estimate, partition statistics) of the filtered rows; neither
+    reads table data. The first is the key-range EXPLAIN of
+    ``estimate_table_count``. The second is the sum of information_schema
+    PARTITIONS.TABLE_ROWS over the partitions EXPLAIN says the filtered query
+    reads (an unpartitioned table's single row): on a date-partitioned table
+    the EXPLAIN estimate can be far below the partition's rows."""
+    explain_rows = estimate_table_count(conn, table, mysql_where, pk, min_pk, max_pk)
+    plan = mysql_execute_df(conn, f"explain select * from {quote_mysql_identifier(table)} where {mysql_where}")
+    partitions = plan['partitions'].iloc[0] if 'partitions' in plan.columns and len(plan.index) else None
+    sql = ("select coalesce(sum(TABLE_ROWS), 0) as table_rows from information_schema.PARTITIONS "
+           f"where TABLE_SCHEMA = database() and TABLE_NAME = {quote_mysql_string(table)}")
+    if isinstance(partitions, str) and partitions:
+        names = ",".join(quote_mysql_string(name.strip()) for name in partitions.split(","))
+        sql += f" and (PARTITION_NAME in ({names}) or concat(PARTITION_NAME, '_', SUBPARTITION_NAME) in ({names}))"
+    statistics = mysql_execute_df(conn, sql)
+    # An aggregate without GROUP BY returns one row; a missing row counts as 0.
+    partition_rows = int(statistics['table_rows'].iloc[0] or 0) if len(statistics.index) else 0
+    return (int(explain_rows or 0), partition_rows)
+
+
+def sample_keys(conn, table, pk, mysql_where, rate, limit):
+    """Keys of a random sample of the filtered rows (each row with probability
+    ``rate``), at most ``limit`` of them: one read of the filtered rows' keys
+    (an index-only read when an index holds the filter's columns; InnoDB
+    secondary indexes hold the primary key, partition column included)."""
+    column = quote_mysql_identifier(pk)
+    df = mysql_execute_df(conn, f"select {column} as k from {quote_mysql_identifier(table)} where ({mysql_where}) "
+                                f"and rand() < {rate:.12f} limit {int(limit)}")
+    return [int(key) for key in df['k'].tolist()]
+
+
+def slice_starts(conn, table, pk, mysql_where, slice_rows, min_slices, min_pk, max_pk):
+    """First key of each slice, smallest first; the first is ``min_pk``.
+
+    A table the larger of the two estimates (filtered_row_estimate) puts at
+    ``slice_rows`` rows or fewer is one slice. Otherwise the filtered keys are
+    sampled (about SLICE_SAMPLE_KEYS_PER_SLICE per slice); the sample gives the
+    row count (sampled keys / rate), hence the number of slices, at least
+    ``min_slices`` (--threads_per_table), and the boundaries are the sample's
+    quantiles, so every slice holds about the same number of rows however the
+    keys are spread. An even split of the key range does not: a day partition
+    whose keys sit in a narrow band at the top of the range gets almost all its
+    rows in one slice."""
+    if slice_rows <= 0:
+        logging.info(f"Slices of {table}: --snapshot_slice_rows 0, one slice")
+        return [min_pk]
+    (explain_rows, partition_rows) = filtered_row_estimate(conn, table, pk, mysql_where, min_pk, max_pk)
+    estimate = max(explain_rows, partition_rows)
+    if estimate <= slice_rows:
+        logging.info(f"Slices of {table}: estimate {estimate} rows (EXPLAIN {explain_rows}, partition statistics "
+                     f"{partition_rows}), one slice")
+        return [min_pk]
+    rate = min(1.0, SLICE_SAMPLE_KEYS_PER_SLICE / slice_rows, SLICE_SAMPLE_MAX_KEYS / estimate)
+    keys = sample_keys(conn, table, pk, mysql_where, rate, SLICE_SAMPLE_MAX_KEYS)
+    while len(keys) >= SLICE_SAMPLE_MAX_KEYS and rate / 16 >= SLICE_SAMPLE_MIN_RATE:
+        # A full sample stopped at its LIMIT in scan order, so it is not
+        # representative: the estimates were far too low. Sample sparser until
+        # a sample ends below the limit (16 times fewer keys each time).
+        rate /= 16
+        keys = sample_keys(conn, table, pk, mysql_where, rate, SLICE_SAMPLE_MAX_KEYS)
+    sampled_rows = round(len(keys) / rate)
+    count = math.ceil(sampled_rows / slice_rows)
+    if count > 1:
+        count = max(count, min_slices)
+    bounds = sorted({key for key in keys if key > min_pk})
+    starts = [min_pk]
+    for i in range(1, count):
+        if bounds and bounds[(i * len(bounds)) // count] > starts[-1]:
+            starts.append(bounds[(i * len(bounds)) // count])
+    fewer = (f" (fewer than {count}: the sample holds {len(bounds)} distinct key(s) above the smallest)"
+             if len(starts) < count else "")
+    logging.info(f"Slices of {table}: estimate {estimate} rows (EXPLAIN {explain_rows}, partition statistics "
+                 f"{partition_rows}), about {sampled_rows} rows from a sample of {len(keys)} keys, "
+                 f"{len(starts)} slice(s){fewer}")
+    return starts
+
+
+def snapshot_slices(conn, table, pk, mysql_where, slice_rows, min_slices=1):
     """Row conditions that split the table into PK-range slices of about
-    ``slice_rows`` rows. The first slice starts at the smallest key of the
-    filtered rows and the last is open above, so together they cover every key
-    of the filtered set, including rows inserted (with higher keys) while the
-    run goes on. Every slice is bounded below: on a replica sorted by the key,
-    an open lower end would scan every older row of the table (an unpartitioned
-    replica of a date-partitioned source reads its whole history for the first
-    slice). A table without an integer primary key, or with no rows in the
-    filter, is one slice (None)."""
+    ``slice_rows`` rows each (slice_starts), at least ``min_slices`` of them
+    when the table holds more than one slice's worth. The first slice starts
+    at the smallest key of the filtered rows and the last is open above, so
+    together they cover every key of the filtered set, including rows inserted
+    (with higher keys) while the run goes on. Every slice is bounded below: on
+    a replica sorted by the key, an open lower end would scan every older row
+    of the table (an unpartitioned replica of a date-partitioned source reads
+    its whole history for the first slice). A table without an integer primary
+    key, or with no rows in the filter, is one slice (None)."""
     if not pk or mysql_where is None:
         return [None]
-    starts = [int(chunk['min_pk']) for chunk in divide_table_into_even_chunks(conn, table, slice_rows, pk, mysql_where)]
-    if not starts:
+    (min_pk, max_pk) = get_min_max_pk_value(conn, table, pk, mysql_where)
+    if min_pk is None:
         return [None]
+    starts = slice_starts(conn, table, pk, mysql_where, slice_rows, min_slices, min_pk, max_pk)
     column = f"`{pk}`"
     edges = starts + [None]
     return [f"{column} >= {low}" + (f" and {column} < {high}" if high is not None else "")
@@ -911,7 +1026,14 @@ def checksum_one_slice(table_name, table, condition, commands_for, mysql_host, r
     turns on the version fence: keys a replica changed after the slice's
     highest _version read before the snapshot are left out on both sides, so a
     slice written while it is read compares only the keys whose state the
-    snapshot and the replica can share (spec 13.06 section 3.7.4)."""
+    snapshot and the replica can share (spec 13.06 section 3.7.4). The
+    connector keeps writing while the slice is compared, so the replicas are
+    read first, while the snapshot is held, each leaving out in the same query
+    every key with a row versioned above its floor; the keys are listed only
+    after that read, so the list the MySQL side leaves out holds at least
+    every key the replica read left out. A key changed in between is left out
+    on MySQL only: the counts differ and the slice is read again, never a
+    false match."""
     label = f"{table_name} slice [{condition or 'all rows'}]"
     passes = 1 + recheck_differences
     for pass_number in range(1, passes + 1):
@@ -924,7 +1046,13 @@ def checksum_one_slice(table_name, table, condition, commands_for, mysql_host, r
             floors = {host: slice_max_version(fences[host], exclusion["databases"][host], table, condition)
                       for host in replica_hosts}
         (mysql_cmd, _) = commands_for(condition)
-        state = {"notes": [], "keys": [], "too_many": 0}
+        state = {"notes": [], "keys": [], "too_many": 0, "replicas": None}
+
+        def read_replicas(extra_where):
+            (_, ch_commands) = commands_for(condition, extra_where)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(ch_commands))) as executor:
+                futures = [executor.submit(run_quick_safe_checksum, cmd, host, table) for (host, cmd) in ch_commands]
+                return [future.result() for future in futures]
 
         def on_position(position):
             # The side's own line reaches this log only at DEBUG; the position
@@ -936,7 +1064,13 @@ def checksum_one_slice(table_name, table, condition, commands_for, mysql_host, r
                               for host, (reached, offset) in waited.items() if not reached]
             if floors is not None:
                 # Keys the replicas changed after the floor: the snapshot cannot
-                # hold their later state, so they are left out on both sides.
+                # hold their later state, so they are left out on both sides. The
+                # replicas are read now, leaving them out as of their own read
+                # (the connector keeps writing), and listed afterwards for the
+                # MySQL side, which leaves out that list or more.
+                state["replicas"] = read_replicas(
+                    lambda host: changed_keys_filter(exclusion["databases"][host], table, exclusion["column"],
+                                                     condition, floors[host]))
                 keys = set()
                 for host in replica_hosts:
                     keys |= keys_changed_since(fences[host], exclusion["databases"][host], table,
@@ -946,6 +1080,7 @@ def checksum_one_slice(table_name, table, condition, commands_for, mysql_host, r
                     state["notes"].append(f"more than {exclusion['cap']} keys changed while the slice was read "
                                           "(--snapshot_max_excluded_keys); none were left out")
                     keys = set()
+                    state["replicas"] = read_replicas(None)
                 state["keys"] = sorted(keys)
                 if keys:
                     logging.info(f"Excluded {len(keys)} key(s) of {label} changed after its snapshot began, "
@@ -957,15 +1092,10 @@ def checksum_one_slice(table_name, table, condition, commands_for, mysql_host, r
             logging.error(f"Checksum ERROR in {label}: the MySQL side printed no snapshot position")
             return (VERDICT_ERROR, 0, 0)
         if mysql_result is None or mysql_result[2] is None:
-            logging.error(f"Checksum ERROR in {label}: no valid checksum from {mysql_host}; the replicas were not read")
+            logging.error(f"Checksum ERROR in {label}: no valid checksum from {mysql_host}"
+                          f"{'; the replicas were not read' if state['replicas'] is None else ''}")
             return (VERDICT_ERROR, 0, 0)
-        ch_extra_where = None
-        if state["keys"]:
-            ch_extra_where = f"`{exclusion['column']}` not in ({','.join(str(key) for key in state['keys'])})"
-        (_, ch_commands) = commands_for(condition, ch_extra_where)
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, len(ch_commands))) as executor:
-            futures = [executor.submit(run_quick_safe_checksum, cmd, host, table) for (host, cmd) in ch_commands]
-            ch_results = [future.result() for future in futures]
+        ch_results = state["replicas"] if state["replicas"] is not None else read_replicas(None)
         note = None if last else f"on pass {pass_number} of {passes}, reading the slice again"
         verdict = compare_slice([mysql_result] + ch_results, mysql_host, replica_hosts, table_name, condition,
                                 recheck_note=note, fence_notes=state["notes"])
@@ -994,6 +1124,15 @@ def keys_changed_since(fence, database, table, column, condition, version, cap):
     return {int(row[0]) for row in rows}
 
 
+def changed_keys_filter(database, table, column, condition, version):
+    """ClickHouse row filter that leaves out, as of the query that applies it,
+    every key of the slice with a row versioned above ``version`` (the same
+    keys keys_changed_since lists, read in the replica's own query)."""
+    key = quote_clickhouse_identifier(column)
+    return (f"{key} not in (select {key} from {quote_clickhouse_identifier(database)}."
+            f"{quote_clickhouse_identifier(table)} where ({condition or '1'}) and _version > {int(version)})")
+
+
 def replicas_have_version_column(fences, databases, table):
     """True when every replica's table has a _version column."""
     for (host, database) in databases.items():
@@ -1020,7 +1159,7 @@ def verify_table_in_slices(mysql_database, database_override_map, table_override
         integer_pk = mysql_pk_columns(conn, mysql_database, table, is_integer=True)
         slice_pk = integer_pk[0] if integer_pk else None
         conditions = snapshot_slices(conn, table, slice_pk, mysql_where_for_slicing(where, partition_key),
-                                     args.snapshot_slice_rows)
+                                     args.snapshot_slice_rows, min_slices=max(1, args.threads_per_table))
     finally:
         close_connection(conn, table_name)
     logging.info(f"Consistent snapshots for {table_name}: {len(conditions)} slice(s)"
@@ -1480,15 +1619,15 @@ def main():
     parser.add_argument('--consistent_snapshot', action='store_true', default=False,
                         help='Compare each table in PK-range slices without any lock: each slice is read on MySQL in one START TRANSACTION WITH CONSISTENT SNAPSHOT, the connector is awaited up to that snapshot\'s binlog position, then the replica reads the slice; a differing slice is read again (--recheck_differences). Needs replicas[].clickhouse.offset_table. Not combinable with --lock_tables_on_source.')
     parser.add_argument('--snapshot_slice_rows', type=non_negative_int, default=1000000,
-                        help='Approximate rows per slice under --consistent_snapshot (default 1000000); a slice holds its read view only while it is read. Slices run --threads_per_table at a time.')
+                        help='Approximate rows per slice under --consistent_snapshot (default 1000000; 0 = one slice per table); a slice holds its read view only while it is read. A table with more rows gets at least --threads_per_table slices, cut at the quantiles of a sample of its keys. Slices run --threads_per_table at a time.')
     parser.add_argument('--snapshot_max_excluded_keys', type=non_negative_int, default=5000,
-                        help='Under --consistent_snapshot, keys a replica changed while their slice was read are left out on both sides (version fence, needs _version on the replica table); above this many in one slice none are left out and the slice is compared as is (default 5000; the list is passed on the ClickHouse side\'s command line).')
+                        help='Under --consistent_snapshot, keys a replica changed while their slice was read are left out on both sides (version fence, needs _version on the replica table); above this many in one slice none are left out and the slice is compared as is (default 5000; the list is sent to the MySQL side, the replica leaves the same keys out by a subquery on _version).')
     parser.add_argument('--fence_timeout_seconds', type=non_negative_int, default=300,
                         help='Longest wait for a connector to reach a position (default 300); after it the comparison runs anyway and a difference names the connector position.')
     parser.add_argument('--fence_poll_seconds', type=non_negative_int, default=1,
                         help='Seconds between reads of the connector offset (default 1).')
     parser.add_argument('--fence_idle_seconds', type=non_negative_int, default=10,
-                        help='When the source wrote nothing after the position and the connector offset has not moved for this long, nothing is in flight and the wait ends (default 10).')
+                        help='When the source wrote nothing after the position and the connector offset has not moved for this long, nothing is in flight and the wait ends (default 10). Later waits reuse that verdict at once while the source binary log head and the offset are both unchanged.')
 
     global args
     args = parser.parse_args()

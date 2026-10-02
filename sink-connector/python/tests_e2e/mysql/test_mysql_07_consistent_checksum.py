@@ -161,8 +161,9 @@ def test_consistent_snapshot_matches_while_the_table_is_written(ws, config, chur
     assert parse_verdicts(log) == {f"{DB}.{TABLE}": "MATCH"}, log
     assert "Locking table" not in log, "the snapshot mode must not lock"
     slices = re.search(r"Consistent snapshots for \S+: (\d+) slice\(s\)", log)
-    # the slice count comes from InnoDB's row estimate; it only has to split the table
-    assert slices and int(slices.group(1)) >= 2, log
+    # more than --snapshot_slice_rows rows: at least --threads_per_table (4) slices, cut at sampled key quantiles
+    assert slices and int(slices.group(1)) >= 4, log
+    assert re.search(r"Slices of \S+: estimate \d+ rows .*about \d+ rows from a sample of \d+ keys", log), log
     # the writer changes every slice while it is read: those keys are left out on both sides
     # (version fence on _version), never compared against a later state
     assert "has no _version column" not in log, log
@@ -180,7 +181,10 @@ def test_both_modes_report_a_real_divergence(ws, config, churn):
             assert result.returncode != 0, "the job's WARNING scan must fail the run"
             assert len(warning_lines(log)) == 1, log
             if mode is SNAPSHOT:
-                assert re.search(r"Checksum difference : .* in slice \[`id` < \d+\]", warning_lines(log)[0]), log
+                # every slice is bounded below; the reported one holds the planted id 7
+                found = re.search(r"Checksum difference : .* in slice \[`id` >= (\d+) and `id` < (\d+)\]",
+                                  warning_lines(log)[0])
+                assert found and int(found.group(1)) <= 7 < int(found.group(2)), log
 
 
 def test_consistent_snapshot_on_an_idle_source_needs_no_writes(ws, config, churn_table):
