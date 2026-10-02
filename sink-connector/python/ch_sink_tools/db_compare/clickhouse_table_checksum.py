@@ -46,7 +46,10 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
     else:
         logging.info("Skipping writing to file")
     try:
-        for sql in statements:
+        # statements[0] is the aggregate; with --debug_output the per-row
+        # query follows it, so the checksum line is printed as well as the
+        # debug file (spec 13.06 D-13.06-27).
+        for position, sql in enumerate(statements):
             (result, rowcount) = execute_sql(conn, sql)
             if rowcount != -1:
                 logging.debug("Rows affected "+str(rowcount))
@@ -55,7 +58,7 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
 
                 md5_sum = ""
                 cnt = -1
-                if args.debug_output:
+                if position > 0:
                     for line in x:
                         if isinstance(line, bytes):
                             debug_out.write(line.decode('utf-8'))
@@ -98,8 +101,9 @@ def get_primary_key_columns(conn, table_schema, table_name):
 
 
 def get_table_checksum_query(conn, table):
-    excluded_columns = "','".join(args.exclude_columns)
-    excluded_columns = [f'{column}' for column in excluded_columns.split(',')]
+    # 'a b' (space-separated words) and 'a,b' name the same columns, as on the
+    # MySQL side (spec 13.06 D-13.06-17).
+    excluded_columns = [name.strip() for token in (args.exclude_columns or []) for name in str(token).split(',') if name.strip()]
     logging.info(f"Excluded columns, {excluded_columns}")
     excluded_columns_str = ','.join((f"'{col}'" for col in excluded_columns))
     checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' order by position"
@@ -107,6 +111,10 @@ def get_table_checksum_query(conn, table):
 
     select = ""
     nullables = []
+    # every compared column gets a value-based null flag, Nullable or not (a
+    # non-Nullable column yields '0'), so a nullability mismatch with the
+    # source gives the same flags for equal values (spec 13.06 D-13.06-40)
+    compared = []
     columns = []
     data_types = {}
     first_column = True
@@ -125,6 +133,7 @@ def get_table_checksum_query(conn, table):
             continue
         filtered_columns_metadata.append(row)
        
+    json_columns = set(name.strip() for name in (args.json_columns or "").split(",") if name.strip())
     for row in filtered_columns_metadata:
         column_name = '"'+row[0]+'"'
         data_type = row[1]
@@ -134,14 +143,21 @@ def get_table_checksum_query(conn, table):
         unhex = row[0] in args.hex_columns
         if not args.include_floating_point_columns:
             if 'Float' in data_type:
-                logging.info(f"Excluding floating point column {column_name} of type {data_type}")
+                logging.warning(f"Not compared in table {args.clickhouse_database}.{table}: floating point column {column_name} of type {data_type} (pass --include_floating_point_columns to compare it)")
                 continue
         if not args.include_json_columns:
-            if 'json' in data_type:
-                logging.info(f"Excluding json column {column_name} of type {data_type}")
+            # Native JSON types, and the String columns that replicate a MySQL
+            # JSON column (--json_columns): not compared by default, like the
+            # MySQL side (spec 13.06 FM-13.06-7).
+            if 'json' in data_type.lower() or row[0] in json_columns:
+                logging.warning(f"Not compared in table {args.clickhouse_database}.{table}: JSON column {column_name} of type {data_type} (pass --include_json_columns for a best-effort comparison)")
                 continue
         if not first_column:
-            select += "||"
+            # The separator goes before every compared column but the first,
+            # so a skipped last column leaves no dangling '#' (the MySQL side
+            # joins the compared columns with concat_ws('#', ...)).
+            select += "||'#'||"
+        compared.append(column_name)
 
         if is_nullable == 1:
             nullables.append(column_name)
@@ -181,15 +197,13 @@ def get_table_checksum_query(conn, table):
         if is_nullable == 1:
             select += " end"
 
-        if not filtered_columns_metadata.index(row) == len(filtered_columns_metadata)-1:
-            select += "||'#'"
         first_column = False
         data_types[row[0]] = data_type
     logging.debug(str(nullables))
-    if len(nullables) > 0:
+    if len(compared) > 0:
         select += "||'#'"
-        for nullable in nullables:
-            select += "|| case when "+nullable+" is null then '1' else '0' end "
+        for compared_column in compared:
+            select += "|| case when "+compared_column+" is null then '1' else '0' end "
     query = "select "+select+"||','  as query from " + \
         args.clickhouse_database+"."+table
 
@@ -254,9 +268,11 @@ def select_table_statements(table, query, select_query, order_by, external_colum
       from {schema}.{table} final where {where} /*order by {order_by}*/ {limit}
 
 	  ) as t settings do_not_merge_across_partitions_select_final=1 {memory_setting}"""
-    if args.debug_output:
-        sql = f"""select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit} settings do_not_merge_across_partitions_select_final=1"""
     statements.append(sql)
+    if args.debug_output:
+        # The per-row strings, written to out.<table>.ch.txt by
+        # compute_checksum after the aggregate (spec 13.06 D-13.06-27).
+        statements.append(f"""select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit} settings do_not_merge_across_partitions_select_final=1""")
     return statements
 
 
@@ -287,8 +303,6 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where, parti
     #
     # Create new threads to execute the sync
     conn = get_connection(clickhouse_user, clickhouse_password)
-    # we need to count the values in CH first
-    sql = "select count(*) cnt from "+args.clickhouse_database+"."+table
     if where:
         if "{partition_expression}" in where:
            if partition_key is None:
@@ -299,15 +313,8 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where, parti
            if partition_key is None or partition_key=='':
                logging.warning(f"{args.clickhouse_database}.{table} has no partitioning key")
            where = fstr(where, partition_key)
-        sql = sql + " where " + where
-
-
-    (rowset, rowcount) = execute_sql(conn, sql)
-    if rowcount == 0:
-        logging.info("No rows in ClickHouse. Nothing to sync.")
-        logging.info("Checksum for table {schema}.{table} = d41d8cd98f00b204e9800998ecf8427e count 0".format(
-            schema=args.clickhouse_database, table=table))
-        return
+    # No separate count pre-check: an empty selection gives
+    # md5('0#0#0#0#0#') count 0 from the aggregate itself, as on the MySQL side.
     # generate the file from ClickHouse
     (query, select_query, distributed_by,
      external_table_types) = get_table_checksum_query(conn, table)
@@ -328,7 +335,6 @@ def record_factory(*args, **kwargs):
 
 logging.setLogRecordFactory(record_factory)
 
-create_function_format_decimal = '''CREATE FUNCTION if not exists format_decimal AS (x, scale) -> toDecimalString(x, scale)'''
 
 def main():
 
@@ -359,12 +365,13 @@ def main():
     parser.add_argument('--exclude_columns', help='columns exclude', nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
     parser.add_argument('--threads', type=int, help='number of parallel threads', default=1)
     parser.add_argument('--min_datetime_value', help='Min Datetime64 datetime', default='1900-01-01 00:00:00', required=False)
-    parser.add_argument('--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59.000000', required=False)
+    parser.add_argument('--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59', required=False)
     parser.add_argument('--max_memory_usage', help='increase  max_memory_usage', required=False)
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
                         help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
-    parser.add_argument('--include_json_columns', action='store_true', default=True,
-                        help='JSON data types can not easily be compared, we include them by default, please ignore them explicitly', required=False)
+    parser.add_argument('--include_json_columns', action='store_true', default=False,
+                        help='JSON columns (native JSON types and the String columns named in --json_columns) can not easily be compared, we do not include them by default (a WARNING names them); pass it to both sides', required=False)
+    parser.add_argument('--json_columns', help='comma separated names of the String columns that replicate a MySQL JSON column', default='', required=False)
     global args
     args = parser.parse_args()
 
@@ -396,8 +403,8 @@ def main():
     try:
         conn =  get_connection(clickhouse_user, clickhouse_password)
         tables = get_tables_from_regex(conn)
-        # CH does not print decimal with trailing zero, we need a custom function
-        execute_sql(conn, create_function_format_decimal)
+        # No DDL here: decimals are rendered with toDecimalString(), so this
+        # read-only tool needs no CREATE FUNCTION privilege.
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []

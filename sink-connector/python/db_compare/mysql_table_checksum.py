@@ -18,37 +18,33 @@ import concurrent.futures
 from db.mysql import *
 from db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
                                 clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
-                                validate_timezone, shift_datetime_bounds, warn_not_compared)
+                                validate_timezone, shift_datetime_bounds, warn_not_compared,
+                                parse_exclude_columns)
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
 def compute_checksum(table, statements, conn):
-    sql = ""
-    debug_out = None
+    """Run ``statements``; return the aggregate row as a flat list.
+
+    The first statement that returns rows is the aggregate. With
+    --debug_output, select_table_statements adds the per-row query after it:
+    its rows are appended to out.<table>.mysql.txt and the aggregate is still
+    returned, so the checksum line is printed as well (spec 13.06 D-13.06-27)."""
     result = None
-    if args.debug_output:
-        out_file = f"out.{table}.mysql.txt"
-        # logging.info(f"Debug output to {out_file}")
-        debug_out = open(out_file, 'a')
-    try:
-        for statement in statements:
-            sql = statement
-
-            (result, rowcount) = execute_mysql(conn, sql)
-            if rowcount != -1:
-                logging.debug("Rows affected "+str(rowcount))
-            if result != None and result.returns_rows == True:
-                x = [element for tupl in result for element in tupl]
-                if not args.debug_output:
-                    result = x 
-                if args.debug_output:
-                    for line in x:
-                        debug_out.write(str(line)+'\n')
-                if args.debug_output:
-                        debug_out.close()
-    except Exception:
-        raise  # propagate to caller which owns connection lifecycle
-
+    for statement in statements:
+        (rows, rowcount) = execute_mysql(conn, statement)
+        if rowcount != -1:
+            logging.debug("Rows affected "+str(rowcount))
+        if rows is None or rows.returns_rows != True:
+            continue
+        x = [element for tupl in rows for element in tupl]
+        if result is None:
+            result = x
+        else:
+            with open(f"out.{table}.mysql.txt", 'a') as debug_out:
+                for line in x:
+                    debug_out.write(str(line)+'\n')
+    # the caller owns the connection lifecycle
     return result
 
 
@@ -104,6 +100,13 @@ def mysql_column_expression(column, options, binary_encoding, same_charset, boun
         # Debezium emits BIT(1) as BOOLEAN and the connector stores Bool;
         # ClickHouse renders it as 1 / 0 (toUInt8), so render the bit as an integer.
         return f"{column_name}+0"
+    if data_type == 'bit':
+        # BIT(n>1): the connector stores lower-case hex text under every
+        # binary.handling.mode (base64 applies to BINARY/VARBINARY/BLOB only), and
+        # with --binary_encoding raw the ClickHouse side hexes the raw bytes. A
+        # base64 rendering made every table with a BIT(n>1) column DIFFERENT on
+        # clean data (spec 13.06 D-13.06-38).
+        return "lower(hex(cast(" + column_name + " as binary)))"
     if is_binary_datatype(data_type):
         if binary_encoding == 'base64':
             return "replace(to_base64(cast(" + column_name + " as binary)),'\\n','')"
@@ -122,10 +125,15 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
     ``select`` is the comma separated argument list of ``concat_ws('#', ...)``,
     ``clamped_expression`` the per-row count of datetime values the clamp
     changed and ``skipped`` the columns not compared by kind. Skipped columns
-    contribute nothing; the nullability flags are one trailing element.
+    contribute nothing. The null flags are one trailing element with one
+    ``ISNULL`` per compared column, nullable or not, so a column declared
+    nullable here and non-Nullable on the replica gives the same flags for
+    equal values (spec 13.06 D-13.06-40). ``nullables`` lists the compared
+    columns declared nullable (the ones whose value is wrapped in ``ifnull``).
     """
     pieces = []
     nullables = []
+    compared = []
     data_types = {}
     clamped_flags = []
     skipped = {"floating point": [], "JSON": []}
@@ -157,10 +165,11 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
             nullables.append(column_name)
             expression = f"ifnull({expression},'')"
         pieces.append(expression)
+        compared.append(column_name)
         data_types[name] = column['column_type']
     logging.debug(str(nullables))
-    if len(nullables) > 0:
-        pieces.append("concat(" + ",".join("ISNULL(" + nullable + ")" for nullable in nullables) + ")")
+    if len(compared) > 0:
+        pieces.append("concat(" + ",".join("ISNULL(" + compared_column + ")" for compared_column in compared) + ")")
     return (",".join(pieces), nullables, data_types, clamped_count_expression(clamped_flags), skipped)
 
 
@@ -173,7 +182,8 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     row_list = [row for row in rowset.mappings()]
     (select, nullables, data_types, clamped_expression, skipped) = build_mysql_row_expression(
         row_list, args, binary_encoding, excluded_columns, include_floating_point_columns, include_json_columns)
-    warn_not_compared(args.mysql_database, table, skipped, warned_tables)
+    # A standalone run is told to pass the JSON columns to the ClickHouse side (spec 13.06 D-13.06-41).
+    warn_not_compared(args.mysql_database, table, skipped, warned_tables, json_hint=True)
     # order is not important
     primary_key_columns = []
     logging.debug(str(primary_key_columns))
@@ -239,10 +249,12 @@ def select_table_statements(table, query, select_query, order_by, external_colum
          ) as t;
   """.format(select_query=select_query, schema=args.mysql_database, table=table, where=where, order_by=order_by, limit=limit, clamped_expression=clamped_expression)
 
-    if args.debug_output:
-        sql = """select concat_ws('#',{select_query})  as `hash`   from {schema}.{table} where  {where}  {limit}""".format(
-            select_query=select_query, schema=args.mysql_database, table=table, where=where, order_by=order_by, limit=limit)
     statements.append(sql)
+    if args.debug_output:
+        # The per-row strings, written to out.<table>.mysql.txt by
+        # compute_checksum after the aggregate (spec 13.06 D-13.06-27).
+        statements.append("""select concat_ws('#',{select_query})  as `hash`   from {schema}.{table} where  {where}  {limit}""".format(
+            select_query=select_query, schema=args.mysql_database, table=table, where=where, order_by=order_by, limit=limit))
     return statements
 
 
@@ -283,9 +295,8 @@ def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, ch
         max_pk = int(chunk['max_pk'])
         _where = f" {_where} and {pk} between {min_pk} and {max_pk}" 
 
-    parsed_excluded_columns = []
-    for col in excluded_columns:
-        parsed_excluded_columns.extend(col.split(','))  # split values with commas
+    # space-separated words and comma-separated lists alike (spec 13.06 D-13.06-17)
+    parsed_excluded_columns = parse_exclude_columns(excluded_columns)
     result = calculate_sql_checksum(conn, mysql_table, _where, parsed_excluded_columns,  include_floating_point_columns, include_json_columns)
     return result
 
@@ -334,9 +345,8 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns
                 except Exception:
                     logging.error(f"Checksum failed for {mysql_table}")
                     raise
-    if args.debug_output:
-        # checksum is not output in debug_output mode
-        return
+    # With --debug_output the per-row strings are in out.<table>.mysql.txt and
+    # the checksum line is still printed (spec 13.06 D-13.06-27).
     logging.debug(str(result))
     # cnt, a, b, c, d and the clamped count, summed over the chunks
     totals = [0, 0, 0, 0, 0, 0]
@@ -457,7 +467,10 @@ def main():
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
             future_to_table = {}
-            for table in tables.mappings().fetchall():
+            # --no_wc: get_tables_from_regex returns [[<tables_regex>]], the table name
+            # itself, not a result set (spec 13.06 D-13.06-26).
+            table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.mappings().fetchall()
+            for table in table_rows:
                 future = executor.submit(
                     calculate_checksum, table['table_name'], mysql_user, mysql_password, args.exclude_columns, args.include_floating_point_columns, args.include_json_columns)
                 futures.append(future)
