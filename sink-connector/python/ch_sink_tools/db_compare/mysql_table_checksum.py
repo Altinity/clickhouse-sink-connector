@@ -60,15 +60,26 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     logging.debug("Excluded columns: "+str(excluded_columns))
     select = ""
     nullables = []
+    # every compared column gets a value-based null flag, nullable or not, so
+    # a nullability mismatch with the replica gives the same flags for equal
+    # values (spec 13.06 D-13.06-40)
+    compared = []
     data_types = {}
     first_column = True
     min_date_value = args.min_date_value
     max_date_value = args.max_date_value
     max_datetime_value = args.max_datetime_value
-    row_list = [row for row in rowset]
+    # by column name through mappings() (SQLAlchemy 2.x rows are tuples, spec 13.06 D-13.06-9)
+    row_list = [row for row in rowset.mappings()]
     same_charset = True
     collations = [row['collation'] for row in row_list if row['collation'] is not None]
     same_charset = len(collations) <= 1
+    # A standalone run is told the exact list to pass to the ClickHouse side, which cannot tell a String column
+    # that replicates a MySQL JSON column from any other String (spec 13.06 D-13.06-41).
+    json_names = [row['column_name'] for row in row_list
+                  if row['column_name'] not in excluded_columns and 'json' in row['data_type']]
+    json_hint = (f"; pass --json_columns {','.join(json_names)} to clickhouse_table_checksum.py so both row strings "
+                 f"skip them")
     for row in row_list:
         column_name = '`'+row['column_name']+'`'
         data_type = row['data_type']
@@ -86,11 +97,12 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
             # FM-13.06-7): the MySQL rendering below is normalised, the
             # replica text is not, so comparing them can mask differences.
             if 'json' in data_type:
-                logging.warning(f"Not compared in table {args.mysql_database}.{table}: JSON column {column_name} of type {data_type} (pass --include_json_columns for a best-effort comparison)")
+                logging.warning(f"Not compared in table {args.mysql_database}.{table}: JSON column {column_name} of type {data_type} (pass --include_json_columns for a best-effort comparison{json_hint})")
                 continue
         if not first_column:
             select += ","
-            
+        compared.append(column_name)
+
         if is_nullable == 'YES':
             nullables.append(column_name)
         
@@ -134,15 +146,15 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
         data_types[row['column_name']] = data_type
 
     logging.debug(str(nullables))
-    if len(nullables) > 0:
+    if len(compared) > 0:
         select += ", concat("
         first = True
-        for nullable in nullables:
+        for compared_column in compared:
             if not first:
                 select += ','
             else:
                 first = False
-            select += "ISNULL("+nullable+")"
+            select += "ISNULL("+compared_column+")"
         select += ")"
     # order is not important
     primary_key_columns = []
@@ -417,7 +429,7 @@ def main():
             future_to_table = {}
             # --no_wc: get_tables_from_regex returns [[<tables_regex>]], the table name
             # itself, not a result set (spec 13.06 D-13.06-26).
-            table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.fetchall()
+            table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.mappings().fetchall()
             for table in table_rows:
                 future = executor.submit(
                     calculate_checksum, table['table_name'], mysql_user, mysql_password, args.exclude_columns, args.include_floating_point_columns, args.include_json_columns)

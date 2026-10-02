@@ -117,7 +117,7 @@ class JobRun:
         with open(self.sides_file, "w") as spec:
             json.dump(sides, spec)
         table_rows = MagicMock()
-        table_rows.fetchall.return_value = [{"table_name": t} for t in tables]
+        table_rows.mappings.return_value.fetchall.return_value = [{"table_name": t} for t in tables]
 
         def columns_by_type(conn, database, table, data_types):
             return ["doc"] if data_types == ("json",) and table == "orders" else []

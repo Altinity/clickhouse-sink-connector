@@ -39,7 +39,7 @@ def driver_args(**overrides):
 def run_driver(compute_checksum, tables=("orders",), **arg_overrides):
     """Run run_config() over stubbed catalog helpers; return (exit code, log lines)."""
     table_rows = MagicMock()
-    table_rows.fetchall.return_value = [{"table_name": t} for t in tables]
+    table_rows.mappings.return_value.fetchall.return_value = [{"table_name": t} for t in tables]
     patches = [
         patch.object(tl, "args", driver_args(**arg_overrides), create=True),
         patch.object(tl, "resolve_credentials_from_config", return_value=("u", "p")),

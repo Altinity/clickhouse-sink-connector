@@ -129,10 +129,18 @@ def parse_checksum(data, table, expected_name=None):
     return (name, match.group('checksum'), int(match.group('count')))
 
 
+# The MySQL side's hint to pass --json_columns to the ClickHouse side (spec 13.06 D-13.06-41).
+JSON_COLUMNS_HINT_RE = re.compile(r"; pass --json_columns .*? to clickhouse_table_checksum\.py so both row strings "
+                                  r"skip them")
+
+
 def side_note_text(line):
     """A side output line without the word WARNING (its level or any other
-    occurrence), as the driver relays or dumps it below WARNING."""
-    return line.strip().replace(SIDE_WARNING_MARKER, " - ").replace("WARNING", "warning")
+    occurrence), as the driver relays or dumps it below WARNING. The MySQL
+    side's hint to pass --json_columns to the ClickHouse side is dropped: the
+    driver forwards that list itself (spec 13.06 D-13.06-41)."""
+    text = JSON_COLUMNS_HINT_RE.sub("", line.strip())
+    return text.replace(SIDE_WARNING_MARKER, " - ").replace("WARNING", "warning")
 
 
 def relay_side_messages(data, host, table):
@@ -524,7 +532,9 @@ def run_config(config):
                 table_include_list = [t for t in mysql_table_include_list if t.startswith(f"{database}.")] if mysql_table_include_list else [] 
                 # --no_wc: get_tables_from_regex returns [[<tables_regex>]], the table name
                 # itself, not a result set (spec 13.06 D-13.06-26).
-                table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.fetchall()
+                # Rows by column name through mappings(): a SQLAlchemy 2.x Row is a
+                # tuple, so row['table_name'] raised TypeError (spec 13.06 D-13.06-9).
+                table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.mappings().fetchall()
                 for table_row in table_rows:
                     table = table_row['table_name']
                     table_name = f"{database}.{table}"

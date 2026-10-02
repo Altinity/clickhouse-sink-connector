@@ -111,6 +111,10 @@ def get_table_checksum_query(conn, table):
 
     select = ""
     nullables = []
+    # every compared column gets a value-based null flag, Nullable or not (a
+    # non-Nullable column yields '0'), so a nullability mismatch with the
+    # source gives the same flags for equal values (spec 13.06 D-13.06-40)
+    compared = []
     columns = []
     data_types = {}
     first_column = True
@@ -153,6 +157,7 @@ def get_table_checksum_query(conn, table):
             # so a skipped last column leaves no dangling '#' (the MySQL side
             # joins the compared columns with concat_ws('#', ...)).
             select += "||'#'||"
+        compared.append(column_name)
 
         if is_nullable == 1:
             nullables.append(column_name)
@@ -195,10 +200,10 @@ def get_table_checksum_query(conn, table):
         first_column = False
         data_types[row[0]] = data_type
     logging.debug(str(nullables))
-    if len(nullables) > 0:
+    if len(compared) > 0:
         select += "||'#'"
-        for nullable in nullables:
-            select += "|| case when "+nullable+" is null then '1' else '0' end "
+        for compared_column in compared:
+            select += "|| case when "+compared_column+" is null then '1' else '0' end "
     query = "select "+select+"||','  as query from " + \
         args.clickhouse_database+"."+table
 

@@ -63,7 +63,7 @@ def run_driver(side_outputs, tables=("orders",), config=None, **arg_overrides):
     Returns (exit code, log lines)."""
     config = config or {"source": {"mysql": {"host": MYSQL_HOST}}, "replicas": [{"clickhouse": {"host": CH_HOST}}]}
     table_rows = MagicMock()
-    table_rows.fetchall.return_value = [{"table_name": t} for t in tables]
+    table_rows.mappings.return_value.fetchall.return_value = [{"table_name": t} for t in tables]
     patches = [
         patch.object(tl, "args", driver_args(**arg_overrides), create=True),
         patch.object(tl, "resolve_credentials_from_config", return_value=("u", "p")),

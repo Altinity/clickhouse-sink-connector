@@ -100,6 +100,13 @@ def mysql_column_expression(column, options, binary_encoding, same_charset, boun
         # Debezium emits BIT(1) as BOOLEAN and the connector stores Bool;
         # ClickHouse renders it as 1 / 0 (toUInt8), so render the bit as an integer.
         return f"{column_name}+0"
+    if data_type == 'bit':
+        # BIT(n>1): the connector stores lower-case hex text under every
+        # binary.handling.mode (base64 applies to BINARY/VARBINARY/BLOB only), and
+        # with --binary_encoding raw the ClickHouse side hexes the raw bytes. A
+        # base64 rendering made every table with a BIT(n>1) column DIFFERENT on
+        # clean data (spec 13.06 D-13.06-38).
+        return "lower(hex(cast(" + column_name + " as binary)))"
     if is_binary_datatype(data_type):
         if binary_encoding == 'base64':
             return "replace(to_base64(cast(" + column_name + " as binary)),'\\n','')"
@@ -118,10 +125,15 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
     ``select`` is the comma separated argument list of ``concat_ws('#', ...)``,
     ``clamped_expression`` the per-row count of datetime values the clamp
     changed and ``skipped`` the columns not compared by kind. Skipped columns
-    contribute nothing; the nullability flags are one trailing element.
+    contribute nothing. The null flags are one trailing element with one
+    ``ISNULL`` per compared column, nullable or not, so a column declared
+    nullable here and non-Nullable on the replica gives the same flags for
+    equal values (spec 13.06 D-13.06-40). ``nullables`` lists the compared
+    columns declared nullable (the ones whose value is wrapped in ``ifnull``).
     """
     pieces = []
     nullables = []
+    compared = []
     data_types = {}
     clamped_flags = []
     skipped = {"floating point": [], "JSON": []}
@@ -153,10 +165,11 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
             nullables.append(column_name)
             expression = f"ifnull({expression},'')"
         pieces.append(expression)
+        compared.append(column_name)
         data_types[name] = column['column_type']
     logging.debug(str(nullables))
-    if len(nullables) > 0:
-        pieces.append("concat(" + ",".join("ISNULL(" + nullable + ")" for nullable in nullables) + ")")
+    if len(compared) > 0:
+        pieces.append("concat(" + ",".join("ISNULL(" + compared_column + ")" for compared_column in compared) + ")")
     return (",".join(pieces), nullables, data_types, clamped_count_expression(clamped_flags), skipped)
 
 
@@ -169,7 +182,8 @@ def get_table_checksum_query(table, conn, binary_encoding, where, excluded_colum
     row_list = [row for row in rowset.mappings()]
     (select, nullables, data_types, clamped_expression, skipped) = build_mysql_row_expression(
         row_list, args, binary_encoding, excluded_columns, include_floating_point_columns, include_json_columns)
-    warn_not_compared(args.mysql_database, table, skipped, warned_tables)
+    # A standalone run is told to pass the JSON columns to the ClickHouse side (spec 13.06 D-13.06-41).
+    warn_not_compared(args.mysql_database, table, skipped, warned_tables, json_hint=True)
     # order is not important
     primary_key_columns = []
     logging.debug(str(primary_key_columns))
