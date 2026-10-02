@@ -205,6 +205,8 @@ from `sink-connector/python` with that directory on `PYTHONPATH` (§3.1). A miss
 | `--lock_wait_timeout` | int, 30 | `SET SESSION lock_wait_timeout` before `LOCK TABLES` | yes |
 | `--fail_on_lock_timeout` | flag | A lock timeout aborts the run instead of skip-and-warn | yes |
 | `--fail_on_empty` | flag | A table with verdict `EMPTY` (zero rows on both sides) makes the run exit 1. Default: INFO only, exit 0 (§3.8) | yes |
+| `--recheck_differences` | int ≥ 0, 1 | How many more times a `DIFFERENT` table is checksummed before its difference is reported; 0 restores the single pass (§3.7.3) | yes |
+| `--recheck_delay_seconds` | int ≥ 0, 60 | Seconds slept before each re-check (§3.7.3) | yes |
 
 The packaged driver (PT404-445) has the same flags **minus** `--source_timezone`, `--binary_encoding`, the two
 include flags, `--lock_wait_timeout` and `--fail_on_lock_timeout`. It has `--fail_on_empty`. Their effects
@@ -387,7 +389,8 @@ The questions this spec must answer:
   3. `--threads N` holds up to N table locks at once.
 
 Without `--lock_tables_on_source`, nothing is frozen. With `--threads_per_table > 1`, the MySQL side reads its
-PK chunks over separate connections at different moments, so a written table gives noise.
+PK chunks over separate connections at different moments, so a written table gives noise. A pass that differs
+is checksummed again before it is reported (§3.7.3).
 
 #### 3.7.2 Packaged (`run_config`, PT319-353)
 
@@ -402,6 +405,43 @@ PK chunks over separate connections at different moments, so a written table giv
 - The metadata variable `conn` is overwritten by each lock connection, so the metadata queries of table k run
   on table k's lock session. None of these connections is ever closed. When a table raises, only that table is
   unlocked before the re-raise. The other locks are released when the process exits.
+
+#### 3.7.3 Re-check of a difference (both drivers, `verify_table`, `recheck_settings`)
+
+One pass reads the MySQL side and every ClickHouse side once. On a table that is written during the run the
+sides read it at different moments, and the MySQL side reads its PK chunks over separate connections, each with
+its own snapshot (§3.9). A single pass can therefore differ although no row diverges. Observed on a scheduled
+staging run on 2026-10-01: the ClickHouse side finished at 17:45:30 (CT). Fifteen rows were closed (`db_to` set)
+at 17:45:35.9, and their fifteen successors were inserted from 17:45:36.7 to 17:45:38.4. The MySQL side ran
+from 17:45:28 to 17:46:04 in 16 PK chunks. Its chunk holding the closed rows saw the update, and its last chunk,
+holding the new rows, did not see the insert. Both sides reported 27,368,866 rows with different md5s. The
+next run matched, and the 30 rows hold identical values on both sides.
+
+The worker of each table runs `verify_table(checksum, mysql_host, replica_hosts, table_name,
+recheck_differences, recheck_delay_seconds)`, where `checksum` is `compute_checksum` bound to the table
+(`functools.partial`):
+
+1. Run every side once (`checksum()`, which takes and releases the source lock per pass when locking is on) and
+   take the verdict from `analyze_differences` (§3.8).
+2. A verdict other than `DIFFERENT` ends the table with that verdict. A re-check that ends in `ERROR` is an
+   `ERROR`. When an earlier pass differed, an INFO line `Re-check of <db.t>: the mismatch of the earlier
+   pass(es) is gone on pass k of n; verdict <V>` records it.
+3. A `DIFFERENT` pass that is not the last one is logged at INFO as `Checksum mismatch on pass k of n,
+   checksumming again in S s: <replica tuple> to <source tuple>`. The table is checksummed again after
+   `time.sleep(--recheck_delay_seconds)`, so the connector can apply the writes that pass raced with.
+4. The last pass (`1 + --recheck_differences`) reports a difference exactly as a single pass did: `WARNING
+   Checksum difference : <replica tuple> to <source tuple>`, verdict `DIFFERENT`.
+
+Only the last pass may log WARNING, so the scheduled job's WARNING scan (§3.17) fails on a difference that
+persists across the delay, never on one the re-check no longer sees. A `MATCH` after a re-check is a real match:
+every side hashed the whole filtered table to the same md5 and count in that pass. The re-check does not
+establish that the replica caught up (D-13.06-36 stays open). A table written so continuously that every pass
+races with a write can still be reported `DIFFERENT`. The warning is then logged from the table's worker
+thread, not `MainThread`.
+
+`recheck_settings(options)` reads both values with `getattr`. The command line defaults to one re-check after
+60 s, and `--recheck_differences 0` restores the single pass. A caller that builds its own
+`argparse.Namespace` without these attributes keeps the single pass it had before they existed.
 
 ### 3.8 Output parsing, verdict and exit codes
 
@@ -425,7 +465,9 @@ logs the table's verdict:
   verdict`. A failed side is never compared, so `(None, None)` can no longer equal `(None, None)`
   (D-13.06-1, fixed).
 - `DIFFERENT`: some replica's `(md5, count)` differs from the source's (`!=`). Logged as
-  `WARNING Checksum difference : <replica tuple> to <source tuple>`, as before.
+  `WARNING Checksum difference : <replica tuple> to <source tuple>`, as before, on the last pass. When a
+  re-check follows (`recheck_note` set by `verify_table`, §3.7.3), the same tuples are logged at INFO as
+  `Checksum mismatch on pass k of n, ...` instead.
 - `EMPTY`: all equal and the count is 0. Logged as `INFO EMPTY on both sides for <db.t>: 0 rows compared
   ...` (D-13.06-5, fixed). INFO, not WARNING: empty partitions are normal in date-partitioned runs, and WARNING
   is reserved for `Checksum difference` (§3.17).
@@ -442,7 +484,8 @@ Outcome table (`exit` is the process exit code of the driver):
 | Situation | Legacy driver | Packaged driver |
 |---|---|---|
 | All sides equal | `No difference for db.t`, exit 0 | same |
-| A replica differs | `WARNING Checksum difference`, exit 0 (FM-11.02-1, unchanged) | same |
+| A replica differs | `WARNING Checksum difference` after the re-check(s) still differ, exit 0 (FM-11.02-1, unchanged) | same |
+| A replica differs on one pass and matches on the re-check (a write raced the pass) | INFO `Checksum mismatch on pass 1 of 2, ...`, then `No difference`, verdict `MATCH`, exit 0 (§3.7.3) | same |
 | One side script exits non-zero (connection refused, SQL error, script or module not found) | `ERROR` for that table, the other tables still get verdicts, exit 1 | same (before the fix: `Checksum difference`, exit 0) |
 | **Both** sides fail | `ERROR`, exit 1 | same (before the fix: **`No difference`, exit 0**, D-13.06-1) |
 | Side exits 0 but prints no checksum line (table missing on the replica) | `ERROR`, exit 1 (before the fix the legacy driver reported `Checksum difference`, exit 0, for a missing replica table) | same |
@@ -895,6 +938,12 @@ The suite was run on 2026-10-01 from `sink-connector/python` with the toolset ve
   - `sink-connector/python/db_compare/tests/test_table_locking.py::TestLockHoldDuration::test_lock_held_during_both_checksums`
   - `sink-connector/python/db_compare/tests/test_table_locking.py::TestConcurrentChecksums::test_mysql_and_clickhouse_run_concurrently`
   - `sink-connector/python/db_compare/tests/test_table_locking.py::TestComputeChecksumResults::test_database_override_map_applied`. It covers only the exact `a:b` form.
+- Re-check of a difference (§3.7.3), legacy driver end to end with the scheduled job's flags and both copies'
+  `verify_table`:
+  - `sink-connector/python/db_compare/tests/test_checksum_recheck.py::TestScheduledJobRecheck::test_difference_gone_on_recheck_logs_no_warning_and_matches`
+  - `sink-connector/python/db_compare/tests/test_checksum_recheck.py::TestScheduledJobRecheck::test_difference_seen_again_logs_exactly_one_warning`
+  - `sink-connector/python/db_compare/tests/test_checksum_recheck.py::TestScheduledJobRecheck::test_recheck_zero_reports_the_first_difference`
+  - `sink-connector/python/db_compare/tests/test_checksum_recheck.py::TestVerifyTableBothCopies::test_error_on_recheck_is_an_error`
 - Bounded lock:
   - `sink-connector/python/db_compare/tests/test_bounded_source_lock.py::TestIsLockWaitTimeout::test_does_not_match_table_name_containing_1205`
   - `sink-connector/python/db_compare/tests/test_bounded_source_lock.py::TestLockTables::test_sets_session_timeout_before_lock`
@@ -1448,7 +1497,7 @@ LCC/PCC the ClickHouse count runners.
 | D-13.06-33 | S4 | both | `db_compare/top_level_table_checksum.py:499,503`; `ch_sink_tools/db_compare/top_level_table_checksum.py:312,316` | reproduced (R10: `db1\.orders` → all tables) | `table_include_list` patterns are pre-filtered by the literal prefix `<db>.`. Regex-style patterns are dropped and the include list silently turns off. |
 | D-13.06-34 | S4 | both | `db_compare/mysql_table_checksum.py:100-102`; `ch_sink_tools/db_compare/mysql_table_checksum.py:113-115` | code-read | The DATE clamp (`1900-01-01`..`2299-12-31`) is neither counted nor warned, unlike the datetime clamp. |
 | D-13.06-35 | S4 | both | `db_compare/mysql_table_checksum.py:137-138`; `ch_sink_tools/db_compare/mysql_table_checksum.py:72-73`; specs 11.02 §3.9, §3.10, §6 item 2, FM-11.02-3, FM-11.02-9 | reproduced (R01: two same-collation columns get `convert()`) and code-read | `same_charset` counts columns, not distinct collations (harmless). Spec 11.02 drifts from the code: MySQL errors rather than wraps on overflow; the ClickHouse side does not split multi-token exclusions; failed runs do not skip pending tables; the FM-11.02-9 recipe uses space-separated exclusions; coverage warnings are dropped by the driver. |
-| D-13.06-36 | S3 | both | `db_compare/top_level_table_checksum.py:160-199`; `ch_sink_tools/db_compare/top_level_table_checksum.py:319-326` | code-read (no position, GTID or connector-offset read anywhere in the runners) | "Replica caught up" is never established. The only mechanism is a fixed sleep after locking, so lag is reported as a difference indistinguishable from divergence. |
+| D-13.06-36 | S3 | both | `db_compare/top_level_table_checksum.py:160-199`; `ch_sink_tools/db_compare/top_level_table_checksum.py:319-326` | code-read (no position, GTID or connector-offset read anywhere in the runners) | "Replica caught up" is never established. The only mechanism is a fixed sleep after locking, so lag is reported as a difference indistinguishable from divergence. Mitigated, not fixed: a `DIFFERENT` table is checksummed again after `--recheck_delay_seconds` and reported only if it still differs (§3.7.3). |
 | D-13.06-37 | S4 | both | `db_compare/top_level_table_checksum.py:203`; `db/mysql.py:46-47` | code-read | The driver's `--include_partitions_regex` filters tables but checksums them whole. The name suggests a partition-restricted comparison. |
 | D-13.06-38 | S2 | legacy | `db_compare/mysql_table_checksum.py` (`mysql_column_expression`, binary branch) | reproduced end to end (connector `binary.handling.mode: base64`: ClickHouse holds `abcd` for `b'1010101111001101'`, the MySQL side rendered `q80=`; the scheduled job reported `Checksum difference` for every table with a BIT(16) column on clean data) | FIXED: BIT(n>1) is rendered `lower(hex(cast(c as binary)))` under every `--binary_encoding`. Test: `test_scheduled_job_findings.py::TestBitColumnRendering::test_bit_n_is_lower_hex_under_every_encoding`; e2e `tests_e2e/mysql/test_mysql_01_production_job.py::test_clean_data_passes_the_job`. Was: base64 with `--binary_encoding base64`, while the connector applies base64 to binary/varbinary/blob only. |
 | D-13.06-39 | S2 | legacy | `install.sh:4` | reproduced end to end (`install.sh: line 4: PYTHONPATH: unbound variable` under the job's `set -euo pipefail`) | FIXED: `export PYTHONPATH="${PYTHONPATH:-}":.`. Test: `test_scheduled_job_findings.py::TestInstallShUnderStrictMode::test_sources_with_pythonpath_unset`; e2e `tests_e2e/mysql/test_mysql_01_production_job.py::test_job_sources_install_sh_under_set_euo_pipefail`. Was: a job sourcing `install.sh` after `set -u` with `PYTHONPATH` unset died before any checksum. |

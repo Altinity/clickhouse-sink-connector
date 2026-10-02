@@ -6,6 +6,7 @@ import logging
 from db.mysql import *
 from db.checksum_common import validate_timezone, JSON_COLUMNS_HINT_RE
 import concurrent.futures
+import functools
 from datetime import datetime
 from subprocess import Popen, PIPE
 import subprocess
@@ -444,7 +445,7 @@ def resolve_source_timezone(conn, explicit):
     return zone
 
 
-def analyze_differences(results, mysql_host, replica_hosts, table_name=None):
+def analyze_differences(results, mysql_host, replica_hosts, table_name=None, recheck_note=None):
     """Log and return the table's verdict: MATCH, DIFFERENT, EMPTY or ERROR.
 
     ``results`` is in submission order: the MySQL source first, then one entry
@@ -453,7 +454,11 @@ def analyze_differences(results, mysql_host, replica_hosts, table_name=None):
     host string as MySQL still gets a verdict (spec 13.06 FM-13.06-4). A side
     that failed (None) or printed no parseable checksum (None md5 or count)
     makes the table an ERROR, never a match (FM-13.06-1, FM-13.06-2). Equal
-    results with zero rows are EMPTY, not a match (FM-13.06-5)."""
+    results with zero rows are EMPTY, not a match (FM-13.06-5).
+
+    ``recheck_note`` is set when a re-check of this table follows (spec 13.06
+    section 3.7.3): a difference is then logged at INFO with the note, and
+    only the last pass logs the WARNING "Checksum difference" line."""
     results = list(results or [])
     label = table_name
     if label is None:
@@ -474,7 +479,12 @@ def analyze_differences(results, mysql_host, replica_hosts, table_name=None):
     for replica_result in results[1:]:
         (checksum, count) = (replica_result[2], replica_result[3])
         if  (checksum, count) !=  (mysql_checksum, mysql_count):
-            logging.warning(f"Checksum difference : {replica_result} to {source_result}")
+            if recheck_note is None:
+                logging.warning(f"Checksum difference : {replica_result} to {source_result}")
+            else:
+                # INFO, not WARNING: a re-check follows, and WARNING is
+                # reserved for the difference the last pass still sees.
+                logging.info(f"Checksum mismatch {recheck_note}: {replica_result} to {source_result}")
             is_difference = True
     if is_difference:
         return VERDICT_DIFFERENT
@@ -486,6 +496,41 @@ def analyze_differences(results, mysql_host, replica_hosts, table_name=None):
         return VERDICT_EMPTY
     logging.info(f"No difference for {source_result[1]}")
     return VERDICT_MATCH
+
+
+def recheck_settings(options):
+    """(recheck_differences, recheck_delay_seconds) of the parsed options.
+
+    The command line defaults to one re-check after 60 s. A caller that builds
+    its own argparse.Namespace without these attributes keeps the single pass
+    it had before they existed."""
+    return (getattr(options, "recheck_differences", 0), getattr(options, "recheck_delay_seconds", 60))
+
+
+def verify_table(checksum, mysql_host, replica_hosts, table_name, recheck_differences, recheck_delay_seconds):
+    """Return the table's verdict, checksumming it again when it differs.
+
+    ``checksum`` is a callable without arguments that runs every side once and
+    returns their results (``compute_checksum`` bound to the table). The sides
+    of a table that is written during the run read it at different moments,
+    and the MySQL side reads its PK chunks over separate connections, so one
+    pass can differ although no row diverges (spec 13.06 section 3.7.3). A
+    DIFFERENT verdict is therefore checksummed again, up to
+    ``recheck_differences`` more times, ``recheck_delay_seconds`` apart; only
+    the last pass may log the WARNING. A pass that is not DIFFERENT ends the
+    table with that verdict, so a recheck that errors is still an ERROR."""
+    passes = 1 + recheck_differences
+    for pass_number in range(1, passes + 1):
+        last = pass_number == passes
+        note = None if last else (f"on pass {pass_number} of {passes}, checksumming again "
+                                  f"in {recheck_delay_seconds} s")
+        verdict = analyze_differences(checksum(), mysql_host, replica_hosts, table_name, recheck_note=note)
+        if verdict != VERDICT_DIFFERENT or last:
+            if pass_number > 1 and verdict != VERDICT_DIFFERENT:
+                logging.info(f"Re-check of {table_name}: the mismatch of the earlier pass(es) is gone on pass "
+                             f"{pass_number} of {passes}; verdict {verdict}")
+            return verdict
+        time.sleep(recheck_delay_seconds)
 
 
 def report_run_summary(verdicts, fail_on_empty):
@@ -691,8 +736,11 @@ def run_config(config):
                     # Lock lifecycle is now managed inside compute_checksum per table.
                     # Each future acquires its own lock, runs both MySQL and
                     # ClickHouse checksums under the lock, then releases it.
-                    future = executor.submit(
+                    checksum = functools.partial(
                         compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns, lock_wait_timeout=args.lock_wait_timeout)
+                    future = executor.submit(
+                        verify_table, checksum, mysql_host, replica_hosts, table_name,
+                        *recheck_settings(args))
                     futures.append(future)
                     future_to_table[future] = table_name
                 skipped_tables = []
@@ -717,7 +765,7 @@ def run_config(config):
                         logging.error(exc)
                         raise exc
                     else:
-                        verdicts[table_name] = analyze_differences(future.result(), mysql_host, replica_hosts, table_name)
+                        verdicts[table_name] = future.result()
                 if skipped_tables:
                     logging.warning(
                         "COVERAGE GAP -- checksum finished but " +
@@ -769,6 +817,16 @@ def valid_date(s, format= "%Y-%m-%d"):
     except ValueError:
         msg = "Not a valid date: '{0}'.".format(s)
         raise argparse.ArgumentTypeError(msg)
+
+
+def non_negative_int(s):
+    try:
+        value = int(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Not an integer: '{s}'.")
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"Must be 0 or more: '{s}'.")
+    return value
 
 # hack to add the user to the logger, which needs it apparently
 old_factory = logging.getLogRecordFactory()
@@ -837,6 +895,10 @@ def main():
                         help='Abort the whole run if any table cannot be locked within --lock_wait_timeout. Default is to log a loud COVERAGE GAP warning, skip that one table, and keep checksumming the rest so a single continuously-written table does not fail the whole job.')
     parser.add_argument('--fail_on_empty', action='store_true', default=False,
                         help='Exit non-zero when a table compared 0 rows on both sides (verdict EMPTY). Default: EMPTY is logged at INFO and the run exits 0, since empty partitions are normal in date-partitioned runs.')
+    parser.add_argument('--recheck_differences', type=non_negative_int, default=1,
+                        help='How many more times a table whose checksums differ is checksummed before it is reported as a "Checksum difference" (default 1, 0 disables). A table written during the run is read by each side at a different moment, so a single pass can differ although no row diverges.')
+    parser.add_argument('--recheck_delay_seconds', type=non_negative_int, default=60,
+                        help='Seconds to wait before each re-check of a differing table (default 60), so the connector can apply the writes the first pass raced with.')
 
     global args
     args = parser.parse_args()
