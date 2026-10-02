@@ -654,6 +654,7 @@ class ConnectorFence:
         self.timeout_seconds = timeout_seconds
         self.poll_seconds = poll_seconds
         self.idle_seconds = idle_seconds
+        self.behind = False
 
     def offset(self):
         """(file, position) of the connector's durable offset."""
@@ -689,9 +690,18 @@ class ConnectorFence:
         target_key = binlog_position_key(*target)
         start = time.monotonic()
         (last_offset, last_change) = (None, start)
+        # Once this connector has missed a target, it is behind: every later
+        # wait of the run checks the offset once instead of sleeping the full
+        # timeout again, so a lagging connector costs one timeout per run, not
+        # one per slice and pass. The first target it reaches clears this.
+        timeout_seconds = 0 if self.behind else self.timeout_seconds
         while True:
             offset = self.offset()
             if binlog_position_key(*offset) >= target_key:
+                if self.behind:
+                    logging.info(f"Connector on {self.replica_host} has caught up; waits are back to "
+                                 f"{self.timeout_seconds} s")
+                self.behind = False
                 logging.info(f"Connector on {self.replica_host} reached {target[0]}:{target[1]} for {label} "
                              f"(offset {offset[0]}:{offset[1]}, waited {time.monotonic() - start:0.1f} s)")
                 return (True, offset)
@@ -703,9 +713,11 @@ class ConnectorFence:
                 logging.info(f"Connector on {self.replica_host} is idle at {offset[0]}:{offset[1]} and the source "
                              f"wrote nothing after {target[0]}:{target[1]} for {label}: nothing is in flight")
                 return (True, offset)
-            if now - start >= self.timeout_seconds:
+            if now - start >= timeout_seconds:
                 logging.info(f"Connector on {self.replica_host} did NOT reach {target[0]}:{target[1]} for {label} "
-                             f"within {self.timeout_seconds} s (offset {offset[0]}:{offset[1]}); comparing anyway")
+                             f"within {timeout_seconds} s (offset {offset[0]}:{offset[1]}); comparing anyway"
+                             f"{'' if self.behind else '; later waits of this run check the offset once until it catches up'}")
+                self.behind = True
                 return (False, offset)
             time.sleep(self.poll_seconds)
 

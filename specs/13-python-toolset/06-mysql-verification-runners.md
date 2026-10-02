@@ -425,7 +425,9 @@ every transaction before the target is applied. A source that writes nothing aft
 offset past it; when the end of the source binary log is still the target and the offset has not moved for
 `--fence_idle_seconds`, nothing is in flight and the wait ends too. After `--fence_timeout_seconds` the wait
 gives up with an INFO line `did NOT reach`; the comparison still runs and can only produce a difference, never
-a false match. An unreadable offset (missing table, zero or several offset rows) or an unreadable binlog
+a false match. That connector is then marked behind (`ConnectorFence.behind`): its later waits in the run check
+the offset once instead of sleeping the timeout again, so a lagging connector costs one timeout per run rather
+than one per slice and pass; the first target it reaches clears the mark. An unreadable offset (missing table, zero or several offset rows) or an unreadable binlog
 position makes that table `ERROR` (`ConnectorFenceError`, `BinlogPositionError`); the other tables still get
 verdicts. Without `offset_table` on every replica the run exits 1 before the first table.
 

@@ -140,6 +140,32 @@ class TestConnectorWait(unittest.TestCase):
         self.assertNotIn("WARNING", log)
 
 
+class TestBehindConnector(unittest.TestCase):
+
+    def test_a_missed_target_makes_later_waits_check_once_until_caught_up(self):
+        fence = tl.ConnectorFence("ch-host", "db.offsets", timeout_seconds=30, poll_seconds=1, idle_seconds=10)
+        clock = FakeClock()
+        offsets = [("binlog.000005", 400)]
+        target = ("binlog.000005", 500)
+        busy_head = lambda: ("binlog.000005", 900)
+        with patch.object(fence, "offset", side_effect=lambda: offsets[0]), \
+                patch.object(tl.time, "monotonic", clock.monotonic), patch.object(tl.time, "sleep", clock.sleep), \
+                self.assertLogs(level="INFO") as logs:
+            self.assertFalse(fence.wait(target, busy_head, "slice 1")[0])
+            self.assertEqual(clock.now, 30, "the first miss waits the full timeout")
+            self.assertFalse(fence.wait(target, busy_head, "slice 2")[0])
+            self.assertEqual(clock.now, 30, "a later wait of a connector that is behind checks once")
+            offsets[0] = ("binlog.000005", 600)
+            self.assertTrue(fence.wait(target, busy_head, "slice 3")[0])
+            self.assertFalse(fence.behind)
+            offsets[0] = ("binlog.000005", 400)
+            fence.wait(target, busy_head, "slice 4")
+            self.assertEqual(clock.now, 60, "after catching up a miss waits the full timeout again")
+        log = "\n".join(logs.output)
+        self.assertIn("later waits of this run check the offset once until it catches up", log)
+        self.assertIn("has caught up", log)
+
+
 class TestSlices(unittest.TestCase):
 
     def test_slices_cover_every_key_with_open_ends(self):
