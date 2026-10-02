@@ -26,25 +26,32 @@ Key facts:
   PostgreSQL checksum, count or diff module and no copy of `_expressions.py` or
   `db/postgres.py`. So no legacy-vs-packaged divergence exists for these files
   (§3.20).
-- **No unit tests.** No test in the repository imports any of these modules.
-  Every behaviour below was established by reading every line and by offline
-  repro scripts with mocked connections (§5).
-- **Main hazards** (§6, §7). The run reports `PASS` and exits 0 in four
-  situations:
-  - the ClickHouse checksum query fails;
-  - no column of the table is comparable;
-  - the counts differ by less than the alert thresholds while the checksum was
-    not compared;
-  - a PostgreSQL column is missing from ClickHouse altogether.
-
-  In `snapshot_mode`, the "REPEATABLE READ" snapshot is in fact the server's
-  default isolation level, and the precomputed ClickHouse checksum is built from
-  ClickHouse metadata rather than PostgreSQL metadata. Both produce false
-  mismatches. The cron wrapper cannot start the tool at all.
+- **Unit tests.** Only the verdict, coverage, snapshot-isolation and exit-code
+  rules are pinned by tests
+  (`sink-connector/python/db_compare/tests/test_postgres_checksum_verdicts.py`).
+  Every other behaviour below was established by reading every line and by
+  offline repro scripts with mocked connections (§5).
+- **Verdicts** (§3.12). A table is PASS only when its value-level checksum was
+  computed on both sides and matched, its counts are equal, and every
+  PostgreSQL column (minus the skip list) exists in ClickHouse. A checksum that
+  could not be computed is ERROR. A PostgreSQL column missing from ClickHouse
+  is a MISMATCH (FAIL). A count delta within the alert thresholds is WARN and
+  fails the run unless `checksum.allow_count_delta_warn: true`. Tables or
+  columns hidden from the checksum user are ERROR, and ClickHouse-only tables
+  are EXTRA (§3.8). These four hazards were fixed (D-13.07-1 to D-13.07-4).
+- **Remaining hazards** (§6, §7). In `snapshot_mode` the precomputed ClickHouse
+  checksum is built from ClickHouse metadata rather than PostgreSQL metadata,
+  which produces false mismatches (D-13.07-6). The cron wrapper cannot start
+  the tool at all (D-13.07-12).
 
 ---
 
 ## 2. Codebase Mapping on 2.11.0
+Line numbers below and in §3 to §7 are those of 2.11.0. The verdict fixes
+(D-13.07-1 to D-13.07-5, D-13.07-23) added functions to
+`top_level_postgres_checksum.py` (now 2,419 lines) and shifted its later
+lines; new code is cited by function name.
+
 - **Orchestrator** `ch-checksum` = `main()` in
   `sink-connector/python/ch_sink_tools/db_compare/top_level_postgres_checksum.py`
   (2,141 lines). It handles YAML parsing and validation, the LSN wait, the
@@ -91,10 +98,12 @@ Key facts:
   copies only the legacy `db` and `db_compare` directories. Its entry point
   runs the legacy `clickhouse_table_checksum.py`. It cannot run any tool in
   this spec.
-- **Tests.** None. The existing offline suite (227 passed, 5 skipped) is in
-  `sink-connector/python/db_compare/tests/`, `sink-connector/python/db_load/tests/`,
-  `sink-connector/python/db_dump/tests/` and `sink-connector/python/tests/`.
-  None of it references these modules.
+- **Tests.** `sink-connector/python/db_compare/tests/test_postgres_checksum_verdicts.py`
+  (offline, every connection mocked) pins the verdicts, the coverage checks,
+  the snapshot isolation and the exit codes of the three entry points. The
+  rest of the offline suite in `sink-connector/python/db_compare/tests/`,
+  `sink-connector/python/db_load/tests/`, `sink-connector/python/db_dump/tests/`
+  and `sink-connector/python/tests/` does not reference these modules.
 
 ---
 
@@ -186,11 +195,12 @@ raises `KeyError` in `run_config()` (`:1192`; D-13.07-25).
 | `checksum.lsn_wait_poll_interval_seconds` | int | 10 | `:1231` | LSN wait only. The connector-status wait polls every 5 s |
 | `checksum.alert_count_delta_pct` | float | 0.0001 | `:1232` | count FAIL threshold (fraction, not percent) |
 | `checksum.alert_count_delta_abs` | int | 100 | `:1233` | count FAIL threshold (rows) |
-| `checksum.skip_tables` | list | `[]` | `:1234` | exact bare names removed after discovery |
+| `checksum.allow_count_delta_warn` | bool | false | `run_config` | only the YAML boolean `true` enables it. When true, WARN rows (count delta within the two thresholds above) keep exit 0. Otherwise any WARN row makes the run exit 1 (§3.12) |
+| `checksum.skip_tables` | list | `[]` | `:1234` | exact bare names removed after discovery, and exempt from the hidden-table and ClickHouse-only checks (§3.8) |
 | `checksum.include_floating_point_columns` | bool | false | `:1235` | opt-in for `real` and `double precision` |
 | `checksum.include_json_columns` | bool | false | `:1236` | opt-in for `json` and `jsonb` |
 | `checksum.exclude_ch_columns` | list | `_version, is_deleted, _is_deleted, __is_deleted` | `:1237` | **replaces** the default set. Only filters `system.columns` reads; the queries still hard-code `is_deleted = 0` (D-13.07-11) |
-| `checksum.skip_table_columns` (preferred) or `checksum.skip_columns` | map table → list | `{}` | `:1253-1254` | per-table columns removed from the checksum (not from the count). The comment's "list form = global exclusions" is **ignored**: a list becomes `{}` (D-13.07-24) |
+| `checksum.skip_table_columns` (preferred) or `checksum.skip_columns` | map table → list | `{}` | `:1253-1254` | per-table columns removed from the checksum (not from the count), and exempt from the missing-in-ClickHouse and column-privilege checks (§3.9). The comment's "list form = global exclusions" is **ignored**: a list becomes `{}` (D-13.07-24) |
 | `checksum.lsn_encoding` | str | — | not read | docstring only (`:1180-1182`) |
 | `checksum.auto_diff.*` | map | see §3.17 | `:1850-1851`, `auto_diff.py:936-943` | snapshot mode only. Ignored in per-table mode |
 
@@ -210,11 +220,12 @@ raises `KeyError` in `run_config()` (`:1192`; D-13.07-25).
 ### 3.5 Run orchestration, per-table mode (`snapshot_mode: false`; the code calls it "legacy mode") (`:1957-2056`)
 1. Open one PG connection. Read `get_standby_lsn()`:
    `pg_last_wal_replay_lsn()::text`, or `pg_current_wal_lsn()::text` when the
-   former is NULL (primary). It returns `hi*2^32 + lo`. Discover tables (§3.8)
-   and close the connection. An empty table list logs ERROR and exits 1.
-2. Open a CH connection. If `offset_table` is set and the LSN is greater than
-   0, run `wait_for_ch_lsn()` (§3.7). A timeout is a WARNING and the run
-   continues. Close the connection.
+   former is NULL (primary). It returns `hi*2^32 + lo`. Discover tables
+   (§3.8). An empty table list logs ERROR and exits 1.
+2. Open a CH connection. Run the coverage check `find_coverage_gaps()` (§3.8)
+   on both connections, then close the PG connection. If `offset_table` is set
+   and the LSN is greater than 0, run `wait_for_ch_lsn()` (§3.7). A timeout is
+   a WARNING and the run continues. Close the connection.
 3. Run `compare_table()` for every table on a `ThreadPoolExecutor(threads)`.
    Each call opens its own PG and CH connections. The PG checksum opens one
    more PG connection per chunk on a `ThreadPoolExecutor(threads_per_table)`.
@@ -237,15 +248,17 @@ Steps as executed:
    `SELECT pg_wal_replay_pause()`, then `SELECT pg_is_wal_replay_paused()`;
    `RuntimeError` if that returns false. Log the frozen LSN.
    `wal_was_paused_by_us = True`.
-1. **Snapshot connection** (`:1420-1432`). Open a new connection, set
-   `autocommit = False`, execute `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ`.
-   A failure closes the connection and exits 1. **As built this does not
-   produce a REPEATABLE READ transaction** (§3.7.3; D-13.07-5).
+1. **Snapshot connection** (`begin_repeatable_read_snapshot()`). Open a new
+   connection and call `set_session(isolation_level='REPEATABLE READ',
+   readonly=True, autocommit=False)`, then run `SHOW transaction_isolation`
+   and require `repeatable read`. Any failure closes the connection and exits
+   1 (§3.7.3).
 2. **Snapshot LSN** (`:1438`). `get_standby_lsn()` on the snapshot connection.
 3. **Discover tables** on the snapshot connection (`:1447-1466`). An empty
    list rolls back, closes and exits 1.
-4. **Catch-up** (`:1474-1534`). Open a CH connection. If `offset_table` is set
-   and the LSN is greater than 0:
+4. **Catch-up** (`:1474-1534`). Open a CH connection and run the coverage
+   check `find_coverage_gaps()` (§3.8) on it and the snapshot connection. If
+   `offset_table` is set and the LSN is greater than 0:
    - if the WAL was paused by this run: `_wait_for_connector_caught_up()`
      (§3.7.2);
    - otherwise: `wait_for_ch_lsn()` with tolerance 0 (§3.7.1).
@@ -359,35 +372,36 @@ flush in step 4b only stops writes that arrive after it. The docstring's
 tables give false mismatches (D-13.07-10).
 
 #### 3.7.3 Transaction isolation on the PostgreSQL side
-The connection arrives with `autocommit = True`. `run_config()` sets
-`autocommit = False` and then runs `cursor.execute("BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ")`.
-psycopg2 behaviour, documented for `connection.autocommit`: in non-autocommit
-mode the driver itself sends `BEGIN` before the first command of a
-transaction. PostgreSQL's documented behaviour for `BEGIN` inside a
-transaction block: it raises a WARNING and leaves the transaction state
-unchanged. The isolation level therefore stays `default_transaction_isolation`,
-normally READ COMMITTED, and each statement takes a fresh snapshot.
+The connection arrives with `autocommit = True`.
+`begin_repeatable_read_snapshot()` calls
+`set_session(isolation_level='REPEATABLE READ', readonly=True, autocommit=False)`.
+psycopg2 behaviour, documented for `connection.autocommit` and
+`set_session`: in non-autocommit mode the driver itself sends `BEGIN` before
+the first command of a transaction, and with these session settings that
+`BEGIN` carries `ISOLATION LEVEL REPEATABLE READ READ ONLY`. The helper then
+runs `SHOW transaction_isolation` (the first statement, so it opens the
+transaction) and raises unless the answer is `repeatable read`; `run_config()`
+then closes the connection and exits 1. The next statement, the LSN read,
+pins the snapshot that every later PG statement of the run (discovery,
+metadata, counts, chunk checksums, `auto_diff`) reads.
 
-Repro S4 shows the statement order on the connection: `set autocommit=False`,
-then `execute 'BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ'`. The
-implicit driver `BEGIN` cannot be observed without a server.
+Before the fix (2.11.0, D-13.07-5) `run_config()` set `autocommit = False` and
+executed `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ` itself. The
+driver's implicit `BEGIN` came first, PostgreSQL ignored the nested `BEGIN`
+with a WARNING, and the transaction ran at `default_transaction_isolation`
+(normally READ COMMITTED) with a fresh snapshot per statement (repro S4).
 
-Consequences:
-
-- With WAL replay paused, the standby is frozen, so READ COMMITTED still reads
-  one state. The isolation defect is then masked.
-- Without the pause, PG data moves during Phase B, which the code itself
-  estimates at about 15 minutes. The logged "snapshot LSN" is not the data's
-  LSN. The PG count and checksum of one table can see different states.
-  `auto_diff` reads a later state than the checksum (D-13.07-5).
+Remaining limit: the snapshot is consistent within PostgreSQL, but it is not
+tied to the ClickHouse state unless the WAL replay is paused and the
+connector flushed (§3.7.2, D-13.07-10).
 
 #### 3.7.4 Summary of the modes
 
 | Mode | PG consistency | CH vs PG point in time | Writes during compare |
 |---|---|---|---|
 | per-table | none (autocommit per statement) | CH waited to ≥ LSN read **before** discovery | continue on both sides |
-| snapshot, no WAL pause, no flush | per statement (D-13.07-5) | CH ≥ snapshot LSN, then keeps moving | continue on both sides |
-| snapshot, flush only | per statement | CH frozen at flush, PG moving | PG only |
+| snapshot, no WAL pause, no flush | one REPEATABLE READ snapshot | CH ≥ snapshot LSN, then keeps moving | continue on both sides (PG side invisible to the snapshot) |
+| snapshot, flush only | one REPEATABLE READ snapshot | CH frozen at flush | none visible |
 | snapshot, WAL pause + flush | frozen standby | CH ≥ frozen point (possibly ahead, §3.7.2) | none after flush |
 
 ### 3.8 Table discovery and pairing
@@ -404,17 +418,40 @@ ORDER BY table_name
   `'` breaks the statement (repro P8). `skip_tables` is then applied by exact
   name.
 - **Privilege filter.** `information_schema.tables` (and `.columns`) shows only
-  objects the current user has a privilege on. Tables the checksum user cannot
-  read are silently absent: they appear in no count and no warning, and the
-  final line still says "all N tables match" (D-13.07-4).
+  objects the current user has a privilege on. The coverage check therefore
+  re-reads the catalog (`get_pg_hidden_tables()`):
+
+  ```sql
+  SELECT c.relname AS table_name, has_table_privilege(c.oid, 'SELECT') AS can_select
+  FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = %s AND c.relkind IN ('r', 'p')
+    AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_inherits i WHERE i.inhrelid = c.oid)
+    [AND c.relname ~ %s]          -- the same include regex, bound as a parameter
+  ```
+
+  Every returned table that discovery did not return and that is not in
+  `skip_tables` becomes an **ERROR** row "exists in PostgreSQL but is not
+  visible to the checksum user (SELECT privilege: yes|no); not compared".
+  Partitions and inheritance children are not reported, because their rows
+  are read and privilege-checked through the parent. Hidden columns are
+  handled per table (§3.9).
 - **Partitions.** Partitioned parents and their partitions are both
   `BASE TABLE` (PostgreSQL behaviour, not verified offline). Both are compared,
   and whichever has no ClickHouse twin is reported MISSING.
 - **Pairing.** PG `<schema>.<t>` is compared with CH `<clickhouse.database>.<t>`,
   same bare name, case-sensitive. There is no rename map, no schema-to-database
   map and only one schema per run.
-- **Missing twin.** A CH table that does not exist gives status MISSING. CH
-  tables with no PG twin are never examined.
+- **Missing twin.** A CH table that does not exist gives status MISSING.
+- **ClickHouse-only tables** (`get_ch_only_tables()`). The coverage check lists
+  `system.tables` of `clickhouse.database` with `engine LIKE '%MergeTree'`
+  (views, dictionaries and `.inner*` tables excluded), removes the names
+  discovery returned, and filters the rest with the same include regex
+  evaluated by PostgreSQL (`unnest(%s::text[]) ... ~ %s`), so both sides use
+  one regex dialect. Names in `skip_tables`, and the offset table when
+  `connector.offset_db` equals `clickhouse.database`, are ignored. Each
+  remaining table becomes an **EXTRA** row "exists in ClickHouse but has no
+  visible PostgreSQL table". A catalog query error is not caught: the run
+  ends with a traceback and exit 1.
 
 ### 3.9 Column selection
 **Phase B and per-table mode** (`compare_table`, `:838-858`, `:959-988`):
@@ -423,12 +460,22 @@ ORDER BY table_name
    Each has `column_name`, `pg_type` (= `information_schema.columns.data_type`),
    `udt_name` and `nullable`.
 2. Take the CH column names from `system.columns` in `position` order, minus
-   `exclude_ch_columns` (`get_ch_columns`, `:387-406`). A query error returns
-   `[]`.
+   `exclude_ch_columns` (`get_ch_columns`, `:387-406`). A query error is
+   logged and re-raised, so the table is ERROR (an empty list would read as
+   "every column missing").
+   - **Column privileges** (`get_pg_unreadable_columns()`). `pg_catalog.pg_attribute`
+     is read for the table's live columns with
+     `NOT has_column_privilege(c.oid, a.attnum, 'SELECT')`. Any such column not
+     in the skip list makes the table **ERROR** "checksum user lacks SELECT
+     privilege on PostgreSQL columns [...]; not compared", before any count or
+     checksum runs.
 3. **Shared columns** are the PG columns present in CH and not in the table's
-   skip list, kept in PG order. A PG column missing from CH is dropped. The only
-   trace is the INFO counts `pg_cols=` and `shared_cols=` (D-13.07-3). A CH
-   column missing from PG is ignored.
+   skip list, kept in PG order. A PG column missing from CH and not in the skip
+   list is a **column-set mismatch**: it is logged at ERROR, recorded in
+   `missing_ch_columns`, and the table is FAIL with checksum label `MISMATCH`
+   and detail `columns missing in ClickHouse: [...]`, whatever the checksum
+   over the shared columns says (§3.12). The checksum still runs over the
+   shared columns. A CH column missing from PG is ignored.
 4. **PG side.** `build_pg_select_expression()` drops these types:
    - float (`real`, `float4`, `double precision`, `float8`, `float`) unless
      opted in;
@@ -486,10 +533,10 @@ and add the column's NULL bit (§3.11).
 
 | PG type | PG expression | CH expression (from PG type) | Agreement as built |
 |---|---|---|---|
-| `boolean` | `CASE WHEN c THEN '1' ELSE '0' END`. Nullable: `CASE WHEN c IS NULL THEN NULL WHEN c ...` | `if(c = 0,'0','1')`. Nullable: `if(isNull(c), NULL, ...)` | yes for CH `UInt8` and `Bool`. A CH `String` column makes `c = 0` a type error, so the checksum is None and the table is PASSed on count (D-13.07-1) |
-| `timestamp with time zone` | `to_char(c AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US')`, always 6 fraction digits, UTC wall clock | `toString(toTimeZone(c,'UTC'))` | yes **only** for CH `DateTime64(6, ...)`. `DateTime64(3)` prints 3 digits and `DateTime` prints none, so every non-NULL row mismatches. Values outside the `DateTime64` range are clamped by ClickHouse. PG `infinity` makes `to_char` return NULL (PostgreSQL behaviour, not verified offline) |
+| `boolean` | `CASE WHEN c THEN '1' ELSE '0' END`. Nullable: `CASE WHEN c IS NULL THEN NULL WHEN c ...` | `if(c = 0,'0','1')`. Nullable: `if(isNull(c), NULL, ...)` | yes for CH `UInt8` and `Bool`. A CH `String` column makes `c = 0` a type error, so the checksum is None and the table is ERROR (§3.12) |
+| `timestamp with time zone` | `to_char(c AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US')`, always 6 fraction digits, UTC wall clock | `toString(toTimeZone(c,'UTC'))` | yes **only** for CH `DateTime64(6, ...)`. `DateTime64(3)` prints 3 digits and `DateTime` prints none, so every non-NULL row mismatches. Values outside the `DateTime64` range are clamped by ClickHouse. PG `infinity` makes `to_char` return NULL, rendered `''`, while ch-pg-dump and the connector store the type bound: a false MISMATCH (verified end to end; D-13.07-30) |
 | `timestamp without time zone` | **`to_char(c AT TIME ZONE 'UTC', ...)`**: the test `'time zone' in type` at `:105` also matches `without time zone`. `AT TIME ZONE 'UTC'` turns the naive value into a `timestamptz` read as UTC, and `to_char` then renders it in the **session TimeZone** | `toString(c)`, with no conversion (the "Bug 84.2-1 fix" was applied only on the CH side) | only when the PG session TimeZone is UTC. Otherwise every non-NULL row is shifted by the session offset (repro P1; D-13.07-7). Also requires that the CH column's zone, or the server's when unannotated, renders the stored instant as the original wall clock |
-| `date` | `to_char(c,'YYYY-MM-DD')` | `toString(c)` | yes inside the `Date32` range (1900–2299). Values outside it are clamped by CH and mismatch |
+| `date` | `to_char(c,'YYYY-MM-DD')` | `toString(c)` | yes inside the `Date32` range (1900–2299). Values outside it are clamped by CH and mismatch; `infinity` / `-infinity` render `''` against the stored bound (verified end to end; D-13.07-30) |
 | `time without time zone` | `to_char(c,'HH24:MI:SS.US')` (resolves through the `time`→`interval` cast) | `toString(c)` | only if CH stores `HH:MM:SS.ffffff` text. The dumper maps `time` to `String`; the CDC value format is set by the connector, not here |
 | `time with time zone` | `to_char(c,'HH24:MI:SS.US')` | `toString(c)` | whether PostgreSQL resolves `to_char(timetz, text)` is **not verified** offline. If it does not, the PG query fails and the table is ERROR (and in snapshot mode the transaction is aborted, D-13.07-13). The offset is dropped either way |
 | `numeric`, `decimal` | `c::text`, which keeps the declared scale (`1.50`) | `toString(c)`. ClickHouse prints `Decimal` **without trailing zeros** (`1.5`), the reason 11.02 §3.3 renders MySQL decimals with `toDecimalString(col, s)` | **no** for any value with trailing fractional zeros (D-13.07-8). Unconstrained `numeric` maps to CH `String` in the dumper and agrees only if the writer stored PG's text |
@@ -533,10 +580,15 @@ FROM (SELECT md5(concat_ws(chr(1), <e1>, ..., <en>)
 
 - The NULL-bit suffix is present only when at least one included column is
   nullable.
-- `build_tier1_chunk_query` returns `None` when no column survives.
-  `get_postgres_table_checksum` then skips every chunk and returns the
-  **empty-table digest** `md5('0#0#0#0#0#')` whatever the row count
-  (repro P7).
+- `build_tier1_chunk_query` returns `None` when no column survives (every
+  column excluded, or no column at all because the table does not exist or is
+  hidden from the user). `get_postgres_table_checksum` then logs
+  `No comparable column in <schema>.<table> ...` and returns `None` without
+  querying the table. On 2.11.0 it skipped every chunk and returned the
+  **empty-table digest** `md5('0#0#0#0#0#')` whatever the row count (repro P7),
+  which `ch-pg-checksum` printed with `count 0` and exit 0, even for a table
+  that does not exist (D-13.07-31, FIXED). `ch-checksum` makes such a table
+  ERROR "no comparable column" (§3.12).
 - **Chunking** (`get_postgres_table_checksum`, `:431-449`;
   `divide_table_into_chunks`, `:301-328`):
   - The chunk key is the first PK column whose `pg_type` contains `int`,
@@ -577,7 +629,7 @@ SETTINGS do_not_merge_across_partitions_select_final = 1,
 - **Empty or missing.** An empty result or `cnt = 0` gives the empty-table
   digest.
 - **Errors.** No column, or any exception, returns `None` (`:657-660`,
-  `:742-744`).
+  `:742-744`). `compare_table` turns that `None` into status ERROR (§3.12).
 - **Partitions.** `FINAL` collapses versions **within each partition only**,
   always. 11.02 §3.7 removed that setting from the MySQL path for exactly this
   reason (finding C16). Here a row whose partition-key value changed survives
@@ -609,57 +661,81 @@ SETTINGS do_not_merge_across_partitions_select_final = 1,
 (`:866-905`, `get_pg_tier3_metrics`, max-PK comparison) is dead code. Phase A
 still runs the Tier-3 CH scan for every table (D-13.07-26).
 
-**Status** (`:919-1030`):
+**Status** (`compare_table`):
 
 ```text
 count_delta     = ch_cnt - pg_cnt
 count_delta_pct = |count_delta| / pg_cnt   (0.0 when pg_cnt == 0)
 count_fail      = |count_delta| > alert_count_delta_abs  or  count_delta_pct > alert_count_delta_pct
 checksum_match  = (pg == ch) if both checksums are not None else None
-status = FAIL  if checksum_match is False or count_fail
-         WARN  elif count_delta != 0            (the "or checksum_match is False" there is dead)
+checksum_error  = set when checksums were requested and either is None
+                  ("no comparable column ..." or "<side> checksum not computed")
+status = ERROR if ch_cnt < 0                                   ("ClickHouse count query failed")
+         FAIL  elif checksum_match is False or count_fail or missing_ch_columns
+         ERROR elif checksum_error
+         WARN  elif count_delta != 0
          PASS  otherwise
 ```
 
-Other statuses: `MISSING` when the CH table does not exist; `ERROR` on any
-exception in `compare_table`, including connection failures. A CH count of -1
-enters the arithmetic as a count.
+The detail joins `columns missing in ClickHouse: [...]`, the count error and
+the checksum error. A FAIL caused by missing columns shows checksum label
+`MISMATCH`.
 
-**Verdict table** (repro `repro_verdicts.py`):
+Other statuses: `MISSING` when the CH table does not exist; `ERROR` on any
+exception in `compare_table` (connection failures, a `system.columns` read
+error) and for a table with unreadable PG columns (§3.9); `ERROR` and `EXTRA`
+rows from the coverage check (§3.8).
+
+**Verdict table** (pinned by `test_postgres_checksum_verdicts.py`; the R
+labels are the 2.11.0 repros of §5):
 
 | Situation | Status | Summary column | Counted as failure? |
 |---|---|---|---|
 | checksums equal, counts equal | PASS | `MATCH` | no |
 | checksums differ | FAIL | `MISMATCH` | yes |
-| CH checksum query fails, counts equal (R1) | **PASS** | `SKIP` | **no** |
-| `system.columns` read fails, counts equal (R5) | **PASS** | `SKIP` | **no** |
-| no comparable column (all json, bytea, array…) | **PASS** | `SKIP` | **no** |
-| PG column missing in CH, rest equal (R2) | **PASS** | `MATCH` | **no** |
-| checksum skipped or failed, \|Δ\| ≤ 100 and Δ% ≤ 0.01 % (R3b, R3c) | **WARN** | `SKIP` | **no** |
-| PG empty, CH has ≤ 100 rows, `--no-checksum` (R4) | **WARN** | `SKIP` | **no** |
-| CH count query fails, PG empty (R6) | **WARN** | — | **no** |
+| CH checksum query fails, counts equal (R1) | ERROR | `SKIP` | yes |
+| `system.columns` read fails (R5) | ERROR | `SKIP` | yes |
+| no comparable column (all json, bytea, array…) | ERROR | `SKIP` | yes |
+| PG column missing in CH and not skip-listed (R2) | FAIL | `MISMATCH` | yes |
+| PG column the user cannot SELECT, not skip-listed | ERROR | `SKIP` | yes |
+| checksum equal or `--no-checksum`, 0 < \|Δ\| ≤ 100 and Δ% ≤ 0.01 % (R3b) | WARN | `MATCH` / `SKIP` | yes, unless `allow_count_delta_warn: true` |
+| PG empty, CH has ≤ 100 rows, `--no-checksum` (R4) | WARN | `SKIP` | yes, unless `allow_count_delta_warn: true` |
+| CH count query fails (R6) | ERROR | `SKIP` | yes |
 | CH table missing | MISSING | `MISSING` | yes |
+| PG table hidden from the checksum user | ERROR | `SKIP` | yes |
+| CH-only table matching the include regex | EXTRA | `EXTRA` | yes |
 | exception | ERROR | `SKIP` | yes |
 
-**Summary** (`print_summary`, `:1073-1134`, stdout):
+With a checksum requested, `SKIP` therefore appears only next to ERROR,
+MISSING or EXTRA; under `--no-checksum` it is the label of every row.
+
+**Summary** (`print_summary`, stdout; returns the exit code):
 
 - a header with source, replica, LSN (string and integer) and run start, end
   and duration in UTC;
 - one row per table, sorted by name: table, tier, PG count, CH count, delta,
   delta %, checksum label, status, plus `↳ <detail>` when there is a detail;
-- `RESULT: PASS — all <N> tables match` when no table is FAIL, MISSING or
-  ERROR, otherwise `RESULT: FAIL — <k> of <N> tables have mismatches`;
+- `Tables: <N> (PASS=a, WARN=b, FAIL=c, MISSING=d, EXTRA=e, ERROR=f)`;
+- under `--no-checksum`: `Checksums: not compared (--no-checksum); verdicts rest on row counts only`;
+- one RESULT line:
+  - `RESULT: FAIL — <k> of <N> tables are not verified equal (FAIL/MISSING/EXTRA/ERROR[/WARN])`
+    when the exit code is 1 (`/WARN` and the WARN rows are included unless
+    `allow_count_delta_warn` is true);
+  - `RESULT: PASS WITH WARNINGS — <b> of <N> tables have row-count deltas within the alert thresholds (allowed by checksum.allow_count_delta_warn)`;
+  - `RESULT: PASS — all <N> tables have equal row counts (checksums not compared)`
+    under `--no-checksum`;
+  - `RESULT: PASS — all <N> tables match` only when every row is PASS with
+    checksums compared;
 - `Exit code: <0|1>`.
 
-The PASS line is printed for runs that contain WARN and SKIP rows
-(D-13.07-1, D-13.07-2).
-
-**Exit codes of `ch-checksum`.**
+**Exit codes of `ch-checksum`** (`verdict_exit_code`). Rule: a run exits 0
+only if every table is PASS, or WARN while `checksum.allow_count_delta_warn`
+is the YAML boolean `true`. WARN without that explicit opt-in is a failure.
 
 | Code | When |
 |---|---|
-| 0 | every table PASS or WARN, including the rows above |
-| 1 | any FAIL, MISSING or ERROR; config not found, YAML error or failed validation; no tables found; REPEATABLE READ `BEGIN` failed; any uncaught exception (traceback), e.g. PG unreachable at start, missing `source.postgres.database` |
+| 0 | every table PASS, or PASS/WARN with `allow_count_delta_warn: true` |
+| 1 | any FAIL, MISSING, EXTRA or ERROR; any WARN without `allow_count_delta_warn: true`; config not found, YAML error or failed validation; no tables found; the REPEATABLE READ snapshot could not be opened or verified; any uncaught exception (traceback), e.g. PG unreachable at start, a coverage-check catalog query error, missing `source.postgres.database` |
 | 2 | argparse error |
 | 128+signum | SIGTERM while a WAL-pause or flush handler is installed (SIGINT surfaces as `KeyboardInterrupt`) |
 
@@ -723,9 +799,14 @@ Output: one INFO line per table, `Checksum for table <db>.<schema>.<table> =
 "ClickHouse-compatible" is true only of `ch-checksum`'s internal
 `get_ch_checksum()` (D-13.07-27).
 
-Exit codes: 0 even when a table fails, because `calculate_checksum` catches and
-logs (`:632-634`; repro; D-13.07-23). 1 on discovery or connection exception,
-or when credentials are unresolved. 1 via `os._exit` on interrupt. 2 on
+Exit codes: 0 when every selected table printed its checksum line (tables
+skipped by `--ignore_tables_regex` count as done, and `--debug_output` runs
+print no line by design). 1 when any table failed: `calculate_checksum` still
+catches and logs the exception, but returns False, as it does when no
+checksum is computed (`--tier 2` without a PK; a table with no comparable
+column, including one that does not exist, D-13.07-31); `main()` logs
+`<k> table(s) failed: [...]` and exits 1. 1 on discovery or connection
+exception, or when credentials are unresolved. 1 via `os._exit` on interrupt. 2 on
 argparse error. `calculate_checksum` reads the module-global `args` and raises
 `NameError` when called as a library function without `main()`.
 
@@ -740,7 +821,9 @@ argparse with exit 2 (repro; D-13.07-27).
 
 Per table: `SELECT COUNT(*) AS cnt FROM "<schema>"."<table>"[ WHERE <where>]`,
 logging `Count for table <db>.<schema>.<table> = <n>`. An error logs an ERROR
-and returns -1. The run still exits 0 (repro; D-13.07-23). The helper
+and returns -1. `main()` collects the -1 results and, after all tables ran,
+logs `<k> table(s) failed: [...]` and exits 1. Tables excluded by
+`--exclude_tables_regex` are not failures. The helper
 `get_postgres_table_count()` (`:29-51`) is unused by any entry point.
 
 ### 3.17 `auto_diff` (`auto_diff.py`)
@@ -926,7 +1009,8 @@ prints per-row mismatching columns as `col:  PG=[..]  CH=[..]  X`, then
 - A run with no arguments exits 2 on the missing default config.
 - The header's exit code 2 for "script startup error" cannot be told apart
   from Python's own exit 2.
-- The header says "0 → all tables PASS", but WARN runs exit 0 too.
+- The header says "0 → all tables PASS", but WARN runs exit 0 too when
+  `checksum.allow_count_delta_warn: true` (§3.12).
 
 ### 3.19 Dockerfile
 `Dockerfile_clickhouse_checksum` builds the legacy MySQL-pipeline ClickHouse
@@ -996,13 +1080,24 @@ Invariants that hold as built:
    type exclusions.
 6. **Cleanup.** If this run paused WAL replay or flushed the connector, it
    attempts the resume in a `finally` block and in SIGTERM/SIGINT handlers.
+7. **No PASS without a value-level comparison.** With checksums requested, a
+   table is PASS only if both checksums were computed and equal, the counts
+   are equal and no non-skip-listed PG column is missing from CH. Under
+   `--no-checksum` the RESULT line says so instead of "all tables match".
+   Exit 0 requires every table PASS, or WARN with the explicit
+   `allow_count_delta_warn: true` (fixed D-13.07-1, D-13.07-2, D-13.07-3).
+8. **Coverage is reported.** PG tables and columns hidden from the checksum
+   user, and CH-only tables matching the include regex, are ERROR or EXTRA
+   rows, never silent (fixed D-13.07-4).
+9. **One PG snapshot in snapshot mode.** The shared connection runs one
+   read-only REPEATABLE READ transaction, verified with
+   `SHOW transaction_isolation` (fixed D-13.07-5).
+10. **Standalone exit codes.** `ch-pg-checksum` and `ch-pg-count` exit 1 when
+    any selected table fails (fixed D-13.07-23), including a table that does not
+    exist or has no comparable column (fixed D-13.07-31).
 
 Invariants the tool claims but does **not** preserve (each is a defect in §7):
 
-- "never PASS without a value-level comparison" (D-13.07-1, D-13.07-2,
-  D-13.07-3, D-13.07-4);
-- "PG is read inside one REPEATABLE READ snapshot pinned at the logged LSN"
-  (D-13.07-5);
 - "CH and PG reflect the same logical state" (D-13.07-10, D-13.07-17);
 - "Phase A excludes the same columns as Phase B and builds matching
   expressions" (D-13.07-6);
@@ -1011,16 +1106,116 @@ Invariants the tool claims but does **not** preserve (each is a defect in §7):
 ---
 
 ## 5. Verification Criteria
-**Existing automated tests:** none.
-`grep -rln -e postgres_table_checksum -e top_level_postgres -e auto_diff -e _expressions -e postgres_table_count`
-over `sink-connector/python/db_compare/tests`, `sink-connector/python/db_load/tests`,
-`sink-connector/python/db_dump/tests` and `sink-connector/python/tests` finds
-nothing. The offline suite (`python -m pytest -q -p no:cacheprovider db_compare/tests db_load/tests db_dump/tests tests`
-from `sink-connector/python`) passes 227 and skips 5 on 2.11.0, and is
-unaffected by and blind to these modules.
+**Existing automated tests:**
+`sink-connector/python/db_compare/tests/test_postgres_checksum_verdicts.py`
+(32 tests, offline, every PG and CH helper patched):
+
+- `TestUncomputedChecksumIsError`: a `None` checksum on either side, no
+  comparable column, a `system.columns` error and a CH count error are ERROR;
+  a per-table run with a failed CH checksum exits 1 (D-13.07-1).
+- `TestWarnIsVisible`: WARN counted in the summary, never "all tables match",
+  exit 1 unless `allow_count_delta_warn: true` (a string `'true'` does not
+  count); `--no-checksum` PASS runs do not claim a match (D-13.07-2).
+- `TestMissingColumns`: a PG column absent from CH is FAIL / `MISMATCH`
+  unless skip-listed, also under `--no-checksum` (D-13.07-3).
+- `TestCoverageGaps`: unreadable columns (`has_column_privilege`), hidden PG
+  tables (`has_table_privilege`) and CH-only tables are reported, honouring
+  `skip_tables` and the offset table, and fail the run (D-13.07-4).
+- `TestRepeatableReadSnapshot`: `set_session(isolation_level='REPEATABLE READ',
+  readonly=True, autocommit=False)`, the `SHOW transaction_isolation` check,
+  and a snapshot-mode `run_config()` that issues no explicit `BEGIN`
+  (D-13.07-5).
+- `TestStandaloneExitCodes`: `ch-pg-checksum` and `ch-pg-count` exit 1 when a
+  table fails and 0 when all succeed (D-13.07-23); a missing table, or one with
+  no comparable column, gives no digest and exit 1
+  (`::test_pg_checksum_exits_nonzero_for_a_missing_table`,
+  `::test_no_comparable_column_gives_no_digest`; D-13.07-31, mutation-checked).
+
+**End-to-end tests** (real PostgreSQL 15 and ClickHouse 24.8 from
+`sink-connector-lightweight/docker/docker-compose-postgres.yml`; CI job
+`python-toolset-e2e-postgres` in `.github/workflows/python-toolset-e2e-postgres.yml`).
+The data is loaded by `ch-pg-dump` (spec 13.05 §5) from
+`sink-connector/python/tests_e2e/postgres/sql/seed_postgres.sql`. Each
+negative plants its divergence in its own copy of the dumped ClickHouse
+database, the way CDC would write it (a newer `_version`, `is_deleted = 1`).
+Every test asserts the exit status and the summary rows / RESULT line:
+
+- `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_ch_checksum_passes_on_dumped_data`
+  (snapshot mode with auto_diff enabled, and per-table mode): every table
+  `MATCH PASS`, `RESULT: PASS — all 2 tables match`, exit 0, and no auto_diff
+  file. The tables include a keyless table, `numeric` with scale, `uuid`,
+  `timestamp`, `timestamptz`, `date`, `boolean` and NULL vs `''`; `bytea` and
+  `jsonb` are excluded by the type rules (§3.9). On these dumper-created tables
+  (`UInt8`, zone-annotated `DateTime64(6, ...)`, PG column order, no CH-only
+  column) the Phase A precomputed ClickHouse digest equals the PostgreSQL
+  digest, so D-13.07-6 does not fire for them.
+- `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_pg_checksum_and_pg_count_agree`:
+  both exit 0, report the same tables, and their counts equal the PG
+  `count(*)` and the CH `count() FINAL`.
+- `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_standalone_tools_exit_1_when_a_table_fails`
+  (negative, both tools): `--no_wc` on a table that does not exist exits 1 with
+  `1 table(s) failed: [...]`. For `ch-pg-checksum` this found D-13.07-31.
+- `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_planted_value_is_a_mismatch`
+  (negative): one differing value, counts equal, `MISMATCH FAIL`, the other
+  table PASS, `RESULT: FAIL — 1 of 2 ...`, exit 1.
+- `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_dropped_clickhouse_column_is_a_mismatch_naming_it`
+  (negative): `MISMATCH FAIL` with `columns missing in ClickHouse: ['note']`,
+  exit 1 (D-13.07-3).
+- `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_extra_clickhouse_table_is_reported`
+  (negative): a CH-only table matching the include regex is an `EXTRA` row,
+  one that does not match is not reported, exit 1 (D-13.07-4).
+- `sink-connector/python/tests_e2e/postgres/test_pg_auto_diff.py::test_auto_diff_locates_planted_rows_by_primary_key`:
+  with a modified row, a row deleted in ClickHouse and a ClickHouse-only row,
+  the table is `MISMATCH FAIL` (exit 1) and the auto_diff JSON names exactly
+  keys 42 (`modified`, only column `note` differing, both values shown), 43
+  (`pg_only`) and 5000 (`ch_only`), with no skipped chunk (§3.17).
+- Strict xfail (the run must keep failing until the defect is fixed):
+  `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_numeric_with_trailing_zero_verifies`
+  (`numeric(10,2)` 1.50, D-13.07-8) and
+  `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_saturated_infinity_values_verify`
+  (`infinity` / `-infinity`, D-13.07-30). Each is satisfied only by a
+  value-level `MISMATCH` with equal counts.
+
+Fix witnesses in `sink-connector/python/tests_e2e/postgres/test_pg_verify_fixes.py`.
+The pre-fix verification tools were run on data loaded by the fixed dumper
+(`PYTOOLS_E2E_TOOLS_ROOT` = the 2.11.0 tree, `PYTOOLS_E2E_DUMP_TOOLS_ROOT` = this
+tree). Each test below fails on the pre-fix tools and passes on the fixed ones.
+The matrix is in `sink-connector/python/tests_e2e/postgres/JUSTIFICATION.md`.
+
+- `sink-connector/python/tests_e2e/postgres/test_pg_verify_fixes.py::test_uncomputable_clickhouse_checksum_is_error_not_pass`
+  (D-13.07-1). A ClickHouse `String` column under a PG `timestamptz` makes the
+  CH checksum fail. Before the fix: PASS, exit 0.
+- `sink-connector/python/tests_e2e/postgres/test_pg_verify_fixes.py::test_count_delta_within_thresholds_is_not_reported_as_a_match`
+  (D-13.07-2). Before the fix: `RESULT: PASS — all 2 tables match`, exit 0,
+  with a WARN row.
+- `sink-connector/python/tests_e2e/postgres/test_pg_verify_fixes.py::test_column_hidden_from_the_checksum_user_is_error`
+  (D-13.07-4, column-level privileges). Before the fix: `MATCH PASS`, exit 0,
+  and the hidden column was never compared.
+- `sink-connector/python/tests_e2e/postgres/test_pg_verify_fixes.py::test_pg_checksum_exits_1_when_a_table_query_fails`
+  (D-13.07-23, a `timetz` column for which PostgreSQL has no `to_char`).
+  Before the fix: exit 0.
+- Also failing before: `test_dropped_clickhouse_column_is_a_mismatch_naming_it`
+  (D-13.07-3), `test_extra_clickhouse_table_is_reported` (D-13.07-4),
+  `test_standalone_tools_exit_1_when_a_table_fails[ch-pg-count]` (D-13.07-23)
+  and `[ch-pg-checksum]` (D-13.07-31).
+- `sink-connector/python/tests_e2e/postgres/test_pg_verify_fixes.py::test_snapshot_mode_reads_postgres_in_one_repeatable_read_transaction`
+  (D-13.07-5) passes before and after. A probe
+  (`sink-connector/python/tests_e2e/postgres/probe/sitecustomize.py`) prints the
+  isolation level of the open transaction before every checksum query, and the
+  pre-fix tools also read `repeatable read`. PostgreSQL 15 warns about the
+  nested `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ` that follows
+  psycopg2's implicit `BEGIN`, but it still applies the isolation option,
+  because no snapshot exists yet. The D-13.07-5 claim that the run uses the
+  default level is therefore not reproduced end to end. The fix keeps its
+  value as hardening: the level is set explicitly and verified.
+
+The offline suite (`python -m pytest -q -p no:cacheprovider db_compare/tests db_load/tests db_dump/tests tests`
+from `sink-connector/python`) passed 227 and skipped 5 on 2.11.0; with this
+file it passes 259 and skips 5.
 
 **Offline repros run for this spec.** These are throwaway scripts, not
-committed. Each imports the packaged modules and mocks every connection. They
+committed. The R, S4 and standalone results below are those of 2.11.0, before
+the verdict fixes. Each imports the packaged modules and mocks every connection. They
 use the project's Python 3.12 environment with psycopg2 2.9.13 and
 clickhouse-driver 0.2.11.
 
@@ -1083,7 +1278,10 @@ clickhouse-driver 0.2.11.
   gives an argparse error.
 
 **Acceptance criteria for a conforming implementation.** These are
-behavioural statements that tests must pin; each is a GAP today.
+behavioural statements that tests must pin. Criteria 1, 2, 3 and 9 are met
+and pinned by `test_postgres_checksum_verdicts.py` (and end to end by the tests
+above); the others are GAPs. Criterion 6 is pinned as a strict xfail end to end,
+as is criterion 10.
 
 1. No status other than FAIL, MISSING or ERROR when a checksum was requested
    but not computed, or when a PG column is absent from CH.
@@ -1097,7 +1295,10 @@ behavioural statements that tests must pin; each is a GAP today.
 6. `numeric(10,2)` value `1.50` produces the same text on both sides.
 7. A resume failure makes the exit code non-zero.
 8. The runner starts the tool from an installed package.
-9. `ch-pg-checksum` and `ch-pg-count` exit non-zero when a table fails.
+9. `ch-pg-checksum` and `ch-pg-count` exit non-zero when a table fails,
+   including a table that does not exist.
+10. A `date`, `timestamp` or `timestamptz` value `infinity` / `-infinity`,
+    stored as the type bound by ch-pg-dump and the connector, verifies as equal.
 
 ---
 
@@ -1107,64 +1308,70 @@ is "fix the cause, re-run (narrower with `--table`)". The two exceptions are
 the WAL-pause and connector-flush side effects (FM-13.07-8, FM-13.07-9).
 Failure modes that make the tool lie are listed first.
 
-- **FM-13.07-1 A checksum that was not computed is reported PASS**
+- **FM-13.07-1 A checksum cannot be computed**
   - **Trigger**: the CH checksum query fails, for example from a memory limit,
     a type error such as `if(c = 0, ...)` on a `String` column or
     `toTimeZone` on a `String`, or a network error. Or `system.columns`
-    cannot be read, or no column survives the type exclusions.
+    cannot be read, or no column survives the type exclusions, or the CH
+    count query fails.
   - **Behaviour**: `get_ch_checksum` returns `None` (`top_level_postgres_checksum.py:742-744`,
-    `:657-660`), or `get_ch_columns` returns `[]` (`:404-406`). Then
-    `checksum_match = None` (`:1019-1022`) and the status is PASS when the
-    counts are equal (`:1025-1030`). The summary prints `SKIP` and
-    `RESULT: PASS — all N tables match`, and the run exits 0
-    (`:1122-1134`, `:2066-2067`).
-  - **Detection**: an ERROR `CH checksum error for ...` in the log, and the
-    `SKIP` label in the summary. The exit code and the RESULT line say PASS.
-  - **Blast radius**: any value-level divergence in that table is certified
-    by row count only.
-  - **Recovery**: treat every `SKIP` row in a run without `--no-checksum` as
-    a failure. Fix the cause and re-run with `--table <t>`.
+    `:657-660`), `get_ch_columns` re-raises, or `get_ch_count` returns -1.
+    `compare_table` makes the table ERROR with the detail
+    `<side> checksum not computed`, `no comparable column ...` or
+    `ClickHouse count query failed`, and the run exits 1 (§3.12).
+  - **Detection**: the ERROR row and its `↳` detail in the summary, the
+    `RESULT: FAIL` line and exit 1; an ERROR `CH checksum error for ...` in
+    the log.
+  - **Blast radius**: no false verdict. The table's coverage is lost for this
+    run.
+  - **Recovery**: fix the cause and re-run with `--table <t>`. For a table
+    with no comparable column, enable the type opt-ins or add the table to
+    `skip_tables` knowingly.
   - **RTO**: one re-run of the table (unmeasured, proportional to its size).
-  - **Test**: GAP: a test with a mocked CH checksum query that raises must
-    yield ERROR and exit 1.
-  - **DEFECT**: a failed or impossible checksum is a PASS (D-13.07-1).
+  - **Test**: `sink-connector/python/db_compare/tests/test_postgres_checksum_verdicts.py::TestUncomputedChecksumIsError::test_run_with_failed_ch_checksum_exits_nonzero`, `sink-connector/python/tests_e2e/postgres/test_pg_verify_fixes.py::test_uncomputable_clickhouse_checksum_is_error_not_pass` (end to end)
+  - **FIXED**: a `None` checksum, a failed CH column read and a failed CH count are ERROR and exit 1 (D-13.07-1).
 
-- **FM-13.07-2 Counts differ within the thresholds: WARN, "all tables match", exit 0**
-  - **Trigger**: `--no-checksum`, or a checksum that is `None`, together with
+- **FM-13.07-2 Counts differ within the thresholds**
+  - **Trigger**: checksums equal or `--no-checksum`, together with
     0 < |Δ| ≤ `alert_count_delta_abs` (100) and Δ/PG ≤
     `alert_count_delta_pct` (0.0001). Or a PG table that is empty while CH
     has up to 100 rows (Δ% is defined as 0).
-  - **Behaviour**: status WARN (`:1027-1028`), not counted as a failure
-    (`:1122-1123`, `:2066`). The RESULT line claims all tables match.
-  - **Detection**: the WARN status and the nonzero Delta column in the
-    summary.
-  - **Blast radius**: up to 100 missing or extra rows per table, or 0.01 % of
-    a large table, pass silently.
-  - **Recovery**: scan the summary for WARN rows, then run with checksums and
-    `--table`.
+  - **Behaviour**: status WARN. The summary counts WARN separately, never
+    prints "all tables match", and the run exits 1 unless
+    `checksum.allow_count_delta_warn: true`, in which case it prints
+    `RESULT: PASS WITH WARNINGS` and exits 0 (§3.12).
+  - **Detection**: the WARN row, `WARN=<n>` in the `Tables:` line, the RESULT
+    line and the exit code.
+  - **Blast radius**: none by default. With the opt-in, up to 100 missing or
+    extra rows per table, or 0.01 % of a large table, exit 0 but are named.
+  - **Recovery**: re-run the WARN tables with checksums and `--table`.
   - **RTO**: one re-run per table (unmeasured).
-  - **Test**: GAP: a run with Δ = 50 on 2,000,000 rows and `--no-checksum`
-    must not print "all tables match".
-  - **DEFECT**: WARN is invisible in the exit code, and the RESULT text is
-    false (D-13.07-2).
+  - **Test**: `sink-connector/python/db_compare/tests/test_postgres_checksum_verdicts.py::TestWarnIsVisible::test_run_no_checksum_delta_within_thresholds_exits_nonzero`, `sink-connector/python/tests_e2e/postgres/test_pg_verify_fixes.py::test_count_delta_within_thresholds_is_not_reported_as_a_match` (end to end)
+  - **FIXED**: WARN is counted, never "all match", and exits 1 unless `allow_count_delta_warn: true` (D-13.07-2).
 
-- **FM-13.07-3 A column or a table is silently left out of the comparison**
+- **FM-13.07-3 A column or a table cannot be compared**
   - **Trigger**: a PG column missing in CH, for example a schema change the
     connector did not apply. Or a table or column the checksum user has no
-    privilege on (hidden by `information_schema`). Or CH-only tables.
-  - **Behaviour**: shared-column intersection (`:856-858`). An INFO line
-    reports `pg_cols=N shared_cols=M`. Tables come from
-    `information_schema.tables` (`db/postgres.py:308-316`).
-  - **Detection**: compare `pg_cols` with `shared_cols` in the log. Compare
-    the table list with the catalog by hand.
-  - **Blast radius**: a missing column, or an unreadable table, is certified
-    as MATCH and PASS (repro R2).
-  - **Recovery**: re-run as a user with SELECT on all tables. Diff the PG and
-    CH column lists, and repair the schema per spec 13.05 or the connector's
-    DDL path.
-  - **RTO**: unbounded while unnoticed. Then one re-run.
-  - **Test**: GAP: a PG column absent from CH must make the table FAIL.
-  - **DEFECT**: coverage loss is not reported (D-13.07-3, D-13.07-4).
+    privilege on (hidden by `information_schema`). Or a CH-only table.
+  - **Behaviour**: a missing column makes the table FAIL with `MISMATCH` and
+    `columns missing in ClickHouse: [...]` unless the column is in the skip
+    list. An unreadable column (`has_column_privilege`) makes the table ERROR.
+    A hidden PG table (`has_table_privilege`, `pg_catalog`) is an ERROR row
+    and a CH-only table matching the include regex is an EXTRA row, unless
+    listed in `skip_tables` (§3.8, §3.9). Each exits 1.
+  - **Detection**: the FAIL, ERROR or EXTRA row with its detail, and exit 1.
+  - **Blast radius**: no false verdict. Coverage of the named object is lost
+    until the cause is fixed.
+  - **Recovery**: grant SELECT to the checksum user, repair the CH schema per
+    spec 13.05 or the connector's DDL path, or list the column in
+    `skip_table_columns` / the table in `skip_tables` knowingly.
+  - **RTO**: one re-run after the fix.
+  - **Test**: `sink-connector/python/db_compare/tests/test_postgres_checksum_verdicts.py::TestMissingColumns::test_pg_column_missing_in_ch_fails`,
+    `sink-connector/python/db_compare/tests/test_postgres_checksum_verdicts.py::TestCoverageGaps::test_run_reports_hidden_pg_table_and_fails`;
+    end to end `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_dropped_clickhouse_column_is_a_mismatch_naming_it`,
+    `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_extra_clickhouse_table_is_reported`,
+    `sink-connector/python/tests_e2e/postgres/test_pg_verify_fixes.py::test_column_hidden_from_the_checksum_user_is_error`
+  - **FIXED**: missing CH columns are MISMATCH, hidden tables and columns are ERROR, CH-only tables are EXTRA (D-13.07-3, D-13.07-4).
 
 - **FM-13.07-4 Snapshot mode reports MISMATCH for equal data (Phase A metadata drift)**
   - **Trigger**: `snapshot_mode: true` on a table whose CH column order
@@ -1189,10 +1396,13 @@ Failure modes that make the tool lie are listed first.
   - **Trigger**: `numeric(p,s)` values with trailing fractional zeros;
     `timestamp without time zone` under a non-UTC PG session TimeZone;
     `interval`, `char(n)` with padding, `money`, `bit`, and `time` stored in a
-    format other than PG's text; `timestamptz` stored as `DateTime64(3)`.
+    format other than PG's text; `timestamptz` stored as `DateTime64(3)`;
+    `date` / `timestamp` / `timestamptz` `infinity` or `-infinity`, which the
+    dumper and the connector store as the type bounds.
   - **Behaviour**: different text on the two sides (`postgres_table_checksum.py:105-106`,
-    `:144-149`; `_expressions.py:57-58`). Every affected row changes the
-    digest, giving FAIL.
+    `:144-149`; `_expressions.py:57-58`). For `infinity`, PG `to_char` gives
+    NULL (rendered `''`) against the bound on the CH side. Every affected row
+    changes the digest, giving FAIL.
   - **Detection**: FAIL. auto_diff per-column output shows the formatting
     difference, for example `PG=[1.50] CH=[1.5]`.
   - **Blast radius**: false FAIL for whole classes of tables. Real
@@ -1202,19 +1412,25 @@ Failure modes that make the tool lie are listed first.
     UTC (for example through `PGTZ` in the environment) for the timestamp
     case.
   - **RTO**: one re-run.
-  - **Test**: GAP: per-type golden pairs (PG text vs CH text) for every row of
-    the §3.10 table.
-  - **DEFECT**: no canonical form for these types, and the naive-timestamp
-    shift (D-13.07-7, D-13.07-8).
+  - **Test**: strict xfail end to end for two classes:
+    `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_numeric_with_trailing_zero_verifies`,
+    `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_saturated_infinity_values_verify`.
+    GAP: per-type golden pairs (PG text vs CH text) for every row of the §3.10
+    table.
+  - **DEFECT**: no canonical form for these types, the naive-timestamp shift,
+    and no saturation of special temporal values (D-13.07-7, D-13.07-8,
+    D-13.07-30).
 
 - **FM-13.07-6 The source keeps moving during the compare**
   - **Trigger**: snapshot mode without `wal_replay_pause` on an actively
     written database, or WAL-pause mode where the replication slot is on the
     primary, or per-table mode at any time.
-  - **Behaviour**: the PG transaction is READ COMMITTED (`:1420-1425`,
-    `db/postgres.py:235`; §3.7.3). In WAL-pause mode, "caught up" means caught
-    up with the primary, and `_wait_for_connector_caught_up` returns True even
-    on timeout (`:375-380`). CH and PG therefore read different points in time.
+  - **Behaviour**: in snapshot mode PG is read inside one verified
+    REPEATABLE READ snapshot (§3.7.3; D-13.07-5 fixed), but CH keeps moving
+    unless the connector is flushed. Per-table mode has no PG snapshot at all.
+    In WAL-pause mode, "caught up" means caught up with the primary, and
+    `_wait_for_connector_caught_up` returns True even on timeout (`:375-380`).
+    CH and PG therefore read different points in time.
   - **Detection**: FAIL on hot tables that disappears on re-run.
     Indistinguishable from a real divergence without auto_diff.
   - **Blast radius**: false FAIL (noise). In principle this is not a false
@@ -1222,11 +1438,11 @@ Failure modes that make the tool lie are listed first.
   - **Recovery**: re-run during a quiet period, or with WAL pause plus flush
     and a connector whose slot is on the paused standby.
   - **RTO**: one re-run (unmeasured).
-  - **Test**: GAP: a test asserting the snapshot connection uses
-    `set_session(isolation_level=REPEATABLE READ)` or an equivalent before the
-    first statement.
-  - **DEFECT**: the snapshot is not repeatable, and "caught up" is not
-    established against the frozen point (D-13.07-5, D-13.07-10).
+  - **Test**: `sink-connector/python/db_compare/tests/test_postgres_checksum_verdicts.py::TestRepeatableReadSnapshot::test_snapshot_run_opens_repeatable_read_via_set_session`, `sink-connector/python/tests_e2e/postgres/test_pg_verify_fixes.py::test_snapshot_mode_reads_postgres_in_one_repeatable_read_transaction` (end to end)
+    pins the PG snapshot. GAP: a test that the catch-up check is made against
+    the frozen point.
+  - **DEFECT**: "caught up" is not established against the frozen point
+    (D-13.07-10). The non-repeatable snapshot part (D-13.07-5) is FIXED.
 
 - **FM-13.07-7 The catch-up wait never converges**
   - **Trigger**: a cluster with WAL the connector does not consume, an offset
@@ -1377,8 +1593,11 @@ Failure modes that make the tool lie are listed first.
   - **Recovery**: compare by hand by the real PK range with the expressions of
     §3.10.
   - **RTO**: manual (unmeasured).
-  - **Test**: GAP: auto_diff must use `get_table_pk`, include NULL bits,
-    report count-only mismatches and handle one empty side.
+  - **Test**: the working case (unique integer `id` PK, modified, PG-only and
+    CH-only rows) is pinned end to end by
+    `sink-connector/python/tests_e2e/postgres/test_pg_auto_diff.py::test_auto_diff_locates_planted_rows_by_primary_key`.
+    GAP: auto_diff must use `get_table_pk`, include NULL bits, report
+    count-only mismatches and handle one empty side.
   - **DEFECT**: D-13.07-19, D-13.07-20, D-13.07-21, D-13.07-22.
 
 - **FM-13.07-15 The cron wrapper never runs the checksum**
@@ -1395,19 +1614,27 @@ Failure modes that make the tool lie are listed first.
     `ch-checksum`.
   - **DEFECT**: D-13.07-12.
 
-- **FM-13.07-16 Standalone helpers exit 0 when a table fails**
-  - **Trigger**: any per-table error in `ch-pg-checksum` or `ch-pg-count`.
-  - **Behaviour**: the error is logged. No checksum line is printed, or the
-    count is -1. The exit code is 0 (`postgres_table_checksum.py:632-634`,
-    `:794`; `postgres_table_count.py:77-80`, `:200`).
-  - **Detection**: ERROR log lines, and a missing `Checksum for table` or
-    `Count for table` line.
-  - **Blast radius**: a script that trusts the exit code and parses the lines
-    sees a missing table as nothing to compare.
-  - **Recovery**: check that one output line exists per expected table.
+- **FM-13.07-16 A standalone helper fails on a table**
+  - **Trigger**: any per-table error in `ch-pg-checksum` or `ch-pg-count`, a
+    `ch-pg-checksum --tier 2` table without a PK, or a `ch-pg-checksum` table
+    with no comparable column (for example a `--no_wc` name that does not
+    exist).
+  - **Behaviour**: the error is logged and no checksum line is printed, or the
+    count is -1. The other tables still run; then `main()` logs
+    `<k> table(s) failed: [...]` and exits 1 (§3.15, §3.16).
+  - **Detection**: exit 1, the `table(s) failed` line, ERROR log lines, and a
+    missing `Checksum for table` or `Count for table` line.
+  - **Blast radius**: none beyond the failed tables; a caller that trusts the
+    exit code sees the failure.
+  - **Recovery**: fix the cause and re-run the named tables.
   - **RTO**: one re-run.
-  - **Test**: GAP: a mocked table error must give a non-zero exit.
-  - **DEFECT**: D-13.07-23.
+  - **Test**: `sink-connector/python/db_compare/tests/test_postgres_checksum_verdicts.py::TestStandaloneExitCodes::test_pg_count_exits_nonzero_when_table_fails`,
+    `sink-connector/python/db_compare/tests/test_postgres_checksum_verdicts.py::TestStandaloneExitCodes::test_pg_checksum_exits_nonzero_for_a_missing_table`;
+    end to end `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_standalone_tools_exit_1_when_a_table_fails`,
+    `sink-connector/python/tests_e2e/postgres/test_pg_verify_fixes.py::test_pg_checksum_exits_1_when_a_table_query_fails`
+  - **FIXED**: both helpers exit 1 when any selected table fails (D-13.07-23);
+    a table with no comparable column gives no digest instead of the
+    empty-table digest (D-13.07-31).
 
 - **FM-13.07-17 Configuration accepted but not honoured**
   - **Trigger**: `skip_columns` given as a list; `secure: "false"` as a
@@ -1425,7 +1652,7 @@ Failure modes that make the tool lie are listed first.
   - **Test**: GAP: config-schema validation tests.
   - **DEFECT**: D-13.07-24, D-13.07-25.
 
-Summary: 17 failure modes, 17 DEFECT, 17 GAP.
+Summary: 17 failure modes, 13 DEFECT, 13 GAP.
 
 ---
 
@@ -1433,11 +1660,11 @@ Summary: 17 failure modes, 17 DEFECT, 17 GAP.
 
 | ID | Severity | Copy (legacy/packaged/both) | Location | Evidence | Summary |
 |---|---|---|---|---|---|
-| D-13.07-1 | S1 | packaged | `ch_sink_tools/db_compare/top_level_postgres_checksum.py:1019-1030`, `:742-744`, `:404-406`, `:1129-1130` | reproduced (R1, R5: `SKIP PASS`, `RESULT: PASS`, exit 0) | A checksum that failed or could not be built (`None`) yields PASS when the counts are equal, and the run reports "all tables match" |
-| D-13.07-2 | S1 | packaged | `top_level_postgres_checksum.py:920-930`, `:1025-1030`, `:1122-1123`, `:2066` | reproduced (R3b, R3c, R4, R6: `WARN`, `RESULT: PASS`, exit 0) | A count difference within the thresholds (or PG empty and CH ≤ 100 rows) is WARN, not a failure, and the summary claims all tables match |
-| D-13.07-3 | S1 | packaged | `top_level_postgres_checksum.py:856-858`, `:959-961` | reproduced (R2: column absent from both SQL texts, `MATCH PASS`) | PG columns missing from ClickHouse are silently dropped from the comparison |
-| D-13.07-4 | S1 | packaged | `ch_sink_tools/db/postgres.py:308-316` (used by `top_level_postgres_checksum.py:1453`, `:1971`) | code-read (PostgreSQL shows only privileged objects in `information_schema`) | Tables or columns the checksum user cannot see are silently not compared, and CH-only tables are never examined |
-| D-13.07-5 | S2 | packaged | `top_level_postgres_checksum.py:1420-1425`; `ch_sink_tools/db/postgres.py:235` | code-read (psycopg2 implicit `BEGIN`, then PostgreSQL ignores the nested `BEGIN`); statement order reproduced (S4) | The "REPEATABLE READ snapshot" runs at the default isolation level; the logged snapshot LSN does not describe the data read |
+| D-13.07-1 | S1 | packaged | `ch_sink_tools/db_compare/top_level_postgres_checksum.py:1019-1030`, `:742-744`, `:404-406`, `:1129-1130` | reproduced (R1, R5: `SKIP PASS`, `RESULT: PASS`, exit 0) | FIXED: a `None` checksum (either side, or no comparable column), a failed CH column read and a failed CH count are ERROR and exit 1 (`test_postgres_checksum_verdicts.py::TestUncomputedChecksumIsError`). Was: a checksum that failed or could not be built (`None`) yields PASS when the counts are equal, and the run reports "all tables match" |
+| D-13.07-2 | S1 | packaged | `top_level_postgres_checksum.py:920-930`, `:1025-1030`, `:1122-1123`, `:2066` | reproduced (R3b, R3c, R4, R6: `WARN`, `RESULT: PASS`, exit 0) | FIXED: WARN is counted separately, the summary never says "all match" with any WARN/ERROR/`--no-checksum` row, and WARN exits 1 unless `checksum.allow_count_delta_warn: true` (`test_postgres_checksum_verdicts.py::TestWarnIsVisible`). Was: a count difference within the thresholds (or PG empty and CH ≤ 100 rows) is WARN, not a failure, and the summary claims all tables match |
+| D-13.07-3 | S1 | packaged | `top_level_postgres_checksum.py:856-858`, `:959-961` | reproduced (R2: column absent from both SQL texts, `MATCH PASS`) | FIXED: a PG column missing from CH and not skip-listed makes the table FAIL / `MISMATCH` naming the columns (`test_postgres_checksum_verdicts.py::TestMissingColumns`). Was: PG columns missing from ClickHouse are silently dropped from the comparison |
+| D-13.07-4 | S1 | packaged | `ch_sink_tools/db/postgres.py:308-316` (used by `top_level_postgres_checksum.py:1453`, `:1971`) | code-read (PostgreSQL shows only privileged objects in `information_schema`) | FIXED: hidden PG tables (`has_table_privilege`, `pg_catalog`) are ERROR, unreadable columns (`has_column_privilege`) make the table ERROR, CH-only tables matching the include regex are EXTRA (`test_postgres_checksum_verdicts.py::TestCoverageGaps`). Was: tables or columns the checksum user cannot see are silently not compared, and CH-only tables are never examined |
+| D-13.07-5 | S2 | packaged | `top_level_postgres_checksum.py:1420-1425`; `ch_sink_tools/db/postgres.py:235` | code-read (psycopg2 implicit `BEGIN`, then PostgreSQL ignores the nested `BEGIN`); statement order reproduced (S4). Not reproduced end to end: on PostgreSQL 15 the pre-fix sequence reads `repeatable read`, because the nested `BEGIN`'s isolation option is applied while no snapshot exists (`sink-connector/python/tests_e2e/postgres/test_pg_verify_fixes.py::test_snapshot_mode_reads_postgres_in_one_repeatable_read_transaction` passes on both trees). The hazard holds only if a statement ran on the connection first | FIXED: `begin_repeatable_read_snapshot()` uses `set_session(isolation_level='REPEATABLE READ', readonly=True, autocommit=False)` and verifies `SHOW transaction_isolation` (`test_postgres_checksum_verdicts.py::TestRepeatableReadSnapshot`). Was: the "REPEATABLE READ snapshot" runs at the default isolation level; the logged snapshot LSN does not describe the data read |
 | D-13.07-6 | S2 | packaged | `top_level_postgres_checksum.py:1693-1734`, `:1749-1755`, `:450-510`, `:435` | reproduced (S1 expressions, P2 table) | The Phase A precomputed CH digest uses ClickHouse order, inferred types and nullability, and includes CH-only columns, so snapshot mode gives false MISMATCH |
 | D-13.07-7 | S2 | packaged | `ch_sink_tools/db_compare/postgres_table_checksum.py:105-106` | reproduced (P1 expression); semantics code-read | `timestamp without time zone` matches the `'time zone'` test and is rendered `AT TIME ZONE 'UTC'`, so it is shifted by the PG session TimeZone while CH is not |
 | D-13.07-8 | S2 | packaged | `postgres_table_checksum.py:144-149`; `ch_sink_tools/db_compare/_expressions.py:57-58` | code-read (CH `Decimal` text drops trailing zeros, cf. 11.02 §3.3) | `numeric` scale, `interval`, `char(n)`, `money`, `bit` and `time` are compared as raw `::text` vs `toString()`, with no canonical form |
@@ -1455,10 +1682,12 @@ Summary: 17 failure modes, 17 DEFECT, 17 GAP.
 | D-13.07-20 | S3 | packaged | `auto_diff.py:731-732`, `:743-744` | reproduced (A3, A3b: `empty_table`) | auto_diff skips a table as empty when either side is empty, although every row then diverges |
 | D-13.07-21 | S3 | packaged | `auto_diff.py:90`, `:157`, `:272-275`, `:301-303` | reproduced (A2: total 0) | The per-row maps collapse duplicate keys and the row text has no NULL bits, so count-only and NULL-vs-empty mismatches yield zero divergent rows |
 | D-13.07-22 | S3 | packaged | `auto_diff.py:398`, `:936-943`; `top_level_postgres_checksum.py:1890-1891` | reproduced (A6: `ZeroDivisionError`); PG-only column path code-read | The auto_diff config is not validated, and its column list is all PG columns rather than the shared set |
-| D-13.07-23 | S3 | packaged | `postgres_table_checksum.py:632-634`, `:794`; `ch_sink_tools/db_compare/postgres_table_count.py:77-80`, `:200` | reproduced (both exit 0 with every table failing) | `ch-pg-checksum` and `ch-pg-count` exit 0 when tables fail |
+| D-13.07-23 | S3 | packaged | `postgres_table_checksum.py:632-634`, `:794`; `ch_sink_tools/db_compare/postgres_table_count.py:77-80`, `:200` | reproduced (both exit 0 with every table failing) | FIXED: both exit 1 after all tables ran when any table failed (`test_postgres_checksum_verdicts.py::TestStandaloneExitCodes`). Was: `ch-pg-checksum` and `ch-pg-count` exit 0 when tables fail |
 | D-13.07-24 | S3 | packaged | `top_level_postgres_checksum.py:1251-1254` | code-read | `skip_columns` given as a list (documented as global exclusions) is silently ignored |
 | D-13.07-25 | S4 | packaged | `top_level_postgres_checksum.py:116-132`, `:1192`, `:1211` | code-read | Validation omits `source.postgres.database` (late `KeyError`), and `secure: "false"` enables TLS |
 | D-13.07-26 | S4 | packaged | `top_level_postgres_checksum.py:833`, `:866-905`, `:1225-1226`, `:1654`, `:824-829`, `:2095-2098` | code-read | The tier thresholds and Tier-2/3 code are dead while `--help` advertises them; Phase A still runs the Tier-3 `FINAL` scan, and an extra `COUNT(*)` runs when stats are missing |
 | D-13.07-27 | S4 | packaged | `sink-connector/python/README.md` Quick Start; `postgres_table_checksum.py:661` | reproduced (`ch-pg-count --config` gives an argparse error) | The README invokes `ch-pg-count --config`; `ch-pg-checksum` output is called "ClickHouse-compatible" but cannot be compared with `ch-ch-checksum` |
 | D-13.07-28 | S4 | packaged | `ch_sink_tools/db/postgres.py:303-306`; `top_level_postgres_checksum.py:1449`, `:1967` | reproduced (P8) | The table regex and names are interpolated without escaping: a quote breaks the SQL, and `--table` metacharacters stay live |
 | D-13.07-29 | S4 | packaged | `top_level_postgres_checksum.py:1393`, `:1399`, `:1950-1952` | code-read | When the WAL pause is disabled at step 0 and flush is off, the installed signal handlers are not restored |
+| D-13.07-30 | S3 | packaged | `ch_sink_tools/db_compare/postgres_table_checksum.py:105-113`; `ch_sink_tools/db_compare/auto_diff.py:50-158` | reproduced end to end (PostgreSQL 15, ClickHouse 24.8): a table with `date`/`timestamp`/`timestamptz` `infinity` and `-infinity` rows loaded by ch-pg-dump is `MISMATCH FAIL`; auto_diff shows `PG=[] CH=[2299-12-31]` and `CH=[1900-01-01 00:00:00.000000]` (`sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_saturated_infinity_values_verify`, strict xfail) | The PG row expressions render special temporal values through `to_char`, which returns NULL, while ch-pg-dump and the connector store the saturated type bounds, so every such row is a false mismatch |
+| D-13.07-31 | S3 | packaged | `ch_sink_tools/db_compare/postgres_table_checksum.py:431-445` (before the fix: the chunk loop skipped a `None` query and the empty sum was digested) | reproduced end to end: `ch-pg-checksum --tables_regex t_does_not_exist --no_wc` printed `Checksum for table ... = 081af8c0... count 0` and exited 0 | FIXED: no comparable column (missing or hidden table, every column excluded) returns no digest, so `ch-pg-checksum` exits 1 (`sink-connector/python/db_compare/tests/test_postgres_checksum_verdicts.py::TestStandaloneExitCodes::test_pg_checksum_exits_nonzero_for_a_missing_table`, `sink-connector/python/tests_e2e/postgres/test_pg_verification.py::test_standalone_tools_exit_1_when_a_table_fails`). Was: the empty-table digest `md5('0#0#0#0#0#')` with `count 0` and exit 0, even for a table that does not exist |
