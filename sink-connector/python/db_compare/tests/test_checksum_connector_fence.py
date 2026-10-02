@@ -186,49 +186,65 @@ class TestSlices(unittest.TestCase):
             self.assertIsNone(tl.mysql_where_for_slicing("{partition_expression} >= 3", None))
 
 
+MYSQL_CMD = ["python", "db_compare/mysql_table_checksum.py", "--mysql_database", "shop"]
+
+
 class TestOneSlice(unittest.TestCase):
-    """checksum_one_slice: MySQL snapshot, wait, replica read, re-check."""
+    """checksum_one_slice: snapshot held while the connector is awaited, replica read, re-check, version fence."""
 
-    def run_slice(self, mysql_outputs, ch_results, reached=True, recheck=1):
-        mysql_outputs = list(mysql_outputs)
+    def run_slice(self, mysql_passes, ch_results, reached=True, recheck=1, exclusion=None, floors=(), changed=()):
+        """mysql_passes: [(md5, count, position or None)] per pass; changed: [set of keys] per pass."""
+        mysql_passes = list(mysql_passes)
         ch_results = list(ch_results)
+        changed = list(changed)
+        payloads = []
 
-        def run(cmd, host, table, with_output=False):
-            if host == "db1":
-                (md5, count, snapshot) = mysql_outputs.pop(0)
-                output = side_line(snapshot) if snapshot else ""
-                return ((host, "shop.orders", md5, count), output)
-            return ch_results.pop(0)
+        def snapshot_side(cmd, host, table, on_position):
+            (md5, count, position) = mysql_passes.pop(0)
+            if position is None:
+                return (None, b"", None, None)
+            payload = on_position(position)
+            payloads.append(payload)
+            return ((host, "shop.orders", md5, count), b"", position, payload)
 
         fence = MagicMock()
         fence.wait.return_value = (reached, ("binlog.000005", 100))
-        commands_for = MagicMock(return_value=(["python", "db_compare/mysql_table_checksum.py",
-                                                "--mysql_database", "shop"], [("ch-host", ["ch"])]))
-        with patch.object(tl, "run_quick_safe_checksum", side_effect=run), self.assertLogs(level="INFO") as logs:
+        commands_for = MagicMock(side_effect=lambda condition, extra=None: (MYSQL_CMD, [("ch-host", ["ch", extra])]))
+        floors = list(floors)
+        with patch.object(tl, "run_snapshot_side", side_effect=snapshot_side), \
+                patch.object(tl, "run_quick_safe_checksum", side_effect=lambda cmd, host, table: ch_results.pop(0)), \
+                patch.object(tl, "slice_max_version", side_effect=lambda *a: floors.pop(0)), \
+                patch.object(tl, "keys_changed_since", side_effect=lambda *a: changed.pop(0)), \
+                self.assertLogs(level="INFO") as logs:
             outcome = tl.checksum_one_slice("shop.orders", "orders", "`id` < 101", commands_for, "db1", ["ch-host"],
-                                            {"ch-host": fence}, lambda: ("binlog.000005", 900), recheck)
-        return outcome, fence, "\n".join(logs.output)
+                                            {"ch-host": fence}, lambda: ("binlog.000005", 900), recheck, exclusion)
+        return outcome, fence, "\n".join(logs.output), payloads, commands_for
 
-    SNAP = "Snapshot position for table shop.orders = binlog.000005 777 exact"
+    POS = ("binlog.000005", 777, "exact")
+    EXCLUSION = {"column": "id", "databases": {"ch-host": "shop"}, "cap": 3}
 
-    def test_match_waits_for_the_snapshot_position(self):
-        (outcome, fence, log) = self.run_slice([(MD5_A, 5, self.SNAP)], [("ch-host", "shop.orders", MD5_A, 5)])
-        self.assertEqual(outcome, (tl.VERDICT_MATCH, 5))
+    def test_match_waits_for_the_snapshot_position_while_the_snapshot_is_held(self):
+        (outcome, fence, log, payloads, _) = self.run_slice([(MD5_A, 5, self.POS)],
+                                                             [("ch-host", "shop.orders", MD5_A, 5)])
+        self.assertEqual(outcome, (tl.VERDICT_MATCH, 5, 0))
         self.assertEqual(fence.wait.call_args[0][0], ("binlog.000005", 777))
+        self.assertEqual(payloads, [{"column": None, "keys": []}])
         self.assertNotIn("WARNING", log)
+        # the side's INFO line reaches the driver log only at DEBUG: the driver logs the position itself
+        self.assertIn("Snapshot of shop.orders slice [`id` < 101] at binlog.000005:777 (exact)", log)
 
     def test_difference_read_again_and_gone_is_a_match(self):
-        (outcome, fence, log) = self.run_slice(
-            [(MD5_A, 5, self.SNAP), (MD5_B, 6, self.SNAP)],
+        (outcome, fence, log, _, _) = self.run_slice(
+            [(MD5_A, 5, self.POS), (MD5_B, 6, self.POS)],
             [("ch-host", "shop.orders", MD5_B, 5), ("ch-host", "shop.orders", MD5_B, 6)])
-        self.assertEqual(outcome, (tl.VERDICT_MATCH, 6))
+        self.assertEqual(outcome, (tl.VERDICT_MATCH, 6, 0))
         self.assertEqual(fence.wait.call_count, 2, "a fresh snapshot is awaited on the re-read")
         self.assertNotIn("WARNING", log)
         self.assertIn("Checksum mismatch on pass 1 of 2, reading the slice again", log)
 
     def test_persistent_difference_warns_with_the_slice(self):
-        (outcome, _, log) = self.run_slice(
-            [(MD5_A, 5, self.SNAP), (MD5_A, 5, self.SNAP)],
+        (outcome, _, log, _, _) = self.run_slice(
+            [(MD5_A, 5, self.POS), (MD5_A, 5, self.POS)],
             [("ch-host", "shop.orders", MD5_B, 5), ("ch-host", "shop.orders", MD5_B, 5)])
         self.assertEqual(outcome[0], tl.VERDICT_DIFFERENT)
         warnings = [line for line in log.splitlines() if line.startswith("WARNING")]
@@ -237,19 +253,114 @@ class TestOneSlice(unittest.TestCase):
                       f"'{MD5_A}', 5) in slice [`id` < 101]", warnings[0])
 
     def test_unreached_connector_is_named_in_the_difference(self):
-        (outcome, _, log) = self.run_slice([(MD5_A, 5, self.SNAP)], [("ch-host", "shop.orders", MD5_B, 5)],
-                                           reached=False, recheck=0)
+        (outcome, _, log, _, _) = self.run_slice([(MD5_A, 5, self.POS)], [("ch-host", "shop.orders", MD5_B, 5)],
+                                                 reached=False, recheck=0)
         self.assertEqual(outcome[0], tl.VERDICT_DIFFERENT)
         self.assertIn("connector on ch-host had not reached binlog.000005:777 (offset binlog.000005:100)", log)
 
     def test_missing_snapshot_position_is_an_error(self):
-        (outcome, fence, _) = self.run_slice([(MD5_A, 5, None)], [])
-        self.assertEqual(outcome, (tl.VERDICT_ERROR, 0))
+        (outcome, fence, _, _, _) = self.run_slice([(MD5_A, 5, None)], [])
+        self.assertEqual(outcome, (tl.VERDICT_ERROR, 0, 0))
         fence.wait.assert_not_called()
 
     def test_failed_replica_is_an_error(self):
-        (outcome, _, _) = self.run_slice([(MD5_A, 5, self.SNAP)], [None])
-        self.assertEqual(outcome, (tl.VERDICT_ERROR, 0))
+        (outcome, _, _, _, _) = self.run_slice([(MD5_A, 5, self.POS)], [None])
+        self.assertEqual(outcome, (tl.VERDICT_ERROR, 0, 0))
+
+    def test_keys_changed_after_the_floor_are_left_out_on_both_sides(self):
+        (outcome, _, log, payloads, commands_for) = self.run_slice(
+            [(MD5_A, 3, self.POS)], [("ch-host", "shop.orders", MD5_A, 3)], recheck=0,
+            exclusion=self.EXCLUSION, floors=[1000], changed=[{42, 7}])
+        self.assertEqual(outcome, (tl.VERDICT_MATCH, 3, 2))
+        self.assertEqual(payloads, [{"column": "id", "keys": [7, 42]}], "the MySQL side gets the keys in its snapshot")
+        self.assertEqual(commands_for.call_args_list[-1], call("`id` < 101", "`id` not in (7,42)"),
+                         "the ClickHouse side leaves the same keys out")
+        self.assertIn("Excluded 2 key(s) of shop.orders slice [`id` < 101] changed after its snapshot began", log)
+
+    def test_too_many_changed_keys_are_not_left_out_and_say_so(self):
+        (outcome, _, log, payloads, commands_for) = self.run_slice(
+            [(MD5_A, 3, self.POS)], [("ch-host", "shop.orders", MD5_B, 3)], recheck=0,
+            exclusion=self.EXCLUSION, floors=[1000], changed=[{1, 2, 3, 4}])
+        self.assertEqual(outcome[0], tl.VERDICT_DIFFERENT)
+        self.assertEqual(payloads, [{"column": "id", "keys": []}])
+        self.assertEqual(commands_for.call_args_list[-1], call("`id` < 101", None))
+        self.assertIn("more than 3 keys changed while the slice was read", log)
+
+
+class TestVersionFenceQueries(unittest.TestCase):
+
+    def test_queries_read_all_versions_of_the_slice(self):
+        fence = MagicMock()
+        fence.query.side_effect = [[(1790894739000000123,)], [(7,), (42,)], [(1,)], [(0,)]]
+        self.assertEqual(tl.slice_max_version(fence, "shop", "orders", "`id` < 101"), 1790894739000000123)
+        self.assertEqual(tl.keys_changed_since(fence, "shop", "orders", "id", "`id` < 101", 99, 5000), {7, 42})
+        self.assertEqual(fence.query.call_args_list[0][0][0],
+                         "SELECT max(_version) FROM `shop`.`orders` WHERE `id` < 101")
+        self.assertEqual(fence.query.call_args_list[1][0][0],
+                         "SELECT DISTINCT `id` FROM `shop`.`orders` WHERE (`id` < 101) AND _version > 99 LIMIT 5001")
+        self.assertTrue(tl.replicas_have_version_column({"ch": fence}, {"ch": "shop"}, "orders"))
+        self.assertFalse(tl.replicas_have_version_column({"ch": fence}, {"ch": "shop"}, "orders"))
+
+
+STAND_IN_SNAPSHOT_SIDE = r'''#!{python}
+import json, sys
+print("2026-10-01 10:00:00,000 - INFO - MainThread - Snapshot position for table shop.orders = binlog.000005 777 exact", flush=True)
+line = sys.stdin.readline()
+if not line:
+    print("2026-10-01 10:00:00,000 - ERROR - MainThread - no exclusion line", flush=True)
+    sys.exit(1)
+keys = json.loads(line)["keys"]
+print(f"2026-10-01 10:00:00,000 - INFO - MainThread - Checksum for table shop.orders = {{'0123456789abcdef0123456789abcdef'}} count {{10 - len(keys)}}", flush=True)
+'''
+
+
+class TestSnapshotSideProtocol(unittest.TestCase):
+    """run_snapshot_side against a stand-in side process (real pipes)."""
+
+    def setUp(self):
+        import tempfile
+        self.tmp = tempfile.TemporaryDirectory()
+        self.script = os.path.join(self.tmp.name, "side.py")
+        with open(self.script, "w") as handle:
+            handle.write(STAND_IN_SNAPSHOT_SIDE.format(python=sys.executable))
+        self.cmd = [sys.executable, self.script, "--mysql_database", "shop"]
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_answer_is_sent_while_the_side_waits_and_the_result_is_parsed(self):
+        seen = []
+        with self.assertLogs(level="INFO"):
+            (result, output, position, payload) = tl.run_snapshot_side(
+                self.cmd, "db1", "orders",
+                lambda position: (seen.append(position) or {"column": "id", "keys": [3, 4]}))
+        self.assertEqual(seen, [("binlog.000005", 777, "exact")])
+        self.assertEqual(position, ("binlog.000005", 777, "exact"))
+        self.assertEqual(payload, {"column": "id", "keys": [3, 4]})
+        self.assertEqual(result, ("db1", "shop.orders", MD5_A, 8))
+
+    def test_a_failing_wait_closes_the_side_and_propagates(self):
+        def fail(position):
+            raise tl.ConnectorFenceError("offset unreadable")
+        with self.assertRaises(tl.ConnectorFenceError), self.assertLogs(level="INFO"):
+            tl.run_snapshot_side(self.cmd, "db1", "orders", fail)
+
+
+class TestMySQLSideExclusionLine(unittest.TestCase):
+
+    def read(self, text):
+        import io
+        return my.read_excluded_keys(io.StringIO(text))
+
+    def test_keys_become_a_not_in_filter(self):
+        with self.assertLogs(level="INFO"):
+            self.assertEqual(self.read('{"column": "id", "keys": [7, 42]}\n'), "`id` not in (7,42)")
+        self.assertIsNone(self.read('{"column": null, "keys": []}\n'))
+
+    def test_malformed_or_missing_answers_are_errors(self):
+        for text in ("", '{"column": "id; DROP", "keys": [1]}\n', '{"column": "id", "keys": ["1"]}\n'):
+            with self.subTest(text=text), self.assertRaises(RuntimeError):
+                self.read(text)
 
 
 class TestLockAndWait(unittest.TestCase):

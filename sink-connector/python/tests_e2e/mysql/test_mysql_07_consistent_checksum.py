@@ -11,10 +11,12 @@ separate connections, so it can differ on clean data. The two consistent modes m
   either side reads (no fixed sleep). No re-check is allowed, so the MATCH proves the
   comparison itself is consistent.
 - ``--consistent_snapshot``: no lock; each PK slice is read on MySQL in one consistent
-  snapshot, the connector is awaited up to that snapshot's binlog position, then
-  ClickHouse reads the slice. The suite's MySQL (``mysql:8.0``) has no snapshot position
-  variables, so the position is the binary log head read right after the snapshot starts,
-  an upper bound; a slice that raced a write in between is read again.
+  snapshot, held while the connector is awaited up to that snapshot's binlog position.
+  The connector keeps applying newer writes, so the keys ClickHouse changed after the
+  slice's highest ``_version`` read before the snapshot are left out on both sides
+  (version fence); every other key must match. The suite's MySQL (``mysql:8.0``) has no
+  snapshot position variables, so the position is the binary log head read right after
+  the snapshot starts, an upper bound.
 
 Both modes must still report a real divergence, and ``--consistent_snapshot`` names the
 slice that holds it. The table name starts with ``temp_``, which the scheduled-job
@@ -159,8 +161,14 @@ def test_consistent_snapshot_matches_while_the_table_is_written(ws, config, chur
     assert parse_verdicts(log) == {f"{DB}.{TABLE}": "MATCH"}, log
     assert "Locking table" not in log, "the snapshot mode must not lock"
     slices = re.search(r"Consistent snapshots for \S+: (\d+) slice\(s\)", log)
-    assert slices and int(slices.group(1)) >= ROWS // SLICE_ROWS, log
-    assert "upper_bound" in log, "mysql:8.0 has no snapshot position variables"
+    # the slice count comes from InnoDB's row estimate; it only has to split the table
+    assert slices and int(slices.group(1)) >= 2, log
+    # the writer changes every slice while it is read: those keys are left out on both sides
+    # (version fence on _version), never compared against a later state
+    assert "has no _version column" not in log, log
+    assert re.search(r"Excluded \d+ key\(s\) of \S+ slice \[.*\] changed after its snapshot began", log), log
+    # mysql:8.0 has no snapshot position variables: the position is the binary log head (an upper bound).
+    assert re.search(r"Snapshot of \S+ slice \[.*\] at \S+:\d+ \(upper_bound\)", log), log
     assert re.search(r"Connector on \S+ reached \S+ for \S+ slice", log), log
 
 
