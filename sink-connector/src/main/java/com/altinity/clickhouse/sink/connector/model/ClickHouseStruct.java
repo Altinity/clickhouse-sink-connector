@@ -844,14 +844,22 @@ public class ClickHouseStruct {
      * @param useSnowflakeId Whether to use SnowFlakeId algorithm for version generation
      */
     public void calculateVersion(boolean useSnowflakeId) {
-        if (this.gtid != UNINITIALIZED_VALUE) {
+        if (this.sequenceNumber != UNINITIALIZED_VALUE) {
+            // The lightweight connector always assigns a sequence number: the source commit
+            // timestamp plus an intra-second counter, kept monotonic in binlog order
+            // (DebeziumChangeEventCapture.addVersion). It must win over the GTID-based
+            // snowflake id: switching the MySQL source to gtid_mode=ON would otherwise move
+            // every new row to a different numeric domain (timestamp bits shifted by 22, the
+            // GTID in the low 22 bits) that neither compares with the versions written so far
+            // nor stays monotonic when the source timestamp steps back, so a later DELETE or
+            // UPDATE could rank below the row it replaces.
+            this.version = this.sequenceNumber;
+        } else if (this.gtid != UNINITIALIZED_VALUE) {
             if (useSnowflakeId) {
                 this.version = SnowFlakeId.generate(this.ts_ms, this.gtid, false);
             } else {
                 this.version = this.gtid;
             }
-        } else if (this.sequenceNumber != UNINITIALIZED_VALUE) {
-            this.version = this.sequenceNumber;
         } else if (this.lsn != UNINITIALIZED_VALUE) {
             this.version = this.lsn;
         } else if (this.ts_ms > 0) {
