@@ -226,6 +226,113 @@ public class DebeziumChangeEventCapture {
      */
     public static long sequenceAnchorTs = 0L;
 
+    /**
+     * Highest timestamp used for a version so far in this process (see
+     * {@link #monotonicVersionTs}).
+     */
+    public static long lastVersionTs = 0L;
+
+    /**
+     * Highest binlog coordinates seen so far in this process: the numeric suffix of the
+     * binlog file name and the position in it. -1 while nothing with coordinates was seen.
+     */
+    public static long maxBinlogFileIndex = -1L;
+    public static long maxBinlogPos = -1L;
+
+    /**
+     * Returns the timestamp to build a record's {@code _version} from: the source commit
+     * timestamp, but never lower than the one used for the previous record of a forward
+     * binlog stream.
+     *
+     * <p>The MySQL source timestamp is the binlog event header time: the second in which
+     * the statement STARTED, not the commit order. A transaction that starts in second S
+     * can commit after one that started in S+1, so the binlog delivers S+1 and then S.
+     * The intra-second counter has already been reset by the S+1 event, so the late event
+     * gets {@code S * 1e6 + <small counter>} - LOWER than every earlier event of second S.
+     * When that late event is the DELETE of a row inserted earlier in second S (a row that
+     * lives a few milliseconds, e.g. a queue entry), the INSERT keeps the higher version and
+     * ReplacingMergeTree drops the DELETE: the row stays in ClickHouse forever. The same
+     * inversion makes an UPDATE lose against the previous value of the row.</p>
+     *
+     * <p>The initial snapshot is stamped with the processing time at which each table is
+     * READ, while its data is the consistent view at snapshot START. The binlog stream then
+     * replays everything from snapshot start with the (older) source timestamps, so every
+     * change made between snapshot start and the moment a table was read ranks below the
+     * snapshot row and is lost: deleted rows survive, updated rows keep their old values.</p>
+     *
+     * <p>Clamping the timestamp to the previous one keeps the version monotonic in binlog
+     * (commit) order for both cases. Records without binlog coordinates (other sources,
+     * tests) keep the historical behaviour, and so does a re-delivery after an in-process
+     * rewind - a record whose coordinates are BEFORE the highest ones seen - so a
+     * re-delivered event keeps its source timestamp and cannot out-rank what was written
+     * after it (issue #1346).</p>
+     *
+     * @param recordTs  The source (or, for snapshots, processing) timestamp in ms.
+     * @param binlogFile The binlog file name, empty or null if unknown.
+     * @param binlogPos  The position in the binlog file, null if unknown.
+     * @return The timestamp to derive the version from.
+     */
+    public static long monotonicVersionTs(long recordTs, String binlogFile, Long binlogPos) {
+        long fileIndex = binlogFileIndex(binlogFile);
+        if (fileIndex < 0 || binlogPos == null || binlogPos < 0) {
+            return recordTs;
+        }
+        boolean rewind = fileIndex < maxBinlogFileIndex
+                || (fileIndex == maxBinlogFileIndex && binlogPos < maxBinlogPos);
+        if (rewind) {
+            return recordTs;
+        }
+        maxBinlogFileIndex = fileIndex;
+        maxBinlogPos = binlogPos;
+        if (recordTs < lastVersionTs) {
+            return lastVersionTs;
+        }
+        lastVersionTs = recordTs;
+        return recordTs;
+    }
+
+    /**
+     * Numeric suffix of a MySQL binlog file name ({@code mysql-bin-changelog.124802} gives
+     * 124802), or -1 when there is none.
+     */
+    static long binlogFileIndex(String binlogFile) {
+        if (binlogFile == null) {
+            return -1L;
+        }
+        int dot = binlogFile.lastIndexOf('.');
+        if (dot < 0 || dot == binlogFile.length() - 1) {
+            return -1L;
+        }
+        try {
+            return Long.parseLong(binlogFile.substring(dot + 1));
+        } catch (NumberFormatException e) {
+            return -1L;
+        }
+    }
+
+    /**
+     * The {@code source.file} and {@code source.pos} of a change event, or null when absent.
+     */
+    static Object getSourceField(ChangeEvent<SourceRecord, SourceRecord> changeEvent, String field) {
+        if (changeEvent == null || changeEvent.value() == null
+                || !(changeEvent.value().value() instanceof Struct)) {
+            return null;
+        }
+        Struct value = (Struct) changeEvent.value().value();
+        if (value.schema() == null || value.schema().field("source") == null) {
+            return null;
+        }
+        Object source = value.get("source");
+        if (!(source instanceof Struct)) {
+            return null;
+        }
+        Struct sourceStruct = (Struct) source;
+        if (sourceStruct.schema() == null || sourceStruct.schema().field(field) == null) {
+            return null;
+        }
+        return sourceStruct.get(field);
+    }
+
 
     /**
      * Sets up the Debezium event capture engine using the provided properties,
@@ -330,7 +437,12 @@ public class DebeziumChangeEventCapture {
                         // later re-INSERT (issue #1346). The emitted formula is unchanged
                         // from 2.8.0 (ts_ms * 1_000_000 + counter), so values stay in the
                         // same numeric domain: upgrades AND downgrades remain safe.
-                        long recordTs = ClickHouseStruct.getSourceTsFromChangeEvent(record);
+                        Object binlogFile = getSourceField(record, "file");
+                        Object binlogPos = getSourceField(record, "pos");
+                        long recordTs = monotonicVersionTs(
+                                ClickHouseStruct.getSourceTsFromChangeEvent(record),
+                                binlogFile instanceof String ? (String) binlogFile : null,
+                                binlogPos instanceof Long ? (Long) binlogPos : null);
 
                         // The intra-second counter is keyed exclusively on the source commit
                         // clock - never on the binlog file name or position - so it is kept
@@ -1575,8 +1687,9 @@ public class DebeziumChangeEventCapture {
             // The intra-second counter is keyed exclusively on the source clock and the
             // shared anchor survives batch boundaries and binlog rotations - it is never
             // reset by file/position changes and never moves backward.
-            long recordTs = chStruct.getTs_ms() > 0
-                    ? chStruct.getTs_ms() : chStruct.getDebezium_ts_ms();
+            long recordTs = monotonicVersionTs(chStruct.getTs_ms() > 0
+                    ? chStruct.getTs_ms() : chStruct.getDebezium_ts_ms(),
+                    chStruct.getFile(), chStruct.getPos());
             if (sequenceAnchorTs == 0L) {
                 // First record after start/resume: seed at SEQUENCE_START_INITIAL
                 // (500m) so re-published events of the same source second rank
