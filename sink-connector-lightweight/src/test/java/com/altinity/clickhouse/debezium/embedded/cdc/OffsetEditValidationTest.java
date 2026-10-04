@@ -143,6 +143,24 @@ public class OffsetEditValidationTest {
     }
 
     @Test
+    @DisplayName("An LSN edit clears the stale Debezium 3.7+ lsn_events_processed skip counter")
+    public void lsnEditClearsStaleEventsProcessedCounter() throws Exception {
+        DebeziumOffsetStorage storage = new DebeziumOffsetStorage();
+        // Debezium 3.7's PostgresOffsetContext.LSN_EVENTS_PROCESSED_KEY: absent
+        // from Debezium 3.1.3 offsets, used by WalPositionLocator to skip that
+        // many events already processed AT THE STORED LSN on restart.
+        String base = "{\"transaction_id\":null,\"lsn_proc\":1000,\"messageType\":\"INSERT\","
+                + "\"lsn\":1000,\"txId\":743,\"ts_usec\":1687876724804733,\"lsn_events_processed\":37}";
+
+        JSONObject json = parse(storage.updateLsnInformation(base, "5000"));
+        assertEquals(5000L, json.get("lsn"));
+        assertEquals(5000L, json.get("lsn_proc"));
+        assertFalse(json.containsKey("lsn_events_processed"),
+                "pre-fix this stale counter from the OLD lsn survived the edit, making Debezium 3.7 "
+                        + "silently skip that many real events at the NEW lsn: " + json.toJSONString());
+    }
+
+    @Test
     @DisplayName("A malformed or missing LSN is refused with a message naming the field")
     public void malformedLsnIsRefused() {
         DebeziumOffsetStorage storage = new DebeziumOffsetStorage();
