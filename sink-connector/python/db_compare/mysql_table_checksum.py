@@ -19,7 +19,7 @@ import concurrent.futures
 from db.mysql import *
 from db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
                                 clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
-                                validate_timezone, shift_datetime_bounds, warn_not_compared,
+                                validate_timezone, shift_datetime_bounds, saturation_floor, warn_not_compared,
                                 parse_exclude_columns)
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
@@ -65,14 +65,16 @@ def mysql_datetime_rendering(column_name):
     return f"date_format({column_name}, '%Y-%m-%d %H:%i:%s.%f')"
 
 
-def mysql_column_expression(column, options, binary_encoding, same_charset, bounds=(DATETIME_MIN, DATETIME_MAX)):
+def mysql_column_expression(column, options, binary_encoding, same_charset, bounds=(DATETIME_MIN, DATETIME_MAX),
+                            saturate_from=None):
     """Text rendering of one MySQL column (spec 11.02 section 3.3).
 
     ``column`` is an ``information_schema.columns`` row. Classification uses
     ``data_type`` (DATA_TYPE, the bare type keyword) and ``datetime_precision``;
     ``column_type`` (COLUMN_TYPE) carries user text such as enum/set labels and
     is never substring-matched -- an enum('float','json') is a string column.
-    ``bounds`` are the canonical (min, max) datetime clamp bounds.
+    ``bounds`` are the canonical (min, max) datetime clamp bounds and
+    ``saturate_from`` the start of the saturated last day (``saturation_floor()``).
     """
     column_name = '`' + column['column_name'] + '`'
     data_type = column['data_type'].lower()
@@ -89,7 +91,7 @@ def mysql_column_expression(column, options, binary_encoding, same_charset, boun
         # ClickHouse DateTime64 cannot hold the whole MySQL range; the connector
         # clamps on write, so the rendered text is clamped to the same bounds here.
         return clamp_datetime_expression(mysql_datetime_rendering(column_name),
-                                         min_datetime_value, max_datetime_value, 'mysql')
+                                         min_datetime_value, max_datetime_value, 'mysql', saturate_from)
     if data_type == 'time':
         # The connector stores TIME as [-]HH:MM:SS.ffffff for every declared
         # precision (spec 07.03 section 3.2), so render six digits unconditionally.
@@ -143,6 +145,9 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
     # the source zone and is clamped with the bounds rendered in that zone.
     utc_bounds = datetime_bounds(options)
     wall_clock_bounds = shift_datetime_bounds(utc_bounds, options.source_timezone)
+    # The last day of the range is saturated on both sides (spec 11.02 section 3.4).
+    utc_floor = saturation_floor(utc_bounds, 'UTC')
+    wall_clock_floor = saturation_floor(utc_bounds, options.source_timezone)
     collations = [column['collation'] for column in columns if column['collation'] is not None]
     same_charset = len(collations) <= 1
     for column in columns:
@@ -158,10 +163,12 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
         if not include_json_columns and data_type == 'json':
             skipped["JSON"].append(name)
             continue
-        bounds = utc_bounds if data_type == 'timestamp' else wall_clock_bounds
-        expression = mysql_column_expression(column, options, binary_encoding, same_charset, bounds)
+        (bounds, floor) = ((utc_bounds, utc_floor) if data_type == 'timestamp'
+                           else (wall_clock_bounds, wall_clock_floor))
+        expression = mysql_column_expression(column, options, binary_encoding, same_charset, bounds, floor)
         if data_type in ('datetime', 'timestamp'):
-            clamped_flags.append(clamped_datetime_flag(mysql_datetime_rendering(column_name), bounds[0], bounds[1]))
+            clamped_flags.append(clamped_datetime_flag(mysql_datetime_rendering(column_name), bounds[0], bounds[1],
+                                                       floor))
         if column['is_nullable'] == 'YES':
             nullables.append(column_name)
             expression = f"ifnull({expression},'')"

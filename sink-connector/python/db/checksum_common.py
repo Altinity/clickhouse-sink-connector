@@ -70,23 +70,49 @@ def datetime_bounds(options):
             canonical_datetime_bound(options.max_datetime_value, "--max_datetime_value"))
 
 
-def clamp_datetime_expression(rendered, min_value, max_value, dialect):
+def saturation_floor(utc_bounds, zone):
+    """Start of the saturated last day of the range (spec 11.02 section 3.4):
+    the first instant of the UTC calendar day that holds the upper bound
+    (``2299-12-31 00:00:00`` UTC for the default range), rendered as a wall
+    clock of ``zone`` like the bounds themselves (``shift_datetime_bounds()``)
+    and never above the upper bound in that zone.
+
+    Every value from this instant on renders as the upper bound on both sides,
+    so all the representations of an out-of-range source value that ClickHouse
+    can hold compare equal: the connector stores ``2299-12-31 23:59:59`` (or
+    ``.999999``), a bulk load stores the source's own time of day on
+    ``2299-12-31`` (``00:00:00``, ``05:59:00``, ...).
+    """
+    utc_floor = utc_bounds[1][:10] + " 00:00:00.000000"
+    (floor,) = shift_datetime_bounds((utc_floor,), zone)
+    (_, upper) = shift_datetime_bounds(utc_bounds, zone)
+    return min(floor, upper)
+
+
+def clamp_datetime_expression(rendered, min_value, max_value, dialect, saturate_from=None):
     """Clamp the canonical datetime text ``rendered`` to [min_value, max_value]:
-    ``>= max`` renders as the max bound, ``< min`` as the min bound. The same
-    rule in both dialects -- the two sides must never differ in the comparison
-    operator or in the text they substitute."""
+    ``>= saturate_from`` renders as the max bound, ``< min`` as the min bound.
+    ``saturate_from`` is the start of the saturated last day
+    (``saturation_floor()``); without it only values ``>= max`` render as the
+    max bound. The same rule in both dialects -- the two sides must never
+    differ in the comparison operator or in the text they substitute."""
+    upper = max_value if saturate_from is None else saturate_from
     if dialect == "mysql":
-        return f"case when {rendered} >= '{max_value}' then '{max_value}' when {rendered} < '{min_value}' then '{min_value}' else {rendered} end"
+        return f"case when {rendered} >= '{upper}' then '{max_value}' when {rendered} < '{min_value}' then '{min_value}' else {rendered} end"
     if dialect == "clickhouse":
-        return f"if({rendered} >= '{max_value}', '{max_value}', if({rendered} < '{min_value}', '{min_value}', {rendered}))"
+        return f"if({rendered} >= '{upper}', '{max_value}', if({rendered} < '{min_value}', '{min_value}', {rendered}))"
     raise ValueError(f"unknown SQL dialect {dialect!r}")
 
 
-def clamped_datetime_flag(rendered, min_value, max_value):
-    """1 when the clamp changed the value (strictly outside the bounds), 0
-    otherwise, NULL for NULL; identical text in both dialects. Summed per table
-    and printed as the clamped-value count, never hashed."""
-    return f"({rendered} > '{max_value}' or {rendered} < '{min_value}')"
+def clamped_datetime_flag(rendered, min_value, max_value, saturate_from=None):
+    """1 when the clamp changed the value, 0 otherwise, NULL for NULL;
+    identical text in both dialects. Without ``saturate_from`` that is strictly
+    outside the bounds; with it, also a value on the saturated last day that is
+    not the max bound itself. Summed per table and printed as the clamped-value
+    count, never hashed."""
+    if saturate_from is None:
+        return f"({rendered} > '{max_value}' or {rendered} < '{min_value}')"
+    return f"(({rendered} >= '{saturate_from}' and {rendered} != '{max_value}') or {rendered} < '{min_value}')"
 
 
 def clamped_count_expression(flags):
