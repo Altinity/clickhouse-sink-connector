@@ -201,6 +201,7 @@ from `sink-connector/python` with that directory on `PYTHONPATH` (§3.1). A miss
 | `--sleep_after_lock` | int, 3 | Seconds slept after the lock, before the sides start | yes |
 | `--source_timezone` | str, resolved | 11.02 §3.2 step 1. Forwarded to both sides | yes |
 | `--binary_encoding` | `hex`/`base64`/`raw`, `hex` | Forwarded to both sides. With `raw`, `--hex_columns` is derived per table | yes |
+| `--min_datetime_value`, `--max_datetime_value` | str (UTC instant `YYYY-MM-DD[ HH:MM:SS[.ffffff]]`), none | Not passed by default, so each side clamps to the full DateTime64 range. When given: canonicalised and confined by `canonical_datetime_bound` in `main` (`resolve_datetime_bounds`; a non-datetime value or min >= max is a `parser.error`, exit 2) and forwarded as identical text to both sides (11.02 §3.4). `--max_datetime_value 2299-12-31` makes every value on 2299-12-31 compare equal | yes |
 | `--include_floating_point_columns`, `--include_json_columns` | flag | Forwarded to both sides | yes |
 | `--lock_wait_timeout` | int, 30 | `SET SESSION lock_wait_timeout` before `LOCK TABLES` | yes |
 | `--fail_on_lock_timeout` | flag | A lock timeout aborts the run instead of skip-and-warn | yes |
@@ -311,13 +312,15 @@ python db_compare/mysql_table_checksum.py --threads_per_table <N> --threads=<T>
   --min_date_value 1900-01-01 --mysql_host <host> --mysql_database <db> --tables_regex <exact table regex>
   --where " 1=1 [ and <where> ][ and {partition_expression}=YYYYMMDD]" --source_timezone <tz>
   --binary_encoding <enc> [--include_floating_point_columns] [--include_json_columns]
+  [--min_datetime_value <min>] [--max_datetime_value <max>]
   [--exclude_columns a,b] [--debug_output] [--defaults_file=<file>]
 
 python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads=<T>
   --clickhouse_host <replica> --clickhouse_database <db|override> --tables_regex <exact table regex>
   --where " 1=1 [ and <where> ][ and {partition_expression}=toDate('YYYY-MM-DD') ]" --source_timezone <tz>
   [--timestamp_columns c1,c2] [--json_columns j1] --binary_encoding <enc> [--hex_columns b1,b2]
-  [include flags] --exclude_columns _version,is_deleted,_is_deleted,__is_deleted[,ignored...]
+  [include flags] [--min_datetime_value <min>] [--max_datetime_value <max>]
+  --exclude_columns _version,is_deleted,_is_deleted,__is_deleted[,ignored...]
   --sign_column "" [--debug_output] [--partition_key <mysql partition expression without backticks>]
 ```
 
@@ -1000,8 +1003,8 @@ Faults:
 | `parse_config`, `validate_config`, `parse_checksum`, `relay_side_messages`, `run_quick_safe_checksum`, `analyze_differences`, `report_run_summary`, `exact_table_regex`, `unlock_tables`, `match_table_include_list`, `get_tables_from_regexp` | identical behaviour |
 | `run_quick_safe_command` | both: argv list, no shell, rc `127` when the program cannot start. PT also prepends the package root to the child's `PYTHONPATH` (`side_environment`) |
 | `compute_checksum` | LT owns the lock lifecycle (lock, sleep, sides, unlock/close in `finally`). PT has no lock (it is in `run_config`) and forwards `json_columns`. Both return results in submission order |
-| `get_mysql_checksum_command` | LT: `python db_compare/mysql_table_checksum.py`, `--source_timezone`, `--binary_encoding <arg>`, include flags, no datetime bounds. PT: `<sys.executable> -m ch_sink_tools.db_compare.mysql_table_checksum`, `--min_datetime_value "1900-01-01 00:00:00" --max_datetime_value "2299-12-31 23:59:59"`, `--binary_encoding base64` |
-| `get_clickhouse_checksum_command` | LT: plain `toDate('...')`, `--source_timezone`, `--timestamp_columns`, `--json_columns`, `--binary_encoding` and raw `--hex_columns`, include flags. PT: `-m ch_sink_tools.db_compare.clickhouse_table_checksum`, `toDate(\'...\')` for the eval `fstr`, the full-range bounds, `--json_columns`, none of the other flags |
+| `get_mysql_checksum_command` | LT: `python db_compare/mysql_table_checksum.py`, `--source_timezone`, `--binary_encoding <arg>`, include flags, datetime bounds only when given to the driver. PT: `<sys.executable> -m ch_sink_tools.db_compare.mysql_table_checksum`, `--min_datetime_value "1900-01-01 00:00:00" --max_datetime_value "2299-12-31 23:59:59"`, `--binary_encoding base64` |
+| `get_clickhouse_checksum_command` | LT: plain `toDate('...')`, `--source_timezone`, `--timestamp_columns`, `--json_columns`, `--binary_encoding` and raw `--hex_columns`, include flags, datetime bounds only when given to the driver. PT: `-m ch_sink_tools.db_compare.clickhouse_table_checksum`, `toDate(\'...\')` for the eval `fstr`, the full-range bounds, `--json_columns`, none of the other flags |
 | `mysql_json_columns`, `side_command`, `side_environment` | PT only |
 | `include_flags_clause`, `normalize_where_override`, `quote_mysql_identifier`, `close_connection`, `resolve_source_timezone` | LT only |
 | `lock_tables` | LT: ``LOCK TABLES `t` READ``, backticks doubled, optional `SET SESSION lock_wait_timeout`, errno 1205 → `LockAcquisitionError`. PT: ``FLUSH TABLE `t` WITH READ LOCK``, no escaping, no timeout |

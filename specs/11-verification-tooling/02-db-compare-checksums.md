@@ -254,9 +254,18 @@ precision, never trimmed:
   with a WARNING, because a bound the replica cannot exceed would clamp
   MySQL alone. Narrower bounds turn every value beyond them, on both sides,
   into the same constant: differences inside that window are invisible. The
-  driver therefore passes no bounds any more (it used to pass
+  driver therefore passes no bounds by default (it used to pass
   `1969-12-31 18:00:00` / `2299-12-31 00:00:00`, hiding 1900–1969 and the
-  last day of 2299).
+  last day of 2299). Narrowing is an explicit opt-in: `--min_datetime_value`
+  / `--max_datetime_value` given to the driver are canonicalised with the
+  same rule before any side runs (a non-datetime value or bounds with
+  min >= max stop the run) and forwarded, as identical text, to both sides.
+  The use case is a replica that holds a far-future sentinel with a different
+  time of day than the connector's clamp writes (rows loaded as
+  `2299-12-31 00:00:00` while the connector clamps `9999-12-31 ...` to
+  `2299-12-31 23:59:59`): `--max_datetime_value 2299-12-31` makes every value
+  on that day compare equal, at the cost of not seeing differences within it
+  (`test_driver_datetime_bounds.py`).
 - **Clamped-value counts are printed.** Each datetime column contributes
   `clamped_datetime_flag()` = `(rendered > max or rendered < min)`; the
   per-row sum (`clamped_count_expression()`, `coalesce(flag, 0)` so NULLs

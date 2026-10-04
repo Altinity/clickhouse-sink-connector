@@ -4,7 +4,8 @@ import sys
 import argparse
 import logging
 from db.mysql import *
-from db.checksum_common import validate_timezone, JSON_COLUMNS_HINT_RE
+from db.checksum_common import (validate_timezone, JSON_COLUMNS_HINT_RE, DATETIME_MIN, DATETIME_MAX,
+                                 canonical_datetime_bound)
 import concurrent.futures
 import functools
 import json
@@ -415,6 +416,49 @@ def include_flags():
     return flags
 
 
+DATETIME_BOUND_OPTIONS = ("min_datetime_value", "max_datetime_value")
+
+
+def datetime_bound_flags():
+    """``--min_datetime_value`` / ``--max_datetime_value``, passed identically
+    to both sides, only when given to the driver (spec 13.06 section 3.6.1).
+
+    Without them each side clamps to its own default, the full ClickHouse
+    DateTime64 range, and the argv is unchanged. ``args`` namespaces built
+    outside main() may lack the attributes; that means "not given"."""
+    flags = []
+    for option in DATETIME_BOUND_OPTIONS:
+        value = getattr(args, option, None)
+        if value is not None:
+            flags += [f"--{option}", str(value)]
+    return flags
+
+
+def resolve_datetime_bounds(options, parser):
+    """Canonicalise the datetime bounds given to the driver before any side
+    runs, with the sides' own rule (``canonical_datetime_bound``: accepted
+    forms, confined to the ClickHouse range with a WARNING), so both sides
+    receive the same canonical text. A value that is not a datetime, or bounds
+    that leave no range (min >= max, the missing one at its default), stop the
+    run through ``parser.error``. Returns the effective (min, max) when at
+    least one bound was given, else None."""
+    if all(getattr(options, option, None) is None for option in DATETIME_BOUND_OPTIONS):
+        return None
+    for option in DATETIME_BOUND_OPTIONS:
+        value = getattr(options, option, None)
+        if value is not None:
+            try:
+                value = canonical_datetime_bound(value, f"--{option}")
+            except ValueError as error:
+                parser.error(str(error))
+        setattr(options, option, value)
+    effective_min = options.min_datetime_value if options.min_datetime_value is not None else DATETIME_MIN
+    effective_max = options.max_datetime_value if options.max_datetime_value is not None else DATETIME_MAX
+    if effective_min >= effective_max:
+        parser.error(f"--min_datetime_value {effective_min} must be earlier than --max_datetime_value {effective_max}")
+    return (effective_min, effective_max)
+
+
 # Characters that are regex syntax in MySQL (ICU), ClickHouse (re2) and Python.
 # Each is matched literally as a one-character class: a backslash escape would
 # be consumed by the SQL string literal the sides paste the regex into.
@@ -479,7 +523,7 @@ def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, i
            "--min_date_value", "1900-01-01", "--mysql_host", str(mysql_host), "--mysql_database", str(database),
            "--tables_regex", exact_table_regex(table), "--where", where_value,
            "--source_timezone", str(args.source_timezone), "--binary_encoding", str(args.binary_encoding)]
-    cmd += include_flags() + ignored_columns_clause + debug_output_clause + defaults_file_clause
+    cmd += include_flags() + datetime_bound_flags() + ignored_columns_clause + debug_output_clause + defaults_file_clause
     logging.debug(f"MySQL command: {command_text(cmd)}")
     return cmd
 
@@ -536,6 +580,7 @@ def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, w
            "--tables_regex", exact_table_regex(table), "--where", where_value,
            "--source_timezone", str(args.source_timezone)]
     cmd += timestamp_columns_clause + json_columns_clause + binary_encoding_clause + include_flags()
+    cmd += datetime_bound_flags()
     cmd += ["--exclude_columns", ignored_columns_value, "--sign_column", ""]
     cmd += debug_output_clause + partition_key_clause
     return cmd
@@ -1600,6 +1645,10 @@ def main():
     parser.add_argument('--source_timezone', help='IANA time zone the connector interprets MySQL DATETIME values in (its database.connectionTimeZone); default: resolved from the MySQL server', required=False, default=None)
     parser.add_argument('--binary_encoding', choices=['hex', 'base64', 'raw'], default='hex', required=False,
                         help='how the connector wrote binary values: hex text (default), base64 text (binary.handling.mode=base64) or raw bytes (persist.raw.bytes=true); passed to both sides')
+    parser.add_argument('--min_datetime_value', required=False, default=None,
+                        help='Lower clamp bound for DATETIME/TIMESTAMP values, a UTC instant YYYY-MM-DD[ HH:MM:SS[.ffffff]]; passed to both sides only when given. Every value earlier than it compares as the bound on both sides, so differences below it are not detected. Default: not passed, each side uses the ClickHouse DateTime64 minimum (1900-01-01 00:00:00)')
+    parser.add_argument('--max_datetime_value', required=False, default=None,
+                        help='Upper clamp bound for DATETIME/TIMESTAMP values, a UTC instant YYYY-MM-DD[ HH:MM:SS[.ffffff]]; passed to both sides only when given. Every value at or after it compares as the bound on both sides, so differences above it are not detected; for example 2299-12-31 makes every value on 2299-12-31 compare equal whatever its time of day. Default: not passed, each side uses the ClickHouse DateTime64 maximum (2299-12-31 23:59:59)')
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
                         help='compare floating point columns (text renderings, not guaranteed identical in exponent notation); passed to both sides')
     parser.add_argument('--include_json_columns', action='store_true', default=False,
@@ -1650,6 +1699,13 @@ def main():
     if args.debug:
         root.setLevel(logging.DEBUG)
         handler.setLevel(logging.DEBUG)
+
+    # After the handler is attached, so a bound confined to the ClickHouse
+    # range logs its WARNING into the run log.
+    bounds = resolve_datetime_bounds(args, parser)
+    if bounds:
+        logging.info(f"Datetime clamp bounds passed to both sides: [{bounds[0]}, {bounds[1]}] (UTC instants); "
+                     f"values outside them compare as the bound")
 
     # Parse the configuration file
     config = parse_config(args.config_file)
