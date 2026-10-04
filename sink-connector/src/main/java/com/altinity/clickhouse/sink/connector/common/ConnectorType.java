@@ -1,7 +1,7 @@
 package com.altinity.clickhouse.sink.connector.common;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
-import io.debezium.metadata.ConnectorDescriptor;
+
 import org.apache.logging.log4j.Logger;
 
 /**
@@ -51,7 +51,7 @@ public enum ConnectorType {
 
     /**
      * Attempts to determine the enum constant based on a connector class name.
-     * This method relies on Debezium's {@link ConnectorDescriptor} to derive
+     * This method relies on Debezium's {@link DebeziumConnectorIds} to derive
      * a display name. If the display name indicates MySQL or PostgreSQL,
      * the corresponding connector type is returned. Otherwise, it defaults
      * to {@link ConnectorType#MYSQL}.
@@ -63,7 +63,7 @@ public enum ConnectorType {
     public static ConnectorType fromString(String value) {
         ConnectorType connectorType = ConnectorType.MYSQL;
 
-        String displayName = ConnectorDescriptor.getIdForConnectorClass(value);
+        String displayName = DebeziumConnectorIds.idForConnectorClass(value);
         if (displayName != null) {
             //connectorType =ConnectorType.valueOf(displayName);
             if (displayName.contains(MYSQL.getValue())) {
@@ -94,7 +94,7 @@ public enum ConnectorType {
      * If the class name matches the ClickHouse sink connector, KAFKA is
      * returned. Otherwise, it uses {@link #fromString(String)} to derive
      * the correct connector type from Debezium's
-     * {@link ConnectorDescriptor}.
+     * {@link DebeziumConnectorIds}.
      * </p>
      *
      * @param config The ClickHouse sink connector configuration.

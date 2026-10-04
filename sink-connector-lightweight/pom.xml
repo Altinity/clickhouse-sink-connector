@@ -13,7 +13,7 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <version.debezium>3.1.3.Final</version.debezium>
+        <version.debezium>3.7.0.Final</version.debezium>
         <version.junit>5.9.1</version.junit>
         <version.testcontainers>1.21.4</version.testcontainers>
         <version.testcontainers.core>1.21.4</version.testcontainers.core>
@@ -25,7 +25,7 @@
         <quarkus.platform.version>2.14.0.Final</quarkus.platform.version>
         <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
         <sink-connector-library-version>0.0.9</sink-connector-library-version>
-        <version.kafka>3.8.0</version.kafka>
+        <version.kafka>4.3.1</version.kafka>
         <javalin-version>5.5.0</javalin-version>
     </properties>
     <dependencyManagement>
@@ -203,6 +203,15 @@
         </dependency>
 
 
+        <!-- Debezium 3.7's storage modules declare debezium-storage-common as
+             "provided": the embedding application must ship it. Without it the
+             JDBC offset store fails at engine start with NoClassDefFoundError
+             io/debezium/spi/storage/DefaultOffsetStorageReader (spec 02.06 §3.4). -->
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-storage-common</artifactId>
+            <version>${version.debezium}</version>
+        </dependency>
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-storage-jdbc</artifactId>
@@ -241,7 +250,7 @@
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>kafka-server-common</artifactId>
-            <version>3.3.1</version>
+            <version>${version.kafka}</version>
             <scope>runtime</scope>
             <exclusions>
                 <exclusion>
@@ -522,6 +531,16 @@
             <scope>compile</scope>
         </dependency>
 
+        <!-- Test sources import the log4j 1.x API (org.apache.log4j.*).
+             Debezium 3.1.3 brought it in transitively; 3.3.x no longer does
+             (spec 02.07). Test scope only: the shade plugin already excludes
+             org/apache/log4j/** from the shipped jar. -->
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-1.2-api</artifactId>
+            <version>2.23.1</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-jul</artifactId>

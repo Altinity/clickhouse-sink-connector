@@ -11,7 +11,7 @@ Specifies the translation and execution of upstream MySQL TRUNCATE operations (`
 - **Statement**: `DBMetadata.truncateTable(Connection conn, String databaseName, String tableName)` in `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/db/DBMetadata.java`
 - **Formal model**: `formal_specs/lean/Replication/BatchOrder.lean`
 
-The TRUNCATE this path issues is MySQL's own statement, already executed at the source and delivered as a replicated binlog change event (`op == 't'`). It is never issued on the connector's initiative.
+The TRUNCATE this path issues is MySQL's own statement, already executed at the source and delivered as a replicated binlog change event (`op == 't'`). It is never issued on the connector's initiative. A MySQL truncate event reaches this path only when the operator's `skipped.operations` does not contain `t` (e.g. `none`); with the default (`t`) it is converted into a schema-change record and applied by the DDL path instead, as under Debezium 3.1.3 (spec 01.11).
 
 ---
 

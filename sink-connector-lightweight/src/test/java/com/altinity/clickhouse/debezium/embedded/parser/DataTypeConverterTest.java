@@ -2,8 +2,8 @@ package com.altinity.clickhouse.debezium.embedded.parser;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import io.debezium.antlr.CaseChangingCharStream;
-import io.debezium.ddl.parser.mysql.generated.MySqlLexer;
-import io.debezium.ddl.parser.mysql.generated.MySqlParser;
+import io.debezium.ddl.parser.mysql.legacy.MySqlLexer;
+import io.debezium.ddl.parser.mysql.legacy.MySqlParser;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
 import org.junit.Assert;

@@ -48,7 +48,9 @@ public class MariaDBIT
 
     @BeforeEach
     public void startContainers() throws InterruptedException {
-        mySqlContainer = (MariaDBContainer) new MariaDBContainer()
+        // Testcontainers (as resolved with Debezium 3.7's test dependencies) no
+        // longer has the no-argument constructor; name the image it defaulted to.
+        mySqlContainer = (MariaDBContainer) new MariaDBContainer(DockerImageName.parse("mariadb:10.3.6"))
                 .withDatabaseName("employees").withUsername("adminuser").withPassword("adminpass")
                 .withCopyFileToContainer(
                 MountableFile.forClasspathResource("my.cnf"),

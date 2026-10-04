@@ -171,10 +171,10 @@ schema.history.internal.jdbc.password: "{{ item.schema_history_clickhouse.passwo
 
 # DDL statement for creating the schema history table.
 {% if sink_connector_version != '' and sink_connector_version is version("2.7.1", ">=") %}
-schema.history.internal.jdbc.table.ddl: "CREATE TABLE if not exists %s (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE = ReplacingMergeTree(record_insert_seq) ORDER BY id"
+schema.history.internal.jdbc.table.ddl: "CREATE TABLE if not exists %s (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE = ReplacingMergeTree(record_insert_seq) ORDER BY (id, history_data_seq)"
 schema.history.internal.jdbc.table.name: "{{ item.schema_history_clickhouse.table_name | default('altinity_sink_connector.replicate_schema_history') }}"
 {% else %}
-schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE = ReplacingMergeTree(record_insert_seq) ORDER BY id"
+schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE = ReplacingMergeTree(record_insert_seq) ORDER BY (id, history_data_seq)"
 schema.history.internal.jdbc.schema.history.table.name: "{{ item.schema_history_clickhouse.table_name | default('altinity_sink_connector.replicate_schema_history') }}"
 {% endif %}
 

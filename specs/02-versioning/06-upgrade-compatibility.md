@@ -15,6 +15,8 @@ written by the new version coexist in one `ReplacingMergeTree` table, and the
 - **Persisted offset store / schema history**: Debezium JDBC storage into `replica_source_info` / schema-history tables, configured by `offset.storage.*` / `schema.history.internal.*`.
 - **Config surface**: `ClickHouseSinkConnectorConfigVariables` (key names) and `ClickHouseSinkConnectorConfig` (hardcoded defaults).
 - **Formal model**: `formal_specs/lean/Replication/Upgrade.lean` (`upgrade_safe`, `replicate_convergesV`).
+- **Removed `snapshot.mode` values (§3.4)**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/SnapshotModeAliasPreflight.java`, called from `DebeziumChangeEventCapture.setup(...)`.
+- **Removed Debezium API (§3.4)**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/common/DebeziumConnectorIds.java` (used by `ConnectorType` and `DDLParserFactory`).
 
 ---
 
@@ -96,6 +98,73 @@ longer enter the version sequence (spec 02.02 §3.2, §3.5). None alters
 `_version`'s formula or encoding, the offset store, or the schema — all
 upgrade-safe.
 
+### 3.4 Embedded Debezium 3.1.3.Final → 3.7.0.Final
+The embedded Debezium moved to 3.7.0.Final (the latest release) to fix
+schema-history recovery of records longer than 65000 characters
+(Altinity/clickhouse-sink-connector#1450, DBZ-8979, fixed in 3.3.0). The
+behaviour changes between 3.1.3 and 3.7.0 that reach persisted state, replicated
+data or the connector's own code are handled so an unchanged configuration keeps
+its meaning:
+- **Schema-history write format**: all parts of one record share one id; the
+  ClickHouse table must be keyed `(id, history_data_seq)`. An existing
+  non-replicated `ORDER BY id` table in an Atomic database is migrated at start
+  (copy, verify, atomic `EXCHANGE TABLES`, original kept); other layouts refuse
+  to start with the manual procedure (spec 09.05). 3.1.3-written single-part
+  records are read unchanged; 3.1.3 oversized records are re-keyed.
+- **MySQL TRUNCATE with `skipped.operations` containing `t`** (the default):
+  3.3 drops the statement; the connector converts the truncate event into the
+  schema-change record 3.1.3 emitted, so it still goes through the DDL path
+  (spec 01.11).
+- **Removed `snapshot.mode` values**: 3.3 removed `schema_only` and
+  `schema_only_recovery` from the binlog connectors' enum (DBZ-8171) and `never`
+  from PostgreSQL's; 3.7 also removed `never` from the binlog enum and deleted
+  `NeverSnapshotter`. A configuration naming one fails validation and never
+  starts. The shipped ansible-systemd and helm templates default
+  `snapshot.mode` to `schema_only`, and `never` is a common PostgreSQL setting. `SnapshotModeAliasPreflight` rewrites them, with a WARN,
+  to `no_data`: under 3.1.3 `SchemaOnlySnapshotter` and
+  `SchemaOnlyRecoverySnapshotter` extended `NoDataSnapshotter` overriding only
+  their name (exact parity); `never` and `no_data` are identical once offsets
+  exist (neither reads data or schema); on a first start without offsets
+  `no_data` reads the table structures and, for MySQL, streams from the current
+  position instead of the oldest binlog -- 3.7 has no mode that does the latter.
+- **MySQL DDL grammar**: 3.6 replaced Debezium's MySQL ANTLR grammar and kept the
+  previous one as `io.debezium.ddl.parser.mysql.legacy.*`. The connector's DDL
+  translator (`MySqlDDLParserListenerImpl`, `MySQLDDLParserBaseListener`,
+  `MySQLDDLParserService`, `DataTypeConverter`, `GeneratedExpressionBitOperators`)
+  imports the legacy package: its parser and lexer are the 3.3.2 grammar with one
+  added rule (`SRID <n>` as a column constraint, ignored by the translator), so
+  the translation of every statement that parsed before is unchanged.
+- **Removed Debezium API**: `io.debezium.metadata.ConnectorDescriptor` is gone;
+  `DebeziumConnectorIds` carries its connector-class to id mapping unchanged.
+  `MySqlValueConverters` gained an unavailable-value placeholder argument
+  (`DataTypeConverter` passes the connector default, as Debezium's task does).
+- **Shadowed Debezium classes**: `MySqlStreamingChangeEventSourceMetrics` (3.7
+  passes the `BinaryLogClient` and a captured-tables supplier to its
+  constructor; the connection guard is installed on that client) and
+  `TransactionPayloadDeserializer` (3.7 constructs it with a third
+  `preserveInvalidTemporalValues` argument, passed to the row deserializers)
+  track the 3.7 constructors; a mismatch would be a `NoSuchMethodError` at task
+  start.
+- **Dependencies**: Debezium 3.7.0 builds against Kafka 4.3.1 and
+  mysql-binlog-connector-java 0.41.5. The connector's Kafka pin moves from
+  3.8.0 to 4.3.1 (`version.kafka`, and `kafka-server-common` follows it): with
+  3.8.0, Debezium's `connect-runtime` 4.x `WorkerConfig` calls
+  `ConfigDef$ValidList.anyNonDuplicateValues`, which kafka-clients 3.8.0 lacks,
+  and the engine dies at construction with `NoSuchMethodError` (observed end to
+  end). The binlog client is the one Debezium ships.
+- **Engine implementation**: `DebeziumEngine.create(Connect.class)` resolved to
+  the legacy `io.debezium.embedded.ConvertingEngineBuilderFactory`
+  (`EmbeddedEngine`) in 3.1.3 and resolves to
+  `io.debezium.embedded.async.ConvertingAsyncEngineBuilderFactory`
+  (`AsyncEmbeddedEngine`) since 3.3, the only engine left. The batch consumer,
+  `RecordCommitter.markProcessed` / `markBatchFinished` and
+  `OffsetCommitPolicy.always()` contracts the connector uses are unchanged;
+  the swap is exercised end to end (restart mid-burst, graceful stop, value-level
+  comparison) rather than assumed equivalent.
+Downgrading to a 3.1.3 build after the migration is safe under the same
+condition under which 3.1.3 worked at all — no record longer than 65000
+characters (spec 09.05 §3.4).
+
 ---
 
 ## 4. Invariants Preserved
@@ -105,6 +174,7 @@ upgrade-safe.
 ---
 
 ## 5. Verification Criteria
+- `SnapshotModeAliasPreflightTest.schemaOnlyBecomesNoData()`, `SnapshotModeAliasPreflightTest.schemaOnlyRecoveryBecomesNoData()`, `SnapshotModeAliasPreflightTest.mysqlNeverBecomesNoData()`, `SnapshotModeAliasPreflightTest.postgresNeverBecomesNoData()`, `SnapshotModeAliasPreflightTest.validValuesUntouched()`, `SnapshotModeAliasPreflightTest.postgresDoesNotGetBinlogAliases()` — §3.4 removed `snapshot.mode` values.
 - `Replication.Upgrade.upgrade_safe` — a mixed old-scheme/new-scheme stream converges when the combined scheme is gap-monotone.
 - `Replication.Upgrade.replicate_convergesV` — convergence for ANY gap-monotone version scheme (absolute version numbers are irrelevant; only order matters).
 - `Replication.Upgrade.liveVersion_gapMono` — the shipped ordinal scheme is gap-monotone.

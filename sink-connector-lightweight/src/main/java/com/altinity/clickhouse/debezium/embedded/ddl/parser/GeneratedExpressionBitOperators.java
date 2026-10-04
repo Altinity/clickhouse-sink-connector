@@ -1,6 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
-import io.debezium.ddl.parser.mysql.generated.MySqlParser;
+import io.debezium.ddl.parser.mysql.legacy.MySqlParser;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.TerminalNode;
 import org.apache.logging.log4j.LogManager;
