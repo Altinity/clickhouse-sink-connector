@@ -55,11 +55,13 @@ def driver_args(**overrides):
     return argparse.Namespace(**values)
 
 
-def run_driver(side_outputs, tables=("orders",), config=None, **arg_overrides):
+def run_driver(side_outputs, tables=("orders",), config=None, source_columns=(), **arg_overrides):
     """Run the real run_config()/compute_checksum()/command builders with only
     the catalog helpers and the process runner stubbed.
 
     ``side_outputs(cmd)`` returns the (rc, stdout) a side command would give.
+    ``source_columns`` is what the stubbed information_schema lists as the
+    source table's columns (spec 11.02 section 3.3).
     Returns (exit code, log lines)."""
     config = config or {"source": {"mysql": {"host": MYSQL_HOST}}, "replicas": [{"clickhouse": {"host": CH_HOST}}]}
     table_rows = MagicMock()
@@ -74,6 +76,7 @@ def run_driver(side_outputs, tables=("orders",), config=None, **arg_overrides):
         patch.object(tl, "get_min_max_pk_value", return_value=(1, 10)),
         patch.object(tl, "get_table_partition_key", return_value=None),
         patch.object(tl, "mysql_columns_by_data_type", return_value=[]),
+        patch.object(tl, "mysql_column_names", return_value=list(source_columns)),
         patch.object(tl, "run_quick_safe_command", side_effect=side_outputs),
     ]
     for p in patches:
@@ -309,6 +312,76 @@ class TestSideWarningsReachTheDriverLog(unittest.TestCase):
         self.assertTrue(any(line.startswith("ERROR:") and "Exception in table orders" in line for line in logs), logs)
         self.assertTrue(any("Checksum ERROR for shop.orders" in line for line in logs), logs)
         self.assertFalse(any("No difference" in line for line in logs), logs)
+
+
+class TestSourceColumnSetReachesTheReplicaSide(unittest.TestCase):
+    """Spec 11.02 sections 3.3 (column set) and 3.9: the driver hands the
+    source table's column names to every ClickHouse side, never to the MySQL
+    side. A replica-only column is a finding that fails the run by default
+    and is accepted only with --allow_replica_only_columns; the data verdict
+    is about the replicated columns either way."""
+
+    REPORT = ("Replica-only columns in table shop.orders: ['name'] "
+              "(present on the ClickHouse destination, absent from the source table; not compared)")
+
+    def run_with_replica_only_column(self, **arg_overrides):
+        commands = []
+
+        def outputs(cmd):
+            commands.append(list(cmd))
+            extra = () if is_mysql_side(cmd) else (side_line("WARNING", self.REPORT),)
+            return "0", side_output("shop.orders", MD5_A, 2, extra)
+        code, logs = run_driver(outputs, source_columns=("id", "user"), **arg_overrides)
+        return code, logs, commands
+
+    def test_replica_sides_get_the_source_columns(self):
+        _, _, commands = self.run_with_replica_only_column()
+        mysql_cmds = [cmd for cmd in commands if is_mysql_side(cmd)]
+        replica_cmds = [cmd for cmd in commands if not is_mysql_side(cmd)]
+        self.assertTrue(mysql_cmds and replica_cmds, commands)
+        for cmd in replica_cmds:
+            self.assertEqual(json.loads(cmd[cmd.index("--source_columns") + 1]), ["id", "user"])
+        for cmd in mysql_cmds:
+            self.assertNotIn("--source_columns", cmd)
+
+    def test_by_default_a_replica_only_column_is_reported_and_fails_the_run(self):
+        code, logs, _ = self.run_with_replica_only_column()
+        self.assertEqual(code, 1)
+        findings = [line for line in logs if line.startswith("WARNING:") and "REPLICA-ONLY COLUMNS -- ch-host shop.orders: ['name']" in line]
+        self.assertEqual(len(findings), 1, logs)
+        self.assertIn("stop adding columns on the destination", findings[0])
+        self.assertIn("--allow_replica_only_columns", findings[0])
+        self.assertTrue(any(line.startswith("WARNING:") and "1 replica table(s) carry columns" in line
+                            and "ch-host shop.orders ['name']" in line for line in logs), logs)
+        # The replicated columns still get their own verdict.
+        self.assertTrue(any("No difference for shop.orders" in line for line in logs), logs)
+        self.assertFalse(any("Checksum difference" in line for line in logs), logs)
+
+    def test_the_allow_flag_accepts_them_at_info(self):
+        code, logs, _ = self.run_with_replica_only_column(allow_replica_only_columns=True)
+        self.assertEqual(code, 0)
+        self.assertTrue(any(line.startswith("INFO:") and "replica-only columns ['name'] accepted" in line
+                            for line in logs), logs)
+        self.assertFalse(any("WARNING" in line for line in logs), logs)
+
+    def test_a_later_run_does_not_inherit_earlier_findings(self):
+        self.run_with_replica_only_column()
+
+        def clean(cmd):
+            return "0", side_output("shop.orders", MD5_A, 2)
+        code, logs = run_driver(clean, source_columns=("id", "user"))
+        self.assertEqual(code, 0)
+        self.assertFalse(any("REPLICA-ONLY" in line for line in logs), logs)
+
+    def test_unknown_source_columns_pass_no_flag(self):
+        commands = []
+
+        def outputs(cmd):
+            commands.append(list(cmd))
+            return "0", side_output("shop.orders", MD5_A, 2)
+        run_driver(outputs, source_columns=())
+        self.assertTrue(commands)
+        self.assertFalse(any("--source_columns" in cmd for cmd in commands), commands)
 
 
 if __name__ == "__main__":

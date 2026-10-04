@@ -96,7 +96,8 @@ class TestDriversReadRealRows:
         rows = sqlite_rows("select 'shop' as table_schema, 'orders' as table_name")
         code, logs = run_driver(legacy_driver, rows, extra_patches=[
             patch.object(legacy_driver, "resolve_source_timezone", return_value="UTC"),
-            patch.object(legacy_driver, "mysql_columns_by_data_type", return_value=[])])
+            patch.object(legacy_driver, "mysql_columns_by_data_type", return_value=[]),
+            patch.object(legacy_driver, "mysql_column_names", return_value=[])])
         assert code == 0, logs
         assert any("No difference for shop.orders" in line for line in logs), logs
 

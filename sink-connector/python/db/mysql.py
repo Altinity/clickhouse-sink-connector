@@ -190,6 +190,17 @@ def mysql_columns_by_data_type(conn, mysql_database, mysql_table, data_types):
     return df['COLUMN_NAME'].to_list()
 
 
+def mysql_column_names(conn, mysql_database, mysql_table):
+    """Names of every column of the table, in ordinal order: the source column
+    set the replica side compares against (spec 11.02 section 3.3)."""
+    def literal(value):
+        return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+    sql = (f"select column_name as COLUMN_NAME from information_schema.columns where table_schema={literal(mysql_database)} "
+           f"and table_name = {literal(mysql_table)} order by ORDINAL_POSITION")
+    df = mysql_execute_df(conn, sql)
+    return df['COLUMN_NAME'].to_list()
+
+
 def divide_table_into_even_chunks(conn, mysql_table, chunk_size, pk, where):
     if not pk:
          yield {}

@@ -82,7 +82,8 @@ def run_driver_config(driver, args):
     ]
     if driver is tl:
         patches += [patch.object(tl, "resolve_source_timezone", return_value="UTC"),
-                    patch.object(tl, "mysql_columns_by_data_type", return_value=[])]
+                    patch.object(tl, "mysql_columns_by_data_type", return_value=[]),
+                    patch.object(tl, "mysql_column_names", return_value=[])]
     else:
         patches += [patch.object(pt, "mysql_json_columns", return_value=[])]
     for p in patches:

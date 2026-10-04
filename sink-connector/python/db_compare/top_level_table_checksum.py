@@ -164,17 +164,63 @@ def side_note_text(line):
     return text.replace(SIDE_WARNING_MARKER, " - ").replace("WARNING", "warning")
 
 
+# The replica side's report of columns the destination has and the source
+# table does not (spec 11.02 sections 3.3 and 3.9).
+REPLICA_ONLY_RE = re.compile(r"Replica-only columns in table (?P<table>\S+): (?P<columns>\[.*?\])")
+# (replica host, <db>.<table>) -> the column list as the side printed it.
+# Filled while the run's tables are compared, read by report_run_summary().
+replica_only_findings = {}
+replica_only_lock = threading.Lock()
+
+
+def allow_replica_only_columns():
+    """--allow_replica_only_columns: accept columns added on the destination
+    only. Off by default, so they are reported and fail the run."""
+    return bool(getattr(globals().get("args"), "allow_replica_only_columns", False))
+
+
+def record_replica_only(host, line):
+    """True when ``line`` is the replica side's replica-only report. Each
+    (host, table) is recorded and logged once per run: by default as a WARNING
+    naming the columns and telling the owner to stop adding columns on the
+    destination; with --allow_replica_only_columns as an INFO side note. The
+    columns are left out of the comparison either way, so the table's verdict
+    is about the replicated columns only."""
+    match = REPLICA_ONLY_RE.search(line)
+    if not match:
+        return False
+    key = (host, match.group('table'))
+    columns = match.group('columns')
+    with replica_only_lock:
+        first = key not in replica_only_findings
+        replica_only_findings[key] = columns
+    if not first:
+        return True
+    if allow_replica_only_columns():
+        logging.info(f"{host} {key[1]} side note: replica-only columns {columns} accepted "
+                     "(--allow_replica_only_columns); they are not compared")
+    else:
+        logging.warning(f"REPLICA-ONLY COLUMNS -- {host} {key[1]}: {columns} exist on the ClickHouse destination "
+                        "but not in the source table. The destination must conform to the source: stop adding "
+                        "columns on the destination; drop them there, or add them to the source table so they "
+                        "replicate (pass --allow_replica_only_columns to accept them)")
+    return True
+
+
 def relay_side_messages(data, host, table):
     """Re-log the side script's ERROR/CRITICAL lines at ERROR and its WARNING
     lines (columns not compared, clamped values, SQL warnings) at INFO as side
-    notes: they qualify the verdict (spec 13.06 FM-13.06-8). Returns True when
-    the side logged an ERROR or CRITICAL line."""
+    notes: they qualify the verdict (spec 13.06 FM-13.06-8). The replica-only
+    report is the exception: record_replica_only() logs it as a finding.
+    Returns True when the side logged an ERROR or CRITICAL line."""
     side_failed = False
     for line in side_output_text(data).splitlines():
         if any(marker in line for marker in SIDE_ERROR_MARKERS):
             logging.error(f"{host} {table} side: {line.strip()}")
             side_failed = True
         elif SIDE_WARNING_MARKER in line:
+            if record_replica_only(host, line):
+                continue
             logging.info(f"{host} {table} side note: {side_note_text(line)}")
     return side_failed
 
@@ -300,7 +346,7 @@ def table_where(table_name, where, table_overrides_map):
 def side_commands(mysql_database, database_override_map, table, mysql_host, replica_hosts, pk, max_pk, where,
                   ignored_columns=[], debug_output=False, defaults_file=None, partition_key=None, timestamp_columns=(),
                   binary_columns=(), json_columns=(), mysql_threads_per_table=None, mysql_extra_flags=(),
-                  ch_extra_where=None):
+                  ch_extra_where=None, source_columns=()):
     """(MySQL side argv, [(replica host, ClickHouse side argv)]) for one table and ``where``.
     ``ch_extra_where`` is ANDed onto the ClickHouse sides' filter only; it is a
     filter, or a function of the replica host that returns one."""
@@ -317,7 +363,7 @@ def side_commands(mysql_database, database_override_map, table, mysql_host, repl
         extra_where = ch_extra_where(replica_host) if callable(ch_extra_where) else ch_extra_where
         if extra_where:
             replica_where = f"({where}) and {extra_where}" if where else extra_where
-        cmd = get_clickhouse_checksum_command(replica_host, replica_database, table, pk, max_pk, where=replica_where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns)
+        cmd = get_clickhouse_checksum_command(replica_host, replica_database, table, pk, max_pk, where=replica_where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns, source_columns=source_columns)
         ch_commands.append((replica_host, cmd))
     return (mysql_cmd, ch_commands)
 
@@ -339,7 +385,7 @@ def replica_database_for(replica_host, mysql_database, database_override_map, lo
     return replica_database
 
 
-def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306, timestamp_columns=(), binary_columns=(), json_columns=(), lock_wait_timeout=None, fences=None):
+def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306, timestamp_columns=(), binary_columns=(), json_columns=(), lock_wait_timeout=None, fences=None, source_columns=()):
     table_name = f"{mysql_database}.{table}"
     logging.info(f"Checksumming {table_name}")
     where = table_where(table_name, where, table_overrides_map)
@@ -347,7 +393,7 @@ def compute_checksum (mysql_database, database_override_map, table_overrides_map
         mysql_database, database_override_map, table, mysql_host, replica_hosts, pk, max_pk, where,
         ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file,
         partition_key=partition_key, timestamp_columns=timestamp_columns, binary_columns=binary_columns,
-        json_columns=json_columns)
+        json_columns=json_columns, source_columns=source_columns)
 
     # Lock held during all checksums (MySQL source + ClickHouse replicas)
     # to ensure a consistent comparison. Without --wait_for_connector the
@@ -529,7 +575,7 @@ def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, i
 
 
 
-def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, where=None, ignored_columns=[], debug_output=False, partition_key = None, timestamp_columns=(), binary_columns=(), json_columns=()):
+def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, where=None, ignored_columns=[], debug_output=False, partition_key = None, timestamp_columns=(), binary_columns=(), json_columns=(), source_columns=()):
     partition_date = args.partition_date
     where_value = " 1=1 "
     if where:
@@ -573,13 +619,19 @@ def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, w
     json_columns_clause = []
     if json_columns:
         json_columns_clause = ["--json_columns", ",".join(json_columns)]
+    # The source table's column set: replica columns outside it hold no
+    # replicated value and are not compared (spec 11.02 section 3.3). A JSON
+    # list, so a column name holding a comma or a space survives the trip.
+    source_columns_clause = []
+    if source_columns:
+        source_columns_clause = ["--source_columns", json.dumps(list(source_columns))]
     # An argv list, run without a shell (see get_mysql_checksum_command).
     cmd = ["python", "db_compare/clickhouse_table_checksum.py",
            "--max_memory_usage", "80000000000", f"--threads={args.threads}",
            "--clickhouse_host", str(replica_host), "--clickhouse_database", str(database),
            "--tables_regex", exact_table_regex(table), "--where", where_value,
            "--source_timezone", str(args.source_timezone)]
-    cmd += timestamp_columns_clause + json_columns_clause + binary_encoding_clause + include_flags()
+    cmd += timestamp_columns_clause + json_columns_clause + source_columns_clause + binary_encoding_clause + include_flags()
     cmd += datetime_bound_flags()
     cmd += ["--exclude_columns", ignored_columns_value, "--sign_column", ""]
     cmd += debug_output_clause + partition_key_clause
@@ -1192,7 +1244,7 @@ def replicas_have_version_column(fences, databases, table):
 def verify_table_in_slices(mysql_database, database_override_map, table_overrides_map, table, mysql_user,
                            mysql_password, mysql_host, replica_hosts, pk, max_pk, where, fences, ignored_columns=[],
                            defaults_file=None, partition_key=None, mysql_port=3306, timestamp_columns=(),
-                           binary_columns=(), json_columns=()):
+                           binary_columns=(), json_columns=(), source_columns=()):
     """Verdict of a table compared slice by slice under --consistent_snapshot
     (spec 13.06 section 3.7.4). No lock is taken: each slice is one InnoDB
     read view on the source, held only while that slice is read."""
@@ -1220,7 +1272,7 @@ def verify_table_in_slices(mysql_database, database_override_map, table_override
                              binary_columns=binary_columns, json_columns=json_columns,
                              mysql_threads_per_table=1,
                              mysql_extra_flags=["--consistent_snapshot", "--exclude_keys_from_stdin"],
-                             ch_extra_where=ch_extra_where)
+                             ch_extra_where=ch_extra_where, source_columns=source_columns)
 
     # The version fence needs a key to exclude by and a _version column on every
     # replica table (the connector's ReplacingMergeTree version).
@@ -1275,7 +1327,9 @@ def report_run_summary(verdicts, fail_on_empty):
     """Log the per-verdict totals; return the process exit code.
 
     ERROR (a table with no verdict) always fails the run. EMPTY fails it only
-    with --fail_on_empty. DIFFERENT keeps exit 0 (spec 11.02 FM-11.02-1)."""
+    with --fail_on_empty. DIFFERENT keeps exit 0 (spec 11.02 FM-11.02-1).
+    Replica-only columns fail it unless --allow_replica_only_columns (spec
+    11.02 section 3.9)."""
     by_verdict = {}
     for table_name, verdict in verdicts.items():
         by_verdict.setdefault(verdict, []).append(table_name)
@@ -1297,6 +1351,13 @@ def report_run_summary(verdicts, fail_on_empty):
     if errors:
         logging.error(f"{len(errors)} table(s) have NO verdict (a side failed or its output could not be parsed): "
                       + ", ".join(errors))
+        exit_code = 1
+    with replica_only_lock:
+        findings = sorted(replica_only_findings.items())
+    if findings and not allow_replica_only_columns():
+        logging.warning(f"REPLICA-ONLY COLUMNS -- {len(findings)} replica table(s) carry columns the source table "
+                        "does not have (failing the run; pass --allow_replica_only_columns to accept them): "
+                        + "; ".join(f"{host} {table} {columns}" for ((host, table), columns) in findings))
         exit_code = 1
     return exit_code
 
@@ -1439,6 +1500,8 @@ def run_config(config):
     if getattr(args, "wait_for_connector", False) or consistent_snapshot:
         fences = build_connector_fences(config)
     verdicts = {}
+    with replica_only_lock:
+        replica_only_findings.clear()
     for database in databases:
         logging.info(f"Using MySQL database: {database}")
         try:
@@ -1472,6 +1535,7 @@ def run_config(config):
                     if args.binary_encoding == 'raw':
                         binary_columns = mysql_columns_by_data_type(conn, database, table, binary_datatypes)
                     json_columns = mysql_columns_by_data_type(conn, database, table, ('json',))
+                    source_columns = mysql_column_names(conn, database, table)
                     ignored_columns = []
                     if database in ignored_columns_map and table in ignored_columns_map[database]:
                         ignored_columns = list(ignored_columns_map[database][table].keys())
@@ -1487,10 +1551,10 @@ def run_config(config):
                             fences, ignored_columns=ignored_columns, defaults_file=args.defaults_file,
                             partition_key=partition_key, mysql_port=args.mysql_port,
                             timestamp_columns=timestamp_columns, binary_columns=binary_columns,
-                            json_columns=json_columns)
+                            json_columns=json_columns, source_columns=source_columns)
                     else:
                         checksum = functools.partial(
-                            compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns, lock_wait_timeout=args.lock_wait_timeout, fences=fences)
+                            compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns, lock_wait_timeout=args.lock_wait_timeout, fences=fences, source_columns=source_columns)
                         future = executor.submit(
                             verify_table, checksum, mysql_host, replica_hosts, table_name,
                             *recheck_settings(args))
@@ -1657,6 +1721,8 @@ def main():
                         help='Seconds to wait for the source READ lock on each table before giving up on that table (default 30). Bounds the wait so a continuously-written table fails fast instead of stalling the whole run for the server-default timeout.')
     parser.add_argument('--fail_on_lock_timeout', action='store_true', default=False,
                         help='Abort the whole run if any table cannot be locked within --lock_wait_timeout. Default is to log a loud COVERAGE GAP warning, skip that one table, and keep checksumming the rest so a single continuously-written table does not fail the whole job.')
+    parser.add_argument('--allow_replica_only_columns', action='store_true', default=False,
+                        help='Accept columns that exist on a ClickHouse replica table but not in the source table (added on the destination only). They are never compared. Default: each one is reported as a "REPLICA-ONLY COLUMNS" WARNING telling the owner to stop adding columns on the destination, and the run exits non-zero; with this flag they are logged at INFO and do not affect the exit code.')
     parser.add_argument('--fail_on_empty', action='store_true', default=False,
                         help='Exit non-zero when a table compared 0 rows on both sides (verdict EMPTY). Default: EMPTY is logged at INFO and the run exits 0, since empty partitions are normal in date-partitioned runs.')
     parser.add_argument('--recheck_differences', type=non_negative_int, default=1,
