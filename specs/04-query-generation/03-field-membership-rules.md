@@ -160,7 +160,7 @@ Recovery posture: membership is decided from the record's schema and a disagreem
   - **Test**: `PreparedStatementFieldMapperColumnCaseTest.columnCaseMismatchIsResolvedToTheSourceField()` (a case mismatch is not mistaken for staleness), `GroupInsertQueryDdlMemoTest.staleCacheIsRefreshedOnceAndTheFreshMapKeysTheMemo()` (one re-read, fresh map keys the templates), `StaleCacheBindingMapTest.materializedColumnConvertedMidBatchIsBoundInTheSameBatch()` and `StaleCacheBindingMapTest.columnFoundByStaleCacheReReadIsBoundInTheSameBatch()` (a batch whose grouping refreshed the map is written on the first attempt), `StaleCacheBindingMapTest.placeholderMissingFromTheBindingMapFailsNamingTheColumn()` (the backstop).
 
 - **FM-04.03-3 Explicit NULL for a column ClickHouse cannot hold NULL in**
-  - **Trigger**: Case A (§3.1) for a non-Nullable ClickHouse column.
+  - **Trigger**: Case A (§3.1) for a non-Nullable ClickHouse column other than `Array` (an `Array` column cannot be Nullable; its NULL is bound as `[]` — spec 07.07 §3.2.3).
   - **Behaviour**: bound as NULL; refused by ClickHouse with `Code: 53` (terminal) — see spec 07.07 §6 FM-07.07-1; with `input_format_null_as_default=1` set by the operator it is silently replaced by the column DEFAULT — spec 07.07 §6 FM-07.07-2.
   - **Detection**: ERROR `FATAL ClickHouse error (Code: 53)`, FATAL `Replication is STOPPED: ...`, exit 3 within ≤ 5 s.
   - **Blast radius**: connector stopped; nothing lost.

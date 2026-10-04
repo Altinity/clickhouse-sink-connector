@@ -27,6 +27,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 
@@ -111,6 +113,54 @@ public class PreparedStatementFieldMapper {
      * Logger instance for logging purposes.
      */
     private static final Logger log = LogManager.getLogger(PreparedStatementFieldMapper.class);
+
+    /**
+     * Columns ({@code database.table.column}) for which the NULL-as-empty-array
+     * binding of Spec 07.07 section 3.2.3 has already been reported at WARN.
+     * Later rows of the same column are reported at DEBUG so a table whose
+     * source column is mostly NULL does not flood the log.
+     */
+    static final Set<String> REPORTED_NULL_AS_EMPTY_ARRAY_COLUMNS = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Whether a ClickHouse column type is an {@code Array}. Such a column can
+     * never be wrapped in {@code Nullable} (ClickHouse refuses
+     * {@code Nullable(Array(T))} with Code 43), so it has no representation
+     * for a source NULL other than the empty array.
+     *
+     * @param chColumnType the ClickHouse column type string, may be null
+     * @return true when the type is {@code Array(...)}
+     */
+    static boolean isArrayType(String chColumnType) {
+        return chColumnType != null && chColumnType.trim().startsWith("Array(");
+    }
+
+    /**
+     * Binds the empty array for a source NULL in an {@code Array} column
+     * (Spec 07.07 section 3.2.3). The array is created with the column's
+     * declared element type through the same driver call the ARRAY binding of
+     * {@code ClickHouseDataTypeMapper.convert} uses, so it renders as
+     * {@code []}. The substitution is reported at WARN the first time per
+     * column: NULL and the empty array are indistinguishable on the
+     * ClickHouse side, and that must be visible, not silent.
+     */
+    private void bindEmptyArrayForNull(PreparedStatement ps, int index, String chColumnType,
+                                       String colName, String tableName) throws java.sql.SQLException {
+        String t = chColumnType.trim();
+        String elementType = t.substring("Array(".length(), t.length() - 1);
+        ps.setArray(index, ps.getConnection().createArrayOf(elementType, new Object[0]));
+        String key = databaseName + "." + tableName + "." + colName;
+        if (REPORTED_NULL_AS_EMPTY_ARRAY_COLUMNS.add(key)) {
+            log.warn("Source NULL for column {} of type {} in Database({}), Table({}) is stored as the empty "
+                            + "array []: ClickHouse cannot declare Nullable({}), so NULL has no other "
+                            + "representation and NULL and [] are indistinguishable in this column. "
+                            + "Reported once per column (Spec 07.07 section 3.2.3).",
+                    colName, t, databaseName, tableName, t);
+        } else {
+            log.debug("Source NULL for Array column {} in Database({}), Table({}) stored as []",
+                    colName, databaseName, tableName);
+        }
+    }
 
     /**
      * The column name used for "delete" operations in the ReplacingMergeTree engine.
@@ -352,6 +402,17 @@ public class PreparedStatementFieldMapper {
                 Field sourceField = resolveSourceField(struct, colName);
                 Object value = struct.getWithoutDefault(sourceField == null ? colName : sourceField.name());
                 if (value == null) {
+                    String chColumnType = entry.getValue();
+                    if (isArrayType(chColumnType)) {
+                        // An Array column can never be Nullable in ClickHouse
+                        // (Code 43), so the NULL-into-non-Nullable refusal of
+                        // Spec 07.07 section 3.2.1 has no recovery for it: the
+                        // batch would stop the connector on every restart. The
+                        // empty array is the only value the column can hold
+                        // for a source NULL (Spec 07.07 section 3.2.3).
+                        bindEmptyArrayForNull(ps, index, chColumnType, colName, tableName);
+                        continue;
+                    }
                     ps.setNull(index, Types.OTHER);
                     continue;
                 }
