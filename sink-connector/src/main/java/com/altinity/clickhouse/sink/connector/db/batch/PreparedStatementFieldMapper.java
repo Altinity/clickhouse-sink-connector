@@ -165,9 +165,10 @@ public class PreparedStatementFieldMapper {
                         + "source column maps to (a MySQL JSON column maps to Nullable(String))", t);
         log.error("Schema mismatch: the source sent NULL for column {} in Database({}), Table({}), but the "
                         + "ClickHouse column is {}, which cannot store NULL. ClickHouse must match the source: {}, "
-                        + "then reload the rows written while the schemas differed. The NULL is bound as NULL "
-                        + "and ClickHouse will refuse it (Code 53); nothing else is stored in its place "
-                        + "(Spec 07.07 section 3.2.3).",
+                        + "then reload the rows written while the schemas differed. The NULL is bound as NULL; "
+                        + "ClickHouse refuses it (Code 53) unless input_format_null_as_default=1 was configured, "
+                        + "in which case ClickHouse stores the column DEFAULT instead (Spec 07.07 section 3.2.3, "
+                        + "FM-07.07-2).",
                 colName, databaseName, tableName, t, remedy);
     }
 

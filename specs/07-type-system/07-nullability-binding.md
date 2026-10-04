@@ -69,45 +69,6 @@ Rule (`BaseDbWriter.createConnection`, helper `customSettings`):
    failure is the loud fallback of Invariant I9, never a substituted value.
    Redelivery is safe: nothing was written for the failed batch.
 
-#### 3.2.3 A NULL the ClickHouse column cannot store is a schema mismatch, and is named
-A source NULL arriving for a column whose ClickHouse type cannot store NULL
-means the two schemas do not match: the source column admits NULL and the
-replica column does not. The fix is always to make the ClickHouse schema match
-the source; the binder never stores anything in place of the NULL — not `[]`,
-not `0`, not `''`, not the column DEFAULT — because ClickHouse would then hold
-a value the source never had.
-
-ClickHouse's refusal (`Code: 53 Cannot insert NULL value into a column of type
-'Array(Int64)' at: NULL)`) names the type but not the column, so an operator
-facing a stopped connector cannot tell which column of which table to fix.
-And for some types the remediation of §3.2.1 rule 3 does not exist:
-ClickHouse refuses `Nullable(Array(T))` (`Code: 43 Nested type Array(Int64)
-cannot be inside Nullable type`), and likewise `Nullable` of `Map`, `Tuple`,
-`Nested` and the geo types. A common source shape is a MySQL JSON column —
-often a generated column such as `JSON_EXTRACT(doc, '$.items[*].v')`, which
-MySQL computes as NULL when the path matches nothing — replicated into a
-hand-created `Array(T)` column. Both codes measured with `clickhouse local`
-24.8.8 under `input_format_null_as_default=0`.
-
-Rule (`PreparedStatementFieldMapper.insertPreparedStatement`, helpers
-`canHoldNull` / `reportNullSchemaMismatch`):
-1. The NULL is bound with `ps.setNull` exactly as §3.2 requires, for every
-   column type. ClickHouse refuses it for a column that cannot store NULL and
-   the connector stops (FM-07.07-1); nothing is written for the batch.
-2. Before binding, when the declared ClickHouse type cannot store NULL
-   (`canHoldNull` is false: anything other than `Nullable(...)`,
-   `LowCardinality(Nullable(...))`, `Variant(...)`, `Dynamic`, `JSON`,
-   `Object(...)`), the binder logs one ERROR per `database.table.column`:
-   `Schema mismatch: the source sent NULL for column <c> in Database(<db>),
-   Table(<t>), but the ClickHouse column is <T>, which cannot store NULL.
-   ClickHouse must match the source: <remedy>, then reload the rows written
-   while the schemas differed.`
-3. `<remedy>` is `change it to Nullable(<T>)` when ClickHouse can declare it
-   (`ClickHouseDataTypeMapper.canBeNullable`), and otherwise names the type the
-   source column maps to: the connector's own mapping of a MySQL JSON column is
-   `Nullable(String)` (`ClickHouseDataTypeMapper`, `Json.LOGICAL_NAME`).
-4. A non-NULL value is bound exactly as before and reports nothing.
-
 ### 3.2.2 No parameter may be left unbound; no parameter may carry the previous row's value
 Two hazards on the V2 JDBC driver (`clickhouse-jdbc` 0.9.x
 `PreparedStatementImpl`), verified from its bytecode: `addBatch()` substitutes
@@ -133,6 +94,47 @@ Rules:
    `Struct.get`, for the reason in §3.1: a NULL-with-default column must not
    appear in the raw copy as the Connect-schema default. NULL fields are
    omitted from the JSON object as before.
+
+#### 3.2.3 A NULL the ClickHouse column cannot store is a schema mismatch, and is named
+A source NULL arriving for a column whose ClickHouse type cannot store NULL
+means the two schemas do not match: the source column admits NULL and the
+replica column does not. The fix is always to make the ClickHouse schema match
+the source; the binder never stores anything in place of the NULL — not `[]`,
+not `0`, not `''`, not the column DEFAULT — because ClickHouse would then hold
+a value the source never had.
+
+ClickHouse's refusal (`Code: 53 Cannot insert NULL value into a column of type
+'Array(Int64)' at: NULL)`) names the type but not the column, so an operator
+facing a stopped connector cannot tell which column of which table to fix.
+And for some types the remediation of §3.2.1 rule 3 does not exist:
+ClickHouse refuses `Nullable(Array(T))` (`Code: 43 Nested type Array(Int64)
+cannot be inside Nullable type`), and likewise `Nullable` of `Map`, `Tuple`,
+`Nested` and the geo types. A common source shape is a MySQL JSON column —
+often a generated column such as `JSON_EXTRACT(doc, '$.items[*].v')`, which
+MySQL computes as NULL when the path matches nothing — replicated into a
+hand-created `Array(T)` column. Both codes measured with `clickhouse local`
+24.8.8 under `input_format_null_as_default=0`.
+
+Rule (`PreparedStatementFieldMapper.insertPreparedStatement`, helpers
+`canHoldNull` / `reportNullSchemaMismatch`):
+1. The NULL is bound with `ps.setNull` exactly as §3.2 requires, for every
+   column type. ClickHouse refuses it for a column that cannot store NULL and
+   the connector stops (FM-07.07-1); nothing is written for the batch. (If an
+   operator configured `input_format_null_as_default=1`, ClickHouse stores the
+   column DEFAULT instead — FM-07.07-2 — and the message below says so.)
+2. Before binding, when the declared ClickHouse type cannot store NULL
+   (`canHoldNull` is false: anything other than `Nullable(...)`,
+   `LowCardinality(Nullable(...))`, `Variant(...)`, `Dynamic`, `JSON`,
+   `Object(...)`), the binder logs one ERROR per `database.table.column`:
+   `Schema mismatch: the source sent NULL for column <c> in Database(<db>),
+   Table(<t>), but the ClickHouse column is <T>, which cannot store NULL.
+   ClickHouse must match the source: <remedy>, then reload the rows written
+   while the schemas differed.`
+3. `<remedy>` is `change it to Nullable(<T>)` when ClickHouse can declare it
+   (`ClickHouseDataTypeMapper.canBeNullable`), and otherwise names the type the
+   source column maps to: the connector's own mapping of a MySQL JSON column is
+   `Nullable(String)` (`ClickHouseDataTypeMapper`, `Json.LOGICAL_NAME`).
+4. A non-NULL value is bound exactly as before and reports nothing.
 
 ### 3.3 `non.default.value` is deprecated and has no effect
 Before this specification the default-bypassing read was gated behind
