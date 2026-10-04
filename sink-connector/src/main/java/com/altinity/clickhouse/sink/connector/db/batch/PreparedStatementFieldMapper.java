@@ -115,51 +115,60 @@ public class PreparedStatementFieldMapper {
     private static final Logger log = LogManager.getLogger(PreparedStatementFieldMapper.class);
 
     /**
-     * Columns ({@code database.table.column}) for which the NULL-as-empty-array
-     * binding of Spec 07.07 section 3.2.3 has already been reported at WARN.
-     * Later rows of the same column are reported at DEBUG so a table whose
-     * source column is mostly NULL does not flood the log.
+     * Columns ({@code database.table.column}) already reported as a schema
+     * mismatch by {@link #reportNullSchemaMismatch} (Spec 07.07 section 3.2.3),
+     * so a table whose source column is mostly NULL logs the mismatch once per
+     * column, not once per row.
      */
-    static final Set<String> REPORTED_NULL_AS_EMPTY_ARRAY_COLUMNS = ConcurrentHashMap.newKeySet();
+    static final Set<String> REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS = ConcurrentHashMap.newKeySet();
 
     /**
-     * Whether a ClickHouse column type is an {@code Array}. Such a column can
-     * never be wrapped in {@code Nullable} (ClickHouse refuses
-     * {@code Nullable(Array(T))} with Code 43), so it has no representation
-     * for a source NULL other than the empty array.
+     * Whether a ClickHouse column of this declared type can store NULL.
+     * {@code Nullable(T)} and {@code LowCardinality(Nullable(T))} can, and so
+     * can the types whose values include NULL ({@code Variant}, {@code Dynamic},
+     * {@code JSON}, {@code Object}). Every other type cannot: a NULL bound for
+     * it is refused by ClickHouse with Code 53 under
+     * {@code input_format_null_as_default=0} (Spec 07.07 section 3.2.1).
      *
-     * @param chColumnType the ClickHouse column type string, may be null
-     * @return true when the type is {@code Array(...)}
+     * @param chColumnType the declared ClickHouse type string, may be null
+     * @return true when the column can store NULL, or the type is unknown
      */
-    static boolean isArrayType(String chColumnType) {
-        return chColumnType != null && chColumnType.trim().startsWith("Array(");
+    static boolean canHoldNull(String chColumnType) {
+        if (chColumnType == null) {
+            return true;
+        }
+        String t = chColumnType.trim();
+        return t.startsWith("Nullable(") || t.startsWith("LowCardinality(Nullable(")
+                || t.startsWith("Variant(") || t.startsWith("Dynamic") || t.startsWith("JSON")
+                || t.startsWith("Object(");
     }
 
     /**
-     * Binds the empty array for a source NULL in an {@code Array} column
-     * (Spec 07.07 section 3.2.3). The array is created with the column's
-     * declared element type through the same driver call the ARRAY binding of
-     * {@code ClickHouseDataTypeMapper.convert} uses, so it renders as
-     * {@code []}. The substitution is reported at WARN the first time per
-     * column: NULL and the empty array are indistinguishable on the
-     * ClickHouse side, and that must be visible, not silent.
+     * Names a schema mismatch the moment it is seen (Spec 07.07 section 3.2.3):
+     * the source sent NULL for a column whose ClickHouse type cannot store NULL.
+     * The source admits NULL, so the ClickHouse schema does not match it. The
+     * NULL is still bound -- ClickHouse refuses it with Code 53 and the
+     * connector stops -- because storing anything else would make ClickHouse
+     * hold a value the source never had. ClickHouse's own refusal does not
+     * name the column; this does, together with the type the column must be
+     * changed to. Reported at ERROR once per column.
      */
-    private void bindEmptyArrayForNull(PreparedStatement ps, int index, String chColumnType,
-                                       String colName, String tableName) throws java.sql.SQLException {
-        String t = chColumnType.trim();
-        String elementType = t.substring("Array(".length(), t.length() - 1);
-        ps.setArray(index, ps.getConnection().createArrayOf(elementType, new Object[0]));
+    private void reportNullSchemaMismatch(String chColumnType, String colName, String tableName) {
         String key = databaseName + "." + tableName + "." + colName;
-        if (REPORTED_NULL_AS_EMPTY_ARRAY_COLUMNS.add(key)) {
-            log.warn("Source NULL for column {} of type {} in Database({}), Table({}) is stored as the empty "
-                            + "array []: ClickHouse cannot declare Nullable({}), so NULL has no other "
-                            + "representation and NULL and [] are indistinguishable in this column. "
-                            + "Reported once per column (Spec 07.07 section 3.2.3).",
-                    colName, t, databaseName, tableName, t);
-        } else {
-            log.debug("Source NULL for Array column {} in Database({}), Table({}) stored as []",
-                    colName, databaseName, tableName);
+        if (!REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS.add(key)) {
+            return;
         }
+        String t = chColumnType.trim();
+        String remedy = ClickHouseDataTypeMapper.canBeNullable(t)
+                ? String.format("change it to Nullable(%s)", t)
+                : String.format("ClickHouse cannot declare Nullable(%s), so change it to the Nullable type the "
+                        + "source column maps to (a MySQL JSON column maps to Nullable(String))", t);
+        log.error("Schema mismatch: the source sent NULL for column {} in Database({}), Table({}), but the "
+                        + "ClickHouse column is {}, which cannot store NULL. ClickHouse must match the source: {}, "
+                        + "then reload the rows written while the schemas differed. The NULL is bound as NULL "
+                        + "and ClickHouse will refuse it (Code 53); nothing else is stored in its place "
+                        + "(Spec 07.07 section 3.2.3).",
+                colName, databaseName, tableName, t, remedy);
     }
 
     /**
@@ -403,15 +412,12 @@ public class PreparedStatementFieldMapper {
                 Object value = struct.getWithoutDefault(sourceField == null ? colName : sourceField.name());
                 if (value == null) {
                     String chColumnType = entry.getValue();
-                    if (isArrayType(chColumnType)) {
-                        // An Array column can never be Nullable in ClickHouse
-                        // (Code 43), so the NULL-into-non-Nullable refusal of
-                        // Spec 07.07 section 3.2.1 has no recovery for it: the
-                        // batch would stop the connector on every restart. The
-                        // empty array is the only value the column can hold
-                        // for a source NULL (Spec 07.07 section 3.2.3).
-                        bindEmptyArrayForNull(ps, index, chColumnType, colName, tableName);
-                        continue;
+                    if (!canHoldNull(chColumnType)) {
+                        // The source admits NULL and the ClickHouse column does
+                        // not: the schemas do not match. Name the column and the
+                        // type it must become; still bind NULL, never a stand-in
+                        // (Spec 07.07 section 3.2.3).
+                        reportNullSchemaMismatch(chColumnType, colName, tableName);
                     }
                     ps.setNull(index, Types.OTHER);
                     continue;

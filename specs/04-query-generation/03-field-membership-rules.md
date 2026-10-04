@@ -160,11 +160,11 @@ Recovery posture: membership is decided from the record's schema and a disagreem
   - **Test**: `PreparedStatementFieldMapperColumnCaseTest.columnCaseMismatchIsResolvedToTheSourceField()` (a case mismatch is not mistaken for staleness), `GroupInsertQueryDdlMemoTest.staleCacheIsRefreshedOnceAndTheFreshMapKeysTheMemo()` (one re-read, fresh map keys the templates), `StaleCacheBindingMapTest.materializedColumnConvertedMidBatchIsBoundInTheSameBatch()` and `StaleCacheBindingMapTest.columnFoundByStaleCacheReReadIsBoundInTheSameBatch()` (a batch whose grouping refreshed the map is written on the first attempt), `StaleCacheBindingMapTest.placeholderMissingFromTheBindingMapFailsNamingTheColumn()` (the backstop).
 
 - **FM-04.03-3 Explicit NULL for a column ClickHouse cannot hold NULL in**
-  - **Trigger**: Case A (§3.1) for a non-Nullable ClickHouse column other than `Array` (an `Array` column cannot be Nullable; its NULL is bound as `[]` — spec 07.07 §3.2.3).
+  - **Trigger**: Case A (§3.1) for a non-Nullable ClickHouse column.
   - **Behaviour**: bound as NULL; refused by ClickHouse with `Code: 53` (terminal) — see spec 07.07 §6 FM-07.07-1; with `input_format_null_as_default=1` set by the operator it is silently replaced by the column DEFAULT — spec 07.07 §6 FM-07.07-2.
-  - **Detection**: ERROR `FATAL ClickHouse error (Code: 53)`, FATAL `Replication is STOPPED: ...`, exit 3 within ≤ 5 s.
+  - **Detection**: ERROR `Schema mismatch: the source sent NULL for column <c> ...` once per column, naming the column and the type it must become (spec 07.07 §3.2.3); ERROR `FATAL ClickHouse error (Code: 53)`, FATAL `Replication is STOPPED: ...`, exit 3 within ≤ 5 s.
   - **Blast radius**: connector stopped; nothing lost.
-  - **Recovery**: P-FIX-TYPE to `Nullable(T)` and restart.
+  - **Recovery**: make the ClickHouse schema match the source: P-FIX-TYPE to `Nullable(T)`, or, for a type ClickHouse cannot declare `Nullable` (`Array`, `Map`, `Tuple`, ...), to the Nullable type the source column maps to, then P-RESYNC the table — spec 07.07 §6 FM-07.07-1; restart.
   - **RTO**: ≈ 1–2 min + re-apply of the in-flight transaction; unmeasured.
   - **Test**: `NullValueColumnDropTest.testNullColumnIsBoundOnInsert()`, `PoisonValueClassificationTest.nullIntoNonNullableColumnIsFatal()`.
 
