@@ -27,6 +27,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 
@@ -111,6 +113,64 @@ public class PreparedStatementFieldMapper {
      * Logger instance for logging purposes.
      */
     private static final Logger log = LogManager.getLogger(PreparedStatementFieldMapper.class);
+
+    /**
+     * Columns ({@code database.table.column}) already reported as a schema
+     * mismatch by {@link #reportNullSchemaMismatch} (Spec 07.07 section 3.2.3),
+     * so a table whose source column is mostly NULL logs the mismatch once per
+     * column, not once per row.
+     */
+    static final Set<String> REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS = ConcurrentHashMap.newKeySet();
+
+    /**
+     * Whether a ClickHouse column of this declared type can store NULL.
+     * {@code Nullable(T)} and {@code LowCardinality(Nullable(T))} can, and so
+     * can the types whose values include NULL ({@code Variant}, {@code Dynamic},
+     * {@code JSON}, {@code Object}). Every other type cannot: a NULL bound for
+     * it is refused by ClickHouse with Code 53 under
+     * {@code input_format_null_as_default=0} (Spec 07.07 section 3.2.1).
+     *
+     * @param chColumnType the declared ClickHouse type string, may be null
+     * @return true when the column can store NULL, or the type is unknown
+     */
+    static boolean canHoldNull(String chColumnType) {
+        if (chColumnType == null) {
+            return true;
+        }
+        String t = chColumnType.trim();
+        return t.startsWith("Nullable(") || t.startsWith("LowCardinality(Nullable(")
+                || t.startsWith("Variant(") || t.startsWith("Dynamic") || t.startsWith("JSON")
+                || t.startsWith("Object(");
+    }
+
+    /**
+     * Names a schema mismatch the moment it is seen (Spec 07.07 section 3.2.3):
+     * the source sent NULL for a column whose ClickHouse type cannot store NULL.
+     * The source admits NULL, so the ClickHouse schema does not match it. The
+     * NULL is still bound -- ClickHouse refuses it with Code 53 and the
+     * connector stops -- because storing anything else would make ClickHouse
+     * hold a value the source never had. ClickHouse's own refusal does not
+     * name the column; this does, together with the type the column must be
+     * changed to. Reported at ERROR once per column.
+     */
+    private void reportNullSchemaMismatch(String chColumnType, String colName, String tableName) {
+        String key = databaseName + "." + tableName + "." + colName;
+        if (!REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS.add(key)) {
+            return;
+        }
+        String t = chColumnType.trim();
+        String remedy = ClickHouseDataTypeMapper.canBeNullable(t)
+                ? String.format("change it to Nullable(%s)", t)
+                : String.format("ClickHouse cannot declare Nullable(%s), so change it to the Nullable type the "
+                        + "source column maps to (a MySQL JSON column maps to Nullable(String))", t);
+        log.error("Schema mismatch: the source sent NULL for column {} in Database({}), Table({}), but the "
+                        + "ClickHouse column is {}, which cannot store NULL. ClickHouse must match the source: {}, "
+                        + "then reload the rows written while the schemas differed. The NULL is bound as NULL; "
+                        + "ClickHouse refuses it (Code 53) unless input_format_null_as_default=1 was configured, "
+                        + "in which case ClickHouse stores the column DEFAULT instead (Spec 07.07 section 3.2.3, "
+                        + "FM-07.07-2).",
+                colName, databaseName, tableName, t, remedy);
+    }
 
     /**
      * The column name used for "delete" operations in the ReplacingMergeTree engine.
@@ -352,6 +412,14 @@ public class PreparedStatementFieldMapper {
                 Field sourceField = resolveSourceField(struct, colName);
                 Object value = struct.getWithoutDefault(sourceField == null ? colName : sourceField.name());
                 if (value == null) {
+                    String chColumnType = entry.getValue();
+                    if (!canHoldNull(chColumnType)) {
+                        // The source admits NULL and the ClickHouse column does
+                        // not: the schemas do not match. Name the column and the
+                        // type it must become; still bind NULL, never a stand-in
+                        // (Spec 07.07 section 3.2.3).
+                        reportNullSchemaMismatch(chColumnType, colName, tableName);
+                    }
                     ps.setNull(index, Types.OTHER);
                     continue;
                 }

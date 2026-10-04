@@ -95,6 +95,47 @@ Rules:
    appear in the raw copy as the Connect-schema default. NULL fields are
    omitted from the JSON object as before.
 
+#### 3.2.3 A NULL the ClickHouse column cannot store is a schema mismatch, and is named
+A source NULL arriving for a column whose ClickHouse type cannot store NULL
+means the two schemas do not match: the source column admits NULL and the
+replica column does not. The fix is always to make the ClickHouse schema match
+the source; the binder never stores anything in place of the NULL — not `[]`,
+not `0`, not `''`, not the column DEFAULT — because ClickHouse would then hold
+a value the source never had.
+
+ClickHouse's refusal (`Code: 53 Cannot insert NULL value into a column of type
+'Array(Int64)' at: NULL)`) names the type but not the column, so an operator
+facing a stopped connector cannot tell which column of which table to fix.
+And for some types the remediation of §3.2.1 rule 3 does not exist:
+ClickHouse refuses `Nullable(Array(T))` (`Code: 43 Nested type Array(Int64)
+cannot be inside Nullable type`), and likewise `Nullable` of `Map`, `Tuple`,
+`Nested` and the geo types. A common source shape is a MySQL JSON column —
+often a generated column such as `JSON_EXTRACT(doc, '$.items[*].v')`, which
+MySQL computes as NULL when the path matches nothing — replicated into a
+hand-created `Array(T)` column. Both codes measured with `clickhouse local`
+24.8.8 under `input_format_null_as_default=0`.
+
+Rule (`PreparedStatementFieldMapper.insertPreparedStatement`, helpers
+`canHoldNull` / `reportNullSchemaMismatch`):
+1. The NULL is bound with `ps.setNull` exactly as §3.2 requires, for every
+   column type. ClickHouse refuses it for a column that cannot store NULL and
+   the connector stops (FM-07.07-1); nothing is written for the batch. (If an
+   operator configured `input_format_null_as_default=1`, ClickHouse stores the
+   column DEFAULT instead — FM-07.07-2 — and the message below says so.)
+2. Before binding, when the declared ClickHouse type cannot store NULL
+   (`canHoldNull` is false: anything other than `Nullable(...)`,
+   `LowCardinality(Nullable(...))`, `Variant(...)`, `Dynamic`, `JSON`,
+   `Object(...)`), the binder logs one ERROR per `database.table.column`:
+   `Schema mismatch: the source sent NULL for column <c> in Database(<db>),
+   Table(<t>), but the ClickHouse column is <T>, which cannot store NULL.
+   ClickHouse must match the source: <remedy>, then reload the rows written
+   while the schemas differed.`
+3. `<remedy>` is `change it to Nullable(<T>)` when ClickHouse can declare it
+   (`ClickHouseDataTypeMapper.canBeNullable`), and otherwise names the type the
+   source column maps to: the connector's own mapping of a MySQL JSON column is
+   `Nullable(String)` (`ClickHouseDataTypeMapper`, `Json.LOGICAL_NAME`).
+4. A non-NULL value is bound exactly as before and reports nothing.
+
 ### 3.3 `non.default.value` is deprecated and has no effect
 Before this specification the default-bypassing read was gated behind
 `non.default.value=true`, whose hardcoded default was `false` — i.e. the
@@ -130,6 +171,25 @@ deprecated and ignored.
 - Probe (recorded above, `clickhouse local` 24.8.14): NULL into
   `Int32 DEFAULT 7` stores `7` under the server default and is rejected under
   `input_format_null_as_default=0`.
+- `NullSchemaMismatchTest.nullIntoArrayColumnIsBoundAsNullNotSubstituted()` —
+  §3.2.3 rule 1: a NULL JSON field for an `Array(Int64)` column is bound with
+  `setNull`, never with `[]` or another stand-in.
+- `NullSchemaMismatchTest.nullIntoNonNullableColumnsIsReportedAsSchemaMismatch()`
+  — rules 1 and 2: in one row, NULL for `Array(Int64)` and for `Int64` is bound
+  with `setNull` and both columns are reported as a schema mismatch; NULL for
+  `Nullable(String)` is bound with `setNull` and not reported. Fails on code
+  that does not report (no column is recorded).
+- `NullSchemaMismatchTest.nonNullValuesAreUnchangedAndNotReported()` — rule 4.
+- `NullSchemaMismatchTest.canHoldNullRecognisesNullCapableTypes()` — rule 2:
+  `Nullable`, `LowCardinality(Nullable)`, `Variant`, `Dynamic`, `JSON` store
+  NULL; `Array` (also of `Nullable`), `Map`, `LowCardinality(String)`, `Int64`
+  do not.
+- Probe (`clickhouse local` 24.8.8, `input_format_null_as_default=0`): NULL into
+  `Array(Int64)` is refused with `Code: 53`; `Nullable(Array(Int64))` is refused
+  with `Code: 43`; after `MODIFY COLUMN versions REMOVE DEFAULT` and
+  `MODIFY COLUMN versions Nullable(String)` on a MergeTree `Array(Int64)` column,
+  NULL and `'[1, 2]'` are stored as `\N` and `[1, 2]`, while the rows written
+  before the change hold `[5]` and `[]` (converted, not reloaded).
 - `PreparedStatementFieldMapperUnhandledTypeTest.unhandledTypeFailsTheBatch()`
   — §3.2.2 rule 1: a `MAP` field bound for a `String` column throws
   `DataException` naming the column; nothing is bound for it (pre-fix code
@@ -147,13 +207,13 @@ deprecated and ignored.
 Recovery posture: a source NULL is always bound as NULL and the server is told not to substitute a default (`input_format_null_as_default=0`), so a NULL the replica cannot hold is refused by ClickHouse with a terminal code; an unbindable field is refused by the connector (retried forever on 2.11.0). The remaining silent path is an operator opting back into default substitution. Procedures P-FIX-TYPE / P-SKIP / P-RESYNC and the retry-vs-stop rule are defined in spec 07.01 §6.
 
 - **FM-07.07-1 Source NULL for a non-Nullable ClickHouse column**
-  - **Trigger**: a column created non-Nullable while the source admits NULL (hand-created table, a MySQL `ALTER ... NULL` not applied on ClickHouse, a record-path geo column — spec 07.06 §6 FM-07.06-3), and a row carries NULL.
+  - **Trigger**: a column created non-Nullable while the source admits NULL (hand-created table, a MySQL `ALTER ... NULL` not applied on ClickHouse, a record-path geo column — spec 07.06 §6 FM-07.06-3, a MySQL JSON column hand-created as `Array(T)` — §3.2.3), and a row carries NULL.
   - **Behaviour**: `PreparedStatementFieldMapper.insertPreparedStatement` binds `ps.setNull`; the connection carries `input_format_null_as_default=0` (`BaseDbWriter.customSettings`), so ClickHouse refuses: `Code: 53 ... Cannot insert NULL value into a column of type 'Int32'` (measured). 53 is in `FATAL_ERROR_CODES`: the worker dies, the engine stops on the next source batch and the process exits 3.
-  - **Detection**: ERROR `******* ERROR inserting Batch Database(<db>), Table(<t>)`, ERROR `FATAL ClickHouse error (Code: 53) -- this batch will never succeed.`, FATAL `Replication is STOPPED: ...`, exit code 3, within ≤ 5 s of the failure; systemd restarts every 30 s and gives up after 5 starts in 300 s.
+  - **Detection**: ERROR `Schema mismatch: the source sent NULL for column <c> in Database(<db>), Table(<t>), but the ClickHouse column is <T>, which cannot store NULL. ...` once per column, naming the column and the type it must become (§3.2.3); ERROR `******* ERROR inserting Batch Database(<db>), Table(<t>)`, ERROR `FATAL ClickHouse error (Code: 53) -- this batch will never succeed.`, FATAL `Replication is STOPPED: ...`, exit code 3, within ≤ 5 s of the failure; systemd restarts every 30 s and gives up after 5 starts in 300 s.
   - **Blast radius**: the whole connector stops; nothing of the batch is written; no loss, no divergence.
-  - **Recovery**: P-FIX-TYPE with `MODIFY COLUMN c Nullable(T)`; for a sorting-key column ClickHouse refuses (`Code: 524 ALTER of key column ... is not safe`, measured), so rebuild the table with a nullable key (`allow_nullable_key=1`, spec 06.09) or `ch-mysql-resync` into a corrected table (spec 11.04); restart.
+  - **Recovery**: make the ClickHouse schema match the source, then reload the rows written while it did not. P-FIX-TYPE with `MODIFY COLUMN c Nullable(T)`; for a type ClickHouse cannot declare `Nullable` (`Array`, `Map`, `Tuple`, `Nested`, geo — Code 43) change the column to the Nullable type the source column maps to (`Nullable(String)` for a MySQL JSON column; drop the column's DEFAULT expression first if its type no longer fits) and P-RESYNC the table, because the rows already written hold values converted from the old type, not the source values (for example `[]` where the source holds NULL); for a sorting-key column ClickHouse refuses (`Code: 524 ALTER of key column ... is not safe`, measured), so rebuild the table with a nullable key (`allow_nullable_key=1`, spec 06.09) or `ch-mysql-resync` into a corrected table (spec 11.04); restart.
   - **RTO**: non-key column: `ALTER` + restart ≈ 1–2 min + re-apply of the in-flight transaction; key column: + table rebuild proportional to table size; unmeasured.
-  - **Test**: `JdbcCustomSettingsTest.defaultSettingsDisableNullAsDefault()`, `PoisonValueClassificationTest.nullIntoNonNullableColumnIsFatal()`, `TerminalFailureExitTest.fatalErrorCodeIsNotRetried()`.
+  - **Test**: `JdbcCustomSettingsTest.defaultSettingsDisableNullAsDefault()`, `PoisonValueClassificationTest.nullIntoNonNullableColumnIsFatal()`, `TerminalFailureExitTest.fatalErrorCodeIsNotRetried()`, `NullSchemaMismatchTest.nullIntoNonNullableColumnsIsReportedAsSchemaMismatch()`.
 
 - **FM-07.07-2 Operator re-enables default substitution**
   - **Trigger**: `clickhouse.jdbc.settings` contains `input_format_null_as_default=1`.
