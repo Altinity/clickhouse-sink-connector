@@ -848,7 +848,10 @@ class TestReplicaOnlyColumns(unittest.TestCase):
         self.assertEqual(select, shared)
         self.assertNotIn('"name"', select)
         self.assertEqual(len(warnings), 1, warnings)
-        self.assertIn("Not compared in table db1.t1: replica-only columns ['name']", warnings[0])
+        self.assertIn("Replica-only columns in table db1.t1: ['name']", warnings[0])
+        # The driver's parser must recognise exactly this line (spec 11.02 section 3.9).
+        match = tl.REPLICA_ONLY_RE.search(warnings[0])
+        self.assertEqual((match.group("table"), match.group("columns")), ("db1.t1", "['name']"))
         # Relayed by the driver as a side note: it must not read as a result line.
         self.assertNotIn("checksum", warnings[0].lower())
         # A second chunk of the same table does not repeat the warning.
@@ -908,7 +911,7 @@ class TestReplicaOnlyColumns(unittest.TestCase):
         self.assertIn('"order id"', select)
         self.assertNotIn('"name"', select)
         self.assertEqual(len(warnings), 1, warnings)
-        self.assertIn("replica-only columns ['name']", warnings[0])
+        self.assertIn("Replica-only columns in table db1.t1: ['name']", warnings[0])
 
     def test_a_malformed_json_list_fails_loudly(self):
         with self.assertRaises(ValueError):

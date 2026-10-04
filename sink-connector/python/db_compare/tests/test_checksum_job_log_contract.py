@@ -200,6 +200,29 @@ class TestScheduledJobLogContract(unittest.TestCase):
         self.assertEqual(code, 1, "\n".join(log))
         self.assertTrue(any(" - ERROR - " in line and "Checksum ERROR for shop.items" in line for line in log), log)
 
+    REPLICA_ONLY_REPORT = ("WARNING", "Replica-only columns in table shop.items: ['name'] "
+                                      "(present on the ClickHouse destination, absent from the source table; not compared)")
+
+    def test_replica_only_column_fails_the_job_by_default(self):
+        """Spec 11.02 section 3.9: a column added on the destination only is
+        reported through the job's WARNING scan and fails the run."""
+        sides = clean_sides()
+        sides["shop.items"]["clickhouse"] = [MD5_B, 3, [self.REPLICA_ONLY_REPORT], 0]
+        (code, log) = self.run_job(sides, NON_PARTITIONED_RUN)
+        self.assertEqual(code, 1, "\n".join(log))
+        warnings = [line for line in log if "WARNING" in line]
+        self.assertTrue(any("REPLICA-ONLY COLUMNS -- ch-host shop.items: ['name']" in line for line in warnings), log)
+        self.assertFalse(any("Checksum difference" in line for line in log), log)
+        self.assertTrue(any("No difference for shop.items" in line for line in log), log)
+
+    def test_allow_replica_only_columns_flag_keeps_the_job_green(self):
+        sides = clean_sides()
+        sides["shop.items"]["clickhouse"] = [MD5_B, 3, [self.REPLICA_ONLY_REPORT], 0]
+        (code, log) = self.run_job(sides, NON_PARTITIONED_RUN + ["--allow_replica_only_columns"])
+        self.assertEqual(code, 0, "\n".join(log))
+        self.assertEqual([line for line in log if "WARNING" in line], [], "\n".join(log))
+        self.assertTrue(any(" - INFO - " in line and "replica-only columns ['name'] accepted" in line for line in log), log)
+
 
 if __name__ == "__main__":
     unittest.main()

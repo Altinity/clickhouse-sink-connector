@@ -282,8 +282,12 @@ def restrict_to_source_columns(database, table, columns_metadata, source_columns
 
     A replica column with no source column of the same name (compared without
     regard to case, as MySQL names columns) holds no replicated value, so
-    hashing it can only make the two sides differ: it is left out and named in
-    one WARNING per table. A source column the replica lacks cannot be left out
+    hashing it can only make the two sides differ: it is left out of the row
+    string and named in one ``Replica-only columns in table <db>.<table>:``
+    WARNING per table. The driver parses that line: by default it reports the
+    columns as a schema-drift finding that fails the run, and with
+    ``--allow_replica_only_columns`` it relays them as a note (spec 11.02
+    section 3.9). A source column the replica lacks cannot be left out
     here (the source side hashes it), so the run still reports DIFFERENT; the
     WARNING names the missing column so the difference explains itself."""
     source_columns = parse_source_columns(source_columns_text)
@@ -298,8 +302,8 @@ def restrict_to_source_columns(database, table, columns_metadata, source_columns
                      if name.lower() not in replica_lower and name.lower() not in excluded_lower)
     if replica_only and (database, table, "replica-only") not in warned:
         warned.add((database, table, "replica-only"))
-        logging.warning(f"Not compared in table {database}.{table}: replica-only columns {replica_only} "
-                        "(absent from the source table, so there is no source value to compare)")
+        logging.warning(f"Replica-only columns in table {database}.{table}: {replica_only} "
+                        "(present on the ClickHouse destination, absent from the source table; not compared)")
     if missing and (database, table, "missing") not in warned:
         warned.add((database, table, "missing"))
         logging.warning(f"Source columns missing in table {database}.{table} on the replica: {missing} "

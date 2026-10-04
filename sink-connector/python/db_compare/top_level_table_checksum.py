@@ -164,17 +164,63 @@ def side_note_text(line):
     return text.replace(SIDE_WARNING_MARKER, " - ").replace("WARNING", "warning")
 
 
+# The replica side's report of columns the destination has and the source
+# table does not (spec 11.02 sections 3.3 and 3.9).
+REPLICA_ONLY_RE = re.compile(r"Replica-only columns in table (?P<table>\S+): (?P<columns>\[.*?\])")
+# (replica host, <db>.<table>) -> the column list as the side printed it.
+# Filled while the run's tables are compared, read by report_run_summary().
+replica_only_findings = {}
+replica_only_lock = threading.Lock()
+
+
+def allow_replica_only_columns():
+    """--allow_replica_only_columns: accept columns added on the destination
+    only. Off by default, so they are reported and fail the run."""
+    return bool(getattr(globals().get("args"), "allow_replica_only_columns", False))
+
+
+def record_replica_only(host, line):
+    """True when ``line`` is the replica side's replica-only report. Each
+    (host, table) is recorded and logged once per run: by default as a WARNING
+    naming the columns and telling the owner to stop adding columns on the
+    destination; with --allow_replica_only_columns as an INFO side note. The
+    columns are left out of the comparison either way, so the table's verdict
+    is about the replicated columns only."""
+    match = REPLICA_ONLY_RE.search(line)
+    if not match:
+        return False
+    key = (host, match.group('table'))
+    columns = match.group('columns')
+    with replica_only_lock:
+        first = key not in replica_only_findings
+        replica_only_findings[key] = columns
+    if not first:
+        return True
+    if allow_replica_only_columns():
+        logging.info(f"{host} {key[1]} side note: replica-only columns {columns} accepted "
+                     "(--allow_replica_only_columns); they are not compared")
+    else:
+        logging.warning(f"REPLICA-ONLY COLUMNS -- {host} {key[1]}: {columns} exist on the ClickHouse destination "
+                        "but not in the source table. The destination must conform to the source: stop adding "
+                        "columns on the destination; drop them there, or add them to the source table so they "
+                        "replicate (pass --allow_replica_only_columns to accept them)")
+    return True
+
+
 def relay_side_messages(data, host, table):
     """Re-log the side script's ERROR/CRITICAL lines at ERROR and its WARNING
     lines (columns not compared, clamped values, SQL warnings) at INFO as side
-    notes: they qualify the verdict (spec 13.06 FM-13.06-8). Returns True when
-    the side logged an ERROR or CRITICAL line."""
+    notes: they qualify the verdict (spec 13.06 FM-13.06-8). The replica-only
+    report is the exception: record_replica_only() logs it as a finding.
+    Returns True when the side logged an ERROR or CRITICAL line."""
     side_failed = False
     for line in side_output_text(data).splitlines():
         if any(marker in line for marker in SIDE_ERROR_MARKERS):
             logging.error(f"{host} {table} side: {line.strip()}")
             side_failed = True
         elif SIDE_WARNING_MARKER in line:
+            if record_replica_only(host, line):
+                continue
             logging.info(f"{host} {table} side note: {side_note_text(line)}")
     return side_failed
 
@@ -1281,7 +1327,9 @@ def report_run_summary(verdicts, fail_on_empty):
     """Log the per-verdict totals; return the process exit code.
 
     ERROR (a table with no verdict) always fails the run. EMPTY fails it only
-    with --fail_on_empty. DIFFERENT keeps exit 0 (spec 11.02 FM-11.02-1)."""
+    with --fail_on_empty. DIFFERENT keeps exit 0 (spec 11.02 FM-11.02-1).
+    Replica-only columns fail it unless --allow_replica_only_columns (spec
+    11.02 section 3.9)."""
     by_verdict = {}
     for table_name, verdict in verdicts.items():
         by_verdict.setdefault(verdict, []).append(table_name)
@@ -1303,6 +1351,13 @@ def report_run_summary(verdicts, fail_on_empty):
     if errors:
         logging.error(f"{len(errors)} table(s) have NO verdict (a side failed or its output could not be parsed): "
                       + ", ".join(errors))
+        exit_code = 1
+    with replica_only_lock:
+        findings = sorted(replica_only_findings.items())
+    if findings and not allow_replica_only_columns():
+        logging.warning(f"REPLICA-ONLY COLUMNS -- {len(findings)} replica table(s) carry columns the source table "
+                        "does not have (failing the run; pass --allow_replica_only_columns to accept them): "
+                        + "; ".join(f"{host} {table} {columns}" for ((host, table), columns) in findings))
         exit_code = 1
     return exit_code
 
@@ -1445,6 +1500,8 @@ def run_config(config):
     if getattr(args, "wait_for_connector", False) or consistent_snapshot:
         fences = build_connector_fences(config)
     verdicts = {}
+    with replica_only_lock:
+        replica_only_findings.clear()
     for database in databases:
         logging.info(f"Using MySQL database: {database}")
         try:
@@ -1664,6 +1721,8 @@ def main():
                         help='Seconds to wait for the source READ lock on each table before giving up on that table (default 30). Bounds the wait so a continuously-written table fails fast instead of stalling the whole run for the server-default timeout.')
     parser.add_argument('--fail_on_lock_timeout', action='store_true', default=False,
                         help='Abort the whole run if any table cannot be locked within --lock_wait_timeout. Default is to log a loud COVERAGE GAP warning, skip that one table, and keep checksumming the rest so a single continuously-written table does not fail the whole job.')
+    parser.add_argument('--allow_replica_only_columns', action='store_true', default=False,
+                        help='Accept columns that exist on a ClickHouse replica table but not in the source table (added on the destination only). They are never compared. Default: each one is reported as a "REPLICA-ONLY COLUMNS" WARNING telling the owner to stop adding columns on the destination, and the run exits non-zero; with this flag they are logged at INFO and do not affect the exit code.')
     parser.add_argument('--fail_on_empty', action='store_true', default=False,
                         help='Exit non-zero when a table compared 0 rows on both sides (verdict EMPTY). Default: EMPTY is logged at INFO and the run exits 0, since empty partitions are normal in date-partitioned runs.')
     parser.add_argument('--recheck_differences', type=non_negative_int, default=1,
