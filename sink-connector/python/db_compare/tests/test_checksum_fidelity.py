@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import os
 import re
+import sqlite3
 import sys
 import unittest
 from unittest.mock import MagicMock, patch
@@ -22,7 +23,7 @@ import db_compare.mysql_table_checksum as my  # noqa: E402
 import db_compare.top_level_table_checksum as tl  # noqa: E402
 from db.checksum_common import (  # noqa: E402
     DATETIME_MAX, DATETIME_MIN, canonical_datetime_bound, checksum_from_aggregate,
-    clamp_datetime_expression, clamped_datetime_flag, shift_datetime_bounds,
+    clamp_datetime_expression, clamped_datetime_flag, saturation_floor, shift_datetime_bounds,
 )
 
 def mysql_command_line(*args, **kwargs):
@@ -456,6 +457,9 @@ class TestMySQLTemporalRendering(unittest.TestCase):
 MYSQL_DATETIME_RENDERING = "date_format(`d`, '%Y-%m-%d %H:%i:%s.%f')"
 CLICKHOUSE_DATETIME_RENDERING = 'toString(toDateTime64("d", 6), \'UTC\')'
 TOKYO_BOUNDS = ("1900-01-01 09:00:00.000000", "2300-01-01 08:59:59.000000")
+# Start of the saturated last day (2299-12-31 00:00:00 UTC) in UTC and Asia/Tokyo.
+UTC_FLOOR = "2299-12-31 00:00:00.000000"
+TOKYO_FLOOR = "2299-12-31 09:00:00.000000"
 
 
 class TestInstantComparison(unittest.TestCase):
@@ -478,11 +482,11 @@ class TestInstantComparison(unittest.TestCase):
     def test_mysql_datetime_uses_shifted_bounds_and_timestamp_utc_bounds(self):
         datetime_select = build_mysql_select([mysql_column("d", "datetime", precision=0)], source_timezone="Asia/Tokyo")
         self.assertEqual(datetime_select,
-                         clamp_datetime_expression(MYSQL_DATETIME_RENDERING, TOKYO_BOUNDS[0], TOKYO_BOUNDS[1], "mysql")
+                         clamp_datetime_expression(MYSQL_DATETIME_RENDERING, TOKYO_BOUNDS[0], TOKYO_BOUNDS[1], "mysql", TOKYO_FLOOR)
                          + mysql_flags("d"))
         timestamp_select = build_mysql_select([mysql_column("d", "timestamp", precision=0)], source_timezone="Asia/Tokyo")
         self.assertEqual(timestamp_select,
-                         clamp_datetime_expression(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "mysql")
+                         clamp_datetime_expression(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "mysql", UTC_FLOOR)
                          + mysql_flags("d"))
 
     def test_clickhouse_renders_timestamp_columns_in_utc_and_the_rest_in_the_source_zone(self):
@@ -490,17 +494,17 @@ class TestInstantComparison(unittest.TestCase):
         timestamp_select = build([("d", "DateTime64(6, 'UTC')", 0, None)],
                                  source_timezone="Asia/Tokyo", timestamp_columns="d,other")
         self.assertEqual(timestamp_select,
-                         clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse")
+                         clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse", UTC_FLOOR)
                          + clickhouse_flags("d"))
         datetime_select = build([("d", "DateTime64(3)", 0, None)], source_timezone="Asia/Tokyo", timestamp_columns="other")
         self.assertEqual(datetime_select,
                          clamp_datetime_expression('toString(toDateTime64("d", 6), \'Asia/Tokyo\')',
-                                                   TOKYO_BOUNDS[0], TOKYO_BOUNDS[1], "clickhouse")
+                                                   TOKYO_BOUNDS[0], TOKYO_BOUNDS[1], "clickhouse", TOKYO_FLOOR)
                          + clickhouse_flags("d"))
 
     def test_clickhouse_default_zone_is_utc_for_every_column(self):
         select = TestClickHouseRowExpression().build([("d", "DateTime64(3)", 0, None)])
-        self.assertEqual(select, clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse")
+        self.assertEqual(select, clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse", UTC_FLOOR)
                          + clickhouse_flags("d"))
 
     def test_driver_passes_zone_and_timestamp_columns(self):
@@ -567,6 +571,77 @@ class TestSharedDatetimeClamp(unittest.TestCase):
         self.assertEqual(clamped_datetime_flag("r", "MIN", "MAX"), "(r > 'MAX' or r < 'MIN')")
 
 
+class TestSaturatedLastDay(unittest.TestCase):
+    """The last day of the range is one value on both sides (spec 11.02
+    section 3.4): what the connector stores for an out-of-range source value
+    (2299-12-31 23:59:59) and what a bulk load stores (the source's own time of
+    day on 2299-12-31) compare equal to every out-of-range MySQL value."""
+
+    MYSQL_VALUES = ("9999-12-31 00:00:00.000000", "9999-12-31 23:59:59.000000", "9999-07-31 23:59:59.000000",
+                    "2299-12-31 10:59:00.000000")
+    CLICKHOUSE_VALUES = ("2299-12-31 00:00:00.000000", "2299-12-31 05:59:00.000000",
+                         "2299-12-31 23:59:59.000000", "2299-12-31 23:59:59.999999")
+    DAY_BEFORE = "2299-12-30 23:59:59.999999"
+
+    def render(self, value, dialect, saturate_from=UTC_FLOOR):
+        connection = sqlite3.connect(":memory:")
+        connection.create_function("if", 3, lambda condition, then, otherwise: then if condition else otherwise)
+        try:
+            connection.execute("create table t (r text)")
+            connection.execute("insert into t values (?)", (value,))
+            expression = clamp_datetime_expression("r", DATETIME_MIN, DATETIME_MAX, dialect, saturate_from)
+            flag = clamped_datetime_flag("r", DATETIME_MIN, DATETIME_MAX, saturate_from)
+            return connection.execute(f"select {expression}, coalesce({flag}, 0) from t").fetchone()
+        finally:
+            connection.close()
+
+    def test_floor_is_the_first_instant_of_the_last_utc_day_in_the_zone(self):
+        bounds = (DATETIME_MIN, DATETIME_MAX)
+        self.assertEqual(saturation_floor(bounds, "UTC"), UTC_FLOOR)
+        self.assertEqual(saturation_floor(bounds, "Asia/Tokyo"), TOKYO_FLOOR)
+        self.assertEqual(saturation_floor(bounds, "America/Chicago"), "2299-12-30 18:00:00.000000")
+        # Never above the upper bound in the zone: a user bound at midnight UTC
+        # shifted west is earlier than the start of its UTC day there.
+        user_bounds = (DATETIME_MIN, canonical_datetime_bound("2299-12-31 00:00:00", "--max_datetime_value"))
+        self.assertEqual(saturation_floor(user_bounds, "America/Chicago"),
+                         shift_datetime_bounds(user_bounds, "America/Chicago")[1])
+
+    def test_every_last_day_representation_renders_as_the_upper_bound(self):
+        for dialect in ("mysql", "clickhouse"):
+            for value in self.MYSQL_VALUES + self.CLICKHOUSE_VALUES:
+                self.assertEqual(self.render(value, dialect)[0], DATETIME_MAX, (dialect, value))
+
+    def test_the_day_before_is_not_saturated(self):
+        for dialect in ("mysql", "clickhouse"):
+            self.assertEqual(self.render(self.DAY_BEFORE, dialect), (self.DAY_BEFORE, 0), dialect)
+
+    def test_the_flag_counts_every_value_the_saturation_changed(self):
+        for dialect in ("mysql", "clickhouse"):
+            self.assertEqual(self.render(DATETIME_MAX, dialect)[1], 0, dialect)
+            for value in self.MYSQL_VALUES + self.CLICKHOUSE_VALUES:
+                if value != DATETIME_MAX:
+                    self.assertEqual(self.render(value, dialect)[1], 1, (dialect, value))
+
+    def test_without_a_floor_only_values_past_the_bound_are_clamped(self):
+        # The pre-saturation behaviour, still what a caller gets without a floor:
+        # the bulk-loaded 00:00:00 stays itself and hashes differently.
+        self.assertEqual(self.render("2299-12-31 00:00:00.000000", "clickhouse", None),
+                         ("2299-12-31 00:00:00.000000", 0))
+        self.assertEqual(self.render("9999-12-31 00:00:00.000000", "mysql", None), (DATETIME_MAX, 1))
+
+    def test_row_builders_use_the_same_floor_on_both_sides(self):
+        mysql = build_mysql_select([mysql_column("d", "datetime", precision=0)])
+        clickhouse = TestClickHouseRowExpression().build([("d", "DateTime64(3)", 0, None)])
+        for expression in (mysql, clickhouse):
+            self.assertIn(f">= '{UTC_FLOOR}'", expression)
+            self.assertIn(f"'{DATETIME_MAX}'", expression)
+        tokyo_mysql = build_mysql_select([mysql_column("d", "datetime", precision=0)], source_timezone="Asia/Tokyo")
+        tokyo_clickhouse = TestClickHouseRowExpression().build([("d", "DateTime64(3)", 0, None)],
+                                                               source_timezone="Asia/Tokyo")
+        for expression in (tokyo_mysql, tokyo_clickhouse):
+            self.assertIn(f">= '{TOKYO_FLOOR}'", expression)
+
+
 class TestDatetimeRendering(unittest.TestCase):
     """Fixed-precision rendering, no trailing-zero trimming (spec 11.02 section 3.4)."""
 
@@ -577,7 +652,7 @@ class TestDatetimeRendering(unittest.TestCase):
                 select = build_mysql_select([mysql_column("d", data_type, column_type, precision=precision)])
                 self.assertEqual(
                     select,
-                    clamp_datetime_expression(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "mysql")
+                    clamp_datetime_expression(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "mysql", UTC_FLOOR)
                     + mysql_flags("d"),
                     column_type,
                 )
@@ -587,7 +662,7 @@ class TestDatetimeRendering(unittest.TestCase):
             select = TestClickHouseRowExpression().build([("d", data_type, 0, None)])
             self.assertEqual(
                 select,
-                clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse")
+                clamp_datetime_expression(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, "clickhouse", UTC_FLOOR)
                 + clickhouse_flags("d"),
                 data_type,
             )
@@ -621,7 +696,7 @@ class TestClampedRowCounts(unittest.TestCase):
         ch.args = clickhouse_args()
         with patch.object(ch, "execute_sql", side_effect=clickhouse_stub([("d", "DateTime64(3)", 0, None)], [])):
             (query, select, order_by, external_types, clamped, final_per_partition) = ch.get_table_checksum_query(MagicMock(), "t1")
-        self.assertEqual(clamped, "coalesce(" + clamped_datetime_flag(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX) + ", 0)")
+        self.assertEqual(clamped, "coalesce(" + clamped_datetime_flag(CLICKHOUSE_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, UTC_FLOOR) + ", 0)")
         statement = ch.select_table_statements("t1", query, select, order_by, external_types, None, clamped)[0]
         self.assertIn('coalesce(sum(clamped),0) as "clamped"', statement)
         self.assertIn(clamped + " as clamped", statement)
@@ -630,7 +705,7 @@ class TestClampedRowCounts(unittest.TestCase):
         with patch.object(my, "execute_mysql", side_effect=mysql_stub([mysql_column("d", "datetime", precision=0)], [])):
             (query, select, order_by, external_types, clamped) = my.get_table_checksum_query(
                 "t1", MagicMock(), "hex", "1=1", [], False, True)
-        self.assertEqual(clamped, "coalesce(" + clamped_datetime_flag(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX) + ", 0)")
+        self.assertEqual(clamped, "coalesce(" + clamped_datetime_flag(MYSQL_DATETIME_RENDERING, DATETIME_MIN, DATETIME_MAX, UTC_FLOOR) + ", 0)")
         statement = my.select_table_statements("t1", query, select, order_by, external_types, "1=1", clamped)[-1]
         self.assertIn("coalesce(sum(clamped),0) as clamped", statement)
         self.assertIn(clamped + " as clamped", statement)

@@ -19,7 +19,8 @@ import concurrent.futures
 from db.clickhouse import *
 from db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
                                 clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
-                                validate_timezone, shift_datetime_bounds, parse_column_list, warn_not_compared,
+                                validate_timezone, shift_datetime_bounds, saturation_floor, parse_column_list,
+                                warn_not_compared,
                                 parse_exclude_columns)
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
@@ -119,12 +120,15 @@ def clickhouse_datetime_rendering(column_name, zone):
     return f"toString(toDateTime64({column_name}, 6), '{zone}')"
 
 
-def clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds=(DATETIME_MIN, DATETIME_MAX), zone='UTC', raw_bytes=False):
+def clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds=(DATETIME_MIN, DATETIME_MAX), zone='UTC', raw_bytes=False,
+                                 saturate_from=None):
     """Text rendering of one ClickHouse column (spec 11.02 section 3.3).
 
     ``column_name`` is already double-quoted. ``options`` is the parsed argument
     namespace (only its rendering options are read). ``bounds`` are the
-    canonical (min, max) datetime clamp bounds in ``zone``. ``raw_bytes`` marks
+    canonical (min, max) datetime clamp bounds in ``zone`` and
+    ``saturate_from`` the start of the saturated last day in ``zone``
+    (``saturation_floor()``). ``raw_bytes`` marks
     a String column that holds raw bytes (persist.raw.bytes=true, spec 11.02
     section 3.6): it is rendered as lowercase hex like the MySQL side.
     """
@@ -136,7 +140,8 @@ def clickhouse_column_expression(column_name, data_type, numeric_scale, options,
         # toString() drops trailing zeros; MySQL prints the declared scale.
         return "toDecimalString(" + column_name + "," + str(numeric_scale) + ")"
     if is_datetime_type(data_type):
-        return clamp_datetime_expression(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1], 'clickhouse')
+        return clamp_datetime_expression(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1], 'clickhouse',
+                                         saturate_from)
     if raw_bytes and 'String' in data_type:
         return "lower(hex(" + column_name + "))"
     return "toString(" + column_name + ")"
@@ -174,6 +179,9 @@ def build_clickhouse_row_expression(columns_metadata, options):
     utc_bounds = datetime_bounds(options)
     source_zone = options.source_timezone
     wall_clock_bounds = shift_datetime_bounds(utc_bounds, source_zone)
+    # The last day of the range is saturated on both sides (spec 11.02 section 3.4).
+    utc_floor = saturation_floor(utc_bounds, 'UTC')
+    wall_clock_floor = saturation_floor(utc_bounds, source_zone)
     timestamp_columns = parse_column_list(options.timestamp_columns)
     # --hex_columns names the String columns that hold raw bytes; with hex or
     # base64 the replica already holds encoded text (spec 11.02 section 3.6).
@@ -193,9 +201,9 @@ def build_clickhouse_row_expression(columns_metadata, options):
         columns.append(row[0])
         data_types[row[0]] = data_type
         if row[0] in timestamp_columns:
-            (zone, bounds) = ('UTC', utc_bounds)
+            (zone, bounds, floor) = ('UTC', utc_bounds, utc_floor)
         else:
-            (zone, bounds) = (source_zone, wall_clock_bounds)
+            (zone, bounds, floor) = (source_zone, wall_clock_bounds, wall_clock_floor)
         if not options.include_floating_point_columns and 'Float' in data_type:
             skipped["floating point"].append(row[0])
             continue
@@ -203,9 +211,10 @@ def build_clickhouse_row_expression(columns_metadata, options):
             skipped["JSON"].append(row[0])
             continue
         expression = clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds, zone,
-                                                  raw_bytes=(row[0] in hex_columns))
+                                                  raw_bytes=(row[0] in hex_columns), saturate_from=floor)
         if is_datetime_type(data_type):
-            clamped_flags.append(clamped_datetime_flag(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1]))
+            clamped_flags.append(clamped_datetime_flag(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1],
+                                                       floor))
         if is_nullable == 1:
             nullables.append(column_name)
             expression = "case when " + column_name + " is null then '' else " + expression + " end"

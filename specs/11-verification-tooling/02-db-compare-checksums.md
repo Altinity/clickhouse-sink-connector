@@ -255,19 +255,36 @@ precision, never trimmed:
   MySQL alone. Narrower bounds turn every value beyond them, on both sides,
   into the same constant: differences inside that window are invisible. The
   driver therefore passes no bounds by default (it used to pass
-  `1969-12-31 18:00:00` / `2299-12-31 00:00:00`, hiding 1900–1969 and the
-  last day of 2299). Narrowing is an explicit opt-in: `--min_datetime_value`
+  `1969-12-31 18:00:00` / `2299-12-31 00:00:00`, hiding 1900–1969).
+  Narrowing is an explicit opt-in: `--min_datetime_value`
   / `--max_datetime_value` given to the driver are canonicalised with the
   same rule before any side runs (a non-datetime value or bounds with
-  min >= max stop the run) and forwarded, as identical text, to both sides.
-  The use case is a replica that holds a far-future sentinel with a different
-  time of day than the connector's clamp writes (rows loaded as
-  `2299-12-31 00:00:00` while the connector clamps `9999-12-31 ...` to
-  `2299-12-31 23:59:59`): `--max_datetime_value 2299-12-31` makes every value
-  on that day compare equal, at the cost of not seeing differences within it
-  (`test_driver_datetime_bounds.py`).
+  min >= max stop the run) and forwarded, as identical text, to both sides
+  (`test_driver_datetime_bounds.py`). A narrower upper bound also moves the
+  saturated last day (next item) to the UTC day of that bound.
+- **The last day of the range is saturated.** A source value past the
+  range has more than one representation on the replica: the connector
+  stores the upper bound (`2299-12-31 23:59:59`, older builds
+  `2299-12-31 23:59:59.999999`), while a bulk load (initial snapshot, a
+  reload) stores the source's own time of day on `2299-12-31`
+  (`9999-12-31 00:00:00` becomes `2299-12-31 00:00:00`, `9999-12-31 05:59:00`
+  becomes `2299-12-31 05:59:00`). Bulk loading is a supported way to fill a
+  replica, so all of these compare equal to every out-of-range source value:
+  `saturation_floor(utc_bounds, zone)` is the first instant of the UTC
+  calendar day that holds the upper bound (`2299-12-31 00:00:00` UTC for the
+  default range), rendered in the column's comparison zone like the bounds
+  (`2299-12-31 09:00:00` in `Asia/Tokyo`, `2299-12-30 18:00:00` in
+  `America/Chicago`) and never above the upper bound in that zone. Both row
+  builders pass it to `clamp_datetime_expression(rendered, min, max, dialect,
+  saturate_from)`, which renders `rendered >= saturate_from` as `max` in both
+  dialects. A difference between two values inside that last day is
+  therefore invisible; a value on the day before is compared as it is.
+  `clamp_datetime_expression` without `saturate_from` keeps the plain
+  `>= max` rule.
 - **Clamped-value counts are printed.** Each datetime column contributes
-  `clamped_datetime_flag()` = `(rendered > max or rendered < min)`; the
+  `clamped_datetime_flag()` = `((rendered >= saturate_from and rendered !=
+  max) or rendered < min)` (without `saturate_from`: `(rendered > max or
+  rendered < min)`), i.e. every value the clamp changed; the
   per-row sum (`clamped_count_expression()`, `coalesce(flag, 0)` so NULLs
   count as 0) is aggregated as a sixth value `clamped` next to
   `cnt,a,b,c,d`. It is **never hashed**; when it is non-zero the side script
@@ -509,6 +526,16 @@ connect to a database.
   - `TestSharedDatetimeClamp` — §3.4: the bounds are the `DataTypeRange`
     constants; user bounds are canonicalised and confined; both dialects use
     `>= max` / `< min`; the flag counts strictly-outside values.
+  - `TestSaturatedLastDay` — §3.4 saturated last day: `saturation_floor()`
+    is `2299-12-31 00:00:00` in UTC, shifted into `Asia/Tokyo` and
+    `America/Chicago`, and capped at a shifted user bound; evaluated with
+    sqlite3 (whose CASE and text comparison match both dialects), the
+    out-of-range MySQL values and every replica representation of the last
+    day (`00:00:00`, `05:59:00`, `23:59:59`, `23:59:59.999999`) render as the
+    upper bound in both dialects and are counted as clamped unless they are
+    the bound itself; the day before renders unchanged; without a floor the
+    bulk-loaded `00:00:00` stays itself; both row builders carry the same
+    floor.
   - `TestDatetimeRendering` — §3.4: `datetime`/`timestamp` at precisions 0,
     3, 6 and `DateTime`, `DateTime64(0)`, `DateTime64(3)`,
     `DateTime64(6,'UTC')`, `Nullable(DateTime64(3))` all render through the
@@ -652,7 +679,7 @@ connect to a database.
   - **DEFECT**: neither the run time nor the source-lock hold time is bounded.
 
 - **FM-11.02-5 EQUAL although values differ (structural blind spots)**
-  - **Trigger**: a divergence that the row string of §3.3 cannot see. That is a `#` moved between adjacent text values (§6 item 1), two same-typed columns swapped in every row (§6 item 4), word sums past about 2^31 rows (§6 item 2), float and JSON columns (excluded by default), or datetimes outside the clamp range.
+  - **Trigger**: a divergence that the row string of §3.3 cannot see. That is a `#` moved between adjacent text values (§6 item 1), two same-typed columns swapped in every row (§6 item 4), word sums past about 2^31 rows (§6 item 2), float and JSON columns (excluded by default), or datetimes outside the clamp range or inside its saturated last day (§3.4).
   - **Behaviour**: the checksums match.
   - **Detection**: floats and JSON give one `WARNING Not compared in table ...` per table and side. Clamping gives `WARNING <n> out-of-range datetime values clamped ...`. The `#` shift and the column swap give none.
   - **Blast radius**: a real divergence is certified equal.
