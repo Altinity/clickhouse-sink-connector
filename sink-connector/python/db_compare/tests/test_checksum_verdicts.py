@@ -55,11 +55,13 @@ def driver_args(**overrides):
     return argparse.Namespace(**values)
 
 
-def run_driver(side_outputs, tables=("orders",), config=None, **arg_overrides):
+def run_driver(side_outputs, tables=("orders",), config=None, source_columns=(), **arg_overrides):
     """Run the real run_config()/compute_checksum()/command builders with only
     the catalog helpers and the process runner stubbed.
 
     ``side_outputs(cmd)`` returns the (rc, stdout) a side command would give.
+    ``source_columns`` is what the stubbed information_schema lists as the
+    source table's columns (spec 11.02 section 3.3).
     Returns (exit code, log lines)."""
     config = config or {"source": {"mysql": {"host": MYSQL_HOST}}, "replicas": [{"clickhouse": {"host": CH_HOST}}]}
     table_rows = MagicMock()
@@ -74,6 +76,7 @@ def run_driver(side_outputs, tables=("orders",), config=None, **arg_overrides):
         patch.object(tl, "get_min_max_pk_value", return_value=(1, 10)),
         patch.object(tl, "get_table_partition_key", return_value=None),
         patch.object(tl, "mysql_columns_by_data_type", return_value=[]),
+        patch.object(tl, "mysql_column_names", return_value=list(source_columns)),
         patch.object(tl, "run_quick_safe_command", side_effect=side_outputs),
     ]
     for p in patches:
@@ -309,6 +312,44 @@ class TestSideWarningsReachTheDriverLog(unittest.TestCase):
         self.assertTrue(any(line.startswith("ERROR:") and "Exception in table orders" in line for line in logs), logs)
         self.assertTrue(any("Checksum ERROR for shop.orders" in line for line in logs), logs)
         self.assertFalse(any("No difference" in line for line in logs), logs)
+
+
+class TestSourceColumnSetReachesTheReplicaSide(unittest.TestCase):
+    """Spec 11.02 section 3.3 (column set): the driver hands the source table's
+    column names to every ClickHouse side, never to the MySQL side, and the
+    replica-only coverage note comes back as a side note, not a WARNING."""
+
+    def test_replica_sides_get_the_source_columns_and_the_note_is_info(self):
+        commands = []
+        note = ("Not compared in table shop.orders: replica-only columns ['name'] "
+                "(absent from the source table, so there is no source value to compare)")
+
+        def outputs(cmd):
+            commands.append(list(cmd))
+            extra = () if is_mysql_side(cmd) else (side_line("WARNING", note),)
+            return "0", side_output("shop.orders", MD5_A, 2, extra)
+        code, logs = run_driver(outputs, source_columns=("id", "user"))
+        self.assertEqual(code, 0)
+        mysql_cmds = [cmd for cmd in commands if is_mysql_side(cmd)]
+        replica_cmds = [cmd for cmd in commands if not is_mysql_side(cmd)]
+        self.assertTrue(mysql_cmds and replica_cmds, commands)
+        for cmd in replica_cmds:
+            self.assertEqual(json.loads(cmd[cmd.index("--source_columns") + 1]), ["id", "user"])
+        for cmd in mysql_cmds:
+            self.assertNotIn("--source_columns", cmd)
+        self.assertTrue(any(line.startswith("INFO:") and "side note" in line and "replica-only columns ['name']" in line
+                            for line in logs), logs)
+        self.assertFalse(any("WARNING" in line for line in logs), logs)
+
+    def test_unknown_source_columns_pass_no_flag(self):
+        commands = []
+
+        def outputs(cmd):
+            commands.append(list(cmd))
+            return "0", side_output("shop.orders", MD5_A, 2)
+        run_driver(outputs, source_columns=())
+        self.assertTrue(commands)
+        self.assertFalse(any("--source_columns" in cmd for cmd in commands), commands)
 
 
 if __name__ == "__main__":

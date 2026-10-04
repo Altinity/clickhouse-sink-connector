@@ -69,6 +69,7 @@ def clickhouse_args(**overrides):
         max_datetime_value=DATETIME_MAX, max_memory_usage=None,
         include_floating_point_columns=False, include_json_columns=False,
         source_timezone="UTC", timestamp_columns="", binary_encoding="hex", json_columns="",
+        source_columns="",
     )
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -824,6 +825,98 @@ class TestFloatAndJsonCoverage(unittest.TestCase):
         for cmd in (mysql_cmd, clickhouse_cmd):
             self.assertIn("--include_floating_point_columns", cmd)
             self.assertIn("--include_json_columns", cmd)
+
+
+class TestReplicaOnlyColumns(unittest.TestCase):
+    """A replica column the source table does not have is not compared, and
+    each table says so once (spec 11.02 sections 3.3 and 3.9)."""
+
+    # The source table: id, user. The replica added `name` on its own (a
+    # DEFAULT expression over another column), added on ClickHouse only.
+    CLICKHOUSE = [("id", "Int64", 0, None), ("user", "Nullable(String)", 1, None),
+                  ("name", "Nullable(String)", 1, None)]
+
+    def build_with_warnings(self, columns, **arg_overrides):
+        ch.warned_tables.clear()
+        with self.assertLogs(level="INFO") as logs:
+            select = TestClickHouseRowExpression().build(columns, **arg_overrides)
+        return select, [line for line in logs.output if line.startswith("WARNING")]
+
+    def test_replica_only_column_is_left_out_and_named_once(self):
+        shared, _ = self.build_with_warnings(self.CLICKHOUSE[:2])
+        select, warnings = self.build_with_warnings(self.CLICKHOUSE, source_columns="id,user")
+        self.assertEqual(select, shared)
+        self.assertNotIn('"name"', select)
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertIn("Not compared in table db1.t1: replica-only columns ['name']", warnings[0])
+        # Relayed by the driver as a side note: it must not read as a result line.
+        self.assertNotIn("checksum", warnings[0].lower())
+        # A second chunk of the same table does not repeat the warning.
+        with self.assertLogs(level="INFO") as logs:
+            TestClickHouseRowExpression().build(self.CLICKHOUSE, source_columns="id,user")
+        self.assertFalse(any(line.startswith("WARNING") for line in logs.output), logs.output)
+
+    def test_without_source_columns_every_replica_column_is_compared(self):
+        select, warnings = self.build_with_warnings(self.CLICKHOUSE)
+        self.assertIn('"name"', select)
+        self.assertEqual(warnings, [])
+
+    def test_names_match_without_regard_to_case(self):
+        select, warnings = self.build_with_warnings(self.CLICKHOUSE, source_columns="ID,User,Name")
+        self.assertIn('"name"', select)
+        self.assertIn('"user"', select)
+        self.assertEqual(warnings, [])
+
+    def test_source_column_missing_on_the_replica_is_named(self):
+        _, warnings = self.build_with_warnings(self.CLICKHOUSE, source_columns="id,user,name,state")
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertIn("Source columns missing in table db1.t1 on the replica: ['state']", warnings[0])
+
+    def test_excluded_and_connector_columns_are_neither_compared_nor_reported(self):
+        columns = self.CLICKHOUSE + [("_version", "UInt64", 0, None), ("is_deleted", "UInt8", 0, None)]
+        select, warnings = self.build_with_warnings(
+            columns, source_columns="id,user,name,payload",
+            exclude_columns=["_sign,_version,is_deleted,_is_deleted,payload"])
+        self.assertEqual(warnings, [])
+        self.assertNotIn('"_version"', select)
+        self.assertNotIn('"is_deleted"', select)
+
+    def test_parser_default_is_empty(self):
+        self.assertEqual(ch.build_argument_parser().get_default("source_columns"), "")
+
+    def test_driver_passes_source_columns_to_the_replica_side_only(self):
+        tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="UTC",
+                                     binary_encoding="hex", include_floating_point_columns=False,
+                                     include_json_columns=False)
+        cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10,
+                                                 source_columns=["id", "user"])
+        self.assertEqual(cmd[cmd.index("--source_columns") + 1], '["id", "user"]')
+        self.assertNotIn("--source_columns", clickhouse_command_line("clickhouse-host", "db1", "t1", "id", 10))
+        self.assertNotIn("--source_columns", mysql_command_line("mysql-host", "db1", "t1", "id", 10, None))
+
+    def test_a_name_with_a_comma_or_a_space_survives_the_driver_to_side_trip(self):
+        tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="UTC",
+                                     binary_encoding="hex", include_floating_point_columns=False,
+                                     include_json_columns=False)
+        cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10,
+                                                 source_columns=["id", "a,b", "order id"])
+        passed = cmd[cmd.index("--source_columns") + 1]
+        columns = [("id", "Int64", 0, None), ("a,b", "String", 0, None), ("order id", "String", 0, None),
+                   ("name", "String", 0, None)]
+        select, warnings = self.build_with_warnings(columns, source_columns=passed)
+        self.assertIn('"a,b"', select)
+        self.assertIn('"order id"', select)
+        self.assertNotIn('"name"', select)
+        self.assertEqual(len(warnings), 1, warnings)
+        self.assertIn("replica-only columns ['name']", warnings[0])
+
+    def test_a_malformed_json_list_fails_loudly(self):
+        with self.assertRaises(ValueError):
+            ch.parse_source_columns('["id", 3]')
+        with self.assertRaises(ValueError):
+            ch.parse_source_columns('["id",')
+        self.assertEqual(ch.parse_source_columns("id, user"), {"id", "user"})
+        self.assertEqual(ch.parse_source_columns(""), set())
 
 
 class TestRemovedDeadPaths(unittest.TestCase):

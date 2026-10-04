@@ -128,6 +128,37 @@ single character `#`:
 
 - Columns are taken in ordinal position (`information_schema.columns
   .ordinal_position` / `system.columns.position`).
+- **Column set.** The compared columns are the source table's. The driver
+  reads every column name of the source table from `information_schema.columns`
+  (`db.mysql.mysql_column_names()`) and passes them to each replica side as
+  `--source_columns '["a", "b", ...]'`, a JSON list so that a column name
+  holding a comma or a space arrives intact (`parse_source_columns()`; a
+  hand-typed comma separated list is also accepted, a malformed JSON list is
+  an error); the source side is unchanged. The replica side
+  (`restrict_to_source_columns()`) keeps only the `system.columns` rows whose
+  name the source table also has, compared without regard to case (MySQL
+  column names are case-insensitive). A **replica-only column** — one the
+  source table does not have, such as a column added on ClickHouse alone with
+  `ADD COLUMN x ... DEFAULT <expression over other columns>` — holds no
+  replicated value, so no source value exists to compare it against: hashing
+  it could only make the two sides differ for equal replicated data. It is
+  left out (no value, no separator, no null flag) and named in one coverage
+  WARNING per table (§3.9). A source column the replica lacks cannot be left
+  out on the replica side (the source side hashes it), so the table still
+  reports DIFFERENT; the replica side names it in a WARNING so the difference
+  explains itself. Excluded columns and the connector's own columns are
+  neither compared nor reported. Without `--source_columns` (a standalone run,
+  or a source table the driver could not describe) every replica column is
+  compared, as before. Before this, a column added on one replica only made
+  every later run report DIFFERENT for that table with nothing pointing at the
+  column: a replicated table `t(id, payload JSON, ...)` whose replicas gained
+  `name Nullable(String) DEFAULT JSONExtractString(payload, 'Name')` (the
+  source `t` has no such column) failed every scheduled checksum from then on
+  while every replicated column agreed value for value. With the column set
+  restricted, the replica side's aggregate over the same live table equals
+  the source checksum
+  (`test_checksum_fidelity.py::TestReplicaOnlyColumns`,
+  `test_checksum_verdicts.py::TestSourceColumnSetReachesTheReplicaSide`).
 - A MySQL column is **classified on `information_schema.columns.DATA_TYPE`**
   (the bare type keyword: `enum`, `datetime`, `blob`, ...) plus
   `DATETIME_PRECISION`; `COLUMN_TYPE` is read only for the declared width of
@@ -448,6 +479,18 @@ skipped columns (`Not compared in table <db>.<table>: floating point columns
 
 (`test_checksum_fidelity.py::TestFloatAndJsonCoverage`)
 
+- **Replica-only columns** (§3.3, column set): a replica column the source
+  table does not have is not compared. The replica side logs `Not compared in
+  table <db>.<table>: replica-only columns [...] (absent from the source
+  table, so there is no source value to compare)`, once per table, and the
+  driver relays it at INFO as a side note, so a run whose replicated columns
+  agree stays green while the note names the column on every run. Whether
+  such a column should exist is a schema question for the replica's owner,
+  not a replication difference. A source column the replica lacks is the
+  opposite case and stays a difference (`Source columns missing in table
+  <db>.<table> on the replica: [...]`, then `Checksum difference`).
+  (`test_checksum_fidelity.py::TestReplicaOnlyColumns`)
+
 A **table** the driver could not lock within `--lock_wait_timeout` (§3.2
 step 2) is a coverage gap of the same kind, one level up: it is neither
 confirmed equal nor reported different, only **not compared**. It is named
@@ -506,6 +549,24 @@ connect to a database.
   - `TestNullFlagsOverEveryComparedColumn` — §3.3: one null flag per compared
     column on both sides, the same columns whatever each catalog declares
     nullable; excluded and skipped columns flag nothing.
+  - `TestReplicaOnlyColumns` — §3.3 column set and §3.9: with
+    `--source_columns id,user`, a replica table `(id, user, name)` builds
+    exactly the expression of the replica table `(id, user)` and logs one
+    `replica-only columns ['name']` WARNING per table that does not contain the
+    word "checksum"; without the option `name` is compared; names match
+    without regard to case; a source column the replica lacks is named;
+    excluded and connector columns are neither compared nor reported; the
+    driver passes the option to the replica side only. Mutation-checked:
+    keeping every column fails the first and fourth tests, dropping the
+    option from the replica command fails the driver test and
+    `test_checksum_verdicts.py::TestSourceColumnSetReachesTheReplicaSide`.
+- `sink-connector/python/db_compare/tests/test_checksum_verdicts.py`
+  - `TestSourceColumnSetReachesTheReplicaSide` — §3.3 column set through the
+    real `run_config()`: every replica command carries `--source_columns`
+    with the source table's columns, the source command does not, the
+    replica-only note is relayed at INFO and the run logs no WARNING; with no
+    source columns known no command carries the option.
+- `sink-connector/python/db_compare/tests/test_checksum_fidelity.py` (continued)
   - `TestEndToEndChecksum.test_equal_fixtures_report_equal` — §3.5: both side
     scripts, driven through their real `compute_checksum` /
     `calculate_checksum` paths with stubbed engines, print the same checksum
@@ -717,7 +778,7 @@ connect to a database.
 
 - **FM-11.02-9 A replication-history (SCD2) table cannot be verified by the driver**
   - **Trigger**: a mode-2 connector (spec 12.01). Its tables hold one row per version plus `_valid_from`, `_valid_to` and `_operation`.
-  - **Behaviour**: the driver applies the same `--where` to both sides, and its replica exclusion list is `_version,is_deleted,_is_deleted,__is_deleted`. It therefore compares every closed version and the history columns against the current MySQL rows, and always reports a difference.
+  - **Behaviour**: the driver applies the same `--where` to both sides, and its replica exclusion list is `_version,is_deleted,_is_deleted,__is_deleted`. It therefore compares every closed version against the current MySQL rows, and always reports a difference. (Since FM-11.02-10 the history columns, which the source table does not have, are left out as replica-only columns; the closed versions still differ.)
   - **Detection**: `WARNING Checksum difference` on every history table. This is noise, never a masked equality.
   - **Blast radius**: mode-2 replicas have no value-level proof through the driver.
   - **Recovery**: run the side scripts standalone. On the source, run `mysql_table_checksum.py` with `--tables_regex '^t$'`. On the replica, run `clickhouse_table_checksum.py --clickhouse_database <history db> --tables_regex '^t$' --where "_valid_to = toDateTime('2100-01-01 00:00:00', '<column tz>')" --exclude_columns _sign _version is_deleted _is_deleted _valid_from _valid_to _operation`, then compare the two `Checksum for table` lines (spec 12.02 §4). `FINAL` already drops the delete markers.
@@ -725,4 +786,13 @@ connect to a database.
   - **Test**: GAP: a replica-script test asserting the open-row filter and the history-column exclusions produce the source's checksum for a fixture with closed versions.
   - **DEFECT**: the driver cannot verify a replication-history replica.
 
-Summary: 9 failure modes, 4 DEFECT, 4 GAP.
+- **FM-11.02-10 A column only one side has**
+  - **Trigger**: a column added to the replica table alone (replica-only), or a source column the replica table lacks (a missed `ADD COLUMN`).
+  - **Behaviour**: replica-only — left out of the replica row string and named in a coverage note relayed at INFO (§3.3, §3.9); the verdict reflects the replicated columns only. Missing on the replica — the source side hashes it, the replica cannot, so the table reports `Checksum difference`, and the replica side names the missing column.
+  - **Detection**: `Not compared in table <db>.<table>: replica-only columns [...]` / `Source columns missing in table <db>.<table> on the replica: [...]` in the driver log.
+  - **Blast radius**: none for replica-only columns beyond their own content, which the tool cannot judge (no source value exists). A missing column is a real replication gap on every row.
+  - **Recovery**: replica-only — nothing for the checksum; the column's owner decides whether it belongs on the replica. Missing — add the column on the replica and backfill it from the source (spec 11.04), then re-run.
+  - **RTO**: replica-only: none. Missing: the spec 11.04 RTO.
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_fidelity.py::TestReplicaOnlyColumns`, `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestSourceColumnSetReachesTheReplicaSide`.
+
+Summary: 10 failure modes, 4 DEFECT, 4 GAP.

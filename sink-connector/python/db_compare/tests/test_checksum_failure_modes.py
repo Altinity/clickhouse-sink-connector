@@ -50,6 +50,7 @@ def run_driver(compute_checksum, tables=("orders",), **arg_overrides):
         patch.object(tl, "get_min_max_pk_value", return_value=(1, 10)),
         patch.object(tl, "get_table_partition_key", return_value=None),
         patch.object(tl, "mysql_columns_by_data_type", return_value=[]),
+        patch.object(tl, "mysql_column_names", return_value=[]),
         patch.object(tl, "compute_checksum", side_effect=compute_checksum),
     ]
     for p in patches:

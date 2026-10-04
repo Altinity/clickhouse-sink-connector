@@ -15,6 +15,7 @@ import datetime
 import warnings
 import re
 import os
+import json
 import concurrent.futures
 from db.clickhouse import *
 from db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
@@ -258,6 +259,56 @@ def partition_key_within_sorting_key(columns_metadata):
     return len(partition_columns) > 0 and all(row[5] == 1 for row in partition_columns)
 
 
+def parse_source_columns(text):
+    """The names given to ``--source_columns``: a JSON list of strings (what the
+    driver passes, so a name holding a comma or a space survives), or, typed by
+    hand, a comma separated list. Empty gives an empty set. A malformed JSON
+    list raises ValueError: guessing would compare the wrong columns."""
+    text = (text or "").strip()
+    if not text.startswith("["):
+        return parse_column_list(text)
+    names = json.loads(text)
+    if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+        raise ValueError(f"--source_columns must be a JSON list of column names, got {text!r}")
+    return set(names)
+
+
+def restrict_to_source_columns(database, table, columns_metadata, source_columns_text, excluded_columns, warned):
+    """The rows of ``columns_metadata`` whose column the source table also has
+    (spec 11.02 section 3.3, column set). ``source_columns_text`` is the
+    driver's ``--source_columns``: the source table's column names as a JSON
+    list (``parse_source_columns()``). Empty means "unknown" and keeps every
+    row, as before.
+
+    A replica column with no source column of the same name (compared without
+    regard to case, as MySQL names columns) holds no replicated value, so
+    hashing it can only make the two sides differ: it is left out and named in
+    one WARNING per table. A source column the replica lacks cannot be left out
+    here (the source side hashes it), so the run still reports DIFFERENT; the
+    WARNING names the missing column so the difference explains itself."""
+    source_columns = parse_source_columns(source_columns_text)
+    if not source_columns:
+        return columns_metadata
+    source_lower = {name.lower() for name in source_columns}
+    replica_lower = {row[0].lower() for row in columns_metadata}
+    excluded_lower = {name.lower() for name in excluded_columns} | SINK_METADATA_COLUMNS
+    kept = [row for row in columns_metadata if row[0].lower() in source_lower]
+    replica_only = [row[0] for row in columns_metadata if row[0].lower() not in source_lower]
+    missing = sorted(name for name in source_columns
+                     if name.lower() not in replica_lower and name.lower() not in excluded_lower)
+    if replica_only and (database, table, "replica-only") not in warned:
+        warned.add((database, table, "replica-only"))
+        logging.warning(f"Not compared in table {database}.{table}: replica-only columns {replica_only} "
+                        "(absent from the source table, so there is no source value to compare)")
+    if missing and (database, table, "missing") not in warned:
+        warned.add((database, table, "missing"))
+        logging.warning(f"Source columns missing in table {database}.{table} on the replica: {missing} "
+                        "(the source side hashes them and this side cannot, so the table reports DIFFERENT "
+                        "until the replica has them; a column the source side skips by type, floating point "
+                        "or JSON by default, does not differ)")
+    return kept
+
+
 def get_table_checksum_query(conn, table):
     # 'a b' (space-separated words) and 'a,b' name the same columns, as on the
     # MySQL side (spec 13.06 D-13.06-17).
@@ -282,6 +333,9 @@ def get_table_checksum_query(conn, table):
             logging.info(f"Excluding column {row[0]}")
             continue
         filtered_columns_metadata.append(row)
+    filtered_columns_metadata = restrict_to_source_columns(
+        args.clickhouse_database, table, filtered_columns_metadata, getattr(args, "source_columns", ""),
+        excluded_columns, warned_tables)
 
     (select, nullables, columns, data_types, clamped_expression, skipped) = build_clickhouse_row_expression(filtered_columns_metadata, args)
     warn_not_compared(args.clickhouse_database, table, skipped, warned_tables)
@@ -475,6 +529,7 @@ def build_argument_parser():
     parser.add_argument('--include_json_columns', action='store_true', default=False,
                         help='JSON columns (native JSON and the String columns named in --json_columns) are not compared by default (each table logs a WARNING naming them); this compares the stored text against the MySQL side\'s best-effort rendering. Pass it to both sides.', required=False)
     parser.add_argument('--json_columns', help='comma separated names of the String columns that replicate a MySQL JSON column', default='', required=False)
+    parser.add_argument('--source_columns', help='the source table\'s column names as a JSON list (the driver passes this) or comma separated; replica columns absent from it are not compared (each table logs a WARNING naming them). Empty: every replica column is compared', default='', required=False)
     return parser
 
 

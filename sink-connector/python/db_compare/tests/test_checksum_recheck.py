@@ -116,6 +116,7 @@ class JobRun:
                 patch.object(tl, "get_min_max_pk_value", return_value=(1, 10)), \
                 patch.object(tl, "get_table_partition_key", return_value="to_days(`created`)"), \
                 patch.object(tl, "mysql_columns_by_data_type", return_value=[]), \
+                patch.object(tl, "mysql_column_names", return_value=[]), \
                 redirect_stdout(out):
             try:
                 tl.main()
