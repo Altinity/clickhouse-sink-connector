@@ -11,6 +11,7 @@ Specifies the global coordination singleton (`CacheInvalidationManager`) that in
   - `private final Map<String, Long> tableVersions` (a `ConcurrentHashMap`)
   - `private final AtomicLong globalEpoch`
   - `private final Map<String, Map<String, Long>> columnsProvenAbsent` (spec 08.03)
+- **Which tables a DDL invalidates**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DdlTableNames.java` (`affected`, `renamed`, `fromRecord`, `bareName`; section 3.4)
 - **Methods**: `getInstance()`, `invalidateTable(String tableName)`, `getVersion(String tableName)`, `invalidateAll()`, `clearAll()` (tests), `pendingInvalidations()` (tests)
 
 ---
@@ -31,6 +32,17 @@ When the table affected by a DDL cannot be determined (unparsed statement, unres
 1. `globalEpoch.incrementAndGet()`.
 2. Because every `getVersion` result includes the epoch, every cached writer — including those for tables absent from `tableVersions` — observes a version change and rebuilds, at the cost of one metadata re-read per active table on its next batch.
 
+### 3.4 Which tables a DDL invalidates (`DdlTableNames`)
+`DebeziumChangeEventCapture` invalidates (and drops the cached writer of) every
+table `DdlTableNames.affected(record, ddl)` returns: the bare names of the
+record's `tableChanges[].id` (else `source.table`), then BOTH participants of
+every rename in the statement text (`RENAME TABLE a TO b, c TO d`,
+`ALTER TABLE a RENAME [TO|AS] b`). A rename's `tableChanges` entry names only the
+NEW table; without the text scan the OLD name's cached writer would keep
+inserting into a table that no longer exists.
+
+---
+
 ---
 
 ## 4. Invariants Preserved
@@ -39,6 +51,7 @@ When the table affected by a DDL cannot be determined (unparsed statement, unres
 ---
 
 ## 5. Verification Criteria
+- `DebeziumChangeEventCaptureTest` rename cases (`DdlTableNames.renamed`) — section 3.4: both sides of `RENAME TABLE a TO b`, of `ALTER TABLE a RENAME TO b`, of multi-pair renames; null and empty statements yield nothing.
 - `CacheInvalidationProvenAbsentTest.testDdlInvalidatesTheProof()`, `CacheInvalidationProvenAbsentTest.testInvalidateAllInvalidatesTheProof()`, `CacheInvalidationProvenAbsentTest.testProofRetakenAfterDdlSticks()` — `invalidateTable` / `invalidateAll` move `getVersion`.
 - `StaleSchemaCacheIT`, `AlterTableDropColumnCacheIT`, `AlterTableDropColumnDatabaseOverrideCacheIT` — writers rebuild after DDL.
 - Verification: a dedicated unit test of the version counter arithmetic (`merge`/epoch fold) independent of proven-absent tracking is not yet covered by an automated test (gap).

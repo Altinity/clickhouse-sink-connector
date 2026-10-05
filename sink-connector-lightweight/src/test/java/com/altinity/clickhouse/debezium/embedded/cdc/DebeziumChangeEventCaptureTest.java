@@ -560,7 +560,7 @@ public class DebeziumChangeEventCaptureTest {
     @DisplayName("RENAME TABLE yields both the source and the destination table")
     public void shouldExtractBothSidesOfRenameTable() {
         DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
-        List<String> names = capture.getRenamedTableNames("RENAME TABLE orders TO orders_archive");
+        List<String> names = DdlTableNames.renamed("RENAME TABLE orders TO orders_archive");
 
         assertTrue("source table must be invalidated", names.contains("orders"));
         assertTrue("destination table must be invalidated", names.contains("orders_archive"));
@@ -570,7 +570,7 @@ public class DebeziumChangeEventCaptureTest {
     @DisplayName("ALTER TABLE ... RENAME TO yields both the source and the destination table")
     public void shouldExtractBothSidesOfAlterTableRename() {
         DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
-        List<String> names = capture.getRenamedTableNames("ALTER TABLE orders RENAME TO orders_archive");
+        List<String> names = DdlTableNames.renamed("ALTER TABLE orders RENAME TO orders_archive");
 
         assertTrue("source table must be invalidated", names.contains("orders"));
         assertTrue("destination table must be invalidated", names.contains("orders_archive"));
@@ -586,7 +586,7 @@ public class DebeziumChangeEventCaptureTest {
     @DisplayName("ALTER TABLE ... RENAME TO yields exactly two tables, no keyword fragments")
     public void shouldNotExtractKeywordFragmentsFromAlterTableRename() {
         DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
-        List<String> names = capture.getRenamedTableNames("ALTER TABLE orders RENAME TO orders_archive");
+        List<String> names = DdlTableNames.renamed("ALTER TABLE orders RENAME TO orders_archive");
 
         assertEquals("only the two real tables may be returned", 2, names.size());
         assertFalse("a fragment of the RENAME keyword must not be treated as a table",
@@ -597,7 +597,7 @@ public class DebeziumChangeEventCaptureTest {
     @DisplayName("Database qualifiers and quoting are stripped from renamed table names")
     public void shouldStripQualifiersAndQuotingFromRenamedNames() {
         DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
-        List<String> names = capture.getRenamedTableNames(
+        List<String> names = DdlTableNames.renamed(
                 "RENAME TABLE `shop`.`orders` TO `shop`.`orders_archive`");
 
         assertTrue("source table must be invalidated", names.contains("orders"));
@@ -608,7 +608,7 @@ public class DebeziumChangeEventCaptureTest {
     @DisplayName("A multi-pair RENAME TABLE yields every table involved")
     public void shouldExtractEveryPairOfMultiRename() {
         DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
-        List<String> names = capture.getRenamedTableNames("RENAME TABLE a TO b, c TO d");
+        List<String> names = DdlTableNames.renamed("RENAME TABLE a TO b, c TO d");
 
         assertTrue(names.contains("a"));
         assertTrue(names.contains("b"));
@@ -621,10 +621,10 @@ public class DebeziumChangeEventCaptureTest {
     public void shouldReturnNothingForNonRenameDDL() {
         DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
 
-        assertTrue(capture.getRenamedTableNames(
+        assertTrue(DdlTableNames.renamed(
                 "ALTER TABLE orders ADD COLUMN total INT").isEmpty());
-        assertTrue(capture.getRenamedTableNames("").isEmpty());
-        assertTrue(capture.getRenamedTableNames(null).isEmpty());
+        assertTrue(DdlTableNames.renamed("").isEmpty());
+        assertTrue(DdlTableNames.renamed(null).isEmpty());
     }
 
     /** Builds a schema-change event carrying the given DDL statement. */

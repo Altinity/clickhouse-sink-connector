@@ -72,34 +72,6 @@ public class DebeziumChangeEventCapture {
     private static final Logger log = LogManager.getLogger(
             DebeziumChangeEventCapture.class);
 
-    /** A possibly-quoted, possibly database-qualified table identifier. */
-    private static final String QUALIFIED_NAME =
-            "[`\"]?[A-Za-z0-9_$]+[`\"]?(?:\\.[`\"]?[A-Za-z0-9_$]+[`\"]?)?";
-
-    /**
-     * Matches {@code RENAME TABLE a TO b, c TO d}, capturing one source and
-     * destination pair per match.
-     * <p>
-     * The source is anchored on a word boundary and must not be a bare SQL
-     * keyword, so this pattern cannot mis-fire on the
-     * {@code ALTER TABLE ... RENAME TO} form -- where the token preceding
-     * {@code TO} is the keyword rather than a table name -- nor match a
-     * suffix of one. That form is handled by {@link #ALTER_RENAME} instead.
-     */
-    private static final Pattern RENAME_PAIR = Pattern.compile(
-            "\\b(?!(?:RENAME|TABLE|ALTER)\\b)(" + QUALIFIED_NAME + ")\\s+TO\\s+("
-                    + QUALIFIED_NAME + ")",
-            Pattern.CASE_INSENSITIVE);
-
-    /**
-     * Matches {@code ALTER TABLE a RENAME [TO|AS] b}, capturing the source table
-     * (which precedes the {@code RENAME} keyword) and the destination.
-     */
-    private static final Pattern ALTER_RENAME = Pattern.compile(
-            "ALTER\\s+TABLE\\s+(" + QUALIFIED_NAME + ")\\s+RENAME\\s+(?:TO\\s+|AS\\s+)?("
-                    + QUALIFIED_NAME + ")",
-            Pattern.CASE_INSENSITIVE);
-
     /**
      * Executor for scheduling batch tasks.
      */
@@ -1884,7 +1856,7 @@ public class DebeziumChangeEventCapture {
                             invalidationDatabaseName = databaseOverrideMap.get(rawDb);
                         }
                     }
-                    List<String> affected = getTableNamesFromDDL(sr, DDL);
+                    List<String> affected = DdlTableNames.affected(sr, DDL);
                     if (affected == null || affected.isEmpty()) {
                         // A PostgreSQL schema-change event may name no table in its
                         // tableChanges array, yet the topic still identifies it
@@ -2212,129 +2184,6 @@ public class DebeziumChangeEventCapture {
             }
         }
         return null;
-    }
-
-    /**
-     * Resolves the table name(s) affected by a DDL/schema-change event from the record
-     * value. DDL events carry the affected table(s) in the value's {@code tableChanges}
-     * array (each entry's {@code id} is a fully qualified name such as
-     * {@code "employees"."race_test"}), with {@code source.table} as a fallback. The
-     * record key only carries {@code databaseName}, which is why {@link #getTableName}
-     * cannot be used here.
-     *
-     * <p>
-     * For a {@code RENAME TABLE a TO b} the {@code tableChanges} entry identifies
-     * the table by its NEW name, so resolving from {@code tableChanges} alone
-     * leaves the OLD name's cached writer untouched. Any writer still keyed to
-     * the old name would keep inserting into a table that no longer exists, so
-     * the DDL text is additionally scanned for rename pairs and both names are
-     * returned. See {@link #getRenamedTableNames}.
-     *
-     * @param sr The source record.
-     * @param ddl The raw DDL statement, used to recover rename sources.
-     * @return The distinct table names affected by the DDL, or an empty list.
-     */
-    private List<String> getTableNamesFromDDL(SourceRecord sr, String ddl) {
-        List<String> tables = getTableNamesFromDDL(sr);
-        for (String renamed : getRenamedTableNames(ddl)) {
-            if (!tables.contains(renamed)) {
-                tables.add(renamed);
-            }
-        }
-        return tables;
-    }
-
-    /**
-     * Extracts every table name participating in a rename, from either
-     * {@code RENAME TABLE a TO b, c TO d} or {@code ALTER TABLE a RENAME TO b}.
-     * <p>
-     * Both sides are returned. The source name matters because its cached
-     * writer must be discarded -- the table it points at is gone. The
-     * destination name matters because a writer may already be cached for a
-     * previous table of that name.
-     *
-     * @param ddl The raw DDL statement; may be null.
-     * @return The bare table names involved in a rename, or an empty list.
-     */
-    List<String> getRenamedTableNames(String ddl) {
-        List<String> names = new ArrayList<>();
-        if (ddl == null || ddl.isEmpty()) {
-            return names;
-        }
-        // ALTER TABLE a RENAME TO b -- the source precedes the RENAME keyword.
-        Matcher alterMatcher = ALTER_RENAME.matcher(ddl);
-        while (alterMatcher.find()) {
-            collectNames(alterMatcher, names);
-        }
-        // RENAME TABLE a TO b, c TO d -- one match per pair.
-        Matcher renameMatcher = RENAME_PAIR.matcher(ddl);
-        while (renameMatcher.find()) {
-            collectNames(renameMatcher, names);
-        }
-        return names;
-    }
-
-    /**
-     * Adds the bare table names from both capture groups of a rename match,
-     * skipping blanks and duplicates.
-     */
-    private void collectNames(Matcher matcher, List<String> names) {
-        for (int group = 1; group <= 2; group++) {
-            String name = extractTableFromId(matcher.group(group));
-            if (name != null && !name.isEmpty() && !names.contains(name)) {
-                names.add(name);
-            }
-        }
-    }
-
-    private List<String> getTableNamesFromDDL(SourceRecord sr) {
-        java.util.LinkedHashSet<String> tables = new java.util.LinkedHashSet<>();
-        if (sr != null && sr.value() instanceof Struct) {
-            Struct value = (Struct) sr.value();
-            try {
-                List<Object> tableChanges = value.getArray("tableChanges");
-                if (tableChanges != null) {
-                    for (Object change : tableChanges) {
-                        if (change instanceof Struct) {
-                            String t = extractTableFromId((String) ((Struct) change).get("id"));
-                            if (t != null) {
-                                tables.add(t);
-                            }
-                        }
-                    }
-                }
-            } catch (Exception ignored) {
-                // tableChanges field may not exist; fall back to source.table below
-            }
-            if (tables.isEmpty()) {
-                try {
-                    Struct source = (Struct) value.get("source");
-                    String t = source != null ? (String) source.get("table") : null;
-                    if (t != null && !t.isEmpty()) {
-                        tables.add(t);
-                    }
-                } catch (Exception ignored) {
-                    // source.table may not exist
-                }
-            }
-        }
-        return new ArrayList<>(tables);
-    }
-
-    /**
-     * Extracts the bare table name from a fully qualified table id such as
-     * {@code "employees"."race_test"} or {@code `employees`.`race_test`}.
-     *
-     * @param id The fully qualified table id.
-     * @return The bare table name, or null if the id is empty.
-     */
-    private String extractTableFromId(String id) {
-        if (id == null || id.isEmpty()) {
-            return null;
-        }
-        String cleaned = id.replace("\"", "").replace("`", "");
-        int dot = cleaned.lastIndexOf('.');
-        return dot >= 0 ? cleaned.substring(dot + 1) : cleaned;
     }
 
     /**
@@ -3489,7 +3338,7 @@ public class DebeziumChangeEventCapture {
         // section 3.3). Debezium only pre-filters these when
         // store.only.captured.tables.ddl=true.
         String sourceDb = sourceDatabaseName(sr);
-        List<String> tables = getTableNamesFromDDL(sr, DDL);
+        List<String> tables = DdlTableNames.affected(sr, DDL);
         boolean anyCaptured = tables.isEmpty()
                 ? DdlCaptureFilter.isCaptured(sourceDb, null, props)
                 : tables.stream().anyMatch(t -> DdlCaptureFilter.isCaptured(sourceDb, t, props));
@@ -4106,7 +3955,7 @@ public class DebeziumChangeEventCapture {
                     + "retired copies dropped (Spec 06.09 §3.3.2 step 7)", ddl, cancelled, destination);
             return;
         }
-        List<String> affected = getTableNamesFromDDL(sr, ddl);
+        List<String> affected = DdlTableNames.affected(sr, ddl);
         if (affected.isEmpty()) {
             log.warn("Superseding DDL [{}]: no table name could be resolved from the event or the statement, so no "
                     + "pending primary-key backfill is cancelled for it; a backfill of that table, if any, fails "
