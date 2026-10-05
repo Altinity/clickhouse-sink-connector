@@ -169,6 +169,13 @@ constructor and `DbWriter#autoCreateTable` re-throw it ahead of their generic
 `catch (Exception)` (which only logs) so the writer is never built against a
 type the operator has declared wrong (spec 10.04 §3.8).
 
+#### 3.3.1 The reconciler reads the table's columns with bound names
+`ColumnTypeOverrideReconciler` reads `system.columns` with
+`ColumnTypeOverrideReconciler.EXISTING_COLUMNS_QUERY`, binding the database and
+table names as parameters -- the same rule `DBMetadata.getColumnDefaultExpression`
+follows. They are replicated identifiers: interpolated into a quoted literal, a
+name containing a quote makes the query malformed or changes its predicate.
+
 ---
 
 ## 4. Invariants Preserved
@@ -190,6 +197,7 @@ type the operator has declared wrong (spec 10.04 §3.8).
 - `ClickHouseAutoCreateTableTest.testCreateTableEmptyPrimaryKey()` /
   `testCreateTableMultiplePrimaryKeys()` — updated expectations (all-columns key).
 - `ClickHouseAutoCreateTableTest.testCreateTableSyntax()` — the PK path is unchanged.
+- `ColumnTypeOverrideReconcilerTest.columnMetadataQueryBindsTheNames` — §3.3.1: for table `o'brien_accounts` the reconciler prepares `EXISTING_COLUMNS_QUERY` (no name in the SQL text), binds `sales` and the table name, and builds no interpolated statement (pre-fix: one `createStatement` query with the name inside a quoted literal).
 - DDL path (same rule, Spec 06.05 §3.6): `MySqlDDLParserListenerImplTest.testCreateTableKeylessOrdersByAllColumns()`, `CreateTableNoKeySortKeyTest`; formal `Replication.CreateTable.sorting_key_nonempty`.
 - Probe (recorded in the PR): the emitted DDL executed with `clickhouse local`
   keeps two distinct rows under `FINAL`; the `tuple()` form keeps one.

@@ -7,6 +7,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.LinkedHashMap;
@@ -34,6 +35,11 @@ import java.util.Map;
 public class ColumnTypeOverrideReconciler {
 
     private static final Logger log = LogManager.getLogger(ColumnTypeOverrideReconciler.class);
+
+    /** Reads a table's columns; database and table are bound parameters 1 and 2. */
+    static final String EXISTING_COLUMNS_QUERY =
+            "SELECT name, type, default_kind, default_expression "
+                    + "FROM system.columns WHERE database = ? AND table = ?";
 
     /**
      * Reconciles the override configuration against the existing table
@@ -107,20 +113,22 @@ public class ColumnTypeOverrideReconciler {
             Connection conn, String database, String table
     ) throws Exception {
         Map<String, ColumnInfo> columns = new LinkedHashMap<>();
-        String sql = String.format(
-                "SELECT name, type, default_kind, default_expression "
-                        + "FROM system.columns "
-                        + "WHERE database = '%s' AND table = '%s'",
-                database, table);
-        try (Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
-            while (rs.next()) {
-                ColumnInfo info = new ColumnInfo();
-                info.name = rs.getString("name");
-                info.type = rs.getString("type");
-                info.defaultKind = rs.getString("default_kind");
-                info.defaultExpression = rs.getString("default_expression");
-                columns.put(info.name, info);
+        // The names are bound, never interpolated (spec 08.05 section 3.3.1): they
+        // are replicated identifiers, and a quote in one would make an
+        // interpolated literal malformed or change the predicate -- the same
+        // rule DBMetadata#getColumnDefaultExpression follows for this table.
+        try (PreparedStatement ps = conn.prepareStatement(EXISTING_COLUMNS_QUERY)) {
+            ps.setString(1, database);
+            ps.setString(2, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    ColumnInfo info = new ColumnInfo();
+                    info.name = rs.getString("name");
+                    info.type = rs.getString("type");
+                    info.defaultKind = rs.getString("default_kind");
+                    info.defaultExpression = rs.getString("default_expression");
+                    columns.put(info.name, info);
+                }
             }
         }
         return columns;
