@@ -1,5 +1,6 @@
 # python db_load/clickhouse_myloader.py --clickhouse_host localhost  --clickhouse_schema world --dump_dir $HOME/dbdumps/world --db_user root --db_password root --threads 16 --ch_module clickhouse-client-22.5.1.2079 --mysql_source_schema world
 from subprocess import Popen, PIPE
+import shlex
 from ch_sink_tools.db.mysql import is_binary_datatype
 import argparse
 import sys
@@ -33,7 +34,7 @@ def run_command(cmd):
     # -- run the command that is passed as cmd and return True or False
     # -- ======================================================================
     """
-    logging.debug("cmd " + cmd)
+    logging.debug("cmd " + redact_password(cmd))
     process = subprocess.Popen(cmd,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT,
@@ -47,7 +48,7 @@ def run_command(cmd):
 
 
 def run_quick_command(cmd):
-    logging.debug("cmd " + cmd)
+    logging.debug("cmd " + redact_password(cmd))
     # bash -o pipefail: a pipeline's status is that of its LAST failing stage, so a decompressor (zstd/gunzip) or sed
     # that fails makes the load fail. Under plain /bin/sh only clickhouse-client's status counted, and a truncated or
     # missing chunk loaded partially or not at all with status 0 (Spec 13.04 section 3.10).
@@ -626,12 +627,8 @@ def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_passw
     clickhouse_secure = args.clickhouse_secure
     ch_schema = args.clickhouse_database
     password = clickhouse_password
-    password_option = ""
-    if password is not None:
-        password_option= f"--password '{password}'"
-    config_file_option = ""
-    if args.clickhouse_config_file is not None:
-       config_file_option= f"--config-file '{args.clickhouse_config_file}'"
+    password_option = shell_password_arg(password)
+    config_file_option = shell_config_file_arg(args.clickhouse_config_file)
     schema_file = args.dump_dir + '/*-schema.sql.gz'
     for files in glob.glob(schema_file):
         (schema, table_name) = parse_schema_path(files)
@@ -653,15 +650,61 @@ def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_passw
             execute_load(cmd)
 
 
+def shell_password_arg(password):
+    """The clickhouse-client --password argument for a command run by bash: one shell word however the password
+    is spelled (it was spliced as --password '<pw>', so a quote in it ended the word and the rest ran as shell
+    syntax), and registered so every logged or raised copy of the command is redacted. Empty when None."""
+    if password is None:
+        return ""
+    register_secret(password)
+    return f"--password {shlex.quote(password)}"
+
+
+def shell_config_file_arg(path):
+    """The clickhouse-client --config-file argument as one shell word. Empty when None."""
+    return "" if path is None else f"--config-file {shlex.quote(path)}"
+
+
+_REGISTERED_SECRETS = set()
+
+
+def register_secret(secret):
+    """Register a secret so redact_password() can mask it by exact value.
+
+    Redacting by parsing shell syntax is not reliable: shlex.quote() renders a
+    password containing a single quote as a CONCATENATION of quoted segments
+    (my'secret -> 'my'"'"'secret'), and one containing whitespace splits across
+    tokens. Masking the known literal is exact however the shell quoted it.
+    """
+    if secret:
+        _REGISTERED_SECRETS.add(str(secret))
+
+
+def redact_password(cmd):
+    """Return cmd with any registered secret and any --password value masked."""
+    redacted = cmd
+    # Longest first, so a secret containing another is masked whole.
+    for secret in sorted(_REGISTERED_SECRETS, key=len, reverse=True):
+        redacted = redacted.replace(secret, "****")
+    # Fallback for values never registered: consume the whole shell word, which
+    # may be several adjacent quoted/bare segments emitted by shlex.quote().
+    redacted = re.sub(
+        r"""(--password[=\s]+)((?:'[^']*'|"[^"]*"|[^\s'"]+)+)""",
+        r"\1'****'",
+        redacted,
+    )
+    return redacted
+
+
 def execute_load(cmd):
-    logging.info(cmd)
+    logging.info(redact_password(cmd))
     if args.dry_run:
         logging.info("dry-run not executing")
         return 
     (rc, result) = run_quick_command(cmd)
     logging.debug(result)
     if rc != '0':
-        raise AssertionError("command "+cmd + " failed")
+        raise AssertionError("command " + redact_password(cmd) + " failed")
 
 
 def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, clickhouse_password=None, dry_run=False):
@@ -672,13 +715,9 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
     ch_schema = args.clickhouse_database
 
     schema_files = args.dump_dir + f"/{args.mysql_source_database}@*.sql"
-    password = args.clickhouse_password
-    password_option = ""
-    if password is not None:
-        password_option= f"--password '{password}'"
-    config_file_option = ""
-    if args.clickhouse_config_file is not None:
-       config_file_option= f"--config-file '{args.clickhouse_config_file}'"
+    password = clickhouse_password
+    password_option = shell_password_arg(password)
+    config_file_option = shell_config_file_arg(args.clickhouse_config_file)
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         futures = []
         for file in glob.glob(schema_files):

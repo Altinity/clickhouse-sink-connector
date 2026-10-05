@@ -33,7 +33,7 @@ def run_command(cmd):
     # -- run the command that is passed as cmd and return True or False
     # -- ======================================================================
     """
-    logging.debug("cmd " + cmd)
+    logging.debug("cmd " + redact_password(cmd))
     process = subprocess.Popen(cmd,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT,
@@ -47,7 +47,7 @@ def run_command(cmd):
 
 
 def run_quick_command(cmd):
-    logging.debug("cmd " + cmd)
+    logging.debug("cmd " + redact_password(cmd))
     # bash -o pipefail: a pipeline's status is that of its LAST failing stage, so a decompressor (zstd/gunzip) or sed
     # that fails makes the load fail. Under plain /bin/sh only clickhouse-client's status counted, and a truncated or
     # missing chunk loaded partially or not at all with status 0 (Spec 13.04 section 3.10).
@@ -692,7 +692,7 @@ def execute_load(cmd):
     (rc, result) = run_quick_command(cmd)
     logging.debug(result)
     if rc != '0':
-        raise AssertionError("command "+cmd + " failed")
+        raise AssertionError("command " + redact_password(cmd) + " failed")
 
 
 def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, clickhouse_password=None, dry_run=False):

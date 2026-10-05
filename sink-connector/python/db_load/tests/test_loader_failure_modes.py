@@ -54,8 +54,6 @@ class TestLegacyLoaderFailurePath(unittest.TestCase):
             self.cl.execute_load(f"false --password '{SECRET}'")
         self.assertFalse(any(SECRET in line for line in logs.output), logs.output)
 
-    @unittest.skip("DEFECT FM-11.05-2: a failed load raises AssertionError('command ' + cmd + ' failed') with the "
-                   "UNREDACTED command, so the traceback prints the ClickHouse password")
     def test_failure_message_is_redacted(self):
         with self.assertRaises(AssertionError) as raised:
             self.cl.execute_load(f"false --password '{SECRET}'")
@@ -71,12 +69,29 @@ class TestPackagedLoaderRedaction(unittest.TestCase):
                                 "ch_sink_tools.db_load.mysql_parser.mysql_parser")
         self.cl.args = Namespace(dry_run=True)
 
-    @unittest.skip("DEFECT FM-11.05-1: the packaged loader has no redact_password(); execute_load() logs the "
-                   "whole command including --password '<secret>' at INFO")
     def test_logged_command_is_redacted(self):
         with self.assertLogs(level="INFO") as logs:
             self.cl.execute_load(f"clickhouse-client --password '{SECRET}' --query 'select 1'")
         self.assertFalse(any(SECRET in line for line in logs.output), logs.output)
+
+    def test_failure_message_is_redacted(self):
+        self.cl.register_secret(SECRET)
+        self.cl.args = Namespace(dry_run=False)
+        with self.assertRaises(AssertionError) as raised:
+            self.cl.execute_load(f"false --password '{SECRET}'")
+        self.assertNotIn(SECRET, str(raised.exception))
+
+    def test_password_with_shell_metacharacters_stays_one_word(self):
+        """FM-11.05-1: the password was spliced as --password '<pw>', so a quote ended the word and the rest of
+        the password ran as shell syntax. Through the helper both load paths use it is one shell word, and it is
+        registered for redaction."""
+        import shlex
+        hostile = "x'; echo PWNED #"
+        self.assertEqual(["--password", hostile], shlex.split(self.cl.shell_password_arg(hostile)))
+        self.assertNotIn("PWNED", self.cl.redact_password("clickhouse-client " + self.cl.shell_password_arg(hostile)))
+        self.assertEqual("", self.cl.shell_password_arg(None))
+        self.assertEqual(["--config-file", "/a b/c.xml"],
+                         shlex.split(self.cl.shell_config_file_arg("/a b/c.xml")))
 
 
 if __name__ == "__main__":

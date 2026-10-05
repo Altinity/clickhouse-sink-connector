@@ -114,8 +114,8 @@ The component here is the offline test layer and the logic it pins. A failure of
   - **Blast radius**: the ClickHouse password is in plain text in the loader log of every such run.
   - **Recovery**: rotate the password and scrub the logs. Run the packaged loader only with `--clickhouse_config_file`.
   - **RTO**: a credential rotation (operator-dependent, unmeasured).
-  - **Test**: `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestPackagedLoaderRedaction::test_logged_command_is_redacted` (skipped, DEFECT).
-  - **DEFECT**: the packaged loader logs the password, and the coverage this spec declares pins a different file.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestPackagedLoaderRedaction::test_logged_command_is_redacted`, `...::test_failure_message_is_redacted`, `...::test_password_with_shell_metacharacters_stays_one_word`.
+  - **FIXED**: the packaged loader quotes `--password` / `--config-file` with `shlex.quote`, registers the password, logs and raises only `redact_password(cmd)`, and `load_data_mysqlshell()` uses the resolved password (the legacy behaviour).
 
 - **FM-11.05-2 The legacy loader leaks the password when a load fails**
   - **Trigger**: any failing insert. ClickHouse can be down or read-only, a value can fail to parse, or `TOO_MANY_PARTS` can appear. This includes `ch-mysql-resync --loader-cmd` runs that select this legacy copy.
@@ -124,8 +124,8 @@ The component here is the offline test layer and the logic it pins. A failure of
   - **Blast radius**: the password appears in every failure log of a load (for resync, `load_<schema>.<table>.log`).
   - **Recovery**: rotate the password and scrub the logs. The fix is to raise with `redact_password(cmd)`.
   - **RTO**: a credential rotation (unmeasured).
-  - **Test**: `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestLegacyLoaderFailurePath::test_failure_message_is_redacted` (skipped, DEFECT). The redacted INFO line and the loud failure are pinned by `...::TestLegacyLoaderFailurePath::test_logged_command_is_redacted`.
-  - **DEFECT**: redaction is applied to the log line but not to the exception.
+  - **Test**: `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestLegacyLoaderFailurePath::test_failure_message_is_redacted`. The redacted INFO line and the loud failure are pinned by `...::TestLegacyLoaderFailurePath::test_logged_command_is_redacted`.
+  - **FIXED**: both loaders raise `AssertionError("command " + redact_password(cmd) + " failed")` and `run_quick_command()` logs the redacted command at DEBUG.
 
 - **FM-11.05-3 The tests this spec declares never run in CI**
   - **Trigger**: any change to `db_dump/`, `db_load/`, `ch_sink_tools/` or `db_compare/`.
