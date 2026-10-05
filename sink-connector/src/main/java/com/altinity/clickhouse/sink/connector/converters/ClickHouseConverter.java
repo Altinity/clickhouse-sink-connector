@@ -567,7 +567,11 @@ public class ClickHouseConverter implements AbstractConverter {
             return result;
 
         } catch (Exception e) {
-            log.debug("Could not extract Debezium schema from SourceRecord: {}", e.getMessage());
+            // The caller (the PostgreSQL schema-drift check) skips a record it
+            // cannot read the schema of, so the failure must be visible
+            // (Spec 10.04 section 3.9): WARN with the stack trace, not DEBUG.
+            log.warn("Could not extract the Debezium schema from a record of topic {}; schema-drift "
+                    + "detection skips it", record == null ? null : record.topic(), e);
             return null;
         }
     }

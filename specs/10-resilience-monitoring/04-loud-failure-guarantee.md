@@ -290,6 +290,13 @@ behaviour — lost the change while the committed offset advanced past it.
 Kafka-mode liveness (a dead runnable behind `put` / `preCommit`) is §3.4's
 counterpart for the sink task: spec 03.01 §3.4.
 
+### 3.9 A record whose schema cannot be read is reported at WARN
+`ClickHouseConverter.extractDebeziumSchema` returns `null` when it cannot read a
+record's schema, and its caller, the PostgreSQL schema-drift check, then skips the
+record. Any exception raised while reading is therefore logged at WARN with its
+stack trace and the record's topic; it was logged at DEBUG, so drift detection
+could stop for a table with nothing in a production log.
+
 ---
 
 ## 4. Invariants Preserved
@@ -298,6 +305,7 @@ counterpart for the sink task: spec 03.01 §3.4.
 ---
 
 ## 5. Verification Criteria
+- `ClickHouseConverterSchemaExtractionTest.unreadableSchemaIsLoggedAtWarn` — §3.9: an unreadable schema returns `null` and logs one WARN carrying the cause (pre-fix: DEBUG, no stack trace).
 - `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()` — §3.3: a DDL failure escapes the catch-all as `DDLReplicationException`.
 - `UnparseableRowRecordIsTerminalTest.insertWhoseParserThrowsIsTerminal()`, `UnparseableRowRecordIsTerminalTest.updateWhoseParserReturnsNullIsTerminal()` — §3.3: a row record whose parse throws / returns null escapes the catch-all as `RecordReplicationException`; nothing is acknowledged.
 - `NullParsedRowRecordIsTerminalTest.unconvertibleRowRecordIsTerminal()` — §3.3 at the `processEveryChangeRecord` seam (inverted from the former NullParsedRecordSkipTest, which asserted the skip).
