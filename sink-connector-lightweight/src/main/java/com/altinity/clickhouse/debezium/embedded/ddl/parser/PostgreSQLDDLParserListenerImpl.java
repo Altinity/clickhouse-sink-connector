@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import org.antlr.v4.runtime.ParserRuleContext;
+import org.antlr.v4.runtime.misc.Interval;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.TerminalNode;
 import org.apache.logging.log4j.LogManager;
@@ -279,11 +280,19 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
             case "ADD":
             case "ADD_P": {
                 PostgreSQLParser.ColumnDefContext colDef = findColumnDef(cmd);
-                if (colDef != null) translateAddColumn(qualifiedTable, colDef);
+                if (colDef != null) {
+                    translateAddColumn(qualifiedTable, colDef);
+                } else {
+                    reportUntranslatedConstraint(qualifiedTable, cmd);
+                }
                 break;
             }
             case "DROP": {
-                translateDropColumn(qualifiedTable, cmd);
+                if (hasChildToken(cmd, "CONSTRAINT")) {
+                    reportUntranslatedConstraint(qualifiedTable, cmd);
+                } else {
+                    translateDropColumn(qualifiedTable, cmd);
+                }
                 break;
             }
             case "ALTER": {
@@ -293,6 +302,49 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
             default:
                 log.debug("Unsupported alter_table_cmd keyword '{}' – skipped", firstText);
         }
+    }
+
+    /**
+     * Reports a table-constraint clause ({@code ADD [CONSTRAINT n] PRIMARY KEY|UNIQUE|
+     * CHECK|FOREIGN KEY ...}, {@code DROP CONSTRAINT n}) that has no ClickHouse
+     * translation, so it is never dropped without a trace (Spec 06.09 section 3.7).
+     * PostgreSQL DDL never plans a primary-key rebuild: a clause that can change the
+     * table's identity is reported at WARN with the manual remedy, because the
+     * replica keeps the sorting key it was created with.
+     *
+     * @return the WARN/INFO message that was logged (for tests)
+     */
+    String reportUntranslatedConstraint(String qualifiedTable,
+                                        PostgreSQLParser.Alter_table_cmdContext cmd) {
+        String clause = originalText(cmd);
+        String upper = clause.toUpperCase();
+        String message;
+        if (upper.startsWith("DROP")) {
+            message = String.format("Table %s: '%s' is not translated. If the constraint is the PRIMARY KEY, "
+                    + "the source identity changed but the ClickHouse sorting key did not (it is fixed at CREATE "
+                    + "TABLE); re-create the table with the new ORDER BY and re-snapshot it.", qualifiedTable, clause);
+            log.warn(message);
+        } else if (upper.contains("PRIMARY")) {
+            message = String.format("Table %s: '%s' changes the source PRIMARY KEY, which is not translated: the "
+                    + "ClickHouse sorting key is fixed at CREATE TABLE and PostgreSQL DDL plans no rebuild. Re-create "
+                    + "the table with ORDER BY matching the new key and re-snapshot it.", qualifiedTable, clause);
+            log.warn(message);
+        } else {
+            message = String.format("Table %s: constraint clause '%s' has no ClickHouse equivalent; nothing to apply.",
+                    qualifiedTable, clause);
+            log.info(message);
+        }
+        return message;
+    }
+
+    /** The source text of {@code ctx} with its original spacing ({@code getText()} drops whitespace). */
+    private static String originalText(ParserRuleContext ctx) {
+        if (ctx.getStart() == null || ctx.getStop() == null
+                || ctx.getStart().getInputStream() == null) {
+            return ctx.getText();
+        }
+        return ctx.getStart().getInputStream().getText(
+                Interval.of(ctx.getStart().getStartIndex(), ctx.getStop().getStopIndex()));
     }
 
     /** Translates {@code ADD [COLUMN] columnDef} → {@code ALTER TABLE … ADD COLUMN}. */

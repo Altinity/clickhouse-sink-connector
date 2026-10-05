@@ -459,6 +459,24 @@ event before the DDL has been written and every event after it is versioned
 above the run's floor (Spec 02.02), so no re-versioning happens and Invariant I2
 is unaffected.
 
+### 3.7 PostgreSQL constraint clauses are reported, never dropped silently
+PostgreSQL DDL plans no rebuild (`PostgreSQLDDLParserService` never produces a
+plan, §2). A table-constraint clause of `ALTER TABLE` has no ClickHouse
+translation, and before this rule it fell through the ADD/DROP COLUMN branches of
+`PostgreSQLDDLParserListenerImpl.translateAlterTableCmd` with no output and no log
+line. `PostgreSQLDDLParserListenerImpl.reportUntranslatedConstraint` now reports
+every such clause with its source text:
+1. `ADD [CONSTRAINT n] PRIMARY KEY (...)` — WARN: the source identity changed, the
+   ClickHouse sorting key is fixed at CREATE TABLE, re-create the table with the
+   new ORDER BY and re-snapshot it;
+2. `DROP CONSTRAINT n` — WARN with the same remedy (the statement does not say
+   whether `n` is the primary key); it is never translated as `DROP COLUMN n`;
+3. any other constraint (`CHECK`, `UNIQUE`, `FOREIGN KEY`) — INFO, nothing to
+   apply.
+Making these clauses halt the PostgreSQL pipeline (Invariant I9 parity with the
+MySQL refusal) is a separate decision: the PostgreSQL parse path still logs and
+continues on every translation error (`PostgreSQLDDLParserService.parseSql`).
+
 ---
 
 ## 4. Invariants Preserved
@@ -485,6 +503,9 @@ is unaffected.
 ---
 
 ## 5. Verification Criteria
+- `PostgreSQLConstraintClauseReportTest.addPrimaryKeyIsReportedNotSwallowed` — §3.7 item 1: one WARN quoting the clause and naming the re-snapshot remedy; nothing translated (pre-fix: no output, no log line).
+- `PostgreSQLConstraintClauseReportTest.dropConstraintIsReportedAndNotTranslatedAsDropColumn` — §3.7 item 2: one WARN, no `DROP COLUMN`.
+- `PostgreSQLConstraintClauseReportTest.nonKeyConstraintIsInfoAndAddColumnStillTranslates` — §3.7 item 3: `CHECK` logged at INFO only; `ADD COLUMN` still translates.
 - `MySqlDDLParserListenerImplTest.testAddPrimaryKeyThatChangesIdentityPlansRebuild()` — the shapes of Spec 06.07's former loud set now emit their representable clauses and produce a plan naming old key, new key and per-column provenance (`AUTO_INCREMENT` added column is `SOURCE_VALUED`); the restatement still plans nothing.
 - `MySqlDDLParserListenerImplTest.testDropPrimaryKeyPlansRebuild()` — a lone `DROP PRIMARY KEY` plans the all-columns fallback key; `DROP ..., ADD PRIMARY KEY (same)` plans nothing; unknown key: skipped as before.
 - `MySqlDDLParserListenerImplTest.testPrimaryKeyChangeIsLoudWhenRebuildDisabled()` — `ddl.primary.key.rebuild=false` restores the loud refusal, nothing emitted.
