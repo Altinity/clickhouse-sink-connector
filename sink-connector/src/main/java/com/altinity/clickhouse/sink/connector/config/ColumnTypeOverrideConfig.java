@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.config;
 
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -51,10 +52,12 @@ public class ColumnTypeOverrideConfig {
     private static final Logger log = LogManager.getLogger(ColumnTypeOverrideConfig.class);
 
     /** Prefix for direct override properties. */
-    public static final String DIRECT_PREFIX = "column_type_override.direct.";
+    public static final String DIRECT_PREFIX =
+            ClickHouseSinkConnectorConfigVariables.COLUMN_TYPE_OVERRIDE_DIRECT_PREFIX.toString();
 
     /** Prefix for alias override properties. */
-    public static final String ALIAS_PREFIX = "column_type_override.alias.";
+    public static final String ALIAS_PREFIX =
+            ClickHouseSinkConnectorConfigVariables.COLUMN_TYPE_OVERRIDE_ALIAS_PREFIX.toString();
 
     /**
      * Direct overrides keyed by {@code "database.schema.table.column"} (all lower-cased).
