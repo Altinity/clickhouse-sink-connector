@@ -84,6 +84,12 @@ loop to be left normally after a failure.
    failure as its cause.
 4. In both cases the exception leaves through §3.1 (re-thrown ahead of the
    catch-all, engine halts, offset not advanced, restart re-delivers the DDL).
+5. **An interrupt during the wait between attempts ends the loop.** The
+   interrupt flag is restored and `DDLReplicationException` ("Interrupted while
+   waiting to retry DDL; it was not applied") is thrown at once, leaving
+   through §3.1 like any terminal failure. Swallowing the interrupt (the
+   previous behaviour: log and continue) kept a stopping engine retrying for
+   up to `MAX_RETRIES` x 10 s with the stop request lost.
 
 ---
 
@@ -175,6 +181,7 @@ Then, **after** `parseSql` (which is what computes the statement kind):
 ---
 
 ## 5. Verification Criteria
+- `DdlFailureModesTest.interruptBetweenDdlRetriesHaltsAndKeepsTheFlag` — §3.2 item 5: with `ddl.retry=true` and the thread interrupted, the refused DDL throws `DDLReplicationException` naming the interrupt in under 9 s, the interrupt flag is still set and the offset is not acknowledged (pre-fix: the loop slept out the remaining attempts and cleared the flag).
 - `DdlCaptureFilterTest` — §3.3 rule 3: include/exclude table lists, database lists, include-over-exclude, full case-insensitive match, unknown database kept, uncompilable patterns.
 - `DdlIgnoreRulesTest.ddlOutsideIncludeListIsIgnored`, `DdlIgnoreRulesTest.excludeAndDatabaseListsApply`, `DdlIgnoreRulesTest.multiTableAndNoLists` — §3.3 rule 3 through `checkIfDDLNeedsToBeIgnored` with schema-change records carrying `databaseName` and `tableChanges`.
 - `DdlIgnoreRulesTest.mysqlFlagIsStatementKind`, `DdlIgnoreRulesTest.postgresFlagIsStatementKind` — §3.3 rule 5: `DROP TABLE`/`TRUNCATE`/`DROP DATABASE|SCHEMA` set the flag; `DROP COLUMN`, `DROP INDEX`, `DROP DEFAULT` do not (pre-fix: any `DROP` token).

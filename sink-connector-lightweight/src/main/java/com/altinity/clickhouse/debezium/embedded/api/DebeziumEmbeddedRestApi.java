@@ -75,6 +75,29 @@ public class DebeziumEmbeddedRestApi {
      * @param debeziumChangeEventCapture The Debezium event capture instance.
      * @param userProperties          User-specified properties.
      */
+    /**
+     * The engine that is running now (spec 01.01 section 3.4). {@code /start},
+     * {@code /restart} and the monitoring thread replace the engine with a new
+     * instance, while this server is started once per JVM: the instance passed to
+     * {@link #startRestApi} goes stale at the first restart. {@code /flush} must
+     * pause the engine that is writing, never a stopped one -- pausing a stopped
+     * engine pauses nothing and would report success while writes continue.
+     *
+     * @param startedWith the instance passed to {@link #startRestApi}, used only
+     *                    when the application holds no engine (unit tests that
+     *                    drive the server without the application)
+     * @return the live engine
+     * @throws IllegalStateException if no engine is running
+     */
+    static DebeziumChangeEventCapture liveEngine(DebeziumChangeEventCapture startedWith) {
+        DebeziumChangeEventCapture current = ClickHouseDebeziumEmbeddedApplication.currentEventCapture();
+        DebeziumChangeEventCapture engine = current != null ? current : startedWith;
+        if (engine == null) {
+            throw new IllegalStateException("No replication engine is running");
+        }
+        return engine;
+    }
+
     public static void startRestApi(Properties props, Injector injector,
                                     DebeziumChangeEventCapture debeziumChangeEventCapture,
                                     Properties userProperties) {
@@ -155,11 +178,10 @@ public class DebeziumEmbeddedRestApi {
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                         new DebeziumJdbcStorageOperations();
-                Connection connection = getDatabaseConnection(finalProps1);
-                response = debeziumJdbcStorageOperations.getDebeziumStorageStatus(
-                        connection, config, finalProps1);
-                connection.close();
-
+                try (Connection connection = getDatabaseConnection(finalProps1)) {
+                    response = debeziumJdbcStorageOperations.getDebeziumStorageStatus(
+                            connection, config, finalProps1);
+                }
             } catch (Exception e) {
                 log.error("Client - Error getting status", e);
                 // Create JSON response
@@ -183,9 +205,9 @@ public class DebeziumEmbeddedRestApi {
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                         new DebeziumJdbcStorageOperations();
-                Connection connection = getDatabaseConnection(finalProps1);
-                debeziumJdbcStorageOperations.deleteOffsets(connection, finalProps1);
-                connection.close();
+                try (Connection connection = getDatabaseConnection(finalProps1)) {
+                    debeziumJdbcStorageOperations.deleteOffsets(connection, finalProps1);
+                }
             } catch (Exception e) {
                 log.error("Client - Error deleting offsets", e);
                 ctx.result(e.toString());
@@ -262,9 +284,9 @@ public class DebeziumEmbeddedRestApi {
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                         new DebeziumJdbcStorageOperations();
-                Connection connection = getDatabaseConnection(finalProps1);
-                debeziumJdbcStorageOperations.deleteSchemaHistory(connection, config, finalProps1);
-                connection.close();
+                try (Connection connection = getDatabaseConnection(finalProps1)) {
+                    debeziumJdbcStorageOperations.deleteSchemaHistory(connection, config, finalProps1);
+                }
             } catch (Exception e) {
                 log.error("Client - Error deleting schema history", e);
                 ctx.result(e.toString());
@@ -282,9 +304,9 @@ public class DebeziumEmbeddedRestApi {
                             PropertiesHelper.toMap(finalProps1));
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-                Connection connection = getDatabaseConnection(finalProps1);
-                response = debeziumJdbcStorageOperations.getErrorTableStatus(connection, finalProps1);
-                connection.close();
+                try (Connection connection = getDatabaseConnection(finalProps1)) {
+                    response = debeziumJdbcStorageOperations.getErrorTableStatus(connection, finalProps1);
+                }
             } catch (Exception e) {
                 log.error("Client - Error getting error table status", e);      
                 ctx.result(e.toString());
@@ -344,7 +366,7 @@ public class DebeziumEmbeddedRestApi {
         app.get("/flush", ctx -> {
             try {
                 log.info("REST /flush: flushing and pausing batch executor");
-                debeziumChangeEventCapture.flushAndPause();
+                liveEngine(debeziumChangeEventCapture).flushAndPause();
                 ctx.result("{\"status\":\"flushed\"}");
             } catch (Exception e) {
                 log.error("REST /flush: error", e);
@@ -357,7 +379,7 @@ public class DebeziumEmbeddedRestApi {
         app.get("/resume", ctx -> {
             try {
                 log.info("REST /resume: resuming batch executor");
-                debeziumChangeEventCapture.resumeAfterFlush();
+                liveEngine(debeziumChangeEventCapture).resumeAfterFlush();
                 ctx.result("{\"status\":\"resumed\"}");
             } catch (Exception e) {
                 log.error("REST /resume: error", e);

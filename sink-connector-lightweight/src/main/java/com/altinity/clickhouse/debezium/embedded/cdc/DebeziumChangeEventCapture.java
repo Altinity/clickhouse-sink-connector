@@ -1385,11 +1385,17 @@ public class DebeziumChangeEventCapture {
      * @throws IllegalStateException if the executor is not initialised.
      */
     public void flushAndPause() {
-        if (this.executor == null) {
-            throw new IllegalStateException("Executor is not initialised — cannot flush");
+        ClickHouseBatchExecutor pool = this.executor;
+        if (pool == null || pool.isShutdown()) {
+            // A stopped engine's pool runs nothing: pausing it pauses nothing,
+            // and reporting success would tell the checksum tool writes have
+            // stopped while the live engine keeps writing (spec 01.01 section 3.4).
+            throw new IllegalStateException("The batch executor is "
+                    + (pool == null ? "not initialised" : "shut down (engine stopped)")
+                    + " -- cannot flush");
         }
         log.info("FLUSH: Pausing batch executor (drain buffered records)...");
-        this.executor.pause();
+        pool.pause();
 
         // Wait briefly for any in-flight batch to complete.
         // The pause flag is checked in beforeExecute(), so the currently running
@@ -1408,11 +1414,14 @@ public class DebeziumChangeEventCapture {
      * @throws IllegalStateException if the executor is not initialised.
      */
     public void resumeAfterFlush() {
-        if (this.executor == null) {
-            throw new IllegalStateException("Executor is not initialised — cannot resume");
+        ClickHouseBatchExecutor pool = this.executor;
+        if (pool == null || pool.isShutdown()) {
+            throw new IllegalStateException("The batch executor is "
+                    + (pool == null ? "not initialised" : "shut down (engine stopped)")
+                    + " -- cannot resume");
         }
         log.info("FLUSH: Resuming batch executor — writes to ClickHouse will restart");
-        this.executor.resume();
+        pool.resume();
     }
 
     /**
@@ -1730,8 +1739,8 @@ public class DebeziumChangeEventCapture {
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
         // Use the configured MAX_RETRIES value for DDL operations
         int MAX_DDL_RETRIES = MAX_RETRIES;
-        int SLEEP_TIME = 10000;
-        int numRetries = 0;
+        int ddlRetrySleepMs = 10000;
+        int ddlAttempts = 0;
 
         // Check if configuration is set to retry DDL
         String retryDDL = props.getProperty(SinkConnectorLightWeightConfig.DDL_RETRY.toString());
@@ -1745,7 +1754,7 @@ public class DebeziumChangeEventCapture {
         // exception so the operator sees the actual ClickHouse error.
         Exception lastFailure = null;
 
-        while (numRetries < MAX_DDL_RETRIES) {
+        while (ddlAttempts < MAX_DDL_RETRIES) {
             try {
 
                 if(!config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_REPLICATION_LOG_ONLY.toString())) {
@@ -1989,13 +1998,19 @@ public class DebeziumChangeEventCapture {
                                     + "change: [" + DDL + "]", e);
                 }
                 try {
-                    Thread.sleep(SLEEP_TIME);
+                    Thread.sleep(ddlRetrySleepMs);
                 } catch (InterruptedException ex) {
-                    log.error("Error sleeping", ex);
+                    // Stop asked this thread to finish: keep the flag and halt
+                    // loudly instead of retrying a schema change nobody waits
+                    // for any more (spec 06.08 section 3.2 item 5).
+                    Thread.currentThread().interrupt();
+                    throw new DDLReplicationException(
+                            "Interrupted while waiting to retry DDL; it was not applied: ["
+                                    + DDL + "]", ex);
                 }
-                numRetries++;
+                ddlAttempts++;
             }
-            if (numRetries >= MAX_DDL_RETRIES) {
+            if (ddlAttempts >= MAX_DDL_RETRIES) {
                 // Terminal DDL failure. Raise the loud, non-swallowed type so
                 // the pipeline halts here instead of advancing past a schema
                 // change that never reached ClickHouse. See

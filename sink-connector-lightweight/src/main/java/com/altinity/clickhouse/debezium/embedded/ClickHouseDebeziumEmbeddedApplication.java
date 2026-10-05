@@ -69,7 +69,9 @@ public class ClickHouseDebeziumEmbeddedApplication {
      * The DebeziumChangeEventCapture instance that captures and
      * processes change events from the source database.
      */
-    private static DebeziumChangeEventCapture debeziumChangeEventCapture;
+    // Replaced by every start() (REST pool and monitor threads) and read by REST
+    // handler threads, so it is volatile for safe publication.
+    private static volatile DebeziumChangeEventCapture debeziumChangeEventCapture;
 
     /**
      * A Properties object used to hold additional user-defined
@@ -412,6 +414,17 @@ public class ClickHouseDebeziumEmbeddedApplication {
      *
      * @return the DebeziumChangeEventCapture
      */
+    /**
+     * The engine currently owned by the application: every {@code start()}
+     * replaces it, so callers that outlive a restart (the REST server) must ask
+     * here at use time instead of keeping a reference.
+     *
+     * @return the current engine, or {@code null} before the first start
+     */
+    public static DebeziumChangeEventCapture currentEventCapture() {
+        return debeziumChangeEventCapture;
+    }
+
     public DebeziumChangeEventCapture getDebeziumEventCapture() {
         return debeziumChangeEventCapture;
     }

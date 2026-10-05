@@ -51,6 +51,12 @@ There is no additional command-line override layer. The `LOGGING_LEVEL` environm
 
 **Why this order (the failure it prevents).** The FIFO in `DebeziumOffsetManagement` is static, but the engine is restarted INSIDE the process by REST `/restart`, by `/start` after `/stop`, and by the restart monitor: a new `DebeziumChangeEventCapture` on the same FIFO. The previous `stop()` shut the pool down FIRST (cancelling the periodic workers and abandoning every queued batch), closed the engine LAST, and never touched the FIFO. A unit the old engine had handed off but no worker had written stayed the FIFO head for the life of the JVM: every unit of the new engine parked behind it, no offset was ever acknowledged again, `hasUnwrittenBatches()` stayed true (no control-record commit; every DDL drain timed out into a restart loop), rows kept being inserted while the durable offset froze, and the parked units' record lists leaked (`Replication.OffsetFifo.old_restart_poisons_fifo`).
 
+### 3.4 REST operations act on the engine that is running now
+The REST server (`DebeziumEmbeddedRestApi.startRestApi`) is started once per JVM, while `/start`, `/restart` and the restart monitor replace the engine with a new `DebeziumChangeEventCapture` (`ClickHouseDebeziumEmbeddedApplication.start`). An engine reference captured at server start is therefore stale after the first restart.
+1. `/flush` and `/resume` resolve the engine at request time through `DebeziumEmbeddedRestApi.liveEngine`, which returns `ClickHouseDebeziumEmbeddedApplication.currentEventCapture()` (the instance passed to `startRestApi` only when the application holds none). The application's engine field is `volatile`: it is written by REST pool and monitor threads and read by handler threads.
+2. `DebeziumChangeEventCapture.flushAndPause()` and `resumeAfterFlush()` refuse (`IllegalStateException`, HTTP 500) when the batch executor is missing or shut down. Pausing a stopped engine's pool pauses nothing; answering 200 "flushed" would tell the checksum tool that writes stopped while the live engine keeps writing.
+3. Every REST handler that opens a ClickHouse connection (`/status`, `DELETE /offsets`, `DELETE /schema-history`, `/show-slave-status`, `/binlog`, `/lsn`) closes it with try-with-resources, including when the storage operation throws: a failing monitoring poll must not leak one connection per call.
+
 The application registers **no JVM shutdown hook**. On SIGTERM the process relies on the embedded engine's own shutdown handling and on at-least-once redelivery from the last committed offset at the next start (specs 02.04, 09.03). Offsets are only ever committed by the writer path after rows are in ClickHouse (specs 09.01, 09.02), so an abrupt stop costs redelivery, never data.
 
 ---
@@ -64,6 +70,10 @@ The application registers **no JVM shutdown hook**. On SIGTERM the process relie
 ## 5. Verification Criteria
 - `KeylessTablePreflightTest` — the keyless-table preflight that `setup` runs (`testCheckNeverThrowsWhateverTheSourceLooksLike`, `testSkipPropertyBypassesTheCheck`).
 - `DebeziumEmbeddedRestApiDoubleStartTest` — the REST-driven restart path.
+- `FlushTargetsLiveEngineTest.handlersResolveTheEngineRunningNow` — §3.4 item 1: with the application holding a new engine, `liveEngine` returns it, not the instance the server was started with (pre-fix handlers used the startup instance).
+- `FlushTargetsLiveEngineTest.handlersFallBackToTheStartupInstance` — §3.4 item 1: no application engine → the startup instance; neither → `IllegalStateException`.
+- `FlushTargetsLiveEngineTest.flushOfAStoppedEngineIsRefused` — §3.4 item 2: a shut-down pool → `flushAndPause()` and `resumeAfterFlush()` throw (pre-fix: returned normally).
+- `FlushTargetsLiveEngineTest.flushOfARunningEnginePausesItsPool` — §3.4 item 2: a running pool is paused and released.
 - `EngineRestartFifoResetTest.stopThenStartNewInstanceIsNotPoisoned` — a unit handed off and never written; `stop()`; a NEW capture's heartbeat is committed and its first written unit is acknowledged with nothing parked (fails on the old `stop()`: the ghost stays outstanding).
 - `EngineRestartFifoResetTest.stopLeavesNothingOutstanding` — after `stop()` the outstanding set, the unwritten-group map and the parked-unit map are empty and the pool is shut down.
 - `EngineRestartFifoResetTest.stopClosesEngineBeforeShuttingThePool` — the engine's `close()` observes a still-running pool; the pool is shut down afterwards.

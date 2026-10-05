@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
@@ -123,6 +124,15 @@ public class DdlFailureModesTest {
                                         ClickHouseSinkConnectorConfig config,
                                         DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> committer)
             throws Exception {
+        return invokeProcess(capture, record, config, committer, new Properties());
+    }
+
+    private static Object invokeProcess(DebeziumChangeEventCapture capture,
+                                        ChangeEvent<SourceRecord, SourceRecord> record,
+                                        ClickHouseSinkConnectorConfig config,
+                                        DebeziumEngine.RecordCommitter<ChangeEvent<SourceRecord, SourceRecord>> committer,
+                                        Properties props)
+            throws Exception {
         Method m = DebeziumChangeEventCapture.class.getDeclaredMethod(
                 "processEveryChangeRecord",
                 Properties.class,
@@ -134,7 +144,7 @@ public class DdlFailureModesTest {
                 DebeziumChangeEventCapture.VersionAssignment.class);
         m.setAccessible(true);
         try {
-            return m.invoke(capture, new Properties(), record, null, config, committer, true,
+            return m.invoke(capture, props, record, null, config, committer, true,
                     new DebeziumChangeEventCapture.VersionAssignment(1000000001L, 1000L));
         } catch (InvocationTargetException ite) {
             Throwable cause = ite.getCause();
@@ -279,6 +289,42 @@ public class DdlFailureModesTest {
         } finally {
             DBMetadata.setMaxRetries(10);
         }
+    }
+
+    /**
+     * Spec 06.08 section 3.2 item 5: with {@code ddl.retry=true} a failed DDL
+     * waits before the next attempt. An interrupt during that wait (engine
+     * stop) ends the loop at once with {@link DDLReplicationException} and the
+     * interrupt flag kept -- it is never swallowed into further attempts.
+     * Before the fix the catch only logged, so the loop slept out every
+     * remaining attempt (10 s apart) and the interrupt was lost.
+     */
+    @Test
+    @DisplayName("06.08 s3.2 item 5: an interrupt between DDL retries halts at once and keeps the flag")
+    public void interruptBetweenDdlRetriesHaltsAndKeepsTheFlag() throws Exception {
+        RecordingCommitter committer = new RecordingCommitter();
+        DebeziumChangeEventCapture capture = singleThreadedCapture(refusingConnection("ALTER TABLE",
+                "Code: 62. DB::Exception: Syntax error: failed at position 1"));
+        Properties props = new Properties();
+        props.setProperty(SinkConnectorLightWeightConfig.DDL_RETRY, "true");
+
+        long started = System.nanoTime();
+        Thread.currentThread().interrupt();
+        DDLReplicationException thrown;
+        boolean flagKept;
+        try {
+            thrown = assertThrows(DDLReplicationException.class,
+                    () -> invokeProcess(capture, ddlEvent("ALTER TABLE t MODIFY COLUMN c BIGINT NULL"),
+                            config(), committer.proxy(), props));
+        } finally {
+            flagKept = Thread.interrupted();
+        }
+        long elapsedMs = (System.nanoTime() - started) / 1_000_000;
+
+        assertTrue(flagKept, "the interrupt must not be swallowed");
+        assertTrue(elapsedMs < 9_000, "no further 10 s retry wait after the interrupt: " + elapsedMs + " ms");
+        assertTrue(thrown.getMessage().contains("Interrupted"), thrown.getMessage());
+        assertFalse(committer.calls.contains("markProcessed"), String.valueOf(committer.calls));
     }
 
     /**
