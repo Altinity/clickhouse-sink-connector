@@ -232,21 +232,6 @@ public class QueryFormatter {
     }
 
     /**
-     * Checks if a column is a temporal tracking column used for history.
-     * These columns should use DEFAULT values from the table schema.
-     *
-     * @param colName the name of the column to check.
-     * @return true if the column is a temporal tracking column, false otherwise.
-     */
-    private boolean isTemporalTrackingColumn(String colName) {
-        return colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN) ||
-               colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN) ||
-               colName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN) ||
-               colName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN) ||
-               colName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN);
-    }
-
-    /**
      * Formats a parameter placeholder for use in SQL based on the ClickHouse data type.
      * DECIMAL types are wrapped with CAST function, DateTime/DateTime64 types are wrapped
      * with toDateTime/toDateTime64 functions to ensure proper type handling.
@@ -340,7 +325,8 @@ public class QueryFormatter {
         }
         
         // Check if the data type is a string type
-        String upperDataType = dataType.toUpperCase();
+        // Nullable(...) and LowCardinality(...) wrap the type the value is compared as.
+        String upperDataType = unwrapTypeModifiers(dataType).toUpperCase();
         if (upperDataType.startsWith("STRING") || 
             upperDataType.startsWith("FIXEDSTRING") ||
             upperDataType.startsWith("ENUM") ||
@@ -634,13 +620,55 @@ public class QueryFormatter {
         }
         StringBuilder predicate = new StringBuilder();
         for (Map.Entry<String, Object> column : primaryKey.entrySet()) {
+            String dataType = columnNameToDataTypeMap.get(column.getKey());
+            refuseUnrenderableKeyColumn(tableName, column.getKey(), dataType);
             if (predicate.length() > 0) {
                 predicate.append(" AND ");
             }
             predicate.append("`").append(column.getKey()).append("`=")
-                    .append(formatValueForSql(column.getValue(), columnNameToDataTypeMap.get(column.getKey())));
+                    .append(formatValueForSql(column.getValue(), dataType));
         }
         return predicate.toString();
+    }
+
+    /**
+     * Refuses a primary-key column whose record value this predicate cannot render
+     * as the value stored in the column (spec 02.01 section 3.5 e). A temporal key
+     * arrives as the raw Debezium value -- epoch days for a Date, epoch millis or
+     * micros for a DateTime -- and ClickHouse either rejects the comparison
+     * ({@code Date = 19737}: Code 43) or, for DateTime, reads the number as
+     * SECONDS and matches nothing, so the previous history row is silently never
+     * closed. Failing here is loud; writing a second open row is not.
+     */
+    private static void refuseUnrenderableKeyColumn(String tableName, String column, String dataType) {
+        if (dataType == null) {
+            throw new IllegalStateException("History mode cannot close the previous row of " + tableName
+                    + ": primary key column `" + column + "` is not a column of the table (spec 02.01 section 3.5 e)");
+        }
+        String base = unwrapTypeModifiers(dataType).toUpperCase();
+        if (base.startsWith("DATE") || base.startsWith("TIME")) {
+            throw new IllegalStateException("History mode cannot close the previous row of " + tableName
+                    + ": primary key column `" + column + "` is " + dataType + ", and a temporal key value "
+                    + "cannot be matched against the stored column without the insert path's conversion. "
+                    + "Replicate this table without replication.history.enable, or key it on non-temporal "
+                    + "columns (spec 02.01 section 3.5 e)");
+        }
+    }
+
+    /** {@code Nullable(LowCardinality(String))} -> {@code String}: the type a value is compared as. */
+    static String unwrapTypeModifiers(String dataType) {
+        String type = dataType.trim();
+        boolean unwrapped = true;
+        while (unwrapped) {
+            unwrapped = false;
+            for (String modifier : new String[]{"Nullable(", "LowCardinality("}) {
+                if (type.regionMatches(true, 0, modifier, 0, modifier.length()) && type.endsWith(")")) {
+                    type = type.substring(modifier.length(), type.length() - 1).trim();
+                    unwrapped = true;
+                }
+            }
+        }
+        return type;
     }
 
     /**

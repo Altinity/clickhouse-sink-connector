@@ -427,6 +427,52 @@ public class QueryFormatterTest {
                         "2025-03-01 10:30:00", 5L, "UTC").left);
     }
 
+    /**
+     * Spec 02.01 section 3.5 e: a temporal primary-key column cannot be rendered
+     * from the raw record value (epoch days / millis), so the previous history row
+     * would silently never be closed (DateTime) or the statement would fail with
+     * Code 43 (Date). Building the statement is refused, loudly.
+     */
+    @Test
+    public void temporalPrimaryKeyColumnIsRefusedNotSilentlyUnmatched() {
+        QueryFormatter qf = new QueryFormatter();
+        for (String temporal : new String[]{"Date", "Date32", "DateTime", "DateTime64(6, 'UTC')",
+                "Nullable(DateTime64(3))"}) {
+            Map<String, String> columns = historyColumns();
+            columns.put("valid_from", temporal);
+            Map<String, Object> key = employeeKey(1001);
+            key.put("valid_from", 1705276800000L);
+
+            IllegalStateException refused = org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                    () -> qf.getInsertQueryForDelete("h.employees", columns, key, SENTINEL, EVENT_TIME, 5L, "UTC"));
+            Assert.assertTrue(refused.getMessage(), refused.getMessage().contains("`valid_from`"));
+            Assert.assertTrue(refused.getMessage(), refused.getMessage().contains("3.5 e"));
+        }
+    }
+
+    /** Spec 02.01 section 3.5 e: a key column missing from the table is refused with its name, not an NPE. */
+    @Test
+    public void primaryKeyColumnMissingFromTheTableIsRefusedByName() {
+        Map<String, Object> key = employeeKey(1001);
+        key.put("ghost", 7);
+        IllegalStateException refused = org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> new QueryFormatter().getInsertQueryForDelete("h.employees", historyColumns(), key,
+                        SENTINEL, EVENT_TIME, 5L, "UTC"));
+        Assert.assertTrue(refused.getMessage(), refused.getMessage().contains("`ghost`"));
+    }
+
+    /** Spec 02.01 section 3.5 e: Nullable/LowCardinality string keys are quoted like String. */
+    @Test
+    public void wrappedStringPrimaryKeyIsQuoted() {
+        Map<String, String> columns = historyColumns();
+        columns.put("tenant", "LowCardinality(Nullable(String))");
+        Map<String, Object> key = new LinkedHashMap<>();
+        key.put("tenant", "o'brien");
+        String delete = new QueryFormatter().getInsertQueryForDelete("h.employees", columns, key, SENTINEL,
+                EVENT_TIME, 5L, "UTC").left;
+        Assert.assertTrue(delete, delete.contains("WHERE `tenant`='o''brien' AND"));
+    }
+
     // ---- Spec 12.03 sections 3.2-3.5: the corrected SCD2 statement shapes ----
 
     private static final String SENTINEL = "2100-01-01 00:00:00";
