@@ -1480,49 +1480,39 @@ public final class PrimaryKeyBackfill {
         return task == null ? "Primary-key backfill" : "Primary-key backfill of " + task.database() + "." + task.table();
     }
 
+    /** Every statement of an attempt fails as a {@link BackfillFailure} naming the step and the statement. */
+    private static RebuildQueries.Failure failureAt(String step) {
+        return (sql, e) -> new BackfillFailure(step, sql, e.getMessage(), e);
+    }
+
     static void exec(Connection ch, String sql, String step, Task task) {
         log.info("{} {}: {}", who(task), step, sql);
-        try (Statement st = ch.createStatement()) {
-            st.execute(sql);
-        } catch (Exception e) {
-            throw new BackfillFailure(step, sql, e.getMessage(), e);
-        }
+        RebuildQueries.exec(ch, sql, failureAt(step));
     }
 
     static String scalar(Connection ch, String sql, String step, Task task) {
         log.info("{} {}: {}", who(task), step, sql);
-        try (Statement st = ch.createStatement(); ResultSet rs = st.executeQuery(sql)) {
-            return rs.next() ? rs.getString(1) : null;
-        } catch (Exception e) {
-            throw new BackfillFailure(step, sql, e.getMessage(), e);
-        }
+        return RebuildQueries.scalar(ch, sql, failureAt(step));
     }
 
     static long count(Connection ch, String sql, String step, Task task) {
         log.info("{} {}: {}", who(task), step, sql);
-        try (Statement st = ch.createStatement(); ResultSet rs = st.executeQuery(sql)) {
-            if (!rs.next()) {
-                throw new IllegalStateException("count() returned no row");
-            }
-            return rs.getLong(1);
-        } catch (Exception e) {
-            throw new BackfillFailure(step, sql, e.getMessage(), e);
+        List<Long> counts = RebuildQueries.rows(ch, sql, rs -> rs.getLong(1), failureAt(step));
+        if (counts.isEmpty()) {
+            throw new BackfillFailure(step, sql, "count() returned no row", new IllegalStateException("count() returned no row"));
         }
+        return counts.get(0);
     }
 
     static List<String> column(Connection ch, String sql, String step, Task task) {
         log.info("{} {}: {}", who(task), step, sql);
-        List<String> values = new ArrayList<>();
-        try (Statement st = ch.createStatement(); ResultSet rs = st.executeQuery(sql)) {
-            while (rs.next()) {
-                values.add(rs.getString(1));
-            }
-        } catch (Exception e) {
-            throw new BackfillFailure(step, sql, e.getMessage(), e);
-        }
-        return values;
+        return RebuildQueries.column(ch, sql, failureAt(step));
     }
 
+    /**
+     * The first {@code width} columns of every row. Unlike the helpers above, a
+     * failure propagates UNWRAPPED: the resume path handles the raw exception.
+     */
     private static List<String[]> rows(Connection ch, String sql, int width) throws Exception {
         log.info("Primary-key backfill resume: {}", sql);
         List<String[]> out = new ArrayList<>();
@@ -1539,17 +1529,8 @@ public final class PrimaryKeyBackfill {
     }
 
     static List<ColumnInfo> columns(Connection ch, String db, String table, String step, Task task) {
-        String sql = "SELECT name, type, default_kind FROM system.columns WHERE database = '" + lit(db)
-                + "' AND table = '" + lit(table) + "' ORDER BY position";
+        String sql = RebuildQueries.columnsQuery(db, table);
         log.info("{} {}: {}", who(task), step, sql);
-        List<ColumnInfo> columns = new ArrayList<>();
-        try (Statement st = ch.createStatement(); ResultSet rs = st.executeQuery(sql)) {
-            while (rs.next()) {
-                columns.add(new ColumnInfo(rs.getString(1), rs.getString(2), rs.getString(3)));
-            }
-        } catch (Exception e) {
-            throw new BackfillFailure(step, sql, e.getMessage(), e);
-        }
-        return columns;
+        return RebuildQueries.columns(ch, sql, failureAt(step));
     }
 }

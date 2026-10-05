@@ -1062,70 +1062,42 @@ public final class PrimaryKeyRebuild {
 
     private static void exec(Connection ch, String sql, String step, PrimaryKeyRebuildPlan plan) {
         log.info("Primary-key rebuild of {}.{} {}: {}", plan.database(), plan.table(), step, sql);
-        try (Statement st = ch.createStatement()) {
-            st.execute(sql);
-        } catch (Exception e) {
-            throw new DDLReplicationException(failure(plan, step, "[" + sql + "]: " + e.getMessage()), e);
-        }
+        RebuildQueries.exec(ch, sql,
+                (q, e) -> new DDLReplicationException(failure(plan, step, "[" + q + "]: " + e.getMessage()), e));
+    }
+
+    /** The failure every read below raises: the step and the statement, never retried here. */
+    private static RebuildQueries.Failure readFailure(String step) {
+        return (q, e) -> new DDLReplicationException("Primary-key rebuild failed at " + step + " executing ["
+                + q + "]: " + e.getMessage(), e);
     }
 
     private static String scalar(Connection ch, String sql, String step) {
         log.info("Primary-key rebuild {}: {}", step, sql);
-        try (Statement st = ch.createStatement(); ResultSet rs = st.executeQuery(sql)) {
-            return rs.next() ? rs.getString(1) : null;
-        } catch (Exception e) {
-            throw new DDLReplicationException("Primary-key rebuild failed at " + step + " executing [" + sql + "]: "
-                    + e.getMessage(), e);
-        }
+        return RebuildQueries.scalar(ch, sql, readFailure(step));
     }
 
     /** The first {@code width} columns of every row of {@code sql}, as strings. */
     private static List<List<String>> rows(Connection ch, String sql, int width, String step) {
         log.info("Primary-key rebuild {}: {}", step, sql);
-        List<List<String>> out = new ArrayList<>();
-        try (Statement st = ch.createStatement(); ResultSet rs = st.executeQuery(sql)) {
-            while (rs.next()) {
-                List<String> row = new ArrayList<>(width);
-                for (int i = 1; i <= width; i++) {
-                    row.add(rs.getString(i));
-                }
-                out.add(row);
+        return RebuildQueries.rows(ch, sql, rs -> {
+            List<String> row = new ArrayList<>(width);
+            for (int i = 1; i <= width; i++) {
+                row.add(rs.getString(i));
             }
-        } catch (Exception e) {
-            throw new DDLReplicationException("Primary-key rebuild failed at " + step + " executing [" + sql + "]: "
-                    + e.getMessage(), e);
-        }
-        return out;
+            return row;
+        }, readFailure(step));
     }
 
     private static List<String> column(Connection ch, String sql, String step) {
         log.info("Primary-key rebuild {}: {}", step, sql);
-        List<String> values = new ArrayList<>();
-        try (Statement st = ch.createStatement(); ResultSet rs = st.executeQuery(sql)) {
-            while (rs.next()) {
-                values.add(rs.getString(1));
-            }
-        } catch (Exception e) {
-            throw new DDLReplicationException("Primary-key rebuild failed at " + step + " executing [" + sql + "]: "
-                    + e.getMessage(), e);
-        }
-        return values;
+        return RebuildQueries.column(ch, sql, readFailure(step));
     }
 
     private static List<ColumnInfo> columns(Connection ch, String db, String table, String step) {
-        String sql = "SELECT name, type, default_kind FROM system.columns WHERE database = '" + lit(db)
-                + "' AND table = '" + lit(table) + "' ORDER BY position";
+        String sql = RebuildQueries.columnsQuery(db, table);
         log.info("Primary-key rebuild {}: {}", step, sql);
-        List<ColumnInfo> columns = new ArrayList<>();
-        try (Statement st = ch.createStatement(); ResultSet rs = st.executeQuery(sql)) {
-            while (rs.next()) {
-                columns.add(new ColumnInfo(rs.getString(1), rs.getString(2), rs.getString(3)));
-            }
-        } catch (Exception e) {
-            throw new DDLReplicationException("Primary-key rebuild failed at " + step + " executing [" + sql + "]: "
-                    + e.getMessage(), e);
-        }
-        return columns;
+        return RebuildQueries.columns(ch, sql, readFailure(step));
     }
 
     static boolean dropTruncateDisabled(Properties props) {

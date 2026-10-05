@@ -50,6 +50,7 @@ verified) is what this spec automates.
   — the value object `enforcePrimaryKeyPolicy` produces instead of throwing
   (`MySqlDDLParserListenerImpl.enforcePrimaryKeyPolicy`,
   `MySqlDDLParserListenerImpl.primaryKeyRebuildPlan()`).
+- **Shared statements**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/RebuildQueries.java` — the one plain-JDBC implementation (one `Statement` per call, no retry, caller-built failure) behind the exec/scalar/column/columns helpers of both `PrimaryKeyRebuild` and `PrimaryKeyBackfill`; each caller keeps its own logging and failure type (`DDLReplicationException` / `PrimaryKeyBackfill.BackfillFailure`).
 - **Handoff**: `DDLParserService.primaryKeyRebuildPlan()` (default `null`;
   `MySQLDDLParserService` returns the plan of the last `parseSql`,
   `PostgreSQLDDLParserService` never produces one).
