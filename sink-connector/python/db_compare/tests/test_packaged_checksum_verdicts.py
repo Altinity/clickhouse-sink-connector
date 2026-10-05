@@ -48,6 +48,8 @@ def driver_args(**overrides):
         tables_regex=".", threads=1, where=None, debug_output=False, lock_tables_on_source=False,
         sleep_after_lock=0, no_wc=False, include_partitions_regex=None, exclude_tables_regex=None,
         non_partitioned_tables_only=False, partition_date=None, threads_per_table=1, fail_on_empty=False,
+        source_timezone="UTC", binary_encoding="hex", lock_wait_timeout=30, fail_on_lock_timeout=False,
+        include_floating_point_columns=False, include_json_columns=False,
     )
     values.update(overrides)
     return argparse.Namespace(**values)
@@ -66,6 +68,9 @@ def run_driver(side_outputs, tables=("orders",), config=CONFIG, json_columns=(),
         patch.object(pt, "mysql_pk_columns", return_value=["id"]),
         patch.object(pt, "get_min_max_pk_value", return_value=(1, 10)),
         patch.object(pt, "get_table_partition_key", return_value=None),
+        patch.object(pt, "resolve_source_timezone", return_value="UTC"),
+        patch.object(pt, "mysql_columns_by_data_type", return_value=[]),
+        patch.object(pt, "mysql_column_names", return_value=[]),
         patch.object(pt, "mysql_json_columns", return_value=list(json_columns)),
         patch.object(pt, "run_quick_safe_command", side_effect=side_outputs),
     ]
@@ -229,6 +234,17 @@ class TestPackagedDatetimeBounds(unittest.TestCase):
         pt.args = driver_args()
 
     def test_driver_passes_identical_full_range_bounds_to_both_sides(self):
+        # Without explicit bounds, nothing is forwarded: each side clamps to
+        # its own identical default, the full ClickHouse DateTime64 range
+        # (spec 13.06 section 3.6.1).
+        default_mysql_cmd = pt.get_mysql_checksum_command(MYSQL_HOST, "shop", "orders", "id", 10, where=None)
+        default_ch_cmd = pt.get_clickhouse_checksum_command(CH_HOST, "shop", "orders", "id", 10)
+        for cmd in (default_mysql_cmd, default_ch_cmd):
+            self.assertNotIn("--min_datetime_value", cmd)
+            self.assertNotIn("--max_datetime_value", cmd)
+        # Given explicitly, the driver forwards identical canonical bounds to
+        # both sides (spec 13.06 FM-13.06-6).
+        pt.args = driver_args(min_datetime_value=pt.DATETIME64_MIN_UTC, max_datetime_value=pt.DATETIME64_MAX_UTC)
         mysql_cmd = pt.get_mysql_checksum_command(MYSQL_HOST, "shop", "orders", "id", 10, where=None)
         ch_cmd = pt.get_clickhouse_checksum_command(CH_HOST, "shop", "orders", "id", 10)
         for flag, expected in (("--min_datetime_value", "1900-01-01 00:00:00"),
@@ -239,11 +255,17 @@ class TestPackagedDatetimeBounds(unittest.TestCase):
 
     def test_pre_1969_values_render_as_themselves_on_both_sides(self):
         mysql_select = mysql_select_for([("dt", "datetime", "NO", None)], args_overrides={
-            "min_datetime_value": pt.DATETIME_RANGE_MIN, "max_datetime_value": pt.DATETIME_RANGE_MAX})
+            "min_datetime_value": pt.DATETIME64_MIN_UTC, "max_datetime_value": pt.DATETIME64_MAX_UTC})
         ch_select = clickhouse_select_for([("dt", "DateTime64(0, 'UTC')", 0, None)], args_overrides={
-            "min_datetime_value": pt.DATETIME_RANGE_MIN, "max_datetime_value": pt.DATETIME_RANGE_MAX})
-        self.assertIn("<= '1900-01-01 00:00:00'", mysql_select)
-        self.assertIn("< '1900-01-01 00:00:00'", ch_select)
+            "min_datetime_value": pt.DATETIME64_MIN_UTC, "max_datetime_value": pt.DATETIME64_MAX_UTC})
+        # The clamp compares the canonical, microsecond-precision bound text
+        # (checksum_common.DATETIME_MIN/MAX), never a UNIX epoch, so a pre-1969
+        # value renders as itself rather than wrapping through 1970 (spec 11.02
+        # section 3.4).
+        self.assertIn("< '1900-01-01 00:00:00.000000'", mysql_select)
+        self.assertIn("< '1900-01-01 00:00:00.000000'", ch_select)
+        self.assertNotIn("1969", mysql_select)
+        self.assertNotIn("1969", ch_select)
 
     def test_standalone_side_defaults_agree(self):
         mysql_defaults = parsed_defaults(pm, ["--mysql_host", "h", "--mysql_database", "d", "--tables_regex", "t"])
@@ -264,16 +286,16 @@ class TestPackagedJsonCoverage(unittest.TestCase):
             select = mysql_select_for([("id", "int", "NO", None), ("j", "json", "YES", None), ("name", "varchar(10)", "NO", "utf8mb4_bin")])
         self.assertNotIn("json_pretty", select)
         self.assertNotIn("`j`", select)
-        self.assertTrue(any("JSON column `j`" in line for line in logs.output), logs.output)
+        self.assertTrue(any("JSON columns ['j']" in line for line in logs.output), logs.output)
 
     def test_clickhouse_side_excludes_named_json_string_columns_with_a_warning(self):
         with self.assertLogs(level="WARNING") as logs:
             select = clickhouse_select_for([("id", "Int32", 0, None), ("j", "Nullable(String)", 1, None),
                                             ("name", "String", 0, None)], args_overrides={"json_columns": "j"})
         self.assertEqual(select, "toString(\"id\")||'#'||toString(\"name\")"
-                                 "||'#'|| case when \"id\" is null then '1' else '0' end "
-                                 "|| case when \"name\" is null then '1' else '0' end ")
-        self.assertTrue(any('JSON column "j"' in line for line in logs.output), logs.output)
+                                 "||'#'||case when \"id\" is null then '1' else '0' end "
+                                 "|| case when \"name\" is null then '1' else '0' end")
+        self.assertTrue(any("JSON columns ['j']" in line for line in logs.output), logs.output)
 
     def test_driver_derives_json_columns_for_the_clickhouse_side(self):
         captured = []
@@ -289,8 +311,8 @@ class TestPackagedJsonCoverage(unittest.TestCase):
     def test_skipped_last_column_leaves_no_dangling_separator(self):
         select = clickhouse_select_for([("id", "Int32", 0, None), ("name", "String", 0, None), ("f", "Float64", 0, None)])
         self.assertEqual(select, "toString(\"id\")||'#'||toString(\"name\")"
-                                 "||'#'|| case when \"id\" is null then '1' else '0' end "
-                                 "|| case when \"name\" is null then '1' else '0' end ")
+                                 "||'#'||case when \"id\" is null then '1' else '0' end "
+                                 "|| case when \"name\" is null then '1' else '0' end")
 
 
 class TestPackagedClickHouseSideIsReadOnly(unittest.TestCase):
@@ -312,10 +334,10 @@ class TestPackagedClickHouseSideIsReadOnly(unittest.TestCase):
         self.assertFalse(any("CREATE FUNCTION" in str(call) for call in execute.call_args_list), execute.call_args_list)
 
     def test_calculate_checksum_runs_no_count_pre_check(self):
-        pc.args = argparse.Namespace(ignore_tables_regex=None, clickhouse_database="d")
+        pc.args = argparse.Namespace(ignore_tables_regex=None, clickhouse_database="d", sign_column="_sign")
         execute = MagicMock(return_value=([(0,)], 1))
         with patch.object(pc, "get_connection", return_value=MagicMock()), patch.object(pc, "execute_sql", execute), \
-                patch.object(pc, "get_table_checksum_query", return_value=("q", "s", "o", "")), \
+                patch.object(pc, "get_table_checksum_query", return_value=("q", "s", "o", "", "0", False)), \
                 patch.object(pc, "select_table_statements", return_value=["agg"]), \
                 patch.object(pc, "compute_checksum") as compute:
             pc.calculate_checksum("t", "u", "p", " 1=1 ", None)
@@ -344,12 +366,18 @@ class MappingRows(list):
 def mysql_select_for(columns, args_overrides=None, excluded_columns=()):
     """The packaged MySQL side's row expression for (name, column_type, is_nullable, collation) rows."""
     values = dict(mysql_database="shop", min_date_value="1900-01-01", max_date_value="2299-12-31",
-                  min_datetime_value="1900-01-01 00:00:00", max_datetime_value="2299-12-31 23:59:59")
+                  min_datetime_value="1900-01-01 00:00:00", max_datetime_value="2299-12-31 23:59:59",
+                  source_timezone="UTC")
     values.update(args_overrides or {})
     pm.args = argparse.Namespace(**values)
-    rows = MappingRows({"column_name": n, "data_type": t, "is_nullable": nl, "collation": c} for (n, t, nl, c) in columns)
+    # "Not compared" is warned once per (database, table, kind); clear it so
+    # every call sees its own warning regardless of what ran before it in the
+    # same pytest process (spec 11.02 section 3.9).
+    pm.warned_tables.clear()
+    rows = MappingRows({"column_name": n, "data_type": t, "column_type": t, "is_nullable": nl, "collation": c}
+                        for (n, t, nl, c) in columns)
     with patch.object(pm, "execute_mysql", return_value=(rows, -1)):
-        (query, select, order_by, external) = pm.get_table_checksum_query("orders", MagicMock(), "hex", None,
+        (query, select, order_by, external, clamped) = pm.get_table_checksum_query("orders", MagicMock(), "hex", None,
                                                                          list(excluded_columns), False, False)
     return select
 
@@ -358,16 +386,22 @@ def clickhouse_select_for(columns, args_overrides=None):
     """The packaged ClickHouse side's row expression for (name, type, is_nullable, scale) rows."""
     values = dict(clickhouse_database="shop", exclude_columns=[], hex_columns=[], include_floating_point_columns=False,
                   include_json_columns=False, json_columns="", min_datetime_value="1900-01-01 00:00:00",
-                  max_datetime_value="2299-12-31 23:59:59")
+                  max_datetime_value="2299-12-31 23:59:59", source_timezone="UTC", timestamp_columns="")
     values.update(args_overrides or {})
     pc.args = argparse.Namespace(**values)
+    pc.warned_tables.clear()
+
+    # system.columns rows are (name, type, is_nullable, numeric_scale,
+    # is_in_partition_key, is_in_sorting_key); the fixture's 4-tuples pad the
+    # last two with 0 (no partition/sorting key) unless given explicitly.
+    padded = [tuple(row) + (0, 0)[:max(0, 6 - len(row))] for row in columns]
 
     def execute_sql(conn, sql):
         if "is_in_primary_key" in sql:
             return ([], 0)
-        return (list(columns), len(columns))
+        return (padded, len(padded))
     with patch.object(pc, "execute_sql", side_effect=execute_sql):
-        (query, select, order_by, external) = pc.get_table_checksum_query(MagicMock(), "orders")
+        (query, select, order_by, external, clamped, final_per_partition) = pc.get_table_checksum_query(MagicMock(), "orders")
     return select
 
 
@@ -396,13 +430,13 @@ class TestPackagedNullFlagsOverEveryComparedColumn(unittest.TestCase):
         self.assertEqual(packaged_mysql_flag_columns(mysql_select), ["id", "name", "is_valid"])
         self.assertEqual(packaged_clickhouse_flag_columns(ch_select), ["id", "name", "is_valid"])
         self.assertEqual(mysql_select, "`id`,ifnull(`name`,''),ifnull(`is_valid`,''),"
-                                       " concat(ISNULL(`id`),ISNULL(`name`),ISNULL(`is_valid`))")
+                                       "concat(ISNULL(`id`),ISNULL(`name`),ISNULL(`is_valid`))")
         self.assertEqual(ch_select,
-                         "toString(\"id\")||'#'|| case when \"name\" is null then '' else toString(\"name\") end"
+                         "toString(\"id\")||'#'||case when \"name\" is null then '' else toString(\"name\") end"
                          "||'#'||toString(\"is_valid\")"
-                         "||'#'|| case when \"id\" is null then '1' else '0' end "
+                         "||'#'||case when \"id\" is null then '1' else '0' end "
                          "|| case when \"name\" is null then '1' else '0' end "
-                         "|| case when \"is_valid\" is null then '1' else '0' end ")
+                         "|| case when \"is_valid\" is null then '1' else '0' end")
 
     def test_excluded_and_skipped_columns_contribute_no_flag(self):
         mysql_select = mysql_select_for([("id", "int", "NO", None), ("f", "double", "YES", None),
@@ -412,11 +446,11 @@ class TestPackagedNullFlagsOverEveryComparedColumn(unittest.TestCase):
                                            ("j", "Nullable(String)", 1, None), ("secret", "Nullable(String)", 1, None),
                                            ("name", "String", 0, None)],
                                           args_overrides={"exclude_columns": ["secret"], "json_columns": "j"})
-        self.assertEqual(mysql_select, "`id`,`name`, concat(ISNULL(`id`),ISNULL(`name`))")
+        self.assertEqual(mysql_select, "`id`,`name`,concat(ISNULL(`id`),ISNULL(`name`))")
         self.assertEqual(ch_select,
                          "toString(\"id\")||'#'||toString(\"name\")"
-                         "||'#'|| case when \"id\" is null then '1' else '0' end "
-                         "|| case when \"name\" is null then '1' else '0' end ")
+                         "||'#'||case when \"id\" is null then '1' else '0' end "
+                         "|| case when \"name\" is null then '1' else '0' end")
 
     def test_table_without_nullable_columns_gets_one_flag_per_column(self):
         mysql_select = mysql_select_for([("id", "int", "NO", None), ("name", "varchar(32)", "NO", None)])

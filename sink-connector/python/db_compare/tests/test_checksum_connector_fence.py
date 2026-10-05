@@ -589,6 +589,7 @@ class TestSnapshotSideProtocol(unittest.TestCase):
         execute_mysql logs at WARNING and the scheduled job fails on."""
         import gc
         import warnings
+        gc.collect()
         with warnings.catch_warnings(record=True) as caught, self.assertLogs(level="INFO"):
             warnings.simplefilter("always")
             tl.run_snapshot_side(self.cmd, "db1", "orders", lambda position: {"column": None, "keys": []})

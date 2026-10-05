@@ -95,7 +95,7 @@ def run_driver(side_outputs, tables=("orders",), config=None, source_columns=(),
 
 
 def is_mysql_side(cmd):
-    return "db_compare/mysql_table_checksum.py" in cmd
+    return tl.MYSQL_SIDE_MODULE in cmd
 
 
 class TestFailedSidesAreErrors(unittest.TestCase):
@@ -196,8 +196,14 @@ class TestArgumentsReachTheSideUnchanged(unittest.TestCase):
         stand_in_python(self.tmp.name)
         self.env = patch.dict(os.environ, {"PATH": self.tmp.name + os.pathsep + os.environ.get("PATH", "")})
         self.env.start()
+        # The sides are started as `<interpreter> -m <side module>` (spec 13.06 FM-13.06-1); the
+        # stand-in takes the interpreter's place so the real argv is still what is checked.
+        self.launcher = patch.object(tl, "side_command",
+                                     lambda module: [os.path.join(self.tmp.name, "python"), "-m", module])
+        self.launcher.start()
 
     def tearDown(self):
+        self.launcher.stop()
         self.env.stop()
         self.tmp.cleanup()
 

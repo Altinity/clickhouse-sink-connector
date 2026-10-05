@@ -10,6 +10,8 @@ ENV CLICKHOUSE_PASSWORD clickhouse_password_value
 
 COPY db db
 COPY db_compare db_compare
+# db/ and db_compare/ are compatibility paths of ch_sink_tools (spec 13.01 section 3.16)
+COPY ch_sink_tools ch_sink_tools
 
 COPY requirements.txt requirements.txt
 RUN pip install -r requirements.txt

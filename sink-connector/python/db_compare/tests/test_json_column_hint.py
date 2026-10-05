@@ -51,8 +51,9 @@ def test_clickhouse_side_warning_has_no_hint(caplog):
 def test_packaged_mysql_side_names_the_flag_and_the_columns(caplog):
     with caplog.at_level(logging.WARNING):
         packaged.mysql_select_for([("id", "int", "NO", None), ("j", "json", "YES", None), ("k", "json", "YES", None)])
-    json_warnings = [w for w in warnings_of(caplog) if "JSON column" in w]
-    assert len(json_warnings) == 2 and all(w.endswith(f"; {HINT})") for w in json_warnings), json_warnings
+    json_warnings = [w for w in warnings_of(caplog) if "JSON columns ['j', 'k']" in w]
+    assert len(json_warnings) == 1, warnings_of(caplog)
+    assert json_warnings[0].endswith(f"; {HINT})"), json_warnings[0]
 
 
 def test_drivers_relay_the_side_note_without_the_hint():

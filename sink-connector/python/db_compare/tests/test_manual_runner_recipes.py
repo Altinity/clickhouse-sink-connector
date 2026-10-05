@@ -357,10 +357,12 @@ class TestDebugOutput(InTemporaryDirectory):
     def test_packaged_mysql_side(self):
         pm.args = argparse.Namespace(
             mysql_host="h", mysql_port=3306, mysql_database="shop", where="id > 0", ignore_tables_regex=None,
-            threads_per_table=1, chunk_size=10000, debug_output=True, debug_limit=None, binary_encoding="base64")
+            threads_per_table=1, chunk_size=10000, debug_output=True, debug_limit=None, binary_encoding="base64",
+            min_date_value="1900-01-01", max_date_value="2299-12-31", min_datetime_value=DATETIME_MIN,
+            max_datetime_value=DATETIME_MAX, source_timezone="UTC")
         with patch.object(pm, "get_mysql_connection", return_value=MagicMock()), \
                 patch.object(pm, "mysql_pk_columns", return_value=[]), \
-                patch.object(pm, "get_table_checksum_query", return_value=("q", "`id`", "", "")), \
+                patch.object(pm, "get_table_checksum_query", return_value=("q", "`id`", "", "", "0")), \
                 patch.object(pm, "execute_mysql", side_effect=lambda conn, sql: self.mysql_engine(sql)), \
                 self.assertLogs(level="INFO") as logs:
             pm.calculate_checksum("orders", "u", "p", RECIPE_MYSQL_EXCLUSIONS, False, False)
@@ -393,9 +395,9 @@ class TestDebugOutput(InTemporaryDirectory):
     def test_packaged_clickhouse_side(self):
         pc.args = argparse.Namespace(
             clickhouse_database="shop", ignore_tables_regex=None, sign_column="", debug_output=True,
-            debug_limit=None, max_memory_usage=None)
+            debug_limit=None, max_memory_usage=None, min_datetime_value=DATETIME_MIN, max_datetime_value=DATETIME_MAX)
         with patch.object(pc, "get_connection", return_value=MagicMock()), \
-                patch.object(pc, "get_table_checksum_query", return_value=("q", "toString(\"id\")", "", "")), \
+                patch.object(pc, "get_table_checksum_query", return_value=("q", "toString(\"id\")", "", "", "0", False)), \
                 patch.object(pc, "execute_sql", side_effect=lambda conn, sql: self.clickhouse_engine(sql)), \
                 self.assertLogs(level="INFO") as logs:
             pc.calculate_checksum("orders", "u", "p", " 1=1 and id > 0", None)

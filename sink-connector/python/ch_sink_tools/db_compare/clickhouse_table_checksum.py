@@ -15,7 +15,7 @@ import datetime
 import warnings
 import re
 import os
-import hashlib
+import json
 import concurrent.futures
 from ch_sink_tools.db.clickhouse import (
     clickhouse_connection,
@@ -23,6 +23,11 @@ from ch_sink_tools.db.clickhouse import (
     get_table_partition_key,
     resolve_credentials_from_config,
 )
+from ch_sink_tools.db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
+                                clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
+                                validate_timezone, shift_datetime_bounds, saturation_floor, parse_column_list,
+                                warn_not_compared,
+                                parse_exclude_columns)
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
@@ -56,8 +61,6 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
             if result != None and rowcount > 0:
                 x = [element for tupl in result for element in tupl]
 
-                md5_sum = ""
-                cnt = -1
                 if position > 0:
                     for line in x:
                         if isinstance(line, bytes):
@@ -66,17 +69,15 @@ def compute_checksum(table, clickhouse_user, clickhouse_password, statements):
                             debug_out.write(line)
                         debug_out.write('\n')
                 else:
-                    for line in x:
-                        logging.debug(str(line))
-                        md5_sum += str(line) + '#'
-                        if cnt == - 1:
-                            cnt = str(line)
-
-                    logging.debug(md5_sum)
-                    m = hashlib.md5()
-                    m.update(md5_sum.encode('utf-8'))
+                    logging.debug(str(x))
+                    (cnt, a, b, c, d) = x[0:5]
+                    clamped = x[5] if len(x) > 5 else 0
+                    checksum = checksum_from_aggregate(cnt, a, b, c, d)
+                    if clamped > 0:
+                        (min_datetime_value, max_datetime_value) = datetime_bounds(args)
+                        logging.warning(f"{clamped} out-of-range datetime values clamped to [{min_datetime_value}, {max_datetime_value}] in table {args.clickhouse_database}.{table}")
                     logging.info("Checksum for table "+args.clickhouse_database +
-                                 "."+table+" = "+m.hexdigest() + " count "+str(cnt))
+                                 "."+table+" = "+checksum + " count "+str(cnt))
 
         if args.debug_output:
             debug_out.close()
@@ -100,112 +101,257 @@ def get_primary_key_columns(conn, table_schema, table_name):
     return res
 
 
-def get_table_checksum_query(conn, table):
-    # 'a b' (space-separated words) and 'a,b' name the same columns, as on the
-    # MySQL side (spec 13.06 D-13.06-17).
-    excluded_columns = [name.strip() for token in (args.exclude_columns or []) for name in str(token).split(',') if name.strip()]
-    logging.info(f"Excluded columns, {excluded_columns}")
-    excluded_columns_str = ','.join((f"'{col}'" for col in excluded_columns))
-    checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' order by position"
-    (rowset, rowcount) = execute_sql(conn, checksum_query)
+# Metadata columns managed by the sink connector itself. The un-exclusion rule in
+# get_table_checksum_query() exists only for these (e.g. the is_deleted/_is_deleted
+# pair): a user-supplied excluded column must never be silently re-added just
+# because an unrelated underscore-prefixed column happens to share its name.
+SINK_METADATA_COLUMNS = frozenset(
+    {"_sign", "_version", "is_deleted", "_is_deleted", "__is_deleted"}
+)
 
-    select = ""
+# (database, table, kind) already reported as not compared (spec 11.02 section 3.9).
+warned_tables = set()
+
+
+def is_datetime_type(data_type):
+    """DateTime, DateTime32, DateTime64 and their Nullable / time-zoned forms."""
+    return "DateTime" in data_type
+
+
+def clickhouse_datetime_rendering(column_name, zone):
+    """Canonical text of a DateTime / DateTime64 column (spec 11.02 section 3.4):
+    'YYYY-MM-DD HH:MM:SS.ffffff', six digits whatever the column's scale, the
+    stored instant rendered in ``zone`` -- 'UTC' for a MySQL TIMESTAMP (an
+    instant), the source zone for a MySQL DATETIME (a wall clock)."""
+    return f"toString(toDateTime64({column_name}, 6), '{zone}')"
+
+
+def clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds=(DATETIME_MIN, DATETIME_MAX), zone='UTC', raw_bytes=False,
+                                 saturate_from=None):
+    """Text rendering of one ClickHouse column (spec 11.02 section 3.3).
+
+    ``column_name`` is already double-quoted. ``options`` is the parsed argument
+    namespace (only its rendering options are read). ``bounds`` are the
+    canonical (min, max) datetime clamp bounds in ``zone`` and
+    ``saturate_from`` the start of the saturated last day in ``zone``
+    (``saturation_floor()``). ``raw_bytes`` marks
+    a String column that holds raw bytes (persist.raw.bytes=true, spec 11.02
+    section 3.6): it is rendered as lowercase hex like the MySQL side.
+    """
+    if 'Bool' in data_type:
+        # Bool and Nullable(Bool); MySQL renders bit(1) / tinyint as 1 / 0,
+        # toString(Bool) would give true / false.
+        return "toString(toUInt8(" + column_name + "))"
+    if "Decimal" in data_type:
+        # toString() drops trailing zeros; MySQL prints the declared scale.
+        return "toDecimalString(" + column_name + "," + str(numeric_scale) + ")"
+    if is_datetime_type(data_type):
+        return clamp_datetime_expression(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1], 'clickhouse',
+                                         saturate_from)
+    if raw_bytes and 'String' in data_type:
+        return "lower(hex(" + column_name + "))"
+    return "toString(" + column_name + ")"
+
+
+def build_clickhouse_row_expression(columns_metadata, options):
+    """Build the canonical row expression from ``system.columns`` rows.
+
+    ``columns_metadata`` rows are ``(name, type, is_nullable, numeric_scale)`` in
+    position order, already filtered of excluded columns. Returns
+    ``(select, nullables, columns, data_types, clamped_expression)`` where
+    ``select`` is the pieces joined by ``||'#'||`` and ``clamped_expression``
+    the per-row count of datetime values the clamp changed.
+
+    The pieces are collected in a list and joined, never built by appending a
+    separator after each column: a column skipped by type (floating point,
+    JSON) must contribute neither a value nor a separator, otherwise a table
+    whose last column is a skipped Float64 hashes ``1#bob#`` here against
+    ``1#bob`` from MySQL's concat_ws (spec 11.02 section 3.3).
+
+    The null flags are one trailing part with one flag per compared column,
+    Nullable or not (a non-Nullable column yields '0'), so a column declared
+    nullable on MySQL and non-Nullable here gives the same flags for equal
+    values (spec 13.06 D-13.06-40). ``nullables`` lists the compared columns
+    declared Nullable (the ones whose value has the NULL guard).
+    """
+    parts = []
     nullables = []
-    # every compared column gets a value-based null flag, Nullable or not (a
-    # non-Nullable column yields '0'), so a nullability mismatch with the
-    # source gives the same flags for equal values (spec 13.06 D-13.06-40)
     compared = []
     columns = []
     data_types = {}
-    first_column = True
+    clamped_flags = []
+    # TIMESTAMP-origin columns compare as UTC instants; every other datetime
+    # column as the wall clock of the source zone (spec 11.02 section 3.4).
+    utc_bounds = datetime_bounds(options)
+    source_zone = options.source_timezone
+    wall_clock_bounds = shift_datetime_bounds(utc_bounds, source_zone)
+    # The last day of the range is saturated on both sides (spec 11.02 section 3.4).
+    utc_floor = saturation_floor(utc_bounds, 'UTC')
+    wall_clock_floor = saturation_floor(utc_bounds, source_zone)
+    timestamp_columns = parse_column_list(options.timestamp_columns)
+    # --hex_columns names the String columns that hold raw bytes; with hex or
+    # base64 the replica already holds encoded text (spec 11.02 section 3.6).
+    hex_columns = parse_column_list(",".join(options.hex_columns))
+    if hex_columns and options.binary_encoding != 'raw':
+        raise ValueError("--hex_columns names columns that hold raw bytes and requires --binary_encoding raw; "
+                         f"with --binary_encoding {options.binary_encoding} the replica already holds encoded text")
+    # String columns that replicate a MySQL JSON column; the catalog cannot
+    # tell them from any other String (spec 11.02 section 3.9).
+    json_columns = parse_column_list(options.json_columns)
+    skipped = {"floating point": [], "JSON": []}
+    for row in columns_metadata:
+        column_name = '"' + row[0] + '"'
+        data_type = row[1]
+        is_nullable = row[2]
+        numeric_scale = row[3]
+        columns.append(row[0])
+        data_types[row[0]] = data_type
+        if row[0] in timestamp_columns:
+            (zone, bounds, floor) = ('UTC', utc_bounds, utc_floor)
+        else:
+            (zone, bounds, floor) = (source_zone, wall_clock_bounds, wall_clock_floor)
+        if not options.include_floating_point_columns and 'Float' in data_type:
+            skipped["floating point"].append(row[0])
+            continue
+        if not options.include_json_columns and ('json' in data_type.lower() or row[0] in json_columns):
+            skipped["JSON"].append(row[0])
+            continue
+        expression = clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds, zone,
+                                                  raw_bytes=(row[0] in hex_columns), saturate_from=floor)
+        if is_datetime_type(data_type):
+            clamped_flags.append(clamped_datetime_flag(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1],
+                                                       floor))
+        if is_nullable == 1:
+            nullables.append(column_name)
+            expression = "case when " + column_name + " is null then '' else " + expression + " end"
+        parts.append(expression)
+        compared.append(column_name)
+    logging.debug(str(nullables))
+    if len(compared) > 0:
+        parts.append(" || ".join(
+            "case when " + compared_column + " is null then '1' else '0' end" for compared_column in compared))
+    select = "||'#'||".join(parts)
+    return (select, nullables, columns, data_types, clamped_count_expression(clamped_flags), skipped)
+
+
+def sign_column_from_engine(engine_full):
+    """The row filter column implied by the engine (spec 11.02 section 3.8):
+    the sign of CollapsingMergeTree / VersionedCollapsingMergeTree (and their
+    Replicated variants, whose first two arguments are the quoted ZooKeeper
+    path and replica name); '' for every other engine -- ReplacingMergeTree
+    (_version, is_deleted) drops deleted rows under FINAL by itself."""
+    match = re.match(r"\s*(?:Replicated)?(?:Versioned)?CollapsingMergeTree\s*\((.*?)\)", engine_full or "")
+    if not match:
+        return ''
+    arguments = [argument.strip() for argument in match.group(1).split(',')]
+    unquoted = [argument for argument in arguments if argument and not argument.startswith(("'", '"'))]
+    return unquoted[0] if unquoted else ''
+
+
+def get_engine_full(conn, database, table):
+    sql = f"select engine_full from system.tables where database = '{database}' and name = '{table}'"
+    (rowset, count) = execute_sql(conn, sql)
+    return rowset[0][0] if rowset else ''
+
+
+def partition_key_within_sorting_key(columns_metadata):
+    """True when the table has a partition key and every partition-key column
+    is a sorting-key column, so a row cannot change partition without changing
+    its sorting key and per-partition FINAL is exact (spec 11.02 section 3.7).
+    Rows are (name, type, is_nullable, numeric_scale, is_in_partition_key,
+    is_in_sorting_key)."""
+    partition_columns = [row for row in columns_metadata if row[4] == 1]
+    return len(partition_columns) > 0 and all(row[5] == 1 for row in partition_columns)
+
+
+def parse_source_columns(text):
+    """The names given to ``--source_columns``: a JSON list of strings (what the
+    driver passes, so a name holding a comma or a space survives), or, typed by
+    hand, a comma separated list. Empty gives an empty set. A malformed JSON
+    list raises ValueError: guessing would compare the wrong columns."""
+    text = (text or "").strip()
+    if not text.startswith("["):
+        return parse_column_list(text)
+    names = json.loads(text)
+    if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+        raise ValueError(f"--source_columns must be a JSON list of column names, got {text!r}")
+    return set(names)
+
+
+def restrict_to_source_columns(database, table, columns_metadata, source_columns_text, excluded_columns, warned):
+    """The rows of ``columns_metadata`` whose column the source table also has
+    (spec 11.02 section 3.3, column set). ``source_columns_text`` is the
+    driver's ``--source_columns``: the source table's column names as a JSON
+    list (``parse_source_columns()``). Empty means "unknown" and keeps every
+    row, as before.
+
+    A replica column with no source column of the same name (compared without
+    regard to case, as MySQL names columns) holds no replicated value, so
+    hashing it can only make the two sides differ: it is left out of the row
+    string and named in one ``Replica-only columns in table <db>.<table>:``
+    WARNING per table. The driver parses that line: by default it reports the
+    columns as a schema-drift finding that fails the run, and with
+    ``--allow_replica_only_columns`` it relays them as a note (spec 11.02
+    section 3.9). A source column the replica lacks cannot be left out
+    here (the source side hashes it), so the run still reports DIFFERENT; the
+    WARNING names the missing column so the difference explains itself."""
+    source_columns = parse_source_columns(source_columns_text)
+    if not source_columns:
+        return columns_metadata
+    source_lower = {name.lower() for name in source_columns}
+    replica_lower = {row[0].lower() for row in columns_metadata}
+    excluded_lower = {name.lower() for name in excluded_columns} | SINK_METADATA_COLUMNS
+    kept = [row for row in columns_metadata if row[0].lower() in source_lower]
+    replica_only = [row[0] for row in columns_metadata if row[0].lower() not in source_lower]
+    missing = sorted(name for name in source_columns
+                     if name.lower() not in replica_lower and name.lower() not in excluded_lower)
+    if replica_only and (database, table, "replica-only") not in warned:
+        warned.add((database, table, "replica-only"))
+        logging.warning(f"Replica-only columns in table {database}.{table}: {replica_only} "
+                        "(present on the ClickHouse destination, absent from the source table; not compared)")
+    if missing and (database, table, "missing") not in warned:
+        warned.add((database, table, "missing"))
+        logging.warning(f"Source columns missing in table {database}.{table} on the replica: {missing} "
+                        "(the source side hashes them and this side cannot, so the table reports DIFFERENT "
+                        "until the replica has them; a column the source side skips by type, floating point "
+                        "or JSON by default, does not differ)")
+    return kept
+
+
+def get_table_checksum_query(conn, table):
+    # 'a b' (space-separated words) and 'a,b' name the same columns, as on the
+    # MySQL side (spec 13.06 D-13.06-17).
+    excluded_columns = parse_exclude_columns(args.exclude_columns)
+    logging.info(f"Excluded columns, {excluded_columns}")
+    checksum_query="select name, type, if(match(type,'Nullable'),1,0) is_nullable, numeric_scale, is_in_partition_key, is_in_sorting_key from system.columns where database='" + args.clickhouse_database+"' and table = '"+table+"' order by position"
+    (rowset, rowcount) = execute_sql(conn, checksum_query)
+
     columns_metadata  = []
-    for row in rowset:    
+    for row in rowset:
         columns_metadata.append(row)
     columns_metadata_map = { r[0]: r for r in columns_metadata }
     # sometimes we have excluded columns like is_deleted and _is_deleted, we would exclude the one prefixed with _
     filtered_columns_metadata = []
-    for row in columns_metadata:   
+    for row in columns_metadata:
         prefixed_column = "_"+row[0]
-        if row[0] in excluded_columns and prefixed_column in columns_metadata_map:
+        if (row[0] in excluded_columns
+                and prefixed_column in columns_metadata_map
+                and row[0] in SINK_METADATA_COLUMNS):
             logging.info(f"Not excluding column {row[0]} as {prefixed_column} is also excluded")
         elif row[0] in excluded_columns:
             logging.info(f"Excluding column {row[0]}")
             continue
         filtered_columns_metadata.append(row)
-       
-    json_columns = set(name.strip() for name in (args.json_columns or "").split(",") if name.strip())
-    for row in filtered_columns_metadata:
-        column_name = '"'+row[0]+'"'
-        data_type = row[1]
-        is_nullable = row[2]
-        numeric_scale = row[3]
-        columns.append(row[0])
-        unhex = row[0] in args.hex_columns
-        if not args.include_floating_point_columns:
-            if 'Float' in data_type:
-                logging.warning(f"Not compared in table {args.clickhouse_database}.{table}: floating point column {column_name} of type {data_type} (pass --include_floating_point_columns to compare it)")
-                continue
-        if not args.include_json_columns:
-            # Native JSON types, and the String columns that replicate a MySQL
-            # JSON column (--json_columns): not compared by default, like the
-            # MySQL side (spec 13.06 FM-13.06-7).
-            if 'json' in data_type.lower() or row[0] in json_columns:
-                logging.warning(f"Not compared in table {args.clickhouse_database}.{table}: JSON column {column_name} of type {data_type} (pass --include_json_columns for a best-effort comparison)")
-                continue
-        if not first_column:
-            # The separator goes before every compared column but the first,
-            # so a skipped last column leaves no dangling '#' (the MySQL side
-            # joins the compared columns with concat_ws('#', ...)).
-            select += "||'#'||"
-        compared.append(column_name)
+    filtered_columns_metadata = restrict_to_source_columns(
+        args.clickhouse_database, table, filtered_columns_metadata, getattr(args, "source_columns", ""),
+        excluded_columns, warned_tables)
 
-        if is_nullable == 1:
-            nullables.append(column_name)
-            select += " case when "+column_name+" is null then '' else "
-            if first_column:
-                select += " "
-
-        if 'timestamp' in data_type:
-            select += "replace(to_char("+column_name + \
-                ",'YYYY-MM-DD HH24:MI:SS.US'),'1900-01-01 ','')"
-        else:
-            if 'Bool' == data_type:
-                select += "toString(toUInt8("+column_name+"))"
-            elif 'date' == data_type:
-                select += "to_char("+column_name + ",'YYYY-MM-DD')"
-            elif "Decimal" in data_type:
-                # custom function due to https://github.com/ClickHouse/ClickHouse/issues/30934
-                # requires this function : CREATE OR REPLACE FUNCTION format_decimal AS (x, scale) -> if(locate(toString(x),'.')>0,concat(toString(x),repeat('0',toUInt8(scale-(length(toString(x))-locate(toString(x),'.'))))),concat(toString(x),'.',repeat('0',toUInt8(scale))))
-                select += "toDecimalString("+column_name + \
-                    ","+str(numeric_scale)+")"
-            elif "DateTime64(0" in data_type:
-                select += f"if(toString({column_name}) >= '{args.max_datetime_value}', '{args.max_datetime_value}', if(toString({column_name}) < '{args.min_datetime_value}', '{args.min_datetime_value}', trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))))"
-            elif "DateTime64(6" in data_type:
-                select += f"if(toString({column_name}) >= '{args.max_datetime_value}', '{args.max_datetime_value}', if(toString({column_name}) < '{args.min_datetime_value}', '{args.min_datetime_value}', trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))))"
-            elif "DateTime" in data_type:
-                select += f"trim(TRAILING '.' from (trim(TRAILING '0' FROM toString({column_name}))))"
-            else:
-                if 'time without time zone' == data_type:
-                    select += "replace(to_char("+column_name + \
-                        ",'HH24:MI:SS.US'),'1900-01-01 ','')"
-                else:
-                    if unhex:
-                        select += "toString(unhex("+column_name + "))"
-                    else:
-                        select += "toString("+column_name + ")"
-
-        if is_nullable == 1:
-            select += " end"
-
-        first_column = False
-        data_types[row[0]] = data_type
-    logging.debug(str(nullables))
-    if len(compared) > 0:
-        select += "||'#'"
-        for compared_column in compared:
-            select += "|| case when "+compared_column+" is null then '1' else '0' end "
-    query = "select "+select+"||','  as query from " + \
-        args.clickhouse_database+"."+table
+    (select, nullables, columns, data_types, clamped_expression, skipped) = build_clickhouse_row_expression(filtered_columns_metadata, args)
+    warn_not_compared(args.clickhouse_database, table, skipped, warned_tables)
+    final_per_partition = partition_key_within_sorting_key(columns_metadata)
+    partition_columns = [row[0] for row in columns_metadata if row[4] == 1]
+    logging.info(f"FINAL per partition: {final_per_partition} (partition key columns {partition_columns}; "
+                 "per-partition FINAL is used only when all of them are in the sorting key)")
 
     primary_key_columns = get_primary_key_columns(conn,
         args.clickhouse_database, table)
@@ -227,13 +373,16 @@ def get_table_checksum_query(conn, table):
         external_column_types += ","+column+" "+data_types[column]
 
     logging.debug("order by columns "+order_by_columns)
-    return (query, select, order_by_columns, external_column_types)
+    return (query, select, order_by_columns, external_column_types, clamped_expression, final_per_partition)
 
-@staticmethod
 def fstr(template, partition_expression):
-        return eval(f"f'{template}'")
+        # Safe substitution: only replace {partition_expression} placeholder
+        # instead of eval() which allows arbitrary code execution
+        if partition_expression is not None:
+            return template.replace('{partition_expression}', str(partition_expression))
+        return template
 
-def select_table_statements(table, query, select_query, order_by, external_column_types, _where):
+def select_table_statements(table, query, select_query, order_by, external_column_types, _where, clamped_expression="0", final_per_partition=False, sign_column=""):
     statements = []
     external_table_name = args.clickhouse_database+"."+table
     limit = ""
@@ -243,36 +392,46 @@ def select_table_statements(table, query, select_query, order_by, external_colum
     if _where:
        where = _where
     schema=args.clickhouse_database
-    # skip deleted rows
-    if args.sign_column != '':
-      where+= f" and {args.sign_column} > 0 "
+    # skip deleted rows of a Collapsing engine; a ReplacingMergeTree with
+    # is_deleted needs no filter, FINAL drops them (spec 11.02 section 3.8)
+    if sign_column:
+        where += f" and {sign_column} > 0 "
 
-    memory_setting = ""
+    # do_not_merge_across_partitions_select_final only when the partition key
+    # is a function of the sorting key (spec 11.02 section 3.7); otherwise an
+    # UPDATE that moved a row to another partition would leave its old
+    # version visible and the table would look DIFFERENT while equal.
+    settings = []
+    if final_per_partition:
+        settings.append("do_not_merge_across_partitions_select_final=1")
     max_memory_usage = args.max_memory_usage
     if max_memory_usage:
-        memory_setting = f", max_memory_usage = {max_memory_usage}"
+        settings.append(f"max_memory_usage = {max_memory_usage}")
+    settings_clause = (" settings " + ", ".join(settings)) if settings else ""
 
     sql = f"""select
       count(*) as "cnt",
       coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 1, 8))))),0) as "a",
       coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 9, 8))))),0) as "b",
       coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 17, 8))))),0) as "c",
-      coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 25, 8))))),0) as "d"
+      coalesce(sum(reinterpretAsInt64(reverse(unhex(substring(hash, 25, 8))))),0) as "d",
+      coalesce(sum(clamped),0) as "clamped"
     from (
      select hex(MD5(
 
        {select_query}
 
-      )) as "hash"
+      )) as "hash",
+      {clamped_expression} as clamped
 
       from {schema}.{table} final where {where} /*order by {order_by}*/ {limit}
 
-	  ) as t settings do_not_merge_across_partitions_select_final=1 {memory_setting}"""
+	  ) as t{settings_clause}"""
     statements.append(sql)
     if args.debug_output:
         # The per-row strings, written to out.<table>.ch.txt by
         # compute_checksum after the aggregate (spec 13.06 D-13.06-27).
-        statements.append(f"""select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit} settings do_not_merge_across_partitions_select_final=1""")
+        statements.append(f"""select  {select_query}  as "hash"   from {schema}.{table} final where  {where} {limit}{settings_clause}""")
     return statements
 
 
@@ -303,23 +462,28 @@ def calculate_checksum(table, clickhouse_user, clickhouse_password, where, parti
     #
     # Create new threads to execute the sync
     conn = get_connection(clickhouse_user, clickhouse_password)
-    if where:
-        if "{partition_expression}" in where:
-           if partition_key is None:
-                partition_key = get_table_partition_key(conn, args.clickhouse_database, table)
-                logging.info(partition_key)
-                if len(partition_key) > 0 :
-                    partition_key = partition_key[0][0]
-           if partition_key is None or partition_key=='':
-               logging.warning(f"{args.clickhouse_database}.{table} has no partitioning key")
-           where = fstr(where, partition_key)
-    # No separate count pre-check: an empty selection gives
-    # md5('0#0#0#0#0#') count 0 from the aggregate itself, as on the MySQL side.
+    if where and "{partition_expression}" in where:
+        if partition_key is None:
+            partition_key = get_table_partition_key(conn, args.clickhouse_database, table)
+            logging.info(partition_key)
+            if len(partition_key) > 0 :
+                partition_key = partition_key[0][0]
+        if partition_key is None or partition_key=='':
+            logging.warning(f"{args.clickhouse_database}.{table} has no partitioning key")
+        where = fstr(where, partition_key)
+    # An empty table goes through the aggregate like any other and prints
+    # md5('0#0#0#0#0#') count 0, the same value as the source side (spec 11.02
+    # section 3.5); there is no separate count pre-check.
     # generate the file from ClickHouse
+    sign_column = getattr(args, "sign_column", "")
+    if not sign_column:
+        engine_full = get_engine_full(conn, args.clickhouse_database, table)
+        sign_column = sign_column_from_engine(engine_full)
+        logging.info(f"Row filter for {args.clickhouse_database}.{table}: sign column '{sign_column}' derived from engine {engine_full}")
     (query, select_query, distributed_by,
-     external_table_types) = get_table_checksum_query(conn, table)
+     external_table_types, clamped_expression, final_per_partition) = get_table_checksum_query(conn, table)
     statements = select_table_statements(
-        table, query, select_query, distributed_by, external_table_types, where)
+        table, query, select_query, distributed_by, external_table_types, where, clamped_expression, final_per_partition, sign_column)
     compute_checksum(table, clickhouse_user, clickhouse_password, statements)
 
 
@@ -336,8 +500,7 @@ def record_factory(*args, **kwargs):
 logging.setLogRecordFactory(record_factory)
 
 
-def main():
-
+def build_argument_parser():
     parser = argparse.ArgumentParser(description='''
   Compute the table checksum using the same technique as pt-checksum, md5 algorithm.
 
@@ -350,7 +513,7 @@ def main():
     parser.add_argument('--clickhouse_database', help='ClickHouse database', required=True)
     parser.add_argument('--clickhouse_port',  help='ClickHouse port', default=9000, required=False)
     parser.add_argument('--secure', help='True or False', default=False, required=False)
-    parser.add_argument('--sign_column', help='Override sign column, by default its _sign', default='_sign', required=False)
+    parser.add_argument('--sign_column', help='Column whose value > 0 marks a live row. Default: derived from the engine -- the sign of a (Replicated)(Versioned)CollapsingMergeTree, no filter otherwise (ReplacingMergeTree(ver, is_deleted) drops deleted rows under FINAL)', default='', required=False)
     parser.add_argument('--tables_regex', help='table regexp', required=True)
     parser.add_argument('--where', help='where clause', required=False)
     parser.add_argument('--order_by', help='order by` clause', required=False)
@@ -359,21 +522,33 @@ def main():
     parser.add_argument('--no_wc', action='store_true', default=False, help='Runs wc first to determine the table names from the regex', required=False)
     parser.add_argument('--debug_output', action='store_true', default=False, help='Output the raw format to a file called out.txt', required=False)
     parser.add_argument('--debug_limit', help='Limit the debug output in lines', required=False)
-    parser.add_argument('--hex_columns', help='columns to convert to hex', nargs='+', default=[])
+    parser.add_argument('--binary_encoding', choices=['hex', 'base64', 'raw'], default='hex', required=False,
+                        help='how the connector wrote binary values: hex text (default), base64 text (binary.handling.mode=base64) or raw bytes (persist.raw.bytes=true); pass the same value to the MySQL side')
+    parser.add_argument('--hex_columns', help='with --binary_encoding raw: the String columns holding raw bytes, rendered as lower(hex(col)); comma or space separated', nargs='+', default=[])
     parser.add_argument('--debug', dest='debug', action='store_true', default=False)
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
-    parser.add_argument('--exclude_columns', help='columns exclude', nargs='*', default=['_sign,_version,is_deleted,_is_deleted'])
+    parser.add_argument('--exclude_columns', help='columns to exclude (comma or space separated)', nargs='+', default=['_sign,_version,is_deleted,_is_deleted'])
     parser.add_argument('--threads', type=int, help='number of parallel threads', default=1)
-    parser.add_argument('--min_datetime_value', help='Min Datetime64 datetime', default='1900-01-01 00:00:00', required=False)
-    parser.add_argument('--max_datetime_value', help='Maximum Datetime64 datetime', default='2299-12-31 23:59:59', required=False)
+    parser.add_argument('--source_timezone', help='IANA time zone the connector interprets MySQL DATETIME values in (its database.connectionTimeZone); DateTime columns not listed in --timestamp_columns are rendered in it', default='UTC', required=False)
+    parser.add_argument('--timestamp_columns', help='comma separated names of the columns that replicate a MySQL TIMESTAMP; they are compared as UTC instants', default='', required=False)
+    parser.add_argument('--min_datetime_value', help='Lower clamp bound for datetime values (same value on both sides; default is the ClickHouse DateTime64 minimum)', default=DATETIME_MIN, required=False)
+    parser.add_argument('--max_datetime_value', help='Upper clamp bound for datetime values (same value on both sides; default is the ClickHouse DateTime64 maximum)', default=DATETIME_MAX, required=False)
     parser.add_argument('--max_memory_usage', help='increase  max_memory_usage', required=False)
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
                         help='Floating point data types like float or double can not be compared, we do not include them by default', required=False)
     parser.add_argument('--include_json_columns', action='store_true', default=False,
-                        help='JSON columns (native JSON types and the String columns named in --json_columns) can not easily be compared, we do not include them by default (a WARNING names them); pass it to both sides', required=False)
+                        help='JSON columns (native JSON and the String columns named in --json_columns) are not compared by default (each table logs a WARNING naming them); this compares the stored text against the MySQL side\'s best-effort rendering. Pass it to both sides.', required=False)
     parser.add_argument('--json_columns', help='comma separated names of the String columns that replicate a MySQL JSON column', default='', required=False)
+    parser.add_argument('--source_columns', help='the source table\'s column names as a JSON list (the driver passes this) or comma separated; replica columns absent from it are not compared (each table logs a WARNING naming them). Empty: every replica column is compared', default='', required=False)
+    return parser
+
+
+def main():
+    parser = build_argument_parser()
     global args
     args = parser.parse_args()
+    (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
+    validate_timezone(args.source_timezone, '--source_timezone')
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)
@@ -403,8 +578,6 @@ def main():
     try:
         conn =  get_connection(clickhouse_user, clickhouse_password)
         tables = get_tables_from_regex(conn)
-        # No DDL here: decimals are rendered with toDecimalString(), so this
-        # read-only tool needs no CREATE FUNCTION privilege.
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []

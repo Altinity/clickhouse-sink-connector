@@ -1,55 +1,20 @@
+"""Legacy path of ``ch_sink_tools.db_load.mysql_parser.mysql_parser`` -- kept so existing launchers and imports keep working.
+
+There is ONE implementation, in ``sink-connector/python/ch_sink_tools/db_load/mysql_parser/mysql_parser.py`` (Spec 13.01 section 3.16). Importing this name
+returns the same module object as ``ch_sink_tools.db_load.mysql_parser.mysql_parser``, so the two names cannot drift and patching either
+patches both. Started as a script (``python db_load/mysql_parser/mysql_parser.py ...``) it runs the tool's main(). Works with or without the package installed: the Python root that holds
+``ch_sink_tools`` is put on ``sys.path`` first.
+"""
+import os
 import sys
-from antlr4 import *
-from antlr4.tree.Trees import Trees 
-from db_load.mysql_parser.MySqlLexer import MySqlLexer
-from db_load.mysql_parser.MySqlParser import MySqlParser
-from db_load.mysql_parser.CreateTableMySQLParserListener import CreateTableMySQLParserListener, UnsafeTableDefinitionError  # noqa: F401 (re-exported for the loader)
-from antlr4.error.ErrorListener import ErrorListener
-import logging
-from io import StringIO
 
-class MyErrorListener( ErrorListener ):
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
-    def __init__(self):
-        super(MyErrorListener, self).__init__()
+import ch_sink_tools.db_load.mysql_parser.mysql_parser as _implementation  # noqa: E402
 
-    def syntaxError(self, recognizer, offendingSymbol, line, column, msg, e):
-        raise Exception(f"Syntax error at line {line} column {column}")
+if __name__ == "__main__":
+    sys.exit(_implementation.main(sys.argv))
 
-
-def convert_to_clickhouse_table_antlr(source, rmt_delete_support, partition_options='', datetime_timezone=None):
-    columns = []
-    input_stream = InputStream(source)
-    lexer = MySqlLexer(input_stream)
-    stream = CommonTokenStream(lexer)
-    parser = MySqlParser(stream)
-    parser.addErrorListener( MyErrorListener() )
-    tree = parser.sqlStatements()
-    listener = CreateTableMySQLParserListener(rmt_delete_support, partition_options, datetime_timezone=datetime_timezone)
-    walker = ParseTreeWalker()
-    walker.walk(listener, tree) 
-    logging.debug(Trees.toStringTree(tree, None, parser)) 
-     
-    (res, columns) = listener.get_clickhouse_sql()
-
-    return (res, columns)
-
-def main(argv):
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
-
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter(
-        '%(asctime)s - %(name)s - %(threadName)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    root.addHandler(handler)
-
-    with open(argv[1], 'r') as file:
-        source = file.read()
-        logging.info(f"source = {source}")
-        (res, columns) = convert_to_clickhouse_table_antlr(source,True)
-        logging.info(f"target = {res}")
-
-if __name__ == '__main__':
-    main(sys.argv)
+sys.modules[__name__] = _implementation

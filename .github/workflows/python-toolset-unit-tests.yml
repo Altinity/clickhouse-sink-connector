@@ -1,0 +1,46 @@
+name: Python toolset unit tests
+
+# The offline unit suite of sink-connector/python (spec 11.05, spec 13.01 section 3.12):
+# db_compare/tests, db_load/tests, db_dump/tests and tests/. No database, no network, no
+# Docker -- side commands run against stand-in executables, drivers against mocks and
+# SQLite. Before this workflow only db_load/tests/test_mysql_resync.py ran in CI
+# (FM-11.05-3), so a regression in any other tool reached a release unseen.
+
+on:
+  pull_request:
+    branches:
+      - '**'
+  push:
+    branches:
+      - '2.11.0'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: python-toolset-unit-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-toolset-unit:
+    name: python-toolset-unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install the toolset and pytest
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends zstd
+          python -m pip install --upgrade pip
+          python -m pip install -e "sink-connector/python[all]" pytest
+
+      - name: Unit tests
+        working-directory: sink-connector/python
+        run: python -m pytest -q db_compare/tests db_load/tests db_dump/tests tests

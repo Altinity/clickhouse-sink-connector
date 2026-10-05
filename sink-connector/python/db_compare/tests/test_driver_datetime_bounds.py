@@ -55,8 +55,8 @@ def value_after(cmd, flag):
 
 def side_bounds(module, cmd):
     """The bounds a side script ends up with after parsing ``cmd`` exactly as
-    its main() does (argv after ``python <script>``)."""
-    options = module.build_argument_parser().parse_args(cmd[2:])
+    its main() does (argv after ``<interpreter> -m <side module>``)."""
+    options = module.build_argument_parser().parse_args(cmd[cmd.index("-m") + 2:])
     return datetime_bounds(options)
 
 

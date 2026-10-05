@@ -104,7 +104,9 @@ class TestDriversReadRealRows:
     def test_packaged_driver_compares_a_table_listed_by_sqlalchemy(self, sqlite_rows):
         rows = sqlite_rows("select 'shop' as table_schema, 'orders' as table_name")
         code, logs = run_driver(packaged_driver, rows, extra_patches=[
-            patch.object(packaged_driver, "mysql_json_columns", return_value=[])])
+            patch.object(packaged_driver, "resolve_source_timezone", return_value="UTC"),
+            patch.object(packaged_driver, "mysql_columns_by_data_type", return_value=[]),
+            patch.object(packaged_driver, "mysql_column_names", return_value=[])])
         assert code == 0, logs
         assert any("No difference for shop.orders" in line for line in logs), logs
 
@@ -124,14 +126,14 @@ def test_mysql_count_builds_statements_from_real_rows(module, sqlite_rows):
 
 def test_packaged_mysql_side_reads_column_rows_by_name(sqlite_rows):
     """D-13.06-9: the packaged MySQL side builds its row expression from real rows."""
-    rows = sqlite_rows("select 'id' as column_name, 'int' as data_type, 'NO' as is_nullable, "
-                       "NULL as collation union all "
-                       "select 'name', 'varchar(10)', 'YES', 'utf8mb4_0900_ai_ci'")
+    rows = sqlite_rows("select 'id' as column_name, 'int' as data_type, 'int' as column_type, "
+                       "'NO' as is_nullable, NULL as collation, NULL as datetime_precision union all "
+                       "select 'name', 'varchar', 'varchar(10)', 'YES', 'utf8mb4_0900_ai_ci', NULL")
     packaged_mysql_side.args = argparse.Namespace(
         mysql_database="shop", min_date_value="1900-01-01", max_date_value="2299-12-31",
-        min_datetime_value="1900-01-01 00:00:00", max_datetime_value="2299-12-31 23:59:59")
+        min_datetime_value="1900-01-01 00:00:00", max_datetime_value="2299-12-31 23:59:59", source_timezone="UTC")
     with patch.object(packaged_mysql_side, "execute_mysql", return_value=(rows, -1)):
-        (query, select, order_by, external) = packaged_mysql_side.get_table_checksum_query(
+        (query, select, order_by, external, *_rest) = packaged_mysql_side.get_table_checksum_query(
             "orders", MagicMock(), "hex", None, [], False, False)
     assert "`id`" in select and "`name`" in select, select
 

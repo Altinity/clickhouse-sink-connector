@@ -49,8 +49,10 @@ Python root: `sink-connector/python/` (all paths below are repo-relative).
   - Legacy tests: `sink-connector/python/db_compare/tests/__init__.py`, `sink-connector/python/db_dump/tests/__init__.py`, `sink-connector/python/db_load/tests/__init__.py`, `sink-connector/python/tests/__init__.py`.
   - Packaged: `sink-connector/python/ch_sink_tools/__init__.py`, `sink-connector/python/ch_sink_tools/config/__init__.py`, `sink-connector/python/ch_sink_tools/db/__init__.py`, `sink-connector/python/ch_sink_tools/db_compare/__init__.py`, `sink-connector/python/ch_sink_tools/db_dump/__init__.py`, `sink-connector/python/ch_sink_tools/db_load/__init__.py`, `sink-connector/python/ch_sink_tools/db_load/mysql_parser/__init__.py`, `sink-connector/python/ch_sink_tools/db_load/postgres_parser/__init__.py`.
 - **Legacy tree**: `sink-connector/python/db/`, `sink-connector/python/db_compare/`, `sink-connector/python/db_dump/`, `sink-connector/python/db_load/`.
-  - The shared file only this tree has is `sink-connector/python/db/checksum_common.py`.
-  - `sink-connector/python/db_load/mysql_resync.py` is a 16-line shim that imports the packaged tool.
+  - Since section 3.16 every hand-written legacy module is a compatibility shim of its `ch_sink_tools` twin
+    (`sink-connector/python/db/checksum_common.py` included; its implementation is
+    `sink-connector/python/ch_sink_tools/db/checksum_common.py`). The guard is
+    `sink-connector/python/tests/test_single_source.py`.
 - **Packaged tree**: `sink-connector/python/ch_sink_tools/` with subpackages `sink-connector/python/ch_sink_tools/config/`, `sink-connector/python/ch_sink_tools/db/`, `sink-connector/python/ch_sink_tools/db_compare/`, `sink-connector/python/ch_sink_tools/db_dump/`, `sink-connector/python/ch_sink_tools/db_load/`.
   - Package data: `sink-connector/python/ch_sink_tools/db_compare/scripts/postgres_checksum_runner.sh`.
 - **ANTLR grammar sources**
@@ -70,6 +72,7 @@ Python root: `sink-connector/python/` (all paths below are repo-relative).
   - `sink-connector/python/ch_sink_tools/db_load/postgres_parser/README.md`.
 - **CI that touches the Python tree**
   - `.github/workflows/spec-governance.yml` (line 88 runs one test file).
+  - `.github/workflows/python-toolset-unit-tests.yml` runs the whole offline unit suite (section 3.16).
   - `.github/workflows/pull-request.yml` calls `.github/workflows/sink-connector-lightweight-checksum-tests.yml`. That workflow runs `sink-connector-lightweight/tests/checksum/test_checksum_replication.py` and `sink-connector-lightweight/tests/checksum/test_sysbench_checksum_replication.py`, which invoke the legacy checksum scripts with deps from `sink-connector-lightweight/tests/checksum/requirements.txt`.
   - `.github/workflows/docker-build.yml` builds no Python image.
 - **Offline unit tests**
@@ -537,6 +540,41 @@ Method: an AST-based function diff. For every file pair it parses both copies an
   - **cwd = `sink-connector/python` without `PYTHONPATH`**: the children die with `No module named 'db'`, which is the first case again.
 - The packaged `ch-mysql-load` and the legacy loader create different column types for the same DDL whenever an `enum`/`set` label contains `bit`, `blob` or `binary` (D-13.01-7). A table snapshotted with one copy and repaired with `ch-mysql-resync` (packaged loader, `CREATE TABLE ... AS <live>`) keeps the live type, so this matters for initial loads.
 
+### 3.16 One implementation per tool (legacy paths are shims)
+
+The divergence of section 3.14 is closed by construction rather than by keeping two copies
+in step:
+
+1. `ch_sink_tools` holds the single implementation of every MySQL tool and helper. Each
+   module is the union of both former copies: the legacy fixes (datetime clamp and
+   saturation via `ch_sink_tools/db/checksum_common.py`, the source column-set /
+   replica-only check, exact `is_binary_datatype`, `quote_plus` in the MySQL URL,
+   shell-quoted and redacted loader credentials) plus the packaged capabilities
+   (run-from-any-directory side launching, `mysql_resync`). `checksum_common` also owns
+   the one definition of the DateTime64/Date32 storable range (`DATETIME64_MIN_UTC`,
+   `DATETIME64_MAX_UTC`, `DATE32_MIN`, `DATE32_MAX`), used by the loader, the PostgreSQL
+   type mapper and the checksum driver.
+2. The legacy files `db/{mysql,clickhouse,checksum_common}.py`,
+   `db_compare/{mysql,clickhouse}_table_checksum.py`, `db_compare/top_level_table_checksum.py`,
+   `db_compare/{mysql,clickhouse}_table_count.py`, `db_load/clickhouse_loader.py`,
+   `db_load/mysql_resync.py`, `db_dump/mysql_dumper.py` and
+   `db_load/mysql_parser/{mysql_parser,CreateTableMySQLParserListener}.py` contain no
+   logic. Each puts the Python root on `sys.path`, imports its `ch_sink_tools` twin and
+   replaces itself in `sys.modules` with it, so `db.mysql is ch_sink_tools.db.mysql`:
+   imports, `patch.object` and module globals (`args`) are shared. Started as a script
+   (`python db_compare/x.py ...`, the scheduled-job form) it calls the twin's `main()`
+   and exits with its result; it no longer needs `PYTHONPATH` or a particular cwd
+   (R4's `ModuleNotFoundError` is gone).
+3. The checksum driver starts each side as `<interpreter> -m
+   ch_sink_tools.db_compare.<side>` with the package root first on `PYTHONPATH`
+   (spec 13.06 FM-13.06-1) whichever name it was started under.
+4. The generated ANTLR files stay byte-identical in both trees (section 3.7); only the
+   packaged copy is imported.
+5. `.github/workflows/python-toolset-unit-tests.yml` installs the package (`[all]`) and
+   runs `db_compare/tests`, `db_load/tests`, `db_dump/tests` and `tests` on every PR and
+   push to `2.11.0` (closes FM-11.05-3). The two checksum Dockerfiles copy
+   `ch_sink_tools` next to the legacy directories.
+
 ### 3.15 Tool → detailed spec cross-reference
 
 | Tool / layer | Detailed spec | Related domain-11 spec |
@@ -554,7 +592,7 @@ Method: an AST-based function diff. For every file pair it parses both copies an
 
 These are the properties the toolset's architecture must have. The "As built" note says which hold on 2.11.0.
 
-- **I-13.01-1 One behaviour per tool.** For a given tool and input, the legacy and packaged copies produce the same SQL, DDL, verdict and log content (secrets aside). *As built: violated* for every pair in §3.14.2, and for the listener through `is_binary_datatype`.
+- **I-13.01-1 One behaviour per tool.** For a given tool and input, the legacy and packaged copies produce the same SQL, DDL, verdict and log content (secrets aside). *Holds since section 3.16 by construction (one module object); the note that follows describes 2.11.0 before it:* *As built: violated* for every pair in §3.14.2, and for the listener through `is_binary_datatype`.
 - **I-13.01-2 Every console script imports under the extras the README names for it.** *As built: violated* for the three MySQL commands under `[mysql]` (D-13.01-5).
 - **I-13.01-3 `requires-python` is the real floor.** Every module imports and every code path runs on the declared minimum. *As built: violated*: the floor is 3.10 (D-13.01-6).
 - **I-13.01-4 Generated code is reproducible from the committed grammars into the directory that is imported.** *As built: violated* (D-13.01-8, D-13.01-9). The committed MySQL output does match its grammar (§3.7).
@@ -564,6 +602,14 @@ These are the properties the toolset's architecture must have. The "As built" no
 - **I-13.01-8 Documentation matches the build.** *As built: violated* (§3.13).
 
 ## 5. Verification Criteria
+
+- `sink-connector/python/tests/test_single_source.py` (section 3.16): every legacy name imports as the very
+  module object of its `ch_sink_tools` twin; every legacy file holds only imports, the path insert, the
+  `__main__` dispatch and the alias; each legacy launcher prints its usage when started by path from `/` with no
+  `PYTHONPATH` (before: eight of nine raised `ModuleNotFoundError`, R4).
+- The whole offline suite (`python -m pytest -q db_compare/tests db_load/tests db_dump/tests tests` from
+  `sink-connector/python`): 805 passed, 2 skipped on the section 3.16 head (771 before the guard test was added), run by
+  `python-toolset-unit-tests.yml` in CI.
 
 End-to-end suites (Pull Request Pipeline, `.github/workflows/pull-request.yml` jobs `python-toolset-e2e-mysql` and
 `python-toolset-e2e-postgres`, defined in `.github/workflows/python-toolset-e2e-mysql.yml` and

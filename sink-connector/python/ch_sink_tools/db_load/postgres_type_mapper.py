@@ -26,6 +26,10 @@
 import re
 import logging
 
+from ch_sink_tools.db.checksum_common import (
+    DATETIME64_MIN_UTC, DATETIME64_MAX_UTC, DATE32_MIN, DATE32_MAX,
+)
+
 # ---------------------------------------------------------------------------
 # Base type map  (lower-cased canonical PostgreSQL type name → CH type)
 # ---------------------------------------------------------------------------
@@ -541,13 +545,15 @@ def build_select_columns(columns) -> str:
 
 # ClickHouse DateTime64 / Date32 range, as bounded by the streaming connector
 # (DataTypeRange.DATETIME64_MIN/MAX: 1900-01-01 00:00:00 .. 2299-12-31
-# 23:59:59 UTC; Date32 1900-01-01 .. 2299-12-31).
+# 23:59:59 UTC; Date32 1900-01-01 .. 2299-12-31). The bound strings themselves
+# are the single definition in checksum_common (review MAJOR-3); only the
+# year cutoffs used for the BC/overflow checks below are local to this file.
 _TEMPORAL_MIN_YEAR = 1900
 _TEMPORAL_MAX_YEAR = 2299
-_DATETIME64_MIN_UTC = '1900-01-01 00:00:00'
-_DATETIME64_MAX_UTC = '2299-12-31 23:59:59'
-_DATE32_MIN = '1900-01-01'
-_DATE32_MAX = '2299-12-31'
+_DATETIME64_MIN_UTC = DATETIME64_MIN_UTC
+_DATETIME64_MAX_UTC = DATETIME64_MAX_UTC
+_DATE32_MIN = DATE32_MIN
+_DATE32_MAX = DATE32_MAX
 
 _DATETIME64_RE = re.compile(r"^DateTime64\(\s*(\d+)\s*(?:,\s*'([^']*)'\s*)?\)$")
 

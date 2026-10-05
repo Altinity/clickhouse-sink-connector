@@ -42,7 +42,7 @@ MD5_B = "fedcba9876543210fedcba9876543210"
 STAND_IN_SIDE = r'''#!{python}
 import json, os, re, sys
 argv = sys.argv[1:]
-side = "mysql" if "mysql_table_checksum.py" in argv[0] else "clickhouse"
+side = "mysql" if "mysql_table_checksum" in " ".join(argv[:2]) else "clickhouse"
 def value(flag):
     return argv[argv.index(flag) + 1]
 database = value("--mysql_database" if side == "mysql" else "--clickhouse_database")
@@ -108,6 +108,8 @@ class JobRun:
         out = io.StringIO()
         sleep = MagicMock()
         with patch.object(sys, "argv", argv), patch.dict(os.environ, environment), \
+                patch.object(tl, "side_command",
+                             lambda module: [os.path.join(self.directory, "python"), "-m", module]), \
                 patch.object(tl, "get_mysql_connection", return_value=MagicMock()), \
                 patch.object(tl, "execute_mysql", return_value=(MagicMock(), -1)), \
                 patch.object(tl.time, "sleep", sleep), \

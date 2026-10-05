@@ -22,9 +22,12 @@ def clickhouse_connection(host, database='default', user='default',  password=''
 def clickhouse_execute_conn(conn, sql):
     logging.debug(sql)
     cursor = conn.cursor()
-    cursor.execute(sql)
-    result = cursor.fetchall()
-    return result
+    try:
+        cursor.execute(sql)
+        result = cursor.fetchall()
+        return result
+    finally:
+        cursor.close()
 
 def get_table_partition_key(conn, database, table):
    sql = f"SELECT partition_key FROM system.tables WHERE name = '{table}'  AND database = '{database}' FORMAT TabSeparated"
@@ -62,8 +65,8 @@ def resolve_credentials_from_config(config_file):
         clickhouse_password = root.findtext('password')
     elif config_file.endswith(".yml") or config_file.endswith(".yaml"):
         with open(config_file, 'r') as f:
-            valuesYaml = yaml.load(f, Loader=yaml.FullLoader)
+            valuesYaml = yaml.safe_load(f)
             clickhouse_user = valuesYaml['config']['user']
             clickhouse_password = valuesYaml['config']['password']
-    logging.debug(f"clickhouse_user {clickhouse_user} clickhouse_password {clickhouse_password}")
+    logging.debug(f"clickhouse_user {clickhouse_user} clickhouse_password ****")
     return (clickhouse_user, clickhouse_password)
