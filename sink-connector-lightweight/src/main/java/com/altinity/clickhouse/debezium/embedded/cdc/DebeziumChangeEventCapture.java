@@ -1034,6 +1034,13 @@ public class DebeziumChangeEventCapture {
     static volatile long stopDrainTimeoutMs = 60_000;
 
     /**
+     * Wait between two attempts of a failed DDL when {@code ddl.retry=true}
+     * (Spec 06.08 section 3.2 item 3). Package-private and mutable so tests do
+     * not wait out the real back-off; production keeps the default.
+     */
+    static volatile long ddlRetryBackoffMs = 10_000;
+
+    /**
      * Stops the engine and shuts the worker pool down, in the only order that
      * neither drops queued work needlessly nor poisons the offset FIFO for the
      * next engine in this process (spec 01.01 §3.3, spec 09.01 §3.8).
@@ -1739,7 +1746,6 @@ public class DebeziumChangeEventCapture {
         log.info("Executed Source DB DDL: " + DDL + " Snapshot:" + isSnapshotDDL(sr));
         // Use the configured MAX_RETRIES value for DDL operations
         int MAX_DDL_RETRIES = MAX_RETRIES;
-        int ddlRetrySleepMs = 10000;
         int ddlAttempts = 0;
 
         // Check if configuration is set to retry DDL
@@ -1998,7 +2004,7 @@ public class DebeziumChangeEventCapture {
                                     + "change: [" + DDL + "]", e);
                 }
                 try {
-                    Thread.sleep(ddlRetrySleepMs);
+                    Thread.sleep(ddlRetryBackoffMs);
                 } catch (InterruptedException ex) {
                     // Stop asked this thread to finish: keep the flag and halt
                     // loudly instead of retrying a schema change nobody waits

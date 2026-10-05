@@ -339,21 +339,22 @@ public class DdlFailureLoudTest {
      * budget is exhausted the failure is just as loud -- and names the last
      * ClickHouse error as its cause.
      *
-     * <p>The retry budget is cut to one attempt and the calling thread is
-     * interrupted so the 10 s back-off returns at once; the test does not wait
-     * out the real budget.</p>
+     * <p>The retry budget is cut to one attempt and the back-off to zero
+     * ({@code ddlRetryBackoffMs}); the test does not wait out the real budget.
+     * It used to interrupt the thread instead, which only worked because the
+     * retry loop swallowed the interrupt (Spec 06.08 section 3.2 item 5).</p>
      */
     @Test
     @DisplayName("With ddl.retry=true an exhausted retry budget halts the pipeline loudly, naming the last failure")
     public void ddlExecutionFailureAfterRetriesExhaustedIsLoud() throws Exception {
         int savedRetries = DebeziumChangeEventCapture.MAX_RETRIES;
+        long savedBackoff = DebeziumChangeEventCapture.ddlRetryBackoffMs;
         DebeziumChangeEventCapture.MAX_RETRIES = 1;
+        DebeziumChangeEventCapture.ddlRetryBackoffMs = 0;
         try {
             DebeziumChangeEventCapture capture = singleThreadedCaptureWithRejectingWriter();
             Properties props = new Properties();
             props.setProperty(SinkConnectorLightWeightConfig.DDL_RETRY, "true");
-
-            Thread.currentThread().interrupt();
 
             DDLReplicationException thrown = assertThrows(DDLReplicationException.class,
                     () -> invokeProcess(capture, ddlEvent("ALTER TABLE t ADD COLUMN c INT NULL"),
@@ -366,7 +367,7 @@ public class DdlFailureLoudTest {
                     "the terminal failure must carry the last ClickHouse error as its cause, "
                             + "not a null cause");
         } finally {
-            Thread.interrupted();
+            DebeziumChangeEventCapture.ddlRetryBackoffMs = savedBackoff;
             DebeziumChangeEventCapture.MAX_RETRIES = savedRetries;
         }
     }

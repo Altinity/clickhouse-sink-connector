@@ -63,7 +63,7 @@ count-clean divergence (violates the Prime Directive and Invariant I9).
 ### 3.2 `ddl.retry` decides whether to RETRY, never whether a failure is loud
 
 `performDDLOperation()` executes the translated statement(s) inside a bounded
-retry loop (`MAX_RETRIES` attempts, 10 s apart). The `ddl.retry` property
+retry loop (`MAX_RETRIES` attempts, `DebeziumChangeEventCapture.ddlRetryBackoffMs` = 10 s apart). The `ddl.retry` property
 (`SinkConnectorLightWeightConfig.DDL_RETRY`, default unset = `false`) controls
 only whether further attempts are made after a failure. It never permits the
 loop to be left normally after a failure.
