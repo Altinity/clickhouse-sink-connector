@@ -158,13 +158,15 @@ public final class SchemaHistoryStorePreflight {
         // on a transient outage would let the collapsing layout through.
         long waitMs = waitMs(props);
         long deadline = System.currentTimeMillis() + waitMs;
+        String user = nullToEmpty(first(props, USER_KEYS));
+        String password = nullToEmpty(first(props, PASSWORD_KEYS));
         Connection conn = null;
         String database = null;
         SQLException lastFailure = null;
+        boolean databaseCreated = false;
         while (database == null) {
             try {
-                conn = DriverManager.getConnection(url, nullToEmpty(first(props, USER_KEYS)),
-                        nullToEmpty(first(props, PASSWORD_KEYS)));
+                conn = DriverManager.getConnection(url, user, password);
                 // The ClickHouse JDBC driver connects lazily: an unreachable
                 // server only fails on the first statement.
                 database = scalar(conn, "SELECT currentDatabase()");
@@ -173,6 +175,26 @@ public final class SchemaHistoryStorePreflight {
                 if (conn != null) {
                     closeQuietly(conn);
                     conn = null;
+                }
+                // On a first start the URL's database (by convention the one the
+                // offset store lives in) does not exist yet: the connector creates
+                // it later in setup() (createDatabaseForDebeziumStorage), after this
+                // preflight. Create it here, the same way, instead of waiting for
+                // it; ClickHouse is reachable, it answered UNKNOWN_DATABASE.
+                String urlDatabase = urlDatabase(url);
+                if (!databaseCreated && urlDatabase != null && isUnknownDatabase(e)) {
+                    databaseCreated = true;
+                    try {
+                        createDatabase(serverUrl(url), user, password, urlDatabase);
+                        continue;
+                    } catch (SQLException ce) {
+                        // Not swallowed: it becomes the failure the wait below
+                        // reports, and the start is refused if it persists.
+                        lastFailure = ce;
+                        e = ce;
+                        log.warn("Schema-history store preflight (spec 09.05) could not create database {} "
+                                + "named in {}: {}", urlDatabase, url, ce.getMessage());
+                    }
                 }
                 if (System.currentTimeMillis() + RETRY_INTERVAL_MS > deadline) {
                     throw new IllegalStateException(String.format(
@@ -220,6 +242,78 @@ public final class SchemaHistoryStorePreflight {
             return Math.max(0L, Long.parseLong(v));
         } catch (NumberFormatException e) {
             return DEFAULT_WAIT_MS;
+        }
+    }
+
+    /** ClickHouse error code for a database that does not exist. */
+    static final int UNKNOWN_DATABASE_CODE = 81;
+
+    /**
+     * Whether a failure (or any of its causes) is ClickHouse's UNKNOWN_DATABASE.
+     */
+    static boolean isUnknownDatabase(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause() == t ? null : t.getCause()) {
+            if (t instanceof SQLException && ((SQLException) t).getErrorCode() == UNKNOWN_DATABASE_CODE) {
+                return true;
+            }
+            String m = t.getMessage();
+            if (m != null && (m.contains("UNKNOWN_DATABASE") || m.contains("Code: 81."))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The database a {@code jdbc:clickhouse} URL selects in its path
+     * ({@code jdbc:clickhouse://host:8123/db?x=y} gives {@code db}), or null.
+     */
+    static String urlDatabase(String url) {
+        int path = pathStart(url);
+        if (path < 0) {
+            return null;
+        }
+        int end = url.length();
+        for (char c : new char[] {'?', ';', '#'}) {
+            int i = url.indexOf(c, path);
+            if (i >= 0 && i < end) {
+                end = i;
+            }
+        }
+        String db = url.substring(path + 1, end);
+        return db.isEmpty() || db.contains("/") ? null : db;
+    }
+
+    /** The same URL without the database path, for a connection that can create it. */
+    static String serverUrl(String url) {
+        int path = pathStart(url);
+        if (path < 0) {
+            return url;
+        }
+        String db = urlDatabase(url);
+        return db == null ? url : url.substring(0, path) + url.substring(path + 1 + db.length());
+    }
+
+    /** Index of the '/' that starts the path after {@code ://host[:port]}, or -1. */
+    private static int pathStart(String url) {
+        if (url == null) {
+            return -1;
+        }
+        int scheme = url.indexOf("://");
+        return scheme < 0 ? -1 : url.indexOf('/', scheme + 3);
+    }
+
+    /**
+     * Creates the URL's database the way {@code createDatabaseForDebeziumStorage}
+     * later would ({@code CREATE DATABASE IF NOT EXISTS}, idempotent).
+     */
+    private static void createDatabase(String serverUrl, String user, String password, String database)
+            throws SQLException {
+        String sql = "CREATE DATABASE IF NOT EXISTS `" + database.replace("`", "``") + "`";
+        log.info("Schema-history store preflight (spec 09.05): database {} does not exist yet (first start); "
+                + "running [{}] before verifying the schema-history table.", database, sql);
+        try (Connection c = DriverManager.getConnection(serverUrl, user, password)) {
+            execute(c, sql);
         }
     }
 

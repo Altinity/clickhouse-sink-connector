@@ -191,6 +191,37 @@ public class SchemaHistoryStorePreflightTest {
     }
 
     @Test
+    @DisplayName("The URL's database is located so a first start can create it")
+    public void urlDatabaseParsing() {
+        assertEquals("altinity_sink_connector",
+                SchemaHistoryStorePreflight.urlDatabase("jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"));
+        assertEquals("db", SchemaHistoryStorePreflight.urlDatabase("jdbc:clickhouse://h:8123/db?ssl=false"));
+        assertEquals("db", SchemaHistoryStorePreflight.urlDatabase("jdbc:clickhouse:http://h:8123/db"));
+        assertNull(SchemaHistoryStorePreflight.urlDatabase("jdbc:clickhouse://clickhouse:8123"));
+        assertNull(SchemaHistoryStorePreflight.urlDatabase("jdbc:clickhouse://clickhouse:8123/"));
+        assertNull(SchemaHistoryStorePreflight.urlDatabase("jdbc:clickhouse://clickhouse:8123/?x=1"));
+        assertEquals("jdbc:clickhouse://clickhouse:8123",
+                SchemaHistoryStorePreflight.serverUrl("jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"));
+        assertEquals("jdbc:clickhouse://h:8123?ssl=false",
+                SchemaHistoryStorePreflight.serverUrl("jdbc:clickhouse://h:8123/db?ssl=false"));
+        assertEquals("jdbc:clickhouse://h:8123", SchemaHistoryStorePreflight.serverUrl("jdbc:clickhouse://h:8123"));
+    }
+
+    @Test
+    @DisplayName("Only ClickHouse's UNKNOWN_DATABASE triggers creating the database")
+    public void unknownDatabaseDetection() {
+        assertTrue(SchemaHistoryStorePreflight.isUnknownDatabase(new java.sql.SQLException(
+                "Code: 81. DB::Exception: Database altinity_sink_connector does not exist. (UNKNOWN_DATABASE)")));
+        assertTrue(SchemaHistoryStorePreflight.isUnknownDatabase(new java.sql.SQLException("x", "HY000", 81)));
+        assertTrue(SchemaHistoryStorePreflight.isUnknownDatabase(new java.sql.SQLException("wrapped",
+                new RuntimeException("Code: 81. DB::Exception: Database d does not exist. (UNKNOWN_DATABASE)"))));
+        assertFalse(SchemaHistoryStorePreflight.isUnknownDatabase(new java.sql.SQLException(
+                "Connect to http://127.0.0.1:1 failed: Connection refused")));
+        assertFalse(SchemaHistoryStorePreflight.isUnknownDatabase(new java.sql.SQLException(
+                "Code: 516. DB::Exception: default: Authentication failed")));
+    }
+
+    @Test
     @DisplayName("The wait for an unreachable ClickHouse defaults to 5 minutes and is never negative")
     public void waitBound() {
         Properties props = new Properties();

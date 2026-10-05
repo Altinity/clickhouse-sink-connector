@@ -30,6 +30,21 @@
     </properties>
     <dependencyManagement>
         <dependencies>
+            <!--
+              The quarkus BOM imported below pins org.postgresql:postgresql to
+              42.5.0, which overrides the 42.7.13 Debezium 3.7.0 is built and
+              tested against. debezium-connector-postgres 3.7 calls
+              ChainedLogicalStreamBuilder.withAutomaticFlush(boolean), which
+              42.5.0 does not have, so every PostgreSQL stream failed with
+              NoSuchMethodError when it started. An entry declared directly here
+              wins over any imported BOM; keep it equal to Debezium's
+              version.postgresql.driver when version.debezium changes.
+            -->
+            <dependency>
+                <groupId>org.postgresql</groupId>
+                <artifactId>postgresql</artifactId>
+                <version>42.7.13</version>
+            </dependency>
             <dependency>
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>${quarkus.platform.artifact-id}</artifactId>
@@ -155,6 +170,19 @@
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connector-postgres</artifactId>
+            <version>${version.debezium}</version>
+        </dependency>
+        <!--
+          MariaDB sources. Debezium 3.7's MySqlConnector refuses MariaDB 10.x and
+          later: it parses the server version as MySQL >= 8.4 and fails with
+          "should support SHOW BINARY LOG STATUS" (Debezium 3.1.3 probed the
+          statement instead). Debezium's dedicated connector,
+          connector.class=io.debezium.connector.mariadb.MariaDbConnector, is the
+          supported route (spec 02.06).
+        -->
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-connector-mariadb</artifactId>
             <version>${version.debezium}</version>
         </dependency>
         <!--  <dependency>
@@ -347,7 +375,8 @@
         <dependency>
             <groupId>org.mariadb.jdbc</groupId>
             <artifactId>mariadb-java-client</artifactId>
-            <version>2.7.12</version>
+            <!-- Debezium 3.7.0's version.mariadb.driver; debezium-connector-mariadb needs the 3.x driver. -->
+            <version>3.5.3</version>
             <!-- <scope>runtime</scope> -->
         </dependency>
         <dependency>
@@ -792,6 +821,17 @@
                         <license>
                             <name>Dual license consisting of the CDDL v1\.1 and GPL v2</name>
                             <url>https?://oss\.oracle\.com/licenses/CDDL\+GPL-1\.1</url>
+                        </license>
+                        <!--
+                          MariaDB Connector/J. The 2.7.12 driver shipped until now
+                          declared "LGPL-2.1" (accepted through osi-permissive); the
+                          3.x driver Debezium 3.7's MariaDB connector needs declares
+                          the same license as the SPDX id "LGPL-2.1-or-later", which
+                          the osi-permissive list does not spell. Same library, same
+                          terms.
+                        -->
+                        <license>
+                            <name>LGPL-2\.1-or-later</name>
                         </license>
                     </acceptableLicenses>
                     <!-- Use OSI permissive licenses as acceptable licenses -->

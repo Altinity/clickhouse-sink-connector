@@ -151,7 +151,26 @@ its meaning:
   3.8.0, Debezium's `connect-runtime` 4.x `WorkerConfig` calls
   `ConfigDef$ValidList.anyNonDuplicateValues`, which kafka-clients 3.8.0 lacks,
   and the engine dies at construction with `NoSuchMethodError` (observed end to
-  end). The binlog client is the one Debezium ships.
+  end). The binlog client is the one Debezium ships. The quarkus BOM the
+  lightweight module imports pins `org.postgresql:postgresql` to 42.5.0, below
+  the 42.7.13 Debezium 3.7.0 builds against; `debezium-connector-postgres` 3.7
+  calls `ChainedLogicalStreamBuilder.withAutomaticFlush(boolean)`, which 42.5.0
+  lacks, so every PostgreSQL stream died at start with `NoSuchMethodError`. The
+  module's own `dependencyManagement` pins 42.7.13, which wins over the
+  imported BOM.
+- **MariaDB sources**: 3.7's `MySqlConnector` picks the binlog-status statement
+  from the server version and treats MariaDB 10.x and later as MySQL >= 8.4: it
+  fails with `MySQL version 10.3.6-MariaDB... should support SHOW BINARY LOG
+  STATUS but it failed` (3.1.3 probed the statement and fell back to
+  `SHOW MASTER STATUS`). A MariaDB source must therefore run with
+  `connector.class: io.debezium.connector.mariadb.MariaDbConnector`, Debezium's
+  dedicated connector, which the connector now ships (`debezium-connector-mariadb`
+  with the 3.x MariaDB JDBC driver Debezium 3.7 builds against, 3.5.3).
+  `ConnectorType` maps it to the MySQL row path. The preflights that match the
+  connector class on `mysql` (binlog row image, keyless tables, connection time
+  zone, binlog transaction compression) do not run for it; the keep-alive
+  preflight (spec 01.07) does. This is a configuration change at upgrade for
+  MariaDB deployments (FM-02.06-5).
 - **Engine implementation**: `DebeziumEngine.create(Connect.class)` resolved to
   the legacy `io.debezium.embedded.ConvertingEngineBuilderFactory`
   (`EmbeddedEngine`) in 3.1.3 and resolves to
@@ -335,4 +354,13 @@ An upgrade or a downgrade is a restart plus a change of code; the persisted form
   - **Test**: `VersionFallbackWithoutGtidTest.bindMustNotWriteUint64Max()`, `VersionFallbackWithoutGtidTest.calculateVersionMustNotFallThroughToSentinel()` (2.11.0 writes none).
   - **DEFECT**: pre-existing frozen keys are neither detected nor repaired by the upgrade.
 
-Summary: 4 failure modes, 4 DEFECT, 1 GAP.
+- **FM-02.06-5 MariaDB source still configured with `MySqlConnector`** (§3.4)
+  - **Trigger**: upgrading a deployment that replicates MariaDB with `connector.class: io.debezium.connector.mysql.MySqlConnector`.
+  - **Behaviour**: the engine does not start; Debezium 3.7 fails connection validation and the connector retries. No row is written or lost; replication stops until the configuration changes.
+  - **Detection**: `MySQL version <v>-MariaDB... should support SHOW BINARY LOG STATUS but it failed` in the connector log.
+  - **Blast radius**: MariaDB deployments only.
+  - **Recovery**: set `connector.class: io.debezium.connector.mariadb.MariaDbConnector` and restart.
+  - **RTO**: one restart after the configuration change.
+  - **Test**: `MariaDBIT.testMultipleDatabases()` replicates MariaDB through the MariaDB connector.
+
+Summary: 5 failure modes, 4 DEFECT, 1 GAP.

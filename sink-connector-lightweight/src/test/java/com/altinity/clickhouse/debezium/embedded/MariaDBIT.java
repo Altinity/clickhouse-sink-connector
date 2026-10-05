@@ -81,6 +81,10 @@ public class MariaDBIT
         try {
             Properties props = ITCommon.getDebeziumProperties(mySqlContainer.getHost(),
                     String.valueOf(mySqlContainer.getFirstMappedPort()), clickHouseContainer);
+            // Debezium 3.7's MySqlConnector refuses MariaDB ("MySQL version
+            // 10.3.6-MariaDB... should support SHOW BINARY LOG STATUS"); MariaDB
+            // sources use Debezium's MariaDB connector (spec 02.06).
+            props.put("connector.class", "io.debezium.connector.mariadb.MariaDbConnector");
             props.put("database.whitelist", "employees,test_db,test_db2");
             props.put("database.include.list", "employees,test_db,test_db2");
             props.put("single.threaded", true);
