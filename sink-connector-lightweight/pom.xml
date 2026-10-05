@@ -514,10 +514,28 @@
             <artifactId>jackson-databind</artifactId>
             <version>2.20.1</version>
         </dependency>
+        <!-- Pinned alongside jackson-core/jackson-databind above: left
+             unmanaged, jackson-annotations resolves transitively through
+             jackson-dataformat-yaml (previously 2.12.6) and wins Maven's
+             nearest-dependency mediation over the 2.20.1 that
+             jackson-databind itself depends on. The resulting classpath skew
+             (jackson-databind 2.20.1 calling jackson-annotations
+             JsonProperty.isRequired(), which only gained its current
+             OptBoolean return type in 2.14+) throws
+             NoSuchMethodError during MariaDbCharsetRegistry's static init
+             (Debezium 3.7's MariaDbConnector), crash-looping the embedded
+             engine on every restart attempt. Pinning jackson-annotations
+             explicitly, and bumping jackson-dataformat-yaml into the same
+             2.20.x family, converges all jackson-* modules on one version. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>2.20.1</version>
+        </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
-            <version>2.12.6</version>
+            <version>2.20.1</version>
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-lang3 -->
