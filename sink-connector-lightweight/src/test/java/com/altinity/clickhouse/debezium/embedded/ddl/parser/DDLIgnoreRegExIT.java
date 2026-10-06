@@ -11,6 +11,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
+import com.altinity.clickhouse.debezium.embedded.cdc.ReplicationStatusSingleton;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.db.HikariDbSource;
@@ -80,6 +81,25 @@ public class DDLIgnoreRegExIT {
                 throw new RuntimeException(e);
             }
         });
+
+        // Wait for the engine's async setup() (dispatched above on a separate
+        // executor thread: connecting, snapshotting, attaching to the binlog)
+        // to actually finish before issuing any DDL. Previously there was no
+        // wait at all here, so the first DDL below could run -- and be missed
+        // entirely -- before the engine had attached; the test relied only on
+        // a blind 15s sleep *after* this DDL to let it "be captured", which
+        // does not help if the engine was not yet listening when it was
+        // executed. connectorStarted() (DebeziumEngine.ConnectorCallback,
+        // wired in DebeziumChangeEventCapture#setupDebeziumEventCapture) marks
+        // ReplicationStatusSingleton.isReplicationRunning() true as its first
+        // action, so poll that instead of guessing a fixed delay.
+        {
+            long deadline = System.currentTimeMillis() + 60_000;
+            while (System.currentTimeMillis() < deadline
+                    && !ReplicationStatusSingleton.getInstance().isReplicationRunning()) {
+                Thread.sleep(1_000);
+            }
+        }
 
         // MySQL DDL
         String createTableWPartition = "CREATE TABLE sales (     id INT NOT NULL,     sale_date DATE NOT NULL,     amount DECIMAL(10, 2),     PRIMARY KEY (id, sale_date) ) PARTITION BY RANGE (YEAR(sale_date)) (     PARTITION p2020 VALUES LESS THAN (2021),     PARTITION p2021 VALUES LESS THAN (2022),     PARTITION p2022 VALUES LESS THAN (2023),     PARTITION pfuture VALUES LESS THAN MAXVALUE )";
