@@ -1108,7 +1108,21 @@ public class ClickHouseBatchRunnable implements Runnable {
         // unrelated defect of "grouped into nothing" (spec 04.01 section
         // 3.3) and fails loudly. Reaching this trivially-true state is not
         // that defect, so it is short-circuited here instead.
+        //
+        // The short-circuit still advances the durable watermark over these
+        // records, exactly as the grouping path folds the offset of an
+        // already-applied record into partitionToOffsetMap (spec 03.06
+        // section 3.5): the attempt that wrote them may have returned false
+        // before reaching the merge below, and the watermark must reflect
+        // every row that is actually durable, whichever attempt wrote it.
         if (!records.isEmpty() && records.stream().allMatch(ClickHouseStruct::isAppliedToClickHouse)) {
+            for (ClickHouseStruct record : records) {
+                if (record.getKafkaPartition() != null && record.getTopic() != null) {
+                    this.durablyInsertedOffsets.merge(
+                            new TopicPartition(record.getTopic(), record.getKafkaPartition()),
+                            record.getKafkaOffset(), Math::max);
+                }
+            }
             return true;
         }
         //The user parameter will override the topic mapping to table.
