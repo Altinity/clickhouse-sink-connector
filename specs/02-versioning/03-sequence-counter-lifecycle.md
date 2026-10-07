@@ -6,7 +6,7 @@ Specifies the lifecycle, reset boundary and seeds of the sequence counter that o
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java`
+- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionSequencer.java` — package-private, extracted from `DebeziumChangeEventCapture`.
 - **Method**: `static synchronized long nextSequenceNumber(long recordTs, SourcePosition position)`
 - **Constants & Fields**:
   - `public static final long SEQUENCE_START = 1000000000` (seed after every reset)
@@ -57,7 +57,7 @@ The counter is process-local, in-memory and `synchronized`: it cannot fail loudl
 
 - **FM-02.03-1 Counter carry at the reset after a window of more than 10^6 rows**
   - **Trigger**: more than 1 000 000 rows are versioned in one anchor window, then a record crosses the reset boundary (§3.2) fewer than `rows / 10^6` ms of effective time after the window's last row. Production shapes: (a) one statement touching millions of rows — every row event of it carries the same statement time — followed by a commit that started just after it (e.g. a transaction that waited on its row locks); (b) a long clamp at the floor, during which `effectiveTs` is constant and the counter never resets: a restart on a lagging source with more than 10^6 rows in the ≤ 5 s head-room clamp (≥ 200 000 rows/s), a clock-seeded start (first start after an upgrade) on a lagging source — the clamp lasts the whole backlog — or a source clock stepped back.
-  - **Behaviour**: `DebeziumChangeEventCapture.nextVersionAssignment` returns `effectiveTs × 10^6 + counter`; after N rows the counter is `SEQUENCE_START + N`, i.e. `N / 10^6` ms carried into the timestamp field. At the reset it restarts at `SEQUENCE_START` with the new `effectiveTs`, so the first rows after the reset are versioned up to `N / 10^6` ms below the last rows before it.
+  - **Behaviour**: `VersionSequencer.nextVersionAssignment` returns `effectiveTs × 10^6 + counter`; after N rows the counter is `SEQUENCE_START + N`, i.e. `N / 10^6` ms carried into the timestamp field. At the reset it restarts at `SEQUENCE_START` with the new `effectiveTs`, so the first rows after the reset are versioned up to `N / 10^6` ms below the last rows before it.
   - **Detection**: none. DEFECT.
   - **Blast radius**: keys written both by the rows before the reset and by the commits of the next `N / 10^6` ms keep the older value under `FINAL` (for a 540 000 000-row clamp: 540 ms of commits). Silent, matching row counts, not self-healing until each key is written again.
   - **Recovery**: identify the window (a multi-million-row transaction in the binlog, or the restart/upgrade instant); run the value checksum (spec 11.02) and `ch-mysql-resync` (spec 11.04) on the tables written around it. Operator prevention: upgrade and restart with the connector caught up (lag under a few seconds), so no long clamp forms.

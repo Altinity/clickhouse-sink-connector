@@ -6,7 +6,7 @@ Specifies the versioning behaviour when the connector restarts or Debezium rewin
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java` — `nextSequenceNumber`, `seedVersionFloor`, `sequenceHighWaterPosition`, `sequenceMaxSourceTs`, `SEQUENCE_START_INITIAL = 500000000`, `SEQUENCE_START = 1000000000`
+- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionSequencer.java` (package-private, extracted from `DebeziumChangeEventCapture`) — `nextSequenceNumber`, `seedVersionFloor`, `sequenceHighWaterPosition`, `sequenceMaxSourceTs`, `SEQUENCE_START_INITIAL = 500000000`, `SEQUENCE_START = 1000000000`
 - **Durable high-water mark**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionHighWaterMark.java` (spec 02.02 §3.5, spec 09.03 §3.4)
 - **Timestamp choice**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/model/ClickHouseStruct.java` — `getSourceTsFromChangeEvent` (source `ts_ms` for streaming rows, identical on every redelivery; envelope `ts_ms` for snapshot rows and records without a source struct)
 - **Offset manager Javadoc**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/executor/DebeziumOffsetManagement.java` (replay-safety paragraphs)

@@ -11,7 +11,7 @@ written by the new version coexist in one `ReplacingMergeTree` table, and the
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Version assignment**: `sink-connector-lightweight/.../cdc/DebeziumChangeEventCapture.java#nextSequenceNumber` and `sink-connector/.../model/ClickHouseStruct.java#calculateVersion`.
+- **Version assignment**: `sink-connector-lightweight/.../cdc/VersionSequencer.java#nextSequenceNumber` (package-private, extracted from `DebeziumChangeEventCapture`) and `sink-connector/.../model/ClickHouseStruct.java#calculateVersion`.
 - **Persisted offset store / schema history**: Debezium JDBC storage into `replica_source_info` / schema-history tables, configured by `offset.storage.*` / `schema.history.internal.*`.
 - **Config surface**: `ClickHouseSinkConnectorConfigVariables` (key names) and `ClickHouseSinkConnectorConfig` (hardcoded defaults).
 - **Formal model**: `formal_specs/lean/Replication/Upgrade.lean` (`upgrade_safe`, `replicate_convergesV`).

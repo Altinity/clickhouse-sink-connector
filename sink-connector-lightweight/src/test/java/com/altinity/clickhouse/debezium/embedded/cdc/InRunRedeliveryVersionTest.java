@@ -34,15 +34,15 @@ public class InRunRedeliveryVersionTest {
 
     @BeforeEach
     public void resetSequenceState() {
-        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
-        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
-        DebeziumChangeEventCapture.sequenceHighWaterPosition = null;
-        DebeziumChangeEventCapture.sequenceHighWaterEffectiveTs = 0L;
-        DebeziumChangeEventCapture.sequenceMaxSourceTs = 0L;
+        VersionSequencer.sequenceNumber = VersionSequencer.SEQUENCE_START;
+        VersionSequencer.sequenceAnchorTs = 0L;
+        VersionSequencer.sequenceHighWaterPosition = null;
+        VersionSequencer.sequenceHighWaterEffectiveTs = 0L;
+        VersionSequencer.sequenceMaxSourceTs = 0L;
     }
 
     private static long version(long ts, String file, long pos) {
-        return DebeziumChangeEventCapture.nextSequenceNumber(ts, SourcePosition.ofBinlog(file, pos, 0));
+        return VersionSequencer.nextSequenceNumber(ts, SourcePosition.ofBinlog(file, pos, 0));
     }
 
     @Test

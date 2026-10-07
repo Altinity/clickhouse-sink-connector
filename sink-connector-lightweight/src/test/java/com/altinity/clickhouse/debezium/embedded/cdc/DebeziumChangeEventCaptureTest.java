@@ -146,10 +146,10 @@ public class DebeziumChangeEventCaptureTest {
     /** The four statics of the version sequence, captured for comparison. */
     private static List<Object> sequenceState() {
         return Arrays.asList(
-                DebeziumChangeEventCapture.sequenceMaxSourceTs,
-                DebeziumChangeEventCapture.sequenceAnchorTs,
-                DebeziumChangeEventCapture.sequenceNumber,
-                DebeziumChangeEventCapture.sequenceHighWaterPosition);
+                VersionSequencer.sequenceMaxSourceTs,
+                VersionSequencer.sequenceAnchorTs,
+                VersionSequencer.sequenceNumber,
+                VersionSequencer.sequenceHighWaterPosition);
     }
 
     @Test
@@ -251,12 +251,12 @@ public class DebeziumChangeEventCaptureTest {
 
         // Make a list of ch1, ch2, ch3 and ch4
         List<ClickHouseStruct> clickHouseStructs = Arrays.asList(ch1, ch2, ch3, ch4, ch5);
-        DebeziumChangeEventCapture.addVersion(clickHouseStructs);
+        VersionSequencer.addVersion(clickHouseStructs);
 
         Thread.sleep(1000);
         // Add ch5 and ch6
         List<ClickHouseStruct> clickHouseStructs2 = Arrays.asList(ch5, ch6);
-        DebeziumChangeEventCapture.addVersion(clickHouseStructs2);
+        VersionSequencer.addVersion(clickHouseStructs2);
 
         // Check if the sequence numbers are unique
         assertTrue(clickHouseStructs.get(0).getSequenceNumber() < clickHouseStructs.get(1).getSequenceNumber());
@@ -279,11 +279,11 @@ public class DebeziumChangeEventCaptureTest {
      * statics themselves (spec 02.02 §2), not copies.
      */
     private static void resetSequenceStateAsAfterRestart() {
-        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
-        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
-        DebeziumChangeEventCapture.sequenceHighWaterPosition = null;
-        DebeziumChangeEventCapture.sequenceHighWaterEffectiveTs = 0L;
-        DebeziumChangeEventCapture.sequenceMaxSourceTs = 0L;
+        VersionSequencer.sequenceNumber = VersionSequencer.SEQUENCE_START;
+        VersionSequencer.sequenceAnchorTs = 0L;
+        VersionSequencer.sequenceHighWaterPosition = null;
+        VersionSequencer.sequenceHighWaterEffectiveTs = 0L;
+        VersionSequencer.sequenceMaxSourceTs = 0L;
     }
 
     /** Counter component of a version emitted by nextSequenceNumber (spec 02.01 §3.2). */
@@ -308,23 +308,23 @@ public class DebeziumChangeEventCaptureTest {
         SourcePosition p2 = SourcePosition.ofBinlog("mysql-bin.000010", 200L, 0);
         SourcePosition p3 = SourcePosition.ofBinlog("mysql-bin.000010", 300L, 0);
 
-        long first = DebeziumChangeEventCapture.nextSequenceNumber(ts, p1);
+        long first = VersionSequencer.nextSequenceNumber(ts, p1);
         assertEquals("first record after start seeds the counter at SEQUENCE_START_INITIAL and increments once",
-                DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1, counterOf(first, ts));
+                VersionSequencer.SEQUENCE_START_INITIAL + 1, counterOf(first, ts));
         assertEquals("the anchor is the first record's timestamp",
-                ts, DebeziumChangeEventCapture.sequenceAnchorTs);
+                ts, VersionSequencer.sequenceAnchorTs);
 
-        long plus1500 = DebeziumChangeEventCapture.nextSequenceNumber(ts + 1500, p2);
+        long plus1500 = VersionSequencer.nextSequenceNumber(ts + 1500, p2);
         assertEquals("1500 ms past the anchor yields diff == 1, which does NOT reset: the counter keeps incrementing",
-                DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 2, counterOf(plus1500, ts + 1500));
+                VersionSequencer.SEQUENCE_START_INITIAL + 2, counterOf(plus1500, ts + 1500));
         assertEquals("no reset, so the anchor has not moved",
-                ts, DebeziumChangeEventCapture.sequenceAnchorTs);
+                ts, VersionSequencer.sequenceAnchorTs);
 
-        long plus2500 = DebeziumChangeEventCapture.nextSequenceNumber(ts + 2500, p3);
+        long plus2500 = VersionSequencer.nextSequenceNumber(ts + 2500, p3);
         assertEquals("2500 ms past the anchor yields diff == 2, which resets the counter to SEQUENCE_START",
-                DebeziumChangeEventCapture.SEQUENCE_START, counterOf(plus2500, ts + 2500));
+                VersionSequencer.SEQUENCE_START, counterOf(plus2500, ts + 2500));
         assertEquals("the reset re-anchors the window on the resetting record's timestamp",
-                ts + 2500, DebeziumChangeEventCapture.sequenceAnchorTs);
+                ts + 2500, VersionSequencer.sequenceAnchorTs);
 
         assertTrue("versions stay strictly increasing across the boundary within one run",
                 first < plus1500 && plus1500 < plus2500);
@@ -356,24 +356,24 @@ public class DebeziumChangeEventCaptureTest {
 
         // Run 1.
         resetSequenceStateAsAfterRestart();
-        DebeziumChangeEventCapture.nextSequenceNumber(connectorClock - 40_000, p400);
+        VersionSequencer.nextSequenceNumber(connectorClock - 40_000, p400);
         runControlRecordBatch(heartbeatAt(connectorClock));
-        long v1 = DebeziumChangeEventCapture.nextSequenceNumber(connectorClock - 30_000, p500);
+        long v1 = VersionSequencer.nextSequenceNumber(connectorClock - 30_000, p500);
 
         // Restart: the statics are fresh; the engine seeds the floor from the
         // durable high-water mark, which is at least v1.
         resetSequenceStateAsAfterRestart();
-        DebeziumChangeEventCapture.seedVersionFloor(v1);
-        long v2 = DebeziumChangeEventCapture.nextSequenceNumber(connectorClock - 25_000, p600);
+        VersionSequencer.seedVersionFloor(v1);
+        long v2 = VersionSequencer.nextSequenceNumber(connectorClock - 25_000, p600);
 
         assertTrue("the newer post-restart write (" + v2 + ") must out-rank the older pre-restart "
                         + "write (" + v1 + "); ReplacingMergeTree keeps the stale row otherwise",
                 v2 > v1);
         assertTrue("the floor was seeded at floorDiv(v1, 1e6) + 1 before the first record",
-                DebeziumChangeEventCapture.sequenceMaxSourceTs >= Math.floorDiv(v1, 1_000_000L) + 1);
+                VersionSequencer.sequenceMaxSourceTs >= Math.floorDiv(v1, 1_000_000L) + 1);
         assertEquals("the counter still starts in the 500m domain after a start: the seed changes "
                         + "the floor, not the 2.8.0 arithmetic",
-                DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1,
+                VersionSequencer.SEQUENCE_START_INITIAL + 1,
                 counterOf(v2, connectorClock - 25_000));
 
         resetSequenceStateAsAfterRestart();
@@ -396,21 +396,21 @@ public class DebeziumChangeEventCaptureTest {
         SourcePosition newerPos = SourcePosition.ofBinlog("mysql-bin.000020", 600L, 0);
 
         resetSequenceStateAsAfterRestart();
-        DebeziumChangeEventCapture.nextSequenceNumber(olderTs - 10_000, SourcePosition.ofBinlog("mysql-bin.000020", 400L, 0));
-        long olderBeforeRestart = DebeziumChangeEventCapture.nextSequenceNumber(olderTs, olderPos);
+        VersionSequencer.nextSequenceNumber(olderTs - 10_000, SourcePosition.ofBinlog("mysql-bin.000020", 400L, 0));
+        long olderBeforeRestart = VersionSequencer.nextSequenceNumber(olderTs, olderPos);
         assertEquals("precondition: the pre-restart write carries the steady-state seed",
-                DebeziumChangeEventCapture.SEQUENCE_START, counterOf(olderBeforeRestart, olderTs));
+                VersionSequencer.SEQUENCE_START, counterOf(olderBeforeRestart, olderTs));
 
         resetSequenceStateAsAfterRestart();
-        DebeziumChangeEventCapture.seedVersionFloor(olderBeforeRestart);
-        long newerAfterRestart = DebeziumChangeEventCapture.nextSequenceNumber(olderTs + 1, newerPos);
+        VersionSequencer.seedVersionFloor(olderBeforeRestart);
+        long newerAfterRestart = VersionSequencer.nextSequenceNumber(olderTs + 1, newerPos);
 
         assertTrue("newer(" + newerAfterRestart + ") must out-rank older(" + olderBeforeRestart
                         + "); before the seeded floor it did not", newerAfterRestart > olderBeforeRestart);
         assertEquals("the newer event is clamped to the seeded slot floorDiv(older, 1e6) + 1 = T + 1001",
-                olderTs + 1001, DebeziumChangeEventCapture.sequenceMaxSourceTs);
+                olderTs + 1001, VersionSequencer.sequenceMaxSourceTs);
         assertEquals("and still carries the 500m start seed: the arithmetic is the 2.8.0 arithmetic",
-                DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 1,
+                VersionSequencer.SEQUENCE_START_INITIAL + 1,
                 counterOf(newerAfterRestart, olderTs + 1001));
 
         resetSequenceStateAsAfterRestart();
@@ -428,25 +428,25 @@ public class DebeziumChangeEventCaptureTest {
         resetSequenceStateAsAfterRestart();
         final long highWater = 1_787_635_797_000L * 1_000_000L + 1_000_000_000L + 7;
 
-        assertEquals(0L, DebeziumChangeEventCapture.seedVersionFloor(0L));
-        assertEquals(0L, DebeziumChangeEventCapture.seedVersionFloor(-5L));
+        assertEquals(0L, VersionSequencer.seedVersionFloor(0L));
+        assertEquals(0L, VersionSequencer.seedVersionFloor(-5L));
         assertEquals("a non-positive high-water mark leaves the floor untouched",
-                0L, DebeziumChangeEventCapture.sequenceMaxSourceTs);
+                0L, VersionSequencer.sequenceMaxSourceTs);
 
-        long floor = DebeziumChangeEventCapture.seedVersionFloor(highWater);
+        long floor = VersionSequencer.seedVersionFloor(highWater);
         assertEquals(Math.floorDiv(highWater, 1_000_000L) + 1, floor);
-        assertEquals(floor, DebeziumChangeEventCapture.sequenceMaxSourceTs);
+        assertEquals(floor, VersionSequencer.sequenceMaxSourceTs);
         assertTrue("the seeded slot lies strictly above the high-water version",
                 floor * 1_000_000L > highWater);
 
-        long lower = DebeziumChangeEventCapture.seedVersionFloor(highWater - 5_000L * 1_000_000L);
+        long lower = VersionSequencer.seedVersionFloor(highWater - 5_000L * 1_000_000L);
         assertEquals("a lower seed (e.g. a re-setup in the same JVM) never lowers the floor",
                 floor, lower);
-        assertEquals(floor, DebeziumChangeEventCapture.sequenceMaxSourceTs);
+        assertEquals(floor, VersionSequencer.sequenceMaxSourceTs);
 
         assertEquals("the anchor and counter are left to their start-of-run rules",
-                0L, DebeziumChangeEventCapture.sequenceAnchorTs);
-        assertEquals(null, DebeziumChangeEventCapture.sequenceHighWaterPosition);
+                0L, VersionSequencer.sequenceAnchorTs);
+        assertEquals(null, VersionSequencer.sequenceHighWaterPosition);
 
         resetSequenceStateAsAfterRestart();
     }
@@ -464,7 +464,7 @@ public class DebeziumChangeEventCaptureTest {
         final long sourceClock = 1_787_635_797_000L - 40_000;
         final long connectorClock = 1_787_635_797_000L;
         resetSequenceStateAsAfterRestart();
-        DebeziumChangeEventCapture.nextSequenceNumber(sourceClock,
+        VersionSequencer.nextSequenceNumber(sourceClock,
                 SourcePosition.ofBinlog("mysql-bin.000020", 400L, 0));
         List<Object> before = sequenceState();
 
@@ -477,7 +477,7 @@ public class DebeziumChangeEventCaptureTest {
                 before, sequenceState());
 
         assertEquals("the floor stays at the source clock", sourceClock,
-                DebeziumChangeEventCapture.sequenceMaxSourceTs);
+                VersionSequencer.sequenceMaxSourceTs);
         resetSequenceStateAsAfterRestart();
     }
 
@@ -497,14 +497,14 @@ public class DebeziumChangeEventCaptureTest {
         SourcePosition p300 = SourcePosition.ofBinlog("mysql-bin.000007", 300L, 0);
 
         resetSequenceStateAsAfterRestart();
-        DebeziumChangeEventCapture.nextSequenceNumber(ts, p100);
-        long oldRunHighest = DebeziumChangeEventCapture.nextSequenceNumber(ts + 3_000, p200);
+        VersionSequencer.nextSequenceNumber(ts, p100);
+        long oldRunHighest = VersionSequencer.nextSequenceNumber(ts + 3_000, p200);
 
         resetSequenceStateAsAfterRestart();
-        DebeziumChangeEventCapture.seedVersionFloor(oldRunHighest);
-        long replayedFirst = DebeziumChangeEventCapture.nextSequenceNumber(ts, p100);
-        long replayedSecond = DebeziumChangeEventCapture.nextSequenceNumber(ts + 3_000, p200);
-        long genuinelyNew = DebeziumChangeEventCapture.nextSequenceNumber(ts + 3_100, p300);
+        VersionSequencer.seedVersionFloor(oldRunHighest);
+        long replayedFirst = VersionSequencer.nextSequenceNumber(ts, p100);
+        long replayedSecond = VersionSequencer.nextSequenceNumber(ts + 3_000, p200);
+        long genuinelyNew = VersionSequencer.nextSequenceNumber(ts + 3_100, p300);
 
         assertTrue("the replayed copy is a first delivery to the new run and ranks above the old run",
                 replayedFirst > oldRunHighest);

@@ -32,11 +32,11 @@ public class SequenceCounterConcurrencyTest {
 
     @BeforeEach
     public void resetSequenceState() {
-        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
-        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
-        DebeziumChangeEventCapture.sequenceHighWaterPosition = null;
-        DebeziumChangeEventCapture.sequenceHighWaterEffectiveTs = 0L;
-        DebeziumChangeEventCapture.sequenceMaxSourceTs = 0L;
+        VersionSequencer.sequenceNumber = VersionSequencer.SEQUENCE_START;
+        VersionSequencer.sequenceAnchorTs = 0L;
+        VersionSequencer.sequenceHighWaterPosition = null;
+        VersionSequencer.sequenceHighWaterEffectiveTs = 0L;
+        VersionSequencer.sequenceMaxSourceTs = 0L;
     }
 
     @Test
@@ -53,7 +53,7 @@ public class SequenceCounterConcurrencyTest {
                     long previous = Long.MIN_VALUE;
                     boolean increasing = true;
                     for (int i = 0; i < CALLS_PER_THREAD; i++) {
-                        long v = DebeziumChangeEventCapture.nextSequenceNumber(TS, null);
+                        long v = VersionSequencer.nextSequenceNumber(TS, null);
                         if (v <= previous) {
                             increasing = false;
                         }

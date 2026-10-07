@@ -34,11 +34,11 @@ public class GtidVersionTieBreakTest {
 
     @BeforeEach
     public void resetSequenceState() {
-        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
-        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
-        DebeziumChangeEventCapture.sequenceHighWaterPosition = null;
-        DebeziumChangeEventCapture.sequenceHighWaterEffectiveTs = 0L;
-        DebeziumChangeEventCapture.sequenceMaxSourceTs = 0L;
+        VersionSequencer.sequenceNumber = VersionSequencer.SEQUENCE_START;
+        VersionSequencer.sequenceAnchorTs = 0L;
+        VersionSequencer.sequenceHighWaterPosition = null;
+        VersionSequencer.sequenceHighWaterEffectiveTs = 0L;
+        VersionSequencer.sequenceMaxSourceTs = 0L;
     }
 
     private static ClickHouseStruct at(long sourceTsMs, Long gtid, long pos) {
@@ -56,7 +56,7 @@ public class GtidVersionTieBreakTest {
 
     /** Dispatch-loop assignment, then the version precedence with snowflake.id=true (the default). */
     private static long versionOf(ClickHouseStruct record) {
-        DebeziumChangeEventCapture.addVersion(Arrays.asList(record));
+        VersionSequencer.addVersion(Arrays.asList(record));
         record.calculateVersion(true);
         return record.getVersion();
     }
@@ -81,11 +81,11 @@ public class GtidVersionTieBreakTest {
     @DisplayName("a GTID transaction number wrap inside one clamped millisecond keeps commit order")
     public void gtidWrapInsideAClampedMillisecondKeepsCommitOrder() {
         // Restart on a lagging source: the floor is seeded ahead of the source clock.
-        DebeziumChangeEventCapture.raiseVersionFloor(TS + 5_000);
+        VersionSequencer.raiseVersionFloor(TS + 5_000);
         long before = versionOf(at(TS, (1L << 22) - 1, 100));
         long after = versionOf(at(TS + 1, 1L << 22, 200));
 
-        assertEquals(TS + 5_000, DebeziumChangeEventCapture.sequenceMaxSourceTs, "both rows were clamped");
+        assertEquals(TS + 5_000, VersionSequencer.sequenceMaxSourceTs, "both rows were clamped");
         assertTrue(after > before,
                 "transaction 4194304 committed after 4194303 but was versioned " + after + " < " + before
                         + ": its low 22 bits are 0");

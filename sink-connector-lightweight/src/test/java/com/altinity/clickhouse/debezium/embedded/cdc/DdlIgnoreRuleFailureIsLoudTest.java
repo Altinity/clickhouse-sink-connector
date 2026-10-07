@@ -81,11 +81,11 @@ public class DdlIgnoreRuleFailureIsLoudTest {
                 ClickHouseSinkConnectorConfig.class,
                 DebeziumEngine.RecordCommitter.class,
                 boolean.class,
-                DebeziumChangeEventCapture.VersionAssignment.class);
+                VersionSequencer.VersionAssignment.class);
         m.setAccessible(true);
         try {
             return m.invoke(capture, props, record, null, null, null, true,
-                    new DebeziumChangeEventCapture.VersionAssignment(1_000_000_001L, 1_000L));
+                    new VersionSequencer.VersionAssignment(1_000_000_001L, 1_000L));
         } catch (InvocationTargetException ite) {
             Throwable cause = ite.getCause();
             if (cause instanceof Exception) {

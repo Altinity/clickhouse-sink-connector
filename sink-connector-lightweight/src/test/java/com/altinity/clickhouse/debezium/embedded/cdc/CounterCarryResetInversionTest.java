@@ -36,15 +36,15 @@ public class CounterCarryResetInversionTest {
 
     @BeforeEach
     public void resetSequenceState() {
-        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
-        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
-        DebeziumChangeEventCapture.sequenceHighWaterPosition = null;
-        DebeziumChangeEventCapture.sequenceHighWaterEffectiveTs = 0L;
-        DebeziumChangeEventCapture.sequenceMaxSourceTs = 0L;
+        VersionSequencer.sequenceNumber = VersionSequencer.SEQUENCE_START;
+        VersionSequencer.sequenceAnchorTs = 0L;
+        VersionSequencer.sequenceHighWaterPosition = null;
+        VersionSequencer.sequenceHighWaterEffectiveTs = 0L;
+        VersionSequencer.sequenceMaxSourceTs = 0L;
     }
 
     private static long version(long ts, long pos, int row) {
-        return DebeziumChangeEventCapture.nextSequenceNumber(ts, SourcePosition.ofBinlog(LOG, pos, row));
+        return VersionSequencer.nextSequenceNumber(ts, SourcePosition.ofBinlog(LOG, pos, row));
     }
 
     /**
@@ -68,7 +68,7 @@ public class CounterCarryResetInversionTest {
     private static void anchorAtTs() {
         version(TS - 10_000, 100, 0);
         version(TS, 200, 0);
-        assertEquals(TS, DebeziumChangeEventCapture.sequenceAnchorTs, "the window is anchored at TS");
+        assertEquals(TS, VersionSequencer.sequenceAnchorTs, "the window is anchored at TS");
     }
 
     @Test
@@ -82,7 +82,7 @@ public class CounterCarryResetInversionTest {
         // anchor, so the counter resets here.
         long next = version(TS + 2_000, 1_000_000, 0);
 
-        assertEquals(DebeziumChangeEventCapture.SEQUENCE_START, DebeziumChangeEventCapture.sequenceNumber,
+        assertEquals(VersionSequencer.SEQUENCE_START, VersionSequencer.sequenceNumber,
                 "the counter reset on this record");
         assertTrue(next > lastOfBigStatement,
                 "900 000 rows carry 0.9 ms into the timestamp field; a 1 ms step still ranks above");
@@ -113,9 +113,9 @@ public class CounterCarryResetInversionTest {
         // A restart on a lagging source: the floor is seeded well ahead of the rows
         // the new run reads first (spec 02.02 section 3.5), so they are clamped to it.
         long floor = TS + 60_000;
-        DebeziumChangeEventCapture.raiseVersionFloor(floor);
+        VersionSequencer.raiseVersionFloor(floor);
         long lastClamped = bigStatement(TS, 1_000, 1_200_000);
-        assertEquals(floor, DebeziumChangeEventCapture.sequenceMaxSourceTs, "every row was clamped to the floor");
+        assertEquals(floor, VersionSequencer.sequenceMaxSourceTs, "every row was clamped to the floor");
 
         // The source clock passes the floor: one row just below the reset boundary,
         // then the row that resets the counter.

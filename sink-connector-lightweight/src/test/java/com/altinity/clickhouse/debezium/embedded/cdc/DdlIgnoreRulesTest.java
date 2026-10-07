@@ -198,12 +198,12 @@ public class DdlIgnoreRulesTest {
                 "processEveryChangeRecord",
                 Properties.class, ChangeEvent.class, DebeziumRecordParserService.class,
                 ClickHouseSinkConnectorConfig.class, DebeziumEngine.RecordCommitter.class,
-                boolean.class, DebeziumChangeEventCapture.VersionAssignment.class);
+                boolean.class, VersionSequencer.VersionAssignment.class);
         m.setAccessible(true);
         try {
             // Mirrors handleBatch: version 1000000001 = effectiveTs 1000 * 1e6 + 1.
             return m.invoke(capture, props, changeEvent(record), null, config(), null, true,
-                    new DebeziumChangeEventCapture.VersionAssignment(1000000001L, 1000L));
+                    new VersionSequencer.VersionAssignment(1000000001L, 1000L));
         } catch (InvocationTargetException ite) {
             Throwable cause = ite.getCause();
             if (cause instanceof Exception) {

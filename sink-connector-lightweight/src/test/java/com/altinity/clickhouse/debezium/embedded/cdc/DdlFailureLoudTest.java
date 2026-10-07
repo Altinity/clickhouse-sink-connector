@@ -130,12 +130,12 @@ public class DdlFailureLoudTest {
                 ClickHouseSinkConnectorConfig.class,
                 DebeziumEngine.RecordCommitter.class,
                 boolean.class,
-                DebeziumChangeEventCapture.VersionAssignment.class);
+                VersionSequencer.VersionAssignment.class);
         m.setAccessible(true);
         try {
             // Mirrors handleBatch: the version 1000000001 = effectiveTs 1000 * 1e6 + 1.
             return m.invoke(capture, props, record, null, config, null, true,
-                    new DebeziumChangeEventCapture.VersionAssignment(1000000001L, 1000L));
+                    new VersionSequencer.VersionAssignment(1000000001L, 1000L));
         } catch (InvocationTargetException ite) {
             Throwable cause = ite.getCause();
             if (cause instanceof Exception) {

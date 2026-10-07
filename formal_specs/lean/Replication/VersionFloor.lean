@@ -15,7 +15,7 @@ where `effectiveTs` is the row's source timestamp clamped up to a process-wide
 floor (`sequenceMaxSourceTs`) for every FIRST delivery, and `counter` is the
 intra-window sequence counter (`sequenceNumber`, seeded at 500m after a start and
 at 1000m after every reset). This module models that state machine exactly as
-`DebeziumChangeEventCapture.nextSequenceNumber` implements it and proves the two
+`VersionSequencer.nextSequenceNumber` implements it and proves the two
 properties the restart fix relies on:
 
 * **Restart boundary.** Before the fix the floor, the anchor and the high-water
@@ -152,7 +152,7 @@ def oldStep (s : SeqState) (r : Rec) : SeqState :=
     mark    := if isFirst s r then r.pos else s.mark,
     markEff := if isFirst s r then oldEffTs s r else s.markEff }
 
-/-- `DebeziumChangeEventCapture.seedVersionFloor(v)`: raise the floor to
+/-- `VersionSequencer.seedVersionFloor(v)`: raise the floor to
     `v / 1_000_000 + 1` (never lower it). -/
 def seed (s : SeqState) (v : Nat) : SeqState :=
   { s with floor := max s.floor (v / M + 1) }
