@@ -21,12 +21,23 @@ import java.util.Map;
  * <ul>
  *   <li><b>ALIAS overrides</b> are automatically applied via
  *       {@code ALTER TABLE ... ADD/MODIFY COLUMN} when the table is missing
- *       the alias column or the alias definition has drifted.</li>
+ *       the alias column or the alias definition has drifted. When the DDL
+ *       is rejected, {@code system.columns} cannot be read, or the alias
+ *       column's name is already taken by a column that is not {@code ALIAS}
+ *       kind, reconciliation halts the connector exactly as a direct
+ *       override mismatch does (spec 08.05 section 3.3.2): no row is
+ *       written while ClickHouse does not match the declared override.</li>
  *   <li><b>Direct overrides</b> cause the connector to halt with a detailed
  *       error message when the configured type does not match the actual
  *       column type in ClickHouse, guiding the operator through the
  *       available fix options.</li>
  * </ul>
+ *
+ * <p>Both kinds are scoped to columns that match the source: an override
+ * entry is skipped (no DDL, no halt) when the column it is defined on is not
+ * part of this table. A ClickHouse-only column a user added by hand --
+ * including one that happens to carry the name a generated ALIAS column
+ * would have -- is never inspected or altered.
  *
  * <p>This class is designed to be called <em>after</em> the table has been
  * confirmed to exist (either pre-existing or just created) and
@@ -63,8 +74,11 @@ public class ColumnTypeOverrideReconciler {
      *                       lookups (e.g. {@code "public"}).
      * @param overrideConfig the parsed column type override configuration.
      * @throws ColumnTypeOverrideMismatchException if a direct override does
-     *         not match the existing column type.
-     * @throws Exception if a SQL error occurs during reconciliation.
+     *         not match the existing column type, if an ALIAS override
+     *         cannot be added or modified, if an existing column occupies a
+     *         configured ALIAS column's name without being ALIAS kind, or if
+     *         {@code system.columns} cannot be read while overrides are
+     *         configured.
      */
     public void reconcile(
             Connection conn,
@@ -72,7 +86,7 @@ public class ColumnTypeOverrideReconciler {
             String tableName,
             String schemaName,
             ColumnTypeOverrideConfig overrideConfig
-    ) throws Exception {
+    ) {
         if (overrideConfig == null || !overrideConfig.hasOverrides()) {
             return;
         }
@@ -107,11 +121,17 @@ public class ColumnTypeOverrideReconciler {
      * @param table    the table name.
      * @return a map of column name → {@link ColumnInfo} preserving insertion
      *         order.
-     * @throws Exception if a SQL error occurs.
+     * @throws ColumnTypeOverrideMismatchException if {@code system.columns}
+     *         cannot be read. Overrides are already known to be configured at
+     *         this point (the caller checks {@code hasOverrides()} first), so
+     *         a failure here would otherwise silently skip both the direct
+     *         and the ALIAS checks below it -- the same halt direct and ALIAS
+     *         mismatches use, rather than a checked exception a caller could
+     *         log and continue past.
      */
     private Map<String, ColumnInfo> getExistingColumns(
             Connection conn, String database, String table
-    ) throws Exception {
+    ) {
         Map<String, ColumnInfo> columns = new LinkedHashMap<>();
         // The names are bound, never interpolated (spec 08.05 section 3.3.1): they
         // are replicated identifiers, and a quote in one would make an
@@ -130,6 +150,17 @@ public class ColumnTypeOverrideReconciler {
                     columns.put(info.name, info);
                 }
             }
+        } catch (Exception e) {
+            throw new ColumnTypeOverrideMismatchException(String.format(
+                    "%n%nERROR: Could not read column metadata for table "
+                            + "'%s.%s' while reconciling column_type_override.*.%n"
+                            + "ClickHouse reported: %s%n%n"
+                            + "No row will be written to this table until "
+                            + "system.columns can be read again (check "
+                            + "connectivity and that the table/database "
+                            + "still exist); the connector retries "
+                            + "automatically once the cause is fixed.%n",
+                    database, table, e.getMessage()), e);
         }
         return columns;
     }
@@ -188,16 +219,41 @@ public class ColumnTypeOverrideReconciler {
      * Reconciles alias overrides by adding missing alias columns or
      * modifying existing ones whose type or expression has drifted from
      * the config.
+     *
+     * <p>Scoped to columns that match the source (manager ruling on
+     * parity): an entry is skipped entirely, with no DDL attempted and no
+     * exception thrown, when the column the ALIAS is derived from
+     * ({@link AliasOverrideEntry#getColumn()}) is not a column of this
+     * table. That covers a wildcard override that simply does not apply to
+     * this table, and guarantees a ClickHouse-only column a user added by
+     * hand -- including one that happens to carry the name a generated
+     * ALIAS column would have -- is never inspected or altered.
+     *
+     * @throws ColumnTypeOverrideMismatchException if the {@code ADD}/
+     *         {@code MODIFY COLUMN ... ALIAS} DDL is rejected, or if the
+     *         alias column's name is already taken by a column that is not
+     *         {@code ALIAS} kind.
      */
     private void reconcileAliasOverrides(
             Connection conn, String database, String tableName,
             String schemaName, ColumnTypeOverrideConfig overrideConfig,
             Map<String, ColumnInfo> existingColumns
-    ) throws Exception {
+    ) {
         List<AliasOverrideEntry> aliasOverrides =
                 overrideConfig.getAliasOverrides(schemaName, tableName);
 
         for (AliasOverrideEntry ao : aliasOverrides) {
+            if (!existingColumns.containsKey(ao.getColumn())) {
+                // The source column this alias is derived from is not a
+                // column of this table -- the override does not apply here.
+                // Nothing the connector created is at stake, so this is not
+                // touched and does not halt.
+                log.debug("Skipping ALIAS override for {}.{}: source column "
+                                + "'{}' is not a column of this table",
+                        database, tableName, ao.getColumn());
+                continue;
+            }
+
             String aliasColName = ao.getAliasColumnName();
             ColumnInfo existing = existingColumns.get(aliasColName);
 
@@ -210,6 +266,10 @@ public class ColumnTypeOverrideReconciler {
                 log.info("Adding missing ALIAS column: {}", alterSql);
                 try (Statement stmt = conn.createStatement()) {
                     stmt.execute(alterSql);
+                } catch (Exception e) {
+                    throw new ColumnTypeOverrideMismatchException(
+                            buildAliasDdlFailureMessage(database, tableName,
+                                    ao.getColumn(), "add", alterSql, e), e);
                 }
             } else if ("ALIAS".equals(existing.defaultKind)) {
                 // ALIAS column exists — check if type or expression differs
@@ -230,14 +290,28 @@ public class ColumnTypeOverrideReconciler {
                             alterSql);
                     try (Statement stmt = conn.createStatement()) {
                         stmt.execute(alterSql);
+                    } catch (Exception e) {
+                        throw new ColumnTypeOverrideMismatchException(
+                                buildAliasDdlFailureMessage(database,
+                                        tableName, ao.getColumn(), "modify",
+                                        alterSql, e), e);
                     }
                 } else {
                     log.debug("ALIAS column {} already matches config, "
                             + "no action needed", aliasColName);
                 }
+            } else {
+                // The source column exists on this table (checked above),
+                // so this override is in scope, but the name its ALIAS
+                // column must have is already taken by a column that is not
+                // ALIAS kind. ClickHouse cannot have two columns of the same
+                // name, so the override can never be satisfied without an
+                // operator resolving the collision -- the same halt a
+                // direct-override mismatch uses, not a silent skip.
+                throw new ColumnTypeOverrideMismatchException(
+                        buildAliasNameCollisionMessage(database, tableName,
+                                aliasColName, ao.getColumn(), existing));
             }
-            // If the column exists but is NOT an ALIAS column, we do not
-            // touch it — the operator must resolve manually.
         }
     }
 
@@ -299,6 +373,64 @@ public class ColumnTypeOverrideReconciler {
                 database, tableName, colName, configuredType,
                 tableName, colName,
                 stripNullable(actualType));
+    }
+
+    /**
+     * Builds a detailed error message for a rejected {@code ADD}/
+     * {@code MODIFY COLUMN ... ALIAS} DDL statement.
+     */
+    private String buildAliasDdlFailureMessage(
+            String database, String tableName, String sourceColumn,
+            String action, String alterSql, Exception cause
+    ) {
+        return String.format(
+                "%n%nERROR: Could not %s the ALIAS override column for "
+                        + "table '%s.%s'.%n%n"
+                        + "Source column '%s' is configured with "
+                        + "column_type_override.alias.*, which requires:%n"
+                        + "  %s%n%n"
+                        + "ClickHouse rejected it: %s%n%n"
+                        + "No row will be written to this table until the "
+                        + "ALIAS column can be %sed. Once the underlying "
+                        + "cause is fixed (grant ALTER TABLE, correct the "
+                        + "expression or type, free up the column name), "
+                        + "the connector retries automatically.%n",
+                action, database, tableName, sourceColumn, alterSql,
+                cause.getMessage(), action);
+    }
+
+    /**
+     * Builds a detailed error message for a configured ALIAS override whose
+     * target column name is already occupied by a non-ALIAS column.
+     */
+    private String buildAliasNameCollisionMessage(
+            String database, String tableName, String aliasColName,
+            String sourceColumn, ColumnInfo existing
+    ) {
+        String existingKind = (existing.defaultKind == null
+                || existing.defaultKind.isEmpty())
+                ? "an ordinary column" : existing.defaultKind + " column";
+        return String.format(
+                "%n%nERROR: Column type override mismatch detected for "
+                        + "table '%s.%s'.%n%n"
+                        + "Source column '%s' is configured with "
+                        + "column_type_override.alias.*, which requires an "
+                        + "ALIAS column named '%s'. That name is already "
+                        + "taken by %s (type %s) in ClickHouse.%n%n"
+                        + "To fix this, you have the following options:%n%n"
+                        + "  1. Rename or drop the existing column:%n"
+                        // DESTRUCTIVE: the "DROP COLUMN" text below is advisory
+                        // only -- a suggested fix command printed for a human
+                        // operator to copy and run by hand after judging it
+                        // safe for their table. The connector never builds or
+                        // executes this (or any) DROP statement itself.
+                        + "     ALTER TABLE `%s`.`%s` DROP COLUMN `%s`;%n"
+                        + "     Then re-run the connector to add the ALIAS "
+                        + "column.%n%n"
+                        + "  2. Remove the alias override to leave the "
+                        + "existing column alone.%n",
+                database, tableName, sourceColumn, aliasColName, existingKind,
+                existing.type, database, tableName, aliasColName);
     }
 
     // -----------------------------------------------------------------------

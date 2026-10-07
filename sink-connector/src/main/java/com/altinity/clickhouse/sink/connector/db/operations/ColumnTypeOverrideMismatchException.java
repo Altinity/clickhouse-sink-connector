@@ -19,4 +19,18 @@ public class ColumnTypeOverrideMismatchException extends RuntimeException {
     public ColumnTypeOverrideMismatchException(String message) {
         super(message);
     }
+
+    /**
+     * Constructs a new mismatch exception wrapping the underlying failure
+     * (for example the {@link java.sql.SQLException} a rejected DDL or an
+     * unreadable {@code system.columns} raised), so the original cause is
+     * still visible in the stack trace the operator sees.
+     *
+     * @param message a human-readable description of the mismatch, including
+     *                fix instructions.
+     * @param cause   the underlying failure that prevented reconciliation.
+     */
+    public ColumnTypeOverrideMismatchException(String message, Throwable cause) {
+        super(message, cause);
+    }
 }
