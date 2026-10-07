@@ -97,7 +97,6 @@ def multiple_parallel_add_and_rename_column(self, column_number=5, node=None):
     """Check that after multiple `ALTER TABLE ADD COLUMN` parallel queries and
     multiple `ALTER TABLE RENAME COLUMN` parallel queries MySQL and Clickhouse has the same columns.
     """
-    xfail("doesn't rename column")
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
