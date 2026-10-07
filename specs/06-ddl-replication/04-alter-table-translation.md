@@ -6,7 +6,8 @@ Specifies the translation mapping from MySQL `ALTER TABLE` clauses (and the tabl
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/MySqlDDLParserListenerImpl.java` (`enterAlterTable`, `parseAlterTable`, `translateColumnClause`, `parseRenameColumn`, `enterCopyCreateTable`, `enterDropTable`, `enterRenameTable`)
+- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/MySqlDDLParserListenerImpl.java` (`enterAlterTable`, `parseAlterTable`, `translateColumnClause`, `parseRenameColumn`, `enterCopyCreateTable`, `enterDropTable`, `enterRenameTable`, `resolveDefault`)
+- **DEFAULT-literal translation**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/DefaultLiteralTranslator.java` (`literalDefault`, `isCurrentTimestampDefault`, `firstEnumMember`; §3.2.1 and the literal parts of §3.2.2 rules 1-2). `resolveDefault` calls into it for the literal rewrite and the two literal implicit-default rules, and keeps the non-literal back-fill decision (§3.2.2 rule 3) and the DDL-event-timestamp-dependent `eventInstantLiteral`/`backfillNotReproducible` helpers, which need the engine's own state.
 - **Templates**: `com.altinity.clickhouse.debezium.embedded.ddl.parser.Constants`
 - **Type mapping**: `com.altinity.clickhouse.debezium.embedded.parser.DataTypeConverter`
 - **Formal model**: `formal_specs/lean/Replication/DdlTranslation.lean`
