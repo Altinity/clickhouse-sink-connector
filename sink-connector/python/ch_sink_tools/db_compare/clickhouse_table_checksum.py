@@ -287,11 +287,13 @@ def restrict_to_source_columns(database, table, columns_metadata, source_columns
 
     A replica column with no source column of the same name (compared without
     regard to case, as MySQL names columns) holds no replicated value, so
-    hashing it can only make the two sides differ: it is left out of the row
-    string and named in one ``Replica-only columns in table <db>.<table>:``
-    WARNING per table. The driver parses that line: by default it reports the
-    columns as a schema-drift finding that fails the run, and with
-    ``--allow_replica_only_columns`` it relays them as a note (spec 11.02
+    hashing it can only make the two sides differ: it is out of parity scope
+    (Invariant I6, ``specs/CONSTITUTION.md``) and tolerated. It is left out of
+    the row string and named in one ``Replica-only columns in table
+    <db>.<table>:`` INFO line per table. The driver parses that line
+    (``record_replica_only()``) and always reports it at INFO as tolerated,
+    whatever ``--allow_replica_only_columns`` is set to: that flag is kept
+    for drop-in compatibility (Invariant I11) but is a no-op (spec 11.02
     section 3.9). A source column the replica lacks cannot be left out
     here (the source side hashes it), so the run still reports DIFFERENT; the
     WARNING names the missing column so the difference explains itself."""
@@ -307,8 +309,8 @@ def restrict_to_source_columns(database, table, columns_metadata, source_columns
                      if name.lower() not in replica_lower and name.lower() not in excluded_lower)
     if replica_only and (database, table, "replica-only") not in warned:
         warned.add((database, table, "replica-only"))
-        logging.warning(f"Replica-only columns in table {database}.{table}: {replica_only} "
-                        "(present on the ClickHouse destination, absent from the source table; not compared)")
+        logging.info(f"Replica-only columns in table {database}.{table}: {replica_only} "
+                    "(present on the ClickHouse destination, absent from the source table; tolerated, not compared)")
     if missing and (database, table, "missing") not in warned:
         warned.add((database, table, "missing"))
         logging.warning(f"Source columns missing in table {database}.{table} on the replica: {missing} "

@@ -828,36 +828,46 @@ class TestFloatAndJsonCoverage(unittest.TestCase):
 
 
 class TestReplicaOnlyColumns(unittest.TestCase):
-    """A replica column the source table does not have is not compared, and
-    each table says so once (spec 11.02 sections 3.3 and 3.9)."""
+    """A replica column the source table does not have is out of parity
+    scope (Invariant I6 "Parity scope", `specs/CONSTITUTION.md`): it is not
+    compared, and each table says so once, at INFO, as tolerated — never a
+    WARNING (spec 11.02 sections 3.3 and 3.9)."""
 
     # The source table: id, user. The replica added `name` on its own (a
     # DEFAULT expression over another column), added on ClickHouse only.
     CLICKHOUSE = [("id", "Int64", 0, None), ("user", "Nullable(String)", 1, None),
                   ("name", "Nullable(String)", 1, None)]
 
-    def build_with_warnings(self, columns, **arg_overrides):
+    def build_with_logs(self, columns, **arg_overrides):
         ch.warned_tables.clear()
         with self.assertLogs(level="INFO") as logs:
             select = TestClickHouseRowExpression().build(columns, **arg_overrides)
-        return select, [line for line in logs.output if line.startswith("WARNING")]
+        return select, logs.output
 
-    def test_replica_only_column_is_left_out_and_named_once(self):
-        shared, _ = self.build_with_warnings(self.CLICKHOUSE[:2])
-        select, warnings = self.build_with_warnings(self.CLICKHOUSE, source_columns="id,user")
+    def build_with_warnings(self, columns, **arg_overrides):
+        select, output = self.build_with_logs(columns, **arg_overrides)
+        return select, [line for line in output if line.startswith("WARNING")]
+
+    def test_replica_only_column_is_left_out_and_named_once_at_info(self):
+        shared, _ = self.build_with_logs(self.CLICKHOUSE[:2])
+        select, output = self.build_with_logs(self.CLICKHOUSE, source_columns="id,user")
         self.assertEqual(select, shared)
         self.assertNotIn('"name"', select)
-        self.assertEqual(len(warnings), 1, warnings)
-        self.assertIn("Replica-only columns in table db1.t1: ['name']", warnings[0])
+        # Tolerated: no WARNING line anywhere, regardless of --allow_replica_only_columns.
+        self.assertFalse(any(line.startswith("WARNING") for line in output), output)
+        info_lines = [line for line in output if "Replica-only columns in table db1.t1: ['name']" in line]
+        self.assertEqual(len(info_lines), 1, output)
+        self.assertTrue(info_lines[0].startswith("INFO:"), info_lines[0])
+        self.assertIn("tolerated", info_lines[0])
         # The driver's parser must recognise exactly this line (spec 11.02 section 3.9).
-        match = tl.REPLICA_ONLY_RE.search(warnings[0])
+        match = tl.REPLICA_ONLY_RE.search(info_lines[0])
         self.assertEqual((match.group("table"), match.group("columns")), ("db1.t1", "['name']"))
         # Relayed by the driver as a side note: it must not read as a result line.
-        self.assertNotIn("checksum", warnings[0].lower())
-        # A second chunk of the same table does not repeat the warning.
+        self.assertNotIn("checksum", info_lines[0].lower())
+        # A second chunk of the same table does not repeat the line.
         with self.assertLogs(level="INFO") as logs:
             TestClickHouseRowExpression().build(self.CLICKHOUSE, source_columns="id,user")
-        self.assertFalse(any(line.startswith("WARNING") for line in logs.output), logs.output)
+        self.assertEqual([line for line in logs.output if "Replica-only columns" in line], [], logs.output)
 
     def test_without_source_columns_every_replica_column_is_compared(self):
         select, warnings = self.build_with_warnings(self.CLICKHOUSE)
@@ -906,12 +916,13 @@ class TestReplicaOnlyColumns(unittest.TestCase):
         passed = cmd[cmd.index("--source_columns") + 1]
         columns = [("id", "Int64", 0, None), ("a,b", "String", 0, None), ("order id", "String", 0, None),
                    ("name", "String", 0, None)]
-        select, warnings = self.build_with_warnings(columns, source_columns=passed)
+        select, output = self.build_with_logs(columns, source_columns=passed)
         self.assertIn('"a,b"', select)
         self.assertIn('"order id"', select)
         self.assertNotIn('"name"', select)
-        self.assertEqual(len(warnings), 1, warnings)
-        self.assertIn("Replica-only columns in table db1.t1: ['name']", warnings[0])
+        info_lines = [line for line in output if "Replica-only columns in table db1.t1: ['name']" in line]
+        self.assertEqual(len(info_lines), 1, output)
+        self.assertTrue(info_lines[0].startswith("INFO:"), info_lines[0])
 
     def test_a_malformed_json_list_fails_loudly(self):
         with self.assertRaises(ValueError):
