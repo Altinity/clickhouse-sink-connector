@@ -1098,6 +1098,19 @@ public class ClickHouseBatchRunnable implements Runnable {
             throws Exception {
 
         boolean result = false;
+        // Every record in this topic's retained list was already durably
+        // written to ClickHouse on an earlier attempt within this retry
+        // cycle (a prior chunk's executeBatch(), a flushStagedRows() flush,
+        // an inline history statement, or a TRUNCATE/bulk-close; spec 03.06
+        // section 3.5). There is nothing left to group or send: grouping
+        // would skip every record and hand addToPreparedStatementBatch an
+        // empty list of segments, which it correctly treats as the
+        // unrelated defect of "grouped into nothing" (spec 04.01 section
+        // 3.3) and fails loudly. Reaching this trivially-true state is not
+        // that defect, so it is short-circuited here instead.
+        if (!records.isEmpty() && records.stream().allMatch(ClickHouseStruct::isAppliedToClickHouse)) {
+            return true;
+        }
         //The user parameter will override the topic mapping to table.
         String tableName = getTableFromTopic(topicName);
         // Note: getting records.get(0) is safe as the topic name is same

@@ -150,11 +150,84 @@ public class PreparedStatementExecutorFailureModesTest {
         assertTrue(String.valueOf(thrown).contains("Code: 252") || String.valueOf(thrown.getCause()).contains("Code: 252"),
                 "the ClickHouse error reaches the worker's classifier: " + thrown);
         // The first chunk's executeBatch() returned: its rows are in ClickHouse and
-        // nothing rolls them back. The worker retries the WHOLE batch (spec 03.03
-        // section 3.1), so they are written again -- idempotent under
-        // ReplacingMergeTree (same key, same _version), additive otherwise.
+        // nothing rolls them back. This call alone does not retry -- that is the
+        // worker's job (spec 03.03 section 3.1) -- so it only proves chunk 1 ran
+        // and chunk 2 did not. What a retry of the SAME record list does with
+        // chunk 1 is covered by aChunkThatFailsThenSucceedsOnRetrySendsEarlierChunksExactlyOnce()
+        // below: since spec 03.06 section 3.5, chunk 1's row is marked applied and
+        // is excluded from the retry's regrouping, so it is sent exactly once
+        // (previously it was sent again every retry; idempotent under
+        // ReplacingMergeTree, additive otherwise).
         assertEquals(Collections.singletonList(1), executed,
                 "chunk 1 was executed (its executeBatch() returned) before chunk 2 failed");
+    }
+
+    @Test
+    @DisplayName("A chunk that fails on the first attempt and succeeds on retry sends the earlier, already-applied chunks exactly once")
+    public void aChunkThatFailsThenSucceedsOnRetrySendsEarlierChunksExactlyOnce() throws Exception {
+        // Spec 03.06 section 3.5 / FM-03.06-2: a retry re-groups the SAME record
+        // list (spec 09.01 section 3.2) through GroupInsertQueryWithBatchRecords,
+        // which must skip a record PreparedStatementExecutor already marked
+        // applied, instead of handing it to addToPreparedStatementBatch again.
+        Map<String, String> props = new HashMap<>();
+        props.put("buffer.max.records", "1"); // two rows -> two chunks -> two executeBatch() calls
+        List<ClickHouseStruct> records = new ArrayList<>();
+        records.add(insertRecord(1));
+        records.add(insertRecord(2));
+
+        // Attempt 1: chunk 1 (record 1) succeeds, chunk 2 (record 2) throws.
+        List<Integer> executedAttempt1 = new ArrayList<>();
+        PreparedStatement failingPs = scriptedStatement(executedAttempt1, n -> {
+            if (n == 2) {
+                throw new RuntimeException(new SQLException(
+                        "Code: 252. DB::Exception: Too many parts (3001). (TOO_MANY_PARTS)"));
+            }
+            return new int[]{1};
+        });
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> attempt1Segments =
+                new ArrayList<>();
+        new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(records, attempt1Segments,
+                new HashMap<>(), new ClickHouseSinkConnectorConfig(props), "t", "db",
+                connectionReturning(failingPs), columns());
+
+        assertThrows(RuntimeException.class, () ->
+                executor().addToPreparedStatementBatch("topic", attempt1Segments, new BlockMetaData(),
+                        new ClickHouseSinkConnectorConfig(props), connectionReturning(failingPs), "t", columns(),
+                        DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE));
+        assertEquals(Collections.singletonList(1), executedAttempt1, "chunk 1 executed; chunk 2 threw");
+        assertTrue(records.get(0).isAppliedToClickHouse(),
+                "record 1's chunk returned from executeBatch() without throwing: it is durable");
+        assertFalse(records.get(1).isAppliedToClickHouse(),
+                "record 2's chunk never returned from executeBatch(): it is not durable");
+
+        // Attempt 2 (the retry): the caller keeps the SAME records list and
+        // regroups it again (spec 09.01 section 3.2). Record 1 must be excluded
+        // from every segment this time.
+        List<Integer> executedAttempt2 = new ArrayList<>();
+        PreparedStatement succeedingPs = scriptedStatement(executedAttempt2, n -> new int[]{1});
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> attempt2Segments =
+                new ArrayList<>();
+        new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(records, attempt2Segments,
+                new HashMap<>(), new ClickHouseSinkConnectorConfig(props), "t", "db",
+                connectionReturning(succeedingPs), columns());
+
+        List<ClickHouseStruct> regrouped = new ArrayList<>();
+        for (Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> seg : attempt2Segments) {
+            for (List<ClickHouseStruct> recs : seg.values()) {
+                regrouped.addAll(recs);
+            }
+        }
+        assertEquals(1, regrouped.size(),
+                "record 1 is already applied and must not be regrouped into a fresh segment on retry");
+        assertTrue(regrouped.get(0) == records.get(1), "the only record carried into the retry is record 2");
+
+        boolean result = executor().addToPreparedStatementBatch("topic", attempt2Segments, new BlockMetaData(),
+                new ClickHouseSinkConnectorConfig(props), connectionReturning(succeedingPs), "t", columns(),
+                DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
+        assertTrue(result, "the retry succeeds");
+        assertEquals(Collections.singletonList(1), executedAttempt2,
+                "the retry executes exactly one chunk: record 1 (already applied) is never resent");
+        assertTrue(records.get(1).isAppliedToClickHouse(), "record 2 is now marked applied too");
     }
 
     @Test

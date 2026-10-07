@@ -219,6 +219,13 @@ public class PreparedStatementExecutor {
                                     "Truncation failed for %s.%s", databaseName, tableName), e);
                         }
                     }
+                    // The TRUNCATE/bulk-close above returned without throwing:
+                    // ClickHouse has applied it. Mark it so a retry of this
+                    // batch (chunk failure elsewhere, caller keeps the same
+                    // record list, spec 09.01 section 3.2) does not run it a
+                    // second time (spec 03.06 section 3.5, spec 04.05
+                    // FM-04.05-4, spec 12.03 FM-12.03-1).
+                    truncateEvent.setAppliedToClickHouse(true);
                     result = true;
                     Metrics.updateCounters(topicName, entry.getValue().size());
                     continue;
@@ -242,10 +249,6 @@ public class PreparedStatementExecutor {
                     return false;
                 }
                 result = true;
-                if (entry.getValue().isEmpty()) {
-                    // All records were processed.
-                    iter.remove();
-                }
                 Metrics.updateCounters(topicName, entry.getValue().size());
             }
         }
@@ -345,6 +348,14 @@ public class PreparedStatementExecutor {
             if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
                 replicationHistoryHandler = new ReplicationHistoryHandler(config, this.serverTimeZone, metadata);
             }
+            // Records staged on ps (addBatch()) since the last point this
+            // chunk is known to be durable in ClickHouse -- the start of the
+            // chunk, or its last successful flushStagedRows() call. Marked
+            // applied the moment that staging is confirmed written, so a
+            // chunk-level failure that happens AFTER an inline history
+            // statement still leaves the rows staged ahead of it correctly
+            // flagged (spec 03.06 section 3.5).
+            List<ClickHouseStruct> stagedSinceLastFlush = new ArrayList<>();
             try (PreparedStatement ps = SpillingInsertStatement.maybeWrap(
                     metadata.getPreparedStatement(conn, insertQuery), conn, batch, spillThreshold, spillDirectory)) {
 
@@ -396,6 +407,11 @@ public class PreparedStatementExecutor {
                                 // intermittent -- it only bites when the CREATE and the
                                 // DELETE land in one batch (Spec 12.03 section 3.3).
                                 flushStagedRows(ps, databaseName, tableName, "DELETE");
+                                // flushStagedRows() above returned without
+                                // throwing: every row staged for this chunk so
+                                // far is durable in ClickHouse.
+                                stagedSinceLastFlush.forEach(r -> r.setAppliedToClickHouse(true));
+                                stagedSinceLastFlush.clear();
                                 replicationHistoryHandler.executeHistoryUpdate(
                                     conn,
                                     tableName,
@@ -406,6 +422,10 @@ public class PreparedStatementExecutor {
                                     config,
                                     engine, true
                             );
+                                // The SCD Type 2 delete statement above ran
+                                // INLINE and returned without throwing: this
+                                // record's own write is durable too.
+                                record.setAppliedToClickHouse(true);
                                 updateRecord = true;
                         }
                         else {
@@ -481,6 +501,11 @@ public class PreparedStatementExecutor {
                             // view stayed correct and no count could detect it
                             // (Spec 12.03 section 3.2, Gap G-12.03-1).
                             flushStagedRows(ps, databaseName, tableName, "UPDATE");
+                            // flushStagedRows() above returned without
+                            // throwing: every row staged for this chunk so far
+                            // is durable in ClickHouse.
+                            stagedSinceLastFlush.forEach(r -> r.setAppliedToClickHouse(true));
+                            stagedSinceLastFlush.clear();
                             // Use ReplicationHistoryHandler for SCD Type 2 updates
                             // tableName is already fully-qualified (e.g., binlog_history.employees_temporal_test)
                             replicationHistoryHandler.executeHistoryUpdate(
@@ -493,6 +518,10 @@ public class PreparedStatementExecutor {
                                     config,
                                     engine, false
                             );
+                            // The SCD Type 2 update statement above ran INLINE
+                            // and returned without throwing: this record's own
+                            // write is durable too.
+                            record.setAppliedToClickHouse(true);
                             updateRecord = true;
                         } else {
                             fieldMapper.insertPreparedStatement(entry.getKey().right, ps, record.getAfterModifiedFields(), record, record.getAfterStruct(),
@@ -512,10 +541,20 @@ public class PreparedStatementExecutor {
                         ps.addBatch();
                         // See above: no bind state may survive into the next row.
                         ps.clearParameters();
+                        // Staged on ps, not yet durable: marked applied only
+                        // once the executeBatch() below (or an intervening
+                        // flushStagedRows() above) returns without throwing.
+                        stagedSinceLastFlush.add(record);
                     }
                 }
 
                 int[] batchResult = ps.executeBatch();
+                // executeBatch() above returned without throwing: every row
+                // staged since the chunk started, or since its last flush, is
+                // now durable in ClickHouse. A retry of this batch (spec 09.01
+                // section 3.2) must not resend it (spec 03.06 section 3.5).
+                stagedSinceLastFlush.forEach(r -> r.setAppliedToClickHouse(true));
+                stagedSinceLastFlush.clear();
 
                 long taskId = config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
                 // Per-batch progress line: INFO by design (spec 03.06 section 3.3) --
