@@ -3,11 +3,8 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import org.antlr.v4.runtime.BaseErrorListener;
 import org.antlr.v4.runtime.CharStreams;
 import org.antlr.v4.runtime.CommonTokenStream;
-import org.antlr.v4.runtime.RecognitionException;
-import org.antlr.v4.runtime.Recognizer;
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
 import org.apache.logging.log4j.LogManager;
@@ -96,15 +93,18 @@ public class PostgreSQLDDLParserService implements DDLParserService {
      *
      * <p>Parses the given PostgreSQL DDL statement using the ANTLR grammar and
      * appends the equivalent ClickHouse DDL to {@code parsedQuery}.
+     *
+     * <p><b>Spec 10.04 section 3.10.</b> A translation failure is never caught
+     * and logged here: it propagates out of this method exactly as the MySQL
+     * path propagates one out of {@code MySQLDDLParserService.parseSql}, so it
+     * reaches {@code DebeziumChangeEventCapture}'s DDL wrap point and halts the
+     * pipeline via {@code DDLReplicationException} rather than advancing the
+     * offset past an untranslated schema change.
      */
     @Override
     public String parseSql(String sql, String tableName, StringBuffer parsedQuery) {
         if (sql == null || sql.trim().isEmpty()) return null;
-        try {
-            runAntlrPipeline(sql, tableName, parsedQuery);
-        } catch (Exception e) {
-            log.error("Error parsing PostgreSQL DDL: {}", sql, e);
-        }
+        runAntlrPipeline(sql, tableName, parsedQuery);
         return null;
     }
 
@@ -113,21 +113,19 @@ public class PostgreSQLDDLParserService implements DDLParserService {
      *
      * <p>Same as {@link #parseSql(String, String, StringBuffer)} but also sets
      * {@code isDropOrTruncate} when the statement is a DROP or TRUNCATE.
+     *
+     * <p>Spec 10.04 section 3.10: no catch here either, for the same reason.
      */
     @Override
     public String parseSql(String sql, String tableName,
                            StringBuffer parsedQuery,
                            AtomicBoolean isDropOrTruncate) {
         if (sql == null || sql.trim().isEmpty()) return null;
-        try {
-            CommonTokenStream tokens = tokenise(sql);
-            isDropOrTruncate.set(isDropOrTruncateStatement(tokens));
+        CommonTokenStream tokens = tokenise(sql);
+        isDropOrTruncate.set(isDropOrTruncateStatement(tokens));
 
-            // Re-tokenise for parsing (token stream is consumed by above call)
-            runAntlrPipeline(sql, tableName, parsedQuery);
-        } catch (Exception e) {
-            log.error("Error parsing PostgreSQL DDL: {}", sql, e);
-        }
+        // Re-tokenise for parsing (token stream is consumed by above call)
+        runAntlrPipeline(sql, tableName, parsedQuery);
         return null;
     }
 
@@ -148,10 +146,14 @@ public class PostgreSQLDDLParserService implements DDLParserService {
         CommonTokenStream tokens  = new CommonTokenStream(lexer);
         PostgreSQLParser parser   = new PostgreSQLParser(tokens);
 
-        // Use a lenient (non-throwing) error listener so that valid DDL that
-        // contains PG-specific constructs the grammar partially recovers from
-        // still produces useful output rather than aborting entirely.
-        LenientErrorListener errorListener = new LenientErrorListener();
+        // Spec 10.04 section 3.10 / FM-10.04-9: reuse MySQL's own throwing
+        // error listener (ErrorListenerImpl, generically typed against
+        // Recognizer<?, ?>) instead of inventing a second mechanism. A
+        // statement the grammar cannot parse must halt the pipeline exactly
+        // like MySQLDDLParserService.parseSql does via the same listener
+        // (spec 06.03 FM-06.03-1), not recover silently and emit partial or
+        // empty output.
+        ErrorListenerImpl errorListener = new ErrorListenerImpl();
         lexer.removeErrorListeners();
         lexer.addErrorListener(errorListener);
         parser.removeErrorListeners();
@@ -167,26 +169,6 @@ public class PostgreSQLDDLParserService implements DDLParserService {
             log.info("PostgreSQL DDL translated: [{}] -> [{}]", sql, parsedQuery);
         } else {
             log.warn("PostgreSQL DDL produced no output (unsupported or ignored): {}", sql);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Lenient error listener (logs but does not throw)
-    // -----------------------------------------------------------------------
-
-    /**
-     * An ANTLR error listener that logs parse errors at WARN level without
-     * throwing an exception.  This allows the listener to still produce partial
-     * output even when the grammar encounters constructs it cannot fully parse.
-     */
-    private static final class LenientErrorListener extends BaseErrorListener {
-        @Override
-        public void syntaxError(Recognizer<?, ?> recognizer,
-                                Object offendingSymbol,
-                                int line, int charPositionInLine,
-                                String msg,
-                                RecognitionException e) {
-            log.warn("PostgreSQL DDL parse warning at {}:{} – {}", line, charPositionInLine, msg);
         }
     }
 

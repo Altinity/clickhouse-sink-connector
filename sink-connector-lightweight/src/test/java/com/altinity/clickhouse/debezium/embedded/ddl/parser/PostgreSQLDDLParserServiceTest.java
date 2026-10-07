@@ -463,6 +463,42 @@ class PostgreSQLDDLParserServiceTest {
     }
 
     // -----------------------------------------------------------------------
+    // Spec 10.04 section 3.10 / FM-10.04-9: a translation failure on a
+    // managed table halts instead of being swallowed, mirroring the MySQL
+    // DDL path (spec 06.03 FM-06.03-1).
+    // -----------------------------------------------------------------------
+
+    @Test
+    @DisplayName("10.04 s3.10 / FM-10.04-9: a statement the grammar cannot parse propagates instead of being swallowed")
+    void unparseablePostgresDdlPropagatesInsteadOfBeingSwallowed() {
+        PostgreSQLDDLParserService svc = parser("db");
+        StringBuffer buf = new StringBuffer();
+        // Not valid PostgreSQL DDL under any grammar alternative: it is
+        // neither a statement keyword nor a recognised continuation, so the
+        // parser's error listener must fire.
+        String unparseable = "FROBNICATE TABLE t DO SOMETHING WEIRD";
+
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                () -> svc.parseSql(unparseable, "t", buf));
+        assertTrue(thrown.getMessage() != null && thrown.getMessage().contains("Error parsing DDL"),
+                "the failure must be the parser's own refusal, not some other exception: " + thrown);
+        assertTrue(buf.toString().isEmpty(),
+                "nothing must be translated for a statement that failed to parse: " + buf);
+    }
+
+    @Test
+    @DisplayName("10.04 s3.10 / FM-10.04-9: the AtomicBoolean overload also propagates a parse failure")
+    void unparseablePostgresDdlPropagatesThroughAtomicBooleanOverload() {
+        PostgreSQLDDLParserService svc = parser("db");
+        StringBuffer buf = new StringBuffer();
+        AtomicBoolean flag = new AtomicBoolean(false);
+        String unparseable = "FROBNICATE TABLE t DO SOMETHING WEIRD";
+
+        assertThrows(RuntimeException.class,
+                () -> svc.parseSql(unparseable, "t", buf, flag));
+    }
+
+    // -----------------------------------------------------------------------
     // Type mapping unit tests (static method)
     // -----------------------------------------------------------------------
 

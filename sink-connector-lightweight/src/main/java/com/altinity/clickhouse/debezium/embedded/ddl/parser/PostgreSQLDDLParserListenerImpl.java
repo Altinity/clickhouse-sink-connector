@@ -102,87 +102,82 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
      */
     @Override
     public void enterCreatestmt(PostgreSQLParser.CreatestmtContext ctx) {
-        try {
-            // ── table name ──────────────────────────────────────────────────
-            // qualified_name(0) is always present for CREATE TABLE; the grammar
-            // has two qualified_names only for PARTITION OF variants.
-            List<PostgreSQLParser.Qualified_nameContext> qnames = ctx.qualified_name();
-            String rawTable = (qnames != null && !qnames.isEmpty())
-                ? qnames.get(0).getText()
-                : tableNameHint;
-            String qualifiedTable = qualifyTableName(rawTable);
+        // ── table name ──────────────────────────────────────────────────
+        // qualified_name(0) is always present for CREATE TABLE; the grammar
+        // has two qualified_names only for PARTITION OF variants.
+        List<PostgreSQLParser.Qualified_nameContext> qnames = ctx.qualified_name();
+        String rawTable = (qnames != null && !qnames.isEmpty())
+            ? qnames.get(0).getText()
+            : tableNameHint;
+        String qualifiedTable = qualifyTableName(rawTable);
 
-            // ── column definitions ──────────────────────────────────────────
-            List<String> columnDdl   = new ArrayList<>();
-            List<String> primaryKeys = new ArrayList<>();
+        // ── column definitions ──────────────────────────────────────────
+        List<String> columnDdl   = new ArrayList<>();
+        List<String> primaryKeys = new ArrayList<>();
 
-            PostgreSQLParser.OpttableelementlistContext elemList = ctx.opttableelementlist();
-            if (elemList != null && elemList.tableelementlist() != null) {
-                // Pass 1: collect ALL primary key columns first (from both
-                // inline column constraints and table-level constraints) so
-                // that processColumnDef can determine nullable/non-nullable
-                // status correctly.
-                for (PostgreSQLParser.TableelementContext elem
-                        : elemList.tableelementlist().tableelement()) {
-                    if (elem.columnDef() != null) {
-                        collectInlinePrimaryKey(elem.columnDef(), primaryKeys);
-                    }
-                    if (elem.tableconstraint() != null) {
-                        collectPrimaryKeysFromTableConstraint(elem.tableconstraint(), primaryKeys);
-                    }
+        PostgreSQLParser.OpttableelementlistContext elemList = ctx.opttableelementlist();
+        if (elemList != null && elemList.tableelementlist() != null) {
+            // Pass 1: collect ALL primary key columns first (from both
+            // inline column constraints and table-level constraints) so
+            // that processColumnDef can determine nullable/non-nullable
+            // status correctly.
+            for (PostgreSQLParser.TableelementContext elem
+                    : elemList.tableelementlist().tableelement()) {
+                if (elem.columnDef() != null) {
+                    collectInlinePrimaryKey(elem.columnDef(), primaryKeys);
                 }
-
-                // Pass 2: process column definitions with full PK knowledge.
-                String plainTable = extractPlainTableName(rawTable);
-                for (PostgreSQLParser.TableelementContext elem
-                        : elemList.tableelementlist().tableelement()) {
-                    if (elem.columnDef() != null) {
-                        processColumnDef(elem.columnDef(), columnDdl, primaryKeys, plainTable);
-                    }
+                if (elem.tableconstraint() != null) {
+                    collectPrimaryKeysFromTableConstraint(elem.tableconstraint(), primaryKeys);
                 }
             }
 
-            // ── ALIAS columns from column type overrides ─────────────────────
-            if (config != null) {
-                String plainTable = extractPlainTableName(rawTable);
-                ColumnTypeOverrideConfig overrideConfig =
-                        ColumnTypeOverrideConfig.fromProperties(config.originalsStrings());
-                List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
-                        overrideConfig.getAliasOverrides(databaseName, plainTable);
-                for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
-                    columnDdl.add("`" + entry.getAliasColumnName() + "` "
-                            + entry.getAliasType() + " ALIAS " + entry.getExpression());
+            // Pass 2: process column definitions with full PK knowledge.
+            String plainTable = extractPlainTableName(rawTable);
+            for (PostgreSQLParser.TableelementContext elem
+                    : elemList.tableelementlist().tableelement()) {
+                if (elem.columnDef() != null) {
+                    processColumnDef(elem.columnDef(), columnDdl, primaryKeys, plainTable);
                 }
             }
-
-            // ── mandatory CDC virtual columns ───────────────────────────────
-            columnDdl.add("`_sign` Int8");
-            columnDdl.add("`_version` UInt64");
-            columnDdl.add("`is_deleted` UInt8 DEFAULT 0");
-
-            // ── ORDER BY / PRIMARY KEY ──────────────────────────────────────
-            String orderBy = primaryKeys.isEmpty() ? "tuple()" : buildColumnList(primaryKeys);
-
-            // ── emit DDL ────────────────────────────────────────────────────
-            StringBuilder sb = new StringBuilder();
-            sb.append("CREATE TABLE IF NOT EXISTS ").append(qualifiedTable).append(" (\n");
-            for (int i = 0; i < columnDdl.size(); i++) {
-                sb.append("    ").append(columnDdl.get(i));
-                if (i < columnDdl.size() - 1) sb.append(",");
-                sb.append("\n");
-            }
-            sb.append(") ENGINE = ReplacingMergeTree(`_version`)\n");
-            if (!primaryKeys.isEmpty()) {
-                sb.append("PRIMARY KEY ").append(orderBy).append("\n");
-            }
-            sb.append("ORDER BY ").append(orderBy).append(";");
-
-            query.append(sb);
-            log.info("PostgreSQL CREATE TABLE translated: {}", qualifiedTable);
-
-        } catch (Exception e) {
-            log.error("Error translating CREATE TABLE", e);
         }
+
+        // ── ALIAS columns from column type overrides ─────────────────────
+        if (config != null) {
+            String plainTable = extractPlainTableName(rawTable);
+            ColumnTypeOverrideConfig overrideConfig =
+                    ColumnTypeOverrideConfig.fromProperties(config.originalsStrings());
+            List<ColumnTypeOverrideConfig.AliasOverrideEntry> aliasOverrides =
+                    overrideConfig.getAliasOverrides(databaseName, plainTable);
+            for (ColumnTypeOverrideConfig.AliasOverrideEntry entry : aliasOverrides) {
+                columnDdl.add("`" + entry.getAliasColumnName() + "` "
+                        + entry.getAliasType() + " ALIAS " + entry.getExpression());
+            }
+        }
+
+        // ── mandatory CDC virtual columns ───────────────────────────────
+        columnDdl.add("`_sign` Int8");
+        columnDdl.add("`_version` UInt64");
+        columnDdl.add("`is_deleted` UInt8 DEFAULT 0");
+
+        // ── ORDER BY / PRIMARY KEY ──────────────────────────────────────
+        String orderBy = primaryKeys.isEmpty() ? "tuple()" : buildColumnList(primaryKeys);
+
+        // ── emit DDL ────────────────────────────────────────────────────
+        StringBuilder sb = new StringBuilder();
+        sb.append("CREATE TABLE IF NOT EXISTS ").append(qualifiedTable).append(" (\n");
+        for (int i = 0; i < columnDdl.size(); i++) {
+            sb.append("    ").append(columnDdl.get(i));
+            if (i < columnDdl.size() - 1) sb.append(",");
+            sb.append("\n");
+        }
+        sb.append(") ENGINE = ReplacingMergeTree(`_version`)\n");
+        if (!primaryKeys.isEmpty()) {
+            sb.append("PRIMARY KEY ").append(orderBy).append("\n");
+        }
+        sb.append("ORDER BY ").append(orderBy).append(";");
+
+        query.append(sb);
+        log.info("PostgreSQL CREATE TABLE translated: {}", qualifiedTable);
     }
 
     /**
@@ -248,22 +243,17 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
      */
     @Override
     public void enterAltertablestmt(PostgreSQLParser.AltertablestmtContext ctx) {
-        try {
-            // relation_expr() returns a single context for the ALTER TABLE alternatives.
-            PostgreSQLParser.Relation_exprContext relExpr = ctx.relation_expr();
-            if (relExpr == null) return;
-            if (ctx.alter_table_cmds() == null) return;
+        // relation_expr() returns a single context for the ALTER TABLE alternatives.
+        PostgreSQLParser.Relation_exprContext relExpr = ctx.relation_expr();
+        if (relExpr == null) return;
+        if (ctx.alter_table_cmds() == null) return;
 
-            String rawTable      = relExpr.getText();
-            String qualifiedTable = qualifyTableName(rawTable);
+        String rawTable      = relExpr.getText();
+        String qualifiedTable = qualifyTableName(rawTable);
 
-            for (PostgreSQLParser.Alter_table_cmdContext cmd
-                    : ctx.alter_table_cmds().alter_table_cmd()) {
-                translateAlterTableCmd(qualifiedTable, cmd);
-            }
-
-        } catch (Exception e) {
-            log.error("Error translating ALTER TABLE", e);
+        for (PostgreSQLParser.Alter_table_cmdContext cmd
+                : ctx.alter_table_cmds().alter_table_cmd()) {
+            translateAlterTableCmd(qualifiedTable, cmd);
         }
     }
 
@@ -479,44 +469,39 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
      */
     @Override
     public void enterRenamestmt(PostgreSQLParser.RenamestmtContext ctx) {
-        try {
-            // Only process ALTER TABLE variants (not ALTER INDEX, ALTER VIEW, etc.)
-            // The quickest check: does this alternative contain a relation_expr?
-            PostgreSQLParser.Relation_exprContext relExpr = ctx.relation_expr();
-            if (relExpr == null) return;
+        // Only process ALTER TABLE variants (not ALTER INDEX, ALTER VIEW, etc.)
+        // The quickest check: does this alternative contain a relation_expr?
+        PostgreSQLParser.Relation_exprContext relExpr = ctx.relation_expr();
+        if (relExpr == null) return;
 
-            String rawTable       = relExpr.getText();
-            String qualifiedTable = qualifyTableName(rawTable);
+        String rawTable       = relExpr.getText();
+        String qualifiedTable = qualifyTableName(rawTable);
 
-            List<PostgreSQLParser.NameContext> names = ctx.name();
-            if (names == null || names.isEmpty()) return;
+        List<PostgreSQLParser.NameContext> names = ctx.name();
+        if (names == null || names.isEmpty()) return;
 
-            // Determine which alternative matched by inspecting children for COLUMN keyword.
-            boolean hasColumnKeyword = hasChildToken(ctx, "COLUMN");
+        // Determine which alternative matched by inspecting children for COLUMN keyword.
+        boolean hasColumnKeyword = hasChildToken(ctx, "COLUMN");
 
-            // Also detect RENAME … TO without a column name in between:
-            // ALTER TABLE relation_expr RENAME TO name  → names.size() == 1
-            // ALTER TABLE relation_expr RENAME [COLUMN] oldName TO name → names.size() == 2
-            if (!hasColumnKeyword && names.size() == 1) {
-                // Table rename
-                String newName      = unquoteId(names.get(0).getText());
-                String newQualified = qualifyTableName(newName);
-                query.append("RENAME TABLE ").append(qualifiedTable)
-                     .append(" TO ").append(newQualified).append(";");
-                log.info("PostgreSQL RENAME TABLE translated: {} → {}", qualifiedTable, newQualified);
-            } else if (names.size() >= 2) {
-                // Column rename: first name is old column, last name is new column
-                String oldCol = unquoteId(names.get(0).getText());
-                String newCol = unquoteId(names.get(names.size() - 1).getText());
-                query.append("ALTER TABLE ").append(qualifiedTable)
-                     .append(" RENAME COLUMN `").append(oldCol)
-                     .append("` TO `").append(newCol).append("`;");
-                log.info("PostgreSQL RENAME COLUMN translated: {}.{} → {}",
-                         qualifiedTable, oldCol, newCol);
-            }
-
-        } catch (Exception e) {
-            log.error("Error translating RENAME statement", e);
+        // Also detect RENAME … TO without a column name in between:
+        // ALTER TABLE relation_expr RENAME TO name  → names.size() == 1
+        // ALTER TABLE relation_expr RENAME [COLUMN] oldName TO name → names.size() == 2
+        if (!hasColumnKeyword && names.size() == 1) {
+            // Table rename
+            String newName      = unquoteId(names.get(0).getText());
+            String newQualified = qualifyTableName(newName);
+            query.append("RENAME TABLE ").append(qualifiedTable)
+                 .append(" TO ").append(newQualified).append(";");
+            log.info("PostgreSQL RENAME TABLE translated: {} → {}", qualifiedTable, newQualified);
+        } else if (names.size() >= 2) {
+            // Column rename: first name is old column, last name is new column
+            String oldCol = unquoteId(names.get(0).getText());
+            String newCol = unquoteId(names.get(names.size() - 1).getText());
+            query.append("ALTER TABLE ").append(qualifiedTable)
+                 .append(" RENAME COLUMN `").append(oldCol)
+                 .append("` TO `").append(newCol).append("`;");
+            log.info("PostgreSQL RENAME COLUMN translated: {}.{} → {}",
+                     qualifiedTable, oldCol, newCol);
         }
     }
 
@@ -540,22 +525,21 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
      */
     @Override
     public void enterDropstmt(PostgreSQLParser.DropstmtContext ctx) {
-        try {
-            if (ctx.object_type_any_name() == null) return;
-            String objType = ctx.object_type_any_name().getText().toUpperCase();
-            if (!"TABLE".equals(objType)) return;
+        if (ctx.object_type_any_name() == null) return;
+        String objType = ctx.object_type_any_name().getText().toUpperCase();
+        if (!"TABLE".equals(objType)) return;
 
-            if (ctx.any_name_list_() == null) return;
+        if (ctx.any_name_list_() == null) return;
 
-            for (PostgreSQLParser.Any_nameContext anyName : ctx.any_name_list_().any_name()) {
-                String rawTable      = anyName.getText();
-                String qualifiedTable = qualifyTableName(rawTable);
-                query.append("DROP TABLE IF EXISTS ").append(qualifiedTable).append(";");
-                log.info("PostgreSQL DROP TABLE translated: {}", qualifiedTable);
-            }
-
-        } catch (Exception e) {
-            log.error("Error translating DROP TABLE", e);
+        for (PostgreSQLParser.Any_nameContext anyName : ctx.any_name_list_().any_name()) {
+            String rawTable      = anyName.getText();
+            String qualifiedTable = qualifyTableName(rawTable);
+            // DESTRUCTIVE: renders the table drop the SOURCE database already
+            // performed and Debezium is replicating; the connector never
+            // originates a drop. Blast radius is the named mirrored table(s),
+            // and IF EXISTS only narrows it by making a repeat a no-op.
+            query.append("DROP TABLE IF EXISTS ").append(qualifiedTable).append(";");
+            log.info("PostgreSQL DROP TABLE translated: {}", qualifiedTable);
         }
     }
 
@@ -573,19 +557,18 @@ public class PostgreSQLDDLParserListenerImpl extends PostgreSQLParserBaseListene
      */
     @Override
     public void enterTruncatestmt(PostgreSQLParser.TruncatestmtContext ctx) {
-        try {
-            if (ctx.relation_expr_list() == null) return;
+        if (ctx.relation_expr_list() == null) return;
 
-            for (PostgreSQLParser.Relation_exprContext re
-                    : ctx.relation_expr_list().relation_expr()) {
-                String rawTable      = re.getText();
-                String qualifiedTable = qualifyTableName(rawTable);
-                query.append("TRUNCATE TABLE IF EXISTS ").append(qualifiedTable).append(";");
-                log.info("PostgreSQL TRUNCATE TABLE translated: {}", qualifiedTable);
-            }
-
-        } catch (Exception e) {
-            log.error("Error translating TRUNCATE TABLE", e);
+        for (PostgreSQLParser.Relation_exprContext re
+                : ctx.relation_expr_list().relation_expr()) {
+            String rawTable      = re.getText();
+            String qualifiedTable = qualifyTableName(rawTable);
+            // DESTRUCTIVE: renders the text of a TRUNCATE the SOURCE database
+            // already executed, applied to the mirrored table; the connector
+            // never originates a truncation. IF EXISTS only narrows the blast
+            // radius by making a repeat a no-op.
+            query.append("TRUNCATE TABLE IF EXISTS ").append(qualifiedTable).append(";");
+            log.info("PostgreSQL TRUNCATE TABLE translated: {}", qualifiedTable);
         }
     }
 

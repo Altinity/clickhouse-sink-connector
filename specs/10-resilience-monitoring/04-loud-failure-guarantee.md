@@ -11,6 +11,7 @@ Specifies the non-negotiable policy that unrecoverable replication errors must t
 - **DDL failure type**: `DDLReplicationException` (`...embedded/cdc/DDLReplicationException.java`), re-thrown ahead of the catch-all in `DebeziumChangeEventCapture#processEveryChangeRecord`
 - **Row failure type**: `RecordReplicationException` (`...embedded/cdc/RecordReplicationException.java`), re-thrown ahead of the same catch-all
 - **Engine retry budget and terminal failure**: `DebeziumChangeEventCapture#handleEngineCompletion`, `#markEngineStarted`, `#hasDeadWorker` (rule 6: a dead sink worker is terminal without a retry), `#terminalFailureHook`, `#TERMINAL_FAILURE_EXIT_CODE`; property `exit.on.terminal.failure` (`SinkConnectorLightWeightConfig.EXIT_ON_TERMINAL_FAILURE`); the progress signal that refills the budget: `DebeziumOffsetManagement#acknowledgements` (`sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/executor/DebeziumOffsetManagement.java`)
+- **PostgreSQL DDL parse path (section 3.10)**: `PostgreSQLDDLParserService#parseSql`, `#runAntlrPipeline` (`PostgreSQLDDLParserService.java`), `PostgreSQLDDLParserListenerImpl.java`; reuses MySQL's own `ErrorListenerImpl` (`ErrorListenerImpl.java`), all in `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/`
 
 ---
 
@@ -349,6 +350,90 @@ stops, the offset is not committed past the failing record, and
 `DebeziumChangeEventCapture.handleEngineCompletion` applies the same
 retry/terminal-exit policy (section 3.5).
 
+### 3.10 A PostgreSQL DDL translation failure halts, not merely warns
+Before this fix, `PostgreSQLDDLParserService.parseSql` (both overloads)
+wrapped the whole ANTLR lexer/parser/listener pipeline in a
+`catch (Exception e) { log.error(...); }` and returned `null` either
+way, and `PostgreSQLDDLParserListenerImpl` additionally wrapped the
+bodies of five `enter*()` callbacks (`enterCreatestmt`,
+`enterAltertablestmt`, `enterRenamestmt`, `enterDropstmt`,
+`enterTruncatestmt`) in the same catch-log-continue shape. A statement
+the grammar could not parse, or a translation that threw while walking
+a parsed tree (a `NullPointerException` from an unexpected shape, an
+`IndexOutOfBoundsException`, anything), produced an empty or partial
+translation and a log line, and the caller
+(`DebeziumChangeEventCapture`'s DDL branch) had no way to tell that
+apart from a statement that was legitimately empty-translated by
+design (section 3.9's "Parity scope", and the allowed-skip list below).
+The pipeline advanced the offset past a managed-table DDL statement
+that was never actually applied to ClickHouse -- exactly the divergence
+section 1's "Prime Directive" forbids, and unlike the MySQL DDL path
+(spec 06.03 FM-06.03-1), which has always halted on the same class of
+failure.
+
+**The fix reuses MySQL's own mechanism; it does not invent a second
+one.** `runAntlrPipeline` now installs `ErrorListenerImpl` -- the same
+`ANTLRErrorListener` class `MySQLDDLParserService` already installs on
+its own lexer/parser, generically typed against `Recognizer<?, ?>` so
+nothing PostgreSQL-specific was needed -- in place of the removed
+`LenientErrorListener` (an inner class that only logged at WARN and
+never threw); its `syntaxError()` throws
+`RuntimeException("Error parsing DDL")` exactly as it does for MySQL.
+`PostgreSQLDDLParserService.parseSql` no longer catches anything: a
+syntax error, or any other exception thrown while walking the parse
+tree, now propagates out of `parseSql` exactly as a MySQL parse failure
+propagates out of `MySQLDDLParserService.parseSql`, reaches the same
+`performDDLOperation()` retry loop and `DDLReplicationException` wrap
+point, and halts the pipeline without acknowledging the offset (section
+3.3, spec 06.03 FM-06.03-1). The five `enter*()` callbacks no longer
+catch anything either: a translation bug inside one of them (a `null`
+dereference while building the column list, for instance) now also
+escapes as a loud, unclassified `RuntimeException` instead of leaving
+`parsedQuery` empty and the caller none the wiser.
+
+**Allowed-skip list (named, per the Parity scope ruling in section
+3.9 and the "ClickHouse-only tables/columns are tolerated" ruling).**
+These are not errors and must keep producing an intentionally empty
+translation without throwing -- each is a statement kind or clause the
+spec already says the connector does not manage, not a translation
+that failed:
+
+1. **A statement kind with no listener callback at all** (`CREATE
+   INDEX`, `CREATE SEQUENCE`, `CREATE VIEW`, `COMMENT ON`, and any other
+   grammar rule `PostgreSQLDDLParserListenerImpl` does not override).
+   The ANTLR walk completes normally and `parsedQuery` stays empty;
+   `runAntlrPipeline` logs a WARN (`"PostgreSQL DDL produced no output
+   (unsupported or ignored)"`) naming the statement so the empty
+   translation is never silent, but nothing halts. (Mirrors MySQL's
+   `FM-06.03-3`.)
+2. **`DROP` of a non-`TABLE` object** (`DROP INDEX`, `DROP VIEW`, `DROP
+   SEQUENCE`, ...). `enterDropstmt` returns early when
+   `object_type_any_name()` is not `TABLE`; only `DROP TABLE` has a
+   ClickHouse equivalent.
+3. **An `alter_table_cmd` keyword `translateAlterTableCmd` does not
+   recognise** (anything other than `ADD`/`ADD_P`, `DROP`, `ALTER`). The
+   `default:` branch logs at DEBUG and skips just that one clause of the
+   `ALTER TABLE` statement; the clauses it does recognise are still
+   translated.
+4. **A table-level constraint clause with no ClickHouse equivalent**
+   (`ADD CONSTRAINT ... PRIMARY KEY/UNIQUE/CHECK/FOREIGN KEY`, `DROP
+   CONSTRAINT`). `reportUntranslatedConstraint` (spec 06.09 section 3.7)
+   already reports these explicitly -- WARN with the manual remedy when
+   the clause could change the table's identity, INFO otherwise -- so
+   they are named, not silently dropped; this was already correct
+   before this fix and is unchanged by it.
+5. **A ClickHouse-only table or column the connector does not manage**
+   (section 3.9's "Parity scope"). Schema drift reconciliation, and by
+   the same ruling this DDL path, never inspects or acts on anything
+   that exists only on the ClickHouse side; it is tolerated by design,
+   not detected and skipped.
+
+None of the five is reached by catching an exception: each is a
+dedicated early-return or a dedicated reporting call keyed on the
+parsed statement's shape, decided before any translation is attempted,
+so a genuine translation failure on a managed table can never be
+mistaken for one of them.
+
 ---
 
 ## 4. Invariants Preserved
@@ -384,6 +469,9 @@ retry/terminal-exit policy (section 3.5).
 - `BinlogRowImagePreflightTest.minimalIsRefused()`, `BinlogRowImagePreflightTest.noblobIsRefused()`, `BinlogRowImagePreflightTest.skipIsLoud()` — §3.6.
 - `IgnoreDeleteWarningTest.trueIsDetectedCaseAndSpaceInsensitively()`, `IgnoreDeleteWarningTest.unsetFalseOrNullIsNot()` — §3.7: the predicate behind the startup WARN.
 - §3.8 has no unit test: constructing a `DbWriter` needs a live ClickHouse (`DbWriterTest` is Testcontainers-based); the change is two `catch (ColumnTypeOverrideMismatchException e) { throw e; }` clauses ahead of the generic catches.
+- `PostgreSQLDDLParserServiceTest.unparseablePostgresDdlPropagatesInsteadOfBeingSwallowed()` — §3.10 / FM-10.04-9: a statement the PostgreSQL grammar cannot parse now throws out of `parseSql` instead of logging and returning an empty translation (pre-fix: caught, logged at ERROR, `parsedQuery` left empty, offset still acknowledged by the caller).
+- `PostgreSQLDDLParserServiceTest.testUnsupportedCreateIndexIsSkipped()`, `testUnsupportedCreateSequenceIsSkipped()`, `testUnsupportedAlterTableSetDefaultIsSkipped()` — §3.10 allowed-skip #1 and #3: a statement kind with no listener callback, and an unrecognised `alter_table_cmd` keyword, both still produce an empty translation without throwing.
+- `PostgreSQLConstraintClauseReportTest` (all three tests) — §3.10 allowed-skip #4, unchanged by this fix: an untranslatable constraint clause is still reported at WARN/INFO, never silently dropped and never thrown as an error.
 
 ---
 
@@ -481,4 +569,40 @@ A FATAL classification, a dead worker and an exhausted engine budget all end in 
   - **RTO**: detection immediate; restart as FM-10.04-1; unmeasured.
   - **Test**: `ClickHouseConverterSchemaExtractionTest.unreadableSchemaPropagates()`, `PostgresSchemaChangeDetectorTest.genuineRowWithUnreachableWriterThrows()`, `PostgresSchemaChangeDetectorTest.cooldownAfterAFailureStillThrows()`, `PostgresSchemaReconcilerAddColumnFailureTest.failedAlterThrowsAfterAttemptingAllColumns()`, `SchemaDriftFailureIsTerminalTest.schemaDriftFailurePropagatesThroughProcessEveryChangeRecord()`.
 
-Summary: 8 failure modes, 2 DEFECT, 2 GAP.
+- **FM-10.04-9 A PostgreSQL DDL translation failure halts instead of being skipped**
+  - **Trigger**: a statement on a managed table that the PostgreSQL
+    grammar cannot parse (a syntax error, or a construct the grammar
+    does not cover), or any other exception thrown while
+    `PostgreSQLDDLParserListenerImpl` walks a successfully parsed tree
+    for `CREATE TABLE`, `ALTER TABLE` (rename/add/drop column), `DROP
+    TABLE` or `TRUNCATE TABLE`. Any of the five named allowed skips
+    (section 3.10) is excluded by definition, not by catching an
+    exception.
+  - **Behaviour**: `runAntlrPipeline` installs `ErrorListenerImpl` (the
+    same class `MySQLDDLParserService` uses) on both the lexer and the
+    parser in place of the removed, non-throwing
+    `LenientErrorListener`; its `syntaxError()` throws
+    `RuntimeException("Error parsing DDL")`. Neither overload of
+    `PostgreSQLDDLParserService.parseSql`, nor any of the five
+    `enter*()` listener callbacks, catches anything any more, so the
+    failure propagates out of `parseSql` exactly as a MySQL parse
+    failure does (spec 06.03 FM-06.03-1), into
+    `DebeziumChangeEventCapture`'s DDL branch and its
+    `DDLReplicationException` wrap point, ahead of the generic catch-all
+    (section 3.3).
+  - **Detection**: the engine stops with `DDLReplicationException`
+    naming the failing statement; the same ERROR/FATAL sequence and
+    retry/terminal-exit policy as FM-10.04-1 follows through
+    `handleEngineCompletion` (section 3.5).
+  - **Blast radius**: all replication stops; the statement is never
+    partially applied and the offset is not committed past it, so
+    ClickHouse never diverges from a managed table's schema because of
+    an untranslated DDL statement.
+  - **Recovery**: fix why the statement could not be translated (an
+    unsupported construct that needs a listener change, or a grammar
+    gap), or hand-apply the equivalent DDL to ClickHouse out of band and
+    skip past the statement at the source; restart per FM-10.04-6.
+  - **RTO**: detection immediate; restart as FM-10.04-1; unmeasured.
+  - **Test**: `PostgreSQLDDLParserServiceTest.unparseablePostgresDdlPropagatesInsteadOfBeingSwallowed()`.
+
+Summary: 9 failure modes, 2 DEFECT, 2 GAP.
