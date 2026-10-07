@@ -3023,8 +3023,18 @@ public class DebeziumChangeEventCapture {
                             pgConfig.getSchemaChangeDetector().checkAndReconcile(sr, dmlTable, dmlDatabase);
                         }
                     } catch (Exception schemaEx) {
-                        log.warn("Schema drift detection threw unexpectedly; continuing replication. Cause: {}",
-                                schemaEx.getMessage(), schemaEx);
+                        // A genuine schema-drift failure (the row's own schema could
+                        // not be read, the ClickHouse schema fetch failed, or a
+                        // reconciliation ADD COLUMN failed for a column the source
+                        // has) means a source column may not exist in ClickHouse:
+                        // writing this row now would store it without that column,
+                        // a silent divergence. Halt the same way an unconvertible
+                        // row does a few lines below (Spec 10.04 section 3.9,
+                        // section 3.3), rather than logging and continuing.
+                        throw new RecordReplicationException(String.format(
+                                "PostgreSQL schema-drift check failed for a row record; stopping the "
+                                        + "pipeline rather than writing it with a column possibly missing "
+                                        + "from ClickHouse. Topic(%s)", sr.topic()), schemaEx);
                     }
                 }
                 // A parser that THROWS on a row record is terminal. The generic

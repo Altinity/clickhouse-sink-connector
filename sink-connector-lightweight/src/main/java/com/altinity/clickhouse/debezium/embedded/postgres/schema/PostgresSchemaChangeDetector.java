@@ -16,8 +16,8 @@ import org.apache.logging.log4j.Logger;
 
 import java.sql.Connection;
 import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.sql.Statement;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -138,6 +138,17 @@ public class PostgresSchemaChangeDetector {
     private final ConcurrentHashMap<String, Long> lastReconcileAttempt =
             new ConcurrentHashMap<>();
 
+    /**
+     * Tracks the last reconciliation failure for each table, so that a record
+     * arriving while {@link #RECONCILE_COOLDOWN_MS} is still active (after a
+     * failed reconciliation) is halted too, instead of being let through
+     * silently just because the cooldown window has not yet elapsed (Spec
+     * 10.04 section 3.9, "Cooldown does not mask a failure"). Cleared on a
+     * successful reconciliation or a check that finds nothing missing.
+     */
+    private final ConcurrentHashMap<String, RuntimeException> lastReconcileFailure =
+            new ConcurrentHashMap<>();
+
     /** Writer whose JDBC connection is used to query {@code system.columns}. */
     private final BaseDbWriter writer;
 
@@ -200,87 +211,116 @@ public class PostgresSchemaChangeDetector {
      *       the cache so the next event fetches a fresh schema.</li>
      * </ol>
      *
-     * <p>All exceptions are caught and logged – this method <em>never</em> throws
-     * so that a schema-detection failure cannot halt replication.
+     * <p>This method no longer catches its own failures. It still returns
+     * without acting for the legitimate no-row cases (no Debezium fields to
+     * compare, or the table does not exist in ClickHouse yet – the
+     * connector's auto-create mechanism is expected to create it), and it
+     * never flags or acts on a column that exists in ClickHouse but not in
+     * the source (parity is only required for source-matching columns, Spec
+     * 10.04 section 3.9). Any other failure – the record's own schema
+     * cannot be read, the ClickHouse schema fetch fails, or a reconciliation
+     * DDL fails – propagates, because a source column the detector could not
+     * confirm or add to ClickHouse would otherwise be written without a
+     * value: divergence, not a condition to log and continue past (Spec
+     * 10.04 section 3.9).
      *
      * @param record       Debezium {@link SourceRecord} (contains full schema metadata)
      * @param tableName    target table name in ClickHouse
      * @param databaseName target database in ClickHouse
+     * @throws RuntimeException if schema-drift detection or reconciliation
+     *         fails for a reason other than the legitimate no-row/table-absent
+     *         cases above
      */
     public void checkAndReconcile(SourceRecord record, String tableName, String databaseName) {
         if (record == null || tableName == null || databaseName == null) {
             return;
         }
 
-        try {
-            // 1. Extract Debezium field schema from the record envelope.
-            Map<String, Schema> debeziumFields = ClickHouseConverter.extractDebeziumSchema(record);
-            if (debeziumFields == null || debeziumFields.isEmpty()) {
-                return;
-            }
-
-            String cacheKey = databaseName + "." + tableName;
-
-            // 2. Resolve the ClickHouse schema from the TTL-aware cache.
-            //    Re-fetch if: (a) no entry exists, (b) entry is expired, or
-            //    (c) the entry recorded a table-absent result (wasAbsent) and has now expired.
-            CacheEntry entry = clickHouseSchemaCache.get(cacheKey);
-            if (entry == null || entry.isExpired()) {
-                Map<String, String> fetched = fetchClickHouseSchema(databaseName, tableName);
-                if (fetched == null) {
-                    // Table not yet in ClickHouse – cache as absent with short TTL.
-                    clickHouseSchemaCache.put(cacheKey, new CacheEntry(null, true));
-                    log.debug("Table {}.{} absent from ClickHouse; cached with {}ms TTL",
-                            databaseName, tableName, TABLE_ABSENT_TTL_MS);
-                    return;
-                }
-                entry = new CacheEntry(fetched, false);
-                clickHouseSchemaCache.put(cacheKey, entry);
-            } else if (entry.wasAbsent) {
-                // Entry is within its short TTL but table was absent – skip without re-fetching.
-                log.debug("Table {}.{} still absent (cached); skipping drift detection", databaseName, tableName);
-                return;
-            }
-
-            Map<String, String> chSchema = entry.schema;
-            if (chSchema == null) {
-                // Safety: should not happen given the logic above, but guard anyway.
-                return;
-            }
-
-            // 3. Find columns present in Debezium but absent from ClickHouse.
-            Map<String, Schema> missingColumns = findMissingColumns(debeziumFields, chSchema);
-
-            if (missingColumns.isEmpty()) {
-                // No drift – fast path.
-                return;
-            }
-
-            // 4. Enforce cooldown before attempting reconciliation.
-            long now = System.currentTimeMillis();
-            Long lastAttempt = lastReconcileAttempt.get(cacheKey);
-            if (lastAttempt != null && (now - lastAttempt) < RECONCILE_COOLDOWN_MS) {
-                log.debug("Schema drift detected for {}.{} but cooldown active ({} ms remaining); skipping.",
-                        databaseName, tableName, RECONCILE_COOLDOWN_MS - (now - lastAttempt));
-                return;
-            }
-
-            // 5. Record attempt timestamp before executing DDL.
-            lastReconcileAttempt.put(cacheKey, now);
-
-            log.info("Schema drift detected for {}.{}: {} column(s) missing from ClickHouse: {}",
-                    databaseName, tableName, missingColumns.size(), missingColumns.keySet());
-
-            // 6. Reconcile (add the missing columns in ClickHouse).
-            reconciler.addMissingColumns(databaseName, tableName, missingColumns);
-
-            // 7. Invalidate cache so the next event fetches the updated schema.
-            invalidateCache(cacheKey);
-
-        } catch (Exception e) {
-            log.warn("Schema drift detection failed for table {}.{} – continuing replication. Cause: {}",
-                    databaseName, tableName, e.getMessage(), e);
+        // 1. Extract Debezium field schema from the record envelope. A null/empty
+        //    result is a legitimate no-row case (control record, or a row with no
+        //    populated after/before image); extractDebeziumSchema itself now lets
+        //    a genuine read failure propagate instead of returning null for it.
+        Map<String, Schema> debeziumFields = ClickHouseConverter.extractDebeziumSchema(record);
+        if (debeziumFields == null || debeziumFields.isEmpty()) {
+            return;
         }
+
+        String cacheKey = databaseName + "." + tableName;
+
+        // 2. Resolve the ClickHouse schema from the TTL-aware cache.
+        //    Re-fetch if: (a) no entry exists, (b) entry is expired, or
+        //    (c) the entry recorded a table-absent result (wasAbsent) and has now expired.
+        CacheEntry entry = clickHouseSchemaCache.get(cacheKey);
+        if (entry == null || entry.isExpired()) {
+            Map<String, String> fetched = fetchClickHouseSchema(databaseName, tableName);
+            if (fetched == null) {
+                // Table not yet in ClickHouse – cache as absent with short TTL.
+                clickHouseSchemaCache.put(cacheKey, new CacheEntry(null, true));
+                log.debug("Table {}.{} absent from ClickHouse; cached with {}ms TTL",
+                        databaseName, tableName, TABLE_ABSENT_TTL_MS);
+                return;
+            }
+            entry = new CacheEntry(fetched, false);
+            clickHouseSchemaCache.put(cacheKey, entry);
+        } else if (entry.wasAbsent) {
+            // Entry is within its short TTL but table was absent – skip without re-fetching.
+            log.debug("Table {}.{} still absent (cached); skipping drift detection", databaseName, tableName);
+            return;
+        }
+
+        Map<String, String> chSchema = entry.schema;
+        if (chSchema == null) {
+            // Safety: should not happen given the logic above, but guard anyway.
+            return;
+        }
+
+        // 3. Find columns present in Debezium but absent from ClickHouse. A
+        //    column present only in ClickHouse (added by a user, not by the
+        //    source) is never in this result – parity scope (Spec 10.04 s3.9).
+        Map<String, Schema> missingColumns = findMissingColumns(debeziumFields, chSchema);
+
+        if (missingColumns.isEmpty()) {
+            // No drift – fast path. Clear any stale failure: the table is caught up.
+            lastReconcileFailure.remove(cacheKey);
+            return;
+        }
+
+        // 4. Enforce cooldown before attempting reconciliation – unless the last
+        //    attempt inside the cooldown window failed, in which case the source
+        //    column is still missing from ClickHouse and this record must halt
+        //    too rather than be written silently (Spec 10.04 section 3.9,
+        //    "Cooldown does not mask a failure").
+        long now = System.currentTimeMillis();
+        Long lastAttempt = lastReconcileAttempt.get(cacheKey);
+        if (lastAttempt != null && (now - lastAttempt) < RECONCILE_COOLDOWN_MS) {
+            RuntimeException priorFailure = lastReconcileFailure.get(cacheKey);
+            if (priorFailure != null) {
+                throw priorFailure;
+            }
+            log.debug("Schema drift detected for {}.{} but cooldown active ({} ms remaining); skipping.",
+                    databaseName, tableName, RECONCILE_COOLDOWN_MS - (now - lastAttempt));
+            return;
+        }
+
+        // 5. Record attempt timestamp before executing DDL.
+        lastReconcileAttempt.put(cacheKey, now);
+
+        log.info("Schema drift detected for {}.{}: {} column(s) missing from ClickHouse: {}",
+                databaseName, tableName, missingColumns.size(), missingColumns.keySet());
+
+        // 6. Reconcile (add the missing columns in ClickHouse). A failure here
+        //    is remembered so a record inside the following cooldown window
+        //    also halts (step 4), then propagates to the caller.
+        try {
+            reconciler.addMissingColumns(databaseName, tableName, missingColumns);
+        } catch (RuntimeException reconcileFailure) {
+            lastReconcileFailure.put(cacheKey, reconcileFailure);
+            throw reconcileFailure;
+        }
+        lastReconcileFailure.remove(cacheKey);
+
+        // 7. Invalidate cache so the next event fetches the updated schema.
+        invalidateCache(cacheKey);
     }
 
     /**
@@ -315,32 +355,39 @@ public class PostgresSchemaChangeDetector {
      * Queries {@code system.columns} in ClickHouse to get the current set of
      * columns for the given table.
      *
-     * <p><strong>Important:</strong> returns {@code null} (not an empty map) when
-     * the table does not yet exist in ClickHouse.  The caller ({@link #checkAndReconcile})
-     * treats a {@code null} return as "table not yet created – skip drift detection
-     * so the connector's auto-create mechanism can work undisturbed".  An empty
-     * (but non-{@code null}) map is only returned for genuine errors so that drift
-     * detection is silently skipped without triggering reconciliation.
+     * <p><strong>Important:</strong> returns {@code null} (not an empty map) only
+     * when a {@code system.tables} count query confirms the table does not yet
+     * exist in ClickHouse.  The caller ({@link #checkAndReconcile}) treats a
+     * {@code null} return as "table not yet created – skip drift detection so
+     * the connector's auto-create mechanism can work undisturbed".  Every other
+     * failure to resolve the schema (the writer or its connection is not ready,
+     * or the query itself throws) is a genuine failure, not a legitimate
+     * no-row case, and now throws instead of returning an empty map: an empty
+     * map previously meant "no columns found", which made every Debezium field
+     * look missing from ClickHouse and masked the real cause.
      *
      * @param database ClickHouse database name
      * @param table    ClickHouse table name
      * @return map of column name → ClickHouse type string; {@code null} if the table
-     *         does not exist in ClickHouse yet; empty map on connection / query error
+     *         does not exist in ClickHouse yet
+     * @throws RuntimeException if the writer/connection is not ready or the
+     *         {@code system.columns}/{@code system.tables} query fails
      */
     private Map<String, String> fetchClickHouseSchema(String database, String table) {
         if (writer == null) {
-            log.warn("Cannot fetch ClickHouse schema for {}.{}: writer is null (not yet initialised?)",
-                    database, table);
-            return Collections.emptyMap();
+            throw new IllegalStateException(String.format(
+                    "Cannot fetch the ClickHouse schema for %s.%s: the writer is not yet initialised.",
+                    database, table));
+        }
+
+        Connection conn = writer.getConnection();
+        if (conn == null) {
+            throw new IllegalStateException(String.format(
+                    "Cannot fetch the ClickHouse schema for %s.%s: the JDBC connection is null.",
+                    database, table));
         }
 
         try {
-            Connection conn = writer.getConnection();
-            if (conn == null) {
-                log.warn("Cannot fetch ClickHouse schema for {}.{}: connection is null", database, table);
-                return Collections.emptyMap();  // error path – skip detection
-            }
-
             // Delegate to DBMetadata to avoid duplicating the system.columns query.
             DBMetadata dbMeta = new DBMetadata(config);
             Map<String, String> result = dbMeta.getColumnsDataTypesForTable(conn, table, database);
@@ -370,10 +417,9 @@ public class PostgresSchemaChangeDetector {
             // Table exists but has 0 matching columns – return empty map.
             return result;
 
-        } catch (Exception e) {
-            log.warn("Failed to fetch ClickHouse schema for {}.{}: {}", database, table, e.getMessage());
-            // Return empty map – caller will skip drift detection silently.
-            return Collections.emptyMap();
+        } catch (SQLException e) {
+            throw new RuntimeException(String.format(
+                    "Failed to fetch the ClickHouse schema for %s.%s: %s", database, table, e.getMessage()), e);
         }
     }
 

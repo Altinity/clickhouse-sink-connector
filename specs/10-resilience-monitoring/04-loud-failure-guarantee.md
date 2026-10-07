@@ -290,12 +290,64 @@ behaviour — lost the change while the committed offset advanced past it.
 Kafka-mode liveness (a dead runnable behind `put` / `preCommit`) is §3.4's
 counterpart for the sink task: spec 03.01 §3.4.
 
-### 3.9 A record whose schema cannot be read is reported at WARN
-`ClickHouseConverter.extractDebeziumSchema` returns `null` when it cannot read a
-record's schema, and its caller, the PostgreSQL schema-drift check, then skips the
-record. Any exception raised while reading is therefore logged at WARN with its
-stack trace and the record's topic; it was logged at DEBUG, so drift detection
-could stop for a table with nothing in a production log.
+### 3.9 A PostgreSQL schema-drift failure halts, not merely warns
+`ClickHouseConverter.extractDebeziumSchema` returns `null` only for the
+legitimate no-row cases: a control record carrying no value schema at all
+(a heartbeat, a transaction-metadata record, a tombstone), or a value
+struct with no populated `after`/`before` row image or an empty field
+list. Any other exception raised while reading the record's own schema
+(e.g. a corrupt envelope) now propagates instead of being caught and
+logged at WARN: a source column the reader never saw is a column that
+would be written to ClickHouse without a value, which is divergence
+(section 1, "Prime Directive"), not a condition to merely log and move
+past.
+
+`PostgresSchemaChangeDetector.checkAndReconcile` no longer wraps its body
+in a catch-all either. It still returns without acting for the two
+legitimate non-failure outcomes -- the extraction result above, and a
+table that does not yet exist in ClickHouse (`fetchClickHouseSchema`
+returns `null` only after a `system.tables` count query confirms the
+table is genuinely absent, and the connector's auto-create mechanism is
+expected to create it) -- but every other failure now propagates: a
+`null` writer or `null` JDBC connection (the detector was wired before
+the writer was ready), a `system.columns` query that throws, or
+`PostgresSchemaReconciler.addMissingColumns` failing to add one or more
+columns all throw out of `checkAndReconcile` instead of being caught and
+logged.
+
+**Parity scope.** Schema-drift detection only ever reconciles a column
+that exists in the source (Debezium) schema but is missing from
+ClickHouse -- `findMissingColumns` inspects only the Debezium-side field
+list. A column that a user has added to a ClickHouse table and that does
+not exist in the source is never flagged, never reconciled and never
+halts the pipeline: parity is required only for columns that match the
+source and for tables the connector manages, and a ClickHouse-only
+column is tolerated by design.
+
+**Cooldown does not mask a failure.** Before this fix `addMissingColumns`
+never threw, so recording `lastReconcileAttempt` immediately before
+calling it was safe: the call always "succeeded" from the caller's point
+of view. Now that `addMissingColumns` can throw, the same unconditional
+timestamp write would otherwise let every record arriving inside the
+following `RECONCILE_COOLDOWN_MS` (10 s) window pass through unchecked --
+each one written with the column still missing. The detector now also
+tracks the last reconciliation failure per table
+(`lastReconcileFailure`); while the cooldown is active and the last
+attempt failed, `checkAndReconcile` re-throws the stored failure instead
+of returning silently, so no record is written during the cooldown that
+follows a failed reconciliation. A successful reconciliation, and a check
+that finds nothing missing, clears the stored failure.
+
+The caller in the PostgreSQL event path,
+`DebeziumChangeEventCapture#processEveryChangeRecord`, wraps whatever
+`checkAndReconcile` throws in `RecordReplicationException` -- the same
+exception type, and the same wrap-and-rethrow shape, already used a few
+lines below for a record whose `debeziumRecordParserService.parse`
+throws -- so it escapes ahead of the method's generic catch-all (section
+3.3) and reaches the same halt as any other row failure: the engine
+stops, the offset is not committed past the failing record, and
+`DebeziumChangeEventCapture.handleEngineCompletion` applies the same
+retry/terminal-exit policy (section 3.5).
 
 ---
 
@@ -305,7 +357,10 @@ could stop for a table with nothing in a production log.
 ---
 
 ## 5. Verification Criteria
-- `ClickHouseConverterSchemaExtractionTest.unreadableSchemaIsLoggedAtWarn` — §3.9: an unreadable schema returns `null` and logs one WARN carrying the cause (pre-fix: DEBUG, no stack trace).
+- `ClickHouseConverterSchemaExtractionTest.unreadableSchemaPropagates()` — §3.9: an unreadable schema now throws out of `extractDebeziumSchema` instead of being caught and logged (pre-fix: returned `null` after a WARN).
+- `PostgresSchemaChangeDetectorTest.genuineRowWithUnreachableWriterThrows()`, `PostgresSchemaChangeDetectorTest.cooldownAfterAFailureStillThrows()`, `PostgresSchemaChangeDetectorTest.extraClickHouseOnlyColumnNeverHalts()` — §3.9: a genuine schema-drift failure on a real row halts, a failure during the cooldown window halts again rather than passing silently, and a ClickHouse-only column (not present in the source) never triggers reconciliation or a halt.
+- `PostgresSchemaReconcilerAddColumnFailureTest.failedAlterThrowsAfterAttemptingAllColumns()` — §3.9: `addMissingColumns` attempts every column, then throws naming the ones that failed, instead of logging and returning normally.
+- `SchemaDriftFailureIsTerminalTest.schemaDriftFailurePropagatesThroughProcessEveryChangeRecord()` — §3.9 at the `processEveryChangeRecord` seam: a schema-drift failure on a real row reaches `RecordReplicationException`, the same halt as an unconvertible row.
 - `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()` — §3.3: a DDL failure escapes the catch-all as `DDLReplicationException`.
 - `UnparseableRowRecordIsTerminalTest.insertWhoseParserThrowsIsTerminal()`, `UnparseableRowRecordIsTerminalTest.updateWhoseParserReturnsNullIsTerminal()` — §3.3: a row record whose parse throws / returns null escapes the catch-all as `RecordReplicationException`; nothing is acknowledged.
 - `NullParsedRowRecordIsTerminalTest.unconvertibleRowRecordIsTerminal()` — §3.3 at the `processEveryChangeRecord` seam (inverted from the former NullParsedRecordSkipTest, which asserted the skip).
@@ -400,4 +455,30 @@ A FATAL classification, a dead worker and an exhausted engine budget all end in 
   - **Test**: `ClickHouseErrorClassifierFailureModesTest.columnTypeOverrideMismatchIsFatal()` (`@Disabled`, confirmed red on 2.11.0).
   - **DEFECT**: section 3.8's halt is not implemented: the exception is retried, not terminal.
 
-Summary: 7 failure modes, 2 DEFECT, 2 GAP.
+- **FM-10.04-8 A PostgreSQL schema-drift failure halts instead of being skipped**
+  - **Trigger**: a row record whose own schema cannot be read, a ClickHouse
+    `system.columns` fetch that fails or finds the writer/connection not
+    ready, or a reconciliation `ALTER TABLE ... ADD COLUMN` that fails --
+    for a source column that is genuinely missing from ClickHouse (section
+    3.9). A ClickHouse-only column never triggers this mode (parity
+    scope, section 3.9).
+  - **Behaviour**: `PostgresSchemaChangeDetector.checkAndReconcile` no
+    longer catches these; `DebeziumChangeEventCapture` wraps whatever it
+    throws in `RecordReplicationException` at the same call site that
+    wraps a parser failure, which escapes the generic catch-all (section
+    3.3) and stops the engine before the row is written. A failure during
+    the 10 s reconciliation cooldown re-throws the stored cause instead
+    of letting the record through silently.
+  - **Detection**: the engine stops with `RecordReplicationException`
+    naming the topic; the same ERROR/FATAL sequence as FM-10.04-1 follows
+    through `handleEngineCompletion`.
+  - **Blast radius**: all replication stops; the record whose column is
+    missing from ClickHouse is never written, so no row is stored with a
+    source column silently absent.
+  - **Recovery**: fix why the column could not be added (a permissions or
+    connectivity problem, an unmappable type), or add it manually; restart
+    per FM-10.04-6.
+  - **RTO**: detection immediate; restart as FM-10.04-1; unmeasured.
+  - **Test**: `ClickHouseConverterSchemaExtractionTest.unreadableSchemaPropagates()`, `PostgresSchemaChangeDetectorTest.genuineRowWithUnreachableWriterThrows()`, `PostgresSchemaChangeDetectorTest.cooldownAfterAFailureStillThrows()`, `PostgresSchemaReconcilerAddColumnFailureTest.failedAlterThrowsAfterAttemptingAllColumns()`, `SchemaDriftFailureIsTerminalTest.schemaDriftFailurePropagatesThroughProcessEveryChangeRecord()`.
+
+Summary: 8 failure modes, 2 DEFECT, 2 GAP.

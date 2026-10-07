@@ -9,9 +9,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -30,6 +32,15 @@ import static org.junit.jupiter.api.Assertions.*;
  *   <li>Cache invalidation via {@link PostgresSchemaChangeDetector#invalidateCache}</li>
  *   <li>Cooldown constant is positive</li>
  *   <li>{@link ColumnInfo} value-object contract</li>
+ *   <li>Spec 10.04 section 3.9: a genuine schema-drift failure (an
+ *       unreachable writer standing in for an unreachable ClickHouse) halts
+ *       instead of being swallowed, a failure recorded during the cooldown
+ *       window halts again rather than letting the next record through, and
+ *       a ClickHouse-only column never triggers reconciliation or a halt
+ *       (tests that need a specific cache/failure state prepopulate the
+ *       detector's package-private cache fields directly via reflection,
+ *       rather than standing up a JDBC mock for logic that is about cache
+ *       state, not the JDBC fetch itself)</li>
  * </ul>
  *
  * <p>The end-to-end drift-detection flow (including DDL execution) is covered by
@@ -193,47 +204,26 @@ public class PostgresSchemaChangeDetectorTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("Debezium envelope with 'after' struct: schema extraction smoke-test via checkAndReconcile")
-    public void testDebeziumEnvelopeHandledGracefully() {
-        // Build an envelope schema:  value = Struct{ after: Struct{ id INT32, name STRING } }
-        Schema rowSchema = SchemaBuilder.struct()
-                .field("id", Schema.INT32_SCHEMA)
-                .field("name", Schema.OPTIONAL_STRING_SCHEMA)
-                .build();
+    @DisplayName("10.04 s3.9: a genuine row with an unreachable writer halts instead of being swallowed")
+    public void genuineRowWithUnreachableWriterThrows() {
+        // A populated "after" row – a real change, not a no-row control record –
+        // against a detector whose writer is null (stands in for "ClickHouse
+        // cannot be reached"). Before the fix, checkAndReconcile caught every
+        // failure here and returned silently, letting the row through with no
+        // confirmation that ClickHouse has the column it needs.
+        SourceRecord record = buildRowRecord("drift_test", 42, "test");
 
-        Schema valueSchema = SchemaBuilder.struct()
-                .field("after", rowSchema)
-                .field("op", Schema.STRING_SCHEMA)
-                .build();
-
-        Struct rowValue = new Struct(rowSchema)
-                .put("id", 42)
-                .put("name", "test");
-
-        Struct valueStruct = new Struct(valueSchema)
-                .put("after", rowValue)
-                .put("op", "c");
-
-        SourceRecord record = new SourceRecord(
-                Collections.emptyMap(),
-                Collections.emptyMap(),
-                "pg.public.drift_test",
-                null,
-                null,
-                valueSchema,
-                valueStruct
-        );
-
-        // With null writer → fetchClickHouseSchema returns empty → drift detection skips silently.
-        // Must not throw.
-        assertDoesNotThrow(() ->
-                detector.checkAndReconcile(record, "drift_test", "public"));
+        assertThrows(IllegalStateException.class,
+                () -> detector.checkAndReconcile(record, "drift_test", "public"),
+                "a real row whose ClickHouse schema cannot be fetched must halt, not be skipped");
     }
 
     @Test
-    @DisplayName("Debezium envelope with CDC-internal fields: no exception even with null writer")
-    public void testCdcInternalColumnsEnvelope() {
+    @DisplayName("10.04 s3.9: CDC-internal fields on a genuine row still halt on an unreachable writer")
+    public void cdcInternalColumnsEnvelopeStillThrows() {
         // Simulate a schema that includes CDC-internal columns (_sign, _version, etc.)
+        // alongside a real source column; the CDC columns are excluded from the
+        // missing-column comparison, but the fetch failure still happens first.
         Schema rowSchema = SchemaBuilder.struct()
                 .field("id", Schema.INT32_SCHEMA)
                 .field("_sign", Schema.INT8_SCHEMA)
@@ -270,13 +260,123 @@ public class PostgresSchemaChangeDetectorTest {
                 valueStruct
         );
 
-        assertDoesNotThrow(() ->
-                detector.checkAndReconcile(record, "cdc_test", "public"));
+        assertThrows(IllegalStateException.class,
+                () -> detector.checkAndReconcile(record, "cdc_test", "public"));
+    }
+
+    @Test
+    @DisplayName("10.04 s3.9: a failure recorded during the cooldown window halts the next record too")
+    public void cooldownAfterAFailureStillThrows() throws Exception {
+        // Prepopulate the detector's cache state directly: a ClickHouse schema
+        // missing the "name" column, a cooldown attempt timestamp that is still
+        // active, and a remembered failure from that attempt. This exercises the
+        // "cooldown active" branch of checkAndReconcile without needing a JDBC
+        // round trip, since that branch's logic is about the failure map, not
+        // about fetching the schema.
+        String cacheKey = "public.drift_test";
+        Map<String, String> chSchemaMissingName = new HashMap<>();
+        chSchemaMissingName.put("id", "Int32");
+
+        setPrivateField(detector, "clickHouseSchemaCache",
+                withEntry(cacheKey, newCacheEntry(chSchemaMissingName, false)));
+
+        ConcurrentHashMap<String, Long> lastAttempt = new ConcurrentHashMap<>();
+        lastAttempt.put(cacheKey, System.currentTimeMillis());
+        setPrivateField(detector, "lastReconcileAttempt", lastAttempt);
+
+        RuntimeException priorFailure = new RuntimeException("simulated prior ALTER TABLE failure");
+        ConcurrentHashMap<String, RuntimeException> lastFailure = new ConcurrentHashMap<>();
+        lastFailure.put(cacheKey, priorFailure);
+        setPrivateField(detector, "lastReconcileFailure", lastFailure);
+
+        SourceRecord record = buildRowRecord("drift_test", 42, "test");
+
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                () -> detector.checkAndReconcile(record, "drift_test", "public"),
+                "a record arriving inside the cooldown window after a failed reconciliation "
+                        + "must halt too, not be let through silently");
+        assertSame(priorFailure, thrown,
+                "the exact remembered failure must be re-thrown so the halt reason is not lost");
+    }
+
+    @Test
+    @DisplayName("10.04 s3.9 parity scope: a ClickHouse-only column never triggers reconciliation or a halt")
+    public void extraClickHouseOnlyColumnNeverHalts() throws Exception {
+        // ClickHouse has every Debezium column PLUS one extra column the source
+        // does not have (e.g. a user-added column). Parity is only required for
+        // source-matching columns (Spec 10.04 section 3.9 "Parity scope"), so
+        // this must take the fast "nothing missing" path and must not throw,
+        // even though the detector's writer is null and would fail any JDBC call.
+        String cacheKey = "public.drift_test";
+        Map<String, String> chSchemaWithExtraColumn = new HashMap<>();
+        chSchemaWithExtraColumn.put("id", "Int32");
+        chSchemaWithExtraColumn.put("name", "Nullable(String)");
+        chSchemaWithExtraColumn.put("clickhouse_only_col", "Nullable(String)");
+
+        setPrivateField(detector, "clickHouseSchemaCache",
+                withEntry(cacheKey, newCacheEntry(chSchemaWithExtraColumn, false)));
+
+        SourceRecord record = buildRowRecord("drift_test", 42, "test");
+
+        assertDoesNotThrow(() -> detector.checkAndReconcile(record, "drift_test", "public"),
+                "a column present only in ClickHouse must never cause drift detection to act or halt");
     }
 
     // ------------------------------------------------------------------
     // Private helpers
     // ------------------------------------------------------------------
+
+    /** Builds a genuine row record: value = Struct{ after: Struct{ id INT32, name STRING } }. */
+    private static SourceRecord buildRowRecord(String topicTable, int id, String name) {
+        Schema rowSchema = SchemaBuilder.struct()
+                .field("id", Schema.INT32_SCHEMA)
+                .field("name", Schema.OPTIONAL_STRING_SCHEMA)
+                .build();
+
+        Schema valueSchema = SchemaBuilder.struct()
+                .field("after", rowSchema)
+                .field("op", Schema.STRING_SCHEMA)
+                .build();
+
+        Struct rowValue = new Struct(rowSchema)
+                .put("id", id)
+                .put("name", name);
+
+        Struct valueStruct = new Struct(valueSchema)
+                .put("after", rowValue)
+                .put("op", "c");
+
+        return new SourceRecord(
+                Collections.emptyMap(),
+                Collections.emptyMap(),
+                "pg.public." + topicTable,
+                null,
+                null,
+                valueSchema,
+                valueStruct
+        );
+    }
+
+    /** Builds a package-private {@code CacheEntry} via reflection (its constructor is package-private). */
+    private static Object newCacheEntry(Map<String, String> schema, boolean wasAbsent) throws Exception {
+        Class<?> cacheEntryClass = Class.forName(
+                "com.altinity.clickhouse.debezium.embedded.postgres.schema.PostgresSchemaChangeDetector$CacheEntry");
+        java.lang.reflect.Constructor<?> ctor = cacheEntryClass.getDeclaredConstructor(Map.class, boolean.class);
+        ctor.setAccessible(true);
+        return ctor.newInstance(schema, wasAbsent);
+    }
+
+    private static ConcurrentHashMap<String, Object> withEntry(String key, Object value) {
+        ConcurrentHashMap<String, Object> map = new ConcurrentHashMap<>();
+        map.put(key, value);
+        return map;
+    }
+
+    private static void setPrivateField(Object target, String name, Object value) throws Exception {
+        Field f = PostgresSchemaChangeDetector.class.getDeclaredField(name);
+        f.setAccessible(true);
+        f.set(target, value);
+    }
 
     /**
      * Builds a minimal {@link SourceRecord} with a value schema that has no
