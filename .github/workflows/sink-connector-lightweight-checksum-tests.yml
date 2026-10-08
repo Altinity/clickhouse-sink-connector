@@ -57,7 +57,10 @@ jobs:
       - name: Dump connector / compose logs on init_mysql failure
         if: failure()
         working-directory: sink-connector-lightweight/docker
-        run: docker compose -f docker-compose.yml logs --no-color > compose-logs-init-mysql.txt 2>&1 || true
+        # tee (not just a redirect) so the connector and service logs are also visible in
+        # the job own stdout log -- the compose-logs-*.txt artifact is only downloadable
+        # once the whole run completes, which blocks early triage of just-failed runs.
+        run: docker compose -f docker-compose.yml logs --no-color 2>&1 | tee compose-logs-init-mysql.txt || true
 
       - name: Tear down compose stack before sysbench
         if: always()
@@ -70,7 +73,10 @@ jobs:
       - name: Dump connector / compose logs on sysbench failure
         if: failure()
         working-directory: sink-connector-lightweight/docker
-        run: docker compose -f docker-compose.yml logs --no-color > compose-logs-sysbench.txt 2>&1 || true
+        # tee (not just a redirect) so the connector and service logs are also visible in
+        # the job own stdout log -- the compose-logs-*.txt artifact is only downloadable
+        # once the whole run completes, which blocks early triage of just-failed runs.
+        run: docker compose -f docker-compose.yml logs --no-color 2>&1 | tee compose-logs-sysbench.txt || true
 
       - name: Upload compose logs
         if: failure()
