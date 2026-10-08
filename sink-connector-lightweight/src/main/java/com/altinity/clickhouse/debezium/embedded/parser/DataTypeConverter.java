@@ -12,7 +12,7 @@ import io.debezium.connector.binlog.charset.BinlogCharsetRegistry;
 import io.debezium.connector.mysql.MySqlConnectorConfig;
 import io.debezium.connector.mysql.charset.MySqlCharsetRegistryServiceProvider;
 import io.debezium.connector.mysql.jdbc.MySqlValueConverters;
-import io.debezium.ddl.parser.mysql.generated.MySqlParser;
+import io.debezium.ddl.parser.mysql.legacy.MySqlParser;
 import io.debezium.jdbc.JdbcValueConverters;
 import io.debezium.jdbc.TemporalPrecisionMode;
 import io.debezium.relational.Column;
@@ -115,7 +115,12 @@ public class DataTypeConverter {
                 CommonConnectorConfig.BinaryHandlingMode.BYTES,
                 x -> x,
                 CommonConnectorConfig.EventConvertingFailureHandlingMode.WARN,
-                connectorConfig.getServiceRegistry());
+                connectorConfig.getServiceRegistry(),
+                // Debezium 3.7 added the unavailable-value placeholder argument;
+                // pass what MySqlConnectorTask passes (the connector's configured
+                // default). Only type resolution is used here, never value
+                // conversion, so it does not affect the produced type.
+                connectorConfig.getUnavailableValuePlaceholder());
 
         String convertedDataType;
 

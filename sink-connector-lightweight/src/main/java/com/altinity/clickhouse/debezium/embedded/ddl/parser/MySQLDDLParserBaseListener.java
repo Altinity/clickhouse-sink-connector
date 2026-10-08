@@ -1,6 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
-import io.debezium.ddl.parser.mysql.generated.MySqlParser;
-import io.debezium.ddl.parser.mysql.generated.MySqlParserListener;
+import io.debezium.ddl.parser.mysql.legacy.MySqlParser;
+import io.debezium.ddl.parser.mysql.legacy.MySqlParserListener;
 import org.antlr.v4.runtime.ParserRuleContext;
 import org.antlr.v4.runtime.tree.ErrorNode;
 import org.antlr.v4.runtime.tree.TerminalNode;
@@ -563,6 +563,21 @@ public class MySQLDDLParserBaseListener implements MySqlParserListener {
 
     @Override
     public void enterNullColumnConstraint(MySqlParser.NullColumnConstraintContext nullColumnConstraintContext) {
+
+    }
+
+    /**
+     * {@code SRID <n>} on a spatial column: a rule the legacy grammar gained in
+     * Debezium 3.6+ (before, the statement did not parse at all). The SRID does
+     * not change the ClickHouse type, so the translator ignores it.
+     */
+    @Override
+    public void enterSridColumnConstraint(MySqlParser.SridColumnConstraintContext ctx) {
+
+    }
+
+    @Override
+    public void exitSridColumnConstraint(MySqlParser.SridColumnConstraintContext ctx) {
 
     }
 

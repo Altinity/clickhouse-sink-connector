@@ -13,7 +13,7 @@
         <maven.compiler.target>17</maven.compiler.target>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <version.debezium>3.1.3.Final</version.debezium>
+        <version.debezium>3.7.0.Final</version.debezium>
         <version.junit>5.9.1</version.junit>
         <version.testcontainers>1.21.4</version.testcontainers>
         <version.testcontainers.core>1.21.4</version.testcontainers.core>
@@ -25,11 +25,26 @@
         <quarkus.platform.version>2.14.0.Final</quarkus.platform.version>
         <surefire-plugin.version>3.0.0-M7</surefire-plugin.version>
         <sink-connector-library-version>0.0.9</sink-connector-library-version>
-        <version.kafka>3.8.0</version.kafka>
+        <version.kafka>4.3.1</version.kafka>
         <javalin-version>5.5.0</javalin-version>
     </properties>
     <dependencyManagement>
         <dependencies>
+            <!--
+              The quarkus BOM imported below pins org.postgresql:postgresql to
+              42.5.0, which overrides the 42.7.13 Debezium 3.7.0 is built and
+              tested against. debezium-connector-postgres 3.7 calls
+              ChainedLogicalStreamBuilder.withAutomaticFlush(boolean), which
+              42.5.0 does not have, so every PostgreSQL stream failed with
+              NoSuchMethodError when it started. An entry declared directly here
+              wins over any imported BOM; keep it equal to Debezium's
+              version.postgresql.driver when version.debezium changes.
+            -->
+            <dependency>
+                <groupId>org.postgresql</groupId>
+                <artifactId>postgresql</artifactId>
+                <version>42.7.13</version>
+            </dependency>
             <dependency>
                 <groupId>${quarkus.platform.group-id}</groupId>
                 <artifactId>${quarkus.platform.artifact-id}</artifactId>
@@ -157,6 +172,19 @@
             <artifactId>debezium-connector-postgres</artifactId>
             <version>${version.debezium}</version>
         </dependency>
+        <!--
+          MariaDB sources. Debezium 3.7's MySqlConnector refuses MariaDB 10.x and
+          later: it parses the server version as MySQL >= 8.4 and fails with
+          "should support SHOW BINARY LOG STATUS" (Debezium 3.1.3 probed the
+          statement instead). Debezium's dedicated connector,
+          connector.class=io.debezium.connector.mariadb.MariaDbConnector, is the
+          supported route (spec 02.06).
+        -->
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-connector-mariadb</artifactId>
+            <version>${version.debezium}</version>
+        </dependency>
         <!--  <dependency>
               <groupId>io.debezium</groupId>
               <artifactId>debezium-connector-oracle</artifactId>
@@ -203,6 +231,15 @@
         </dependency>
 
 
+        <!-- Debezium 3.7's storage modules declare debezium-storage-common as
+             "provided": the embedding application must ship it. Without it the
+             JDBC offset store fails at engine start with NoClassDefFoundError
+             io/debezium/spi/storage/DefaultOffsetStorageReader (spec 02.06 §3.4). -->
+        <dependency>
+            <groupId>io.debezium</groupId>
+            <artifactId>debezium-storage-common</artifactId>
+            <version>${version.debezium}</version>
+        </dependency>
         <dependency>
             <groupId>io.debezium</groupId>
             <artifactId>debezium-storage-jdbc</artifactId>
@@ -241,7 +278,7 @@
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>kafka-server-common</artifactId>
-            <version>3.3.1</version>
+            <version>${version.kafka}</version>
             <scope>runtime</scope>
             <exclusions>
                 <exclusion>
@@ -336,7 +373,8 @@
         <dependency>
             <groupId>org.mariadb.jdbc</groupId>
             <artifactId>mariadb-java-client</artifactId>
-            <version>2.7.12</version>
+            <!-- Debezium 3.7.0's version.mariadb.driver; debezium-connector-mariadb needs the 3.x driver. -->
+            <version>3.5.3</version>
             <!-- <scope>runtime</scope> -->
         </dependency>
         <dependency>
@@ -474,10 +512,28 @@
             <artifactId>jackson-databind</artifactId>
             <version>2.20.1</version>
         </dependency>
+        <!-- Pinned alongside jackson-core/jackson-databind above: left
+             unmanaged, jackson-annotations resolves transitively through
+             jackson-dataformat-yaml (previously 2.12.6) and wins Maven's
+             nearest-dependency mediation over the 2.20.1 that
+             jackson-databind itself depends on. The resulting classpath skew
+             (jackson-databind 2.20.1 calling jackson-annotations
+             JsonProperty.isRequired(), which only gained its current
+             OptBoolean return type in 2.14+) throws
+             NoSuchMethodError during MariaDbCharsetRegistry's static init
+             (Debezium 3.7's MariaDbConnector), crash-looping the embedded
+             engine on every restart attempt. Pinning jackson-annotations
+             explicitly, and bumping jackson-dataformat-yaml into the same
+             2.20.x family, converges all jackson-* modules on one version. -->
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-annotations</artifactId>
+            <version>2.20</version>
+        </dependency>
         <dependency>
             <groupId>com.fasterxml.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
-            <version>2.12.6</version>
+            <version>2.20.1</version>
         </dependency>
 
         <!-- https://mvnrepository.com/artifact/org.apache.commons/commons-lang3 -->
@@ -514,6 +570,16 @@
             <scope>compile</scope>
         </dependency>
 
+        <!-- Test sources import the log4j 1.x API (org.apache.log4j.*).
+             Debezium 3.1.3 brought it in transitively; 3.3.x no longer does
+             (spec 02.07). Test scope only: the shade plugin already excludes
+             org/apache/log4j/** from the shipped jar. -->
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-1.2-api</artifactId>
+            <version>2.23.1</version>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.apache.logging.log4j</groupId>
             <artifactId>log4j-jul</artifactId>
@@ -746,6 +812,17 @@
                         <license>
                             <name>Dual license consisting of the CDDL v1\.1 and GPL v2</name>
                             <url>https?://oss\.oracle\.com/licenses/CDDL\+GPL-1\.1</url>
+                        </license>
+                        <!--
+                          MariaDB Connector/J. The 2.7.12 driver shipped until now
+                          declared "LGPL-2.1" (accepted through osi-permissive); the
+                          3.x driver Debezium 3.7's MariaDB connector needs declares
+                          the same license as the SPDX id "LGPL-2.1-or-later", which
+                          the osi-permissive list does not spell. Same library, same
+                          terms.
+                        -->
+                        <license>
+                            <name>LGPL-2\.1-or-later</name>
                         </license>
                     </acceptableLicenses>
                     <!-- Use OSI permissive licenses as acceptable licenses -->

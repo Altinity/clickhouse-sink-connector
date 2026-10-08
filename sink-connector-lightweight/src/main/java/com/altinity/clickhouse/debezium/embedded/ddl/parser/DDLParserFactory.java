@@ -3,7 +3,7 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
-import io.debezium.metadata.ConnectorDescriptor;
+import com.altinity.clickhouse.sink.connector.common.DebeziumConnectorIds;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -12,7 +12,7 @@ import org.apache.logging.log4j.Logger;
  * based on the source connector type (MySQL/MariaDB or PostgreSQL).
  *
  * <p>Connector identification is delegated to Debezium's
- * {@link ConnectorDescriptor#getIdForConnectorClass(String)} so that adding
+ * {@link DebeziumConnectorIds#idForConnectorClass(String)} so that adding
  * new connector types does not require maintaining hardcoded fully-qualified
  * class names here.</p>
  *
@@ -37,7 +37,7 @@ public class DDLParserFactory {
     /**
      * Returns the appropriate {@link DDLParserService} for the given connector class name.
      *
-     * <p>Uses {@link ConnectorDescriptor#getIdForConnectorClass(String)} to resolve
+     * <p>Uses {@link DebeziumConnectorIds#idForConnectorClass(String)} to resolve
      * the connector identity.  If the resolved id contains "postgres" a
      * {@link PostgreSQLDDLParserService} is returned; otherwise a
      * {@link MySQLDDLParserService} is returned (covering MySQL and MariaDB).</p>
@@ -86,7 +86,7 @@ public class DDLParserFactory {
      * Returns {@code true} if the given connector class name identifies a
      * PostgreSQL connector.
      *
-     * <p>Delegates to {@link ConnectorDescriptor#getIdForConnectorClass(String)}
+     * <p>Delegates to {@link DebeziumConnectorIds#idForConnectorClass(String)}
      * for reliable identification rather than relying on substring matching
      * against hardcoded class names.</p>
      *
@@ -98,12 +98,12 @@ public class DDLParserFactory {
             return false;
         }
         try {
-            String id = ConnectorDescriptor.getIdForConnectorClass(connectorClass);
+            String id = DebeziumConnectorIds.idForConnectorClass(connectorClass);
             if (id != null) {
                 return id.toLowerCase().contains(POSTGRES_ID);
             }
         } catch (RuntimeException e) {
-            // ConnectorDescriptor throws RuntimeException for unrecognized connector classes;
+            // DebeziumConnectorIds throws RuntimeException for unrecognized connector classes;
             // fall through to substring-based matching.
         }
         // Fallback: if Debezium cannot resolve the class, use simple substring match

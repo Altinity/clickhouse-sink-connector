@@ -213,6 +213,14 @@ public class DebeziumChangeEventCapture {
     DebeziumJdbcStorageOperations debeziumJdbcStorageOperations;
 
     /**
+     * Whether a MySQL truncate change event is converted into the schema-change
+     * record Debezium 3.1.3 emitted and applied through the DDL path (spec
+     * 01.11). Set by {@link MySqlTruncateRouting#apply} in {@code setup()};
+     * false (row path, spec 04.05) when setup() never ran.
+     */
+    volatile boolean mysqlTruncateViaDdl = false;
+
+    /**
      * Database writer instance.
      */
     BaseDbWriter writer;
@@ -846,6 +854,22 @@ public class DebeziumChangeEventCapture {
         // sink applies, on the same fixed heap. Bound it in bytes too, unless
         // the operator chose a value (spec 01.05 section 3.4 item 8).
         DebeziumQueueBytesPreflight.apply(props);
+        // Debezium 3.3 drops a MySQL TRUNCATE TABLE entirely when
+        // skipped.operations contains 't' (the default); 3.1.3 delivered it as a
+        // schema change. Hand Debezium the set without 't' and remember the
+        // operator's route, so the statement keeps reaching ClickHouse the way
+        // it did (spec 01.11). Same Properties object every restart rebuilds from.
+        this.mysqlTruncateViaDdl = MySqlTruncateRouting.apply(props);
+        // Debezium 3.3 removed snapshot.mode=schema_only / schema_only_recovery
+        // (the shipped templates' default); both ran NoDataSnapshotter
+        // under 3.1.3, so they are rewritten to no_data (spec 02.06 section 3.4).
+        SnapshotModeAliasPreflight.apply(props);
+        // Debezium 3.3 stores every part of an oversized schema-history record
+        // under one id; a ClickHouse table keyed by id alone would collapse them
+        // and the next restart could not recover the schema (issue #1450). Verify
+        // the store and migrate it, or refuse to start, before the engine
+        // touches it (spec 09.05).
+        SchemaHistoryStorePreflight.apply(props);
         // Every start resumes from the durable offset and Debezium re-reads the
         // resumed transaction from BEGIN, logging each already-delivered event
         // at INFO with its full row image. The rows are never logged: the
@@ -2336,7 +2360,10 @@ public class DebeziumChangeEventCapture {
             if (i == list.size() - 1) {
                 lastRecordInBatch = true;
             }
-            boolean ddlRecord = isDDLRecord(record);
+            // A MySQL truncate event on the DDL route (spec 01.11) is a DDL here:
+            // pending rows are handed off before it and it is acknowledged by the
+            // DDL path, exactly like the schema-change record 3.1.3 emitted.
+            boolean ddlRecord = isDDLRecord(record) || isTruncateRoutedToDdl(record);
 
             // A value that is neither a Struct nor null is not a row and not a
             // control record: nothing downstream can represent it, so it is
@@ -2690,6 +2717,16 @@ public class DebeziumChangeEventCapture {
         try {
             SourceRecord sr = record.value();
             rejectUnrepresentableValue(record);
+            if (isTruncateRoutedToDdl(record)) {
+                // Spec 01.11: the schema-change record Debezium 3.1.3 emitted for
+                // this TRUNCATE. Only the content changes; `record` (the engine's
+                // own event) is still what the DDL path acknowledges.
+                sr = MySqlTruncateRouting.toSchemaChangeRecord(sr);
+                // DESTRUCTIVE: log text only; the statement is applied (or
+                // suppressed) by the DDL path below, one table, source-executed.
+                log.info("MySQL TRUNCATE event for {} routed to the DDL path as [{}] (spec 01.11)",
+                        record.value().topic(), ((Struct) sr.value()).get("ddl"));
+            }
             Struct struct = sr == null ? null : (Struct) sr.value();
 
             if (struct == null) {
@@ -3074,6 +3111,19 @@ public class DebeziumChangeEventCapture {
             log.debug("Could not determine whether the record carries DDL", e);
             return false;
         }
+    }
+
+    /**
+     * Whether a change event is a MySQL truncate event that this engine applies
+     * through the DDL path (spec 01.11): the operator's skipped.operations
+     * contained 't', so Debezium 3.1.3 would have emitted a schema change for it.
+     *
+     * @param record The change event to inspect.
+     * @return true if the record must be handled as the 3.1.3 schema change.
+     */
+    boolean isTruncateRoutedToDdl(ChangeEvent<SourceRecord, SourceRecord> record) {
+        return mysqlTruncateViaDdl && record != null
+                && MySqlTruncateRouting.isTruncateEvent(record.value());
     }
 
     /**

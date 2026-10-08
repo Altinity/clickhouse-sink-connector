@@ -195,7 +195,7 @@ public class SinkConnectorClientRestAPITest {
         defaultProps.putIfAbsent("schema.history.internal.jdbc.schema.history.table.ddl",
                 "CREATE TABLE IF NOT EXISTS %s (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), " +
                         "`history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) " +
-                        "ENGINE=ReplacingMergeTree(record_insert_seq) ORDER BY id");
+                        "ENGINE=ReplacingMergeTree(record_insert_seq) ORDER BY (id, history_data_seq)");
 
         // Timezone configuration
         defaultProps.setProperty("database.connectionTimeZone", "UTC");

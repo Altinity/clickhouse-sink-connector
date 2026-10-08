@@ -32,6 +32,14 @@ public class DebeziumOffsetStorage {
     // PostgreSQL parameters
     public static final String LSN_PROCESSED = "lsn_proc";
     public static final String LSN = "lsn";
+    // Debezium 3.7+ (PostgresOffsetContext.LSN_EVENTS_PROCESSED_KEY). Counts
+    // events already processed AT THE STORED LSN so WalPositionLocator can
+    // skip that many on restart (e.g. a mid-COPY/batch restart). It is not
+    // present in Debezium 3.1.3 offsets. Like the MySQL row/event skip
+    // counters below, it describes progress INSIDE the OLD position: left in
+    // place across an LSN edit, it would make Debezium silently skip that
+    // many real events at the NEW position.
+    public static final String LSN_EVENTS_PROCESSED = "lsn_events_processed";
 
     // Source Host parameters
     public static final String SOURCE_HOST = "source_host";
@@ -371,6 +379,11 @@ public class DebeziumOffsetStorage {
 
         jsonObject.put(LSN_PROCESSED, lsnLong);
         jsonObject.put(LSN, lsnLong);
+        // The counter describes progress INSIDE the old LSN's batch/COPY; at
+        // the new LSN it would make Debezium 3.7+ silently skip that many
+        // real events (WalPositionLocator). Only Debezium itself should set
+        // it going forward, once it has actually processed events there.
+        jsonObject.remove(LSN_EVENTS_PROCESSED);
 
         return jsonObject.toJSONString();
     }

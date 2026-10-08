@@ -214,8 +214,9 @@ Both arrival paths use it:
 - **DDL path** (`MySqlDDLParserListenerImpl.enterTruncateTable` /
   `enterDropTable` in the lightweight engine, executed by
   `performDDLOperation`): this is how a MySQL `TRUNCATE TABLE` actually
-  arrives, since Debezium skips `t` events by default (`skipped.operations`
-  contains `t`); the translator emits the bulk close in place of the
+  arrives when `skipped.operations` contains `t` (the Debezium default) --
+  under Debezium 3.3 the connector converts the truncate event into the
+  schema-change record 3.1.3 emitted (spec 01.11); the translator emits the bulk close in place of the
   ClickHouse `TRUNCATE TABLE` / `DROP TABLE`. `disable.drop.truncate` keeps
   its meaning (the statement is still classified as a drop/truncate for that
   gate), and the DDL row is audited as usual (12.04 §3.4). The translator
