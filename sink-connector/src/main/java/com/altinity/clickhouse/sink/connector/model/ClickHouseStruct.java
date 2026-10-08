@@ -296,6 +296,27 @@ public class ClickHouseStruct {
     long estimatedBytes;
 
     /**
+     * Whether ClickHouse has already acknowledged this row: its chunk's
+     * {@code executeBatch()}, its flush ahead of an inline replication-history
+     * statement, its own inline history statement, or (for the one-record
+     * TRUNCATE/bulk-close group) the truncation itself, returned without
+     * throwing (spec 03.06 section 3.5). {@code false} until then.
+     *
+     * <p>Set in place on this same instance -- records are carried by
+     * reference, never cloned, from the retained handoff/retry list through
+     * every regrouping (spec 04.01) -- so a chunk-level or statement-level
+     * failure that fails only part of a larger unit leaves the
+     * already-acknowledged rows marked, and the in-process retry that
+     * re-groups the SAME list (spec 09.01 section 3.2, spec 10.02) skips
+     * them instead of sending them again. Never read or written across a
+     * process/engine restart: redelivered rows are fresh instances and
+     * start {@code false} (spec 09.01 section 3.8, spec 02.04).</p>
+     */
+    @Getter
+    @Setter
+    boolean appliedToClickHouse;
+
+    /**
      * Constructs a ClickHouseStruct with commit info.
      *
      * @param kafkaOffset  Offset in Kafka.

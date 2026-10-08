@@ -135,6 +135,15 @@ jobs:
         working-directory: sink-connector-lightweight/tests/integration
         run: python3 -u regression.py --only "/mysql to clickhouse replication/auto table creation/${{ inputs.suite != '' && inputs.suite || '*' }}" --clickhouse-binary-path="${{inputs.package}}" --test-to-end ${{ inputs.extra_args != '' && inputs.extra_args || '' }} --output ${{ inputs.output_format }} --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
 
+      - name: Show the messages of every failing test
+        # The run's --output only prints the first failure's details; every
+        # other failing test shows a bare "AssertionError". Print each failing
+        # test's full message from the raw log so a failure can be diagnosed
+        # from the job log alone.
+        if: failure()
+        working-directory: sink-connector-lightweight/tests/integration/logs
+        run: cat raw.log | tfs transform nice-fails
+
       - name: Create tfs results report
         if: always()
         working-directory: sink-connector-lightweight/tests/integration/logs
@@ -217,6 +226,15 @@ jobs:
       - name: Run testflows tests
         working-directory: sink-connector-lightweight/tests/integration
         run: python3 -u regression.py --only "/mysql to clickhouse replication/auto replicated table creation/${{ inputs.suite != '' && inputs.suite || '*' }}" --clickhouse-binary-path="${{inputs.package}}" --test-to-end ${{ inputs.extra_args != '' && inputs.extra_args || '' }} --output ${{ inputs.output_format }} --collect-service-logs --attr project="${GITHUB_REPOSITORY}" project.id="$GITHUB_RUN_NUMBER" user.name="$GITHUB_ACTOR" github_actions_run="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" sink_version="registry.gitlab.com/altinity-public/container-images/clickhouse_debezium_embedded:latest" s3_url="https://altinity-test-reports.s3.amazonaws.com/index.html#altinity-sink-connector/testflows/${{ steps.date.outputs.date }}_${{github.run.number}}/" --log logs/raw.log
+
+      - name: Show the messages of every failing test
+        # The run's --output only prints the first failure's details; every
+        # other failing test shows a bare "AssertionError". Print each failing
+        # test's full message from the raw log so a failure can be diagnosed
+        # from the job log alone.
+        if: failure()
+        working-directory: sink-connector-lightweight/tests/integration/logs
+        run: cat raw.log | tfs transform nice-fails
 
       - name: Create tfs results report
         if: always()

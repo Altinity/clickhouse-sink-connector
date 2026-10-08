@@ -48,6 +48,7 @@ There is **no schema-cache invalidation step** on this path: a TRUNCATE does not
 - `PreparedStatementExecutorTruncateTest.truncateTargetsTheExecutorDatabaseNotTheSourceDatabase()` — §3.2 step 1: the statement names the executor's target database, not the record's source database.
 - `PreparedStatementExecutorTruncateTest.twoTruncatesInOneBatchAreBothApplied()` — §3.1: two TRUNCATEs in one batch both run, each at its position.
 - `PreparedStatementExecutorTruncateTest.truncateRefusedByClickHouseFailsTheBatch()` — §3.2 step 2: with a connection that refuses the qualified `TRUNCATE TABLE` statement, `addToPreparedStatementBatch` throws (root cause: the refusal) and never answers `true`.
+- `PreparedStatementExecutorTruncateTest.aTruncateSegmentIsNotReRunWhenTheFollowingInsertSegmentFailsThenRetries()` — spec 03.06 §3.5 / FM-04.05-4: a TRUNCATE segment followed by a segment that fails and is retried does not re-execute the TRUNCATE; only the still-unapplied insert is resent.
 - `Replication.BatchOrder.segments_match_source`, `Replication.BatchOrder.segmented_batch_converges`, `Replication.BatchOrder.every_truncate_is_its_own_segment`, `Replication.BatchOrder.truncate_last_loses_rows`, `Replication.BatchOrder.truncate_first_resurrects_rows` — the formal model (`lake build`, zero `sorry`).
 - `DBMetadataStatementFailureTest.truncateFailureIsRethrownAfterRetries()`, `DBMetadataStatementFailureTest.preparedStatementFailureIsRethrownNotNull()` — `truncateTable` throws after `MAX_RETRIES` refused attempts; `getPreparedStatement` throws instead of returning `null`.
 - `TruncateTableIT.testIsDeleted()` — a TRUNCATE on MySQL empties the ClickHouse table.
@@ -89,11 +90,11 @@ Recovery posture: a replicated TRUNCATE is applied at its binlog position or the
 
 - **FM-04.05-4 Batch fails after the TRUNCATE was applied**
   - **Trigger**: a later segment of the same batch (rows inserted after the TRUNCATE) fails.
-  - **Behaviour**: the batch is retained and re-executed from its first segment: the pre-TRUNCATE rows are inserted again, the TRUNCATE runs again, then the later segments (§3.2). Between the failure and the successful retry, ClickHouse readers see the table empty or holding only part of the post-TRUNCATE rows. History mode applies a bulk close instead of a TRUNCATE; its replay is spec 12.03.
-  - **Detection**: the later segment's ERROR and the retry WARN; the transient empty state itself: none.
-  - **Blast radius**: transient: readers see an emptier table than the source for up to the retry delay; the final state converges on `ReplacingMergeTree`.
-  - **Recovery**: self-heals on the successful retry.
+  - **Behaviour**: since spec 03.06 §3.5, the TRUNCATE's own execution marks its record `appliedToClickHouse` the instant it returns; the batch is retained and re-executed from the first segment NOT yet marked applied, so the TRUNCATE is **not** re-executed. The pre-TRUNCATE rows (an earlier segment, already marked applied by their own `executeBatch()`, spec 03.06 §3.2) and the TRUNCATE itself are excluded from the retry's regrouping; only the later, unapplied segment is resent. Readers never see the table re-emptied by a retry: once the TRUNCATE returns, nothing in this path touches the table's existing rows again. History mode applies a bulk-close record (spec 12.03 §3.4 Gap G-12.03-6) instead of a TRUNCATE statement; the bulk-close record is marked the same way and is likewise excluded from a retry (spec 12.03 §7 FM-12.03-1).
+  - **Detection**: the later segment's ERROR and the retry WARN; no detection needed for the TRUNCATE itself, since it is not repeated.
+  - **Blast radius**: none from the TRUNCATE on retry (it does not run again); the later segment's own failure mode applies to its rows (spec 03.06 §6 FM-03.06-2, FM-03.06-3).
+  - **Recovery**: self-heals on the successful retry of the remaining segment; none needed for the TRUNCATE.
   - **RTO**: ≤ 30 s backoff per attempt + the cause of the later failure; unmeasured.
-  - **Test**: `PreparedStatementExecutorTruncateTest.truncateIsAppliedAtItsBinlogPositionForBothHashOrders()` pins the order within one execution; GAP: a test that re-executes the batch after a failure behind the TRUNCATE and asserts the converged table.
+  - **Test**: `PreparedStatementExecutorTruncateTest.truncateIsAppliedAtItsBinlogPositionForBothHashOrders()` pins the order within one execution; `PreparedStatementExecutorTruncateTest.aTruncateSegmentIsNotReRunWhenTheFollowingInsertSegmentFailsThenRetries()` pins that a retry after the later segment fails does not re-execute the TRUNCATE and sends only the still-unapplied insert.
 
-Summary: 4 failure modes, 1 DEFECT, 1 GAP.
+Summary: 4 failure modes, 1 DEFECT, 0 GAP.

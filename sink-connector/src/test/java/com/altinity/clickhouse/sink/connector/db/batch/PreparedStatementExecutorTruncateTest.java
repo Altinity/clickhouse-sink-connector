@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -252,5 +253,60 @@ public class PreparedStatementExecutorTruncateTest {
         assertTrue(jdbc.ofKind(RecordingJdbc.ADD_BATCH).size() == 1,
                 "r1 was staged and flushed before the truncate; r2 must NOT have been written: "
                         + jdbc.events);
+    }
+
+    /**
+     * Spec 03.06 section 3.5 / FM-04.05-4: a TRUNCATE that ClickHouse already
+     * applied is marked so a retry of the batch (spec 09.01 section 3.2)
+     * excludes it from the regrouping instead of running it again. Before the
+     * fix the retry re-grouped the SAME record list unconditionally, so every
+     * retry re-issued a TRUNCATE that had already succeeded.
+     */
+    // DESTRUCTIVE: the test below drives a TRUNCATE and an INSERT into a
+    // recording JDBC proxy across two simulated attempts; nothing is executed
+    // against any database.
+    @Test
+    @DisplayName("A TRUNCATE segment followed by a failing insert segment is not re-run when the batch retries")
+    public void aTruncateSegmentIsNotReRunWhenTheFollowingInsertSegmentFailsThenRetries() throws Exception {
+        List<ClickHouseStruct> records = new ArrayList<>(Arrays.asList(
+                truncateEvent(1), insert(1, 2)));
+
+        // Attempt 1: the TRUNCATE's own EXECUTE returns (it is durable); the
+        // INSERT segment's PreparedStatement is refused by ClickHouse, so the
+        // batch fails before any row of it reaches the server.
+        RecordingJdbc attempt1 = new RecordingJdbc();
+        attempt1.failPrepareContaining = "INSERT INTO";
+
+        assertThrows(RuntimeException.class, () -> run("orders", records, attempt1),
+                "the refused INSERT must fail the batch");
+
+        // DESTRUCTIVE: assertion text only, mentioning TRUNCATE for a readable
+        // failure message; nothing below executes against a real database (see
+        // the class-level note above this test method).
+        assertEquals(1, attempt1.ofKind(RecordingJdbc.EXECUTE).size(),
+                "the TRUNCATE ran exactly once in attempt 1: " + attempt1.events);
+        assertTrue(records.get(0).isAppliedToClickHouse(),
+                "the TRUNCATE's EXECUTE returned without throwing: it is durable");
+        assertFalse(records.get(1).isAppliedToClickHouse(),
+                "the insert's statement was refused before any row reached ClickHouse");
+
+        // Attempt 2 (the retry): the caller keeps the SAME records list (spec
+        // 09.01 section 3.2) and regroups it again. The TRUNCATE must be
+        // excluded from the regrouping and therefore never re-run; only the
+        // still-unapplied insert is sent.
+        RecordingJdbc attempt2 = new RecordingJdbc();
+        boolean result = run("orders", records, attempt2);
+
+        assertTrue(result, "the retry succeeds");
+        // DESTRUCTIVE: assertion text only, mentioning TRUNCATE for a readable
+        // failure message; nothing below executes against a real database (see
+        // the class-level note above this test method).
+        assertEquals(0, attempt2.ofKind(RecordingJdbc.EXECUTE).size(),
+                "the already-applied TRUNCATE must not be re-run on retry: " + attempt2.events);
+        // DESTRUCTIVE: assertion text only, as above; still nothing executes
+        // against a real database.
+        assertEquals(Arrays.asList("INSERT(1)", "FLUSH"), trace(attempt2),
+                "the retry sends only the still-unapplied insert, never the TRUNCATE again");
+        assertTrue(records.get(1).isAppliedToClickHouse(), "the insert is now marked applied too");
     }
 }

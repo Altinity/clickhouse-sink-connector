@@ -13,6 +13,7 @@ import org.apache.logging.log4j.Logger;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.Statement;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -29,8 +30,13 @@ import java.util.Set;
  *   <li>DROP COLUMN – not applied automatically; requires explicit configuration</li>
  * </ol>
  *
- * <p>All DDL errors are caught, logged at WARN level, and the connector continues
- * processing so that replication is never halted by a schema-reconciliation failure.
+ * <p>{@link #addMissingColumns} attempts every column in {@code newColumns} even
+ * after one fails (so one bad column does not block the others), but it is no
+ * longer silent about a failure: once every column has been attempted, it
+ * throws naming the columns that could not be added. A missing source column
+ * that cannot be added to ClickHouse means a row carrying it would otherwise
+ * be written without that value -- divergence, not a condition to log and
+ * continue past (Spec 10.04 section 3.9).
  */
 public class PostgresSchemaReconciler {
 
@@ -63,6 +69,10 @@ public class PostgresSchemaReconciler {
      * @param database   ClickHouse target database name
      * @param table      ClickHouse target table name
      * @param newColumns map of {@code columnName → Debezium Schema} for columns to add
+     * @throws RuntimeException if one or more columns could not be added. Every
+     *         column is attempted first (one bad column must not block the
+     *         others); the exception is thrown only after the loop, naming every
+     *         column that failed, with the first failure's cause attached.
      */
     public void addMissingColumns(String database, String table, Map<String, Schema> newColumns) {
         if (newColumns == null || newColumns.isEmpty()) {
@@ -71,6 +81,9 @@ public class PostgresSchemaReconciler {
 
         Connection conn = writer.getConnection();
         DBMetadata dbMetadata = new DBMetadata(config);
+
+        List<String> failedColumns = new ArrayList<>();
+        Exception firstFailure = null;
 
         for (Map.Entry<String, Schema> entry : newColumns.entrySet()) {
             String columnName = entry.getKey();
@@ -88,10 +101,20 @@ public class PostgresSchemaReconciler {
                 log.info("Schema drift reconciliation – DDL executed successfully for column '{}' in {}.{}",
                         columnName, database, table);
             } catch (Exception e) {
-                log.warn("Schema drift reconciliation – failed to add column '{}' to {}.{}: {}. " +
-                                "Replication will continue; the event may be written without this column.",
-                        columnName, database, table, e.getMessage());
+                log.error("Schema drift reconciliation – failed to add column '{}' to {}.{}: {}",
+                        columnName, database, table, e.getMessage(), e);
+                failedColumns.add(columnName);
+                if (firstFailure == null) {
+                    firstFailure = e;
+                }
             }
+        }
+
+        if (!failedColumns.isEmpty()) {
+            throw new RuntimeException(String.format(
+                    "Schema drift reconciliation for %s.%s could not add column(s) %s; the source row "
+                            + "cannot be written without them, so replication must not continue past this point.",
+                    database, table, failedColumns), firstFailure);
         }
     }
 

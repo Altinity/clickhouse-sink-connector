@@ -83,23 +83,21 @@ public class ClickHouseAutoCreateTable
         metadata.executeSystemQuery(connection, createTableQuery);
 
         // Reconcile column type overrides against the (possibly
-        // pre-existing) table.  Direct override mismatches will throw
-        // ColumnTypeOverrideMismatchException; alias drift is auto-fixed.
+        // pre-existing) table: a drifted ALIAS override is auto-fixed via
+        // ALTER TABLE, and a direct override mismatch, a rejected ALIAS DDL,
+        // an unreadable system.columns, or an ALIAS name already occupied by
+        // a non-ALIAS column all throw ColumnTypeOverrideMismatchException
+        // (spec 08.05 section 3.3). It is unchecked and this method declares
+        // no checked exception for it, so there is nothing to catch here --
+        // it propagates to DbWriter, which re-throws it ahead of its own
+        // generic catch (spec 10.04 section 3.8) so the writer is never
+        // built against a table that does not match the declared overrides.
         ColumnTypeOverrideConfig overrideConfig =
                 ColumnTypeOverrideConfig.fromProperties(
                         config.originalsStrings());
         if (overrideConfig.hasOverrides()) {
-            ColumnTypeOverrideReconciler reconciler =
-                    new ColumnTypeOverrideReconciler();
-            try {
-                reconciler.reconcile(connection, databaseName, tableName,
-                        databaseName, overrideConfig);
-            } catch (ColumnTypeOverrideMismatchException e) {
-                throw e; // propagate — must halt the connector
-            } catch (Exception e) {
-                log.error("Error reconciling column type overrides for "
-                        + "table {}.{}", databaseName, tableName, e);
-            }
+            new ColumnTypeOverrideReconciler().reconcile(connection,
+                    databaseName, tableName, databaseName, overrideConfig);
         }
     }
 

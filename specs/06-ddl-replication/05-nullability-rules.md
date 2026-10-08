@@ -8,6 +8,7 @@ Specifies how column nullability is translated on `CREATE TABLE` and `ALTER TABL
 ## 2. Codebase Mapping on 2.11.0
 - **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/MySqlDDLParserListenerImpl.java` (`parseColumnDefinitions`, `translateColumnClause`, `keyColumnChangeVerdict`)
 - **Target schema**: `com.altinity.clickhouse.debezium.embedded.ddl.parser.TargetSchemaLookup` (nullability + sorting key of the existing ClickHouse table)
+- **Sorting-key / engine derivation** (section 3.6): `com.altinity.clickhouse.debezium.embedded.ddl.parser.ReplacingMergeTreeKeyPolicy`, called from `enterColumnCreateTable` — `resolveSortingKey` (declared `PRIMARY KEY` → `NOT NULL UNIQUE` key → all-columns fallback, and whether `allow_nullable_key` is required), `resolveIsDeletedColumnName` (the `is_deleted`/`_is_deleted` collision check), `engineClause` (the `ReplacingMergeTree`/`ReplicatedReplacingMergeTree` engine text, mirroring the record-schema path documented in Spec 08.05 section 3.2), and `sanitizeOrderBy` (the `name(N)` index-prefix clean-up before `ORDER BY`)
 - **Related PRs**: #1455, #1457, #1459
 
 ---

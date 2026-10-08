@@ -32,6 +32,15 @@ Incoming Record Field Evaluation
                 -> Rationale: Pre-ALTER records should receive the table's default.
 ```
 
+Case B covers two triggers that share one mechanism. A pre-ALTER record's
+column is *transiently* absent — a later record, once the ALTER lands, will
+carry it. A column that exists on the ClickHouse replica alone, with no column
+of that name on the MySQL source, is *permanently* absent — no record ever
+carries it, by construction. Both are decided by the same schema-membership
+check and excluded from the INSERT the same way; the replica-only case is the
+parity-scope carve-out of Invariant I6 (`specs/CONSTITUTION.md`) and is pinned
+separately as FM-04.03-4.
+
 ### 3.2 Production Hazard Prevented
 In earlier versions, `null`-valued fields were omitted from the query column list. Consequently, ClickHouse applied column defaults (e.g. converting `NULL` to `0`, `""`, or `1970-01-01`), causing silent data divergence. The 2.11.0 rule strictly preserves explicit `NULL`s.
 
@@ -115,6 +124,11 @@ maps disagree; an unbound parameter never reaches `addBatch()`.
   pre-fix code throws `StaleSchemaCacheException` for `ID`.
 - `NullValueColumnDropTest.testPreAlterRecordStillOmitsUnknownColumn()` — Case B:
   a column absent from a pre-ALTER record's schema is not a member.
+- `ClickHouseOnlyColumnTest.testClickHouseOnlyColumnIsOmittedFromGeneratedInsert()`,
+  `ClickHouseOnlyColumnTest.testClickHouseOnlyColumnRecordWritesWithoutError()` —
+  FM-04.03-4: Case B's permanent variant. A column with no source counterpart
+  is never a member of any record's schema, is excluded from every generated
+  INSERT, and the bind-time mapper writes the rest of the row without error.
 - `NullValueColumnDropTest.testSchemaDefaultIsNotSubstitutedForNull()` — §3.3:
   the Connect-schema default is never bound in place of a stored `null`.
 - `StaleCacheBindingMapTest.materializedColumnConvertedMidBatchIsBoundInTheSameBatch()`,
@@ -168,4 +182,13 @@ Recovery posture: membership is decided from the record's schema and a disagreem
   - **RTO**: ≈ 1–2 min + re-apply of the in-flight transaction; unmeasured.
   - **Test**: `NullValueColumnDropTest.testNullColumnIsBoundOnInsert()`, `PoisonValueClassificationTest.nullIntoNonNullableColumnIsFatal()`.
 
-Summary: 3 failure modes, 1 DEFECT, 1 GAP.
+- **FM-04.03-4 A column only ClickHouse has (parity scope, Constitution I6)**
+  - **Trigger**: a column added on the ClickHouse replica alone — by hand, by another process, or by a prior schema mistake — with no column of that name on the MySQL source and not one of the connector's own bookkeeping columns (`isConnectorManagedColumn`: `_version`, `is_deleted`/the configured delete column, the sign column, the replication-history columns). `DBMetadata.getColumnsDataTypesForTable` still reports it (it excludes only `ALIAS`/`MATERIALIZED`), so it reaches the same writable-column map as every other column.
+  - **Behaviour**: this is Case B (§3.1) forever, not transiently: the column can never appear in any record's schema, so `QueryFormatter.createColumns()` never gives it a placeholder, in every batch, not just the first one after an `ADD COLUMN`. At bind time `PreparedStatementFieldMapper.insertPreparedStatement` finds no entry for it in `columnNameToIndexMap`, finds it is not `isUnboundByDesign`, finds `recordCarries(fields, colName)` false (the field cannot exist in any schema derived from the source table), and takes the by-design branch: DEBUG log, `continue`. No value is bound, no exception is thrown, no `ALTER` is issued, and ClickHouse keeps whatever value the column already holds (its DEFAULT, or a value a human or another process wrote) — never NULL, never shadowed, never overwritten. Nothing here recognises "this column will never appear" as a distinct case; it falls out of the ordinary Case B / `recordCarries` check having nothing to find, every time.
+  - **Detection**: none, by design (Constitution I6, Parity scope: a column with no source counterpart has no source value to conform to or diverge from, so there is nothing to report at the connector layer). `db_compare`'s value-level checksum reports the same finding, once per table, at INFO (spec 11.02 §3.3, §3.9, FM-11.02-10).
+  - **Blast radius**: none. The column is never written, altered, or warned about by the connector; its value is whatever it was before the connector saw the table, for as long as the column exists.
+  - **Recovery**: none required — this is the tolerated case. A column the owner wants removed is dropped directly on the replica (no connector action); a column that should instead track a source column is renamed or the source `ADD COLUMN` is applied, which moves it out of this failure mode and into Case A or FM-04.03-1.
+  - **RTO**: not applicable.
+  - **Test**: `ClickHouseOnlyColumnTest.testClickHouseOnlyColumnIsOmittedFromGeneratedInsert()` (query-formatting half, through `GroupInsertQueryWithBatchRecords.updateQueryToRecordsMap`), `ClickHouseOnlyColumnTest.testClickHouseOnlyColumnRecordWritesWithoutError()` (bind-time half, through `PreparedStatementFieldMapper.insertPreparedStatement`, asserting no index outside the real columns is ever touched and the call completes without error).
+
+Summary: 4 failure modes, 1 DEFECT, 1 GAP.

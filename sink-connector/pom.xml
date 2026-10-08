@@ -415,13 +415,7 @@
             <scope>test</scope>
         </dependency>
 
-        <!--Kafka JSON converter for SMT unit test-->
-        <dependency>
-            <groupId>org.apache.kafka</groupId>
-            <artifactId>connect-json</artifactId>
-            <version>${version.kafka}</version>
-            <!-- <scope>test</scope> -->
-        </dependency>
+        <!--Kafka JSON converter (compile scope; also used by the SMT unit test)-->
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>connect-json</artifactId>

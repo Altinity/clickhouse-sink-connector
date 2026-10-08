@@ -29,15 +29,15 @@ public class SourceClockStepVersionTest {
 
     @BeforeEach
     public void resetSequenceState() {
-        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
-        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
-        DebeziumChangeEventCapture.sequenceHighWaterPosition = null;
-        DebeziumChangeEventCapture.sequenceHighWaterEffectiveTs = 0L;
-        DebeziumChangeEventCapture.sequenceMaxSourceTs = 0L;
+        VersionSequencer.sequenceNumber = VersionSequencer.SEQUENCE_START;
+        VersionSequencer.sequenceAnchorTs = 0L;
+        VersionSequencer.sequenceHighWaterPosition = null;
+        VersionSequencer.sequenceHighWaterEffectiveTs = 0L;
+        VersionSequencer.sequenceMaxSourceTs = 0L;
     }
 
     private static long version(long sourceTs, long pos) {
-        return DebeziumChangeEventCapture.nextSequenceNumber(sourceTs,
+        return VersionSequencer.nextSequenceNumber(sourceTs,
                 SourcePosition.ofBinlog("mysql-bin.000042", pos, 0));
     }
 
@@ -65,7 +65,7 @@ public class SourceClockStepVersionTest {
         assertTrue(corrected > duringExcursion,
                 "the first commit after the correction must rank above the excursion's rows");
         assertTrue(correctedLater > corrected);
-        assertEquals(T + ONE_DAY + 5, DebeziumChangeEventCapture.sequenceMaxSourceTs,
+        assertEquals(T + ONE_DAY + 5, VersionSequencer.sequenceMaxSourceTs,
                 "the floor stays at the excursion's highest timestamp until the source clock passes it");
     }
 }

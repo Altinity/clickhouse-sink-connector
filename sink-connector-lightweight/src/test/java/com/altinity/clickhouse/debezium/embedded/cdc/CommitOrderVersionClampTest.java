@@ -40,11 +40,11 @@ public class CommitOrderVersionClampTest {
 
     @BeforeEach
     public void resetSequenceState() {
-        DebeziumChangeEventCapture.sequenceNumber = DebeziumChangeEventCapture.SEQUENCE_START;
-        DebeziumChangeEventCapture.sequenceAnchorTs = 0L;
-        DebeziumChangeEventCapture.sequenceHighWaterPosition = null;
-        DebeziumChangeEventCapture.sequenceHighWaterEffectiveTs = 0L;
-        DebeziumChangeEventCapture.sequenceMaxSourceTs = 0L;
+        VersionSequencer.sequenceNumber = VersionSequencer.SEQUENCE_START;
+        VersionSequencer.sequenceAnchorTs = 0L;
+        VersionSequencer.sequenceHighWaterPosition = null;
+        VersionSequencer.sequenceHighWaterEffectiveTs = 0L;
+        VersionSequencer.sequenceMaxSourceTs = 0L;
     }
 
     /** A streaming record at binlog position {@code (file, pos, row)} with source ts {@code sourceTsMs}. */
@@ -63,7 +63,7 @@ public class CommitOrderVersionClampTest {
     }
 
     private static long versionOf(ClickHouseStruct record) {
-        DebeziumChangeEventCapture.addVersion(Arrays.asList(record));
+        VersionSequencer.addVersion(Arrays.asList(record));
         return record.getSequenceNumber();
     }
 
@@ -81,12 +81,12 @@ public class CommitOrderVersionClampTest {
         for (int i = 0; i < 51; i++) {
             earlyWrite = versionOf(at(TS, 200 + i));
         }
-        assertEquals(TS * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START + 50, earlyWrite,
+        assertEquals(TS * MULTIPLIER + VersionSequencer.SEQUENCE_START + 50, earlyWrite,
                 "sanity: the key's earlier write sits high in second T's counter range");
 
         // Second T+5: an unrelated commit advances the source clock and resets the counter.
         long unrelated = versionOf(at(TS + 5_000, 300));
-        assertEquals((TS + 5_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START, unrelated);
+        assertEquals((TS + 5_000) * MULTIPLIER + VersionSequencer.SEQUENCE_START, unrelated);
 
         // The long transaction commits now. Its UPDATE was EXECUTED in second T, so its
         // row event carries ts = T, but it is at a HIGHER binlog position than everything
@@ -95,11 +95,11 @@ public class CommitOrderVersionClampTest {
 
         assertTrue(lateCommit > earlyWrite,
                 "the later commit must out-rank the earlier write of the same key; before the "
-                        + "fix it was " + (TS * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START + 1)
+                        + "fix it was " + (TS * MULTIPLIER + VersionSequencer.SEQUENCE_START + 1)
                         + " < " + earlyWrite + " and ReplacingMergeTree kept the stale row");
         assertTrue(lateCommit > unrelated,
                 "versions must stay strictly increasing in commit order");
-        assertEquals((TS + 5_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START + 1, lateCommit,
+        assertEquals((TS + 5_000) * MULTIPLIER + VersionSequencer.SEQUENCE_START + 1, lateCommit,
                 "the timestamp component is floored at the newest first-delivery timestamp "
                         + "and the counter continues - the 2.8.0 formula is untouched");
     }
@@ -164,9 +164,9 @@ public class CommitOrderVersionClampTest {
         assertEquals(insertRow2 + 1, update, "the UPDATE (row 0 of its statement, same payload position) "
                 + "is floored like the INSERT and out-ranks it; before the fix it kept second T and lost");
         assertEquals(update + 1, delete, "the DELETE out-ranks the UPDATE");
-        assertEquals((TS + 5_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START + 1, insertRow0,
+        assertEquals((TS + 5_000) * MULTIPLIER + VersionSequencer.SEQUENCE_START + 1, insertRow0,
                 "floored to the newer commit's second (the newer commit reset the counter to SEQUENCE_START)");
-        assertEquals(TS + 5_000, (delete - DebeziumChangeEventCapture.SEQUENCE_START) / MULTIPLIER,
+        assertEquals(TS + 5_000, (delete - VersionSequencer.SEQUENCE_START) / MULTIPLIER,
                 "the DELETE is versioned in the floored second, not in its raw second T");
     }
 
@@ -187,7 +187,7 @@ public class CommitOrderVersionClampTest {
                 assertTrue(v > previous, "chunk " + chunk + " row " + row + " must out-rank every earlier row");
                 // The seeds are ten digits and carry 1000 ms into the timestamp field
                 // (spec 02.01 section 3.3): subtract the seed before reading the second.
-                assertEquals(TS + 5_000, (v - DebeziumChangeEventCapture.SEQUENCE_START) / MULTIPLIER,
+                assertEquals(TS + 5_000, (v - VersionSequencer.SEQUENCE_START) / MULTIPLIER,
                         "every chunk is floored to the newer commit's second");
                 previous = v;
             }
@@ -204,7 +204,7 @@ public class CommitOrderVersionClampTest {
         long newest = versionOf(at(TS + 3_000, 500));
         long redelivered = versionOf(at(TS, "mysql-bin.000007", 400, 5)); // older event, higher row
         assertTrue(redelivered < newest, "an earlier event redelivered with any row index is a redelivery");
-        assertEquals(TS, (redelivered - DebeziumChangeEventCapture.SEQUENCE_START) / MULTIPLIER,
+        assertEquals(TS, (redelivered - VersionSequencer.SEQUENCE_START) / MULTIPLIER,
                 "not clamped: the source-timestamp anchored assignment (seed carry subtracted)");
     }
 
@@ -215,7 +215,7 @@ public class CommitOrderVersionClampTest {
         versionOf(at(TS, 300));
         long first = versionOf(at(TS + 2_000, 400));   // newer than the floor: not clamped
         long second = versionOf(at(TS + 2_000, 400));  // same transaction, same position
-        assertEquals((TS + 2_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START, first);
+        assertEquals((TS + 2_000) * MULTIPLIER + VersionSequencer.SEQUENCE_START, first);
         assertEquals(first + 1, second);
     }
 
@@ -253,8 +253,8 @@ public class CommitOrderVersionClampTest {
         // 02.02 section 3.2; DebeziumChangeEventCaptureTest pins that).
         ClickHouseStruct positionlessRow = new ClickHouseStruct();
         positionlessRow.setDebezium_ts_ms(TS + 5_000);
-        DebeziumChangeEventCapture.addVersion(Arrays.asList(positionlessRow));
-        assertEquals((TS + 5_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START,
+        VersionSequencer.addVersion(Arrays.asList(positionlessRow));
+        assertEquals((TS + 5_000) * MULTIPLIER + VersionSequencer.SEQUENCE_START,
                 positionlessRow.getSequenceNumber(), "sanity: the positionless row reset the counter");
 
         long lateCommit = versionOf(at(TS, 400));
@@ -262,7 +262,7 @@ public class CommitOrderVersionClampTest {
         assertTrue(lateCommit > earlyWrite,
                 "the counter reset caused by the positionless row must be accompanied by the floor: "
                         + "early=" + earlyWrite + " late=" + lateCommit);
-        assertEquals((TS + 5_000) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START + 1, lateCommit);
+        assertEquals((TS + 5_000) * MULTIPLIER + VersionSequencer.SEQUENCE_START + 1, lateCommit);
     }
 
     @Test
@@ -275,7 +275,7 @@ public class CommitOrderVersionClampTest {
         }
         batch.add(at(TS + 4_000, 300));
         batch.add(at(TS, 400)); // long transaction, committed last
-        DebeziumChangeEventCapture.addVersion(batch);
+        VersionSequencer.addVersion(batch);
 
         for (int i = 1; i < batch.size(); i++) {
             assertTrue(batch.get(i - 1).getSequenceNumber() < batch.get(i).getSequenceNumber(),
@@ -298,7 +298,7 @@ public class CommitOrderVersionClampTest {
         assertTrue(redeliveredDelete < reinsert,
                 "a redelivery is not a new commit: it must keep ranking below the later "
                         + "re-INSERT, exactly as before this change");
-        assertEquals(TS * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START + 1, redeliveredDelete,
+        assertEquals(TS * MULTIPLIER + VersionSequencer.SEQUENCE_START + 1, redeliveredDelete,
                 "the redelivered event keeps the source-timestamp anchored assignment: "
                         + "no floor, counter continues");
     }
@@ -311,7 +311,7 @@ public class CommitOrderVersionClampTest {
         versionOf(at(TS, 10)); // redelivery
         long next = versionOf(at(TS + 3_100, 30)); // genuinely new commit
         assertTrue(next > newest);
-        assertEquals((TS + 3_100) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START + 2, next,
+        assertEquals((TS + 3_100) * MULTIPLIER + VersionSequencer.SEQUENCE_START + 2, next,
                 "the floor moved to TS+3000 with the newest first delivery and the redelivery "
                         + "left it there");
     }
@@ -358,7 +358,7 @@ public class CommitOrderVersionClampTest {
         versionOf(at(TS, 200));
         versionOf(at(TS, 400)); // same second, still first delivery
         long later = versionOf(at(TS + 2_500, 500));
-        assertEquals((TS + 2_500) * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START, later,
+        assertEquals((TS + 2_500) * MULTIPLIER + VersionSequencer.SEQUENCE_START, later,
                 "a >1s advance of the effective clock resets the counter exactly as 2.8.0 did");
     }
 
@@ -371,10 +371,10 @@ public class CommitOrderVersionClampTest {
         ClickHouseStruct older = new ClickHouseStruct();
         older.setTs_ms(TS);
         older.setDebezium_ts_ms(TS + 10_030);
-        DebeziumChangeEventCapture.addVersion(Arrays.asList(newer));
-        DebeziumChangeEventCapture.addVersion(Arrays.asList(older));
+        VersionSequencer.addVersion(Arrays.asList(newer));
+        VersionSequencer.addVersion(Arrays.asList(older));
 
-        assertEquals(TS * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL + 2,
+        assertEquals(TS * MULTIPLIER + VersionSequencer.SEQUENCE_START_INITIAL + 2,
                 older.getSequenceNumber(),
                 "without a position nothing proves this is a first delivery, so the "
                         + "source-timestamp anchored assignment stays exactly as before");
@@ -395,7 +395,7 @@ public class CommitOrderVersionClampTest {
         ClickHouseStruct late = new ClickHouseStruct();
         late.setTs_ms(TS);
         late.setLsn(4_000L);
-        DebeziumChangeEventCapture.addVersion(Arrays.asList(a, early, newer, late));
+        VersionSequencer.addVersion(Arrays.asList(a, early, newer, late));
 
         assertNotNull(late.getSourcePosition());
         assertTrue(late.getSequenceNumber() > early.getSequenceNumber());
@@ -435,7 +435,7 @@ public class CommitOrderVersionClampTest {
                         + "every earlier write; before the fix it compared below the mark, was not clamped and "
                         + "ranked " + (TS * MULTIPLIER) + "-ish below early=" + early);
         assertEquals(SourcePosition.ofBinlog("binlog.000001", 4L, 0),
-                DebeziumChangeEventCapture.sequenceHighWaterPosition,
+                VersionSequencer.sequenceHighWaterPosition,
                 "the mark moved to the new log");
 
         // From here on the new log is the log: in-order records are first deliveries
@@ -443,7 +443,7 @@ public class CommitOrderVersionClampTest {
         long next = versionOf(at(TS, "binlog.000001", 5, 0));
         assertTrue(next > afterRename, "log order within the new log is honoured");
         long rewound = versionOf(at(TS, "binlog.000001", 4, 0));
-        assertEquals(TS * MULTIPLIER + DebeziumChangeEventCapture.sequenceNumber, rewound,
+        assertEquals(TS * MULTIPLIER + VersionSequencer.sequenceNumber, rewound,
                 "a rewind inside the new log is a redelivery: not clamped, source-timestamp anchored");
     }
 }

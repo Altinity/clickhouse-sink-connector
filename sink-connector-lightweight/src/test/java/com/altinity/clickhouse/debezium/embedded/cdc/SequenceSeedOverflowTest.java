@@ -52,11 +52,11 @@ public class SequenceSeedOverflowTest {
      */
     @Test
     public void testSeedDoesNotFitBeneathTheMultiplier() {
-        Assert.assertTrue("SEQUENCE_START (" + DebeziumChangeEventCapture.SEQUENCE_START
+        Assert.assertTrue("SEQUENCE_START (" + VersionSequencer.SEQUENCE_START
                         + ") still overflows the multiplier (" + MULTIPLIER + "). When this "
                         + "fails the encoding has been fixed -- invert the ordering "
                         + "assertion below into the guarantee it could not make before.",
-                DebeziumChangeEventCapture.SEQUENCE_START >= MULTIPLIER);
+                VersionSequencer.SEQUENCE_START >= MULTIPLIER);
     }
 
     /**
@@ -73,9 +73,9 @@ public class SequenceSeedOverflowTest {
         final long newerSourceTs = olderSourceTs + 1;
 
         long olderPreRestart =
-                olderSourceTs * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START;
+                olderSourceTs * MULTIPLIER + VersionSequencer.SEQUENCE_START;
         long newerPostRestart =
-                newerSourceTs * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL;
+                newerSourceTs * MULTIPLIER + VersionSequencer.SEQUENCE_START_INITIAL;
 
         Assert.assertTrue("KNOWN DEFECT: newer(" + newerPostRestart + ") should out-rank "
                         + "older(" + olderPreRestart + ") but does not, so "
@@ -96,7 +96,7 @@ public class SequenceSeedOverflowTest {
         Assert.assertTrue("a resumed event must rank below a pre-restart write of the "
                         + "SAME event; this ordering is intended and must survive any "
                         + "fix to the multiplier overflow",
-                DebeziumChangeEventCapture.SEQUENCE_START_INITIAL
-                        < DebeziumChangeEventCapture.SEQUENCE_START);
+                VersionSequencer.SEQUENCE_START_INITIAL
+                        < VersionSequencer.SEQUENCE_START);
     }
 }

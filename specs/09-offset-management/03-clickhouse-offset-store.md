@@ -12,7 +12,7 @@ Specifies how replication offsets are persisted in a ClickHouse table (conventio
 - **Connector-side reader**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumOffsetStorage.java` — `getDebeziumLatestRecordTimestamp(Properties, Connection)`, `getDebeziumStorageStatusQuery(Properties, Connection)` / `offsetValueQuery(Properties)` / `isKeeperMapOffsetTable(Properties)`, plus `updateBinLogInformation` / `updateLsnInformation` / `deleteOffsetStorageRow` for the REST API's position edits (§3.4).
 - **REST position edits**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/api/DebeziumEmbeddedRestApi.java` — `POST /binlog`, `POST /lsn` (§3.4).
 - **Database bootstrap**: `DebeziumJdbcStorageOperations.createDatabaseForDebeziumStorage(Connection, Properties)` in `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumJdbcStorageOperations.java` creates the database that hosts the table; Debezium creates the table itself from the configured DDL.
-- **Version high-water mark (connector-owned, same database)**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionHighWaterMark.java` — table `replica_version_high_water` (§3.4), created and written by the connector, read by `DebeziumChangeEventCapture.seedVersionFloor` at engine start (spec 02.02 §3.5).
+- **Version high-water mark (connector-owned, same database)**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionHighWaterMark.java` — table `replica_version_high_water` (§3.4), created and written by the connector, read by `VersionSequencer.seedVersionFloor` at engine start (spec 02.02 §3.5).
 
 ---
 

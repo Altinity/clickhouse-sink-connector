@@ -520,60 +520,58 @@ public class ClickHouseConverter implements AbstractConverter {
      *
      * @param record the Debezium {@link SourceRecord}
      * @return ordered map of field name → field {@link Schema}, or {@code null}
-     *         if the schema cannot be extracted
+     *         for a legitimate no-row envelope (no value schema, or no
+     *         populated {@code after}/{@code before} row image -- e.g. a
+     *         heartbeat, transaction-metadata record or tombstone)
+     * @throws RuntimeException if the record's schema cannot be read for any
+     *         other reason (a corrupt envelope). This is a genuine failure,
+     *         not a no-row case: a source column the caller never saw would
+     *         otherwise be written to ClickHouse without a value, which is
+     *         divergence (Spec 10.04 section 3.9), so it is not caught here;
+     *         it must propagate and halt the pipeline.
      */
     public static Map<String, Schema> extractDebeziumSchema(SourceRecord record) {
-        try {
-            Schema valueSchema = record.valueSchema();
-            if (valueSchema == null) {
-                return null;
-            }
-
-            // Prefer "after" (INSERT / UPDATE); fall back to "before" (DELETE).
-            Schema rowSchema = null;
-
-            Field afterField = valueSchema.field("after");
-            if (afterField != null && afterField.schema() != null
-                    && afterField.schema().type() == Schema.Type.STRUCT) {
-                // For DELETE, the "after" value in the Struct will be null, so check the value too.
-                Struct valueStruct = record.value() instanceof Struct ? (Struct) record.value() : null;
-                Object afterValue = (valueStruct != null) ? safeGet(valueStruct, "after") : null;
-                if (afterValue != null) {
-                    rowSchema = afterField.schema();
-                }
-            }
-
-            if (rowSchema == null) {
-                Field beforeField = valueSchema.field("before");
-                if (beforeField != null && beforeField.schema() != null
-                        && beforeField.schema().type() == Schema.Type.STRUCT) {
-                    rowSchema = beforeField.schema();
-                }
-            }
-
-            if (rowSchema == null) {
-                return null;
-            }
-
-            List<Field> fields = rowSchema.fields();
-            if (fields == null || fields.isEmpty()) {
-                return null;
-            }
-
-            Map<String, Schema> result = new LinkedHashMap<>(fields.size());
-            for (Field field : fields) {
-                result.put(field.name(), field.schema());
-            }
-            return result;
-
-        } catch (Exception e) {
-            // The caller (the PostgreSQL schema-drift check) skips a record it
-            // cannot read the schema of, so the failure must be visible
-            // (Spec 10.04 section 3.9): WARN with the stack trace, not DEBUG.
-            log.warn("Could not extract the Debezium schema from a record of topic {}; schema-drift "
-                    + "detection skips it", record == null ? null : record.topic(), e);
+        Schema valueSchema = record.valueSchema();
+        if (valueSchema == null) {
             return null;
         }
+
+        // Prefer "after" (INSERT / UPDATE); fall back to "before" (DELETE).
+        Schema rowSchema = null;
+
+        Field afterField = valueSchema.field("after");
+        if (afterField != null && afterField.schema() != null
+                && afterField.schema().type() == Schema.Type.STRUCT) {
+            // For DELETE, the "after" value in the Struct will be null, so check the value too.
+            Struct valueStruct = record.value() instanceof Struct ? (Struct) record.value() : null;
+            Object afterValue = (valueStruct != null) ? safeGet(valueStruct, "after") : null;
+            if (afterValue != null) {
+                rowSchema = afterField.schema();
+            }
+        }
+
+        if (rowSchema == null) {
+            Field beforeField = valueSchema.field("before");
+            if (beforeField != null && beforeField.schema() != null
+                    && beforeField.schema().type() == Schema.Type.STRUCT) {
+                rowSchema = beforeField.schema();
+            }
+        }
+
+        if (rowSchema == null) {
+            return null;
+        }
+
+        List<Field> fields = rowSchema.fields();
+        if (fields == null || fields.isEmpty()) {
+            return null;
+        }
+
+        Map<String, Schema> result = new LinkedHashMap<>(fields.size());
+        for (Field field : fields) {
+            result.put(field.name(), field.schema());
+        }
+        return result;
     }
 
     /**

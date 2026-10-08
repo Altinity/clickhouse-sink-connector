@@ -6,7 +6,7 @@ Specifies how the lightweight connector derives the 64-bit `_version` value (bou
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java`
+- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionSequencer.java` — package-private, extracted from `DebeziumChangeEventCapture` (which still owns the call sites in `handleChangeEventBatch` / `processEveryChangeRecord`); the formal model is unchanged (`formal_specs/lean/Replication/VersionFloor.lean`).
 - **Methods**: `static synchronized long nextSequenceNumber(long recordTs, SourcePosition position)`; `static synchronized VersionAssignment nextVersionAssignment(long recordTs, SourcePosition position)` — the same assignment, also returning the clamped `effectiveTs` (`VersionAssignment.effectiveTs`) that the dispatch loop stores on the record as `versionTs`.
 - **Constants**: `SEQUENCE_START = 1000000000L` (one billion), `SEQUENCE_START_INITIAL = 500000000L` (five hundred million), multiplier `1_000_000L` (inline in the return statement)
 - **Precedence**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/model/ClickHouseStruct.java` — `calculateVersion(boolean useSnowflakeId)`, field `versionTs` (`setVersionTs` / `getVersionTs`, default `0`); `snowflake.id` defaults to `true` in `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/ClickHouseSinkConnectorConfig.java`

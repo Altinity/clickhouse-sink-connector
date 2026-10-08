@@ -6,11 +6,11 @@ Specifies the high-water floor (`sequenceMaxSourceTs`) that gives events committ
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java`
+- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionSequencer.java` — package-private, extracted from `DebeziumChangeEventCapture`; `seedVersionFloorFromDurableMark` and `handleChangeEventBatch` stay on `DebeziumChangeEventCapture` and call into `VersionSequencer`.
 - **Methods**:
   - `static synchronized long nextSequenceNumber(long recordTs, SourcePosition position)` — the assignment (§3); delegates to `nextVersionAssignment`, which also returns the clamped `effectiveTs` for the GTID path (spec 02.01 §3.1).
   - `static synchronized long seedVersionFloor(long highWaterVersion)` — restart seeding from a high-water version (§3.5); raises `sequenceMaxSourceTs` to `Math.floorDiv(highWaterVersion, 1_000_000L) + 1`, never lowers it, ignores `<= 0`, returns the floor in force.
-  - `seedVersionFloorFromDurableMark(Properties, ClickHouseSinkConnectorConfig)` — engine-start seeding (§3.5 (2)): `VersionHighWaterMark.seedFloor()` then `raiseVersionFloor(seed.floorMs)`. Exactly two statements, both on the mark table; no target table is read (Invariant I14, spec 10.06).
+  - `DebeziumChangeEventCapture.seedVersionFloorFromDurableMark(Properties, ClickHouseSinkConnectorConfig)` — engine-start seeding (§3.5 (2)): `VersionHighWaterMark.seedFloor()` then `VersionSequencer.raiseVersionFloor(seed.floorMs)`. Exactly two statements, both on the mark table; no target table is read (Invariant I14, spec 10.06).
   - `handleChangeEventBatch` — decides which records enter the sequence (§3.2): DDL and row records do, control records (`isControlRecord`) do not.
 - **Durable high-water mark**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionHighWaterMark.java` — table `replica_version_high_water` in the offset database (spec 09.03 §3.4), written ahead of handoff (§3.5), read at engine start by `seedFloor()`; a start without a mark is seeded from the connector clock plus `CLOCK_SEED_HEADROOM_MS` (5 000 ms) — never from a scan of the targets (Invariant I14, spec 10.06).
 - **Fields** (all `public static`, process-wide; the floor is re-established from the durable mark at engine start, the other three start empty):

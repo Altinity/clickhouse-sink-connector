@@ -167,7 +167,9 @@ override contradicts the actual column type; the operator must resolve it
 before rows may flow. The caller must let it propagate: `DbWriter`'s
 constructor and `DbWriter#autoCreateTable` re-throw it ahead of their generic
 `catch (Exception)` (which only logs) so the writer is never built against a
-type the operator has declared wrong (spec 10.04 §3.8).
+type the operator has declared wrong (spec 10.04 §3.8). Direct and ALIAS
+overrides are held to the same rule (section 3.3.2): neither kind may leave
+ClickHouse different from the declared override without halting.
 
 #### 3.3.1 The reconciler reads the table's columns with bound names
 `ColumnTypeOverrideReconciler` reads `system.columns` with
@@ -175,6 +177,45 @@ type the operator has declared wrong (spec 10.04 §3.8).
 table names as parameters -- the same rule `DBMetadata.getColumnDefaultExpression`
 follows. They are replicated identifiers: interpolated into a quoted literal, a
 name containing a quote makes the query malformed or changes its predicate.
+
+#### 3.3.2 An ALIAS override that cannot be reconciled halts exactly like a direct-override mismatch
+`ColumnTypeOverrideReconciler#reconcileAliasOverrides` auto-applies a missing
+or drifted ALIAS override via `ALTER TABLE ... ADD/MODIFY COLUMN ... ALIAS`.
+Three failures that this auto-apply can meet now halt the connector through
+the same `ColumnTypeOverrideMismatchException` (unchecked, reused -- not a new
+exception type) a direct-override mismatch uses, instead of being logged and
+left to recur on every batch or ignored outright:
+- the `ADD`/`MODIFY COLUMN ... ALIAS` statement is rejected by ClickHouse
+  (missing privilege, invalid expression, an incompatible existing
+  definition); the underlying `SQLException` is preserved as the exception's
+  cause (`ColumnTypeOverrideMismatchException(String, Throwable)`);
+- `system.columns` cannot be read while any override (direct or ALIAS) is
+  configured -- previously this silently skipped both checks for the whole
+  table;
+- the alias column's configured name is already occupied by a column that is
+  not `ALIAS` kind -- ClickHouse cannot have two columns of the same name, so
+  the override can never be satisfied without an operator resolving the
+  collision.
+
+`ColumnTypeOverrideMismatchException` carries no ClickHouse error code and is
+not one of `ClickHouseErrorClassifier`'s terminal types, so it classifies
+UNKNOWN and `ClickHouseBatchRunnable` retries the batch with exponential
+backoff (spec 10.04 §3.8) -- the same mechanism a direct-override mismatch
+already relies on, now applied symmetrically. This satisfies Invariant I15:
+detection is immediate (the exception, and the ERROR a retry attempt logs it
+with), recovery is a declared operator action (grant `ALTER TABLE`, correct
+the type or expression, resolve the name collision, or restore connectivity),
+and the retry re-attempts the same reconciliation -- no partial DDL is left
+half-applied and no row is written in the meantime.
+
+Scope -- tolerated ClickHouse-only columns (parity applies only to columns
+that match the source): both override kinds act only on a column that is
+present on the table being reconciled. A configured override whose source
+column (`AliasOverrideEntry.getColumn()` / `DirectOverrideEntry.getColumn()`)
+is absent from the table is skipped silently (no DDL, no halt) -- it may be a
+wildcard override that does not apply to this table -- and a ClickHouse-only
+column a user added by hand is therefore never inspected or altered, even
+when it happens to carry the exact name a generated ALIAS column would have.
 
 ---
 
@@ -198,6 +239,22 @@ name containing a quote makes the query malformed or changes its predicate.
   `testCreateTableMultiplePrimaryKeys()` — updated expectations (all-columns key).
 - `ClickHouseAutoCreateTableTest.testCreateTableSyntax()` — the PK path is unchanged.
 - `ColumnTypeOverrideReconcilerTest.columnMetadataQueryBindsTheNames` — §3.3.1: for table `o'brien_accounts` the reconciler prepares `EXISTING_COLUMNS_QUERY` (no name in the SQL text), binds `sales` and the table name, and builds no interpolated statement (pre-fix: one `createStatement` query with the name inside a quoted literal).
+- `ColumnTypeOverrideReconcilerTest.addColumnDdlFailureHalts()` /
+  `.modifyColumnDdlFailureHalts()` / `.nonAliasColumnCollisionHalts()` /
+  `.existingColumnsReadFailureHalts()` — §3.3.2: a rejected ALIAS `ADD`/
+  `MODIFY COLUMN`, a name collision with a non-ALIAS column, and an unreadable
+  `system.columns` each throw `ColumnTypeOverrideMismatchException` (pre-fix:
+  the first two only logged or did nothing, and the third skipped the ALIAS
+  check silently).
+- `ColumnTypeOverrideReconcilerTest.wildcardOverrideForAbsentSourceColumnIsIgnored()`
+  / `.clickHouseOnlyAliasColumnForAbsentSourceColumnIsNeverTouched()` —
+  §3.3.2 scope guard: an override whose source column is absent from the
+  table is never inspected, never altered, and never halts, even when a
+  ClickHouse-only column occupies the name a generated ALIAS column would
+  have.
+- `ColumnTypeOverrideReconcilerTest.addColumnDdlSucceedsForSourceMatchingColumn()`
+  — the existing auto-add behaviour for a source-matching column is
+  unaffected by the scope guard.
 - DDL path (same rule, Spec 06.05 §3.6): `MySqlDDLParserListenerImplTest.testCreateTableKeylessOrdersByAllColumns()`, `CreateTableNoKeySortKeyTest`; formal `Replication.CreateTable.sorting_key_nonempty`.
 - Probe (recorded in the PR): the emitted DDL executed with `clickhouse local`
   keeps two distinct rows under `FINAL`; the `tuple()` form keeps one.
@@ -270,4 +327,51 @@ Auto-create runs once per writer build, inside the `DbWriter` constructor. When 
   - **Test**: `ClickHouseErrorClassifierFailureModesTest.columnTypeOverrideMismatchIsFatal()` (`@Disabled`, confirmed red on 2.11.0) for the classification half; GAP: a unit test that builds a writer for an existing table whose column contradicts an override and asserts the connector refuses to write.
   - **DEFECT**: the override-contradiction check is unreachable for existing tables and, if reached, is retried forever instead of halting.
 
-Summary: 4 failure modes, 4 DEFECT, 2 GAP.
+- **FM-08.05-5 An ALIAS override reconciliation failure was only logged, never retried, while a direct-override mismatch halted**
+  - **Trigger**: `column_type_override.alias.*` names a source column present on
+    the table; the ALIAS column ClickHouse would need either cannot be added
+    or modified (DDL rejected -- missing privilege, invalid expression, an
+    incompatible existing definition), or its configured name is already
+    occupied by a column that is not `ALIAS` kind.
+  - **Behaviour**: before the fix, a rejected `ADD`/`MODIFY COLUMN ... ALIAS`
+    was logged at ERROR/INFO and reconciliation moved on to the next entry;
+    a name collision with a non-ALIAS column produced no DDL and no log line
+    at all. Either way the table was left without the declared ALIAS column
+    (or with a stale one) and rows kept flowing, unlike a direct-override
+    mismatch, which already halted via `ColumnTypeOverrideMismatchException`
+    (section 3.3). Nothing retried the reconciliation; the drift persisted
+    until the next restart re-ran `createNewTable` (which only runs for a
+    table that did not exist yet, so for an existing table it never did).
+  - **Detection**: before the fix, ERROR/INFO from the DDL failure only, or
+    nothing for the name collision; no metric, no halt. After the fix:
+    `ColumnTypeOverrideMismatchException` propagates immediately and
+    `ClickHouseBatchRunnable` logs WARN `Retriable ClickHouse error (Code: -1,
+    Category: UNKNOWN) ...` on every retry attempt, the same signature a
+    direct-override mismatch already produces.
+  - **Blast radius**: ALIAS columns are never stored (AGENTS.md -- they are a
+    query-time expression only), so no row data was ever wrong; a query
+    against the ALIAS column silently returned the old or default expression
+    (or the column did not exist at all) instead of the declared one, with no
+    record that reconciliation had failed. After the fix the blast radius of
+    the halt itself matches section 3.3: the table, and every table hashed to
+    the same worker, stalls until the operator resolves it.
+  - **Recovery**: resolve the underlying cause (grant `ALTER TABLE`, correct
+    the configured type or expression, drop/rename the colliding column, or
+    restore connectivity to read `system.columns`); the connector retries the
+    same reconciliation automatically on the next batch, no restart required.
+  - **RTO**: bounded by operator response time once alerted by the ERROR/WARN
+    logs on every retry attempt; each attempt itself backs off per spec 10.04
+    §3.8's generic retry policy.
+  - **Test**: `ColumnTypeOverrideReconcilerTest.addColumnDdlFailureHalts()`,
+    `.modifyColumnDdlFailureHalts()`, `.nonAliasColumnCollisionHalts()`,
+    `.existingColumnsReadFailureHalts()` pin the halt (all four fail without
+    the fix); `.wildcardOverrideForAbsentSourceColumnIsIgnored()` and
+    `.clickHouseOnlyAliasColumnForAbsentSourceColumnIsNeverTouched()` pin the
+    source-matching scope guard; `.addColumnDdlSucceedsForSourceMatchingColumn()`
+    confirms the existing auto-add behaviour is unaffected.
+  - **FIXED**: both override kinds now halt through the same
+    `ColumnTypeOverrideMismatchException` (section 3.3.2); the halt is scoped
+    to overrides whose source column exists on the table, so a ClickHouse-only
+    column a user added is never touched.
+
+Summary: 5 failure modes, 4 DEFECT, 2 GAP.

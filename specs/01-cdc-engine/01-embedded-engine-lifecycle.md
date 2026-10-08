@@ -9,6 +9,7 @@ Specifies the startup, dependency injection, runtime orchestration and shutdown 
 - **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ClickHouseDebeziumEmbeddedApplication.java`
 - **Dependency Injection**: `com.altinity.clickhouse.debezium.embedded.AppInjector` (Guice module; there is no `injector` sub-package)
 - **Engine wrapper**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java` (`setup(...)`, `stop()`, `drainBeforeStop()`, `stopDrainTimeoutMs`)
+- **System/offset database connection retry**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/SystemDbConnectionRetry.java` (`createSystemDbConnectionWithRetry`, `connectWithRetry`, `SYSTEM_DB_CONNECT_ATTEMPTS`, `SYSTEM_DB_CONNECT_RETRY_MS`; section 3.5)
 - **Offset FIFO reset on restart**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/executor/DebeziumOffsetManagement.java` (`reset()`, `outstandingCount()`; spec 09.01 §3.8)
 - **Restart-monitor idleness source**: `ClickHouseDebeziumEmbeddedApplication.effectiveLastRecordTimestamp(long, long)`
 - **Row-image preflight**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/BinlogRowImagePreflight.java` (`check(Properties)`, `check(Properties, Connection)`, `QUERY`, `SKIP_PROPERTY`)
@@ -59,6 +60,27 @@ The REST server (`DebeziumEmbeddedRestApi.startRestApi`) is started once per JVM
 
 The application registers **no JVM shutdown hook**. On SIGTERM the process relies on the embedded engine's own shutdown handling and on at-least-once redelivery from the last committed offset at the next start (specs 02.04, 09.03). Offsets are only ever committed by the writer path after rows are in ClickHouse (specs 09.01, 09.02), so an abrupt stop costs redelivery, never data.
 
+### 3.5 System-database connection retry (`SystemDbConnectionRetry`)
+`setupDebeziumEventCapture` obtains the system-database connection exactly once per
+engine, via `DebeziumChangeEventCapture.setSystemDbConnection` ->
+`SystemDbConnectionRetry.createSystemDbConnectionWithRetry`. That connection is then
+reused for the Debezium offset-storage database (`offset.storage.jdbc.url` points at
+the same system database), for the Debezium storage-database creation and for the
+ClickHouse version lookup. With `connection.pool.disable=true` (the docker-compose
+stacks) there is no pool to obtain a replacement from later, so a `null` here is
+terminal for the process: every later query fails and the connector never creates the
+destination tables.
+
+`SystemDbConnectionRetry.connectWithRetry(supplier, retryMs)` retries up to
+`SYSTEM_DB_CONNECT_ATTEMPTS` (30) times, `SYSTEM_DB_CONNECT_RETRY_MS` (2000 ms) apart,
+returning the first non-null connection or `null` after the budget is spent (logged at
+ERROR). This tolerates a cold start where compose's healthcheck passes moments before
+ClickHouse is actually serving: verified against clickhouse-jdbc 0.9.8, the V2 driver
+returns a connection object lazily even when nothing is listening, while the V1 driver
+throws `Connection refused`, which `BaseDbWriter.createConnection` converts to `null`.
+The 30 x 2000 ms budget (60 s) exceeds the compose healthcheck `start_period` (30 s)
+with margin.
+
 ---
 
 ## 4. Invariants Preserved
@@ -78,6 +100,7 @@ The application registers **no JVM shutdown hook**. On SIGTERM the process relie
 - `EngineRestartFifoResetTest.stopLeavesNothingOutstanding` — after `stop()` the outstanding set, the unwritten-group map and the parked-unit map are empty and the pool is shut down.
 - `EngineRestartFifoResetTest.stopClosesEngineBeforeShuttingThePool` — the engine's `close()` observes a still-running pool; the pool is shut down afterwards.
 - `EngineRestartFifoResetTest.stopDrainsInFlightWorkBeforeShuttingThePool` — a unit a live worker finishes 300 ms later is acknowledged by the drain, `stop()` returns 0 abandoned.
+- `SystemDbConnectRetryTest` — section 3.5: `testReturnsImmediatelyWhenFirstAttemptSucceeds`, `testRetriesUntilConnectionAvailable`, `testGivesUpAfterConfiguredAttempts`, `testRetryBudgetCoversARealisticColdStart`.
 - `StoppedEngineRetiresHandoffsTest.connectorStoppedRetiresTheEnginesUnits` — the `connectorStopped` callback (`onConnectorStopped()`) retires every unit the engine handed off and marks replication not running; `StoppedEngineRetiresHandoffsTest.completionCallbackRetiresTheStoppedEnginesUnitsBeforeRetrying`, `StoppedEngineRetiresHandoffsTest.cleanCompletionRetiresTheEnginesUnits` — the completion callback retires them before it retries, and on a clean completion too (spec 09.01 §3.8 item 5).
 - `EngineRestartFifoResetTest.liveEngineStillRefusesASecondEngine` — `setup()` throws `IllegalStateException` while a unit of a still-alive engine is outstanding; `EngineRestartFifoResetTest.deadEngineWithoutStopIsAbandonedNotPoisoning` — a previous engine that terminated without `stop()` has its leftovers abandoned by `setup()` instead (spec 09.01 §3.8).
 - `RestartMonitorTimestampTest` — `effectiveLastRecordTimestamp(-1, stored) == stored`, in-memory wins, `(-1, -1) == -1`.

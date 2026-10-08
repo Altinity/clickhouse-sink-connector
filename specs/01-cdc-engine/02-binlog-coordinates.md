@@ -64,7 +64,7 @@ When Global Transaction Identifiers (GTID) are enabled:
 ---
 
 ## 6. Failure Modes & Recovery
-Coordinates are server-local: a `(file, pos)` pair means something only on the server that wrote it, and the in-memory high-water mark built from them (`DebeziumChangeEventCapture.sequenceHighWaterPosition`) lives for the whole JVM. The component recovers by itself from a log basename change; it has no defence against a source whose log identity changes without a basename change, and no way to tell a new server from the old one without GTID.
+Coordinates are server-local: a `(file, pos)` pair means something only on the server that wrote it, and the in-memory high-water mark built from them (`VersionSequencer.sequenceHighWaterPosition`) lives for the whole JVM. The component recovers by itself from a log basename change; it has no defence against a source whose log identity changes without a basename change, and no way to tell a new server from the old one without GTID.
 
 - **FM-01.02-1 Binary log basename change**
   - **Trigger**: `log_bin` reconfigured, or a failover to a server whose binlog basename differs.

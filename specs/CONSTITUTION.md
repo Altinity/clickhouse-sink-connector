@@ -89,6 +89,8 @@ If a column exists in the MySQL source table, its value must be stored in ClickH
 - **MATERIALIZED Columns**: If present in MySQL, the MySQL value wins. The connector must alter the ClickHouse column to `DEFAULT` to allow writing.
 - **DEFAULT Columns**: Source values (including explicit `NULL`) must be bound. ClickHouse defaults apply only when the source column was omitted prior to an ALTER.
 
+**Parity scope**: I6, and every invariant in this document, govern columns and tables that exist on the MySQL source, or that the connector itself creates and manages for replication bookkeeping (version, delete-marker, sign and history columns). A column that exists only on the ClickHouse replica table, with no column of that name on the source table, is outside the Prime Directive's asymmetric contract: there is no source value for it to shadow, conform to, or diverge from. Such a column is **tolerated**: the connector must never halt, `ALTER`, overwrite, or report it as a mismatch on account of it, and verification tooling must never compare it or fail a run over it (spec 11.02 sections 3.3, 3.9). Tolerance stops at the column: a table the connector does not create or manage is not a replication target at all and is likewise out of scope. This does not relax Invariant I9 — an unapplied or lost source change is still a loud halt — because no source value exists here to apply or lose.
+
 ### Invariant I7: Value-Level Type Equivalence
 All data types must preserve value fidelity across boundaries:
 - Decimal scales and precisions must not suffer binary floating-point rounding.

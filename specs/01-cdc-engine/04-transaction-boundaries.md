@@ -6,10 +6,10 @@ Specifies how transaction boundaries (`BEGIN`, `COMMIT`, `XID`) in the MySQL bin
 ---
 
 ## 2. Codebase Mapping on 2.11.0
-- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java` — `nextSequenceNumber(long recordTs, SourcePosition position)` and the static fields `sequenceMaxSourceTs`, `sequenceHighWaterPosition`, `sequenceAnchorTs`, `sequenceNumber`.
+- **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionSequencer.java` (package-private, extracted from `DebeziumChangeEventCapture`) — `nextSequenceNumber(long recordTs, SourcePosition position)` and the static fields `sequenceMaxSourceTs`, `sequenceHighWaterPosition`, `sequenceAnchorTs`, `sequenceNumber`.
 - **Model**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/model/ClickHouseStruct.java` — `getSourceTsFromChangeEvent` (timestamp choice) and `calculateVersion(boolean useSnowflakeId)` (version precedence).
 - **Offset manager Javadoc**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/executor/DebeziumOffsetManagement.java` (replay-safety paragraphs).
-- **Durable floor**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionHighWaterMark.java` and `DebeziumChangeEventCapture.seedVersionFloor` (spec 02.02 §3.5).
+- **Durable floor**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionHighWaterMark.java` and `VersionSequencer.seedVersionFloor` (spec 02.02 §3.5).
 
 ---
 

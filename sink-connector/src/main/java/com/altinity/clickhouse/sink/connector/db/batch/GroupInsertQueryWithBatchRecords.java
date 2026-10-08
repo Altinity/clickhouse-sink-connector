@@ -292,6 +292,18 @@ public class GroupInsertQueryWithBatchRecords {
                         record.getKafkaPartition(), record.getTopic(),
                         record.getKafkaOffset());
             }
+            // Already acknowledged by ClickHouse on an earlier attempt within
+            // this same retry cycle -- a prior chunk's executeBatch(), a
+            // flushStagedRows() ahead of an inline history statement, the
+            // inline history statement itself, or (for its own one-record
+            // segment) a TRUNCATE/bulk-close (spec 03.06 section 3.5). Its
+            // offset is still folded into partitionToOffsetMap above so the
+            // watermark reflects everything actually durable, but it must not
+            // be grouped into any segment again: that would resend a write
+            // ClickHouse already has.
+            if (record != null && record.isAppliedToClickHouse()) {
+                continue;
+            }
             boolean enableSchemaEvolution = config.getBoolean(
                     ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION
                             .toString());
