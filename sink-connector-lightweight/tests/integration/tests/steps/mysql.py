@@ -132,7 +132,17 @@ def create_mysql_table(
     try:
         key = ""
         if primary_key is not None:
-            key = f"{primary_key} INT NOT NULL,"
+            # A composite key ("id,k") names several columns. Define as
+            # `INT NOT NULL` only the key columns that `columns` does not
+            # already define; "id,k INT NOT NULL," is not valid MySQL.
+            for key_column in (c.strip() for c in primary_key.split(",")):
+                defined = any(
+                    definition.strip().split()[0].strip("`") == key_column
+                    for definition in columns.split(",")
+                    if definition.strip()
+                )
+                if not defined:
+                    key += f"{key_column} INT NOT NULL,"
 
         with Given(f"I create MySQL table", description=name):
             query = f"CREATE TABLE IF NOT EXISTS {database_name}.{table_name} ({key}{columns}"

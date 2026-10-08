@@ -27,7 +27,11 @@ def truncate(
         )
 
     with When(f"I insert data in MySQL table"):
-        mysql.query(f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');")
+        if primary_key is None:
+            # No `id` column: the table is (k, c, pad).
+            mysql.query(f"INSERT INTO {table_name} values (2,'a','b'), (3,'a','b');")
+        else:
+            mysql.query(f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');")
 
     with Then("I check that clickhouse table received data"):
         verify_table_creation_in_clickhouse(

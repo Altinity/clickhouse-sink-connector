@@ -24,7 +24,12 @@ def simple_insert(
         )
 
     with When("I insert data in MySQL table"):
-        mysql.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES {input};")
+        # The table's primary key `id` is INT NOT NULL with no default, so the
+        # row must name it; inserting only (col1,col2,col3) is rejected by
+        # MySQL itself (ERROR 1364: Field 'id' doesn't have a default value).
+        mysql.query(
+            f"INSERT INTO {table_name} (id,col1,col2,col3) VALUES (1,{input.strip()[1:]};"
+        )
 
     with Then("I check data inserted correct"):
         verify_table_creation_in_clickhouse(
@@ -459,6 +464,17 @@ def parallel(self):
             )
 
         for table_name in tables_names:
+            # Tables with a primary key are (id, x); tables without one are (x).
+            # The three parallel inserts use disjoint id ranges (1, 2..101,
+            # 102..1101): overlapping ranges made MySQL reject the later
+            # inserts with duplicate-key errors, which the step retried for
+            # its full 300 s timeout. A keyless table gets one value per row,
+            # also disjoint, because identical whole rows in a keyless
+            # ReplacingMergeTree collapse under FINAL (spec 08.05).
+            if table_name.endswith("_no_primary_key"):
+                values = ["({x})"]
+            else:
+                values = ["({x},{y})"]
             with Example(f"{table_name}", flags=TE):
                 with When(
                     "I perform insert in MySQL to make parallel inserts in replicated ClickHouse table"
@@ -466,7 +482,8 @@ def parallel(self):
                     By(f"one raw insert", test=complex_insert, parallel=True)(
                         node=self.context.cluster.node("mysql-master"),
                         table_name=table_name,
-                        values=["({x},{y})", "({x},{y})"],
+                        values=values,
+                        start_id=1,
                         partitions=1,
                         parts_per_partition=1,
                         block_size=1,
@@ -475,7 +492,8 @@ def parallel(self):
                     By(f"100 rows insert", test=complex_insert, parallel=True)(
                         node=self.context.cluster.node("mysql-master"),
                         table_name=table_name,
-                        values=["({x},{y})", "({x},{y})"],
+                        values=values,
+                        start_id=2,
                         partitions=100,
                         parts_per_partition=1,
                         block_size=1,
@@ -484,8 +502,8 @@ def parallel(self):
                     By(f"1000 rows insert", test=complex_insert, parallel=True)(
                         node=self.context.cluster.node("mysql-master"),
                         table_name=table_name,
-                        values=["({x},{y})", "({x},{y})"],
-                        start_id=2,
+                        values=values,
+                        start_id=102,
                         partitions=1000,
                         parts_per_partition=1,
                         block_size=1,

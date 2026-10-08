@@ -1060,9 +1060,13 @@ class SinkConnector(DatabaseNode):
     def stop_replication(self, timeout=300):
         """Stop ClickHouse Sink Connector replication using sink-connector-client script."""
         with Given("I stop ClickHouse Sink Connector replication"):
+            # exitcode=0: the client exits non-zero when the connector's REST
+            # endpoint is unreachable; without the check a dead connector went
+            # unnoticed here and surfaced later as an unrelated timeout.
             self.command(
                 command=f"{self.sink_connector_cli} stop_replica",
                 timeout=timeout,
+                exitcode=0,
             )
 
     def start_replication(self):
@@ -1071,6 +1075,7 @@ class SinkConnector(DatabaseNode):
             self.command(
                 command=f"{self.sink_connector_cli} start_replica",
                 timeout=300,
+                exitcode=0,
             )
 
     def change_replica_source(self):
