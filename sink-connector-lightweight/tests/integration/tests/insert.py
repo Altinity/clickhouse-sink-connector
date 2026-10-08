@@ -464,17 +464,14 @@ def parallel(self):
             )
 
         for table_name in tables_names:
-            # Tables with a primary key are (id, x); tables without one are (x).
+            # Every shape is (id, x); the keyless ones just have no PRIMARY KEY.
             # The three parallel inserts use disjoint id ranges (1, 2..101,
-            # 102..1101): overlapping ranges made MySQL reject the later
-            # inserts with duplicate-key errors, which the step retried for
-            # its full 300 s timeout. A keyless table gets one value per row,
-            # also disjoint, because identical whole rows in a keyless
-            # ReplacingMergeTree collapse under FINAL (spec 08.05).
-            if table_name.endswith("_no_primary_key"):
-                values = ["({x})"]
-            else:
-                values = ["({x},{y})"]
+            # 102..1101). Overlapping ranges made MySQL reject the later
+            # inserts on keyed tables (duplicate key, retried for the step's
+            # full 300 s), and on keyless tables produced identical whole rows,
+            # which a keyless ReplacingMergeTree collapses under FINAL
+            # (spec 08.05), so the counts could never match.
+            values = ["({x},{y})"]
             with Example(f"{table_name}", flags=TE):
                 with When(
                     "I perform insert in MySQL to make parallel inserts in replicated ClickHouse table"

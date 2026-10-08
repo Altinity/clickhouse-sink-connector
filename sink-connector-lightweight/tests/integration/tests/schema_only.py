@@ -1,10 +1,14 @@
-import copy
 import os
 import time
 
 from integration.tests.steps.mysql import *
 from integration.tests.steps.clickhouse import *
 from integration.tests.steps.service_settings import *
+
+# Imported after the star imports on purpose: they bring a test step named
+# `copy` into this namespace, which shadowed the standard-library module
+# ("'TestStep' object has no attribute 'deepcopy'").
+from copy import deepcopy as _deepcopy
 
 
 def base_config_file(env):
@@ -31,7 +35,7 @@ def check_schema_only(self):
     clickhouse = self.context.clickhouse_node
     sink = self.context.sink_node
     config_file = os.path.join(self.context.env, "configs", "schema_only.yml")
-    saved_config = copy.deepcopy(self.context.config.data)
+    saved_config = _deepcopy(self.context.config.data)
 
     try:
         with Given("the connector is stopped"):
