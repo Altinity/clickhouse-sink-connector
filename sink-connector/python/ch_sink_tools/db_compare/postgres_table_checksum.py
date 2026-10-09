@@ -401,7 +401,7 @@ def get_postgres_table_checksum(conn, table_name, columns_meta, pk_columns,
 
     Parameters
     ----------
-    conn            : psycopg2 connection (used for schema/chunk-boundary queries)
+    conn            : pg8000 DB-API connection (used for schema/chunk-boundary queries)
     table_name      : bare table name
     columns_meta    : list of dicts from get_table_columns()
     pk_columns      : list of PK column names from get_table_pk()
@@ -412,7 +412,7 @@ def get_postgres_table_checksum(conn, table_name, columns_meta, pk_columns,
     excluded_columns: set/list of column names to exclude
     debug_output    : write raw hash rows instead of checksum
     debug_limit     : limit rows in debug mode
-    snapshot_conn   : optional shared REPEATABLE READ psycopg2 connection
+    snapshot_conn   : optional shared REPEATABLE READ pg8000 DB-API connection
                       (snapshot_mode=True). When provided, ALL chunk queries
                       execute on this connection in serial (threads_per_table
                       is effectively 1) so the shared connection is never
@@ -474,7 +474,7 @@ def get_postgres_table_checksum(conn, table_name, columns_meta, pk_columns,
 
     if snapshot_conn is not None:
         # snapshot_mode: run all chunks serially on the shared connection.
-        # Do NOT use a thread pool — the shared psycopg2 connection is not
+        # Do NOT use a thread pool — the shared pg8000 DB-API connection is not
         # thread-safe for concurrent queries.
         for chunk in chunks:
             min_pk = chunk['min_pk']
@@ -607,7 +607,7 @@ def calculate_checksum(table_name, pg_host, pg_user, pg_password, pg_port,
     """
     Entry point for one table — opens its own connection, discovers columns
     and PK, then calls get_postgres_table_checksum().
-    Thread-safe: each invocation uses its own psycopg2 connection.
+    Thread-safe: each invocation uses its own pg8000 DB-API connection.
 
     Returns True when the table was checksummed (or deliberately ignored),
     False when it failed or yielded no checksum.

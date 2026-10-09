@@ -82,7 +82,7 @@ def test_snapshot_mode_reads_postgres_in_one_repeatable_read_transaction(dumped,
     """D-13.07-5: every PG checksum query of a snapshot-mode run is REPEATABLE READ.
 
     A regression guard, not a before/after witness: on PostgreSQL 15 the
-    pre-fix sequence (psycopg2's implicit BEGIN, then an explicit
+    pre-fix sequence (the DB-API driver's implicit BEGIN, then an explicit
     BEGIN ... REPEATABLE READ) also ends up REPEATABLE READ, because the
     isolation option is applied while no snapshot exists (see JUSTIFICATION.md).
     """

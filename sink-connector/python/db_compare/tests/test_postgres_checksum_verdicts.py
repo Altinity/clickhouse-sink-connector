@@ -268,41 +268,90 @@ class TestCoverageGaps(unittest.TestCase):
         self.assertIn('not visible to the checksum user', out)
 
 
-class TestRepeatableReadSnapshot(unittest.TestCase):
-    """D-13.07-5: the snapshot transaction really is REPEATABLE READ."""
+SET_SESSION_CHARACTERISTICS_SQL = (
+    "SET SESSION CHARACTERISTICS AS TRANSACTION "
+    "ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+)
 
-    def test_helper_uses_set_session_and_verifies(self):
-        conn = MagicMock()
+
+class _AutocommitTrackingConn(MagicMock):
+    """A MagicMock whose ``autocommit`` attribute assignments are logged.
+
+    pg8000 (unlike psycopg2) has no ``set_session()``; the REPEATABLE READ /
+    READ ONLY snapshot is established by flipping ``autocommit`` around a
+    ``SET SESSION CHARACTERISTICS ...`` statement (see
+    ``begin_repeatable_read_snapshot``). These tests need to see the exact
+    True-then-False sequence, which a plain MagicMock attribute does not
+    record.
+    """
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        object.__setattr__(self, 'autocommit_history', [])
+        object.__setattr__(self, '_autocommit', None)
+
+    @property
+    def autocommit(self):
+        return self._autocommit
+
+    @autocommit.setter
+    def autocommit(self, value):
+        object.__setattr__(self, '_autocommit', value)
+        self.autocommit_history.append(value)
+
+
+class TestRepeatableReadSnapshot(unittest.TestCase):
+    """D-13.07-5: the snapshot transaction really is REPEATABLE READ (and READ ONLY)."""
+
+    @staticmethod
+    def _fake_execute_pg(isolation='repeatable read', read_only='on'):
+        def fake(conn, sql, params=None):
+            if sql == 'SHOW transaction_isolation':
+                return [{'transaction_isolation': isolation}]
+            if sql == 'SHOW transaction_read_only':
+                return [{'transaction_read_only': read_only}]
+            return []
+        return fake
+
+    def test_helper_sets_session_characteristics_and_verifies(self):
+        conn = _AutocommitTrackingConn()
         with patch.object(tlp, 'execute_pg',
-                          return_value=[{'transaction_isolation': 'repeatable read'}]) as ep:
+                          side_effect=self._fake_execute_pg()) as ep:
             tlp.begin_repeatable_read_snapshot(conn)
-        conn.set_session.assert_called_once_with(
-            isolation_level='REPEATABLE READ', readonly=True, autocommit=False)
-        self.assertEqual(ep.call_args[0][1], 'SHOW transaction_isolation')
-        conn.cursor.assert_not_called()
+        # autocommit must go True (so the SET runs outside any transaction
+        # and takes effect immediately) then False (so the next statement's
+        # implicit BEGIN inherits the new session defaults).
+        self.assertEqual(conn.autocommit_history, [True, False])
+        conn.cursor.return_value.execute.assert_called_once_with(
+            SET_SESSION_CHARACTERISTICS_SQL)
+        conn.cursor.return_value.close.assert_called_once()
+        called_sqls = [c.args[1] for c in ep.call_args_list]
+        self.assertEqual(
+            called_sqls, ['SHOW transaction_isolation', 'SHOW transaction_read_only'])
 
     def test_helper_raises_when_level_is_wrong(self):
         with patch.object(tlp, 'execute_pg',
-                          return_value=[{'transaction_isolation': 'read committed'}]):
+                          side_effect=self._fake_execute_pg(isolation='read committed')):
             with self.assertRaises(RuntimeError):
-                tlp.begin_repeatable_read_snapshot(MagicMock())
+                tlp.begin_repeatable_read_snapshot(_AutocommitTrackingConn())
 
-    def test_snapshot_run_opens_repeatable_read_via_set_session(self):
-        pg_conn = MagicMock()
+    def test_helper_raises_when_not_read_only(self):
+        with patch.object(tlp, 'execute_pg',
+                          side_effect=self._fake_execute_pg(read_only='off')):
+            with self.assertRaises(RuntimeError):
+                tlp.begin_repeatable_read_snapshot(_AutocommitTrackingConn())
+
+    def test_snapshot_run_opens_repeatable_read_via_set_session_characteristics(self):
+        pg_conn = _AutocommitTrackingConn()
         executed = []
-        pg_conn.cursor.return_value.__enter__.return_value.execute.side_effect = \
+        pg_conn.cursor.return_value.execute.side_effect = \
             lambda sql, *a: executed.append(sql)
-
-        def fake_execute_pg(conn, sql, params=None):
-            if sql == 'SHOW transaction_isolation':
-                return [{'transaction_isolation': 'repeatable read'}]
-            return []
 
         config = base_config({'snapshot_mode': True})
         with patch.multiple(
                 tlp,
                 get_postgres_connection=MagicMock(return_value=pg_conn),
-                execute_pg=MagicMock(side_effect=fake_execute_pg),
+                execute_pg=MagicMock(side_effect=self._fake_execute_pg()),
                 get_standby_lsn=MagicMock(return_value=('0/10', 16)),
                 get_tables=MagicMock(return_value=['orders']),
                 clickhouse_connection=MagicMock(),
@@ -313,9 +362,9 @@ class TestRepeatableReadSnapshot(unittest.TestCase):
             with redirect_stdout(io.StringIO()), self.assertRaises(SystemExit) as cm:
                 tlp.run_config(config, argparse.Namespace(table=None, no_checksum=False))
         self.assertEqual(cm.exception.code, 0)
-        pg_conn.set_session.assert_called_once_with(
-            isolation_level='REPEATABLE READ', readonly=True, autocommit=False)
+        self.assertIn(SET_SESSION_CHARACTERISTICS_SQL, executed)
         self.assertFalse([s for s in executed if 'BEGIN' in s.upper()])
+        self.assertEqual(pg_conn.autocommit_history, [True, False])
 
 
 class TestStandaloneExitCodes(unittest.TestCase):

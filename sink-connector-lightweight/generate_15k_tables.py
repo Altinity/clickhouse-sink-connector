@@ -1,13 +1,15 @@
-import mysql.connector
-from mysql.connector import Error
+# pymysql (MIT) instead of mysql-connector-python (GPL-2.0, ASF Category X):
+# see doc/licensing.md.
+import pymysql
+from pymysql import MySQLError as Error
 
 def create_connection(host_name, user_name, user_password, db_name):
     connection = None
     try:
-        connection = mysql.connector.connect(
+        connection = pymysql.connect(
             host=host_name,
             user=user_name,
-            passwd=user_password,
+            password=user_password,
             database=db_name
         )
         print("Connection to MySQL DB successful")

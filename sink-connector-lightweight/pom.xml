@@ -27,6 +27,19 @@
         <sink-connector-library-version>0.0.9</sink-connector-library-version>
         <version.kafka>3.8.0</version.kafka>
         <javalin-version>5.5.0</javalin-version>
+        <!--
+          MySQL Connector/J is GPL-2.0 (with the Universal FOSS Exception), an
+          ASF Category X license: it must not be bundled into this
+          Apache-2.0 jar. It is "provided" by default (on the compile and test
+          class path, NOT shaded into the jar) and supplied at run time (see
+          MySqlJdbcDriver and doc/licensing.md). The version is the one
+          debezium-connector-mysql ${version.debezium} declares.
+          -Pbundle-mysql-driver switches the scope to compile for an internal
+          build that is never redistributed.
+        -->
+        <version.mysql.connector.j>9.1.0</version.mysql.connector.j>
+        <mysql.driver.scope>provided</mysql.driver.scope>
+        <bundle.mysql.driver>false</bundle.mysql.driver>
     </properties>
     <dependencyManagement>
         <dependencies>
@@ -114,6 +127,15 @@
             <groupId>com.googlecode.json-simple</groupId>
             <artifactId>json-simple</artifactId>
             <version>1.1.1</version>
+            <exclusions>
+                <!-- json-simple 1.1.1 declares junit 4.10 (CPL-1.0) and hamcrest
+                     in compile scope by mistake, which shaded a test framework
+                     into the production jar. Nothing in src/main uses them. -->
+                <exclusion>
+                    <groupId>junit</groupId>
+                    <artifactId>junit</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <dependency>
             <groupId>io.debezium</groupId>
@@ -151,6 +173,21 @@
             <groupId>io.debezium</groupId>
             <artifactId>debezium-connector-mysql</artifactId>
             <version>${version.debezium}</version>
+            <exclusions>
+                <!-- Declared directly below with ${mysql.driver.scope}. -->
+                <exclusion>
+                    <groupId>com.mysql</groupId>
+                    <artifactId>mysql-connector-j</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!-- GPL-2.0 + Universal FOSS Exception: never shaded by default; see the
+             version.mysql.connector.j property and MySqlJdbcDriver. -->
+        <dependency>
+            <groupId>com.mysql</groupId>
+            <artifactId>mysql-connector-j</artifactId>
+            <version>${version.mysql.connector.j}</version>
+            <scope>${mysql.driver.scope}</scope>
         </dependency>
         <dependency>
             <groupId>io.debezium</groupId>
@@ -332,12 +369,14 @@
             <version>${version.testcontainers}</version>
             <scope>test</scope>
         </dependency>
-        <!-- mariab.jdbc.Driver -->
+        <!-- org.mariadb.jdbc.Driver, for the MariaDB Testcontainers tests only.
+             LGPL-2.1 (ASF Category X): test scope, so it is never shaded into
+             the jar. No class in src/main uses it. -->
         <dependency>
             <groupId>org.mariadb.jdbc</groupId>
             <artifactId>mariadb-java-client</artifactId>
             <version>2.7.12</version>
-            <!-- <scope>runtime</scope> -->
+            <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
@@ -575,14 +614,23 @@
             <version>${sink-connector-library-version}</version>
             <scope>compile</scope>
         </dependency>
-        <!-- Explicit dependency to resolve antlr4-maven-plugin transitive dependency issue -->
-        <dependency>
-            <groupId>org.glassfish</groupId>
-            <artifactId>javax.json</artifactId>
-            <version>1.1.4</version>
-        </dependency>
     </dependencies>
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- Third-party notices and license texts ship inside the JAR
+                 (META-INF/THIRD_PARTY_NOTICES.md, META-INF/licenses/). -->
+            <resource>
+                <directory>${project.basedir}/..</directory>
+                <targetPath>META-INF</targetPath>
+                <includes>
+                    <include>THIRD_PARTY_NOTICES.md</include>
+                    <include>licenses/**</include>
+                </includes>
+            </resource>
+        </resources>
         <extensions>
             <extension>
                 <groupId>kr.motd.maven</groupId>
@@ -645,6 +693,14 @@
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                                     <mainClass>com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication</mainClass>
+                                    <manifestEntries>
+                                        <!-- The GPL MySQL JDBC driver is not shaded in (see
+                                             version.mysql.connector.j). `java -jar` loads it from
+                                             these paths, relative to this jar's directory;
+                                             a missing entry is ignored by the JVM and
+                                             MySqlJdbcDriver.check refuses a MySQL start. -->
+                                        <Class-Path>mysql-connector-j.jar lib/mysql-connector-j.jar</Class-Path>
+                                    </manifestEntries>
                                 </transformer>
                             </transformers>
                             <filters>
@@ -713,50 +769,130 @@
                 </executions>
             </plugin>
 
-            <!-- License Compliance Plugin -->
+            <!--
+              License compliance gate (doc/licensing.md).
+
+              This replaces org.honton.chas:license-maven-plugin 0.0.6, whose
+              "compliance" goal ran in every build and reported nothing while
+              the 2.11.0 shaded jar carried MySQL Connector/J (GPL-2.0, 1,127
+              entries under com/mysql/), the MariaDB driver (LGPL-2.1, 283
+              entries under org/mariadb/) and JUnit 4 (CPL-1.0, 242 entries
+              under org/junit/ and junit/): it never failed a build.
+
+              bannedDependencies fails the build when an ASF Category X
+              artifact would be shaded into the jar, i.e. reaches the compile
+              or runtime scope directly or transitively. Test and provided
+              scopes are not shaded and are allowed.
+            -->
             <plugin>
-                <groupId>org.honton.chas</groupId>
-                <artifactId>license-maven-plugin</artifactId>
-                <version>0.0.6</version>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
                 <executions>
                     <execution>
+                        <id>ban-category-x-dependencies</id>
+                        <phase>validate</phase>
                         <goals>
-                            <goal>compliance</goal>
+                            <goal>enforce</goal>
                         </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <message>An ASF Category X (GPL/LGPL/AGPL) or test-only artifact would be shaded into this Apache-2.0 jar. Give it test or provided scope, exclude it, or replace it with a permissively licensed package (doc/licensing.md).</message>
+                                    <excludes>
+                                        <!-- LGPL-2.1 MariaDB Connector/J -->
+                                        <exclude>org.mariadb.jdbc:*:*:*:compile</exclude>
+                                        <exclude>org.mariadb.jdbc:*:*:*:runtime</exclude>
+                                        <!-- GPL-2.0 Connector/J under its pre-8.0.31 coordinates -->
+                                        <exclude>mysql:mysql-connector-java:*:*:compile</exclude>
+                                        <exclude>mysql:mysql-connector-java:*:*:runtime</exclude>
+                                        <!-- JUnit 4 (CPL-1.0) is a test framework, never production code -->
+                                        <exclude>junit:junit:*:*:compile</exclude>
+                                        <exclude>junit:junit:*:*:runtime</exclude>
+                                    </excludes>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                    <execution>
+                        <!-- Separate execution so -Pbundle-mysql-driver can turn off
+                             exactly this ban and nothing else. -->
+                        <id>ban-bundled-mysql-driver</id>
+                        <phase>validate</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <skip>${bundle.mysql.driver}</skip>
+                            <rules>
+                                <bannedDependencies>
+                                    <message>MySQL Connector/J (GPL-2.0 + Universal FOSS Exception) would be shaded into this Apache-2.0 jar. It must stay "provided" and be supplied at run time; only an internal, never-redistributed build may use -Pbundle-mysql-driver (doc/licensing.md).</message>
+                                    <excludes>
+                                        <exclude>com.mysql:mysql-connector-j:*:*:compile</exclude>
+                                        <exclude>com.mysql:mysql-connector-j:*:*:runtime</exclude>
+                                    </excludes>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
                     </execution>
                 </executions>
-                <configuration>
-                    <!-- Add explicit licenses for libraries with non-standard license declarations -->
-                    <acceptableLicenses>
-                        <!-- Eclipse licenses for JTS library -->
-                        <license>
-                            <name>Eclipse Public License, Version 2\.0</name>
-                            <url>https?://github\.com/locationtech/jts/blob/master/LICENSE_EPLv2\.txt</url>
-                        </license>
-                        <license>
-                            <name>Eclipse Distribution License - v 1\.0</name>
-                            <url>https?://github\.com/locationtech/jts/blob/master/LICENSE_EDLv1\.txt</url>
-                        </license>
-                        <!-- BSD License for ANTLR -->
-                        <license>
-                            <name>The BSD License</name>
-                            <url>https?://(www\.)?antlr\.org/license\.html</url>
-                        </license>
-                        <!-- CDDL+GPL dual license for javax.json -->
-                        <license>
-                            <name>Dual license consisting of the CDDL v1\.1 and GPL v2</name>
-                            <url>https?://oss\.oracle\.com/licenses/CDDL\+GPL-1\.1</url>
-                        </license>
-                    </acceptableLicenses>
-                    <!-- Use OSI permissive licenses as acceptable licenses -->
-                    <acceptableLicenseResources>osi-permissive</acceptableLicenseResources>
-                    <!-- Check compile, runtime, and provided scopes (exclude test) -->
-                    <scopes>compile,runtime,provided</scopes>
-                </configuration>
+            </plugin>
+
+            <!-- Copies the run-time-supplied MySQL driver, unmodified and as its
+                 own file, to target/mysql-driver/mysql-connector-j.jar, so a
+                 deployment or image can place it next to the connector jar
+                 (the jar's manifest Class-Path looks there). It is a separate
+                 artifact under its own license, not part of the Apache jar. -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>copy-mysql-driver</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy</goal>
+                        </goals>
+                        <configuration>
+                            <artifactItems>
+                                <artifactItem>
+                                    <groupId>com.mysql</groupId>
+                                    <artifactId>mysql-connector-j</artifactId>
+                                    <version>${version.mysql.connector.j}</version>
+                                    <destFileName>mysql-connector-j.jar</destFileName>
+                                </artifactItem>
+                                <!-- The driver's complete corresponding source (GPL-2.0),
+                                     shipped next to the binary wherever the binary ships. -->
+                                <artifactItem>
+                                    <groupId>com.mysql</groupId>
+                                    <artifactId>mysql-connector-j</artifactId>
+                                    <version>${version.mysql.connector.j}</version>
+                                    <classifier>sources</classifier>
+                                    <destFileName>mysql-connector-j-${version.mysql.connector.j}-sources.jar</destFileName>
+                                </artifactItem>
+                            </artifactItems>
+                            <outputDirectory>${project.build.directory}/mysql-driver</outputDirectory>
+                        </configuration>
+                    </execution>
+                </executions>
             </plugin>
         </plugins>
     </build>
     <profiles>
+        <!--
+          For an INTERNAL build that is never redistributed: shade MySQL
+          Connector/J into the jar exactly as releases before the licensing
+          change did, so `java -jar` works with no driver jar beside it.
+          A jar built this way contains GPL-2.0 code and must not be published
+          (doc/licensing.md).
+        -->
+        <profile>
+            <id>bundle-mysql-driver</id>
+            <properties>
+                <mysql.driver.scope>compile</mysql.driver.scope>
+                <bundle.mysql.driver>true</bundle.mysql.driver>
+            </properties>
+        </profile>
         <profile>
             <id>native</id>
             <activation>

@@ -11,8 +11,7 @@ import logging
 import warnings
 import os
 import configparser
-import psycopg2
-import psycopg2.extras
+import pg8000.dbapi as pg8000
 try:
     import pandas as pd
     _PANDAS_AVAILABLE = True
@@ -220,40 +219,78 @@ def is_binary_datatype(pg_type: str) -> bool:
 
 def get_postgres_connection(pg_host, pg_user, pg_password, pg_port, pg_database):
     """
-    Return a psycopg2 connection with autocommit=False.
-    Use a dict cursor so rows are accessible by column name.
+    Return a pg8000 DB-API connection (pg8000.dbapi) with autocommit=False.
+    execute_pg()/pg_execute_df() build dict rows from cursor.description so
+    rows are still accessible by column name.
     """
-    conn = psycopg2.connect(
+    conn = pg8000.connect(
         host=pg_host,
         user=pg_user,
         password=pg_password,
         port=int(pg_port),
-        dbname=pg_database,
-        connect_timeout=20,
-        options='-c statement_timeout=0',   # long-running COPYs
+        database=pg_database,
+        timeout=20,
+        # '-c statement_timeout=0' (long-running COPYs) is sent as the
+        # PostgreSQL wire-protocol startup parameter 'options', exactly as
+        # psycopg2's options= kwarg did.
+        startup_params={'options': '-c statement_timeout=0'},
     )
+    # pg8000 passes timeout= to socket.create_connection(), which leaves it
+    # set as the socket timeout for EVERY later read -- unlike psycopg2's
+    # connect_timeout, which bounded the connect only. Left in place, any
+    # query that sends no row for 20 s (a checksum over a large table) would
+    # fail with a socket timeout. Clear it once connected, and fail loudly
+    # if pg8000's internals ever stop exposing the socket.
+    sock = getattr(conn, '_usock', None)
+    if sock is None or not hasattr(sock, 'settimeout'):
+        conn.close()
+        raise RuntimeError(
+            "pg8000 connection has no '_usock' socket: cannot clear the "
+            "20 s connect timeout, which would otherwise apply to every "
+            "query; check the pg8000 version (pyproject pins pg8000<2)")
+    sock.settimeout(None)
     conn.autocommit = True   # needed for COPY … TO STDOUT
     return conn
+
+
+def _rows_as_dicts(cur, raw_rows):
+    """Zip *raw_rows* fetched from *cur* into a list of dicts keyed by column
+    name, using cursor.description (pg8000 has no dict-cursor helper
+    equivalent to psycopg2.extras.RealDictCursor)."""
+    if cur.description is None:
+        return []
+    columns = [d[0] for d in cur.description]
+    return [dict(zip(columns, row)) for row in raw_rows]
 
 
 def execute_pg(conn, sql, params=None):
     """Execute SQL and return all rows as a list of dicts."""
     logging.debug(f"SQL={sql}")
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(sql, params)
+    # pg8000's Cursor does not support the context-manager protocol, unlike
+    # psycopg2's, so close explicitly instead of ``with conn.cursor() as cur``.
+    cur = conn.cursor()
+    try:
+        cur.execute(sql, params if params is not None else ())
         try:
-            rows = cur.fetchall()
-        except psycopg2.ProgrammingError:
-            rows = []
+            raw_rows = cur.fetchall()
+        except pg8000.ProgrammingError:
+            raw_rows = []
+        rows = _rows_as_dicts(cur, raw_rows)
+    finally:
+        cur.close()
     return rows
 
 
 def pg_execute_df(conn, sql, params=None):
     """Execute SQL and return a pandas DataFrame."""
     logging.debug(f"SQL={sql}")
-    with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-        cur.execute(sql, params)
-        rows = cur.fetchall()
+    cur = conn.cursor()
+    try:
+        cur.execute(sql, params if params is not None else ())
+        raw_rows = cur.fetchall()
+        rows = _rows_as_dicts(cur, raw_rows)
+    finally:
+        cur.close()
     if rows:
         return pd.DataFrame(rows, columns=list(rows[0].keys()))
     return pd.DataFrame()
@@ -288,9 +325,14 @@ def get_schemas(pg_conn, include_regex=None, exclude_regex=None):
         params.append(exclude_regex)
     query += " ORDER BY schema_name"
 
-    with pg_conn.cursor() as cur:
+    # pg8000's Cursor does not support the context-manager protocol, unlike
+    # psycopg2's, so close explicitly instead of ``with pg_conn.cursor() as cur``.
+    cur = pg_conn.cursor()
+    try:
         cur.execute(query, params)
         return [row[0] for row in cur.fetchall()]
+    finally:
+        cur.close()
 
 
 def get_tables(conn, pg_schema, include_regex=None, exclude_regex=None):
@@ -338,7 +380,7 @@ def get_table_columns(conn, pg_schema, table_name, pg_server_timezone=None,
 
     Parameters
     ----------
-    conn               : psycopg2 connection
+    conn               : pg8000 DB-API connection
     pg_schema          : PostgreSQL schema name
     table_name         : PostgreSQL table name
     pg_server_timezone : explicit PG server timezone for DateTime64 annotation

@@ -1,4 +1,4 @@
 pytest
-psycopg2-binary
+pg8000>=1.30,<2
 clickhouse-driver>=0.2.9
 pyyaml

@@ -252,7 +252,7 @@ def get_pk_range_boundaries(pg_conn, pg_schema, table_name, pk_column, num_segme
 
     Parameters
     ----------
-    pg_conn      : psycopg2 connection
+    pg_conn      : pg8000 DB-API connection
     pg_schema    : PG schema name
     table_name   : PG table name
     pk_column    : column name to range-partition on (must be sortable)
@@ -558,7 +558,7 @@ def load_table(
     ch_tmp_file = None
 
     try:
-        # We need a fresh PG connection per thread (psycopg2 is not thread-safe)
+        # We need a fresh PG connection per thread (pg8000 is not thread-safe)
         pg_conn = get_postgres_connection(pg_host, pg_user, pg_password,
                                           pg_port, pg_database)
         columns_meta = get_table_columns(
@@ -1428,7 +1428,7 @@ def validate_postgres_privileges(pg_conn, pg_user, schema, tables, config):
 
     Parameters
     ----------
-    pg_conn  : psycopg2 connection to PostgreSQL
+    pg_conn  : pg8000 DB-API connection to PostgreSQL
     pg_user  : str — the PostgreSQL user name
     schema   : str — the source schema (e.g. 'public')
     tables   : list[str] — table names that will be dumped

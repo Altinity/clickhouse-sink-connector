@@ -203,7 +203,7 @@ def _compute_chunk_hash_pg(pg_conn, table_name, pk_column, pg_schema,
     row = rows[0]
     cnt = int(row.get('count', 0) or 0)
     xor_val = row.get('bit_xor') or row.get('text', None)
-    # execute_pg returns RealDictRow; the column alias may vary
+    # execute_pg returns a dict; the column alias may vary
     # Try multiple key patterns
     xor_raw = None
     for key in row:
@@ -910,7 +910,7 @@ def run_auto_diff_for_table(table_name, pg_conn, pg_schema,
     Parameters
     ----------
     table_name          : bare table name (no schema prefix)
-    pg_conn             : shared psycopg2 REPEATABLE READ connection
+    pg_conn             : shared pg8000 DB-API REPEATABLE READ connection
     pg_schema           : PG schema (usually 'public')
     ch_host/user/...    : CH connection parameters
     ch_database         : CH database name

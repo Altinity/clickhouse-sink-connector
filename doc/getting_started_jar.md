@@ -19,6 +19,16 @@ is setup to connect to the PostgreSQL and ClickHouse services started by docker 
 java -jar target/clickhouse-debezium-embedded-0.0.4.jar docker/config_postgres_local.yml
 ```
 
+A PostgreSQL source needs nothing else. For a **MySQL** source, the MySQL JDBC
+driver (GPL-licensed, so not bundled in the jar) must sit next to the jar as
+`mysql-connector-j.jar`. `mvn package` leaves a copy in
+`target/mysql-driver/`:
+```
+cp target/mysql-driver/mysql-connector-j.jar target/
+java -jar target/clickhouse-debezium-embedded-0.0.4.jar docker/config_local.yml
+```
+See [Licensing](licensing.md) for the other ways to supply it.
+
 By default the replication is setup to replicate two tables,
 in the sink connector logs you will notice the following lines that 
 highlight the newer records that are inserted to ClickHouse.

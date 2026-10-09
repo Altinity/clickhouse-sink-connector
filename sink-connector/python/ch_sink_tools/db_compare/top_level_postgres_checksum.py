@@ -8,7 +8,7 @@
 # --                verification for the staging CDC replication pipeline.
 # --
 # --                Mirrors top_level_table_checksum.py (MySQL version) but:
-# --                  - Source is PostgreSQL (psycopg2 via db.postgres)
+# --                  - Source is PostgreSQL (pg8000 via db.postgres)
 # --                  - Uses LSN-wait instead of FLUSH TABLE WITH READ LOCK
 # --                  - Three-tier checksum: Tier-1 (full MD5), Tier-2 (PK MD5),
 # --                    Tier-3 (count + max metrics only)
@@ -892,19 +892,41 @@ def begin_repeatable_read_snapshot(pg_conn) -> None:
     """
     Put *pg_conn* into a read-only REPEATABLE READ transaction and verify it.
 
-    psycopg2 sends its own BEGIN before the first statement of a transaction
-    when autocommit is off, so an explicit "BEGIN ... REPEATABLE READ" would
-    be ignored by PostgreSQL (nested BEGIN, WARNING only) and the transaction
-    would run at the default isolation level.  set_session() makes psycopg2
-    emit "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY" itself.
+    The DB-API driver (pg8000) issues its own implicit "begin transaction"
+    before the first statement of a transaction when autocommit is off, so an
+    explicit "BEGIN ... REPEATABLE READ" would be ignored by PostgreSQL
+    (nested BEGIN, WARNING only) and the transaction would run at the default
+    isolation level. Instead we set the *session's* default transaction
+    characteristics -- via `SET SESSION CHARACTERISTICS AS TRANSACTION
+    ISOLATION LEVEL REPEATABLE READ, READ ONLY` issued while the connection
+    is still in autocommit mode (i.e. outside of any transaction block) --
+    so that the next implicit BEGIN picks up REPEATABLE READ / READ ONLY.
+    This mirrors psycopg2's former set_session(isolation_level='REPEATABLE
+    READ', readonly=True, autocommit=False), which made psycopg2 itself emit
+    "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY".
     """
-    pg_conn.set_session(isolation_level='REPEATABLE READ', readonly=True,
-                        autocommit=False)
+    pg_conn.autocommit = True
+    cur = pg_conn.cursor()
+    try:
+        cur.execute(
+            "SET SESSION CHARACTERISTICS AS TRANSACTION "
+            "ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+        )
+    finally:
+        cur.close()
+    pg_conn.autocommit = False
+
     rows = execute_pg(pg_conn, 'SHOW transaction_isolation')
     level = rows[0]['transaction_isolation'] if rows else None
     if level != 'repeatable read':
         raise RuntimeError(
             f"snapshot transaction isolation is {level!r}, expected 'repeatable read'")
+
+    ro_rows = execute_pg(pg_conn, 'SHOW transaction_read_only')
+    read_only = ro_rows[0]['transaction_read_only'] if ro_rows else None
+    if read_only != 'on':
+        raise RuntimeError(
+            f"snapshot transaction is not READ ONLY (transaction_read_only={read_only!r})")
 
 
 # ---------------------------------------------------------------------------

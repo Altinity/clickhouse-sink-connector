@@ -33,6 +33,9 @@
 # Output ends with "RESULT PASS=n FAIL=m"; exit status 0 only when FAIL=0.
 set -uo pipefail
 JAR="${JAR:?set JAR}"; GTID="${GTID:-on}"; LABEL="${LABEL:-bch}"
+# MySQL Connector/J (GPL) is supplied next to the jar, not inside it (doc/licensing.md).
+MYSQL_DRIVER="${MYSQL_DRIVER:-$(dirname "$JAR")/mysql-driver/mysql-connector-j.jar}"
+DRIVER_MOUNT=(); [ -f "$MYSQL_DRIVER" ] && DRIVER_MOUNT=(-v "$MYSQL_DRIVER:/mysql-connector-j.jar:ro,Z")
 IMAGE="${IMAGE:-docker.io/eclipse-temurin:17-jre}"
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 TEMPLATE="${TEMPLATE:-$REPO/sink-connector-lightweight/docker/config.yml}"; LOG4J="${LOG4J:-$REPO/sink-connector-lightweight/docker/log4j2.xml}"; WORK="${WORK:-/tmp/csc-e2e-bch-$LABEL}"; mkdir -p "$WORK"
@@ -63,7 +66,7 @@ vt(){
 errscan(){ docker logs $CC 2>&1 | grep -iE ' ERROR |Exception|FATAL|refus|terminal' | grep -viE 'DEBUG|self-test FAILED' | tail -n "${1:-8}" | cut -c1-220; }
 start_connector(){
   docker run -d --name $CC --pod $POD --runtime runc \
-    -v "$WORK/config.yml:/config.yml:ro,Z" -v "$LOG4J:/log4j2.xml:ro,Z" -v "$JAR:/app.jar:ro,Z" \
+    -v "$WORK/config.yml:/config.yml:ro,Z" -v "$LOG4J:/log4j2.xml:ro,Z" -v "$JAR:/app.jar:ro,Z" "${DRIVER_MOUNT[@]}" \
     --entrypoint sh "$IMAGE" -c \
     "java -Xms2g -Xmx2g -Dlog4j2.configurationFile=log4j2.xml -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication" \
     >/dev/null 2>&1 && log "connector started ($CC)"
