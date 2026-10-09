@@ -247,7 +247,7 @@ def get_postgres_connection(pg_host, pg_user, pg_password, pg_port, pg_database)
         raise RuntimeError(
             "pg8000 connection has no '_usock' socket: cannot clear the "
             "20 s connect timeout, which would otherwise apply to every "
-            "query; check the pg8000 version (pyproject pins pg8000<2)")
+            "query; check the pg8000 version (pyproject pins pg8000 to the verified 1.31 line)")
     sock.settimeout(None)
     conn.autocommit = True   # needed for COPY … TO STDOUT
     return conn

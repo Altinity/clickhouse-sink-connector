@@ -142,7 +142,7 @@ and the build and tests pass without it.
 
 | Was | License | Used by | Now |
 |---|---|---|---|
-| `psycopg2-binary` | LGPL-3.0 (Category X) | PostgreSQL checksum / dump tools in `ch_sink_tools` (required dependency) | `pg8000>=1.30,<2` (BSD-3-Clause; deps `scramp` MIT-0, `asn1crypto` MIT, `python-dateutil` Apache-2.0/BSD) |
+| `psycopg2-binary` | LGPL-3.0 (Category X) | PostgreSQL checksum / dump tools in `ch_sink_tools` (required dependency) | `pg8000>=1.31,<1.32` (BSD-3-Clause; deps `scramp` MIT-0, `asn1crypto` MIT, `python-dateutil` Apache-2.0/BSD) |
 | `mysql-connector-python` | GPL-2.0 (Category X) | `sink-connector/tests` (legacy test harness) | `pymysql` (MIT) |
 
 Behaviour kept across the driver change (`ch_sink_tools/db/postgres.py`,

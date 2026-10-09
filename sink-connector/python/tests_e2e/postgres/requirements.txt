@@ -1,4 +1,4 @@
 pytest
-pg8000>=1.30,<2
+pg8000>=1.31,<1.32
 clickhouse-driver>=0.2.9
 pyyaml

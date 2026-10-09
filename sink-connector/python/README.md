@@ -69,7 +69,7 @@ ssh user@ch-server '/opt/python-dump/.venv/bin/pip install --force-reinstall /tm
 
 **Core (always installed):**
 - `clickhouse-driver>=0.2.9`
-- `pg8000>=1.30,<2`
+- `pg8000>=1.31,<1.32`
 - `pyyaml`
 
 **Optional:**

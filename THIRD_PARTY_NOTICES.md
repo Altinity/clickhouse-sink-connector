@@ -285,7 +285,7 @@ Kafka images (`sink-connector/docker/Dockerfile-sink-on-*`):
 | Package | License | License text |
 | --- | --- | --- |
 | pypi:clickhouse-driver>=0.2.9 | MIT | https://github.com/mymarilyn/clickhouse-driver/blob/master/LICENSE |
-| pypi:pg8000>=1.30,<2 | BSD-3-Clause | https://github.com/tlocke/pg8000/blob/main/LICENSE |
+| pypi:pg8000>=1.31,<1.32 | BSD-3-Clause | https://github.com/tlocke/pg8000/blob/main/LICENSE |
 | pypi:scramp (via pg8000) | MIT-0 | https://github.com/tlocke/scramp/blob/main/LICENSE |
 | pypi:asn1crypto (via scramp) | MIT | https://github.com/wbond/asn1crypto/blob/master/LICENSE |
 | pypi:python-dateutil (via pg8000) | Apache-2.0 | https://github.com/dateutil/dateutil/blob/master/LICENSE |
