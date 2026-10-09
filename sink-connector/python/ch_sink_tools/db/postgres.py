@@ -217,12 +217,59 @@ def is_binary_datatype(pg_type: str) -> bool:
 # Connection helpers
 # ---------------------------------------------------------------------------
 
+# libpq (and so psycopg2) reads these environment variables and sends them as
+# session parameters at connect time; pg8000 is a pure-Python driver and reads
+# none of them. Map them explicitly so a session gets exactly the settings it
+# had before: PGTZ in particular decides the zone the dumper detects for
+# zone-less timestamps (D-13.05-8). PGCLIENTENCODING is deliberately NOT
+# mapped: pg8000 decodes every result as UTF-8.
+_LIBPQ_SESSION_ENV = (
+    ('PGTZ', 'TimeZone'),
+    ('PGDATESTYLE', 'DateStyle'),
+    ('PGGEQO', 'geqo'),
+)
+
+
+def _libpq_env_startup_params(environ=None):
+    """Session parameters libpq would send from the environment."""
+    environ = os.environ if environ is None else environ
+    return {param: environ[var] for var, param in _LIBPQ_SESSION_ENV
+            if environ.get(var)}
+
+
+def _libpq_env_ssl_context(environ=None):
+    """pg8000 ``ssl_context`` equivalent to libpq's PGSSLMODE.
+
+    ``None`` is pg8000's own default and matches libpq's default ``prefer``:
+    TLS when the server offers it (not verified), plaintext when it does not.
+    """
+    environ = os.environ if environ is None else environ
+    mode = (environ.get('PGSSLMODE') or 'prefer').strip().lower()
+    if mode in ('prefer', 'allow'):
+        return None
+    if mode == 'disable':
+        return False
+    if mode == 'require':
+        return True          # TLS required, certificate not verified
+    if mode in ('verify-ca', 'verify-full'):
+        import ssl
+        ctx = ssl.create_default_context(cafile=environ.get('PGSSLROOTCERT') or None)
+        ctx.check_hostname = (mode == 'verify-full')
+        return ctx
+    raise ValueError(f"unsupported PGSSLMODE {mode!r}")
+
+
 def get_postgres_connection(pg_host, pg_user, pg_password, pg_port, pg_database):
     """
-    Return a pg8000 DB-API connection (pg8000.dbapi) with autocommit=False.
+    Return a pg8000 DB-API connection (pg8000.dbapi) with autocommit on.
     execute_pg()/pg_execute_df() build dict rows from cursor.description so
     rows are still accessible by column name.
     """
+    # '-c statement_timeout=0' (long-running COPYs) is sent as the PostgreSQL
+    # wire-protocol startup parameter 'options', exactly as psycopg2's
+    # options= kwarg did; the libpq session environment comes on top.
+    startup_params = {'options': '-c statement_timeout=0'}
+    startup_params.update(_libpq_env_startup_params())
     conn = pg8000.connect(
         host=pg_host,
         user=pg_user,
@@ -230,10 +277,8 @@ def get_postgres_connection(pg_host, pg_user, pg_password, pg_port, pg_database)
         port=int(pg_port),
         database=pg_database,
         timeout=20,
-        # '-c statement_timeout=0' (long-running COPYs) is sent as the
-        # PostgreSQL wire-protocol startup parameter 'options', exactly as
-        # psycopg2's options= kwarg did.
-        startup_params={'options': '-c statement_timeout=0'},
+        ssl_context=_libpq_env_ssl_context(),
+        startup_params=startup_params,
     )
     # pg8000 passes timeout= to socket.create_connection(), which leaves it
     # set as the socket timeout for EVERY later read -- unlike psycopg2's

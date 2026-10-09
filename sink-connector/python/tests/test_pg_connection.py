@@ -25,6 +25,16 @@ def _connect_with(conn):
     return result, connect
 
 
+_LIBPQ_VARS = ("PGTZ", "PGDATESTYLE", "PGGEQO", "PGSSLMODE", "PGSSLROOTCERT",
+               "PGCLIENTENCODING")
+
+
+@pytest.fixture(autouse=True)
+def _clean_libpq_env(monkeypatch):
+    for var in _LIBPQ_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+
 def test_connect_arguments_match_the_old_psycopg2_call():
     conn = MagicMock()
     _, connect = _connect_with(conn)
@@ -36,6 +46,51 @@ def test_connect_arguments_match_the_old_psycopg2_call():
     assert kwargs["database"] == "db"
     assert kwargs["timeout"] == 20
     assert kwargs["startup_params"] == {"options": "-c statement_timeout=0"}
+    # libpq's default sslmode=prefer == pg8000's ssl_context=None.
+    assert kwargs["ssl_context"] is None
+
+
+def test_libpq_session_environment_is_sent_like_libpq_did(monkeypatch):
+    """PGTZ / PGDATESTYLE / PGGEQO reach the session as libpq sent them
+    (D-13.05-8: PGTZ decides the zone the dumper detects); PGCLIENTENCODING
+    does not, because pg8000 decodes UTF-8 only."""
+    monkeypatch.setenv("PGTZ", "America/Chicago")
+    monkeypatch.setenv("PGDATESTYLE", "SQL, DMY")
+    monkeypatch.setenv("PGGEQO", "off")
+    monkeypatch.setenv("PGCLIENTENCODING", "LATIN1")
+    _, connect = _connect_with(MagicMock())
+    assert connect.call_args.kwargs["startup_params"] == {
+        "options": "-c statement_timeout=0",
+        "TimeZone": "America/Chicago",
+        "DateStyle": "SQL, DMY",
+        "geqo": "off",
+    }
+
+
+@pytest.mark.parametrize("mode,expected", [
+    ("disable", False), ("allow", None), ("prefer", None), ("require", True),
+])
+def test_pgsslmode_maps_to_pg8000_ssl_context(monkeypatch, mode, expected):
+    monkeypatch.setenv("PGSSLMODE", mode)
+    _, connect = _connect_with(MagicMock())
+    assert connect.call_args.kwargs["ssl_context"] is expected
+
+
+@pytest.mark.parametrize("mode,check_hostname", [("verify-ca", False), ("verify-full", True)])
+def test_pgsslmode_verify_builds_a_verifying_context(monkeypatch, mode, check_hostname):
+    import ssl
+    monkeypatch.setenv("PGSSLMODE", mode)
+    _, connect = _connect_with(MagicMock())
+    ctx = connect.call_args.kwargs["ssl_context"]
+    assert isinstance(ctx, ssl.SSLContext)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is check_hostname
+
+
+def test_unknown_pgsslmode_fails_loudly(monkeypatch):
+    monkeypatch.setenv("PGSSLMODE", "sometimes")
+    with pytest.raises(ValueError, match="PGSSLMODE"):
+        _connect_with(MagicMock())
 
 
 def test_connect_timeout_is_cleared_after_connecting():
