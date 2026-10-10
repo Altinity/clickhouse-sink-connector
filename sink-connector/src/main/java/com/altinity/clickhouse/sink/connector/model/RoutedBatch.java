@@ -104,6 +104,20 @@ public class RoutedBatch {
     /**
      * Extracts the table name from a topic name.
      * Topic format: server.database.table
+     * <p>
+     * Splits on the first two dots only ({@code limit=3}), not an unbounded
+     * split (PR #1437 review, Low item 2). A MySQL table name may itself
+     * contain a dot (e.g. table {@code a.b}, a name MySQL accepts in
+     * backticks); Debezium's topic for it is still exactly three
+     * dot-separated segments, {@code server.database.a.b}, because the table
+     * segment is not re-split. An unbounded {@code split("\\.")} does not
+     * know that and breaks the topic into FOUR parts, returning {@code "a"}
+     * for the table name -- the same value a sibling table literally named
+     * {@code a} would produce. Two source tables then collapse onto the same
+     * routing group, which {@code DebeziumChangeEventCapture
+     * .appendToRecordsWithHashRouting} and the write path both assume is
+     * single-table.
+     * </p>
      *
      * @param topicName The topic name
      * @return The table name, or the full topic if parsing fails
@@ -113,9 +127,9 @@ public class RoutedBatch {
             return "";
         }
 
-        String[] parts = topicName.split("\\.");
+        String[] parts = topicName.split("\\.", 3);
         if (parts.length >= 3) {
-            return parts[2]; // Table name is the third part
+            return parts[2]; // Table name is everything after the 2nd dot
         }
 
         // If format doesn't match, return the whole topic as fallback
@@ -125,6 +139,11 @@ public class RoutedBatch {
     /**
      * Creates a key for routing that combines database and table.
      * This ensures that the same table in different databases can be routed differently if needed.
+     * <p>
+     * Splits on the first two dots only ({@code limit=3}); see
+     * {@link #extractTableName} for why an unbounded split breaks a dotted
+     * table name.
+     * </p>
      *
      * @param topicName The topic name (server.database.table)
      * @return The routing key (database.table)
@@ -134,7 +153,7 @@ public class RoutedBatch {
             return "";
         }
 
-        String[] parts = topicName.split("\\.");
+        String[] parts = topicName.split("\\.", 3);
         if (parts.length >= 3) {
             return parts[1] + "." + parts[2]; // database.table
         }

@@ -529,6 +529,31 @@ public class ClickHouseBatchRunnable implements Runnable {
                         e);
             }
 
+            // An offset-bookkeeping failure (PR #1437 review, Low item 1) is
+            // not a ClickHouse error: the rows are already durably written
+            // (WRITTEN-ONCE), and ClickHouseErrorClassifier finds no
+            // ClickHouse error code in it, so classify(e) below would
+            // otherwise default it to "Retriable ClickHouse error (Code: -1,
+            // Category: UNKNOWN)" -- indistinguishable from a real ClickHouse
+            // outage. Logging it under its own name here means an operator
+            // (or an alert keyed on the log line) does not chase a ClickHouse
+            // problem that does not exist. The next drain still retries the
+            // acknowledgement (see OffsetAcknowledgementFailureTest); this
+            // worker just continues its normal retry/backoff loop afterwards.
+            if (isOffsetAcknowledgementFailure(e)) {
+                log.warn("Offset acknowledgement error -- Task({}): the written rows are durably in "
+                        + "ClickHouse, but reporting one or more groups to the handoff FIFO failed "
+                        + "({}). Not a ClickHouse error: the next drain -- triggered by any later "
+                        + "write -- retries the acknowledgement.", taskId, rootCauseMessage(e));
+                long delayMs = retryBackoff.nextDelayMs(currentBatch);
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                return;
+            }
+
             // Classify the error to decide whether to retry or stop
             ClickHouseErrorClassifier.ErrorCategory category = ClickHouseErrorClassifier.classify(e);
             int errorCode = ClickHouseErrorClassifier.extractErrorCode(e);
@@ -587,6 +612,41 @@ public class ClickHouseBatchRunnable implements Runnable {
             }
         }
         return false;
+    }
+
+    /**
+     * Whether {@code e} is (or wraps) an {@link OffsetAcknowledgementException}
+     * (PR #1437 review, Low item 1): a failure to report already-written rows
+     * to the handoff FIFO, as opposed to a ClickHouse write failure.
+     *
+     * @param e the exception thrown while processing a batch.
+     * @return true when this is an offset-acknowledgement failure, not a
+     *         ClickHouse error.
+     */
+    private static boolean isOffsetAcknowledgementFailure(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof OffsetAcknowledgementException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The message of the innermost cause of {@code e}, for a one-line log
+     * summary of what actually failed underneath an
+     * {@link OffsetAcknowledgementException} wrapper.
+     */
+    private static String rootCauseMessage(Throwable e) {
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String message = root.getMessage();
+        return message != null ? message : root.toString();
     }
 
     /**
@@ -856,8 +916,26 @@ public class ClickHouseBatchRunnable implements Runnable {
             currentBatch = null;
             currentGroups = null;
             retryBackoff.reset();
-            for (List<ClickHouseStruct> written : writtenGroups) {
-                DebeziumOffsetManagement.checkIfBatchCanBeCommitted(written);
+            // Report every group of this write in ONE call (PR #1437 review).
+            // Calling checkIfBatchCanBeCommitted once per group in a loop
+            // recorded group N's unit only after groups 1..N-1 had already
+            // returned, so a drain failure on an early group (a Debezium
+            // markBatchFinished() failure, or the FIFO's own corruption
+            // checks) left every later group's unit permanently un-recorded:
+            // its remainingGroups never reached zero, so it could never be
+            // acknowledged (spec 09.01 section 3.2). reportWritten marks
+            // every group written BEFORE attempting the one drain this write
+            // is allowed, so a drain failure can no longer erase bookkeeping
+            // it never reached; it still rethrows (silence is the enemy --
+            // Low item #1 classifies this failure as an offset-acknowledgement
+            // failure, not a ClickHouse error, in the catch block of run()).
+            try {
+                DebeziumOffsetManagement.reportWritten(writtenGroups);
+            } catch (RuntimeException | InterruptedException e) {
+                throw new OffsetAcknowledgementException(
+                        "failed to acknowledge one or more written groups of this coalesced batch; "
+                                + "the rows are durably in ClickHouse (WRITTEN-ONCE) but their offset(s) "
+                                + "could not be reported to the handoff FIFO", e);
             }
         } else {
             // Not written (e.g. table metadata not yet retrievable): keep the

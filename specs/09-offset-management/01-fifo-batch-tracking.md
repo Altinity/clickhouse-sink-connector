@@ -22,7 +22,11 @@ hash routing (spec 03.03) and is deleted, not amended (see §3.5).
 - **Producer side** (assigns sequences): `sink-connector-lightweight/.../cdc/DebeziumChangeEventCapture.java`
   — `appendToRecords`, `appendToRecordsWithHashRouting` (spec 01.05).
 - **Consumer side** (reports a written batch): `sink-connector/.../executor/ClickHouseBatchRunnable.java`
-  — `processBatch` (spec 03.03).
+  — `processBatch` (spec 03.03), which calls `reportWritten` and rethrows any
+  failure as `OffsetAcknowledgementException`
+  (`sink-connector/.../executor/OffsetAcknowledgementException.java`, PR #1437
+  review Low item 1) so `run()`'s catch block logs it under its own name
+  instead of the generic ClickHouse-error classifier (§6 FM-09.01-4).
 - **Carrier**: `sink-connector/.../model/RoutedBatch.java` — `getHandoffSequence()`.
 - **State** (all static — process-wide, shared by every engine started in the
   JVM, see §3.8 — all guarded by the class monitor of `DebeziumOffsetManagement`
@@ -43,7 +47,15 @@ hash routing (spec 03.03) and is deleted, not amended (see §3.5).
     — producer; assigns and returns the sequence.
   - `boolean checkIfBatchCanBeCommitted(List<ClickHouseStruct> group)` — consumer,
     called once per group after its rows are durably written. Returns `true`
-    iff the group's unit was acknowledged during this call.
+    iff the group's unit was acknowledged during this call. Still used directly
+    by tests and by any single-group write; `reportWritten` (below) is the
+    entry point for a write that durably wrote more than one group at once.
+  - `void reportWritten(List<List<ClickHouseStruct>> groups)` — consumer,
+    called once per write that durably wrote one or more groups (PR #1437
+    review, High item; §3.2). Marks every group written FIRST, then drains
+    ONCE, so a `markBatchFinished` failure during the drain — which can only
+    happen after every group's bookkeeping is already updated — never leaves a
+    sibling group of the same write unmarked.
   - `boolean hasUnwrittenBatches()` — `!outstandingSequences.isEmpty()`.
   - `int outstandingCount()` — size of the outstanding set.
   - `int reset()` — abandons every outstanding unit and retires every sequence
@@ -137,31 +149,85 @@ Sequences are assigned by one thread in handoff order, so
 takes part in any commit decision.
 
 ### 3.2 Written: the consumer reports once, then moves on (WRITTEN-ONCE)
-When a worker has durably written a group (`processRecordsByTopic` returned
-`true` for every topic of the group) it calls `checkIfBatchCanBeCommitted(group)`
-EXACTLY ONCE and then drops the group (`currentBatch = null`) **regardless of
-the return value**, proceeding to the next queued batch. A worker that wrote
-several queued groups as one batch (spec 03.03 §3.1.1) reports each of them
-once, in dequeue order, after that one write; the FIFO sees exactly the calls
-it would have seen from one write per group, in the same order.
+When a worker has durably written one or more groups in a single write
+(`processRecordsByTopic` returned `true` for every topic of every group —
+coalesced queued batches are written together, spec 03.03 §3.1.1, regardless
+of whether they share a topic) it calls `reportWritten(groups)` EXACTLY ONCE
+for that write and then drops every group (`currentBatch = null`, or the
+coalesced equivalent) **regardless of outcome**, proceeding to the next queued
+batch. A single-group write reports a one-element list; the FIFO sees exactly
+the calls it would have seen from one write per group, in the same order.
 
-Inside, under the class monitor:
-1. `unit = unwrittenGroups.remove(BatchKey(group))`.
-   - If no unit is registered and some record carries a Debezium committer,
-     throw `IllegalStateException` — a committer-bearing batch that bypassed
-     `registerHandoff` cannot be ordered and must not be acknowledged silently
-     (Invariant I9).
-   - If no unit is registered and no record carries a committer, return `true`:
-     this is the Kafka Connect sink path, which commits offsets through its own
-     durable watermark and has nothing to acknowledge here.
-2. `unit.unwrittenGroups--`. If it is still `> 0`, other groups of the same
-   unit are unwritten: return `false` (nothing acknowledged yet).
-3. Otherwise the unit is fully written: `completedUnits.put(unit.sequence, unit)`.
-4. **Drain**: while `outstandingSequences.first()` is a key of `completedUnits`:
-   acknowledge that unit (`acknowledgeRecords(unit.records)`), remove it from
-   both collections. Stop at the first outstanding sequence that is not yet
-   completed.
-5. Return `true` iff this group's unit was acknowledged by the drain.
+`reportWritten` is two phases, deliberately separated:
+
+1. **Mark, for every group, unconditionally.** For each group in turn, under
+   the class monitor, wrapped in its own try/catch so one group's failure
+   cannot stop the groups after it from being marked (see below):
+   - `unit = unwrittenGroups.remove(BatchKey(group))`.
+     - If no unit is registered and some record carries a Debezium committer,
+       throw `IllegalStateException` — a committer-bearing batch that bypassed
+       `registerHandoff` cannot be ordered and must not be acknowledged
+       silently (Invariant I9). This throw is caught by `reportWritten`
+       immediately (not propagated out of the loop): the first such failure is
+       remembered, any later one is attached to it via `addSuppressed`, and
+       the loop moves on to the next group.
+     - If no unit is registered and no record carries a committer, this group
+       is the Kafka Connect sink path (nothing to mark) and is skipped.
+   - `unit.unwrittenGroups--`. If it is still `> 0`, other groups of the same
+     unit are unwritten; nothing further happens for this group yet.
+   - Otherwise the unit is fully written: `completedUnits.put(unit.sequence,
+     unit)`.
+   This phase never calls `acknowledgeRecords` and so the only exception it
+   can raise is the `IllegalStateException` above, caught per group as just
+   described.
+2. **Drain once, after every group is marked.** While
+   `outstandingSequences.first()` is a key of `completedUnits`: acknowledge
+   that unit (`acknowledgeRecords(unit.records)`), remove it from both
+   collections. Stop at the first outstanding sequence that is not yet
+   completed. This is the only place `markBatchFinished()` is called from
+   `reportWritten`, and it runs once total for the write, not once per group.
+
+**Why the mark phase is not allowed to stop early (PR #1437 review, High
+item; fixed defect).** Before this split, the consumer called
+`checkIfBatchCanBeCommitted(group)` — mark-one-then-drain — in a loop, once
+per group of a coalesced write. `acknowledgeRecords` can throw (FM-09.01-4):
+if group A's call completed A's unit and the drain inside that same call then
+threw acknowledging A, the exception propagated out of the loop in
+`ClickHouseBatchRunnable.processBatch` and the loop never reached group B.
+B's rows were already durably written (WRITTEN-ONCE drops the group
+regardless), but `unwrittenGroups.remove(BatchKey(B))` was never called, so
+B's unit's `unwrittenGroups` counter never reached 0 and B's unit never
+entered `completedUnits` — not on this call, and not ever, since nothing
+calls `checkIfBatchCanBeCommitted`/`reportWritten` for an already-dropped
+group again. B's offset was orphaned: `hasUnwrittenBatches()` stayed `true`
+forever (short of the hard cap, §3.1 step 5, stopping the engine) even though
+every row of B was safely in ClickHouse. Marking every group first — before
+the one drain that can throw — means A's acknowledgement failure can no
+longer prevent B's bookkeeping from completing: B reaches `completedUnits`
+regardless, and the very next drain (triggered by this call before it
+re-throws, or by any later write on any worker) acknowledges both A and B in
+handoff order once the transient failure clears. See
+`CoalescedQueuedBatchesTest.committerFailureOnFirstOfTwoCoalescedGroupsDoesNotOrphanTheSecond`.
+
+**Why a per-group mark failure is caught instead of propagated (follow-up
+to the same review item).** A first version of
+`reportWritten` fixed the drain-failure case above but still ran the mark
+phase as a plain loop: `unwrittenGroups.remove(BatchKey(group))` returning no
+unit for a committer-bearing group throws `IllegalStateException` directly
+from `markGroupWritten` (Invariant I9, above), and an uncaught throw on group
+k would once again stop groups k+1..N of the SAME coalesced write from ever
+being marked — reproducing the exact orphaning shape this section exists to
+prevent, just triggered by a producer-bug exception instead of an
+acknowledgement failure. `reportWritten` now marks every group inside its own
+try/catch: the first `IllegalStateException` is remembered (later ones are
+attached to it via `addSuppressed`), the loop continues through every
+remaining group regardless, the one drain still runs afterwards so any group
+that completed its unit — including ones after the failing group — is
+acknowledged, and only then is the remembered failure re-thrown (a drain
+failure that happens afterward takes precedence, with the mark failure
+attached to it as suppressed, since the drain failure is raised strictly
+after every group has already been marked). See
+`CoalescedQueuedBatchesTest.groupThatFailsToMarkDoesNotOrphanSiblingGroups`.
 
 The written→acknowledged separation is what makes the WRITTEN-ONCE invariant
 hold: a batch that is written but not yet commit-eligible is parked in
@@ -386,6 +452,29 @@ would let a later batch commit an offset past rows that never reached a queue.
   not block itself; acknowledging one leaves the sibling tracked.
 - `HandedOffBatchVisibilityTest` — visible from handoff; per-group counting;
   quiescent only after the whole unit is acknowledged.
+- `CoalescedQueuedBatchesTest.committerFailureOnFirstOfTwoCoalescedGroupsDoesNotOrphanTheSecond`
+  — PR #1437 review, High item (§3.2): two single-record groups on different
+  topics are handed off and coalesced into one write sharing one committer
+  that throws on the first group's `markBatchFinished`; after that write,
+  `hasUnwrittenBatches()` is still `true` and the committer's finished count
+  is still `0` (neither group acknowledged, but neither orphaned either); a
+  third group is handed off and a second write completes without error;
+  afterwards all three records are acknowledged in handoff order, the
+  committer's finished count is `3`, and `hasUnwrittenBatches()` is `false`.
+  Fails without the fix (the second group's unit never reaches
+  `completedUnits`, so `hasUnwrittenBatches()` stays `true` even after the
+  third group is acknowledged) and passes with it.
+- `CoalescedQueuedBatchesTest.groupThatFailsToMarkDoesNotOrphanSiblingGroups`
+  — follow-up to the same review item (§3.2): a group that carries a
+  committer but was never registered at handoff is listed FIRST and a
+  properly handed-off sibling group SECOND; `reportWritten` is asserted to
+  throw `IllegalStateException` (the failure is surfaced, not swallowed) while
+  the sibling is still marked, drained and acknowledged
+  (`hasUnwrittenBatches()` is `false` and the sibling's record reached the
+  committer's `processed` list). Fails without the fix (the sibling, listed
+  after the group that throws, never reaches `completedUnits` because the
+  plain loop's exception aborts it before marking the sibling) and passes
+  with it.
 - `RetiredHandoffNotAcknowledgedTest` — §3.8 item 5:
   `writtenAfterRetirementIsNotAcknowledgedAndNotAnError` — a unit whose
   committer throws the closed-store `NullPointerException`; `reset()`; the
@@ -486,12 +575,12 @@ The FIFO fails SAFE: every failure leaves units outstanding, so the durable offs
 
 - **FM-09.01-4 The offset commit fails while the drain acknowledges the head**
   - **Trigger**: the committer throws inside `acknowledgeRecords` — Debezium's `Timed out while waiting for committing task offset`, an offset store that cannot be reached, a committer racing a failing worker.
-  - **Behaviour**: the exception propagates out of `checkIfBatchCanBeCommitted` to the worker, which had already dropped the written batch (WRITTEN-ONCE, §3.2) and treats the error as `UNKNOWN` (retried, the worker moves on). The unit stays in `completedUnits` and `outstandingSequences` (removal follows acknowledgement), so no younger unit and no control record can pass it; the NEXT drain — the next unit any worker completes — acknowledges it again, in order.
-  - **Detection**: ERROR `ClickHouseBatchRunnable exception - Task(...)` with the committer's cause, WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN) ...`; immediate. A poisoned writer (`OffsetStorageWriter is already flushing`) is FM-09.02-1 instead.
+  - **Behaviour**: the exception propagates out of `checkIfBatchCanBeCommitted`, or out of `reportWritten` wrapped as `OffsetAcknowledgementException` (PR #1437 review, Low item 1), to the worker, which had already dropped the written batch(es) (WRITTEN-ONCE, §3.2) and retries/backs off instead of stopping. The unit stays in `completedUnits` and `outstandingSequences` (removal follows acknowledgement), so no younger unit and no control record can pass it; the NEXT drain — the next unit any worker completes, from `checkIfBatchCanBeCommitted` or `reportWritten` — acknowledges it again, in order. When the failed write had coalesced more than one group (§3.2), every sibling group was already marked written by `reportWritten`'s first phase before the drain that throws, so none of them is orphaned by this failure (that was the pre-fix defect this spec's §3.2 now documents and `CoalescedQueuedBatchesTest.committerFailureOnFirstOfTwoCoalescedGroupsDoesNotOrphanTheSecond` covers).
+  - **Detection**: ERROR `ClickHouseBatchRunnable exception - Task(...)` with the committer's cause, then WARN `Offset acknowledgement error -- Task(...): the written rows are durably in ClickHouse, but reporting one or more groups to the handoff FIFO failed (...)`. Before Low item 1 this case fell through to the generic classifier and logged WARN `Retriable ClickHouse error (Code: -1, Category: UNKNOWN) ...` instead — indistinguishable from an actual ClickHouse outage even though no ClickHouse server was involved; `ClickHouseBatchRunnable.isOffsetAcknowledgementFailure` now detects `OffsetAcknowledgementException` anywhere in the cause chain and logs it under its own name before the classifier ever runs. Immediate. A poisoned writer (`OffsetStorageWriter is already flushing`) is FM-09.02-1 instead, checked first.
   - **Blast radius**: none lost. On an idle source the retry waits for the next row: heartbeats cannot commit while the unit is outstanding (spec 09.04), so the durable position lags by one unit until then.
   - **Recovery**: self-heals at the next completed unit; nothing to do.
   - **RTO**: time to the next row on the source; if the process restarts first, replay of that unit.
-  - **Test**: `OffsetAcknowledgementFailureTest.failedAcknowledgementIsRetriedByTheNextDrainInHandoffOrder()`, `DebeziumOffsetManagementTest.testAcknowledgePropagatesCommitError()`.
+  - **Test**: `OffsetAcknowledgementFailureTest.failedAcknowledgementIsRetriedByTheNextDrainInHandoffOrder()`, `DebeziumOffsetManagementTest.testAcknowledgePropagatesCommitError()`, `CoalescedQueuedBatchesTest.committerFailureOnFirstOfTwoCoalescedGroupsDoesNotOrphanTheSecond()`.
 
 - **FM-09.01-5 Handoff enqueue interrupted**
   - **Trigger**: the Debezium thread is interrupted while `put` blocks on a full worker queue (engine shutdown during backpressure).

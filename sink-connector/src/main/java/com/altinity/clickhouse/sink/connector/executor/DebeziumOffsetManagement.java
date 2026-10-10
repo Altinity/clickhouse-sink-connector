@@ -774,6 +774,90 @@ public class DebeziumOffsetManagement {
     }
 
     /**
+     * Outcome of {@link #markGroupWritten}, before any FIFO drain is
+     * attempted. Kept distinct from a plain {@code HandoffUnit} so a caller
+     * can tell "nothing left to do for this group" (retired / not handed
+     * off / still incomplete) apart from "this group just completed its
+     * unit" without re-deriving it from {@code groupToUnit} state that has
+     * already been mutated.
+     */
+    private static final class MarkResult {
+        private enum Kind { RETIRED, NOT_HANDED_OFF, STILL_INCOMPLETE, UNIT_COMPLETE }
+
+        private static final MarkResult RETIRED = new MarkResult(Kind.RETIRED, null);
+        private static final MarkResult NOT_HANDED_OFF = new MarkResult(Kind.NOT_HANDED_OFF, null);
+        private static final MarkResult STILL_INCOMPLETE = new MarkResult(Kind.STILL_INCOMPLETE, null);
+
+        final Kind kind;
+        final HandoffUnit unit; // non-null only for UNIT_COMPLETE
+
+        private MarkResult(Kind kind, HandoffUnit unit) {
+            this.kind = kind;
+            this.unit = unit;
+        }
+
+        private static MarkResult unitComplete(HandoffUnit unit) {
+            return new MarkResult(Kind.UNIT_COMPLETE, unit);
+        }
+    }
+
+    /**
+     * Records that one written group's rows are durably in ClickHouse: the
+     * decrement / {@code completedUnits.put} bookkeeping shared by
+     * {@link #checkIfBatchCanBeCommitted} (one group, drains immediately
+     * afterwards) and {@link #reportWritten} (every group of a coalesced
+     * write, which must ALL be recorded before any drain is attempted so a
+     * later group's acknowledgement does not depend on an earlier group's
+     * drain succeeding). Never drains the FIFO itself.
+     *
+     * @param batch the written group.
+     * @return what this call did; {@link MarkResult#unit} is set only when
+     *         the group was the last one its unit was waiting on.
+     * @throws IllegalStateException if the batch carries a Debezium committer
+     *                               but was never registered at handoff -- it
+     *                               cannot be ordered and must not be
+     *                               acknowledged silently.
+     */
+    private static synchronized MarkResult markGroupWritten(List<ClickHouseStruct> batch) {
+        HandoffUnit unit = groupToUnit.remove(new BatchKey(batch));
+        if (unit == null) {
+            if (isRetired(batch)) {
+                // The engine that handed this unit off has stopped and its
+                // offset store closed with it (§3.8 item 5): its committer
+                // cannot acknowledge anything -- it throws from the closed
+                // store, and the failed flush leaves the OffsetStorageWriter
+                // "already flushing" for good, which is how a worker used to
+                // die here. The rows are in ClickHouse; the offset was never
+                // committed; the restarted engine redelivers the unit from the
+                // last committed offset (at-least-once, spec 02.04). Not an
+                // error: the worker moves on.
+                log.info("Handoff sequence {} was retired by an engine restart before its rows were "
+                        + "reported written: not acknowledged (the engine that handed it off has "
+                        + "stopped and its offset store is closed); the restarted engine redelivers "
+                        + "it from the last committed offset.", handoffSequenceOf(batch));
+                return MarkResult.RETIRED;
+            }
+            if (carriesCommitter(batch)) {
+                throw new IllegalStateException("a batch carrying a Debezium committer reached "
+                        + "the writer without a handoff sequence; it cannot be ordered against "
+                        + "the other outstanding batches, so its offset is not acknowledged");
+            }
+            // The Kafka Connect sink path: no Debezium committer, offsets are
+            // committed through the task's own durable watermark. Nothing to
+            // order here.
+            return MarkResult.NOT_HANDED_OFF;
+        }
+        unit.remainingGroups--;
+        if (unit.remainingGroups > 0) {
+            log.debug("Handoff sequence {}: {} group(s) still unwritten", unit.sequence,
+                    unit.remainingGroups);
+            return MarkResult.STILL_INCOMPLETE;
+        }
+        completedUnits.put(unit.sequence, unit);
+        return MarkResult.unitComplete(unit);
+    }
+
+    /**
      * Reports that a group's rows are durably in ClickHouse and lets the FIFO
      * decide whether its unit's offset can be acknowledged now.
      * <p>
@@ -794,43 +878,98 @@ public class DebeziumOffsetManagement {
      */
     static synchronized public boolean checkIfBatchCanBeCommitted(
             List<ClickHouseStruct> batch) throws InterruptedException {
-        HandoffUnit unit = groupToUnit.remove(new BatchKey(batch));
-        if (unit == null) {
-            if (isRetired(batch)) {
-                // The engine that handed this unit off has stopped and its
-                // offset store closed with it (§3.8 item 5): its committer
-                // cannot acknowledge anything -- it throws from the closed
-                // store, and the failed flush leaves the OffsetStorageWriter
-                // "already flushing" for good, which is how a worker used to
-                // die here. The rows are in ClickHouse; the offset was never
-                // committed; the restarted engine redelivers the unit from the
-                // last committed offset (at-least-once, spec 02.04). Not an
-                // error: the worker moves on.
-                log.info("Handoff sequence {} was retired by an engine restart before its rows were "
-                        + "reported written: not acknowledged (the engine that handed it off has "
-                        + "stopped and its offset store is closed); the restarted engine redelivers "
-                        + "it from the last committed offset.", handoffSequenceOf(batch));
-                return false;
-            }
-            if (carriesCommitter(batch)) {
-                throw new IllegalStateException("a batch carrying a Debezium committer reached "
-                        + "the writer without a handoff sequence; it cannot be ordered against "
-                        + "the other outstanding batches, so its offset is not acknowledged");
-            }
-            // The Kafka Connect sink path: no Debezium committer, offsets are
-            // committed through the task's own durable watermark. Nothing to
-            // order here.
-            return true;
-        }
-        unit.remainingGroups--;
-        if (unit.remainingGroups > 0) {
-            log.debug("Handoff sequence {}: {} group(s) still unwritten", unit.sequence,
-                    unit.remainingGroups);
+        MarkResult result = markGroupWritten(batch);
+        if (result.kind == MarkResult.Kind.RETIRED || result.kind == MarkResult.Kind.STILL_INCOMPLETE) {
             return false;
         }
-        completedUnits.put(unit.sequence, unit);
+        if (result.kind == MarkResult.Kind.NOT_HANDED_OFF) {
+            return true;
+        }
+        long sequence = result.unit.sequence;
         drainCompletedUnits();
-        return !outstandingSequences.contains(unit.sequence);
+        return !outstandingSequences.contains(sequence);
+    }
+
+    /**
+     * Reports that every group of a single coalesced write is durably in
+     * ClickHouse, and drains the FIFO exactly once afterwards (Spec 09.01
+     * section 3.2; PR #1437 review).
+     * <p>
+     * {@code ClickHouseBatchRunnable.processBatch} writes several groups --
+     * each belonging to an independently handed-off unit -- to ClickHouse in
+     * one coalesced write, then used to report them with one
+     * {@code checkIfBatchCanBeCommitted} call per group in a plain loop. That
+     * call can itself drain the FIFO and a drain can throw (a Debezium
+     * {@code markBatchFinished()} failure, or the internal FIFO corruption
+     * checks in {@link #drainCompletedUnits}). A throw on the first of N
+     * groups aborted the loop, so groups 2..N -- already written to
+     * ClickHouse -- never reached {@code markGroupWritten} at all: their
+     * units' {@code remainingGroups} never reached zero and they were never
+     * placed in {@link #completedUnits}, orphaning them permanently (their
+     * offsets could never be acknowledged, and {@link #hasUnwrittenBatches}
+     * stayed true forever). Marking every group written BEFORE attempting any
+     * drain means a drain failure can no longer erase the bookkeeping for
+     * groups it did not even reach: by the time this method can throw, every
+     * group passed to it is already durably recorded, and the next
+     * drain -- from any later write, on any worker -- picks all of them up.
+     * </p>
+     * <p>
+     * {@link #markGroupWritten} can itself throw (follow-up to the same
+     * review item): a group that carries a Debezium committer but was never
+     * registered at handoff is a producer bug, and {@code markGroupWritten}
+     * refuses to acknowledge it silently. A plain loop that let that
+     * exception propagate out of the {@code for} would reproduce the exact
+     * orphaning shape this method exists to fix, just with a different
+     * exception -- group k's throw would once again stop groups k+1..N from
+     * ever being marked, even though all of them, including k, are already
+     * durably written. So every group is marked in a try/catch: a per-group
+     * failure is logged and remembered (only the first is kept; later ones
+     * are attached to it via {@link Throwable#addSuppressed}) but never stops
+     * the loop. The drain always runs afterwards -- it must still pick up
+     * whatever groups above {@code k} completed their unit -- and only then
+     * is the remembered failure re-thrown, so the caller still learns about
+     * it and nothing is silently swallowed. If the drain itself also throws,
+     * that exception takes precedence (it is raised after every group has
+     * already been marked, so nothing is lost by preferring it) with the mark
+     * failure, if any, attached as suppressed.
+     * </p>
+     *
+     * @param groups every group written by one coalesced batch.
+     * @throws InterruptedException  if the drain is interrupted.
+     * @throws IllegalStateException if one or more groups carried a Debezium
+     *                               committer but were never registered at
+     *                               handoff, or if the FIFO bookkeeping is
+     *                               corrupt (the first such failure, with any
+     *                               later ones attached as suppressed).
+     */
+    static synchronized void reportWritten(List<List<ClickHouseStruct>> groups) throws InterruptedException {
+        RuntimeException firstMarkFailure = null;
+        for (List<ClickHouseStruct> group : groups) {
+            try {
+                markGroupWritten(group);
+            } catch (RuntimeException e) {
+                log.error("markGroupWritten failed for one group of a coalesced write; its rows are "
+                        + "durably in ClickHouse (WRITTEN-ONCE) but this group cannot be acknowledged. "
+                        + "Marking the remaining groups anyway so this failure does not orphan them "
+                        + "(spec 09.01 section 3.2, PR #1437 review): {}", e.toString());
+                if (firstMarkFailure == null) {
+                    firstMarkFailure = e;
+                } else {
+                    firstMarkFailure.addSuppressed(e);
+                }
+            }
+        }
+        try {
+            drainCompletedUnits();
+        } catch (RuntimeException | InterruptedException drainFailure) {
+            if (firstMarkFailure != null) {
+                drainFailure.addSuppressed(firstMarkFailure);
+            }
+            throw drainFailure;
+        }
+        if (firstMarkFailure != null) {
+            throw firstMarkFailure;
+        }
     }
 
     /**
