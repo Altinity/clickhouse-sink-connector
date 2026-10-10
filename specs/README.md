@@ -123,6 +123,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 - **[11.03: Lean 4 Formal Verification & Simulation Model](11-verification-tooling/03-lean-formal-simulation.md)**: Mathematical state machine proofs.
 - **[11.04: Re-synchronising a Replica After an Unlogged Source Change (`ch-mysql-resync`)](11-verification-tooling/04-mysql-resync-after-unlogged-change.md)**: Count-reconciled, atomic `REPLACE PARTITION` repair after `sql_log_bin=0` patches / reloads, with connector offset rewind.
 - **[11.05: Unit Coverage for the Snapshot/Load Tooling (`mysql_dumper`, `clickhouse_loader`)](11-verification-tooling/05-python-tool-unit-coverage.md)**: Offline, DB-free unit contract for credential redaction, mysqlsh dump-clause construction, dump-path/timezone parsing, and MySQL→ClickHouse DDL translation.
+- **[11.06: Deterministic Review Gates (`scripts/review_gates.py`)](11-verification-tooling/06-review-gates.md)**: Offline gates over the lines a pull request adds: destructive operations warned and attested, no code that stops merges, no Category X runtime dependency, and hygiene (conflict markers, swallowed exceptions, credentials, YAML/JSON syntax).
 
 ---
 

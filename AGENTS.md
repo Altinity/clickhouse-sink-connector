@@ -171,6 +171,40 @@ loud:
    tests.
 7. **Run `python3 scripts/validate_specs.py`** to confirm specification integrity.
 
+## Reviewing changes: skills and gates
+
+Every pull request, your own or someone else's, is reviewed with the same
+method:
+
+1. **Load the review skills in `.claude/skills/`**
+   ([index](.claude/skills/README.md)):
+   * Start with `pr-self-review`. Its five gates are contract, impacted
+     surface, failure and divergence, evidence, and then lower-priority
+     quality.
+   * Then load `code-quality-<language>` for every changed language (`jvm`,
+     `python`, `go`, `bash`, `sql`) and `code-quality-architecture` for the
+     design pass.
+   * Use `code-reuse-review` and `design-note-debt` for duplication and
+     deliberate shortcuts.
+   * Use `destructive-operation-safety` for any code that drops, truncates or
+     deletes.
+   * Use `repro-harness-negative-proof` before calling anything "not
+     reproducible" or "unaffected".
+   * Use `sink-connector-mysql-source-of-truth` for any "which side is right"
+     question.
+   * Before writing code, `code-reuse-first` and
+     `mandatory-code-change-validation` apply.
+2. **Run the deterministic gates:**
+   `python3 scripts/review_gates.py --base origin/<base>` (Spec 11.06,
+   [doc/review_gates.md](doc/review_gates.md)). CI runs them on every pull
+   request. A destructive statement needs a `DESTRUCTIVE:` comment and a
+   `Destructive-Op-Check: sites=<N>; result=pass` commit trailer. Code may
+   never stop merges, and no GPL/LGPL/AGPL dependency may reach a runtime
+   scope.
+
+The gates prove what a machine can prove. The skills cover the judgement.
+A green gate run is not an approval.
+
 ## Repository shape
 
 - `specs/` — Component and system specifications (001–009, Constitution, Smart Ralph protocol).
