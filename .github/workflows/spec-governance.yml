@@ -35,10 +35,15 @@ jobs:
       - name: Check out (full history for the spec-first diff)
         uses: actions/checkout@v4
         with:
-          # On pull_request the default ref is the synthetic merge commit, whose
-          # auto-generated message never carries [spec-exempt: ...]; check out
-          # the PR head so HEAD and its message are the contributor's own.
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          # On pull_request github.sha is the synthetic merge commit: the tree
+          # that would land, PR head merged into the current base. Validate
+          # that tree. Checking out the PR head instead failed every branch
+          # cut before formal_specs/ existed (lake build found no
+          # lean-toolchain) and validated a tree that is not what merges.
+          # The [spec-exempt: ...] marker still works: validate_specs.py
+          # searches every commit message in BASE..HEAD, and the merge
+          # commit's second parent is the contributor's head.
+          ref: ${{ github.sha }}
           fetch-depth: 0
 
       - name: Install elan (toolchain resolved from formal_specs/lean/lean-toolchain)
