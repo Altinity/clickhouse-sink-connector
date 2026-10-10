@@ -38,8 +38,16 @@ methodology in `.claude/skills/` (judgement) and the spec validator
 ### 3.1 Scope of the diff
 The gates inspect `git diff -U0 base...head`, the lines the change adds
 relative to the merge base. Lines that landed on the base branch after the
-branch point are never attributed to the change. Commit messages are read
-from `merge-base..head`, newest first.
+branch point are never attributed to the change. The commits checked for
+attestation are the non-merge commits of `merge-base..head`.
+
+**The checks are not retroactive.** When the commit that introduced
+`scripts/review_gates.py` lies inside `merge-base..head`, the range starts at
+that commit's parent instead: the introducing commit and everything after it
+are checked, nothing older is. This is the case for a long-lived release
+branch compared with an older base (the 2.11.0 line against `develop`):
+without it, the check would re-judge 139 commits that were reviewed and
+merged before it existed and fail on lines nobody in the PR wrote.
 
 ### 3.2 destructive
 An added line is a site when, outside a comment-only line, it matches:
@@ -60,10 +68,14 @@ Each site needs a `DESTRUCTIVE:` marker in a comment (not a string literal),
 followed by at least 20 characters, within 5 lines of the site in the head
 version of the file.
 
-The newest commit in the range that carries `Destructive-Op-Check:` must
-state `sites=<N>; result=pass`, where N equals the number of sites in the
-change. A missing trailer, a count mismatch or a non-pass result is a
-finding.
+Attestation is per commit: every commit that adds sites (counted from that
+commit's own diff) must carry `Destructive-Op-Check: sites=<N>; result=pass`
+in its own message, where N equals its own site count. Several such lines in
+one message are summed, which is what a squash merge of a multi-commit PR
+produces. A commit that adds no site needs no trailer. A missing trailer, a
+count mismatch or a non-pass result is a finding that names the commit. A
+single cumulative trailer for the whole range cannot work for a release
+branch, whose range holds many already-attested commits.
 
 ### 3.3 merge-stop
 An added line, or a run of up to four consecutive added lines, is a finding
@@ -147,7 +159,11 @@ All tests are offline and run by `python3 -m unittest discover -s scripts/tests`
   `test_trailer_count_must_match`, `test_short_warning_is_not_enough`,
   `test_marker_inside_string_literal_is_not_a_warning`,
   `test_concatenated_and_split_flags_are_sites`,
-  `test_failed_result_is_rejected`.
+  `test_failed_result_is_rejected`, `test_each_commit_attests_its_own_sites`,
+  `test_commit_without_its_own_trailer_is_reported`,
+  `test_squash_message_with_several_trailers_is_summed`.
+- §3.1: `test_changes_older_than_the_gate_are_not_checked`,
+  `test_changes_from_the_gate_commit_onward_are_checked`.
 - §3.3: `test_literal_stop_is_reported`,
   `test_split_and_templated_forms_are_reported`,
   `test_start_merges_is_allowed`.
@@ -162,9 +178,11 @@ All tests are offline and run by `python3 -m unittest discover -s scripts/tests`
   `test_broken_json`, `test_broken_yaml_when_pyyaml_available`.
 - §3.6: `test_tests_docs_and_specs_are_exempt`, `test_prose_and_tests_are_exempt`.
 - §3.7: `test_exit_codes`.
-- Calibration: over the 2.11.0 line (`3c0759b1..7f3102db`), the gates report
-  6 unwarned destructive sites and no merge-stop, license or hygiene
-  findings (`doc/review_gates.md`).
+- Calibration: on a range that does not contain the introducing commit, run
+  over the 2.11.0 line (`3c0759b1..7f3102db`), the checks report 6 unwarned
+  destructive sites and no merge-stop, license or hygiene findings
+  (`doc/review_gates.md`). The release PR's own range (`3c0759b1` to the
+  2.11.0 tip, which contains the introducing commit) reports 0 findings.
 
 ## 6. Failure Modes & Recovery
 - **FM-11.06-1 A destructive site the patterns do not recognise.** For example,
