@@ -12,7 +12,7 @@ to stop the task or retry the batch.
 - **Primary Source**: `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/common/ClickHouseErrorClassifier.java`
 - **Enum**: `ErrorCategory { RETRIABLE, FATAL, UNKNOWN }`
 - **Code extraction**: `extractErrorCode(Exception)` matches `Code:\s*(\d+)` against the exception and every `getCause()` in the chain; `-1` when none is found.
-- **Consumer**: `ClickHouseBatchRunnable#run` — `FATAL` rethrows (with `currentBatch` retained) to stop the scheduled task, and the Debezium thread turns that into a loud engine stop (spec 03.01 §3.3); `RETRIABLE`/`UNKNOWN` keep the batch and retry it with exponential backoff (spec 10.02).
+- **Consumer**: `ClickHouseBatchRunnable#run` — `FATAL` rethrows (with `currentBatch` retained) to stop the scheduled task, and the Debezium thread turns that into a loud engine stop (spec 03.01 §3.3); `RETRIABLE`/`UNKNOWN` keep the batch and retry it with exponential backoff (spec 10.02). Not every caught exception reaches `classify`: a poisoned `OffsetStorageWriter` (spec 09.02 §6 FM-09.02-1) and an `OffsetAcknowledgementException` from `DebeziumOffsetManagement.reportWritten` (spec 09.01 §6 FM-09.01-4, PR #1437 review Low item 1) are both detected and logged under their own names first, because neither carries a ClickHouse error code and `classify` would otherwise file them under `UNKNOWN` — indistinguishable from an actual ClickHouse outage even though no ClickHouse server was involved in either.
 
 ---
 

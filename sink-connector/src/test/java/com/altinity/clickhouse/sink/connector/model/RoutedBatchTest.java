@@ -151,6 +151,42 @@ public class RoutedBatchTest {
         assertEquals("db2.users", routingKey2);
     }
 
+    /**
+     * PR #1437 review (Low item 2): the topic format is
+     * {@code server.database.table}, but a MySQL table name may itself
+     * contain a dot (a name MySQL accepts written in backticks, e.g.
+     * {@code `a.b`}); Debezium still emits exactly three dot-separated
+     * segments for it, {@code server.database.a.b} -- the table segment is
+     * not re-split. {@code split("\\.")} (no limit) does not know that: it
+     * breaks {@code "server.database.a.b"} into FOUR parts and
+     * {@code extractTableName}/{@code createRoutingKey} used {@code parts[2]}
+     * / {@code parts[1] + "." + parts[2]}, i.e. just {@code "a"} /
+     * {@code "database.a"} -- identical to what a SIBLING table literally
+     * named {@code a} in the same database would produce. The two distinct
+     * tables then collapse onto the same routing group, breaking the
+     * single-table-per-group invariant
+     * {@code DebeziumChangeEventCapture.appendToRecordsWithHashRouting} and
+     * the write path both rely on. {@code split("\\.", 3)} keeps the table
+     * segment whole.
+     */
+    @Test
+    public void testDottedTableNameIsNotSplitFurther() {
+        String dotted = "server.database.a.b";
+        String sibling = "server.database.a";
+
+        assertEquals("a.b", RoutedBatch.extractTableName(dotted),
+                "the table segment of the topic must not be re-split on its own dot");
+        assertEquals("a", RoutedBatch.extractTableName(sibling));
+
+        assertEquals("database.a.b", RoutedBatch.createRoutingKey(dotted));
+        assertEquals("database.a", RoutedBatch.createRoutingKey(sibling));
+
+        assertNotEquals(RoutedBatch.extractTableName(dotted), RoutedBatch.extractTableName(sibling),
+                "table \"a.b\" and table \"a\" must not collapse onto the same table name");
+        assertNotEquals(RoutedBatch.createRoutingKey(dotted), RoutedBatch.createRoutingKey(sibling),
+                "table \"a.b\" and table \"a\" must not collapse onto the same routing group");
+    }
+
     @Test
     public void testSameTableAlwaysRoutesToSameThread() {
         int threadPoolSize = 5;

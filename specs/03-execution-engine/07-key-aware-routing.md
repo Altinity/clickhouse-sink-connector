@@ -34,7 +34,19 @@ routing.
     carries a usable key (a non-empty primary-key field list and a non-empty
     Debezium key); otherwise `db.table` (the base shard), i.e. the prior
     table-level token.
-  - `createRoutingKey(topic)` — unchanged; produces the `db.table` base token.
+  - `createRoutingKey(topic)` — produces the `db.table` base token by splitting
+    the topic (`server.database.table`) on the first two dots only
+    (`split("\\.", 3)`, PR #1437 review Low item 2), not an unbounded split. A
+    MySQL table name may itself contain a dot (backtick-quoted, e.g. `a.b`);
+    Debezium's topic for it is still exactly three dot-separated segments
+    (`server.database.a.b`), because the table segment is never re-split. An
+    unbounded split did not know that: it broke the topic into four parts and
+    returned `a` as the table name — the same base token a sibling table
+    literally named `a` produces — so both tables' rows collapsed onto one
+    shard key, violating the single-table-per-group invariant
+    `appendToRecordsWithHashRouting` and the write path both assume.
+    `extractTableName(topic)` (used by non-routing call sites for the same
+    topic format) has the identical fix for the identical reason.
   - `calculateThreadId(token, poolSize)` — unchanged;
     `Math.floorMod(token.hashCode(), poolSize)`.
 - **Routing path**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/DebeziumChangeEventCapture.java`
@@ -178,6 +190,12 @@ the committed offset remains a low-water mark from which replay is safe.
 
 ## 5. Verification Criteria
 
+- `RoutedBatchTest.testDottedTableNameIsNotSplitFurther` — PR #1437 review Low
+  item 2: `extractTableName("server.database.a.b")` returns `a.b`, distinct
+  from `extractTableName("server.database.a")`'s `a`; `createRoutingKey` of the
+  same two topics likewise returns distinct `database.a.b` / `database.a`
+  tokens, so a dotted table name and its non-dotted sibling never collapse
+  onto the same routing group or shard key.
 - `RoutedBatchTest.testKeyedRecordsOfSameTableSplitAcrossShards` — two rows of
   one table with different keys produce different shard tokens (and can land on
   different worker queues).
