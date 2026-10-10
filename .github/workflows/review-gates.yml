@@ -1,0 +1,52 @@
+name: Review Gates
+
+# Deterministic review gates over the lines a pull request adds (Spec 11.06,
+# doc/review_gates.md): destructive operations must be warned and attested,
+# no code may stop ClickHouse merges, no GPL/LGPL/AGPL dependency may reach a
+# runtime scope, and basic hygiene (conflict markers, swallowed exceptions,
+# leaked credentials, YAML/JSON that no longer parses).
+
+on:
+  pull_request:
+    branches:
+      - '**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-gates-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review-gates:
+    name: Review gates
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out the PR head (full history for the base...head diff)
+        uses: actions/checkout@v4
+        with:
+          # The synthetic merge commit's message never carries the contributor's
+          # Destructive-Op-Check trailer; gate the PR's own commits.
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install PyYAML (YAML syntax check)
+        run: python3 -m pip install --quiet pyyaml
+
+      - name: Gate self-tests
+        run: python3 -m unittest discover -s scripts/tests -p 'test_review_gates.py' -v
+
+      - name: Run the review gates
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${BASE_REF}:refs/remotes/origin/${BASE_REF}"
+          python3 scripts/review_gates.py --base "origin/${BASE_REF}" --head HEAD
