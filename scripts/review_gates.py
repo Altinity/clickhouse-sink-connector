@@ -12,10 +12,10 @@ destructive  Every added line that irreversibly removes data or objects
              (DROP TABLE/DATABASE/PARTITION/COLUMN/..., TRUNCATE, DELETE FROM,
              ALTER TABLE ... DELETE, DETACH PARTITION, SYSTEM DROP REPLICA,
              recursive+force rm) must carry a ``DESTRUCTIVE:`` comment of at
-             least 20 characters within 5 lines, and the newest commit in the
-             range that carries a ``Destructive-Op-Check: sites=<N>;
-             result=pass`` trailer must attest exactly the number of sites in
-             the change.
+             least 20 characters within 5 lines, and every commit that adds
+             sites must attest them in its own message with
+             ``Destructive-Op-Check: sites=<N>; result=pass`` (several such
+             lines, as a squash merge collects them, are summed).
 merge-stop   No added code may stop or pause ClickHouse merges: the SYSTEM
              statement that stops (TTL) merges, a statement template whose
              verb is interpolated, or a helper named after pausing merges
@@ -33,6 +33,11 @@ hygiene      No merge-conflict markers, no swallowed exceptions (empty Java
              catch block, Python ``except ...: pass``, bare ``except:``), no
              debugger leftovers, no private keys or well-known token formats,
              and every changed YAML/JSON file must still parse.
+
+The checks are not retroactive: when the commit that introduced this script
+lies inside base..head (a long-lived release branch compared with an older
+base), only changes from that commit onward are checked. Code that predates
+the checks was reviewed under the rules of its time.
 
 Exit codes: 0 no findings, 1 findings, 2 usage or git error.
 """
@@ -61,7 +66,7 @@ PROSE_SUFFIXES = (".md", ".rst", ".txt", ".adoc", ".markdown")
 # Grammars and proofs describe syntax and models; they execute nothing.
 NON_EXECUTING_SUFFIXES = (".g4", ".lean")
 PROSE_DIRS = ("doc/", "specs/", "formal_specs/", "release-notes/", ".claude/")
-TEST_SEGMENTS = frozenset({"test", "tests", "__tests__", "testflows", "testdata"})
+TEST_SEGMENTS = frozenset({"test", "tests", "__tests__", "testflows", "testdata", "tests_e2e"})
 TEST_BASENAME_RE = re.compile(
     r"^(?:test_.*|.*_test\.[^.]+|conftest\.py|.*Tests?\.(?:java|kt|groovy)|.*IT\.java)$"
 )
@@ -115,10 +120,41 @@ def merge_base(repo: str, base: str, head: str) -> str:
     return git(repo, "merge-base", base, head).strip()
 
 
-def range_messages(repo: str, base: str, head: str) -> List[str]:
-    """Commit messages in base..head, newest first."""
-    out = git(repo, "log", "--format=%B%x00", f"{base}..{head}")
-    return [m.strip() for m in out.split("\x00") if m.strip()]
+def is_ancestor(repo: str, ancestor: str, descendant: str) -> bool:
+    proc = subprocess.run(
+        ["git", "-C", repo, "merge-base", "--is-ancestor", ancestor, descendant],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode not in (0, 1):
+        raise GitError(f"git merge-base --is-ancestor failed: {proc.stderr.strip()}")
+    return proc.returncode == 0
+
+
+def effective_base(repo: str, merge_base_sha: str, head: str) -> str:
+    """The checks are not retroactive (Spec 11.06 section 3.1): when the commit
+    that introduced this script lies inside merge-base..head, start from its
+    parent, so that commit and everything after it are checked and nothing
+    older is."""
+    added_in = git(repo, "log", "--diff-filter=A", "--format=%H", head, "--",
+                   "scripts/review_gates.py").split()
+    if not added_in:
+        return merge_base_sha
+    intro = added_in[-1]  # oldest commit that added the file
+    if is_ancestor(repo, intro, merge_base_sha):
+        return merge_base_sha
+    parents = git(repo, "rev-list", "--parents", "-n", "1", intro).split()[1:]
+    return parents[0] if parents else merge_base_sha
+
+
+def range_commits(repo: str, base: str, head: str) -> List[Tuple[str, str, Dict[str, List[Tuple[int, str]]]]]:
+    """``(sha, message, lines the commit adds)`` for each non-merge commit in base..head."""
+    shas = git(repo, "rev-list", "--no-merges", f"{base}..{head}").split()
+    result = []
+    for sha in shas:
+        message = git(repo, "log", "-1", "--format=%B", sha)
+        diff = git(repo, "show", "--format=", "--no-color", "--no-ext-diff", "--no-renames", "-U0", sha)
+        result.append((sha, message, parse_added_lines(diff)))
+    return result
 
 
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
@@ -193,6 +229,7 @@ MIN_WARNING_TEXT = 20
 COMMENT_PREFIXES = ("#", "//", "<!--", "*", "/*", ";", "rem ")
 COMMENT_STARTERS = ("#", "//", "--", "/*", "<!--", ";", "*")
 TRAILER_RE = re.compile(r"^Destructive-Op-Check:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+SQUASH_SUBJECT_RE = re.compile(r"\(#\d+\)\s*$")
 RM_WORD_RE = re.compile(r"\brm\b")
 RM_RECURSIVE_RE = re.compile(r"^-\w*r\w*$|^--recursive$", re.IGNORECASE)
 RM_FORCE_RE = re.compile(r"^-\w*f\w*$|^--force$", re.IGNORECASE)
@@ -243,22 +280,67 @@ def window_has_warning(window: Sequence[str]) -> bool:
     return False
 
 
-def parse_trailer(message: str) -> Optional[Dict[str, str]]:
-    m = TRAILER_RE.search(message)
-    if not m:
-        return None
-    fields: Dict[str, str] = {}
-    for chunk in re.split(r";", m.group(1)):
-        if "=" in chunk:
-            key, _, value = chunk.partition("=")
-            fields[key.strip().lower()] = value.strip()
-    return fields
+def parse_trailers(message: str) -> List[Dict[str, str]]:
+    """Every ``Destructive-Op-Check:`` line of a commit message, parsed."""
+    result: List[Dict[str, str]] = []
+    for m in TRAILER_RE.finditer(message):
+        fields: Dict[str, str] = {}
+        for chunk in re.split(r";", m.group(1)):
+            if "=" in chunk:
+                key, _, value = chunk.partition("=")
+                fields[key.strip().lower()] = value.strip()
+        result.append(fields)
+    return result
 
 
-def check_destructive(added: Dict[str, List[Tuple[int, str]]],
-                      head_text, messages: Sequence[str]) -> List[Finding]:
+def destructive_sites(added: Dict[str, List[Tuple[int, str]]]) -> List[Tuple[str, int]]:
+    return [(path, lineno)
+            for path, lines in sorted(added.items()) if not exempt_from_code_gates(path)
+            for lineno, text in lines if is_destructive_line(text)]
+
+
+def check_commit_attestation(sha: str, message: str,
+                             added: Dict[str, List[Tuple[int, str]]]) -> List[Finding]:
+    """One commit's own sites must be attested by that commit's own message."""
+    sites = destructive_sites(added)
+    if not sites:
+        return []
+    path, line = sites[0]
+    short = sha[:10]
+    expected = f"Destructive-Op-Check: sites={len(sites)}; result=pass"
+    trailers = parse_trailers(message)
+    if not trailers:
+        return [Finding(path, line, "destructive",
+                        f"commit {short} adds {len(sites)} destructive site(s) but its message has no "
+                        f"'{expected}' trailer")]
     findings: List[Finding] = []
-    sites: List[Tuple[str, int]] = []
+    bad_results = [t.get("result", "") for t in trailers if t.get("result", "").lower() not in ("pass", "passed")]
+    if bad_results:
+        findings.append(Finding(path, line, "destructive",
+                                f"commit {short}: Destructive-Op-Check trailer has result="
+                                f"{bad_results[0] or '<missing>'}; every site must be reviewed and warned "
+                                "(result=pass)"))
+    values = [t.get("sites", "") for t in trailers]
+    # A squash merge ("subject (#N)") concatenates the trailers of the PR's
+    # commits, each of which was checked exactly in that PR. Their sum can
+    # exceed the squashed diff's net count when the PR reworked a destructive
+    # line, never fall short of it.
+    squashed = bool(SQUASH_SUBJECT_RE.search(message.strip().splitlines()[0] if message.strip() else ""))
+    total = sum(int(v) for v in values) if all(v.isdigit() for v in values) else None
+    if total is None or (total < len(sites) if squashed else total != len(sites)):
+        findings.append(Finding(path, line, "destructive",
+                                f"commit {short}: Destructive-Op-Check trailer(s) attest sites="
+                                f"{'+'.join(v or '<missing>' for v in values)} but the commit adds "
+                                f"{len(sites)} destructive site(s); expected '{expected}'"))
+    return findings
+
+
+def check_destructive(added: Dict[str, List[Tuple[int, str]]], head_text,
+                      commits: Sequence[Tuple[str, str, Dict[str, List[Tuple[int, str]]]]]) -> List[Finding]:
+    """Warning comments are checked on the head version of every line the
+    change adds; attestation is checked per commit (``commits`` holds
+    ``(sha, message, lines that commit adds)`` for each non-merge commit)."""
+    findings: List[Finding] = []
     for path, lines in sorted(added.items()):
         if exempt_from_code_gates(path):
             continue
@@ -266,7 +348,6 @@ def check_destructive(added: Dict[str, List[Tuple[int, str]]],
         for lineno, text in lines:
             if not is_destructive_line(text):
                 continue
-            sites.append((path, lineno))
             if content is None:
                 content = (head_text(path) or "").splitlines()
             lo = max(0, lineno - 1 - WARNING_WINDOW)
@@ -278,30 +359,8 @@ def check_destructive(added: Dict[str, List[Tuple[int, str]]],
                     f"(>= {MIN_WARNING_TEXT} chars: what is destroyed and how the "
                     f"blast radius is bounded) within {WARNING_WINDOW} lines",
                 ))
-    if not sites:
-        return findings
-    trailer = None
-    for msg in messages:  # newest first
-        trailer = parse_trailer(msg)
-        if trailer is not None:
-            break
-    first_path, first_line = sites[0]
-    expected = f"Destructive-Op-Check: sites={len(sites)}; result=pass"
-    if trailer is None:
-        findings.append(Finding(first_path, first_line, "destructive",
-                                f"{len(sites)} destructive site(s) but no commit in the range "
-                                f"carries the trailer '{expected}'"))
-    else:
-        sites_value = trailer.get("sites", "")
-        result_value = trailer.get("result", "").lower()
-        if result_value not in ("pass", "passed"):
-            findings.append(Finding(first_path, first_line, "destructive",
-                                    f"Destructive-Op-Check trailer has result={result_value or '<missing>'}; "
-                                    "every site must be reviewed and warned (result=pass)"))
-        if not sites_value.isdigit() or int(sites_value) != len(sites):
-            findings.append(Finding(first_path, first_line, "destructive",
-                                    f"Destructive-Op-Check trailer attests sites={sites_value or '<missing>'} "
-                                    f"but the change adds {len(sites)} destructive site(s); expected '{expected}'"))
+    for sha, message, commit_added in commits:
+        findings += check_commit_attestation(sha, message, commit_added)
     return findings
 
 
@@ -598,8 +657,8 @@ def check_hygiene(added: Dict[str, List[Tuple[int, str]]], head_text) -> Tuple[L
 
 def run_gates(repo: str, base: str, head: str, gates: Iterable[str]) -> Tuple[List[Finding], List[str]]:
     gates = list(gates)
-    mb = merge_base(repo, base, head)
-    added = parse_added_lines(changed_diff(repo, base, head))
+    mb = effective_base(repo, merge_base(repo, base, head), head)
+    added = parse_added_lines(changed_diff(repo, mb, head))
     cache: Dict[Tuple[str, str], Optional[str]] = {}
 
     def text_at(ref: str):
@@ -614,7 +673,7 @@ def run_gates(repo: str, base: str, head: str, gates: Iterable[str]) -> Tuple[Li
     findings: List[Finding] = []
     notices: List[str] = []
     if "destructive" in gates:
-        findings += check_destructive(added, head_text, range_messages(repo, mb, head))
+        findings += check_destructive(added, head_text, range_commits(repo, mb, head))
     if "merge-stop" in gates:
         findings += check_merge_stop(added)
     if "license" in gates:

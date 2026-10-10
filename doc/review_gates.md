@@ -60,14 +60,19 @@ count. For example:
 statement.execute("DROP TABLE IF EXISTS " + scratchTable);
 ```
 
-In addition, the newest commit in the range that carries the trailer below
-must attest exactly the number of sites in the change:
+In addition, every commit that adds sites must attest exactly the number of
+sites it adds, in its own message:
 
 ```
 Destructive-Op-Check: sites=<N>; result=pass
 ```
 
-A stale or copied trailer with a different count fails. The trailer is an
+A commit that adds no site needs no trailer. Several trailer lines in one
+message are summed, which is what a squash merge of a multi-commit PR
+produces. A stale or copied trailer with a different count fails, and the
+finding names the commit. The one allowance is a squash merge (subject ending
+in `(#N)`): its trailers were each checked in the PR, so their sum may exceed
+the net count when the PR reworked a destructive line, but never fall short. The trailer is an
 attestation that each site was reviewed, that its semantics were checked
 against the code that actually executes it (not a parameter description), and
 that a dry-run path exists where a tool can run against live data. The
@@ -130,14 +135,21 @@ The destructive and merge-stop gates skip:
 
 These files quote or model destructive statements without executing them.
 
+## Not retroactive
+
+When the commit that introduced `scripts/review_gates.py` is inside the
+compared range, the checks start at that commit, so code reviewed and merged
+before the checks existed is not re-judged. The release PR for the 2.11.0
+line against `develop` is the case this is for: its range holds 139 commits
+that predate the checks. Every change from the introducing commit onward is
+checked in full.
+
 ## Calibration
 
-Run over the full 2.11.0 line (`3c0759b1..7f3102db`, 139 commits), the
-gates report the following:
-
-* 6 destructive sites without a `DESTRUCTIVE:` comment: the PostgreSQL
-  `DROP COLUMN` translation, one log message and one operator hint naming
-  `DROP TABLE`.
-* A trailer count that does not cover the line's 35 sites. That is expected
-  for a range of many commits gated as one.
-* No merge-stop, license or hygiene findings.
+Run over the 2.11.0 line before the checks existed (`3c0759b1..7f3102db`,
+139 commits), they report 6 destructive sites without a `DESTRUCTIVE:`
+comment: the PostgreSQL `DROP COLUMN` translation, one log message and one
+operator hint naming `DROP TABLE`. Two squash commits also carry
+older-format trailers that attest fewer sites than they add. They report no
+merge-stop, license or hygiene findings. Those 6 lines are candidates for a warning comment the next
+time they are touched.

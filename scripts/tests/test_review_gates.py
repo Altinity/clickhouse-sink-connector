@@ -68,7 +68,7 @@ class DestructiveGateTest(GateTestCase):
         messages = [f.message for f in findings]
         self.assertEqual(len(findings), 2, messages)
         self.assertTrue(any("without a 'DESTRUCTIVE:' comment" in m for m in messages))
-        self.assertTrue(any("no commit in the range" in m for m in messages))
+        self.assertTrue(any("its message has no" in m for m in messages))
 
     def test_warned_site_with_matching_trailer_passes(self):
         self.repo.write("tool/purge.py", """\
@@ -124,6 +124,75 @@ class DestructiveGateTest(GateTestCase):
         findings = self.run_gate("destructive", f"x\n\n{TRAILER_KEY}: sites=1; result=fail")
         self.assertEqual(len(findings), 1)
         self.assertIn("result=fail", findings[0].message)
+
+    WARN = "# DESTRUCTIVE: drops only the scratch table this step created above\n"
+
+    def test_each_commit_attests_its_own_sites(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        self.repo.snapshot(f"first\n\n{TRAILER_KEY}: sites=1; result=pass")
+        self.repo.write("tool/b.py", self.WARN + 'cur.execute("DROP TABLE b_tmp")\n')
+        # The second commit carries its own trailer; the first keeps its own.
+        self.assertEqual(self.run_gate("destructive", f"second\n\n{TRAILER_KEY}: sites=1; result=pass"), [])
+
+    def test_commit_without_its_own_trailer_is_reported(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        self.repo.snapshot(f"first\n\n{TRAILER_KEY}: sites=1; result=pass")
+        self.repo.write("tool/b.py", self.WARN + 'cur.execute("DROP TABLE b_tmp")\n')
+        findings = self.run_gate("destructive", "second, no trailer")
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].path, "tool/b.py")
+        self.assertIn("has no", findings[0].message)
+
+    def test_squash_message_with_several_trailers_is_summed(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        self.repo.write("tool/b.py", self.WARN + 'cur.execute("DROP TABLE b_tmp")\n')
+        message = (f"squash (#1)\n\n* part one\n\n{TRAILER_KEY}: sites=1; result=pass\n\n"
+                   f"* part two\n\n{TRAILER_KEY}: sites=1; result=pass")
+        self.assertEqual(self.run_gate("destructive", message), [])
+
+    def test_squash_merge_may_attest_more_than_its_net_sites_never_fewer(self):
+        # The PR's first commit added two sites, its second removed one; the
+        # squash carries both trailers (2 + 1) for a net of 1 site.
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        over = f"rework purge (#12)\n\n{TRAILER_KEY}: sites=2; result=pass\n\n{TRAILER_KEY}: sites=1; result=pass"
+        self.assertEqual(self.run_gate("destructive", over), [])
+
+    def test_squash_merge_attesting_too_few_sites_is_reported(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n'
+                        + self.WARN + 'cur.execute("DROP TABLE b_tmp")\n')
+        findings = self.run_gate("destructive", f"purge (#13)\n\n{TRAILER_KEY}: sites=1; result=pass")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("adds 2", findings[0].message)
+
+    def test_non_squash_commit_must_attest_exactly(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        findings = self.run_gate("destructive", f"purge\n\n{TRAILER_KEY}: sites=2; result=pass")
+        self.assertEqual(len(findings), 1)
+
+    def test_e2e_test_data_is_exempt(self):
+        self.repo.write("tool/python/tests_e2e/mysql/seed.sql", "DROP TABLE IF EXISTS t;\n")
+        self.assertEqual(self.run_gate("destructive"), [])
+
+    def test_changes_older_than_the_gate_are_not_checked(self):
+        # An unwarned, unattested site that predates the gate (a long-lived
+        # release branch compared with an old base), then the commit that
+        # introduces the gate, then a clean change.
+        self.repo.write("tool/old.py", 'cur.execute("DROP TABLE legacy")\n')
+        self.repo.snapshot("old change, before the checks existed")
+        self.repo.write("scripts/review_gates.py", "# the checks\n")
+        self.repo.snapshot("introduce the checks")
+        self.repo.write("tool/new.py", "x = 1\n")
+        self.assertEqual(self.run_gate("destructive", "clean change after the checks"), [])
+
+    def test_changes_from_the_gate_commit_onward_are_checked(self):
+        self.repo.write("tool/old.py", 'cur.execute("DROP TABLE legacy")\n')
+        self.repo.snapshot("old change, before the checks existed")
+        self.repo.write("scripts/review_gates.py", "# the checks\n")
+        self.repo.snapshot("introduce the checks")
+        self.repo.write("tool/new.py", 'cur.execute("DROP TABLE fresh")\n')
+        findings = self.run_gate("destructive", "unwarned site after the checks")
+        self.assertEqual(sorted({f.path for f in findings}), ["tool/new.py"])
+        self.assertEqual(len(findings), 2)
 
 
 class MergeStopGateTest(GateTestCase):
