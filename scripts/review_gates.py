@@ -66,7 +66,7 @@ PROSE_SUFFIXES = (".md", ".rst", ".txt", ".adoc", ".markdown")
 # Grammars and proofs describe syntax and models; they execute nothing.
 NON_EXECUTING_SUFFIXES = (".g4", ".lean")
 PROSE_DIRS = ("doc/", "specs/", "formal_specs/", "release-notes/", ".claude/")
-TEST_SEGMENTS = frozenset({"test", "tests", "__tests__", "testflows", "testdata"})
+TEST_SEGMENTS = frozenset({"test", "tests", "__tests__", "testflows", "testdata", "tests_e2e"})
 TEST_BASENAME_RE = re.compile(
     r"^(?:test_.*|.*_test\.[^.]+|conftest\.py|.*Tests?\.(?:java|kt|groovy)|.*IT\.java)$"
 )
@@ -229,6 +229,7 @@ MIN_WARNING_TEXT = 20
 COMMENT_PREFIXES = ("#", "//", "<!--", "*", "/*", ";", "rem ")
 COMMENT_STARTERS = ("#", "//", "--", "/*", "<!--", ";", "*")
 TRAILER_RE = re.compile(r"^Destructive-Op-Check:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
+SQUASH_SUBJECT_RE = re.compile(r"\(#\d+\)\s*$")
 RM_WORD_RE = re.compile(r"\brm\b")
 RM_RECURSIVE_RE = re.compile(r"^-\w*r\w*$|^--recursive$", re.IGNORECASE)
 RM_FORCE_RE = re.compile(r"^-\w*f\w*$|^--force$", re.IGNORECASE)
@@ -320,7 +321,13 @@ def check_commit_attestation(sha: str, message: str,
                                 f"{bad_results[0] or '<missing>'}; every site must be reviewed and warned "
                                 "(result=pass)"))
     values = [t.get("sites", "") for t in trailers]
-    if not all(v.isdigit() for v in values) or sum(int(v) for v in values) != len(sites):
+    # A squash merge ("subject (#N)") concatenates the trailers of the PR's
+    # commits, each of which was checked exactly in that PR. Their sum can
+    # exceed the squashed diff's net count when the PR reworked a destructive
+    # line, never fall short of it.
+    squashed = bool(SQUASH_SUBJECT_RE.search(message.strip().splitlines()[0] if message.strip() else ""))
+    total = sum(int(v) for v in values) if all(v.isdigit() for v in values) else None
+    if total is None or (total < len(sites) if squashed else total != len(sites)):
         findings.append(Finding(path, line, "destructive",
                                 f"commit {short}: Destructive-Op-Check trailer(s) attest sites="
                                 f"{'+'.join(v or '<missing>' for v in values)} but the commit adds "

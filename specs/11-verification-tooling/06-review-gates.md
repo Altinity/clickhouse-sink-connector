@@ -72,7 +72,11 @@ Attestation is per commit: every commit that adds sites (counted from that
 commit's own diff) must carry `Destructive-Op-Check: sites=<N>; result=pass`
 in its own message, where N equals its own site count. Several such lines in
 one message are summed, which is what a squash merge of a multi-commit PR
-produces. A commit that adds no site needs no trailer. A missing trailer, a
+produces. For a squash-merge commit (subject ending in `(#N)`) the sum may
+exceed the commit's net site count but never fall short of it: its trailers
+are the PR's per-commit attestations, each checked exactly in that PR, and a
+PR that reworked a destructive line attested it more than once. Every other
+commit must attest exactly. A commit that adds no site needs no trailer. A missing trailer, a
 count mismatch or a non-pass result is a finding that names the commit. A
 single cumulative trailer for the whole range cannot work for a release
 branch, whose range holds many already-attested commits.
@@ -161,7 +165,10 @@ All tests are offline and run by `python3 -m unittest discover -s scripts/tests`
   `test_concatenated_and_split_flags_are_sites`,
   `test_failed_result_is_rejected`, `test_each_commit_attests_its_own_sites`,
   `test_commit_without_its_own_trailer_is_reported`,
-  `test_squash_message_with_several_trailers_is_summed`.
+  `test_squash_message_with_several_trailers_is_summed`,
+  `test_squash_merge_may_attest_more_than_its_net_sites_never_fewer`,
+  `test_squash_merge_attesting_too_few_sites_is_reported`,
+  `test_non_squash_commit_must_attest_exactly`, `test_e2e_test_data_is_exempt`.
 - §3.1: `test_changes_older_than_the_gate_are_not_checked`,
   `test_changes_from_the_gate_commit_onward_are_checked`.
 - §3.3: `test_literal_stop_is_reported`,
@@ -178,11 +185,12 @@ All tests are offline and run by `python3 -m unittest discover -s scripts/tests`
   `test_broken_json`, `test_broken_yaml_when_pyyaml_available`.
 - §3.6: `test_tests_docs_and_specs_are_exempt`, `test_prose_and_tests_are_exempt`.
 - §3.7: `test_exit_codes`.
-- Calibration: on a range that does not contain the introducing commit, run
-  over the 2.11.0 line (`3c0759b1..7f3102db`), the checks report 6 unwarned
-  destructive sites and no merge-stop, license or hygiene findings
-  (`doc/review_gates.md`). The release PR's own range (`3c0759b1` to the
-  2.11.0 tip, which contains the introducing commit) reports 0 findings.
+- Calibration: run over the 2.11.0 line before the checks existed
+  (`3c0759b1..7f3102db`), the checks report 6 unwarned destructive sites and
+  2 squash commits whose older-format trailers attest fewer sites than they
+  add, and no merge-stop, license or hygiene findings (`doc/review_gates.md`).
+  The release PR's own range (`3c0759b1` to the 2.11.0 tip, which contains
+  the introducing commit) reports 0 findings.
 
 ## 6. Failure Modes & Recovery
 - **FM-11.06-1 A destructive site the patterns do not recognise.** For example,

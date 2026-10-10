@@ -150,6 +150,29 @@ class DestructiveGateTest(GateTestCase):
                    f"* part two\n\n{TRAILER_KEY}: sites=1; result=pass")
         self.assertEqual(self.run_gate("destructive", message), [])
 
+    def test_squash_merge_may_attest_more_than_its_net_sites_never_fewer(self):
+        # The PR's first commit added two sites, its second removed one; the
+        # squash carries both trailers (2 + 1) for a net of 1 site.
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        over = f"rework purge (#12)\n\n{TRAILER_KEY}: sites=2; result=pass\n\n{TRAILER_KEY}: sites=1; result=pass"
+        self.assertEqual(self.run_gate("destructive", over), [])
+
+    def test_squash_merge_attesting_too_few_sites_is_reported(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n'
+                        + self.WARN + 'cur.execute("DROP TABLE b_tmp")\n')
+        findings = self.run_gate("destructive", f"purge (#13)\n\n{TRAILER_KEY}: sites=1; result=pass")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("adds 2", findings[0].message)
+
+    def test_non_squash_commit_must_attest_exactly(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        findings = self.run_gate("destructive", f"purge\n\n{TRAILER_KEY}: sites=2; result=pass")
+        self.assertEqual(len(findings), 1)
+
+    def test_e2e_test_data_is_exempt(self):
+        self.repo.write("tool/python/tests_e2e/mysql/seed.sql", "DROP TABLE IF EXISTS t;\n")
+        self.assertEqual(self.run_gate("destructive"), [])
+
     def test_changes_older_than_the_gate_are_not_checked(self):
         # An unwarned, unattested site that predates the gate (a long-lived
         # release branch compared with an old base), then the commit that

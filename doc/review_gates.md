@@ -70,7 +70,9 @@ Destructive-Op-Check: sites=<N>; result=pass
 A commit that adds no site needs no trailer. Several trailer lines in one
 message are summed, which is what a squash merge of a multi-commit PR
 produces. A stale or copied trailer with a different count fails, and the
-finding names the commit. The trailer is an
+finding names the commit. The one allowance is a squash merge (subject ending
+in `(#N)`): its trailers were each checked in the PR, so their sum may exceed
+the net count when the PR reworked a destructive line, but never fall short. The trailer is an
 attestation that each site was reviewed, that its semantics were checked
 against the code that actually executes it (not a parameter description), and
 that a dry-run path exists where a tool can run against live data. The
@@ -147,6 +149,7 @@ checked in full.
 Run over the 2.11.0 line before the checks existed (`3c0759b1..7f3102db`,
 139 commits), they report 6 destructive sites without a `DESTRUCTIVE:`
 comment: the PostgreSQL `DROP COLUMN` translation, one log message and one
-operator hint naming `DROP TABLE`. They report no merge-stop, license or
-hygiene findings. Those 6 lines are candidates for a warning comment the next
+operator hint naming `DROP TABLE`. Two squash commits also carry
+older-format trailers that attest fewer sites than they add. They report no
+merge-stop, license or hygiene findings. Those 6 lines are candidates for a warning comment the next
 time they are touched.
