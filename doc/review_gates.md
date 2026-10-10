@@ -4,7 +4,9 @@ Two complementary tools keep pull requests to this repository reviewable:
 
 * **`scripts/review_gates.py`** runs deterministic checks over the lines a
   change adds. It runs in CI on every pull request
-  (`.github/workflows/review-gates.yml`) and is specified by
+  (`.github/workflows/review-gates.yml`, which runs the base branch's copy
+  of the script, so branches cut before it existed are checked too) and is
+  specified by
   [Spec 11.06](../specs/11-verification-tooling/06-review-gates.md).
 * **`.claude/skills/`** holds the review methodology: gate-based PR review,
   per-language deep-review checklists, reuse and design-debt review, the

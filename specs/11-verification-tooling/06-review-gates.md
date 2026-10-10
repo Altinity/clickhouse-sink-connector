@@ -25,9 +25,13 @@ methodology in `.claude/skills/` (judgement) and the spec validator
   * `exempt_from_code_gates` (path classification)
 - **Tests**: `scripts/tests/test_review_gates.py`. These are offline: each
   test builds a throwaway git repository.
-- **CI**: `.github/workflows/review-gates.yml` runs the self-tests and then
-  the gates over the PR base...head range on every pull request. The
-  self-tests also run in `.github/workflows/spec-governance.yml` through
+- **CI**: `.github/workflows/review-gates.yml` takes the script and its
+  self-tests from the PR's BASE branch, runs the self-tests, then runs the
+  checks over the PR base...head range on every pull request. Taking them
+  from the base means a branch cut before the checks existed is still
+  checked, and a PR cannot weaken the checks that judge it. A base without
+  the script is reported as a notice and nothing runs. A PR's own copy of
+  the self-tests runs in `.github/workflows/spec-governance.yml` through
   `unittest discover -s scripts/tests`.
 - **Documentation**: `doc/review_gates.md` (usage, rules, calibration),
   `doc/licensing.md` (the license policy the license gate mirrors).
