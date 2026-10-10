@@ -107,6 +107,7 @@ Changed:
 | com.google.inject:guice:6.0.0 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |
 | com.google.j2objc:j2objc-annotations:1.3 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |
 | com.google.j2objc:j2objc-annotations:2.8 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |
+| com.google.protobuf:protobuf-java:3.19.6 | BSD-3-Clause | https://opensource.org/license/bsd-3-clause |
 | com.googlecode.json-simple:json-simple:1.1.1 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |
 | com.yammer.metrics:metrics-core:2.2.0 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |
 | com.zaxxer:HikariCP:6.0.0 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |
