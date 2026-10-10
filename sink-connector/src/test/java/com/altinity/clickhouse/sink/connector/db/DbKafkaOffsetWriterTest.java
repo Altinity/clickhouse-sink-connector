@@ -59,14 +59,15 @@ public class DbKafkaOffsetWriterTest {
         DbKafkaOffsetWriter dbKafkaOffsetWriter = new DbKafkaOffsetWriter(dbHostName, port, database, "topic_offset_metadata", userName, password,
                 config, conn);
 
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> querySegments =
+                new java.util.ArrayList<>();
         Map<TopicPartition, Long> result = new HashMap<>();
         GroupInsertQueryWithBatchRecords groupInsertQueryWithBatchRecords = new GroupInsertQueryWithBatchRecords();
 
         DBMetadata metadata = new DBMetadata(config);
-        boolean resultStatus = groupInsertQueryWithBatchRecords.groupQueryWithRecords(
+        groupInsertQueryWithBatchRecords.groupQueryWithRecords(
                 DbWriterTest.getSampleRecords(),
-                queryToRecordsMap, result, config, tableName, database, writer.getConnection(),
+                querySegments, result, config, tableName, database, writer.getConnection(),
                 metadata.getColumnsDataTypesForTable(conn, tableName, database));
 
         dbKafkaOffsetWriter.insertTopicOffsetMetadata(result);

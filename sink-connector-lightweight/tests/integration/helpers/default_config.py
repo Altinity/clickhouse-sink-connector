@@ -38,15 +38,21 @@ SETTINGS index_granularity = 8198""",
     "schema.history.internal.jdbc.url": "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector",
     "schema.history.internal.jdbc.user": "root",
     "schema.history.internal.jdbc.password": "root",
-    "schema.history.internal.jdbc.schema.history.table.ddl": """CREATE TABLE if not exists %s
+    "schema.history.internal.jdbc.table.ddl": """CREATE TABLE if not exists %s
 (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id""",
-    "schema.history.internal.jdbc.schema.history.table.name": "altinity_sink_connector.replicate_schema_history",
+    "schema.history.internal.jdbc.table.name": "altinity_sink_connector.replicate_schema_history",
     "replacingmergetree.delete.column": "_sign",
     "enable.snapshot.ddl": "true",
     "database.connectionTimeZone": "UTC",
     "database.serverTimezone": "UTC",
     "clickhouse.datetime.timezone": "UTC",
     "auto.create.tables": "true",
+    # The datatypes suites assert the BOUNDED values on purpose (9999-12-31 ->
+    # 2299-12-31, 1000-01-01 -> 1900-01-01, see tests/datatypes.py); the product
+    # default refuses an out-of-range value loudly (Spec 07.03 / 07.02), which
+    # under the previous retriable classification parked the batch forever and
+    # failed every later test. Opt into saturation for the whole suite.
+    "clamp.out.of.range": "true",
     "ddl.retry": "true",
     "schema.history.internal.store.only.captured.databases.ddl": "true",
 }

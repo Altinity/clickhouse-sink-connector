@@ -1,4 +1,5 @@
 from sqlalchemy import create_engine, text
+from urllib.parse import quote_plus
 import logging
 import warnings
 import os
@@ -7,19 +8,26 @@ import pymysql
 import pymysql as mysql
 import pandas as pd
 
-binary_datatypes = ('blob', 'varbinary', 'point', 'geometry', 'bit', 'binary', 'linestring',
-                    'geomcollection', 'multilinestring', 'multipolygon', 'multipoint', 'polygon')
+binary_datatypes = ('blob', 'tinyblob', 'mediumblob', 'longblob', 'varbinary', 'binary', 'bit',
+                    'point', 'geometry', 'linestring', 'geomcollection', 'geometrycollection',
+                    'multilinestring', 'multipolygon', 'multipoint', 'polygon')
+
 
 def is_binary_datatype(datatype):
-    if "blob" in datatype or "binary" in datatype or "varbinary" in datatype or "bit" in datatype:
-        return True
-    else:
-        return datatype.lower() in binary_datatypes
+    """True when the MySQL type keyword denotes bytes (spec 11.02 section 3.3).
+
+    Accepts either information_schema DATA_TYPE ('varbinary') or a declared
+    type ('varbinary(16)', 'bit(1)'): the length and attributes are stripped and
+    the bare keyword is matched exactly. It must never substring-match: the
+    labels of an enum('bit','blob') are user text, not a type.
+    """
+    base = datatype.lower().split('(', 1)[0].strip()
+    return base in binary_datatypes
 
 
 def get_mysql_connection(mysql_host, mysql_user, mysql_passwd, mysql_port, mysql_database):
     url = 'mysql+pymysql://{user}:{passwd}@{host}:{port}/{db}?charset=utf8mb4'.format(
-        host=mysql_host, user=mysql_user, passwd=mysql_passwd, port=int(mysql_port), db=mysql_database)
+        host=mysql_host, user=quote_plus(mysql_user), passwd=quote_plus(mysql_passwd), port=int(mysql_port), db=mysql_database)
     # Ensure session wait_timeout is large enough for long-running flushes
     engine = create_engine(url, connect_args={"init_command": "SET SESSION wait_timeout=28000"})
     conn = engine.connect()
@@ -74,7 +82,8 @@ def get_partitions_from_regex(conn, mysql_database, include_tables_regex, exclud
 
 def get_table_partition_key(conn, database, table):
     partitions = get_partitions_from_regex(conn,  database, '^'+table+'$', limit=1)
-    partitions = partitions.fetchall()
+    # by column name through mappings() (SQLAlchemy 2.x rows are tuples, spec 13.06 D-13.06-9)
+    partitions = partitions.mappings().fetchall()
     if len(partitions) > 0:
         for partition in partitions:
             partition_name = partition['partition_name']
@@ -171,6 +180,26 @@ def mysql_pk_columns(conn, mysql_database, mysql_table, is_integer=True):
     logging.debug('PK columns \n' + df.to_string(index=False))
     list = df['COLUMN_NAME'].to_list()
     return list
+
+
+def mysql_columns_by_data_type(conn, mysql_database, mysql_table, data_types):
+    """Names of the table's columns whose information_schema DATA_TYPE is one of
+    ``data_types`` (bare keywords such as 'timestamp'), in ordinal order."""
+    quoted = ",".join("'" + data_type + "'" for data_type in data_types)
+    sql = f"select column_name as COLUMN_NAME from information_schema.columns where table_schema='{mysql_database}' and table_name = '{mysql_table}' and data_type in ({quoted}) order by ORDINAL_POSITION"
+    df = mysql_execute_df(conn, sql)
+    return df['COLUMN_NAME'].to_list()
+
+
+def mysql_column_names(conn, mysql_database, mysql_table):
+    """Names of every column of the table, in ordinal order: the source column
+    set the replica side compares against (spec 11.02 section 3.3)."""
+    def literal(value):
+        return "'" + str(value).replace("\\", "\\\\").replace("'", "\\'") + "'"
+    sql = (f"select column_name as COLUMN_NAME from information_schema.columns where table_schema={literal(mysql_database)} "
+           f"and table_name = {literal(mysql_table)} order by ORDINAL_POSITION")
+    df = mysql_execute_df(conn, sql)
+    return df['COLUMN_NAME'].to_list()
 
 
 def divide_table_into_even_chunks(conn, mysql_table, chunk_size, pk, where):

@@ -567,6 +567,9 @@ public class KeylessTablePreflightTest {
             set + "SESSION sql_generate_invisible_primary_key = ON",
             "ALTER" + " TABLE app.events ADD COLUMN my_row_id BIGINT",
             "FLUSH" + " TABLES WITH READ LOCK",
+            // DESTRUCTIVE: none -- a string literal handed to the read-only-SQL
+            // assertion so the test can prove the guard REJECTS it. No database
+            // is contacted and nothing is deleted.
             "DELETE" + " FROM app.events",
             "  update" + " app.events " + set.toLowerCase() + "x = 1",
         };
@@ -608,6 +611,9 @@ public class KeylessTablePreflightTest {
     public void testAssertReadOnlySqlSeesThroughLeadingComments() {
         String[] disguised = {
             "/* harmless */ SET GLOBAL sql_generate_invisible_primary_key = ON",
+            // DESTRUCTIVE: none -- a string literal handed to the read-only-SQL
+            // assertion so the test can prove the guard REJECTS it. No database
+            // is contacted and nothing is deleted.
             "-- just a check\n" + "DELETE" + " FROM app.events",
             "# comment\n" + "ALTER" + " TABLE app.events ADD COLUMN c INT",
         };

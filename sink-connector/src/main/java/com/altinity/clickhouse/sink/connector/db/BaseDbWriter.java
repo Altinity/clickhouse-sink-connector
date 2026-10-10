@@ -165,6 +165,55 @@ public class BaseDbWriter {
     }
 
     /**
+     * ClickHouse setting that, at its server default of {@code 1}, silently
+     * replaces a NULL inserted into a non-Nullable column with the column's
+     * DEFAULT expression. The connector binds source NULLs explicitly (Spec
+     * 07.07 section 3.2), which protects nothing if the server then swaps in
+     * the DEFAULT and reports success; measured with clickhouse local 24.8.14
+     * on {@code v Int32 DEFAULT 7}: the row stored {@code 7}. With the setting
+     * at {@code 0} the same insert is rejected (Code 53 TYPE_MISMATCH), so the
+     * batch fails loudly and the ClickHouse column can be corrected.
+     */
+    static final String NULL_AS_DEFAULT_SETTING = "input_format_null_as_default";
+
+    /**
+     * The ClickHouse session settings every connection is opened with when
+     * {@code clickhouse.jdbc.settings} is not configured (Spec 07.07 section 3.2.1).
+     */
+    static final String DEFAULT_CUSTOM_SETTINGS = NULL_AS_DEFAULT_SETTING + "=0,"
+            + "allow_experimental_object_type=1,insert_allow_materialized_columns=1";
+
+    /**
+     * Resolves the {@code custom_settings} JDBC property from the user's
+     * {@code clickhouse.jdbc.settings} value.
+     *
+     * <p>A user list is used verbatim, with {@code input_format_null_as_default=0}
+     * appended when the list does not mention that key: configuring other
+     * session settings must not silently re-enable DEFAULT substitution. A
+     * user who sets the key explicitly, to either value, is honoured -- the
+     * choice is then visible in the configuration rather than silent.</p>
+     *
+     * @param userJdbcSettings the configured {@code clickhouse.jdbc.settings},
+     *                         may be null or empty
+     * @return the comma-separated settings list to open connections with
+     */
+    static String customSettings(String userJdbcSettings) {
+        if (userJdbcSettings == null || userJdbcSettings.isEmpty()) {
+            return DEFAULT_CUSTOM_SETTINGS;
+        }
+        boolean mentionsNullAsDefault = Arrays.stream(userJdbcSettings.split(","))
+                .anyMatch(s -> s.trim().startsWith(NULL_AS_DEFAULT_SETTING));
+        if (mentionsNullAsDefault) {
+            return userJdbcSettings;
+        }
+        log.info("{} does not set {}; appending {}=0 so a source NULL bound for a "
+                        + "non-Nullable column is rejected rather than replaced by the column DEFAULT",
+                ClickHouseSinkConnectorConfigVariables.JDBC_SETTINGS, NULL_AS_DEFAULT_SETTING,
+                NULL_AS_DEFAULT_SETTING);
+        return userJdbcSettings + "," + NULL_AS_DEFAULT_SETTING + "=0";
+    }
+
+    /**
      * Splits a JDBC properties string into a Properties object.
      * The input string should be in the format:
      * "key1=value1,key2=value2,..."
@@ -210,9 +259,20 @@ public class BaseDbWriter {
     };
 
     /**
+     * Property keys whose removal has already been reported at WARN in this
+     * JVM. {@link #dropV1OnlyProperties} runs on EVERY {@code createConnection()}
+     * call -- with a worker pool, several times a minute for the life of the
+     * process -- and one WARN per call is noise that hides real warnings. The
+     * property is still removed every time; only the first report is a WARN.
+     */
+    private static final java.util.Set<String> WARNED_V1_ONLY_PROPERTIES =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
      * Removes V1-only connection properties when the V2 driver is in use, so
      * that a configuration written for the legacy driver keeps working instead
-     * of failing the connection outright. Each removal is logged.
+     * of failing the connection outright. Each removal is logged: at WARN the
+     * first time a key is seen in this process, at DEBUG afterwards.
      * <p>
      * Nothing is dropped on the V1 path — the legacy driver still receives and
      * honours these properties.
@@ -225,10 +285,15 @@ public class BaseDbWriter {
         for (String key : V1_ONLY_PROPERTIES) {
             if (properties.remove(key) != null) {
                 removed++;
-                log.warn("Ignoring JDBC property '{}': it is only supported by the legacy "
-                        + "ClickHouse JDBC V1 driver and the V2 driver rejects the "
-                        + "connection outright when it is present. Set "
-                        + "clickhouse.jdbc.v1=true to keep using the legacy driver.", key);
+                if (WARNED_V1_ONLY_PROPERTIES.add(key)) {
+                    log.warn("Ignoring JDBC property '{}': it is only supported by the legacy "
+                            + "ClickHouse JDBC V1 driver and the V2 driver rejects the "
+                            + "connection outright when it is present. Set "
+                            + "clickhouse.jdbc.v1=true to keep using the legacy driver.", key);
+                } else {
+                    log.debug("Ignoring JDBC property '{}' (V1-only; already reported once "
+                            + "for this process).", key);
+                }
             }
         }
         return removed;
@@ -262,6 +327,25 @@ public class BaseDbWriter {
                 log.error("Error retrieving new connection in getConnection");
             }
         }
+        return this.conn;
+    }
+
+    /**
+     * The connection this writer holds RIGHT NOW, without re-acquiring one:
+     * {@code null} or a closed handle is returned as-is.
+     * <p>
+     * For the owner's cleanup only. {@link #getConnection()} replaces an
+     * unusable handle with a fresh pool checkout, which is the wrong thing to
+     * do while shutting a worker down: it would open a connection in order to
+     * close it, and against a pool that is already gone it would log an error
+     * for nothing. The handle returned here may be one {@link #getConnection()}
+     * re-acquired after the original became unusable, which the worker's
+     * per-database map never saw -- that is exactly the one the owner has to
+     * close (spec 01.01 §3.3 step 4a).
+     *
+     * @return the current connection, possibly null or closed.
+     */
+    public Connection heldConnection() {
         return this.conn;
     }
 
@@ -344,11 +428,7 @@ public class BaseDbWriter {
         try {
             Properties properties = new Properties();
             properties.setProperty("client_name", clientName);
-            if(jdbcSettings != null && !jdbcSettings.isEmpty()) {
-                properties.setProperty("custom_settings", jdbcSettings);
-            } else {
-                properties.setProperty("custom_settings", "allow_experimental_object_type=1,insert_allow_materialized_columns=1");
-            }
+            properties.setProperty("custom_settings", customSettings(jdbcSettings));
             boolean connectionPoolDisable = config.getBoolean(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString());
             // Set the http connection provider to HTTP_URL_CONNECTION if connection pool is enabled.
             if(!connectionPoolDisable) {

@@ -70,8 +70,8 @@ offset.storage.jdbc.user: "root"
 # offset.storage.jdbc.password: The password of the database user to be used when connecting to the database where connector offsets are to be stored.
 offset.storage.jdbc.password: "root"
 
-# offset.storage.jdbc.offset.table.ddl: The DDL statement used to create the database table where connector offsets are to be stored.
-offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
+# offset.storage.jdbc.table.ddl: The DDL statement used to create the database table where connector offsets are to be stored.
+offset.storage.jdbc.table.ddl: "CREATE TABLE if not exists %s
 (
     `id` String,
     `offset_key` String,
@@ -83,7 +83,11 @@ offset.storage.jdbc.offset.table.ddl: "CREATE TABLE if not exists %s
 ENGINE = ReplacingMergeTree(_version)
 ORDER BY offset_key
 SETTINGS index_granularity = 8192"
-offset.storage.jdbc.offset.table.delete: "delete from %s where 1=1"
+# DESTRUCTIVE: this is the statement Debezium JdbcOffsetBackingStore runs to clear the
+# offset table named by offset.storage.jdbc.table.name before it re-inserts the current
+# offsets on each flush; it touches only that checkpoint table, never a replicated table.
+# The ClickHouse example configurations use a no-op SELECT here instead.
+offset.storage.jdbc.table.delete: "delete from %s where 1=1"
 
 # enable.snapshot.ddl: If set to true, the connector wil parse the DDL statements as part of initial load.
 enable.snapshot.ddl: "true"

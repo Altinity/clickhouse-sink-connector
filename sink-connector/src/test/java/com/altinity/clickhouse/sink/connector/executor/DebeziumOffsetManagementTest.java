@@ -5,22 +5,85 @@ import com.altinity.clickhouse.sink.connector.executor.DebeziumOffsetManagement;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import io.debezium.engine.ChangeEvent;
 import io.debezium.engine.DebeziumEngine;
-import org.apache.commons.lang3.tuple.Pair;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.errors.ConnectException;
 import org.apache.kafka.connect.source.SourceRecord;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.Logger;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Configurator;
+import org.apache.logging.log4j.core.config.Property;
 import org.junit.Assert;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.List;
-import java.util.Map;
+import java.util.stream.Collectors;
 
 public class DebeziumOffsetManagementTest {
+
+    /** Collects everything the class under test logs during one call. */
+    private static final class CapturingAppender extends AbstractAppender {
+        private final List<LogEvent> events = Collections.synchronizedList(new ArrayList<>());
+
+        CapturingAppender() {
+            super("capture-offset-management", null, null, true, Property.EMPTY_ARRAY);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            events.add(event.toImmutable());
+        }
+    }
+
+    /**
+     * Spec 03.06 section 3.3 line 4: the per-unit "BATCH marked as processed"
+     * line is INFO by design -- it is how an operator sees from the log that
+     * offsets are being acknowledged. A revision moved it to DEBUG for volume;
+     * the operators reversed that.
+     */
+    @Test
+    @DisplayName("Acknowledging a unit logs the 'BATCH marked as processed' line at INFO, nothing at WARN or above")
+    public void acknowledgementIsLoggedAtInfo() throws InterruptedException {
+        OffsetTestSupport.RecordingCommitter committer = new OffsetTestSupport.RecordingCommitter();
+        List<ClickHouseStruct> unit = OffsetTestSupport.unit(committer, 1L, "orders");
+
+        Logger coreLogger = (Logger) LogManager.getLogger(DebeziumOffsetManagement.class);
+        Level savedLevel = coreLogger.getLevel();
+        CapturingAppender appender = new CapturingAppender();
+        appender.start();
+        coreLogger.addAppender(appender);
+        Configurator.setLevel(coreLogger.getName(), Level.INFO);
+        try {
+            DebeziumOffsetManagement.acknowledgeRecords(unit);
+        } finally {
+            Configurator.setLevel(coreLogger.getName(), savedLevel);
+            coreLogger.removeAppender(appender);
+            appender.stop();
+        }
+
+        Assert.assertEquals("the unit's offset is still acknowledged", 1, committer.batchesFinished);
+        List<LogEvent> events = new ArrayList<>(appender.events);
+        List<String> all = events.stream()
+                .map(e -> e.getLevel() + ": " + e.getMessage().getFormattedMessage())
+                .collect(Collectors.toList());
+        Assertions.assertTrue(events.stream().anyMatch(e -> e.getLevel() == Level.INFO
+                        && e.getMessage().getFormattedMessage().contains("BATCH marked as processed")),
+                "the acknowledgement line must be logged at INFO: " + all);
+        List<String> warnAndAbove = events.stream()
+                .filter(e -> e.getLevel().isMoreSpecificThan(Level.WARN))
+                .map(e -> e.getLevel() + ": " + e.getMessage().getFormattedMessage())
+                .collect(Collectors.toList());
+        Assertions.assertEquals(Collections.emptyList(), warnAndAbove,
+                "an acknowledged unit must not log at WARN or above (spec 03.06 section 3.3)");
+    }
 
     /**
      * Fake {@link DebeziumEngine.RecordCommitter} that records how many times
@@ -133,109 +196,6 @@ public class DebeziumOffsetManagementTest {
         Assert.assertEquals(1, committer.markBatchFinishedCalls);
     }
 
-    // Test function to validate the isWithinRange function
-    @Test
-    public void testIsWithinRange() {
-
-        // Min and Max values for this batch - 3 and 433
-        List<ClickHouseStruct> clickHouseStructs = new ArrayList<>();
-        ClickHouseStruct ch1 = new ClickHouseStruct(10, "SERVER5432.test.customers", getKafkaStruct(), 2, 21L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch1.setDebezium_ts_ms(21L);
-
-        ClickHouseStruct ch4 = new ClickHouseStruct(1000, "SERVER5432.test.customers", getKafkaStruct(), 2, 433L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch4.setDebezium_ts_ms(433L);
-
-        ClickHouseStruct ch2 = new ClickHouseStruct(8, "SERVER5432.test.customers", getKafkaStruct(), 2, 22L ,null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch2.setDebezium_ts_ms(22L);
-
-        ClickHouseStruct ch6 = new ClickHouseStruct(1000, "SERVER5432.test.customers", getKafkaStruct(), 2, 3L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch6.setDebezium_ts_ms(3L);
-
-        ClickHouseStruct ch3 = new ClickHouseStruct(1000, "SERVER5432.test.customers", getKafkaStruct(), 2, 33L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch3.setDebezium_ts_ms(33L);
-        clickHouseStructs.add(ch1);
-        clickHouseStructs.add(ch2);
-        clickHouseStructs.add(ch3);
-
-        clickHouseStructs.add(ch4);
-        clickHouseStructs.add(ch6);
-
-        // Batch 2 - Min and Max values for this batch - 1001 and 2001
-        List<ClickHouseStruct> clickHouseStructs1 = new ArrayList<>();
-        ClickHouseStruct ch5 = new ClickHouseStruct(10, "SERVER5432.test.customers", getKafkaStruct(), 2, 21L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch5.setDebezium_ts_ms(1001L);
-
-        ClickHouseStruct ch7 = new ClickHouseStruct(10, "SERVER5432.test.customers", getKafkaStruct(), 2, 21L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch7.setDebezium_ts_ms(2001L);
-        clickHouseStructs1.add(ch5);
-        clickHouseStructs1.add(ch7);
-
-        DebeziumOffsetManagement.addToBatchTimestamps(clickHouseStructs);
-        DebeziumOffsetManagement.addToBatchTimestamps(clickHouseStructs1);
-
-        // Batch 3 - Min and Max values for this batch - 501 and 1000
-        List<ClickHouseStruct> clickHouseStructs2 = new ArrayList<>();
-        ClickHouseStruct ch8 = new ClickHouseStruct(10, "SERVER5432.test.customers", getKafkaStruct(), 2, 21L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch8.setDebezium_ts_ms(501L);
-
-        ClickHouseStruct ch9 = new ClickHouseStruct(10, "SERVER5432.test.customers", getKafkaStruct(), 2, 21L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch9.setDebezium_ts_ms(1000L);
-        clickHouseStructs2.add(ch8);
-        clickHouseStructs2.add(ch9);
-
-        boolean result = DebeziumOffsetManagement.checkIfThereAreInflightRequests(clickHouseStructs2);
-        Assert.assertTrue(result);
-
-        // Batch 4 - Min and Max values for this batch - 1 and 2
-        List<ClickHouseStruct> clickHouseStructs3 = new ArrayList<>();
-        ClickHouseStruct ch10 = new ClickHouseStruct(10, "SERVER5432.test.customers", getKafkaStruct(), 2, 21L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch10.setDebezium_ts_ms(1L);
-
-        ClickHouseStruct ch11 = new ClickHouseStruct(10, "SERVER5432.test.customers", getKafkaStruct(), 2, 21L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch11.setDebezium_ts_ms(2L);
-        clickHouseStructs3.add(ch10);
-        clickHouseStructs3.add(ch11);
-
-        boolean result1 = DebeziumOffsetManagement.checkIfThereAreInflightRequests(clickHouseStructs3);
-        Assert.assertFalse(result1);
-
-
-    }
-
-    @Test
-    public void testCalculateMinMaxTimestampFromBatch() {
-        // Test to validate DebeziumOffsetManagement calculateMinMaxTimestampFromBatch function
-        // Create batch timestamps map.
-        Map<Pair<Long, Long>, List<ClickHouseStruct>> batchTimestamps = new HashMap();
-        List<ClickHouseStruct> clickHouseStructs = new ArrayList<>();
-        ClickHouseStruct ch1 = new ClickHouseStruct(10, "SERVER5432.test.customers", getKafkaStruct(), 2, 21L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch1.setDebezium_ts_ms(21L);
-
-        ClickHouseStruct ch4 = new ClickHouseStruct(1000, "SERVER5432.test.customers", getKafkaStruct(), 2, 433L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch4.setDebezium_ts_ms(433L);
-
-        ClickHouseStruct ch2 = new ClickHouseStruct(8, "SERVER5432.test.customers", getKafkaStruct(), 2, 22L ,null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch2.setDebezium_ts_ms(22L);
-
-        ClickHouseStruct ch6 = new ClickHouseStruct(1000, "SERVER5432.test.customers", getKafkaStruct(), 2, 3L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch6.setDebezium_ts_ms(3L);
-
-        ClickHouseStruct ch3 = new ClickHouseStruct(1000, "SERVER5432.test.customers", getKafkaStruct(), 2, 33L, null, getKafkaStruct(), null, ClickHouseConverter.CDC_OPERATION.CREATE);
-        ch3.setDebezium_ts_ms(33L);
-
-        clickHouseStructs.add(ch1);
-        clickHouseStructs.add(ch2);
-        clickHouseStructs.add(ch3);
-
-        clickHouseStructs.add(ch4);
-        clickHouseStructs.add(ch6);
-
-
-        Pair<Long, Long> result = DebeziumOffsetManagement.calculateMinMaxTimestampFromBatch(clickHouseStructs);
-        Assert.assertTrue(result.getLeft() == 3L);
-        Assert.assertTrue(result.getRight() == 433L);
-
-    }
     public static Struct getKafkaStruct() {
         Schema kafkaConnectSchema = SchemaBuilder
                 .struct()

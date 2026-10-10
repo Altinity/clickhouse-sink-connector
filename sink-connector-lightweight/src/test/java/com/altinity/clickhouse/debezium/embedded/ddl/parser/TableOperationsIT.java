@@ -138,9 +138,14 @@ public class TableOperationsIT {
             Assert.assertTrue(addTestColumns.size() == 5);
             Assert.assertTrue(copied_table.size() == 5);
 
-            // Validate table created with partitions.
+            // Validate table created with partitions. Neither table declares a
+            // PRIMARY KEY or a non-null UNIQUE key, so the translator keys them
+            // on every stored column (Spec 06.05 §3.6) -- never ORDER BY
+            // tuple(), under which ReplacingMergeTree keeps ONE row per table.
+            // Asserted with the observed statement in the message: a bare
+            // assertTrue reports only "java.lang.AssertionError".
             String membersResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.members");
-            Assert.assertTrue(membersResult.equalsIgnoreCase("CREATE TABLE employees.members\n" +
+            Assert.assertEquals("CREATE TABLE employees.members\n" +
                         "(\n" +
                         "    `firstname` String,\n" +
                         "    `lastname` String,\n" +
@@ -152,12 +157,13 @@ public class TableOperationsIT {
                         ")\n" +
                         "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
                         "PARTITION BY joined\n" +
-                        "ORDER BY tuple()\n" +
-                        "SETTINGS index_granularity = 8192"));
+                        "ORDER BY (firstname, lastname, username, email, joined)\n" +
+                        "SETTINGS allow_nullable_key = 1, index_granularity = 8192",
+                    membersResult);
 
             String rcxResult = dbMetadata.executeSystemQuery(writer.getConnection(), "show create table employees.rcx");
 
-            Assert.assertTrue(rcxResult.equalsIgnoreCase("CREATE TABLE employees.rcx\n" +
+            Assert.assertEquals("CREATE TABLE employees.rcx\n" +
                         "(\n" +
                         "    `a` Int32,\n" +
                         "    `b` Nullable(Int32),\n" +
@@ -168,8 +174,9 @@ public class TableOperationsIT {
                         ")\n" +
                         "ENGINE = ReplacingMergeTree(_version, is_deleted)\n" +
                         "PARTITION BY (a, d, c)\n" +
-                        "ORDER BY tuple()\n" +
-                        "SETTINGS index_granularity = 8192"));
+                        "ORDER BY (a, b, c, d)\n" +
+                        "SETTINGS allow_nullable_key = 1, index_granularity = 8192",
+                    rcxResult);
 
             Thread.sleep(10000);
             // Delete offset table.

@@ -28,6 +28,7 @@ import java.util.concurrent.Executors;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.getDebeziumProperties;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.MYSQL_DOCKER_IMAGE;
 import static com.altinity.clickhouse.debezium.embedded.ITCommon.CLICKHOUSE_DOCKER_IMAGE;
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
 /**
@@ -175,40 +176,67 @@ public class ReplicationLogOnlyIT {
         log.info("Verifying that data WAS inserted into binlog_history database");
         
         int historyTableRecordCount = 0;
+        int auditRowsForTable = -1;
+        int dataTablesInHistoryDatabase = -1;
         boolean historyTableExists = false;
-        
+
         try {
             // Check if the table exists in binlog_history database
             ResultSet historyTableCheckRs = ITCommon.executeQueryWithResultSet(
                 "SELECT count(*) as cnt FROM system.tables WHERE database = 'binlog_history' AND name = 'history'",
                 systemWriter.getConnection());
-            
+
             if (historyTableCheckRs.next()) {
                 historyTableExists = historyTableCheckRs.getInt("cnt") > 0;
             }
-            
+
             log.info("binlog_history.history table exists: {}", historyTableExists);
-            
+
             if (historyTableExists) {
                 ResultSet historyCountRs = ITCommon.executeQueryWithResultSet(
                     "SELECT count(*) as cnt FROM binlog_history.history",
                     systemWriter.getConnection());
-                
+
                 if (historyCountRs.next()) {
                     historyTableRecordCount = historyCountRs.getInt("cnt");
                 }
                 log.info("Record count in binlog_history.history: {}", historyTableRecordCount);
-                
 
+                // The DML audit rows of the table (Spec 12.04 section 3.3): one
+                // per source INSERT. The DDL row carries no operation, so it is
+                // excluded; FINAL collapses any redelivered coordinates
+                // (Spec 12.04 section 3.2).
+                ResultSet auditRowsRs = ITCommon.executeQueryWithResultSet(
+                    "SELECT count(*) as cnt FROM binlog_history.history FINAL "
+                        + "WHERE `table` = 'log_only_test' AND `_operation` != ''",
+                    systemWriter.getConnection());
+                if (auditRowsRs.next()) {
+                    auditRowsForTable = auditRowsRs.getInt("cnt");
+                }
+                log.info("Audit rows for log_only_test in binlog_history.history: {}", auditRowsForTable);
+            }
+
+            // Mode 3 writes NO data table anywhere -- not in the source database
+            // (checked above) and not in the history database either
+            // (Spec 12.05 section 3.1, Gap G-12.05-3).
+            ResultSet dataTableRs = ITCommon.executeQueryWithResultSet(
+                "SELECT count(*) as cnt FROM system.tables WHERE database = 'binlog_history' AND name = 'log_only_test'",
+                systemWriter.getConnection());
+            if (dataTableRs.next()) {
+                dataTablesInHistoryDatabase = dataTableRs.getInt("cnt");
             }
         } catch (Exception e) {
             log.error("Exception while checking binlog history table: {}", e.getMessage(), e);
         }
-        
-        assertTrue("binlog_history.log_only_test table should exist", historyTableExists);
-        assertTrue("binlog_history.log_only_test should have data. Found " + historyTableRecordCount + " records.", 
+
+        assertTrue("binlog_history.history audit table should exist", historyTableExists);
+        assertTrue("binlog_history.history should have data. Found " + historyTableRecordCount + " records.",
             historyTableRecordCount > 0);
-        
+        assertEquals("binlog_history.history should hold exactly one audit row per source INSERT of log_only_test",
+            3, auditRowsForTable);
+        assertEquals("no data table binlog_history.log_only_test may be created in replication-log-only mode",
+            0, dataTablesInHistoryDatabase);
+
         log.info("Successfully verified: Data IS present in binlog_history database ({} records)", historyTableRecordCount);
         log.info("Successfully verified replication_log_only mode works correctly");
 

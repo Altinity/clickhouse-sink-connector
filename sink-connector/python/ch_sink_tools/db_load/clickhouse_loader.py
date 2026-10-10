@@ -1,10 +1,13 @@
 # python db_load/clickhouse_myloader.py --clickhouse_host localhost  --clickhouse_schema world --dump_dir $HOME/dbdumps/world --db_user root --db_password root --threads 16 --ch_module clickhouse-client-22.5.1.2079 --mysql_source_schema world
 from subprocess import Popen, PIPE
+import shlex
 from ch_sink_tools.db.mysql import is_binary_datatype
+from ch_sink_tools.db.checksum_common import DATETIME_MIN, DATETIME_MAX
 import argparse
 import sys
 import logging
 import concurrent.futures
+import json
 import re
 import gzip
 import os
@@ -22,7 +25,7 @@ from ch_sink_tools.db.clickhouse import (
     clickhouse_execute_conn,
     resolve_credentials_from_config,
 )
-from ch_sink_tools.db_load.mysql_parser.mysql_parser import convert_to_clickhouse_table_antlr
+from ch_sink_tools.db_load.mysql_parser.mysql_parser import convert_to_clickhouse_table_antlr, UnsafeTableDefinitionError
 
 
 def run_command(cmd):
@@ -31,7 +34,7 @@ def run_command(cmd):
     # -- run the command that is passed as cmd and return True or False
     # -- ======================================================================
     """
-    logging.debug("cmd " + cmd)
+    logging.debug("cmd " + redact_password(cmd))
     process = subprocess.Popen(cmd,
                                stdout=subprocess.PIPE,
                                stderr=subprocess.STDOUT,
@@ -45,11 +48,13 @@ def run_command(cmd):
 
 
 def run_quick_command(cmd):
-    logging.debug("cmd " + cmd)
-    process = subprocess.Popen(cmd,
+    logging.debug("cmd " + redact_password(cmd))
+    # bash -o pipefail: a pipeline's status is that of its LAST failing stage, so a decompressor (zstd/gunzip) or sed
+    # that fails makes the load fail. Under plain /bin/sh only clickhouse-client's status counted, and a truncated or
+    # missing chunk loaded partially or not at all with status 0 (Spec 13.04 section 3.10).
+    process = subprocess.Popen(['bash', '-o', 'pipefail', '-c', cmd],
                                stdout=subprocess.PIPE,
-                               stderr=subprocess.STDOUT,
-                               shell=True)
+                               stderr=subprocess.STDOUT)
     stdout, stderr = process.communicate()
     rc = str(process.poll())
     if stdout:
@@ -139,9 +144,17 @@ def convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete
 
     primary_key = find_primary_key(source)
     if primary_key is None:
-        logging.warning("No PK found for "+table_name +
-                        " defaulting to order by tuple()")
-        primary_key = "tuple()"
+        # ORDER BY tuple() would make ReplacingMergeTree collapse the table into one row. This fallback translator
+        # cannot derive the streaming connector's keyless sorting key (Spec 13.04 section 3.12), so refuse loudly.
+        raise UnsafeTableDefinitionError(
+            f"Table {table_name} has no PRIMARY KEY and the ANTLR translator failed on its DDL; the regexp fallback "
+            f"cannot derive a sorting key that keeps distinct rows distinct. Refusing ORDER BY tuple().")
+    if re.search(r'\bGENERATED\s+ALWAYS\b', source, flags=re.IGNORECASE):
+        # This fallback deletes generated-column lines, so the replica would silently lack those MySQL columns
+        # (Spec 13.04 D-13.04-33). Only the ANTLR translator can translate their expressions.
+        raise UnsafeTableDefinitionError(
+            f"Table {table_name} has generated columns and the ANTLR translator failed on its DDL; the regexp "
+            f"fallback cannot translate generation expressions and would drop those columns. Refusing.")
 
     settings = "index_granularity = 8192"
 
@@ -259,6 +272,9 @@ def convert_to_clickhouse_table(user_name, table_name, source, rmt_delete_suppor
 
     try:
         return convert_to_clickhouse_table_antlr(src, rmt_delete_support, partition_options, datetime_timezone)
+    except UnsafeTableDefinitionError:
+        # a refusal, not a parse failure: the regexp translator must not paper over it
+        raise
     except Exception as ex:
         logging.info(f"Use regexp DDL converter")
         logging.info(f"{ex}")
@@ -266,23 +282,57 @@ def convert_to_clickhouse_table(user_name, table_name, source, rmt_delete_suppor
 
 
 def get_unix_timezone_from_mysql_timezone(timezone):
-    tz = "UTC"
-    timezones = zoneinfo.available_timezones()
-    sorted(timezones)
-    for tz in timezones:
-        offset = datetime.datetime.now(zoneinfo.ZoneInfo(
-            tz)).utcoffset().total_seconds()/60/60
-        timezone_from_offset = ""
-        if offset >= 0:
-            timezone_from_offset += "+"
-        else:
-            timezone_from_offset += "-"
-        offset_int = int(offset)
-        timezone_from_offset += f"{abs(offset_int):02}:{abs(round((offset-offset_int)*60)):02}"
-        logging.debug(tz + "  => "+timezone_from_offset)
-        if timezone == timezone_from_offset:
-            break
-    return tz
+    """IANA zone name for the TZ variable that reproduces a MySQL time_zone value exactly.
+
+    Deterministic (Spec 13.04 section 3.9): '+00:00' (and '-00:00') is 'UTC'; another whole-hour offset is the
+    fixed-offset zone 'Etc/GMT-N' / 'Etc/GMT+N' (POSIX sign: 'Etc/GMT-5' is UTC+05:00), never a regional zone that
+    happens to have that offset today, whose DST would shift part of the year. A named zone known to zoneinfo is used
+    as is. A value that names no zone (None, SYSTEM, empty, malformed or out of MySQL's range) gives 'UTC' with a
+    WARNING. A valid offset no IANA name represents (e.g. '+05:30') raises: no choice of zone would be correct.
+    """
+    value = (timezone or '').strip()
+    match = re.fullmatch(r'([+-])(\d{1,2}):(\d{2})', value)
+    if match:
+        sign, hours, minutes = match.group(1), int(match.group(2)), int(match.group(3))
+        if minutes < 60 and hours * 60 + minutes <= 14 * 60:
+            if hours == 0 and minutes == 0:
+                return "UTC"
+            if minutes == 0:
+                name = f"Etc/GMT{'-' if sign == '+' else '+'}{hours}"
+                if name in zoneinfo.available_timezones():
+                    return name
+            raise ValueError(
+                f"The dump's TIMESTAMP values are in time zone {value}, which no fixed-offset IANA zone represents. "
+                f"Re-dump in UTC (MySQL Shell tzUtc: true, the default; mydumper --tz-utc).")
+    elif value and value.upper() != 'SYSTEM' and value in zoneinfo.available_timezones():
+        return value
+    logging.warning(f"Time zone of the dump's TIMESTAMP values cannot be determined (got {timezone!r}); "
+                    f"loading them as UTC")
+    return "UTC"
+
+
+def find_mysqlshell_dump_timezone(dump_dir):
+    """MySQL time_zone of the TIMESTAMP text of a MySQL Shell dump, read from <dump_dir>/@.json, or None.
+
+    MySQL Shell's dump option tzUtc (default true) runs SET TIME_ZONE = '+00:00' on every dump session, so TIMESTAMP
+    values are written in UTC, and records the option as "tzUtc" in @.json. The per-table .sql files carry no
+    SET TIME_ZONE. With tzUtc false the dump session's zone is recorded nowhere, so the load is refused.
+    """
+    path = os.path.join(dump_dir, '@.json')
+    if not os.path.isfile(path):
+        logging.warning(f"{path} not found: the time zone of the dump's TIMESTAMP values cannot be determined")
+        return None
+    with open(path) as metadata_file:
+        tz_utc = json.load(metadata_file).get('tzUtc')
+    if tz_utc is True:
+        return '+00:00'
+    if tz_utc is False:
+        raise ValueError(
+            f"{path}: the dump was taken with tzUtc: false, so its TIMESTAMP values are in the dump session's time "
+            f"zone, which MySQL Shell does not record. Re-dump with tzUtc: true (the MySQL Shell default).")
+    logging.warning(f"{path} has no boolean tzUtc entry (got {tz_utc!r}): the time zone of the dump's TIMESTAMP "
+                    f"values cannot be determined")
+    return None
 
 
 def load_schema(args, clickhouse_user=None, clickhouse_password=None,  dry_run=False, datetime_timezone=None):
@@ -318,7 +368,13 @@ def load_schema(args, clickhouse_user=None, clickhouse_password=None,  dry_run=F
                 (table_source, columns) = convert_to_clickhouse_table(
                     db, table, source, args.rmt_delete_support, args.use_regexp_parser, datetime_timezone)
                 logging.info(table_source)
-                timezone = find_dump_timezone(source)
+                file_timezone = find_dump_timezone(source)
+                if file_timezone is not None:
+                    # one dump, one zone: never let glob order pick between two
+                    if timezone is not None and file_timezone != timezone:
+                        raise ValueError(f"{file} sets TIME_ZONE='{file_timezone}' but an earlier schema file "
+                                         f"set '{timezone}'; the dump's TIMESTAMP zone is ambiguous")
+                    timezone = file_timezone
                 logging.info(f"Timezone {timezone}")
 
                 if table_source != '':
@@ -344,7 +400,7 @@ def load_schema_mysqlshell(args, clickhouse_user, clickhouse_password, dry_run=F
             except Exception as e:
                 logging.error(f"Database create error: {e}")
     # create tables
-    timezone = '+00:00'
+    timezone = find_mysqlshell_dump_timezone(args.dump_dir)
     with get_connection(args, clickhouse_user, clickhouse_password, args.clickhouse_database) as conn:
 
         schema_file_wildcard = args.dump_dir + \
@@ -366,7 +422,6 @@ def load_schema_mysqlshell(args, clickhouse_user, clickhouse_password, dry_run=F
                 (table_source, columns) = convert_to_clickhouse_table(
                     db, table, source, args.rmt_delete_support, args.use_regexp_parser, datetime_timezone)
                 logging.info(table_source)
-                # timezone = find_dump_timezone(source)
                 logging.info(f"Timezone {timezone}")
                 if table_source != '':
                     schema_map[f"{db}.{table}"] = columns
@@ -378,7 +433,161 @@ def load_schema_mysqlshell(args, clickhouse_user, clickhouse_password, dry_run=F
     return (tz, schema_map)
 
 
-def get_column_list(schema_map, schema, table, virtual_columns, transform=False, mysqlshell=False):
+def is_loaded_column(column, virtual_columns):
+    """True for a column the INSERT names (Spec 13.04 section 3.7.1).
+
+    A dict the ANTLR translator marks source_column is a MySQL column and is loaded whatever its name: a source
+    column called _sign or _is_deleted is data, not bookkeeping (a real collision is refused by the translator).
+    --virtual_columns only removes the bookkeeping columns the regexp translator lists among its dicts. Generated
+    columns are never inserted."""
+    return (column.get('source_column', False) or column['column_name'] not in virtual_columns) \
+        and not column['generated']
+
+
+BIT1_MYSQL_DATATYPE = re.compile(r"bit\s*(\(\s*1\s*\))?$", re.IGNORECASE)
+SPATIAL_DATATYPES = ('geometry', 'point', 'linestring', 'polygon', 'multipoint', 'multilinestring', 'multipolygon',
+                     'geometrycollection', 'geomcollection')
+
+
+def mysqlshell_binary_kind(mysql_datatype):
+    """'bit', 'spatial' or 'binary' for the MySQL types MySQL Shell encodes in its TSV dump (DATA_TYPE ending in
+    binary or blob, BIT, every spatial type), else None."""
+    keyword = re.split(r'[\s(]', (mysql_datatype or '').strip().lower(), maxsplit=1)[0]
+    if keyword == 'bit':
+        return 'bit'
+    if keyword in SPATIAL_DATATYPES:
+        return 'spatial'
+    if keyword.endswith('binary') or keyword.endswith('blob'):
+        return 'binary'
+    return None
+
+
+MYSQL_DATETIME_DATATYPE = re.compile(r"\s*datetime\b", re.IGNORECASE)
+DATETIME64_PRECISION = re.compile(r"DateTime64\(\s*(\d+)")
+
+
+MYSQL_TIME_DATATYPE = re.compile(r"\s*time\b", re.IGNORECASE)
+
+
+def time_text_expression(column, column_name, target_types=None):
+    """A MySQL TIME field of the dump as the streaming connector writes it into the String column
+    (MicroTimeConverter.convert: '%s%02d:%02d:%02d.%06d', sign kept, hours unbounded; Spec 07.03 section 3.2), so
+    loaded and streamed rows hold the same text (Spec 13.04 D-13.04-35). MySQL prints TIME(p) with at least two
+    hour digits and p fraction digits ('01:15:00', '-838:59:59', '12:00:00.500'); the fraction is padded to six
+    digits. NULL stays NULL. A target column that is not a String is left to the INSERT conversion."""
+    target = (target_types or {}).get(column['column_name'].replace('`', ''))
+    if target is not None and 'String' not in target:
+        return column_name
+    return (f"if(position({column_name}, '.') > 0, concat(substring({column_name}, 1, position({column_name}, '.')), "
+            f"rightPad(substring({column_name}, position({column_name}, '.') + 1), 6, '0')), "
+            f"concat({column_name}, '.000000'))")
+
+
+def target_column_types(args, clickhouse_user, clickhouse_password, database, table):
+    """{column: ClickHouse type} of the target table as it exists (system.columns). A --data_only load (the
+    ch-mysql-resync scratch table is CREATE TABLE ... AS the live table) or a table created by the connector can
+    differ from the loader's own translation, e.g. DateTime64(6, 'UTC') against DateTime64(6)."""
+    quote = lambda name: name.replace("\\", "\\\\").replace("'", "\\'")  # noqa: E731
+    with get_connection(args, clickhouse_user, clickhouse_password) as conn:
+        rows = clickhouse_execute_conn(conn, f"SELECT name, type FROM system.columns WHERE database = "
+                                             f"'{quote(database)}' AND table = '{quote(table)}'")
+    return {name: column_type for (name, column_type) in rows}
+
+
+def datetime_clamp_expression(column, column_name, target_types=None):
+    """A MySQL DATETIME field of the dump (text, input() declares it String), saturated as the streaming connector
+    saturates it (Spec 13.04 D-13.04-34): above 2299-12-31 23:59:59 the instant 2299-12-31 23:59:59 UTC, below
+    1900-01-01 00:00:00 the instant 1900-01-01 00:00:00 UTC (DataTypeRange.DATETIME64_MAX/MIN, clamp.out.of.range;
+    the checksum tools' DATETIME_MIN/DATETIME_MAX). The bounds are instants, so the column or server zone cannot
+    move them; ClickHouse left alone keeps the fraction (2299-12-31 23:59:59.999999) or, parsing in another zone,
+    stores another instant. A value equal to a bound takes the bound too (the same instant, whatever the zone);
+    any other value is cast to the column type exactly as the INSERT cast it before. The dump writes
+    'YYYY-MM-DD HH:MM:SS[.ffffff]', so text order is time order: '>= max' catches the bound and anything later,
+    '< min + 1 microsecond' the bound written with or without a fraction and anything earlier.
+
+    The type cast to is the target table's own column type (``target_types``, from system.columns), so an
+    in-range value is converted in the target column's zone as the implicit INSERT conversion did; the loader's
+    own translation (``datatype``) is used only when the target type is not known."""
+    bare_name = column['column_name'].replace('`', '')
+    target = (target_types or {}).get(bare_name)
+    if target is None:
+        target = column['datatype'].strip()
+        if column.get('nullable'):
+            target = f"Nullable({target})"
+    precision = DATETIME64_PRECISION.search(target)
+    precision = precision.group(1) if precision else '6'
+    (low, high) = (DATETIME_MIN[:19], DATETIME_MAX[:19])
+    return (f"multiIf({column_name} >= '{high}', CAST(toDateTime64('{high}', {precision}, 'UTC') AS {target}), "
+            f"{column_name} < '{low}.000001', CAST(toDateTime64('{low}', {precision}, 'UTC') AS {target}), "
+            f"CAST({column_name} AS {target}))")
+
+
+def read_mysqlshell_decode_columns(table_metadata_path):
+    """{column: 'FROM_BASE64' | 'UNHEX'} from MySQL Shell's per-table metadata <db>@<table>.json
+    (options.decodeColumns: how each encoded column must be decoded), {} when no column is encoded, None when the
+    metadata file is absent."""
+    if not os.path.isfile(table_metadata_path):
+        return None
+    with open(table_metadata_path) as metadata_file:
+        metadata = json.load(metadata_file)
+    return dict(metadata.get('options', {}).get('decodeColumns', {}))
+
+
+def mysqlshell_column_expression(column, column_name, decode_columns, binary_handling_mode='bytes',
+                                 persist_raw_bytes=False, target_types=None):
+    """SELECT expression that turns a MySQL Shell TSV field into the text the streaming connector stores.
+
+    Spec 07.05 section 3.2 and Spec 07.06 section 3.2. MySQL Shell writes binary, BIT and spatial columns as
+    TO_BASE64 text (default useBase64: true; MySQL inserts a newline every 76 characters) or HEX text. The connector
+    stores binary/varbinary/blob as lower-case hex (binary.handling.mode=bytes, persist.raw.bytes=false: the
+    defaults), the raw bytes (persist.raw.bytes=true), base64 text (binary.handling.mode=base64) or upper-case hex
+    (binary.handling.mode=hex). BIT(n) and spatial values reach the connector as bytes under every
+    binary.handling.mode, so they are lower-case hex, or raw with persist.raw.bytes. A spatial value is MySQL's
+    internal format (4-byte SRID, then WKB); the connector stores the WKB only, so the SRID prefix is dropped.
+    NULL needs no special case: the input() structure declares a nullable column Nullable(String)."""
+    bare_name = column['column_name'].replace('`', '')
+    mysql_datatype = column.get('mysql_datatype', '')
+    kind = mysqlshell_binary_kind(mysql_datatype)
+    if decode_columns is None:
+        encoding = 'FROM_BASE64' if kind else None
+    else:
+        encoding = decode_columns.get(bare_name)
+    if kind is None:
+        if encoding is None:
+            if MYSQL_DATETIME_DATATYPE.match(mysql_datatype or ''):
+                return datetime_clamp_expression(column, column_name, target_types)
+            if MYSQL_TIME_DATATYPE.match(mysql_datatype or ''):
+                return time_text_expression(column, column_name, target_types)
+            return column_name
+        raise ValueError(f"Column {bare_name} ({mysql_datatype}) is encoded in the dump ({encoding}) but the loader "
+                         f"has no rule for the representation the connector stores for that type")
+    if encoding == 'FROM_BASE64':
+        raw = f"base64Decode(replaceAll({column_name}, char(10), ''))"
+    elif encoding == 'UNHEX':
+        raw = f"unhex({column_name})"
+    elif encoding is None:
+        raw = column_name
+    else:
+        raise ValueError(f"Column {bare_name}: unknown MySQL Shell decode function {encoding}")
+    if kind == 'spatial':
+        raw = f"substring({raw}, 5)"
+    if kind == 'bit' and BIT1_MYSQL_DATATYPE.match((mysql_datatype or '').strip()):
+        # BIT(1) is a Bool column, as on the streaming path (Debezium emits BOOLEAN): its one byte as
+        # true/false, under every binary mode (spec 13.04 D-13.04-10).
+        return f"({raw}) != char(0)"
+    if kind == 'binary' and binary_handling_mode == 'base64':
+        return f"base64Encode({raw})"
+    if kind == 'binary' and binary_handling_mode == 'hex':
+        return f"hex({raw})"
+    if binary_handling_mode not in ('bytes', 'base64', 'hex'):
+        raise ValueError(f"unknown binary_handling_mode {binary_handling_mode}")
+    if persist_raw_bytes:
+        return raw
+    return f"lower(hex({raw}))"
+
+
+def get_column_list(schema_map, schema, table, virtual_columns, transform=False, mysqlshell=False,
+                    decode_columns=None, binary_handling_mode='bytes', persist_raw_bytes=False, target_types=None):
     key = f"{schema}.{table}"
     column_list = "*"
     if key in schema_map:
@@ -386,7 +595,7 @@ def get_column_list(schema_map, schema, table, virtual_columns, transform=False,
         column_list = ""
         first = True
         for column in columns:
-            if (column['column_name'] not in virtual_columns or (column['column_name'] == '`is_deleted`' and column['has_is_deleted_column'] )) and not column['generated']:
+            if is_loaded_column(column, virtual_columns):
                 datatype = column['datatype']
                 column_name = column['column_name'].replace('`', '\\`')
 
@@ -396,11 +605,12 @@ def get_column_list(schema_map, schema, table, virtual_columns, transform=False,
                     column_list += ","
                 # binary data is escaped
                 logging.debug(f"{table} {column_name} {datatype}")
-                if transform and is_binary_datatype(datatype):
-                    if mysqlshell:
-                        column_list += f"if({column_name}='\\N', null, lower(hex(base64Decode({column_name}))))"
-                    else:
-                        column_list += "lower(hex("+column_name+"))"
+                if transform and mysqlshell:
+                    column_list += mysqlshell_column_expression(column, column_name, decode_columns,
+                                                                binary_handling_mode, persist_raw_bytes, target_types)
+                elif transform and is_binary_datatype(datatype):
+                    # mydumper layout: unchanged (its binary rendering is unverified, Spec 13.04 section 3.8)
+                    column_list += "lower(hex("+column_name+"))"
                 else:
                     column_list += column_name
     return column_list
@@ -409,25 +619,23 @@ def get_column_list(schema_map, schema, table, virtual_columns, transform=False,
 def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_password=None, dry_run=False):
 
     if args.mysqlshell:
-        load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password, dry_run=False)
+        load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password, dry_run=dry_run)
 
     clickhouse_host = args.clickhouse_host
     clickhouse_port = args.clickhouse_port
     clickhouse_secure = args.clickhouse_secure
     ch_schema = args.clickhouse_database
     password = clickhouse_password
-    password_option = ""
-    if password is not None:
-        password_option= f"--password '{password}'"
-    config_file_option = ""
-    if args.clickhouse_config_file is not None:
-       config_file_option= f"--config-file '{args.clickhouse_config_file}'"
+    password_option = shell_password_arg(password)
+    config_file_option = shell_config_file_arg(args.clickhouse_config_file)
     schema_file = args.dump_dir + '/*-schema.sql.gz'
     for files in glob.glob(schema_file):
         (schema, table_name) = parse_schema_path(files)
-        dfile = files.split("-")[0]
+        # <db>.<table>-schema.sql.gz -> <db>.<table>.*dat.gz: strip the suffix only. Splitting the whole path on '-'
+        # cut any directory or table name containing one, and the glob then found no data file (Spec 13.04 3.4).
+        dfile = files[:-len('-schema.sql.gz')]
         print(f"{files}")
-        data_files = glob.glob(dfile + ".*dat.gz")
+        data_files = glob.glob(glob.escape(dfile) + ".*dat.gz")
         columns = get_column_list(
             schema_map, schema, table_name, args.virtual_columns, transform=False)
         transformed_columns = get_column_list(
@@ -441,15 +649,61 @@ def load_data(args, timezone, schema_map, clickhouse_user=None, clickhouse_passw
             execute_load(cmd)
 
 
+def shell_password_arg(password):
+    """The clickhouse-client --password argument for a command run by bash: one shell word however the password
+    is spelled (it was spliced as --password '<pw>', so a quote in it ended the word and the rest ran as shell
+    syntax), and registered so every logged or raised copy of the command is redacted. Empty when None."""
+    if password is None:
+        return ""
+    register_secret(password)
+    return f"--password {shlex.quote(password)}"
+
+
+def shell_config_file_arg(path):
+    """The clickhouse-client --config-file argument as one shell word. Empty when None."""
+    return "" if path is None else f"--config-file {shlex.quote(path)}"
+
+
+_REGISTERED_SECRETS = set()
+
+
+def register_secret(secret):
+    """Register a secret so redact_password() can mask it by exact value.
+
+    Redacting by parsing shell syntax is not reliable: shlex.quote() renders a
+    password containing a single quote as a CONCATENATION of quoted segments
+    (my'secret -> 'my'"'"'secret'), and one containing whitespace splits across
+    tokens. Masking the known literal is exact however the shell quoted it.
+    """
+    if secret:
+        _REGISTERED_SECRETS.add(str(secret))
+
+
+def redact_password(cmd):
+    """Return cmd with any registered secret and any --password value masked."""
+    redacted = cmd
+    # Longest first, so a secret containing another is masked whole.
+    for secret in sorted(_REGISTERED_SECRETS, key=len, reverse=True):
+        redacted = redacted.replace(secret, "****")
+    # Fallback for values never registered: consume the whole shell word, which
+    # may be several adjacent quoted/bare segments emitted by shlex.quote().
+    redacted = re.sub(
+        r"""(--password[=\s]+)((?:'[^']*'|"[^"]*"|[^\s'"]+)+)""",
+        r"\1'****'",
+        redacted,
+    )
+    return redacted
+
+
 def execute_load(cmd):
-    logging.info(cmd)
+    logging.info(redact_password(cmd))
     if args.dry_run:
         logging.info("dry-run not executing")
         return 
     (rc, result) = run_quick_command(cmd)
     logging.debug(result)
     if rc != '0':
-        raise AssertionError("command "+cmd + " failed")
+        raise AssertionError("command " + redact_password(cmd) + " failed")
 
 
 def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, clickhouse_password=None, dry_run=False):
@@ -460,13 +714,9 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
     ch_schema = args.clickhouse_database
 
     schema_files = args.dump_dir + f"/{args.mysql_source_database}@*.sql"
-    password = args.clickhouse_password
-    password_option = ""
-    if password is not None:
-        password_option= f"--password '{password}'"
-    config_file_option = ""
-    if args.clickhouse_config_file is not None:
-       config_file_option= f"--config-file '{args.clickhouse_config_file}'"
+    password = clickhouse_password
+    password_option = shell_password_arg(password)
+    config_file_option = shell_config_file_arg(args.clickhouse_config_file)
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
         futures = []
         for file in glob.glob(schema_files):
@@ -478,10 +728,26 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
             # sakila@store@@0.tsv.zst
             data_files = glob.glob(
                 dfile + f"{schema}@{table_name}@*.tsv.zst") + glob.glob(dfile + f"{schema}@{table_name}.tsv.zst")
+            # how MySQL Shell encoded each binary/BIT/spatial column (<db>@<table>.json next to <db>@<table>.sql)
+            decode_columns = read_mysqlshell_decode_columns(file[:-len('.sql')] + '.json')
+            if decode_columns is None and any(mysqlshell_binary_kind(c.get('mysql_datatype', ''))
+                                              for c in schema_map.get(f"{schema}.{table_name}", [])):
+                logging.warning(f"{file[:-len('.sql')]}.json not found: assuming MySQL Shell's default base64 "
+                                f"encoding (useBase64: true) for the binary, BIT and spatial columns of {table_name}")
             columns = get_column_list(
                 schema_map, schema, table_name, args.virtual_columns, transform=False, mysqlshell=args.mysqlshell)
+            # DATETIME values are cast to the target table's own column types (datetime_clamp_expression), TIME
+            # values are rendered only for a String target (time_text_expression)
+            target_types = None
+            if any(MYSQL_DATETIME_DATATYPE.match(c.get('mysql_datatype', '') or '')
+                   or MYSQL_TIME_DATATYPE.match(c.get('mysql_datatype', '') or '')
+                   for c in schema_map.get(f"{schema}.{table_name}", [])):
+                target_types = target_column_types(args, clickhouse_user, clickhouse_password, ch_schema, table_name)
             transformed_columns = get_column_list(
-                schema_map, schema, table_name, args.virtual_columns, transform=True, mysqlshell=args.mysqlshell)
+                schema_map, schema, table_name, args.virtual_columns, transform=True, mysqlshell=args.mysqlshell,
+                decode_columns=decode_columns,
+                binary_handling_mode=getattr(args, 'binary_handling_mode', 'bytes'),
+                persist_raw_bytes=getattr(args, 'persist_raw_bytes', False), target_types=target_types)
             
             if args.truncate_tables:
                 if not args.dry_run:
@@ -493,7 +759,7 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
                 structure = ""
                 for column in column_metadata_list:
                     logging.info(str(column))
-                    if (column['column_name'] in args.virtual_columns and not (column['column_name'] == '`is_deleted`' and column['has_is_deleted_column'] )) or column['generated']:
+                    if not is_loaded_column(column, args.virtual_columns):
                         continue
                     column_name = column['column_name'].replace('`', '\\`')
                     if structure != "":
@@ -576,7 +842,8 @@ def main():
                         action='store_true', default=False)
     parser.add_argument('--dry_run', dest='dry_run',
                         action='store_true', default=False)
-    parser.add_argument('--virtual_columns', help='virtual_columns',
+    parser.add_argument('--virtual_columns', help='bookkeeping columns left out of the INSERT; applies only to '
+                        'columns the regexp translator appends, never to MySQL source columns',
                         nargs='+', default=['`_sign`', '`_version`', '`is_deleted`','`_is_deleted`'])
     parser.add_argument('--mysqlshell', help='using a util.dumpSchemas', dest='mysqlshell',
                         action='store_true', default=False)
@@ -584,6 +851,14 @@ def main():
                         action='store_true', default=False)
     parser.add_argument('--clickhouse_datetime_timezone',
                         help='Timezone for CH date times', required=False, default=None)
+    parser.add_argument('--binary_handling_mode', choices=['bytes', 'base64', 'hex'], default='bytes',
+                        help='Set to the binary.handling.mode of the connector that streams into these tables, so '
+                             'binary/varbinary/blob values are loaded in the text it stores: bytes = lower-case hex '
+                             '(Debezium default), base64 = base64 text, hex = upper-case hex. BIT and spatial values '
+                             'are hex under every mode.')
+    parser.add_argument('--persist_raw_bytes', action='store_true', default=False,
+                        help='Set when the connector runs with persist.raw.bytes=true: binary/BIT/spatial values are '
+                             'loaded as raw bytes instead of hex (for binary types only with --binary_handling_mode bytes)')
     global args
     args = parser.parse_args()
     schema = not args.data_only

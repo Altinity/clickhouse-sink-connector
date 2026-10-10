@@ -122,18 +122,22 @@ public class DatabaseOverrideIT {
         conn.prepareStatement("create table customers.custtable(col1 varchar(255) not null, col2 int, col3 int, primary key(col1))").execute();
         conn.prepareStatement("insert into customers.custtable values('a', 1, 1)").execute();
 
-
-        Thread.sleep(10000);
-
-        
+        // Poll until employees2.newtable has data
+        assertTrue("employees2.newtable should have data",
+                ITCommon.waitForData(writer.getConnection(),
+                        "select col2 from employees2.newtable final where col1 = 'a'", 120_000));
 
         long col2 = 0L;
         ResultSet version1Result = ITCommon.executeQueryWithResultSet("select col2 from employees2.newtable final where col1 = 'a'", writer.getConnection());
         while(version1Result.next()) {
             col2 = version1Result.getLong("col2");
         }
-        Thread.sleep(10000);
         assertTrue(col2 == 1);
+
+        // Poll until productsnew.prodtable has data
+        assertTrue("productsnew.prodtable should have data",
+                ITCommon.waitForData(writer.getConnection(),
+                        "select col2 from productsnew.prodtable final where col1 = 'a'", 120_000));
 
         long productsCol2 = 0L;
         ResultSet productsVersionResult = ITCommon.executeQueryWithResultSet("select col2 from productsnew.prodtable final where col1 = 'a'", writer.getConnection());
@@ -141,7 +145,11 @@ public class DatabaseOverrideIT {
             productsCol2 = productsVersionResult.getLong("col2");
         }
         assertTrue(productsCol2 == 1);
-        Thread.sleep(10000);
+
+        // Poll until customers.custtable has data
+        assertTrue("customers.custtable should have data",
+                ITCommon.waitForData(writer.getConnection(),
+                        "select col2 from customers.custtable final where col1 = 'a'", 120_000));
 
         long customersCol2 = 0L;
         ResultSet customersVersionResult = ITCommon.executeQueryWithResultSet("select col2 from customers.custtable final where col1 = 'a'", writer.getConnection());
@@ -150,9 +158,6 @@ public class DatabaseOverrideIT {
         }
         assertTrue(customersCol2 == 1);
 
-
-        Thread.sleep(10000);
-        // Execute the query in MySQL to rename table.
 
 
         clickHouseDebeziumEmbeddedApplication.getDebeziumEventCapture().engine.close();

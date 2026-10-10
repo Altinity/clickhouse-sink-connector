@@ -5,40 +5,39 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * KNOWN DEFECT: the sequence seeds overflow the space the timestamp
- * multiplier leaves them, which can invert causal order across a resume.
+ * The sequence seeds overflow the space the timestamp multiplier leaves them
+ * (inherited 2.8.0 arithmetic, preserved for upgrade/downgrade compatibility;
+ * spec 02.01 section 3.3 / section 4).
  *
  * <p>The emitted version is {@code sourceTsMs * 1_000_000 + sequence}, so the
  * sequence has six decimal digits of room. Both seeds are ten digits, so the
  * addition carries into the timestamp field and is worth roughly 1000&nbsp;ms.
- * Across a restart that inverts ordering: a genuinely NEWER event seeded at
- * {@link DebeziumChangeEventCapture#SEQUENCE_START_INITIAL} can rank BELOW an
+ * With the floor starting at 0 after a restart that inverted ordering: a
+ * genuinely NEWER event seeded at
+ * {@link DebeziumChangeEventCapture#SEQUENCE_START_INITIAL} ranked BELOW an
  * older pre-restart event seeded at
  * {@link DebeziumChangeEventCapture#SEQUENCE_START}, and ReplacingMergeTree
- * then keeps the stale row and silently discards the newer update -- with row
- * counts still matching on both sides.</p>
+ * kept the stale row -- with row counts still matching on both sides.</p>
  *
  * <pre>
  *   older, pre-restart  (T)     -&gt; T*1e6 + 1_000_000_000 = 1787635798000000000
  *   newer, post-restart (T+1ms) -&gt; (T+1)*1e6 +   500_000_000 = 1787635797501000000
  * </pre>
  *
- * <p>The {@code diff &gt; 1} second reset in
- * {@code DebeziumChangeEventCapture#handleBatch} does not cover it: a
- * 1&nbsp;ms advance yields {@code diff == 0}, so the 500m seed is still in
- * force.</p>
+ * <p>The {@code diff &gt; 1} second reset does not cover it: a 1&nbsp;ms advance
+ * yields {@code diff == 0}, so the 500m seed is still in force.</p>
  *
- * <p>These assertions read the REAL constants, so they are a genuine guard
- * rather than arithmetic over copied literals. They assert the defect EXISTS
- * and will start FAILING as soon as the encoding is corrected -- at which
- * point the ordering assertion should be inverted into the guarantee the
- * scheme can then finally make.</p>
- *
- * <p>Not fixed in place because changing the encoding changes every emitted
- * {@code _version} and needs its own review plus an upgrade path for versions
- * already stored.</p>
+ * <p>These assertions read the REAL constants and pin the raw arithmetic -- the
+ * UNSEEDED case -- which must stay exactly as it is: a version written by 2.8.0,
+ * 2.9.1 or 2.10.x must rank consistently against one written by 2.11.0 in both
+ * directions. The inversion itself is closed elsewhere, without touching the
+ * arithmetic: the floor is seeded at engine start from the durable high-water
+ * mark, so the post-restart event is clamped to {@code T + 1001} and out-ranks
+ * the older one (spec 02.02 section 3.5;
+ * {@code DebeziumChangeEventCaptureTest
+ * .newerEventOneMillisecondAfterSeededRestartRanksAboveOlderPreRestartEvent}).</p>
  */
-@DisplayName("KNOWN DEFECT: sequence seeds carry into the timestamp field")
+@DisplayName("Inherited arithmetic: sequence seeds carry into the timestamp field (the seeded floor compensates)")
 public class SequenceSeedOverflowTest {
 
     /** The multiplier used by the version encoding in handleBatch. */
@@ -53,11 +52,11 @@ public class SequenceSeedOverflowTest {
      */
     @Test
     public void testSeedDoesNotFitBeneathTheMultiplier() {
-        Assert.assertTrue("SEQUENCE_START (" + DebeziumChangeEventCapture.SEQUENCE_START
+        Assert.assertTrue("SEQUENCE_START (" + VersionSequencer.SEQUENCE_START
                         + ") still overflows the multiplier (" + MULTIPLIER + "). When this "
                         + "fails the encoding has been fixed -- invert the ordering "
                         + "assertion below into the guarantee it could not make before.",
-                DebeziumChangeEventCapture.SEQUENCE_START >= MULTIPLIER);
+                VersionSequencer.SEQUENCE_START >= MULTIPLIER);
     }
 
     /**
@@ -74,9 +73,9 @@ public class SequenceSeedOverflowTest {
         final long newerSourceTs = olderSourceTs + 1;
 
         long olderPreRestart =
-                olderSourceTs * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START;
+                olderSourceTs * MULTIPLIER + VersionSequencer.SEQUENCE_START;
         long newerPostRestart =
-                newerSourceTs * MULTIPLIER + DebeziumChangeEventCapture.SEQUENCE_START_INITIAL;
+                newerSourceTs * MULTIPLIER + VersionSequencer.SEQUENCE_START_INITIAL;
 
         Assert.assertTrue("KNOWN DEFECT: newer(" + newerPostRestart + ") should out-rank "
                         + "older(" + olderPreRestart + ") but does not, so "
@@ -97,7 +96,7 @@ public class SequenceSeedOverflowTest {
         Assert.assertTrue("a resumed event must rank below a pre-restart write of the "
                         + "SAME event; this ordering is intended and must survive any "
                         + "fix to the multiplier overflow",
-                DebeziumChangeEventCapture.SEQUENCE_START_INITIAL
-                        < DebeziumChangeEventCapture.SEQUENCE_START);
+                VersionSequencer.SEQUENCE_START_INITIAL
+                        < VersionSequencer.SEQUENCE_START);
     }
 }

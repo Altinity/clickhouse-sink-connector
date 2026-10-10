@@ -124,6 +124,11 @@ services:
       #- log4j2Debug=true 
     depends_on:
       - kafka
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "1"
     <<: *default-resources
 
   clickhouse:

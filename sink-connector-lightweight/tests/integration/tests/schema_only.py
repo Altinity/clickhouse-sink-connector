@@ -1,46 +1,104 @@
+import os
+import time
+
 from integration.tests.steps.mysql import *
+from integration.tests.steps.clickhouse import *
 from integration.tests.steps.service_settings import *
-from integration.tests.steps.sink_configurations import config_with_schema_only
+
+# Imported after the star imports on purpose: they bring a test step named
+# `copy` into this namespace, which shadowed the standard-library module
+# ("'TestStep' object has no attribute 'deepcopy'").
+from copy import deepcopy as _deepcopy
 
 
-@TestStep(Given)
-def create_table_structure(self, table_name):
-    """Create mysql table that is used to only replicate table schema."""
-    mysql_node = self.context.mysql_node
-    clickhouse_node = self.context.clickhouse_node
-
-    with By(f"creating a {table_name} table"):
-        create_mysql_table(
-            table_name=rf"\`{table_name}\`",
-            columns=f"col1 varchar(255), col2 int",
-        )
-
-    with And(f"inserting data into the {table_name} table"):
-        mysql_node.query(f"INSERT INTO {table_name} VALUES (1, 'test', 1)")
-
-    with And("I make sure that the table was replicated on the ClickHouse side"):
-        for retry in retries(timeout=40):
-            with retry:
-                clickhouse_node.query(f"EXISTS test.{table_name}", message="1")
+def base_config_file(env):
+    """The configuration file the suite started the connector with."""
+    name = "replicated_config.yml" if "replicated" in env else "config.yml"
+    return os.path.join(env, "configs", name)
 
 
 @TestScenario
 def check_schema_only(self):
-    """Check that when schem_only mode is used in configurations, table is created but the data is not replicated."""
-    table_name = "tb_" + getuid()
+    """Check that with `snapshot.mode: no_data` the initial snapshot creates the
+    table in ClickHouse but does not copy the rows that already exist in MySQL,
+    and that rows written after the snapshot are replicated.
 
-    with Given("I create table and populate it with data"):
-        create_table_structure(table_name=table_name)
+    `no_data` only affects the initial snapshot, so the rows that must stay
+    behind are written BEFORE the connector starts, and the connector starts
+    with offset and schema-history tables of its own so that it really takes a
+    new snapshot (with the suite's offsets it would resume streaming instead).
+    """
+    uid = getuid()
+    database = f"schema_only_{uid}"
+    table_name = f"tb_{uid}"
+    mysql = self.context.mysql_node
+    clickhouse = self.context.clickhouse_node
+    sink = self.context.sink_node
+    config_file = os.path.join(self.context.env, "configs", "schema_only.yml")
+    saved_config = _deepcopy(self.context.config.data)
 
-    with Then("I check that the data was not replicated into the ClickHouse table"):
-        for retry in retries(timeout=40, delay=1):
-            with retry:
-                clickhouse_data = self.context.clickhouse_node.query(
-                    f"SELECT * FROM test.{table_name}"
-                )
+    try:
+        with Given("the connector is stopped"):
+            if sink.sink_connector_pid():
+                sink.stop_sink_connector()
+
+        with And("a MySQL table that already holds a row"):
+            create_mysql_database(database_name=database)
+            create_clickhouse_database(name=database)
+            mysql.query(
+                f"CREATE TABLE {database}.{table_name} "
+                f"(id INT NOT NULL, col1 varchar(255), col2 int, PRIMARY KEY (id)) ENGINE = InnoDB;"
+            )
+            mysql.query(f"INSERT INTO {database}.{table_name} VALUES (1, 'before', 1);")
+
+        with When("the connector starts in schema-only mode with fresh offsets and history"):
+            self.context.config.update(
+                {
+                    "snapshot.mode": "no_data",
+                    "database.include.list": database,
+                    "offset.storage.jdbc.table.name": f"altinity_sink_connector.replica_source_info_{uid}",
+                    "schema.history.internal.jdbc.table.name": f"altinity_sink_connector.replicate_schema_history_{uid}",
+                }
+            )
+            self.context.config.save(filename=config_file)
+            sink.start_sink_connector(config_file=config_file)
+
+        with Then("the table is created in ClickHouse"):
+            for attempt in retries(timeout=120, delay=3):
+                with attempt:
+                    clickhouse.query(f"EXISTS {database}.{table_name}", message="1")
+
+        with And("the row that existed before the snapshot was not copied"):
+            for _ in range(10):
                 assert (
-                    "1" and "test" and "1" not in clickhouse_data.output.strip()
+                    clickhouse.query(
+                        f"SELECT count() FROM {database}.{table_name} FINAL"
+                    ).output.strip()
+                    == "0"
                 ), error()
+                time.sleep(1)
+
+        with When("a row is inserted after the snapshot"):
+            mysql.query(f"INSERT INTO {database}.{table_name} VALUES (2, 'after', 2);")
+
+        with Then("only the new row is replicated"):
+            for attempt in retries(timeout=120, delay=3):
+                with attempt:
+                    clickhouse.query(
+                        f"SELECT id, col1, col2 FROM {database}.{table_name} FINAL FORMAT CSV",
+                        message='2,"after",2',
+                    )
+            assert (
+                clickhouse.query(
+                    f"SELECT count() FROM {database}.{table_name} FINAL"
+                ).output.strip()
+                == "1"
+            ), error()
+
+    finally:
+        with Finally("the connector runs the suite's configuration again"):
+            self.context.config.data = saved_config
+            sink.restart_sink_connector(config_file=base_config_file(self.context.env))
 
 
 @TestModule
@@ -54,17 +112,10 @@ def module(
     mysql_node="mysql-master",
 ):
     """
-    Check that it is possible to only replicate the schema of the table using snapshot mode: schema-only.
+    Check that it is possible to only replicate the schema of the table using snapshot mode: no_data.
     """
-    config_file = os.path.join("env", "auto", "configs", "schema_only.yml")
-
     self.context.clickhouse_node = self.context.cluster.node(clickhouse_node)
     self.context.mysql_node = self.context.cluster.node(mysql_node)
-
-    with Given(
-        "I create a new ClickHouse Sink Connector configuration with schema-only mode"
-    ):
-        config_with_schema_only()
 
     for scenario in loads(current_module(), Scenario):
         Scenario(run=scenario)

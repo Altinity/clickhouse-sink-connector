@@ -72,7 +72,7 @@ connector.class: "io.debezium.connector.oracle.OracleConnector"
 # offset.storage: The Java class that implements the offset storage strategy. This must be set to io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore.
 offset.storage: "io.debezium.storage.jdbc.offset.JdbcOffsetBackingStore"
 
-# offset.storage.jdbc.offset.table.name: The name of the database table where connector offsets are to be stored.
+# offset.storage.jdbc.table.name: The name of the database table where connector offsets are to be stored.
 offset.storage.jdbc.table.name: "altinity_sink_connector.replica_source_info"
 
 # offset.storage.jdbc.url: The JDBC URL for the database where connector offsets are to be stored.
@@ -86,7 +86,7 @@ offset.storage.jdbc.password: "root"
 
 disable.ddl: "true"
 
-# offset.storage.jdbc.offset.table.ddl: The DDL statement used to create the database table where connector offsets are to be stored.
+# offset.storage.jdbc.table.ddl: The DDL statement used to create the database table where connector offsets are to be stored.
 offset.storage.jdbc.table.ddl: "CREATE TABLE if not exists %s
 (
     `id` String,
@@ -114,12 +114,12 @@ schema.history.internal.jdbc.user: "root"
 # schema.history.internal.jdbc.password: The password of the database user to be used when connecting to the database where connector schema history is to be stored.
 schema.history.internal.jdbc.password: "root"
 
-# schema.history.internal.jdbc.schema.history.table.ddl: The DDL statement used to create the database table where connector schema history is to be stored.(Advanced)
-schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s
+# schema.history.internal.jdbc.table.ddl: The DDL statement used to create the database table where connector schema history is to be stored.(Advanced)
+schema.history.internal.jdbc.table.ddl: "CREATE TABLE if not exists %s
 (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id"
 
-# schema.history.internal.jdbc.schema.history.table.name: The name of the database table where connector schema history is to be stored.
-schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
+# schema.history.internal.jdbc.table.name: The name of the database table where connector schema history is to be stored.
+schema.history.internal.jdbc.table.name: "altinity_sink_connector.replicate_schema_history"
 
 
 # enable.snapshot.ddl: If set to true, the connector wil parse the DDL statements as part of initial load.

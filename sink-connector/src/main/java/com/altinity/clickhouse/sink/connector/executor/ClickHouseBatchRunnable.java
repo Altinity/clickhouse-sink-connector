@@ -14,6 +14,7 @@ import com.altinity.clickhouse.sink.connector.model.BlockMetaData;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.model.DBCredentials;
 import com.altinity.clickhouse.sink.connector.model.RoutedBatch;
+import com.google.common.annotations.VisibleForTesting;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.common.TopicPartition;
 import org.apache.kafka.connect.source.SourceRecord;
@@ -23,11 +24,13 @@ import java.sql.Connection;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Runnable object that will be called on a schedule to perform the
@@ -74,6 +77,64 @@ public class ClickHouseBatchRunnable implements Runnable {
             new HashMap<>();
 
     /**
+     * Closes every connection this worker holds -- the per-database
+     * connections, the system connection, and the connection each cached
+     * table writer holds -- and forgets them. Called by the engine once the
+     * worker pool has terminated (spec 01.01 §3.3 step 4a): a worker is
+     * discarded with its pool on every engine restart, and without this call
+     * its connections were never returned or closed, so each restart leaked
+     * {@code thread.pool.size} x databases of them. Safe to call more than
+     * once; a connection that fails to close is logged and skipped, never
+     * rethrown.
+     *
+     * <p>The writers matter because a writer's connection is not always one
+     * of this worker's per-database connections: a writer is built on the
+     * per-database connection, but {@code BaseDbWriter.getConnection()}
+     * replaces a closed or evicted handle with a fresh checkout from the pool,
+     * and that checkout is known to the writer alone. Closing only the
+     * per-database map returned the stale original (a no-op) and left the
+     * replacement checked out of the pool for the life of the process -- one
+     * pool slot per reconnected writer per restart, until the pool ran dry.</p>
+     */
+    public synchronized void closeConnections() {
+        for (Map.Entry<String, Connection> entry : this.databaseToConnectionMap.entrySet()) {
+            closeQuietly(entry.getValue(), entry.getKey());
+        }
+        if (this.topicToDbWriterMap != null) {
+            for (Map.Entry<String, DbWriter> entry : this.topicToDbWriterMap.entrySet()) {
+                Connection held = entry.getValue().heldConnection();
+                // Already closed above when it is one of the per-database
+                // connections; only a re-acquired handle is new here.
+                if (held != null && !this.databaseToConnectionMap.containsValue(held)) {
+                    closeQuietly(held, entry.getKey());
+                }
+            }
+            this.topicToDbWriterMap.clear();
+        }
+        this.databaseToConnectionMap.clear();
+        closeQuietly(this.systemConnection, BaseDbWriter.SYSTEM_DB);
+        this.systemConnection = null;
+    }
+
+    /** Number of per-database connections currently held. Package-private for the test. */
+    int openDatabaseConnections() {
+        return this.databaseToConnectionMap.size();
+    }
+
+    private void closeQuietly(Connection conn, String databaseName) {
+        if (conn == null) {
+            return;
+        }
+        try {
+            if (!conn.isClosed()) {
+                conn.close();
+            }
+        } catch (SQLException e) {
+            log.warn("Worker {}: could not close the connection to `{}`: {}", this.threadId, databaseName, e.toString());
+        }
+    }
+
+    /**
      * Map of topic names to table names.
      */
     private final Map<String, String> topic2TableMap;
@@ -89,9 +150,31 @@ public class ClickHouseBatchRunnable implements Runnable {
     private DBCredentials dbCredentials;
 
     /**
-     * Current batch of records being processed.
+     * Current batch of records being processed. In routing mode this may be
+     * the concatenation, in dequeue order, of several queued handed-off groups
+     * written as ONE batch (spec 03.03 section 3.1.1); {@link #currentGroups}
+     * then holds the groups themselves for acknowledgement.
      */
     private List<ClickHouseStruct> currentBatch = null;
+
+    /**
+     * The handed-off groups behind {@link #currentBatch}, in the order they
+     * were dequeued, when the worker coalesced more than one queued batch into
+     * the current write; {@code null} when {@code currentBatch} IS the single
+     * group (legacy mode, or a queue that held one batch). Each group is
+     * reported to the offset FIFO exactly once, in this order, after the write
+     * (spec 09.01 section 3.2).
+     */
+    private List<List<ClickHouseStruct>> currentGroups = null;
+
+    /**
+     * A batch taken from this worker's queue during the coalescing wait of the
+     * previous write (spec 03.03 section 3.1.1 step 6) that did not fit that
+     * write's bounds. It is older than anything still queued, so it opens the
+     * next write; {@code null} otherwise. Its unit is outstanding in the offset
+     * FIFO from its handoff, exactly like a queued batch.
+     */
+    private RoutedBatch carriedOver = null;
 
     /**
      * Shared watermark (owned by ClickHouseSinkTask): highest Kafka offset per
@@ -109,6 +192,15 @@ public class ClickHouseBatchRunnable implements Runnable {
      * Sleep time in milliseconds after an exception occurs.
      */
     private static final long ERROR_SLEEP_TIME_MS = 10000;
+
+    /**
+     * Paces the retries of a batch that failed to reach ClickHouse: the delay
+     * doubles per consecutive failure of the same batch up to a cap, and is
+     * reset by a successful write (spec 10.02). Without it the scheduled tick
+     * re-ran a failing batch every buffer.flush.time.ms (30 ms) against a
+     * server that had just reported backpressure.
+     */
+    private final RetryBackoff retryBackoff;
 
     /**
      * Constructs a ClickHouseBatchRunnable (legacy mode without hash-based routing).
@@ -191,6 +283,11 @@ public class ClickHouseBatchRunnable implements Runnable {
         //this.queryToRecordsMap = new HashMap<>();
         this.topicToDbWriterMap = new HashMap<>();
         //this.topicToRecordsMap = new HashMap<>();
+        this.retryBackoff = new RetryBackoff(
+                this.config.getLong(ClickHouseSinkConnectorConfigVariables
+                        .BATCH_RETRY_BACKOFF_INITIAL_MS.toString()),
+                this.config.getLong(ClickHouseSinkConnectorConfigVariables
+                        .BATCH_RETRY_BACKOFF_MAX_MS.toString()));
         this.dbCredentials = parseDBConfiguration();
         this.systemConnection = createConnection(BaseDbWriter.SYSTEM_DB);
         try {
@@ -217,6 +314,21 @@ public class ClickHouseBatchRunnable implements Runnable {
         String jdbcUrl = BaseDbWriter.getConnectionString(
                 this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), "system");
+        return openConnection(jdbcUrl, databaseName);
+    }
+
+    /**
+     * The single place this worker obtains a JDBC connection. Every
+     * connection the worker uses -- system, per-database, bootstrap -- comes
+     * through here, so a test can substitute recording or null connections
+     * without a ClickHouse server.
+     *
+     * @param jdbcUrl      the server URL to connect to
+     * @param databaseName the database the connection is for (pool key)
+     * @return a connection, or null when one cannot be obtained
+     */
+    @VisibleForTesting
+    Connection openConnection(String jdbcUrl, String databaseName) {
         return BaseDbWriter.createConnection(jdbcUrl,
                 BaseDbWriter.DATABASE_CLIENT_NAME,
                 this.dbCredentials.getUserName(),
@@ -224,61 +336,96 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
+     * {@code host:port/database} keys whose {@code CREATE DATABASE IF NOT
+     * EXISTS} has succeeded in this process. Shared by every worker: the
+     * statement is needed once per database per process, not once per worker
+     * per cache miss -- and never again on every batch while a connection to
+     * that database cannot be obtained.
+     */
+    private static final java.util.Set<String> ENSURED_DATABASES =
+            ConcurrentHashMap.newKeySet();
+
+    /**
      * Retrieves the ClickHouse connection for the specified database.
      *
-     * <p>If no connection exists, this method creates the database (if
-     * needed) and returns a new connection.
+     * <p>If no connection is cached, this method ensures the database exists
+     * (once per process, see {@link #ensureDatabaseExists}) and opens a new
+     * connection. A connection that cannot be obtained is reported at ERROR
+     * naming the database and is NOT cached, so the next lookup retries.
      *
      * @param databaseName the target database name
-     * @return a Connection to the specified database
+     * @return a Connection to the specified database, or null if none could
+     *         be obtained
      */
-    private Connection getClickHouseConnection(String databaseName) {
+    @VisibleForTesting
+    Connection getClickHouseConnection(String databaseName) {
         if (this.databaseToConnectionMap.containsKey(databaseName)) {
             return this.databaseToConnectionMap.get(databaseName);
         }
-        // Create database if it doesnt exist.
-        String systemJdbcUrl = BaseDbWriter.getConnectionString(
-                this.dbCredentials.getHostName(),
-                this.dbCredentials.getPort(), "system");
-        Connection systemConn = BaseDbWriter.createConnection(systemJdbcUrl,
-                BaseDbWriter.DATABASE_CLIENT_NAME,
-                this.dbCredentials.getUserName(),
-                this.dbCredentials.getPassword(), "system", config);
-        try {
-            boolean useOnCluster = this.config.
-                    getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
-            new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
-            DBMetadata metadata = new DBMetadata(config);
-            metadata.executeSystemQuery(systemConn,
-                    "CREATE DATABASE IF NOT EXISTS " + databaseName);
-        } catch (Exception e) {
-            log.error("Error creating database " + e);
-        } finally {
-            try {
-                // createConnection() returns null when ClickHouse is
-                // unreachable, closing it would throw a NullPointerException
-                // that the handler below does not catch.
-                if (systemConn != null) {
-                    systemConn.close();
-                }
-            } catch (SQLException e) {
-                log.error("Error closing connection when creating database" + e);
-            }
-        }
+        ensureDatabaseExists(databaseName);
         String jdbcUrl = BaseDbWriter.getConnectionString(
                 this.dbCredentials.getHostName(),
                 this.dbCredentials.getPort(), databaseName);
-        Connection conn = BaseDbWriter.createConnection(jdbcUrl,
-                BaseDbWriter.DATABASE_CLIENT_NAME,
-                this.dbCredentials.getUserName(),
-                this.dbCredentials.getPassword(), databaseName, config);
+        Connection conn = openConnection(jdbcUrl, databaseName);
         // Only cache a usable connection. containsKey() above returns true for
         // a key mapped to null, so caching a failed connection would keep
         // returning null for this database until the connector restarts.
         if (conn != null) {
             this.databaseToConnectionMap.put(databaseName, conn);
+        } else {
+            // Never silent: the caller retries on the next tick, and the
+            // operator must be able to see WHICH database cannot be reached.
+            log.error("Could not obtain a ClickHouse connection to database `{}` on {}:{}; "
+                            + "the batch will be retried on the next tick.",
+                    databaseName, this.dbCredentials.getHostName(), this.dbCredentials.getPort());
         }
         return conn;
+    }
+
+    /**
+     * Issues {@code CREATE DATABASE IF NOT EXISTS} for {@code databaseName}
+     * unless this process has already done so successfully.
+     *
+     * <p>Exactly one statement per database per process. A failure -- no
+     * system connection, or a rejected statement -- is reported at ERROR
+     * naming the database and is NOT recorded as ensured, so the next cache
+     * miss tries again. The caller still attempts the database connection in
+     * either case: a user that may write to an existing database but lacks
+     * {@code CREATE DATABASE} must not be blocked.
+     *
+     * @param databaseName the destination database
+     */
+    private void ensureDatabaseExists(String databaseName) {
+        String host = this.dbCredentials.getHostName();
+        Integer port = this.dbCredentials.getPort();
+        String key = host + ":" + port + "/" + databaseName;
+        if (ENSURED_DATABASES.contains(key)) {
+            return;
+        }
+        String systemJdbcUrl = BaseDbWriter.getConnectionString(host, port, "system");
+        Connection systemConn = openConnection(systemJdbcUrl, "system");
+        if (systemConn == null) {
+            log.error("Cannot ensure database `{}` exists on {}:{}: no ClickHouse connection could "
+                            + "be obtained (server unreachable or credentials rejected). Will retry "
+                            + "on the next lookup.", databaseName, host, port);
+            return;
+        }
+        try {
+            boolean useOnCluster = this.config.
+                    getBoolean(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString());
+            new ClickHouseCreateDatabase().createNewDatabase(systemConn, databaseName, useOnCluster, this.config);
+            ENSURED_DATABASES.add(key);
+        } catch (Exception e) {
+            log.error("Error creating database `{}` on {}:{}: {}", databaseName, host, port,
+                    e.toString(), e);
+        } finally {
+            try {
+                systemConn.close();
+            } catch (SQLException e) {
+                log.error("Error closing connection after ensuring database `{}`: {}",
+                        databaseName, e.toString());
+            }
+        }
     }
 
     /**
@@ -336,15 +483,15 @@ public class ClickHouseBatchRunnable implements Runnable {
         // Get server timezone from config
         String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
         String errorTableName = config.getString(ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME.toString());
-        
-        // Determine which mode we're in: hash-based routing or legacy
-        boolean useHashRouting = (threadId >= 0 && routedRecords != null);
-        useHashRouting = false;
+
         try {
-//            if (useHashRouting) {
-//                runWithHashRouting(taskId, sourceTimeZone, serverTimeZone, errorTableName);
-//            } else
-           {
+            // Hash-routing mode (threadId >= 0 with a dedicated routed queue)
+            // vs legacy single shared queue. In routing mode this runnable owns
+            // exactly one queue and drains it in FIFO order, so same-table
+            // batches (all routed to this thread) are applied in source order.
+            if (this.routedRecords != null && this.threadId >= 0) {
+                runWithHashRouting(taskId, sourceTimeZone, serverTimeZone, errorTableName);
+            } else {
                 runLegacyMode(taskId, sourceTimeZone, serverTimeZone, errorTableName);
             }
         } catch (Exception e) {
@@ -355,58 +502,186 @@ public class ClickHouseBatchRunnable implements Runnable {
                 logErrorToClickHouse(e, taskId, errorTableName);
             }
 
+            // A poisoned OffsetStorageWriter is NOT retriable, and must be
+            // checked before the ClickHouse classifier, which sees no
+            // ClickHouse error code and defaults it to UNKNOWN/retriable. With
+            // errors.max.retries = -1 that means retrying forever, and because
+            // the offset store writes asynchronously the ClickHouse inserts
+            // keep succeeding while the committed binlog position stays
+            // frozen -- replication silently diverges instead of failing.
+            // Observed on txnrepo-sink-staging (2026-09-10/11): ~8h of
+            // "Retriable ClickHouse error (Code: -1, Category: UNKNOWN)" while
+            // the committed offset never moved past its 13:29 event.
+            if (isOffsetWriterPoisoned(e)) {
+                log.error("FATAL: the Debezium OffsetStorageWriter is stuck in "
+                        + "the 'already flushing' state -- Task({}). Offsets "
+                        + "can no longer be committed in this JVM, so "
+                        + "replication would keep writing rows against a "
+                        + "frozen binlog position. Stopping the task to "
+                        + "prevent silent data divergence; a restart resumes "
+                        + "from the last committed offset.", taskId);
+                // currentBatch is deliberately NOT cleared: its handoff unit
+                // must stay outstanding so no control-record offset can pass
+                // it while the engine is being stopped (spec 03.01 section 3.3).
+                throw new RuntimeException(
+                        "OffsetStorageWriter is permanently stuck flushing; "
+                                + "stopping to prevent silent data divergence",
+                        e);
+            }
+
+            // An offset-bookkeeping failure (PR #1437 review, Low item 1) is
+            // not a ClickHouse error: the rows are already durably written
+            // (WRITTEN-ONCE), and ClickHouseErrorClassifier finds no
+            // ClickHouse error code in it, so classify(e) below would
+            // otherwise default it to "Retriable ClickHouse error (Code: -1,
+            // Category: UNKNOWN)" -- indistinguishable from a real ClickHouse
+            // outage. Logging it under its own name here means an operator
+            // (or an alert keyed on the log line) does not chase a ClickHouse
+            // problem that does not exist. The next drain still retries the
+            // acknowledgement (see OffsetAcknowledgementFailureTest); this
+            // worker just continues its normal retry/backoff loop afterwards.
+            if (isOffsetAcknowledgementFailure(e)) {
+                log.warn("Offset acknowledgement error -- Task({}): the written rows are durably in "
+                        + "ClickHouse, but reporting one or more groups to the handoff FIFO failed "
+                        + "({}). Not a ClickHouse error: the next drain -- triggered by any later "
+                        + "write -- retries the acknowledgement.", taskId, rootCauseMessage(e));
+                long delayMs = retryBackoff.nextDelayMs(currentBatch);
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                return;
+            }
+
             // Classify the error to decide whether to retry or stop
             ClickHouseErrorClassifier.ErrorCategory category = ClickHouseErrorClassifier.classify(e);
             int errorCode = ClickHouseErrorClassifier.extractErrorCode(e);
 
             if (category == ClickHouseErrorClassifier.ErrorCategory.FATAL) {
                 log.error("FATAL ClickHouse error (Code: {}) -- this batch will never succeed. " +
-                          "Discarding batch and stopping task to prevent silent data loss. " +
+                          "Stopping this worker; the engine is stopped on the next source " +
+                          "batch (a dead worker is detected by the capture loop). " +
                           "Manual intervention required.", errorCode);
-                // Clear the stuck batch so it is not retried forever
-                currentBatch = null;
-                // Rethrow to stop the scheduled executor -- silent swallowing causes
-                // binlog advancement to stall and blocks replication for ALL tables
+                // currentBatch is deliberately NOT cleared: the batch's handoff
+                // unit stays outstanding, so no control-record offset can pass
+                // its rows and every younger unit stays parked behind it. The
+                // throw ends this scheduled task; DebeziumChangeEventCapture
+                // sees the terminated future and stops the engine LOUDLY with
+                // this cause (spec 03.01 section 3.3) instead of leaving a
+                // silently stalled pipeline behind.
                 throw new RuntimeException("Fatal ClickHouse error, stopping task", e);
             } else {
-                log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- " +
-                         "batch will be retried on next scheduled run.", errorCode, category);
+                long delayMs = retryBackoff.nextDelayMs(currentBatch);
+                log.warn("Retriable ClickHouse error (Code: {}, Category: {}) -- the same "
+                         + "batch will be retried in {} ms (consecutive failures: {}). Every "
+                         + "table hashed to this worker waits behind it until it succeeds.",
+                         errorCode, category, delayMs, retryBackoff.consecutiveFailures());
+                try {
+                    Thread.sleep(delayMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
             }
         }
     }
 
+    /**
+     * Detects the unrecoverable "OffsetStorageWriter is already flushing"
+     * condition.
+     * <p>
+     * {@code EmbeddedEngine.commitOffsets} returns early when {@code doFlush}
+     * returns null WITHOUT calling {@code cancelFlush}, leaking the
+     * OffsetStorageWriter's {@code flushInProgress} semaphore permanently, so
+     * every subsequent {@code beginFlush()} in this JVM throws.
+     * </p>
+     *
+     * @param e the exception thrown while processing a batch.
+     * @return true when offset commits can no longer succeed in this JVM.
+     */
+    private static boolean isOffsetWriterPoisoned(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            String message = t.getMessage();
+            if (message != null
+                    && message.contains(
+                            "OffsetStorageWriter is already flushing")) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Whether {@code e} is (or wraps) an {@link OffsetAcknowledgementException}
+     * (PR #1437 review, Low item 1): a failure to report already-written rows
+     * to the handoff FIFO, as opposed to a ClickHouse write failure.
+     *
+     * @param e the exception thrown while processing a batch.
+     * @return true when this is an offset-acknowledgement failure, not a
+     *         ClickHouse error.
+     */
+    private static boolean isOffsetAcknowledgementFailure(Throwable e) {
+        for (Throwable t = e; t != null; t = t.getCause()) {
+            if (t instanceof OffsetAcknowledgementException) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The message of the innermost cause of {@code e}, for a one-line log
+     * summary of what actually failed underneath an
+     * {@link OffsetAcknowledgementException} wrapper.
+     */
+    private static String rootCauseMessage(Throwable e) {
+        Throwable root = e;
+        while (root.getCause() != null && root.getCause() != root) {
+            root = root.getCause();
+        }
+        String message = root.getMessage();
+        return message != null ? message : root.toString();
+    }
 
     /**
      * Run loop for hash-based routing mode.
-     * Only processes batches assigned to this thread.
+     * <p>
+     * This runnable owns a dedicated queue ({@code routedRecords}) that receives
+     * ONLY the batches routed to this thread (all batches for a given table hash
+     * to one thread). It therefore drains its own queue in FIFO order and never
+     * needs to inspect {@code assignedThreadId} or re-enqueue a sibling's batch.
+     * The old shared-queue design (one queue, every thread filtering by id and
+     * putting non-matching batches back at the tail) reordered same-table batches
+     * under contention; per-thread queues remove that race.
      */
     private void runWithHashRouting(Long taskId, String sourceTimeZone, String serverTimeZone, String errorTableName) throws Exception {
-        // Poll from Queue until its empty.
-        while (routedRecords.size() > 0 || currentBatch != null) {
-            // If the thread is interrupted, the exit.
+        // Poll from this thread's own queue until it is empty.
+        while (routedRecords.size() > 0 || currentBatch != null || carriedOver != null) {
+            // If the thread is interrupted, exit.
             if (Thread.currentThread().isInterrupted()) {
                 log.info("Thread {} is interrupted, exiting - Java Thread ID: {}",
                         threadId, Thread.currentThread().getId());
                 return;
             }
-            
+
             if (currentBatch == null) {
-                RoutedBatch routedBatch = routedRecords.poll();
+                // A batch taken from the queue during the previous write's wait
+                // that did not fit that write is written first (spec 03.03
+                // section 3.1.1 step 6): it is older than anything still queued.
+                RoutedBatch routedBatch = carriedOver != null ? carriedOver : routedRecords.poll();
+                carriedOver = null;
                 if (routedBatch == null) {
                     // No records in the queue.
                     continue;
                 }
-                
-                // Only process if this batch is assigned to this thread
-                if (routedBatch.getAssignedThreadId() == threadId) {
-                    currentBatch = routedBatch.getBatch();
-                    log.debug("Thread {} picked up batch for table: {}", threadId, routedBatch.getTableName());
-                } else {
-                    // Put it back for another thread to pick up
-                    routedRecords.put(routedBatch);
-                    Thread.sleep(10); // Small sleep to avoid busy waiting
-                    continue;
-                }
+                log.debug("Thread {} picked up batch for table: {}", threadId, routedBatch.getTableName());
+                coalesceQueuedBatches(routedBatch);
             } else {
                 log.debug("***** Thread {} RETRYING the same batch again", threadId);
             }
@@ -414,6 +689,117 @@ public class ClickHouseBatchRunnable implements Runnable {
             // Process the batch (rest of the logic stays the same)
             processBatch(sourceTimeZone, serverTimeZone);
         }
+    }
+
+    /**
+     * Makes {@code first} -- and every batch already queued behind it that fits
+     * -- the current write (spec 03.03 section 3.1.1). Groups are taken from the
+     * head of this worker's own queue in FIFO order, never split, and never
+     * taken past {@code buffer.max.records} rows or {@code buffer.max.bytes}
+     * estimated bytes in total (the same bounds one INSERT is chunked to, spec
+     * 03.06); a group larger than either bound on its own is still written,
+     * alone, as before. Every queued batch is a handed-off group whose unit is
+     * already outstanding in the offset FIFO, so writing several of them in one
+     * INSERT changes how many round trips and parts they cost, not what is
+     * written or in which order: the concatenation preserves dequeue (handoff,
+     * i.e. binlog) order, and {@code processBatch} still splits it by table
+     * with each table's rows in that order.
+     */
+    private void coalesceQueuedBatches(RoutedBatch first) throws InterruptedException {
+        long maxRows = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_RECORDS.toString());
+        long maxBytes = config.getLong(ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_BYTES.toString());
+        long waitMs = config.getLong(ClickHouseSinkConnectorConfigVariables.COALESCE_MAX_WAIT_MS.toString());
+        List<List<ClickHouseStruct>> groups = new ArrayList<>();
+        groups.add(first.getBatch());
+        long rows = first.getBatch().size();
+        long bytes = estimatedBytes(first.getBatch());
+        RoutedBatch next;
+        // Only this worker ever dequeues from its queue, so peek-then-poll
+        // cannot lose a batch to another consumer.
+        while ((next = routedRecords.peek()) != null) {
+            List<ClickHouseStruct> group = next.getBatch();
+            long groupRows = group.size();
+            long groupBytes = estimatedBytes(group);
+            if ((maxRows > 0 && rows + groupRows > maxRows)
+                    || (maxBytes > 0 && bytes + groupBytes > maxBytes)) {
+                break;
+            }
+            routedRecords.poll();
+            groups.add(group);
+            rows += groupRows;
+            bytes += groupBytes;
+        }
+        // Time-bounded coalescing (spec 03.03 section 3.1.1 step 6): while the
+        // write is still under both bounds and the queue is empty, wait up to
+        // coalesce.max.wait.ms for more batches instead of writing a small one.
+        // Each INSERT is one ClickHouse part per partition it touches, so
+        // writing every poll as it arrives creates parts of a few thousand rows
+        // at the source's poll rate -- ten workers on one hot table multiply
+        // that by ten. A batch taken during the wait that does not fit is kept
+        // as carriedOver and opens the next write; nothing is ever split or
+        // reordered, and every batch is already outstanding in the offset FIFO.
+        if (waitMs > 0 && routedRecords.peek() == null
+                && (maxRows <= 0 || rows < maxRows) && (maxBytes <= 0 || bytes < maxBytes)) {
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(waitMs);
+            while ((maxRows <= 0 || rows < maxRows) && (maxBytes <= 0 || bytes < maxBytes)) {
+                long left = deadline - System.nanoTime();
+                if (left <= 0) {
+                    break;
+                }
+                RoutedBatch more = routedRecords.poll(left, TimeUnit.NANOSECONDS);
+                if (more == null) {
+                    break;
+                }
+                List<ClickHouseStruct> group = more.getBatch();
+                long groupRows = group.size();
+                long groupBytes = estimatedBytes(group);
+                if ((maxRows > 0 && rows + groupRows > maxRows)
+                        || (maxBytes > 0 && bytes + groupBytes > maxBytes)) {
+                    carriedOver = more;
+                    break;
+                }
+                groups.add(group);
+                rows += groupRows;
+                bytes += groupBytes;
+                // Take whatever arrived together with it without waiting again.
+                while ((next = routedRecords.peek()) != null) {
+                    List<ClickHouseStruct> g = next.getBatch();
+                    long gr = g.size();
+                    long gb = estimatedBytes(g);
+                    if ((maxRows > 0 && rows + gr > maxRows) || (maxBytes > 0 && bytes + gb > maxBytes)) {
+                        break;
+                    }
+                    routedRecords.poll();
+                    groups.add(g);
+                    rows += gr;
+                    bytes += gb;
+                }
+            }
+        }
+        if (groups.size() == 1) {
+            currentBatch = first.getBatch();
+            currentGroups = null;
+            return;
+        }
+        List<ClickHouseStruct> merged = new ArrayList<>((int) Math.min(rows, Integer.MAX_VALUE));
+        for (List<ClickHouseStruct> group : groups) {
+            merged.addAll(group);
+        }
+        currentBatch = merged;
+        currentGroups = groups;
+        log.debug("Thread {} coalesced {} queued batches ({} rows) into one write", threadId,
+                groups.size(), rows);
+    }
+
+    /** The handoff byte estimate of a group (spec 01.05 section 3.4 item 7); 0 when unstamped. */
+    private static long estimatedBytes(List<ClickHouseStruct> group) {
+        long bytes = 0L;
+        for (ClickHouseStruct record : group) {
+            if (record != null) {
+                bytes += Math.max(0L, record.getEstimatedBytes());
+            }
+        }
+        return bytes;
     }
 
     /**
@@ -455,8 +841,11 @@ public class ClickHouseBatchRunnable implements Runnable {
         addRecordsToHistoryTable(currentBatch, sourceTimeZone, serverTimeZone);
 
         ///// ***** START PROCESSING BATCH **************************
-        // Step 1: Add to Inflight batches.
-        DebeziumOffsetManagement.addToBatchTimestamps(currentBatch);
+        // The batch was registered with its handoff sequence by the producer
+        // before it was enqueued (spec 09.01 section 3.1); there is nothing to
+        // register on pick-up.
+        // Per-batch progress line: INFO by design (spec 03.06 section 3.3) --
+        // operators read the connector's progress from the log.
         log.info("****** Thread: " +
                 Thread.currentThread().getName() +
                 " Batch Size: " + currentBatch.size() +
@@ -509,10 +898,52 @@ public class ClickHouseBatchRunnable implements Runnable {
             
         
         if (result) {
-            // Step 2: Check if the batch can be committed.
-            if(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(currentBatch)) {
-                currentBatch = null;
+            // WRITTEN-ONCE (spec 09.01 section 3.2). The rows are durably in
+            // ClickHouse, so this worker is finished with the batch whatever
+            // happens to its offset: drop it BEFORE handing it to the FIFO.
+            // Keeping a written batch as currentBatch while its offset waited
+            // for older batches made the run loop re-execute it -- and
+            // re-insert its rows -- on every tick until it became committable
+            // (rows present 3x in non-FINAL reads; write amplification).
+            // Whether the offset is acknowledged now (this is the oldest
+            // outstanding unit) or later (parked; drained by whichever call
+            // acknowledges the head) is the FIFO's concern, not the worker's.
+            // A coalesced write (spec 03.03 section 3.1.1) reports every group
+            // it contained, once each, in dequeue order; a single-group write
+            // reports the group itself.
+            List<List<ClickHouseStruct>> writtenGroups = currentGroups != null
+                    ? currentGroups : Collections.singletonList(currentBatch);
+            currentBatch = null;
+            currentGroups = null;
+            retryBackoff.reset();
+            // Report every group of this write in ONE call (PR #1437 review).
+            // Calling checkIfBatchCanBeCommitted once per group in a loop
+            // recorded group N's unit only after groups 1..N-1 had already
+            // returned, so a drain failure on an early group (a Debezium
+            // markBatchFinished() failure, or the FIFO's own corruption
+            // checks) left every later group's unit permanently un-recorded:
+            // its remainingGroups never reached zero, so it could never be
+            // acknowledged (spec 09.01 section 3.2). reportWritten marks
+            // every group written BEFORE attempting the one drain this write
+            // is allowed, so a drain failure can no longer erase bookkeeping
+            // it never reached; it still rethrows (silence is the enemy --
+            // Low item #1 classifies this failure as an offset-acknowledgement
+            // failure, not a ClickHouse error, in the catch block of run()).
+            try {
+                DebeziumOffsetManagement.reportWritten(writtenGroups);
+            } catch (RuntimeException | InterruptedException e) {
+                throw new OffsetAcknowledgementException(
+                        "failed to acknowledge one or more written groups of this coalesced batch; "
+                                + "the rows are durably in ClickHouse (WRITTEN-ONCE) but their offset(s) "
+                                + "could not be reported to the handoff FIFO", e);
             }
+        } else {
+            // Not written (e.g. table metadata not yet retrievable): keep the
+            // batch and retry it, but not every 30 ms (spec 10.02).
+            long delayMs = retryBackoff.nextDelayMs(currentBatch);
+            log.warn("Batch not written to ClickHouse; retrying the same batch in {} ms "
+                    + "(consecutive failures: {})", delayMs, retryBackoff.consecutiveFailures());
+            Thread.sleep(delayMs);
         }
         Thread.sleep(config.getLong(
                 ClickHouseSinkConnectorConfigVariables.
@@ -549,7 +980,16 @@ public class ClickHouseBatchRunnable implements Runnable {
     public String getTableFromTopic(String topicName) {
         String tableName = null;
         if (this.topic2TableMap.containsKey(topicName) == false) {
-            tableName = Utils.getTableNameFromTopic(topicName);
+            boolean schemaPrefix = this.config != null &&
+                    this.config.getBoolean(
+                            ClickHouseSinkConnectorConfigVariables
+                                    .CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString());
+            String schemaTemplate = this.config != null
+                    ? this.config.getString(
+                            ClickHouseSinkConnectorConfigVariables
+                                    .CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString())
+                    : null;
+            tableName = Utils.getTableNameFromTopic(topicName, schemaPrefix, schemaTemplate);
             this.topic2TableMap.put(topicName, tableName);
         } else {
             tableName = this.topic2TableMap.get(topicName);
@@ -673,6 +1113,53 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
+     * Resolves the target ClickHouse database name for a topic and first record.
+     * Applies replication history override, database prefix, schema template suffix,
+     * and database override mapping.
+     *
+     * @param topicName   the Kafka/Debezium topic name
+     * @param firstRecord the first record in the batch
+     * @return the resolved ClickHouse database name
+     */
+    String resolveDatabaseName(String topicName, ClickHouseStruct firstRecord) {
+        String databaseName = firstRecord != null ? firstRecord.getDatabase() : null;
+
+        // If replication history is enabled, set database name to the replication history database name
+        if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
+            return config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
+        }
+
+        // Apply database prefix if configured (mirrors DebeziumChangeEventCapture.extractDatabaseNameFromRecord)
+        if (databaseName != null && this.config != null) {
+            String dbPrefix = this.config.getString(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_DATABASE_PREFIX.toString());
+            databaseName = Utils.applyDatabasePrefix(databaseName, dbPrefix);
+        }
+
+        // Apply database schema suffix if configured (mirrors DebeziumChangeEventCapture.extractDatabaseNameFromRecord)
+        if (databaseName != null && this.config != null) {
+            boolean dbSchemaSuffix = this.config.getBoolean(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString());
+            String schemaTemplate = this.config.getString(
+                    ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString());
+            if (dbSchemaSuffix && schemaTemplate != null && !schemaTemplate.isEmpty()) {
+                String schema = Utils.extractSchemaFromTopic(topicName);
+                databaseName = Utils.applyDatabaseSchemaSuffix(databaseName, schemaTemplate, schema);
+            }
+        }
+
+        // Check if user has overridden the database name (check both post-transform and pre-transform raw db)
+        if (this.databaseOverrideMap.containsKey(databaseName)) {
+            databaseName = this.databaseOverrideMap.get(databaseName);
+        } else if (firstRecord != null && firstRecord.getDatabase() != null
+                && this.databaseOverrideMap.containsKey(firstRecord.getDatabase())) {
+            databaseName = this.databaseOverrideMap.get(firstRecord.getDatabase());
+        }
+
+        return databaseName;
+    }
+
+    /**
      * Processes records for the specified topic.
      *
      * <p>This function groups records by topic, retrieves the corresponding
@@ -684,21 +1171,44 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @return true if processing succeeds; false otherwise
      * @throws Exception if an error occurs during processing
      */
-    private boolean processRecordsByTopic(String topicName,
-                                          List<ClickHouseStruct> records)
+    boolean processRecordsByTopic(String topicName,
+                                  List<ClickHouseStruct> records)
             throws Exception {
+
         boolean result = false;
+        // Every record in this topic's retained list was already durably
+        // written to ClickHouse on an earlier attempt within this retry
+        // cycle (a prior chunk's executeBatch(), a flushStagedRows() flush,
+        // an inline history statement, or a TRUNCATE/bulk-close; spec 03.06
+        // section 3.5). There is nothing left to group or send: grouping
+        // would skip every record and hand addToPreparedStatementBatch an
+        // empty list of segments, which it correctly treats as the
+        // unrelated defect of "grouped into nothing" (spec 04.01 section
+        // 3.3) and fails loudly. Reaching this trivially-true state is not
+        // that defect, so it is short-circuited here instead.
+        //
+        // The short-circuit still advances the durable watermark over these
+        // records, exactly as the grouping path folds the offset of an
+        // already-applied record into partitionToOffsetMap (spec 03.06
+        // section 3.5): the attempt that wrote them may have returned false
+        // before reaching the merge below, and the watermark must reflect
+        // every row that is actually durable, whichever attempt wrote it.
+        if (!records.isEmpty() && records.stream().allMatch(ClickHouseStruct::isAppliedToClickHouse)) {
+            for (ClickHouseStruct record : records) {
+                if (record.getKafkaPartition() != null && record.getTopic() != null) {
+                    this.durablyInsertedOffsets.merge(
+                            new TopicPartition(record.getTopic(), record.getKafkaPartition()),
+                            record.getKafkaOffset(), Math::max);
+                }
+            }
+            return true;
+        }
         //The user parameter will override the topic mapping to table.
         String tableName = getTableFromTopic(topicName);
         // Note: getting records.get(0) is safe as the topic name is same
         // for all records.
         ClickHouseStruct firstRecord = records.get(0);
-        String databaseName = firstRecord.getDatabase();
-
-        // If replication history is enabled, set database name to the replication history database name
-        if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
-            databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
-        }
+        String databaseName = resolveDatabaseName(topicName, firstRecord);
 
         return processBatchRecords(records, topicName, tableName, databaseName, firstRecord);
     }
@@ -707,12 +1217,6 @@ public class ClickHouseBatchRunnable implements Runnable {
                                       String tableName, String databaseName,
                                       ClickHouseStruct firstRecord) throws Exception {
         boolean result = false;
-
-
-        // Check if user has overridden the database name.
-        if (this.databaseOverrideMap.containsKey(databaseName))
-            databaseName = this.databaseOverrideMap.get(
-                    databaseName);
 
         Connection databaseConn = getClickHouseConnection(databaseName);
 
@@ -725,37 +1229,49 @@ public class ClickHouseBatchRunnable implements Runnable {
         // writer would then silently skip the UPDATE tombstone.
         final DbWriter sortingKeySource = writer;
         PreparedStatementExecutor preparedStatementExecutor = new
-                PreparedStatementExecutor(writer.getReplacingMergeTreeDeleteColumn(),
-                writer.isReplacingMergeTreeWithIsDeletedColumn(), writer.getSignColumn(),
-                writer.getVersionColumn(), writer.getDatabaseName(),
-                getServerTimeZone(this.config),
-                sortingKeySource::getSortingKeyColumns);
+                PreparedStatementExecutor(
+                        writer != null ? writer.getReplacingMergeTreeDeleteColumn() : null,
+                        writer != null && writer.isReplacingMergeTreeWithIsDeletedColumn(),
+                        writer != null ? writer.getSignColumn() : null,
+                        writer != null ? writer.getVersionColumn() : null,
+                        writer != null ? writer.getDatabaseName() : databaseName,
+                        getServerTimeZone(this.config),
+                        sortingKeySource != null ? sortingKeySource::getSortingKeyColumns : null);
         if (writer == null || writer.wasTableMetaDataRetrieved() == false) {
             log.error(String.format("*** TABLE METADATA not retrieved for " +
                             "Database(%s), table(%s) retrying",
-                    writer.getDatabaseName(), writer.getTableName()));
+                    writer != null ? writer.getDatabaseName() : databaseName,
+                    writer != null ? writer.getTableName() : tableName));
             if (writer == null) {
                 writer = getDbWriterForTable(topicName, tableName, databaseName,
                         firstRecord, databaseConn);
             }
-            if (writer.wasTableMetaDataRetrieved() == false)
+            if (writer != null && writer.wasTableMetaDataRetrieved() == false)
                 writer.updateColumnNameToDataTypeMap();
             if (writer == null ||
                     writer.wasTableMetaDataRetrieved() == false) {
                 log.error(String.format("*** TABLE METADATA not retrieved for " +
                                 "Database(%s), table(%s), retrying on next attempt",
-                        writer.getDatabaseName(), writer.getTableName()));
+                        writer != null ? writer.getDatabaseName() : databaseName,
+                        writer != null ? writer.getTableName() : tableName));
                 return false;
             }
         }
         // Step 1: The Batch Insert with preparedStatement in JDBC works by
         // forming the Query and then adding records to the Batch.
-        // This step creates a Map of Query -> Records (List of ClickHouseStruct).
-        Map<MutablePair<String, Map<String, Integer>>,
-                List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
+        // This step creates an ordered list of segments, each a Map of
+        // Query -> Records (List of ClickHouseStruct); a replicated TRUNCATE
+        // is a segment of its own (spec 04.05).
+        List<Map<MutablePair<String, Map<String, Integer>>,
+                List<ClickHouseStruct>>> querySegments = new ArrayList<>();
         Map<TopicPartition, Long> partitionToOffsetMap = new HashMap<>();
-        result = new GroupInsertQueryWithBatchRecords()
-                .groupQueryWithRecords(records, queryToRecordsMap,
+        // The resolved engine columns (spec 08.01) must reach query
+        // construction: a version / sign / delete column with a
+        // non-default name is otherwise omitted from the INSERT and stored
+        // as the type default for every row (spec 04.02 section 3.1).
+        new GroupInsertQueryWithBatchRecords(writer.getVersionColumn(), writer.getSignColumn(),
+                writer.getReplacingMergeTreeDeleteColumn())
+                .groupQueryWithRecords(records, querySegments,
                         partitionToOffsetMap, this.config, tableName,
                         writer.getDatabaseName(), writer.getConnection(),
                         writer.getColumnNameToDataTypeMap());
@@ -764,10 +1280,10 @@ public class ClickHouseBatchRunnable implements Runnable {
                 ClickHouseSinkConnectorConfigVariables.
                         BUFFER_MAX_RECORDS.toString());
         // Step 2: Create a PreparedStatement and add the records to the
-        // batch. In DbWriter, the queryToRecordsMap is converted to
-        // PreparedStatement and added to the batch. The batch is then executed
-        // and the records are flushed to ClickHouse.
-        result = flushRecordsToClickHouse(topicName, writer, queryToRecordsMap,
+        // batch. In DbWriter, the query segments are converted to
+        // PreparedStatements and added to the batch. The batch is then
+        // executed and the records are flushed to ClickHouse.
+        result = flushRecordsToClickHouse(topicName, writer, querySegments,
                 bmd, maxBufferSize, preparedStatementExecutor);
         if (result) {
             // Records are now DURABLY in ClickHouse: advance the shared watermark
@@ -777,8 +1293,6 @@ public class ClickHouseBatchRunnable implements Runnable {
             // records that were consumed but never inserted.
             partitionToOffsetMap.forEach((tp, offset) ->
                     this.durablyInsertedOffsets.merge(tp, offset, Math::max));
-            // Remove the entry.
-            queryToRecordsMap.remove(topicName);
         }
         if (this.config.getBoolean(
                 ClickHouseSinkConnectorConfigVariables.
@@ -808,7 +1322,7 @@ public class ClickHouseBatchRunnable implements Runnable {
      *
      * @param topicName the topic name
      * @param writer the DbWriter for the table
-     * @param queryToRecordsMap a map of insert queries to records
+     * @param querySegments the ordered segments of insert queries to records
      * @param bmd block metadata used for metrics
      * @param maxBufferSize the maximum buffer size before flushing
      * @param preparedStatementExecutor the executor to add batches
@@ -816,15 +1330,15 @@ public class ClickHouseBatchRunnable implements Runnable {
      * @throws Exception if an error occurs during batch execution
      */
     private boolean flushRecordsToClickHouse(String topicName, DbWriter writer,
-                                             Map<MutablePair<String, Map<String, Integer>>,
-                                                     List<ClickHouseStruct>> queryToRecordsMap, BlockMetaData bmd,
+                                             List<Map<MutablePair<String, Map<String, Integer>>,
+                                                     List<ClickHouseStruct>>> querySegments, BlockMetaData bmd,
                                              long maxBufferSize,
                                              PreparedStatementExecutor preparedStatementExecutor)
             throws Exception {
         boolean result = false;
-        synchronized (queryToRecordsMap) {
+        synchronized (querySegments) {
             result = preparedStatementExecutor.addToPreparedStatementBatch(
-                    topicName, queryToRecordsMap, bmd, config,
+                    topicName, querySegments, bmd, config,
                     writer.getConnection(), writer.getTableName(),
                     writer.getColumnNameToDataTypeMap(), writer.getEngine());
         }
@@ -852,7 +1366,7 @@ public class ClickHouseBatchRunnable implements Runnable {
             // Log the error with the first record from current batch if available
             if (currentBatch != null && !currentBatch.isEmpty()) {
                 ClickHouseStruct firstRecord = currentBatch.get(0);
-                SourceRecord sourceRecord = firstRecord.getSourceRecord().value();
+                SourceRecord sourceRecord = sourceRecordOrNull(firstRecord);
                 String topicName = firstRecord.getTopic();
                 String databaseName = firstRecord.getDatabase();
                 String serverName = getServerNameFromTopic(topicName);
@@ -882,9 +1396,32 @@ public class ClickHouseBatchRunnable implements Runnable {
             log.error("******* ERROR **** Thread interrupted *********",
                     ex);
             throw new RuntimeException(ex);
-        } catch (SQLException ex) {
+        } catch (SQLException | RuntimeException ex) {
+            // Best-effort diagnostics only. The exception being logged is
+            // classified and handled by the caller right after this; a
+            // failure INSIDE the error logger must not replace it, or a FATAL
+            // ClickHouse error would surface as an unrelated logger failure
+            // and its classification would never run (spec 03.01 section 3.4).
             log.error("******* ERROR **** Failed to log error to ClickHouse *********",
                     ex);
         }
+    }
+
+    /**
+     * The Debezium {@code SourceRecord} behind a batch record, or null.
+     *
+     * <p>Only the embedded (lightweight) runtime attaches a source record; a
+     * record built from a Kafka {@code SinkRecord} carries none, so reading
+     * {@code getSourceRecord().value()} unguarded threw
+     * {@code NullPointerException} from inside the error logger in Kafka
+     * mode whenever {@code error.logging.enable} was on -- replacing the
+     * ClickHouse error that was being reported.</p>
+     */
+    @VisibleForTesting
+    static SourceRecord sourceRecordOrNull(ClickHouseStruct record) {
+        if (record == null || record.getSourceRecord() == null) {
+            return null;
+        }
+        return record.getSourceRecord().value();
     }
 }

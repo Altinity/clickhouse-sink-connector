@@ -87,7 +87,7 @@ public class CreateTableIdempotentTest {
 
         String q = out.toString();
         int guard = q.toLowerCase().indexOf("if not exists");
-        int table = q.indexOf("employees.`process`");
+        int table = q.indexOf("`employees`.`process`");
         Assertions.assertTrue(guard >= 0 && table >= 0, q);
         Assertions.assertTrue(guard < table, "IF NOT EXISTS must precede the table name: " + q);
     }

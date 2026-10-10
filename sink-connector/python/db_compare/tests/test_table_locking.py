@@ -130,7 +130,7 @@ class TestComputeChecksumLockLifecycle(unittest.TestCase):
             lock_enabled=True, sleep_after_lock=0, mysql_port=3306
         )
 
-        mock_lock.assert_called_once_with(mock_conn, 'test_table')
+        mock_lock.assert_called_once_with(mock_conn, 'test_table', lock_wait_timeout=None)
         mock_unlock.assert_called_once_with(mock_conn, 'test_table')
         mock_close.assert_called_once_with(mock_conn, 'test_db.test_table')
 
@@ -271,7 +271,7 @@ class TestLockHoldDuration(unittest.TestCase):
         mock_conn = MagicMock()
         mock_get_conn.return_value = mock_conn
 
-        def track_lock(conn, table):
+        def track_lock(conn, table, lock_wait_timeout=None):
             call_order.append('LOCK')
 
         def track_unlock(conn, table):

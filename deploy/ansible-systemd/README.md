@@ -46,6 +46,19 @@ The service file always references the
 connector is: drop the new JAR, repoint the symlink, restart the
 service. No service-file edit needed.
 
+**MySQL sources: the JDBC driver goes next to the real JAR.** MySQL
+Connector/J is GPL-licensed and is not bundled in the connector JAR
+([Licensing](../../doc/licensing.md)). Place it as
+`mysql-connector-j.jar` (or `lib/mysql-connector-j.jar`) in
+`local_sink_connector_bin_dir`, next to the versioned JAR. The JAR's
+manifest `Class-Path` is resolved from the symlink's target directory
+(checked with JDK 17), so nothing is needed in `~/sink-connector/<name>/`.
+`mvn package` leaves a copy in
+`sink-connector-lightweight/target/mysql-driver/`. Without it, a MySQL
+connector refuses to start with a message saying where to put the driver.
+A JAR built with `-Pbundle-mysql-driver` (internal use only) already
+contains the driver.
+
 ## Config building method
 
 All connector configuration is declared as structured inventory data
@@ -112,7 +125,8 @@ sink_connector_deployments:
       cli_port: 7000
       metrics_port: 8083
       snapshot_mode: schema_only
-      skip_unparseable_ddl: true
+      # default false; true silently discards DDL Debezium cannot parse (loss)
+      skip_unparseable_ddl: false
       thread_pool_size: 10
       max_batch_size: 10000
 ```
