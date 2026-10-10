@@ -22,6 +22,9 @@
 # Output ends with "RESULT PASS=n FAIL=m"; exit status 0 only when FAIL=0 and at least one check ran.
 set -uo pipefail
 JAR="${JAR:?set JAR}"; LABEL="${LABEL:-lrs}"; HEAP="${HEAP:-4g}"; ROW_MB="${ROW_MB:-64 128 256 512}"
+# MySQL Connector/J (GPL) is supplied next to the jar, not inside it (doc/licensing.md).
+MYSQL_DRIVER="${MYSQL_DRIVER:-$(dirname "$JAR")/mysql-driver/mysql-connector-j.jar}"
+DRIVER_MOUNT=(); [ -f "$MYSQL_DRIVER" ] && DRIVER_MOUNT=(-v "$MYSQL_DRIVER:/mysql-connector-j.jar:ro,Z")
 BINARY_MODE="${BINARY_MODE:-bytes}"; TXN_ROWS="${TXN_ROWS:-1000000}"; TXN_ROW_KB="${TXN_ROW_KB:-2}"; KILL="${KILL:-1}"
 IMAGE="${IMAGE:-docker.io/eclipse-temurin:17-jre}"
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -40,7 +43,7 @@ start_connector(){
   STARTS=$((STARTS+1)); CASE_STARTS=$((CASE_STARTS+1))
   docker rm -f $CC >/dev/null 2>&1
   docker run -d --name $CC --pod $POD --runtime runc \
-    -v "$WORK:/work:Z" -v "$WORK/config.yml:/config.yml:ro,Z" -v "$LOG4J:/log4j2.xml:ro,Z" -v "$JAR:/app.jar:ro,Z" \
+    -v "$WORK:/work:Z" -v "$WORK/config.yml:/config.yml:ro,Z" -v "$LOG4J:/log4j2.xml:ro,Z" -v "$JAR:/app.jar:ro,Z" "${DRIVER_MOUNT[@]}" \
     --entrypoint sh "$IMAGE" -c \
     "exec java -Xms$HEAP -Xmx$HEAP -XX:+ExitOnOutOfMemoryError -Xlog:gc:file=/work/gc$STARTS.log:uptime -Dlog4j2.configurationFile=log4j2.xml -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication > /work/conn$STARTS.log 2>&1" \
     >/dev/null 2>&1 && log "connector start #$STARTS (heap $HEAP)"

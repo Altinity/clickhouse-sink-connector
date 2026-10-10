@@ -32,7 +32,7 @@ def get_postgres_table_count(conn, table_name, schema="public"):
 
     Parameters
     ----------
-    conn       : psycopg2 connection (obtained via get_postgres_connection())
+    conn       : pg8000 DB-API connection (obtained via get_postgres_connection())
     table_name : bare table name (no schema prefix)
     schema     : PostgreSQL schema, default 'public'
 
@@ -55,7 +55,7 @@ def calculate_table_count(pg_host, pg_user, pg_password, pg_port, pg_database,
                           pg_schema, table_name, where=None):
     """
     Open a fresh connection (thread-safe) and compute COUNT(*) for one table.
-    psycopg2 connections are NOT thread-safe, so each thread gets its own.
+    pg8000 DB-API connections are NOT thread-safe, so each thread gets its own.
     """
     if args.exclude_tables_regex:
         rex = re.compile(args.exclude_tables_regex, re.IGNORECASE)

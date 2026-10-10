@@ -796,6 +796,11 @@ public class DebeziumChangeEventCapture {
         } catch (Exception e) {
             log.error("Error retrieving max retries", e);
         }
+        // The MySQL JDBC driver is GPL-licensed and is supplied at run time,
+        // not bundled in this Apache-licensed jar. Every MySQL preflight below
+        // and Debezium's MySQL connector itself need it: refuse once, naming
+        // how to supply it, instead of failing inside the retry loop.
+        MySqlJdbcDriver.check(props);
         // A source table with no PRIMARY KEY and no non-null UNIQUE key has no
         // row identity in the binlog, so nothing downstream can keep its
         // ClickHouse copy correct. Name every such table here, with the ALTER

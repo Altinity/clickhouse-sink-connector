@@ -68,6 +68,8 @@ First two are good tutorials on MySQL and PostgreSQL respectively.
 * [Configuration](doc/configuration.md)
 * [State Storage](doc/state_storage.md)
 * [Data Type Mapping](doc/data_types.md)
+* [Licensing and third-party dependencies (the MySQL JDBC driver is supplied at run time)](doc/licensing.md)
+* [Third-party license attribution](THIRD_PARTY_NOTICES.md)
 
 ### Operations
 

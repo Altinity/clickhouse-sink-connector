@@ -36,6 +36,9 @@
 # Output ends with "RESULT PASS=n FAIL=m"; exit status 0 only when FAIL=0 and at least one check ran.
 set -uo pipefail
 JAR="${JAR:?set JAR}"; GTID="${GTID:-on}"; LABEL="${LABEL:-bce}"; VIA_REPLICA="${VIA_REPLICA:-0}"; HEAP="${HEAP:-4g}"
+# MySQL Connector/J (GPL) is supplied next to the jar, not inside it (doc/licensing.md).
+MYSQL_DRIVER="${MYSQL_DRIVER:-$(dirname "$JAR")/mysql-driver/mysql-connector-j.jar}"
+DRIVER_MOUNT=(); [ -f "$MYSQL_DRIVER" ] && DRIVER_MOUNT=(-v "$MYSQL_DRIVER:/mysql-connector-j.jar:ro,Z")
 CASES="${CASES:-E1 E2 E3 E4 E5 E6 E7 E8}"
 IMAGE="${IMAGE:-docker.io/eclipse-temurin:17-jre}"
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
@@ -82,7 +85,7 @@ converge(){
 }
 start_connector(){
   docker run -d --name $CC --pod $POD --runtime runc \
-    -v "$WORK/config.yml:/config.yml:ro,Z" -v "$LOG4J:/log4j2.xml:ro,Z" -v "$JAR:/app.jar:ro,Z" \
+    -v "$WORK/config.yml:/config.yml:ro,Z" -v "$LOG4J:/log4j2.xml:ro,Z" -v "$JAR:/app.jar:ro,Z" "${DRIVER_MOUNT[@]}" \
     --entrypoint sh "$IMAGE" -c \
     "java -Xms$HEAP -Xmx$HEAP -XX:+ExitOnOutOfMemoryError -Dlog4j2.configurationFile=log4j2.xml -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication" \
     >/dev/null 2>&1 && log "connector started ($CC, heap $HEAP)"

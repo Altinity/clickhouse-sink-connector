@@ -33,8 +33,7 @@ import sys
 import time
 from pathlib import Path
 
-import psycopg2
-import psycopg2.extras
+import pg8000.dbapi as pg8000
 import pytest
 import yaml
 from clickhouse_driver import Client
@@ -116,9 +115,9 @@ def _wait_for(predicate, timeout, interval, description):
 
 
 def pg_connect():
-    conn = psycopg2.connect(
+    conn = pg8000.connect(
         host=PG_HOST, port=PG_PORT, user=PG_USER, password=PG_PASSWORD,
-        dbname=PG_DATABASE, connect_timeout=5,
+        database=PG_DATABASE, timeout=5,
     )
     conn.autocommit = True
     return conn
@@ -127,9 +126,19 @@ def pg_connect():
 def pg_query(sql, params=None):
     conn = pg_connect()
     try:
-        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute(sql, params)
-            return cur.fetchall() if cur.description else []
+        # pg8000's Cursor does not support the context-manager protocol,
+        # unlike psycopg2's, so close explicitly; it also has no dict-cursor
+        # helper equivalent to psycopg2.extras.RealDictCursor, so rebuild
+        # dict rows manually from cursor.description.
+        cur = conn.cursor()
+        try:
+            cur.execute(sql, params if params is not None else ())
+            if cur.description is None:
+                return []
+            columns = [d[0] for d in cur.description]
+            return [dict(zip(columns, row)) for row in cur.fetchall()]
+        finally:
+            cur.close()
     finally:
         conn.close()
 
@@ -440,9 +449,14 @@ def seeded(stack):
     drop_suite_ch_databases()
     conn = pg_connect()
     try:
-        with conn.cursor() as cur:
+        # pg8000's Cursor does not support the context-manager protocol,
+        # unlike psycopg2's, so close explicitly.
+        cur = conn.cursor()
+        try:
             cur.execute(SEED_SQL.read_text())
             cur.execute(f"ANALYZE {PG_SCHEMA}.t_orders, {PG_SCHEMA}.t_events_nopk")
+        finally:
+            cur.close()
     finally:
         conn.close()
     yield

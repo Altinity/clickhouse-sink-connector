@@ -1,7 +1,5 @@
-import mysql.connector
+import pymysql
 import os
-
-from mysql.connector import MySQLConnection
 
 """
 Class related to operation in MySQL
@@ -15,15 +13,17 @@ class MySqlConnection:
         self.db_name = os.environ.get('DB_NAME', 'test')
         self.db_user = os.environ.get('DB_USER_NAME', 'root')
         self.db_pass = os.environ.get('DB_USER_PASSWORD', 'root')
-        self.conn:MySQLConnection = None
+        self.conn: pymysql.connections.Connection = None
         self.cursor = None
 
     def create_connection(self, auto_commit=True):
 
         try:
-            self.conn = mysql.connector.connect(host=self.db_host, database=self.db_name,
-                                   user=self.db_user, password=self.db_pass, autocommit=auto_commit,
-                                                auth_plugin='mysql_native_password')
+            # pymysql auto-negotiates the auth plugin, so there is no
+            # equivalent of mysql.connector's auth_plugin='mysql_native_password'
+            # kwarg to pass here.
+            self.conn = pymysql.connect(host=self.db_host, database=self.db_name,
+                                   user=self.db_user, password=self.db_pass, autocommit=auto_commit)
 
         except Exception as e:
              print("Error creating connection", e)
@@ -33,17 +33,19 @@ class MySqlConnection:
     def get_column_names(self, sql):
         column_names = ''
 
-        if self.conn.is_connected:
+        if self.conn.open:
             self.cursor = self.conn.cursor()
 
             self.cursor.execute(sql)
             for result in self.cursor:
                 print(result)
 
-            column_names = self.cursor.column_names
+            # pymysql has no cursor.column_names helper (mysql.connector-only);
+            # build the same tuple of names from cursor.description instead.
+            column_names = tuple(col[0] for col in self.cursor.description)
 
 
-            if (self.conn and self.conn.is_connected()):
+            if (self.conn and self.conn.open):
                 self.conn.commit()
 
         return column_names
@@ -51,7 +53,7 @@ class MySqlConnection:
     def execute_sql(self, sql, data=None):
 
         result = None
-        if self.conn.is_connected():
+        if self.conn.open:
             self.cursor = self.conn.cursor()
 
             try:
@@ -64,14 +66,14 @@ class MySqlConnection:
                     for result in self.cursor:
                         print(result)
 
-                if (self.conn and self.conn.is_connected()):
+                if (self.conn and self.conn.open):
                     self.conn.commit()
             except Exception as e:
                 print("Error executing SQL", e)
 
         return result
 
-    def get_connection(self) -> MySQLConnection:
+    def get_connection(self) -> pymysql.connections.Connection:
         return self.conn
 
     def get_insert_sql_query(self, table_name, col_names, column_length):

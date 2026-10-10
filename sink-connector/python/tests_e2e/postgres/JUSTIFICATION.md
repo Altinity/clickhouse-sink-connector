@@ -106,12 +106,15 @@ Not shown end to end:
   REPEATABLE READ on PostgreSQL 15. The probe (`probe/sitecustomize.py`) prints
   the isolation level of the open transaction before each checksum query, and
   it reads `repeatable read` in the VERIFY-BEFORE run too. The pre-fix sequence
-  is psycopg2's implicit `BEGIN` followed by an explicit
+  is the DB-API driver's implicit `BEGIN` followed by an explicit
   `BEGIN TRANSACTION ISOLATION LEVEL REPEATABLE READ`. PostgreSQL warns about
   the nested `BEGIN` but still applies its isolation option, because no
-  snapshot has been taken yet. The fix (`set_session` plus a
-  `SHOW transaction_isolation` check) is hardening: it makes the level explicit
-  and verified rather than incidental. The test stays as a regression guard.
+  snapshot has been taken yet. The fix (`SET SESSION CHARACTERISTICS AS
+  TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY`, issued in
+  autocommit mode so it takes effect before the next implicit `BEGIN`, plus
+  `SHOW transaction_isolation` / `SHOW transaction_read_only` checks) is
+  hardening: it makes the level and read-only-ness explicit and verified
+  rather than incidental. The test stays as a regression guard.
 - **D-13.05-3, single exported snapshot.** Reading every table in one
   exported snapshot only differs from the old behaviour under concurrent writes
   during the load. This cannot be made deterministic, so it is covered by the

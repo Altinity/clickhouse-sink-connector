@@ -1,6 +1,5 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
-import com.mysql.cj.util.TimeUtil;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -31,10 +30,13 @@ import java.util.Properties;
  * STOPPED}: minutes of noise for a configuration that could never work.</p>
  *
  * <p><b>Agreement by construction.</b> The effective zone is resolved with the
- * driver's own {@link TimeUtil#getCanonicalTimeZone}, not a reimplemented
- * table: IANA ids, offsets such as {@code +00:00}, {@code UTC} and the
- * driver's unambiguous abbreviations pass; {@code CDT}/{@code CST}-style
- * ambiguous abbreviations throw, exactly as they would at connect time.</p>
+ * driver's own {@code com.mysql.cj.util.TimeUtil#getCanonicalTimeZone}, not a
+ * reimplemented table: IANA ids, offsets such as {@code +00:00}, {@code UTC}
+ * and the driver's unambiguous abbreviations pass; {@code CDT}/{@code CST}-style
+ * ambiguous abbreviations throw, exactly as they would at connect time. The
+ * resolver is called reflectively through {@link MySqlJdbcDriver#canonicalTimeZone}:
+ * the GPL-licensed driver is supplied at run time and this Apache-licensed
+ * source does not link against it.</p>
  *
  * <p>The check is read-only against the source, on the same footing as the
  * keyless-table, row-image and compression checks: one {@code SELECT} on a
@@ -93,7 +95,7 @@ public final class ConnectionTimeZonePreflight {
         public final String systemTimeZone;
         /** The zone the driver would derive: {@code time_zone}, or {@code system_time_zone} under SYSTEM. */
         public final String effective;
-        /** What {@link TimeUtil#getCanonicalTimeZone} made of {@link #effective}, or null when not resolved. */
+        /** What the driver's {@code TimeUtil#getCanonicalTimeZone} made of {@link #effective}, or null when not resolved. */
         public final String canonical;
 
         Outcome(State state, String configured, String timeZone, String systemTimeZone,
@@ -205,9 +207,13 @@ public final class ConnectionTimeZonePreflight {
         }
         effective = effective.trim();
         String canonical;
+        // Look the resolver up first: a driver that is missing or lacks the
+        // method is an installation problem, reported as such by
+        // MySqlJdbcDriver, never as "the zone cannot be mapped".
+        MySqlJdbcDriver.resolver(MySqlJdbcDriver.class.getClassLoader());
         try {
             // The driver's own resolver, so the check and the connect path agree by construction.
-            canonical = TimeUtil.getCanonicalTimeZone(effective, null);
+            canonical = MySqlJdbcDriver.canonicalTimeZone(effective);
         } catch (RuntimeException driverRefused) {
             refuse(String.format(
                     "%s is not set and the MySQL source reports time_zone=%s, system_time_zone='%s': the JDBC "
