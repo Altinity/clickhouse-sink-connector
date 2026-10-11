@@ -24,11 +24,12 @@ import java.sql.PreparedStatement;
 import java.sql.Types;
 import java.time.ZoneId;
 import java.util.HashMap;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.ConcurrentHashMap;
 
 import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.*;
 
@@ -115,12 +116,32 @@ public class PreparedStatementFieldMapper {
     private static final Logger log = LogManager.getLogger(PreparedStatementFieldMapper.class);
 
     /**
+     * Hard cap on {@link #REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS}: a schema
+     * mismatch is a standing operator-visible defect (the connector keeps
+     * stopping on the same column), never traffic-driven, so this many
+     * distinct mismatched columns is already far beyond anything one
+     * monitored schema produces; it only guards against the set growing
+     * without a byte bound across the process lifetime (-Xmx is fixed).
+     */
+    static final int MAX_REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS = 10_000;
+
+    /**
      * Columns ({@code database.table.column}) already reported as a schema
      * mismatch by {@link #reportNullSchemaMismatch} (Spec 07.07 section 3.2.3),
      * so a table whose source column is mostly NULL logs the mismatch once per
-     * column, not once per row.
+     * column, not once per row. Bounded (oldest entry evicted past
+     * {@link #MAX_REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS}): this is a
+     * process-lifetime, static, JVM-wide cache with no other eviction, so an
+     * unbounded version grows one entry per distinct mismatched column for as
+     * long as the JVM runs.
      */
-    static final Set<String> REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS = ConcurrentHashMap.newKeySet();
+    static final Set<String> REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS = Collections.newSetFromMap(
+            Collections.synchronizedMap(new LinkedHashMap<String, Boolean>(16, 0.75f, false) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, Boolean> eldest) {
+                    return size() > MAX_REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS;
+                }
+            }));
 
     /**
      * Whether a ClickHouse column of this declared type can store NULL.

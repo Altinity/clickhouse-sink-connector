@@ -130,6 +130,7 @@ Rule (`PreparedStatementFieldMapper.insertPreparedStatement`, helpers
    Table(<t>), but the ClickHouse column is <T>, which cannot store NULL.
    ClickHouse must match the source: <remedy>, then reload the rows written
    while the schemas differed.`
+   The dedup set keying this once-per-column report (`REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS`) is `static` and process-lifetime with no other eviction, so it is capped at `MAX_REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS` (10,000 distinct `database.table.column` keys, oldest evicted first); without the cap it would grow by one entry per distinct mismatched column for as long as the JVM runs, unbounded in bytes.
 3. `<remedy>` is `change it to Nullable(<T>)` when ClickHouse can declare it
    (`ClickHouseDataTypeMapper.canBeNullable`), and otherwise names the type the
    source column maps to: the connector's own mapping of a MySQL JSON column is
@@ -144,6 +145,8 @@ directive admits no such mode. The key is retained so existing configurations
 still validate, but it is a no-op: the connector always binds the source value.
 Setting it explicitly to `false` logs one WARN at startup naming the key as
 deprecated and ignored.
+- `NullSchemaMismatchBoundTest.doesNotGrowPastTheCap()` / `.evictsOldestFirst()` -- `REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS` never exceeds `MAX_REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS` and evicts the oldest-inserted key first once the cap is reached. Fails on the pre-fix unbounded `ConcurrentHashMap.newKeySet()`.
+
 
 ---
 
