@@ -123,7 +123,7 @@ public class PreparedStatementFieldMapper {
      * monitored schema produces; it only guards against the set growing
      * without a byte bound across the process lifetime (-Xmx is fixed).
      */
-    private static final int MAX_REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS = 10_000;
+    static final int MAX_REPORTED_NULL_SCHEMA_MISMATCH_COLUMNS = 10_000;
 
     /**
      * Columns ({@code database.table.column}) already reported as a schema
