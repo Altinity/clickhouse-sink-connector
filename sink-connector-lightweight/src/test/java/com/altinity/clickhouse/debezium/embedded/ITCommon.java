@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded;
 
+import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumOffsetStorage;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -203,15 +204,27 @@ public class ITCommon {
         props.replace("snapshot.mode", "no_data");
         props.replace("disable.drop.truncate", "true");
         props.setProperty("disable.ddl", "true");
-        props.setProperty("replica.status.view", "CREATE OR REPLACE VIEW %s.show_replica_status (`seconds_behind_source` Int32, `duration_behind_source` String, `utc_time` DateTime('UTC'), `local_time` DateTime, `id` String, `offset_key` String, `offset_val` String, `record_insert_ts` DateTime, `record_insert_seq` UInt64) AS SELECT * FROM (SELECT now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source, formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source, toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time, * FROM %s FINAL) AS U ORDER BY offset_key ASC");
+        props.setProperty("replica.status.view", "CREATE OR REPLACE VIEW %s.show_replica_status (`seconds_behind_source` Int32, `duration_behind_source` String, `utc_time` DateTime('UTC'), `local_time` DateTime, `id` String, `offset_key` String, `offset_val` String, `record_insert_ts` DateTime, `record_insert_seq` UInt64) AS SELECT * FROM (SELECT now() - fromUnixTimestamp(if(JSONHas(offset_val, 'ts_sec'), JSONExtractUInt(offset_val, 'ts_sec'), intDiv(JSONExtractUInt(offset_val, 'ts_usec'), 1000000))) AS seconds_behind_source, formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source, toDateTime(fromUnixTimestamp(if(JSONHas(offset_val, 'ts_sec'), JSONExtractUInt(offset_val, 'ts_sec'), intDiv(JSONExtractUInt(offset_val, 'ts_usec'), 1000000))), 'UTC') AS utc_time, fromUnixTimestamp(if(JSONHas(offset_val, 'ts_sec'), JSONExtractUInt(offset_val, 'ts_sec'), intDiv(JSONExtractUInt(offset_val, 'ts_usec'), 1000000))) AS local_time, * FROM %s FINAL) AS U ORDER BY offset_key ASC");
         return props;
     }
 
 
     static public BaseDbWriter getDBWriter(ClickHouseContainer clickHouseContainer) {
 
+        // The pool is registered under the "system" key, so its URL must address
+        // the system database too. Pools are process-wide and keyed by
+        // host:port|database (Spec 03.05 section 3.2): when this helper ran
+        // before the engine's own setSystemDbConnection, it seeded the "system"
+        // pool with a .../employees URL, the engine inherited connections whose
+        // default database was employees, and the snapshot's replicated
+        // DROP DATABASE IF EXISTS employees removed the connection's own default
+        // database -- every later statement failed with
+        // "Code: 81 ... Database employees does not exist" (PrimaryKeyChangeIT).
+        // Lookups through this writer qualify their tables with the database,
+        // and the production callers of createConnection pair a system URL with
+        // their pool name the same way (ClickHouseBatchRunnable, ClickHouseBatchWriter).
          String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(), 
-         "employees");
+         BaseDbWriter.SYSTEM_DB);
         Connection connection = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, clickHouseContainer.getUsername(), 
         clickHouseContainer.getPassword(), BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
@@ -223,8 +236,10 @@ public class ITCommon {
 
     static public BaseDbWriter getDBWriter(ClickHouseContainer clickHouseContainer, String databaseName) {
 
+        // Same rule as above: a pool registered as "system" addresses the
+        // system database, whatever database the writer is for.
         String jdbcUrl = BaseDbWriter.getConnectionString(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
-                databaseName);
+                BaseDbWriter.SYSTEM_DB);
         Connection connection = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, clickHouseContainer.getUsername(),
                 clickHouseContainer.getPassword(), BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
 
@@ -246,5 +261,210 @@ public class ITCommon {
         ResultSet rs = conn.prepareStatement(sql).executeQuery();
         return rs;
 
+    }
+
+    /**
+     * Wait until a ClickHouse query returns at least {@code expectedMinRows} rows,
+     * polling every {@code pollIntervalMs} milliseconds until {@code timeoutMs} elapses.
+     *
+     * @param conn          ClickHouse JDBC connection
+     * @param countQuery    SQL query that returns a single count column (e.g. "SELECT count(*) FROM t")
+     * @param expectedMin   minimum count value to consider "ready"
+     * @param timeoutMs     maximum time to wait in milliseconds
+     * @param pollIntervalMs interval between polls in milliseconds
+     * @return the last observed count, or -1 if the query never succeeded
+     */
+    static public long waitForRowCount(Connection conn, String countQuery, long expectedMin, long timeoutMs, long pollIntervalMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        long lastCount = -1;
+        int poll = 0;
+        while (System.currentTimeMillis() < deadline) {
+            try (ResultSet rs = conn.prepareStatement(countQuery).executeQuery()) {
+                if (rs.next()) {
+                    lastCount = rs.getLong(1);
+                    if (lastCount >= expectedMin) {
+                        return lastCount;
+                    }
+                }
+            } catch (Exception e) {
+                // Table/database may not exist yet — keep polling
+            }
+            try {
+                Thread.sleep(pollIntervalMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+            poll++;
+        }
+        return lastCount;
+    }
+
+    /**
+     * Convenience overload: polls every 5 s with a 120 s timeout.
+     */
+    static public long waitForRowCount(Connection conn, String countQuery, long expectedMin) {
+        return waitForRowCount(conn, countQuery, expectedMin, 120_000, 5_000);
+    }
+
+    /**
+     * Wait until a table exists in ClickHouse and has the expected number of columns.
+     * Polls {@code system.columns} every 5 seconds.
+     *
+     * @param conn           ClickHouse JDBC connection
+     * @param database       ClickHouse database name
+     * @param table          table name
+     * @param expectedCols   expected column count
+     * @param timeoutMs      max wait in milliseconds
+     * @return true if the column count matched within the timeout
+     */
+    static public boolean waitForTableColumns(Connection conn, String database, String table, int expectedCols, long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            try {
+                String sql = String.format(
+                        "SELECT count() FROM system.columns WHERE database='%s' AND table='%s'",
+                        database, table);
+                try (ResultSet rs = conn.prepareStatement(sql).executeQuery()) {
+                    if (rs.next() && rs.getInt(1) >= expectedCols) {
+                        return true;
+                    }
+                }
+            } catch (Exception e) {
+                // table may not exist yet
+            }
+            try {
+                Thread.sleep(5_000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Wait until a ClickHouse query returns at least one row (any result),
+     * polling every 5 seconds with the given timeout.
+     *
+     * @param conn       ClickHouse JDBC connection
+     * @param query      any SELECT query
+     * @param timeoutMs  maximum wait in milliseconds
+     * @return true if the query returned at least one row within the timeout
+     */
+    static public boolean waitForData(Connection conn, String query, long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            try (ResultSet rs = conn.prepareStatement(query).executeQuery()) {
+                if (rs.next()) {
+                    return true;
+                }
+            } catch (Exception e) {
+                // Ignore — table/db may not exist yet
+            }
+            try {
+                Thread.sleep(5_000);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Wait until a count query returns EXACTLY {@code expected}, polling every
+     * {@code pollIntervalMs} milliseconds until {@code timeoutMs} elapses.
+     * <p>
+     * {@link #waitForRowCount} returns as soon as the count is at or ABOVE its
+     * floor, so it cannot wait for a count to come DOWN after a DELETE: with a
+     * floor of 0 it returns on the first poll, before the deletes have been
+     * applied. Use this when the expected value is known.
+     * </p>
+     *
+     * @param conn           ClickHouse JDBC connection
+     * @param countQuery     SQL query that returns a single count column
+     * @param expected       the exact count to wait for
+     * @param timeoutMs      maximum time to wait in milliseconds
+     * @param pollIntervalMs interval between polls in milliseconds
+     * @return the last observed count, or -1 if the query never succeeded
+     */
+    static public long waitForRowCountEquals(Connection conn, String countQuery, long expected, long timeoutMs, long pollIntervalMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        long lastCount = -1;
+        while (System.currentTimeMillis() < deadline) {
+            try (ResultSet rs = conn.prepareStatement(countQuery).executeQuery()) {
+                if (rs.next()) {
+                    lastCount = rs.getLong(1);
+                    if (lastCount == expected) {
+                        return lastCount;
+                    }
+                }
+            } catch (Exception e) {
+                // Table/database may not exist yet — keep polling
+            }
+            try {
+                Thread.sleep(pollIntervalMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+        return lastCount;
+    }
+
+    /**
+     * Polls the connector's persisted Debezium offset until it satisfies
+     * {@code accept}, polling every {@code pollIntervalMs} milliseconds until
+     * {@code timeoutMs} elapses.
+     * <p>
+     * The offset is not written together with the rows. Debezium flushes it on
+     * its own schedule ({@code offset.flush.interval.ms}), and on a source that
+     * goes idle after the snapshot the end-of-snapshot state travels on the first
+     * heartbeat, which is only emitted once streaming has started -- tens of
+     * seconds after the snapshot rows are already visible in ClickHouse. Reading
+     * the offset once, right after the rows appear, races that flush and returns
+     * null. Poll instead.
+     * </p>
+     *
+     * @param props          the connector properties (offset table and key are derived from them)
+     * @param conn           ClickHouse JDBC connection
+     * @param timeoutMs      maximum time to wait in milliseconds
+     * @param pollIntervalMs interval between polls in milliseconds
+     * @param accept         predicate the offset value must satisfy; it is never called with null
+     * @return the accepted offset value, or the last value observed (possibly null) on timeout
+     */
+    static public String waitForOffset(Properties props, Connection conn, long timeoutMs, long pollIntervalMs,
+                                       java.util.function.Predicate<String> accept) throws Exception {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        String last = null;
+        while (System.currentTimeMillis() < deadline) {
+            last = new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, conn);
+            if (last != null && !last.isEmpty() && accept.test(last)) {
+                return last;
+            }
+            Thread.sleep(pollIntervalMs);
+        }
+        return last;
+    }
+
+    /**
+     * Whether a persisted offset says the initial snapshot is finished.
+     * <p>
+     * Debezium writes the {@code snapshot} / {@code snapshot_completed} keys only
+     * while the offset context is in snapshot mode. Once streaming has started the
+     * offset carries position fields only ({@code lsn}/{@code txId}/{@code ts_usec}
+     * for PostgreSQL, {@code file}/{@code pos} for MySQL) and no snapshot keys at
+     * all -- and a connector restarted on such an offset resumes streaming, it does
+     * not re-snapshot. The only state that means "snapshot still in progress" is
+     * an explicit {@code "snapshot_completed":false}, which is what issue #1379
+     * left behind forever.
+     * </p>
+     *
+     * @param offset the persisted offset value, may be null
+     * @return true when the offset exists and does not report an unfinished snapshot
+     */
+    static public boolean offsetSaysSnapshotFinished(String offset) {
+        return offset != null && !offset.isEmpty() && !offset.contains("\"snapshot_completed\":false");
     }
 }

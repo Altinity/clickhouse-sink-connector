@@ -68,9 +68,10 @@ public class VersionHistoryIT {
      * INSERT, UPDATE, and DELETE operations.
      * 
      * For INSERT: _valid_to should be set to max date (2100-01-01)
-     * For UPDATE: 
-     *   - Old record should be closed (is_deleted=1, _valid_to set to binlog timestamp)
+     * For UPDATE (Spec 12.03 section 3.2):
+     *   - Old record should be closed (is_deleted=0, _valid_to set to binlog timestamp)
      *   - New record should have open-ended _valid_to (max date)
+     *   - No deleted copy of the before image (Gap G-12.03-2): a same-key UPDATE writes no is_deleted=1 row
      * For DELETE: (1) close current active row (_valid_to = delete timestamp, is_deleted=0),
      * (2) insert delete marker row (_valid_from = delete timestamp, _valid_to = open_end, is_deleted=1, _operation='D')
      */
@@ -156,10 +157,12 @@ public class VersionHistoryIT {
         
         Thread.sleep(10000);
         
-        // Validate UPDATE: Should have multiple records following the UNION ALL pattern:
-        // 1. CLOSE existing record: _valid_to = now(), is_deleted = 0, original values
+        // Validate UPDATE: Should have multiple records following the UNION ALL pattern (Spec 12.03 section 3.2):
+        // 1. CLOSE existing record: _valid_to = binlog timestamp, is_deleted = 0, original values
         // 2. NEW after-image: _valid_from = binlog timestamp, _valid_to = 2100, is_deleted = 0, new values
-        // 3. CANCEL before-image: _valid_from = binlog timestamp, _valid_to = 2100, is_deleted = 1, original values
+        // There is NO deleted copy of the before image any more (Gap G-12.03-2): it shared the
+        // close row's sorting key and version, so FINAL could hide the closed history version.
+        // A same-key UPDATE therefore writes no is_deleted = 1 row at all.
         log.info("Validating UPDATE operation - checking _valid_from, _valid_to, and record pattern");
         ResultSet updateRs = ITCommon.executeQueryWithResultSet(
             "SELECT emp_id, name, salary, `_valid_from`, `_valid_to`, `is_deleted`, `_version`, `_operation` FROM binlog_history.employees_temporal_test ORDER BY `_version`",
@@ -168,7 +171,7 @@ public class VersionHistoryIT {
         int updateRecordCount = 0;
         int activeRecordsWithNewSalary = 0;  // New after-image with _valid_to = 2100, is_deleted = 0, salary = 60000
         int closedRecords = 0;               // Records with _valid_to != 2100 (closed)
-        int cancelledRecords = 0;            // Records with is_deleted = 1 (before-image cancelled)
+        int cancelledRecords = 0;            // Records with is_deleted = 1 -- none expected after a same-key UPDATE
         int latestSalary = 0;
         long latestVersion = 0;
         String activeRecordValidFrom = null;
@@ -186,12 +189,10 @@ public class VersionHistoryIT {
             
             // Categorize records based on the expected pattern
             if (isDeleted == 1) {
-                // This is the cancelled before-image (third SELECT in UNION ALL)
+                // A deleted row after a same-key UPDATE is the removed before copy
+                // (Gap G-12.03-2) coming back; counted and asserted absent below.
                 cancelledRecords++;
-                log.info("  -> Identified as CANCELLED before-image");
-                // Before-image should have _valid_to = 2100 (open-ended) but is_deleted = 1
-                assertTrue("Cancelled before-image should have _valid_to = 2100", validTo.startsWith("2100"));
-                assertTrue("Cancelled before-image should have original salary (50000)", salary == 50000);
+                log.info("  -> UNEXPECTED deleted row after a same-key UPDATE");
             } else if (!validTo.startsWith("2100")) {
                 // This is the closed original record (first SELECT in UNION ALL)
                 closedRecords++;
@@ -215,10 +216,14 @@ public class VersionHistoryIT {
         log.info("After UPDATE - Total records: {}, Active with new salary: {}, Closed: {}, Cancelled: {}", 
             updateRecordCount, activeRecordsWithNewSalary, closedRecords, cancelledRecords);
         
-        // Validate record counts based on expected UNION ALL pattern
-        // After UPDATE: should have at least 3 records (original, closed, after-image, before-image cancelled)
-        // But due to ReplacingMergeTree behavior, we may see different counts
+        // Validate record counts based on expected UNION ALL pattern (Spec 12.03 section 3.2)
+        // After UPDATE, read WITHOUT FINAL: the original INSERT row (still in an unmerged part),
+        // the closed copy of it, and the new after-image -- and NO deleted row.
         assertTrue("Should have at least 1 active record with updated salary after UPDATE", activeRecordsWithNewSalary >= 1);
+        assertTrue(String.format("The previous version must be closed at the UPDATE time (Gap G-12.03-1 flush), but closed rows = %d", closedRecords),
+            closedRecords >= 1);
+        assertTrue(String.format("A same-key UPDATE writes no deleted before copy (Gap G-12.03-2), but is_deleted = 1 rows = %d", cancelledRecords),
+            cancelledRecords == 0);
         
         // Validate the new after-image has _valid_from set
         assertTrue("New after-image should have _valid_from set", activeRecordValidFrom != null);

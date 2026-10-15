@@ -77,6 +77,21 @@
     </distributionManagement>
 
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <!-- Third-party notices and license texts ship inside the JAR
+                 (META-INF/THIRD_PARTY_NOTICES.md, META-INF/licenses/). -->
+            <resource>
+                <directory>${project.basedir}/..</directory>
+                <targetPath>META-INF</targetPath>
+                <includes>
+                    <include>THIRD_PARTY_NOTICES.md</include>
+                    <include>licenses/**</include>
+                </includes>
+            </resource>
+        </resources>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -243,7 +258,7 @@
         </pluginManagement>
 
         <!-- Define test source directory -->
-        <testSourceDirectory>${project.basedir}/src/test</testSourceDirectory>
+        <testSourceDirectory>${project.basedir}/src/test/java</testSourceDirectory>
 
     </build>
     <dependencies>
@@ -415,13 +430,7 @@
             <scope>test</scope>
         </dependency>
 
-        <!--Kafka JSON converter for SMT unit test-->
-        <dependency>
-            <groupId>org.apache.kafka</groupId>
-            <artifactId>connect-json</artifactId>
-            <version>${version.kafka}</version>
-            <!-- <scope>test</scope> -->
-        </dependency>
+        <!--Kafka JSON converter (compile scope; also used by the SMT unit test)-->
         <dependency>
             <groupId>org.apache.kafka</groupId>
             <artifactId>connect-json</artifactId>
@@ -481,7 +490,7 @@
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter-params</artifactId>
-            <version>5.9.2</version>
+            <version>5.8.1</version>
             <scope>test</scope>
         </dependency>
         <dependency>

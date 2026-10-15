@@ -1,5 +1,7 @@
 # Sink Connector Architecture Overview
 
+> **Detailed Specification**: For an exhaustive, method-by-method operational mapping, concurrency model, and end-to-end execution flow specification covering release 2.11.0, see [Architecture & End-to-End Flow Specification](architecture_and_flow_specification.md).
+
 The Sink Connector extracts transactions from upstream databases 
 using [Debezium](debezium) into a common log format and then applies those 
 transactions to tables in ClickHouse. 

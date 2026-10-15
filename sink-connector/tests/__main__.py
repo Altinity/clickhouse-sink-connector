@@ -1,8 +1,7 @@
 import time
 import os
 
-import mysql.connector
-from mysql.connector import Error
+import pymysql
 from faker import Faker
 Faker.seed(33422)
 
@@ -30,10 +29,10 @@ db_user = os.environ.get('DB_USER_NAME')
 db_pass = os.environ.get('DB_USER_PASSWORD')
 
 try:
-    conn = mysql.connector.connect(host=db_host, database = db_name,
+    conn = pymysql.connect(host=db_host, database = db_name,
                                    user=db_user, password=db_pass)
 
-    if conn.is_connected():
+    if conn.open:
         cursor = conn.cursor()
 
         try:
@@ -58,14 +57,14 @@ try:
                 print("iteration %s" % n)
                 time.sleep(0.5)
                 conn.commit()
-except Error as e :
+except pymysql.MySQLError as e :
     print ("error", e)
     pass
 except Exception as e:
     print ("Unknown error %s", e)
 finally:
     #closing database connection.
-    if(conn and conn.is_connected()):
+    if(conn and conn.open):
         conn.commit()
         cursor.close()
         conn.close()

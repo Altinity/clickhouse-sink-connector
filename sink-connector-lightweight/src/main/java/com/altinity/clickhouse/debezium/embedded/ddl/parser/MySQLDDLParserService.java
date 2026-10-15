@@ -12,6 +12,7 @@ import org.antlr.v4.runtime.CommonTokenStream;
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
 
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -43,11 +44,65 @@ public class MySQLDDLParserService implements DDLParserService {
     private BaseDbWriter writer;
 
     /**
+     * Optional override of how the translator learns the existing ClickHouse
+     * schema of an ALTER's target table (nullability, sorting key). Null means
+     * "read it through DBMetadata on the writer's connection"; tests inject a
+     * fixed answer here (Spec 06.03 §3.4).
+     */
+    private TargetSchemaLookup targetSchemaLookup;
+
+    /**
+     * Statement time ({@code source.ts_ms}) of the DDL event being parsed, in
+     * epoch milliseconds; 0 when the caller did not supply one (Spec 06.04
+     * §3.2.2).
+     */
+    private long ddlEventTimestampMs;
+
+    /**
+     * The rebuild plan of the last {@code parseSql} (Spec 06.09 §3.1); null
+     * when that statement changed no row identity.
+     */
+    private PrimaryKeyRebuildPlan primaryKeyRebuildPlan;
+
+    /**
+     * The history-mode bulk closes of the last {@code parseSql} (Spec 12.03
+     * section 3.4); empty when that statement was not a TRUNCATE-TABLE / DROP
+     * TABLE in history mode.
+     */
+    private List<MySqlDDLParserListenerImpl.HistoryBulkClose> historyBulkCloses = Collections.emptyList();
+
+    /**
      * Default constructor for MySQLDDLParserService.
      */
     @Inject
     public MySQLDDLParserService() {
 
+    }
+
+    /**
+     * Overrides the target-schema lookup used by every listener this service
+     * creates. Intended for tests; production leaves it unset and reads the
+     * schema from ClickHouse.
+     *
+     * @param targetSchemaLookup the lookup, or null to restore the default.
+     */
+    public void setTargetSchemaLookup(TargetSchemaLookup targetSchemaLookup) {
+        this.targetSchemaLookup = targetSchemaLookup;
+    }
+
+    @Override
+    public void setDdlEventTimestampMs(long ddlEventTimestampMs) {
+        this.ddlEventTimestampMs = ddlEventTimestampMs;
+    }
+
+    @Override
+    public PrimaryKeyRebuildPlan primaryKeyRebuildPlan() {
+        return primaryKeyRebuildPlan;
+    }
+
+    @Override
+    public List<MySqlDDLParserListenerImpl.HistoryBulkClose> historyBulkCloses() {
+        return historyBulkCloses;
     }
 
     /**
@@ -98,8 +153,14 @@ public class MySQLDDLParserService implements DDLParserService {
 
         // Initialize the listener to handle the parsing logic
         MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, config, sql);
+        listener.setTargetSchemaLookup(targetSchemaLookup);
+        listener.setDdlEventTimestampMs(ddlEventTimestampMs);
+        this.primaryKeyRebuildPlan = null;
+        this.historyBulkCloses = Collections.emptyList();
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
+        this.primaryKeyRebuildPlan = listener.primaryKeyRebuildPlan();
+        this.historyBulkCloses = listener.historyBulkCloses();
 
         return clickHouseResult;
     }
@@ -128,31 +189,64 @@ public class MySQLDDLParserService implements DDLParserService {
 
         // Initialize the listener to handle the parsing logic
         MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, this.config, sql);
+        listener.setTargetSchemaLookup(targetSchemaLookup);
+        listener.setDdlEventTimestampMs(ddlEventTimestampMs);
+        this.primaryKeyRebuildPlan = null;
+        this.historyBulkCloses = Collections.emptyList();
         ParseTreeWalker walker = new ParseTreeWalker();
         walker.walk(listener, parser.root());
+        this.primaryKeyRebuildPlan = listener.primaryKeyRebuildPlan();
+        this.historyBulkCloses = listener.historyBulkCloses();
 
-        // Set the drop or truncate flag
-        isDropOrTruncate.set(isDropOrTruncateStatement(tokens));
+        // Statement KIND, decided by the parse tree: DROP TABLE / TRUNCATE
+        // TABLE / DROP DATABASE. The earlier token scan flagged any DROP
+        // token, so ALTER TABLE ... DROP COLUMN and DROP INDEX counted too
+        // (spec 06.08 section 3.3).
+        // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+        isDropOrTruncate.set(listener.isDropOrTruncateStatement());
 
         return clickHouseResult;
     }
 
     /**
-     * Checks if the given DDL statement is a DROP or TRUNCATE statement.
+     * Checks whether the statement is, at statement level, a {@code DROP
+     // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+     * TABLE}, {@code TRUNCATE [TABLE]} or {@code DROP DATABASE}.
+     *
+     * <p>Decided by the first significant tokens, never by the presence of a
+     * {@code DROP} token anywhere: {@code ALTER TABLE t DROP COLUMN c},
+     * {@code DROP INDEX i ON t} and {@code ALTER COLUMN c DROP DEFAULT} are
+     * not data-destroying statements and must not be caught by
+     // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+     * {@code disable.drop.truncate}.</p>
      *
      * @param tokens the list of tokens generated by the lexer.
-     * @return true if the statement is DROP or TRUNCATE, false otherwise.
+     * @return true if the statement drops or truncates a table or database.
      */
     public boolean isDropOrTruncateStatement(CommonTokenStream tokens) {
-
-        boolean result = false;
-        List<Token> tokensList = tokens.getTokens();
-
-        if (tokensList.stream().anyMatch(x -> x.getType() == MySqlParser.DROP || x.getType() == MySqlParser.TRUNCATE)) {
-            result = true;
+        List<Token> significant = new java.util.ArrayList<>();
+        for (Token t : tokens.getTokens()) {
+            if (t.getChannel() == Token.DEFAULT_CHANNEL && t.getType() != Token.EOF) {
+                significant.add(t);
+            }
+            if (significant.size() >= 2) {
+                break;
+            }
         }
-
-        return result;
+        if (significant.isEmpty()) {
+            return false;
+        }
+        int first = significant.get(0).getType();
+        // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+        if (first == MySqlParser.TRUNCATE) {
+            return true;
+        }
+        if (first == MySqlParser.DROP && significant.size() > 1) {
+            int second = significant.get(1).getType();
+            return second == MySqlParser.TABLE || second == MySqlParser.TEMPORARY
+                    || second == MySqlParser.DATABASE || second == MySqlParser.SCHEMA;
+        }
+        return false;
     }
 
     /**

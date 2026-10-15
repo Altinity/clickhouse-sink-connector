@@ -20,7 +20,7 @@ offset.storage.jdbc.table.name: "altinity_sink_connector.replica_source_info"
 offset.storage.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
 offset.storage.jdbc.user: "root"
 offset.storage.jdbc.password: "root"
-offset.storage.jdbc.offset.table.ddl:  "CREATE TABLE if not exists %s on cluster '{cluster}'
+offset.storage.jdbc.table.ddl:  "CREATE TABLE if not exists %s on cluster '{cluster}'
 (
     id String,
     offset_key String,
@@ -29,12 +29,12 @@ offset.storage.jdbc.offset.table.ddl:  "CREATE TABLE if not exists %s on cluster
     record_insert_seq UInt64,
 ) ENGINE =  KeeperMap('/asc_offsets201',10)
 PRIMARY KEY offset_key"
-offset.storage.jdbc.offset.table.delete: "select 1"
+offset.storage.jdbc.table.delete: "select 1"
 schema.history.internal: "io.debezium.storage.jdbc.history.JdbcSchemaHistory"
 schema.history.internal.jdbc.url: "jdbc:clickhouse://clickhouse:8123/altinity_sink_connector"
 schema.history.internal.jdbc.user: "root"
 schema.history.internal.jdbc.password: "root"
-schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exists %s on cluster '{cluster}'
+schema.history.internal.jdbc.table.ddl: "CREATE TABLE if not exists %s on cluster '{cluster}'
 (
    id FixedString(36),
    history_data String,
@@ -43,7 +43,7 @@ schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exis
    record_insert_seq UInt32
 ) ENGINE=ReplicatedReplacingMergeTree(record_insert_seq)
 order by id"
-schema.history.internal.jdbc.schema.history.table.name: "altinity_sink_connector.replicate_schema_history"
+schema.history.internal.jdbc.table.name: "altinity_sink_connector.replicate_schema_history"
 enable.snapshot.ddl: "true"
 persist.raw.bytes: "false"
 auto.create.tables: "true"

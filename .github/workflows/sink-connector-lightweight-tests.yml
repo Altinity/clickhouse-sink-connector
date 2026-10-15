@@ -22,7 +22,23 @@ jobs:
     runs-on: [ self-hosted, on-demand, type-cx53-cpx52, image-x86-app-docker-ce ]
     steps:
       - uses: actions/checkout@v2
+      # setup-java resolves "17" through the distribution's metadata API on
+      # every run (empty tool cache on a fresh runner) and, at this pin, does
+      # not retry that request. One dropped TLS handshake there fails the job
+      # before any Java runs. Retry the step itself: the first attempt tolerates
+      # failure, the identical second attempt runs only if the first did not
+      # succeed, and a genuine failure still fails the job on that second try.
+      # (`outcome` is the step result before continue-on-error is applied.)
       - name: Set up JDK 17
+        id: setup-jdk
+        uses: actions/setup-java@v3
+        continue-on-error: true
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+      - name: Set up JDK 17 (retry)
+        if: steps.setup-jdk.outcome == 'failure'
         uses: actions/setup-java@v3
         with:
           java-version: '17'
@@ -42,7 +58,76 @@ jobs:
         run: mvn clean install -DskipTests=true
       - name: Build Replicator with Maven
         working-directory: sink-connector-lightweight
-        run: mvn --quiet surefire-report:report
+        # `surefire-report:report` is a REPORTING goal: invoked bare, it does
+        # not bind to the lifecycle and therefore never runs the `test` phase.
+        # It only formats surefire XML that already exists -- and on a clean
+        # runner none does, so it emitted an empty report and the job passed
+        # in ~55s having executed zero tests. The junit-report step said so
+        # every run ("No annotations found for JUnit Test Report") while the
+        # check stayed green.
+        #
+        # `mvn test` runs them; `surefire-report:report` then formats the XML
+        # it produced. -Dmaven.test.failure.ignore lets the report step be the
+        # thing that fails the job, so a failure is annotated on the PR rather
+        # than aborting before the report is written.
+        run: |
+          mvn --quiet test -Dmaven.test.failure.ignore=true
+          mvn --quiet surefire-report:report-only
+
+      # A green job proves nothing unless tests actually EXECUTED. Twice now
+      # this job has passed while running zero tests: first because
+      # `surefire-report:report` never bound to the lifecycle, then because a
+      # junit-platform version conflict killed every class during DISCOVERY
+      # (96x NoSuchMethodError, "Tests run: 0", BUILD SUCCESS). Both were
+      # invisible because nothing asserted a floor.
+      #
+      # This step is the backstop: it reads the surefire XML and fails the job
+      # if the executed count is implausibly low, so "the suite silently
+      # stopped running" can never again look identical to "the suite passed".
+      # It counts UNIT tests and INTEGRATION tests separately -- an IT-only
+      # regression (e.g. containers unavailable on the runner) would otherwise
+      # hide behind a healthy unit count.
+      #
+      # Floors are set well below current levels so ordinary test removal does
+      # not trip them; they catch collapse, not drift.
+      - name: Verify tests actually ran
+        if: always()
+        working-directory: sink-connector-lightweight
+        env:
+          MIN_TOTAL_TESTS: '250'
+          MIN_IT_CLASSES: '1'
+        run: |
+          set -euo pipefail
+
+          report_dir=target/surefire-reports
+          report_count=$(find "$report_dir" -name 'TEST-*.xml' -type f 2>/dev/null | wc -l)
+          if [ "$report_count" -eq 0 ]; then
+            echo "::error::No surefire XML was produced. The test suite did not run."
+            exit 1
+          fi
+
+          total=$(find "$report_dir" -name 'TEST-*.xml' -type f -exec \
+                    grep -ho 'tests="[0-9]*"' {} + \
+                  | grep -o '[0-9]*' | paste -sd+ - | bc)
+          total=${total:-0}
+
+          it_classes=$(find "$report_dir" -name 'TEST-*IT.xml' -type f | wc -l)
+
+          echo "executed tests: ${total} (floor ${MIN_TOTAL_TESTS})"
+          echo "IT classes with results: ${it_classes} (floor ${MIN_IT_CLASSES})"
+
+          rc=0
+          if [ "${total}" -lt "${MIN_TOTAL_TESTS}" ]; then
+            echo "::error::Only ${total} tests executed, expected at least ${MIN_TOTAL_TESTS}."
+            echo "::error::The suite is silently not running. Do NOT lower this floor to make the job pass."
+            rc=1
+          fi
+          if [ "${it_classes}" -lt "${MIN_IT_CLASSES}" ]; then
+            echo "::error::No integration test (*IT) produced results; the end-to-end suite did not run."
+            rc=1
+          fi
+          exit $rc
+
       - name: Publish Test Report
         uses: mikepenz/action-junit-report@v4
         if: always()

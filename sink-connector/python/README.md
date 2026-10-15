@@ -28,6 +28,7 @@ pip install "ch_sink_tools-0.2.0-py3-none-any.whl[all]"
 | `ch-mysql-checksum` | MySQL checksum (requires `[mysql]` extra) |
 | `ch-mysql-dump` | MySQL dump (requires `[mysql]` extra) |
 | `ch-mysql-load` | MySQL → ClickHouse loader (requires `[mysql]` extra) |
+| `ch-mysql-resync` | Re-synchronise replica tables after a source change that bypassed the binlog (`sql_log_bin=0` patch, schema reload): `dump` → `patch` (dry run unless `--apply`) → `rewind-sql`. Spec 11.04. Needs `mysqlsh`, `zstd`, `clickhouse-client` and the `[mysql]` extra for the loader. |
 
 ## Quick Start
 
@@ -68,7 +69,7 @@ ssh user@ch-server '/opt/python-dump/.venv/bin/pip install --force-reinstall /tm
 
 **Core (always installed):**
 - `clickhouse-driver>=0.2.9`
-- `psycopg2-binary`
+- `pg8000>=1.31,<1.32`
 - `pyyaml`
 
 **Optional:**

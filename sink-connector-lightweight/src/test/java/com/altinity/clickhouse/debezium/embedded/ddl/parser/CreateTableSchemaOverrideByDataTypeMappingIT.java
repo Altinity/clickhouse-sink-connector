@@ -109,13 +109,28 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
         DBMetadata dbMetadata = new DBMetadata(props);
-        Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "contacts", "employees");
 
+        // Poll until the contacts table exists in ClickHouse (DDL replication may take time)
+        Map<String, String> columnsToDataTypeMap = null;
+        for (int retry = 0; retry < 10; retry++) {
+            columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "contacts", "employees");
+            if (!columnsToDataTypeMap.isEmpty() && columnsToDataTypeMap.containsKey("id")) {
+                break;
+            }
+            Thread.sleep(5000);
+        }
+        Assert.assertFalse("contacts table columns should not be empty in ClickHouse employees database", columnsToDataTypeMap.isEmpty());
+
+        Assert.assertNotNull("id column should exist in contacts", columnsToDataTypeMap.get("id"));
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));
+        Assert.assertNotNull("first_name column should exist in contacts", columnsToDataTypeMap.get("first_name"));
         Assert.assertTrue(columnsToDataTypeMap.get("first_name").equalsIgnoreCase("String"));
+        Assert.assertNotNull("last_name column should exist in contacts", columnsToDataTypeMap.get("last_name"));
         Assert.assertTrue(columnsToDataTypeMap.get("last_name").equalsIgnoreCase("String"));
         // Assert.assertTrue(columnsToDataTypeMap.get("fullname").equalsIgnoreCase("Nullable(String)"));
+        Assert.assertNotNull("email column should exist in contacts", columnsToDataTypeMap.get("email"));
         Assert.assertTrue(columnsToDataTypeMap.get("email").equalsIgnoreCase("String"));
+        Assert.assertNotNull("gmt_time column should exist in contacts", columnsToDataTypeMap.get("gmt_time"));
         Assert.assertTrue(columnsToDataTypeMap.get("gmt_time").equalsIgnoreCase("String"));
 
         ResultSet resultSet = ITCommon.executeQueryWithResultSet("select gmt_time from employees.contacts", writer.getConnection());

@@ -1,5 +1,5 @@
 clickhouse-driver>=0.2.9
-psycopg2-binary
+pg8000>=1.31,<1.32
 pymysql
 pyyaml
 sqlalchemy>=1.4

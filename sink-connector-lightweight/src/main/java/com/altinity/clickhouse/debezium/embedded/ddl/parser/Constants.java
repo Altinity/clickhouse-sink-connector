@@ -1,9 +1,5 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
-
 /**
  * This class holds commonly used constants for DDL (Data Definition Language)
  * operations in ClickHouse, such as commands for creating, altering, or
@@ -13,8 +9,52 @@ public class Constants {
 
     /**
      * Alias keyword for materialized columns.
+     *
+     * @deprecated a MySQL generated column is translated with
+     *     {@link #GENERATED_COLUMN_KIND} instead; MATERIALIZED cannot receive
+     *     the value the binlog carries. Retained so any other caller keeps
+     *     compiling.
      */
+    @Deprecated
     public static final String ALIAS = "MATERIALIZED";
+
+    /**
+     * ClickHouse column kind used to translate a MySQL generated column
+     * ({@code GENERATED ALWAYS AS (expr) VIRTUAL|STORED}).
+     *
+     * <p>DEFAULT, not MATERIALIZED, and the difference is behavioural rather
+     * than cosmetic. Both evaluate the expression when the column is omitted
+     * from an INSERT, so a generated column is derived correctly either way on
+     * the initial snapshot. They differ on the two things that matter to a
+     * replication engine:</p>
+     *
+     * <ul>
+     *   <li><b>MATERIALIZED rejects the value outright.</b> An INSERT naming
+     *       the column fails with {@code Code: 44 ... Cannot insert column c,
+     *       because it is MATERIALIZED column (ILLEGAL_COLUMN)}. Debezium puts
+     *       generated columns in the row image, so the connector must strip
+     *       them from every INSERT to avoid failing the batch -- and then
+     *       whatever MySQL actually computed is discarded.</li>
+     *   <li><b>DEFAULT accepts an explicit value and computes one when
+     *       absent.</b> The binlog value lands as sent; when the connector
+     *       omits the column, ClickHouse derives it. MySQL stays the source of
+     *       truth, and the replica still fills the column on its own.</li>
+     * </ul>
+     *
+     * <p>This matters whenever the two expressions can disagree: a MySQL
+     * function with no exact ClickHouse equivalent, differing NULL or
+     * overflow semantics, a session-dependent value, or a generated column
+     * whose definition was changed on the source without the replica's
+     * translation being regenerated. Under MATERIALIZED the replica silently
+     * keeps its own answer -- no error, no failed batch, matching row counts,
+     * detectable only by a value-level checksum. Under DEFAULT it keeps
+     * MySQL's.</p>
+     *
+     * <p>MATERIALIZED is also excluded from {@code SELECT *}, so a generated
+     * column translated that way is invisible to a client that does not name
+     * it. DEFAULT columns are ordinary and appear as expected.</p>
+     */
+    public static final String GENERATED_COLUMN_KIND = "DEFAULT";
 
     /**
      * PARTITION BY clause for ClickHouse DDL statements.
@@ -32,11 +72,6 @@ public class Constants {
     public static final String ORDER_BY = " ORDER BY ";
 
     /**
-     * ORDER BY clause used with empty tuple.
-     */
-    public static final String ORDER_BY_TUPLE = " ORDER BY tuple()";
-
-    /**
      * LIKE keyword used in certain DDL contexts.
      */
     public static final String LIKE = "LIKE";
@@ -52,9 +87,14 @@ public class Constants {
     public static final String ALTER_TABLE = "ALTER TABLE %s";
 
     /**
-     * Template for renaming tables, e.g. "RENAME TABLE %s TO %s".
+     * Template for renaming tables, e.g. "RENAME TABLE IF EXISTS %s TO %s".
+     *
+     * <p>Guarded: a rename is not self-idempotent. Once applied the old
+     * table is gone, so a replay after a connector restart would fail and
+     * stall the stream. With IF EXISTS (accepted by ClickHouse 24.8) the
+     * replay is a no-op.</p>
      */
-    public static final String ALTER_RENAME_TABLE = "RENAME TABLE %s TO %s";
+    public static final String ALTER_RENAME_TABLE = "RENAME TABLE IF EXISTS %s TO %s";
 
     /**
      * CREATE TABLE command.
@@ -114,6 +154,26 @@ public class Constants {
      */
     public static final String MODIFY_COLUMN_NULLABLE =
             "MODIFY COLUMN %s Nullable(%s)";
+
+    /**
+     * Template for the MODIFY half of a translated {@code CHANGE COLUMN old
+     * new <type>}, e.g. "MODIFY COLUMN IF EXISTS %s %s".
+     *
+     * <p>Guarded, unlike {@link #MODIFY_COLUMN}: a CHANGE is emitted as a
+     * MODIFY of the OLD name followed by a RENAME to the new one. Once the
+     * rename has been applied the old name no longer exists, so a replay of
+     * the MODIFY half after a connector restart fails with
+     * {@code Code: 10 NOT_FOUND_COLUMN_IN_BLOCK} and stalls the stream. The
+     * guard is on the synthesised statement only; a user MODIFY stays
+     * unguarded so a genuinely missing column is still reported.</p>
+     */
+    public static final String MODIFY_COLUMN_IF_EXISTS = "MODIFY COLUMN IF EXISTS %s %s";
+
+    /**
+     * Nullable variant of {@link #MODIFY_COLUMN_IF_EXISTS}.
+     */
+    public static final String MODIFY_COLUMN_IF_EXISTS_NULLABLE =
+            "MODIFY COLUMN IF EXISTS %s Nullable(%s)";
 
     /**
      * The RENAME COLUMN clause in an ALTER TABLE statement.
@@ -231,20 +291,8 @@ public class Constants {
     public static final String DROP_COLUMN = "DROP COLUMN IF EXISTS %s";
 
     /**
-     * Template for dropping a constraint, e.g. "DROP CONSTRAINT %s".
-     */
-    public static final String DROP_CONSTRAINT = "DROP CONSTRAINT IF EXISTS %s";
-
-    /**
      * Version number associated with ReplacingMergeTree improvements
      * introduced in ClickHouse 23.2.
      */
     public static final String NEW_REPLACING_MERGE_TREE_VERSION = "23.2";
-
-    /**
-     * A set of data types that do not support being marked as Nullable
-     * in ClickHouse. This is used as a workaround during DDL processing.
-     */
-    public static final Set<String> NULLABLE_NOT_SUPPORTED_DATA_TYPES =
-            new HashSet<>(Arrays.asList("point", "polygon"));
 }

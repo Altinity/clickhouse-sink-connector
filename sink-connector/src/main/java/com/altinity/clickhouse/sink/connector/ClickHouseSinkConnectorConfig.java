@@ -60,9 +60,87 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     private static final int DEFAULT_THREAD_POOL_SIZE = 10;
 
     /**
-     * Default maximum size of the queue.
+     * Default for routing.by.primary.key: route by (table + primary-key
+     * identity) so different rows of one hot table spread across writer threads
+     * while every occurrence of the same row stays on one worker in binlog
+     * order (spec 03.07). Set false to restore exact table-level routing.
      */
-    private static final int DEFAULT_MAX_QUEUE_SIZE = 500000;
+    private static final boolean DEFAULT_ROUTING_BY_PRIMARY_KEY = true;
+
+    /**
+     * Default maximum size of the queue, in batches. Public so the embedded
+     * path applies the same bound to its single-threaded queue when the
+     * property is absent (spec 01.05 section 3.6) instead of an unbounded one.
+     */
+    public static final int DEFAULT_MAX_QUEUE_SIZE = 500000;
+
+    /**
+     * Default hard cap on the ESTIMATED BYTES handed to the writers and not yet
+     * acknowledged (spec 01.05 section 3.4 item 7): one quarter of the maximum
+     * heap. The row cap is blind to row width; this one is not.
+     */
+    public static final long DEFAULT_HANDOFF_MAX_OUTSTANDING_BYTES = defaultHandoffBytes(Runtime.getRuntime().maxMemory());
+
+    /**
+     * Default most estimated bytes per JDBC INSERT chunk (spec 03.06 section
+     * 3.1): 256 MiB. The driver holds a chunk as rendered SQL text, twice,
+     * before it is sent, once per worker thread.
+     */
+    public static final long DEFAULT_BUFFER_MAX_BYTES = 256L << 20;
+
+    /**
+     * Default {@code insert.spill.threshold.bytes} (spec 03.06 section 3.4):
+     * a chunk whose rendered size bound reaches 32 MiB is streamed to a spill
+     * file and sent from disk instead of being rendered in memory.
+     */
+    public static final long DEFAULT_INSERT_SPILL_THRESHOLD_BYTES = 32L << 20;
+
+    /**
+     * Default {@code coalesce.max.wait.ms}: a worker writes what is queued at
+     * once and never waits for more (spec 03.03 section 3.1.1 step 6).
+     */
+    public static final long DEFAULT_COALESCE_MAX_WAIT_MS = 0L;
+
+    /**
+     * Default {@code binlog.transaction.compression.check}: probe the MySQL
+     * source and self-test the Transaction_payload decoder, warn on what cannot
+     * be verified, refuse only what would certainly break (spec 01.08). The
+     * lightweight preflight reads the raw property against this same default.
+     */
+    public static final String DEFAULT_BINLOG_TRANSACTION_COMPRESSION_CHECK = "auto";
+
+    /** One quarter of the given maximum heap; a floor of 256 MiB when the heap is unknown or unlimited. */
+    static long defaultHandoffBytes(long maxHeapBytes) {
+        if (maxHeapBytes <= 0 || maxHeapBytes == Long.MAX_VALUE) {
+            return 256L << 20;
+        }
+        return Math.max(256L << 20, maxHeapBytes / 4);
+    }
+
+    /**
+     * Default hard cap on rows handed to the writers and not yet acknowledged
+     * (spec 01.05 section 3.4). Rows, not batches: a Debezium batch can hold
+     * one row or ten thousand, so a batch count bounds nothing in bytes.
+     */
+    private static final long DEFAULT_HANDOFF_MAX_OUTSTANDING_RECORDS = 500000L;
+
+    /**
+     * Default longest wait at the handoff hard cap before the engine stops
+     * loudly (spec 01.05 section 3.4): ten minutes.
+     */
+    private static final long DEFAULT_HANDOFF_WAIT_TIMEOUT_MS = 600000L;
+
+    /**
+     * Default delay before the first retry of a batch that failed to write to
+     * ClickHouse for a retriable reason (spec 10.02).
+     */
+    private static final long DEFAULT_BATCH_RETRY_BACKOFF_INITIAL_MS = 500L;
+
+    /**
+     * Default cap on the retry delay; the delay doubles per consecutive
+     * failure of the same batch until it reaches this value (spec 10.02).
+     */
+    private static final long DEFAULT_BATCH_RETRY_BACKOFF_MAX_MS = 30000L;
 
     /**
      * Default timeout period for restarting the event loop (milliseconds).
@@ -159,6 +237,66 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
     public ClickHouseSinkConnectorConfig(ConfigDef config,
                                          Map<String, String> properties) {
         super(config, properties, false);
+        warnIfNonDefaultValueDisabled(properties);
+        warnIfIgnoreDelete(properties);
+    }
+
+    /** Emitted at most once per JVM. */
+    private static final java.util.concurrent.atomic.AtomicBoolean IGNORE_DELETE_WARNED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * {@code ignore_delete=true} is loss by design: the writer never binds the
+     * delete marker, so rows the source deleted stay visible in ClickHouse
+     * forever and the replica stops being equal to the source (Spec 10.04
+     * section 3.7). It is an operator's explicit choice, so it is honoured, but
+     * it is announced once at startup so nobody mistakes the divergence for a
+     * bug later.
+     *
+     * @param properties the raw properties; {@code null} is tolerated.
+     * @return whether the warning applies (exposed for tests).
+     */
+    static boolean isIgnoreDeleteEnabled(Map<String, String> properties) {
+        if (properties == null) {
+            return false;
+        }
+        String value = properties.get(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString());
+        return value != null && "true".equalsIgnoreCase(value.trim());
+    }
+
+    private static void warnIfIgnoreDelete(Map<String, String> properties) {
+        if (isIgnoreDeleteEnabled(properties) && IGNORE_DELETE_WARNED.compareAndSet(false, true)) {
+            log.warn("{}=true: source row removals are NOT replicated. Rows removed at the source stay "
+                            + "visible in ClickHouse and the replica will no longer equal the source. "
+                            + "This is loss by design; unset it unless that divergence is intended.",
+                    ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString());
+        }
+    }
+
+    /** Emitted at most once per JVM; the key is a no-op either way. */
+    private static final java.util.concurrent.atomic.AtomicBoolean NON_DEFAULT_VALUE_WARNED =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * {@code non.default.value=false} used to make the writer bind the
+     * Connect-schema default (the MySQL column DEFAULT, via Debezium) in place
+     * of a source NULL -- and {@code false} was the hardcoded default. The
+     * source value is the only value there is to bind (Spec 07.07 section
+     * 3.3), so the key no longer does anything; say so once when an operator
+     * has explicitly asked for the old behaviour.
+     */
+    private static void warnIfNonDefaultValueDisabled(Map<String, String> properties) {
+        if (properties == null) {
+            return;
+        }
+        String key = ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString();
+        String value = properties.get(key);
+        if (value != null && "false".equalsIgnoreCase(value.trim())
+                && NON_DEFAULT_VALUE_WARNED.compareAndSet(false, true)) {
+            log.warn("{}=false is deprecated and ignored: the connector always binds the source "
+                            + "value, including NULL, and never substitutes a column DEFAULT for it.",
+                    key);
+        }
     }
 
     /**
@@ -470,6 +608,22 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.BINLOG_TRANSACTION_COMPRESSION_CHECK.toString(),
+                        Type.STRING,
+                        DEFAULT_BINLOG_TRANSACTION_COMPRESSION_CHECK,
+                        ConfigDef.ValidString.in("auto", "require", "skip"),
+                        Importance.MEDIUM,
+                        "Start-up check of the MySQL source's binlog_transaction_compression (MySQL 8.0.20+; "
+                                + "each transaction is then one zstd-compressed Transaction_payload event) and of "
+                                + "the connector's own Transaction_payload decoder. auto (default): read the "
+                                + "variable, self-test the decoder, refuse to start only when the source is ON "
+                                + "and the decoder does not work; require: refuse unless the source is ON and "
+                                + "the decoder works; skip: no query, no self-test. Ignored for non-MySQL sources.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        1,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.BINLOG_TRANSACTION_COMPRESSION_CHECK.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.KAFKA_OFFSET_METADATA_TABLE.toString(),
                         Type.STRING,
                         "topic_offset_metadata",
@@ -520,6 +674,19 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.THREAD_POOL_SIZE.toString())
                 .define(
+                        ClickHouseSinkConnectorConfigVariables.ROUTING_BY_PRIMARY_KEY.toString(),
+                        Type.BOOLEAN,
+                        DEFAULT_ROUTING_BY_PRIMARY_KEY,
+                        Importance.HIGH,
+                        "If enabled (default), records route to writer threads by table + primary-key "
+                                + "identity so a hot table's rows spread across workers; the same row "
+                                + "always stays on one worker in binlog order (spec 03.07). "
+                                + "Set false to restore table-level routing.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.ROUTING_BY_PRIMARY_KEY.toString())
+                .define(
                         ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString(),
                         Type.BOOLEAN,
                         false,
@@ -539,6 +706,20 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE.toString(),
+                        Type.BOOLEAN,
+                        true,
+                        Importance.HIGH,
+                        "If true (default), a DATE/DATETIME/TIMESTAMP or decimal value outside the "
+                                + "range of the ClickHouse column type is saturated to the ClickHouse "
+                                + "bound (logged at DEBUG only). If false, such a value fails the batch "
+                                + "with an error naming the column and the value; that failure is "
+                                + "terminal for the batch.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        3,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(),
                         Type.STRING,
@@ -627,7 +808,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString(),
                         Type.INT,
-                        500000,
+                        DEFAULT_MAX_QUEUE_SIZE,
                         ConfigDef.Range.atLeast(1),
                         Importance.HIGH,
                         "The maximum size of the queue",
@@ -635,6 +816,142 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         6,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_RECORDS.toString(),
+                        Type.LONG,
+                        DEFAULT_HANDOFF_MAX_OUTSTANDING_RECORDS,
+                        ConfigDef.Range.atLeast(0),
+                        Importance.HIGH,
+                        "Hard cap on the rows handed to the writers and not yet acknowledged "
+                                + "(queued, in flight, or written but parked behind an older batch). "
+                                + "At or above it the Debezium thread pauses before the next handoff "
+                                + "until the writers acknowledge the head of the FIFO, so the heap the "
+                                + "reader's lead can occupy is bounded (the per-queue capacity, "
+                                + "sink.connector.max.queue.size, is counted in batches of any size "
+                                + "and bounds nothing in bytes). Size it so this many rows of the "
+                                + "widest replicated tables fit the heap with room for the writers: "
+                                + "0 disables the cap.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_RECORDS.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_BYTES.toString(),
+                        Type.LONG,
+                        DEFAULT_HANDOFF_MAX_OUTSTANDING_BYTES,
+                        ConfigDef.Range.atLeast(0),
+                        Importance.HIGH,
+                        "Hard cap on the ESTIMATED BYTES of rows handed to the writers and not yet "
+                                + "acknowledged, applied together with the row cap: the reader pauses "
+                                + "when either is met. The estimate is the Debezium envelope walked "
+                                + "field by field and scaled for retained-heap overhead, sampled once "
+                                + "per table per batch. Default: one quarter of the maximum heap "
+                                + "(-Xmx); 0 disables the byte cap.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.HANDOFF_MAX_OUTSTANDING_BYTES.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_BYTES.toString(),
+                        Type.LONG,
+                        DEFAULT_BUFFER_MAX_BYTES,
+                        ConfigDef.Range.atLeast(0),
+                        Importance.MEDIUM,
+                        "The most estimated bytes one JDBC INSERT chunk may hold, applied together "
+                                + "with buffer.max.records: a chunk closes when either is reached. The "
+                                + "driver renders a chunk as SQL text in memory before sending it, once "
+                                + "per worker thread, so this bounds that text on wide-row tables. "
+                                + "Default 256 MiB; 0 disables the byte limit.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.BUFFER_MAX_BYTES.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.INSERT_SPILL_THRESHOLD_BYTES.toString(),
+                        Type.LONG,
+                        DEFAULT_INSERT_SPILL_THRESHOLD_BYTES,
+                        Importance.MEDIUM,
+                        "A JDBC INSERT chunk whose rendered size bound (strings at their length, "
+                                + "binary values at twice theirs) reaches this many bytes is written to a "
+                                + "spill file under insert.spill.directory and sent from disk, instead of "
+                                + "being rendered as SQL text in memory by the driver; a value of 64 KiB or "
+                                + "more is then streamed from the row itself. Default 32 MiB; 0 spills every "
+                                + "chunk; a negative value disables the spill path.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.INSERT_SPILL_THRESHOLD_BYTES.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.INSERT_SPILL_DIRECTORY.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.LOW,
+                        "Directory of the spill files of the spill-to-disk INSERT path; the connector "
+                                + "creates a <pid> subdirectory under it and removes the files of dead "
+                                + "processes from its siblings. Needs free space for one rendered chunk per "
+                                + "worker thread. Default: <java.io.tmpdir>/clickhouse-sink-connector-spill.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.INSERT_SPILL_DIRECTORY.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.COALESCE_MAX_WAIT_MS.toString(),
+                        Type.LONG,
+                        DEFAULT_COALESCE_MAX_WAIT_MS,
+                        ConfigDef.Range.atLeast(0),
+                        Importance.MEDIUM,
+                        "How long (ms) a routing-mode worker may wait for more queued batches "
+                                + "before writing a coalesced batch that is still under "
+                                + "buffer.max.records / buffer.max.bytes. Every INSERT is one "
+                                + "ClickHouse part per partition it touches, so a worker that writes "
+                                + "each poll as it arrives creates parts of a few thousand rows at "
+                                + "the source's poll rate; waiting up to this long lets a worker "
+                                + "accumulate a full buffer.max.records batch and bounds the parts "
+                                + "it creates to at most one write per wait per partition, at the "
+                                + "cost of that much latency on a trickle. 0 (default) writes at once.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.COALESCE_MAX_WAIT_MS.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.HANDOFF_WAIT_TIMEOUT_MS.toString(),
+                        Type.LONG,
+                        DEFAULT_HANDOFF_WAIT_TIMEOUT_MS,
+                        ConfigDef.Range.atLeast(1),
+                        Importance.LOW,
+                        "Longest the Debezium thread waits at the handoff hard cap, in "
+                                + "milliseconds, before the engine stops with an error. Writers that "
+                                + "have not acknowledged the head of the FIFO in this long are "
+                                + "stalled, not slow; stopping loudly beats holding the source "
+                                + "connection open on a reader that cannot make progress.",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.HANDOFF_WAIT_TIMEOUT_MS.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.BATCH_RETRY_BACKOFF_INITIAL_MS.toString(),
+                        Type.LONG,
+                        DEFAULT_BATCH_RETRY_BACKOFF_INITIAL_MS,
+                        ConfigDef.Range.atLeast(1),
+                        Importance.LOW,
+                        "Delay in milliseconds before the first retry of a batch that failed to "
+                                + "write to ClickHouse for a retriable reason (e.g. TOO_MANY_PARTS); "
+                                + "doubles on every consecutive failure of the same batch",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.BATCH_RETRY_BACKOFF_INITIAL_MS.toString())
+                .define(
+                        ClickHouseSinkConnectorConfigVariables.BATCH_RETRY_BACKOFF_MAX_MS.toString(),
+                        Type.LONG,
+                        DEFAULT_BATCH_RETRY_BACKOFF_MAX_MS,
+                        ConfigDef.Range.atLeast(1),
+                        Importance.LOW,
+                        "Upper bound in milliseconds for the retry delay of a failing batch",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        6,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables.BATCH_RETRY_BACKOFF_MAX_MS.toString())
                 .define(
                         ClickHouseSinkConnectorConfigVariables.SINGLE_THREADED.toString(),
                         Type.BOOLEAN,
@@ -652,10 +969,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                                 "(`seconds_behind_source` Int32, `duration_behind_source` String, `utc_time` DateTime('UTC'), " +
                                 "`local_time` DateTime, `id` String, `offset_key` String, `offset_val` String, " +
                                 "`record_insert_ts` DateTime, `record_insert_seq` UInt64) AS SELECT * FROM " +
-                                "(SELECT now() - fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS seconds_behind_source, " +
+                                "(SELECT now() - fromUnixTimestamp(" +
+                                "if(JSONHas(offset_val, 'ts_sec'), JSONExtractUInt(offset_val, 'ts_sec'), " +
+                                "intDiv(JSONExtractUInt(offset_val, 'ts_usec'), 1000000))) AS seconds_behind_source, " +
                                 "formatReadableTimeDelta(seconds_behind_source) AS duration_behind_source, " +
-                                "toDateTime(fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')), 'UTC') AS utc_time, " +
-                                "fromUnixTimestamp(JSONExtractUInt(offset_val, 'ts_sec')) AS local_time, * FROM " +
+                                "toDateTime(fromUnixTimestamp(" +
+                                "if(JSONHas(offset_val, 'ts_sec'), JSONExtractUInt(offset_val, 'ts_sec'), " +
+                                "intDiv(JSONExtractUInt(offset_val, 'ts_usec'), 1000000))), 'UTC') AS utc_time, " +
+                                "fromUnixTimestamp(" +
+                                "if(JSONHas(offset_val, 'ts_sec'), JSONExtractUInt(offset_val, 'ts_sec'), " +
+                                "intDiv(JSONExtractUInt(offset_val, 'ts_usec'), 1000000))) AS local_time, * FROM " +
                                 "%s FINAL) AS U ORDER BY offset_key ASC",
                         Importance.HIGH,
                         "SQL query to get replica status, lag etc.",
@@ -726,9 +1049,11 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.NON_DEFAULT_VALUE.toString(),
                         Type.BOOLEAN,
-                        false,
-                        Importance.HIGH,
-                        "Non default value, if value is NULL, a default value will not be returned, NULL be used instead",
+                        true,
+                        Importance.LOW,
+                        "DEPRECATED, no effect: the connector always binds the source value, "
+                                + "including NULL, and never substitutes the column DEFAULT "
+                                + "(Spec 07.07). Kept so existing configurations still validate.",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         7,
                         ConfigDef.Width.NONE,
@@ -783,7 +1108,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         Type.BOOLEAN,
                         false,
                         Importance.HIGH,
-                        "If enabled, replication history tables are created and maintained",
+                        "If enabled, replication history is kept: every table is written as an SCD Type 2 history table in replication.history.database.name and every record is appended to the audit table replication.history.table.name",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         ORDER_1,
                         ConfigDef.Width.NONE,
@@ -816,7 +1141,7 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         Type.BOOLEAN,
                         false,
                         Importance.MEDIUM,
-                        "If enabled, only track binlog position without inserting data to ClickHouse",
+                        "If enabled together with replication.history.enable, only the replication-history audit table is written (every DML record and every captured DDL); regular tables are not written and DDL is not executed. Binlog position tracking continues.",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         ORDER_3,
                         ConfigDef.Width.NONE,
@@ -854,6 +1179,59 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ORDER_3,
                         ConfigDef.Width.NONE,
                         ClickHouseSinkConnectorConfigVariables.DATABASE_HOSTNAME.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.LOW,
+                        "When true, ClickHouse table names include the PostgreSQL "
+                                + "schema as a prefix: __<schema>__<table>",
+                        CONFIG_GROUP_CONNECTOR_CONFIG,
+                        ORDER_0,
+                        ConfigDef.Width.NONE,
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_TABLE_SCHEMA_PREFIX.toString()
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_DATABASE_SCHEMA_SUFFIX.toString(),
+                        Type.BOOLEAN,
+                        false,
+                        Importance.LOW,
+                        "When true, appends the resolved "
+                                + "clickhouse.common.schema.template to the ClickHouse "
+                                + "database name. Requires "
+                                + "clickhouse.common.schema.template to be set."
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_COMMON_SCHEMA_TEMPLATE.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.LOW,
+                        "Shared template with {{ schema }} placeholder. "
+                                + "Used by clickhouse.table.schema.prefix (overrides "
+                                + "the hardcoded __<schema>__ format) and "
+                                + "clickhouse.database.schema.suffix. "
+                                + "Example: '__{{ schema }}__' resolves to '__public__'. "
+                                + "Empty string (default) means the hardcoded format is "
+                                + "used for table prefix."
+                )
+                .define(
+                        ClickHouseSinkConnectorConfigVariables
+                                .CLICKHOUSE_COMMON_DATABASE_PREFIX.toString(),
+                        Type.STRING,
+                        "",
+                        Importance.LOW,
+                        "Static prefix prepended to the ClickHouse database "
+                                + "name. Only alphanumeric characters and underscores "
+                                + "are allowed. Used to differentiate when multiple "
+                                + "sink-connectors write to the same ClickHouse "
+                                + "instance. Example: 'litellm_dev_' turns database "
+                                + "'app' into 'litellm_dev_app'. Empty string "
+                                + "(default) disables this feature."
                 );
     }
 }

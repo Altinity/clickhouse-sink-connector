@@ -6,8 +6,10 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumJdbcStorageOperatio
 import com.altinity.clickhouse.debezium.embedded.cdc.ReplicationStatusSingleton;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
-import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory;
+import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Injector;
 import io.javalin.Javalin;
@@ -73,13 +75,37 @@ public class DebeziumEmbeddedRestApi {
      * @param debeziumChangeEventCapture The Debezium event capture instance.
      * @param userProperties          User-specified properties.
      */
+    /**
+     * The engine that is running now (spec 01.01 section 3.4). {@code /start},
+     * {@code /restart} and the monitoring thread replace the engine with a new
+     * instance, while this server is started once per JVM: the instance passed to
+     * {@link #startRestApi} goes stale at the first restart. {@code /flush} must
+     * pause the engine that is writing, never a stopped one -- pausing a stopped
+     * engine pauses nothing and would report success while writes continue.
+     *
+     * @param startedWith the instance passed to {@link #startRestApi}, used only
+     *                    when the application holds no engine (unit tests that
+     *                    drive the server without the application)
+     * @return the live engine
+     * @throws IllegalStateException if no engine is running
+     */
+    static DebeziumChangeEventCapture liveEngine(DebeziumChangeEventCapture startedWith) {
+        DebeziumChangeEventCapture current = ClickHouseDebeziumEmbeddedApplication.currentEventCapture();
+        DebeziumChangeEventCapture engine = current != null ? current : startedWith;
+        if (engine == null) {
+            throw new IllegalStateException("No replication engine is running");
+        }
+        return engine;
+    }
+
     public static void startRestApi(Properties props, Injector injector,
                                     DebeziumChangeEventCapture debeziumChangeEventCapture,
                                     Properties userProperties) {
         String cliPort = props.getProperty(
                 SinkConnectorLightWeightConfig.CLI_PORT);
-        MySQLDDLParserService sqlddlParserService = new MySQLDDLParserService();
-        sqlddlParserService = new MySQLDDLParserService(
+        DDLParserService sqlddlParserService = DDLParserFactory.getParser(
+                props,
+                null,
                 new ClickHouseSinkConnectorConfig(new HashMap<>()),
                 "employees");
         if (cliPort == null || cliPort.isEmpty()) {
@@ -152,11 +178,10 @@ public class DebeziumEmbeddedRestApi {
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                         new DebeziumJdbcStorageOperations();
-                Connection connection = getDatabaseConnection(finalProps1);
-                response = debeziumJdbcStorageOperations.getDebeziumStorageStatus(
-                        connection, config, finalProps1);
-                connection.close();
-
+                try (Connection connection = getDatabaseConnection(finalProps1)) {
+                    response = debeziumJdbcStorageOperations.getDebeziumStorageStatus(
+                            connection, config, finalProps1);
+                }
             } catch (Exception e) {
                 log.error("Client - Error getting status", e);
                 // Create JSON response
@@ -180,9 +205,9 @@ public class DebeziumEmbeddedRestApi {
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                         new DebeziumJdbcStorageOperations();
-                Connection connection = getDatabaseConnection(finalProps1);
-                debeziumJdbcStorageOperations.deleteOffsets(connection, finalProps1);
-                connection.close();
+                try (Connection connection = getDatabaseConnection(finalProps1)) {
+                    debeziumJdbcStorageOperations.deleteOffsets(connection, finalProps1);
+                }
             } catch (Exception e) {
                 log.error("Client - Error deleting offsets", e);
                 ctx.result(e.toString());
@@ -195,13 +220,17 @@ public class DebeziumEmbeddedRestApi {
         app.post("/binlog", ctx -> {
             if (ReplicationStatusSingleton.getInstance().isReplicationRunning()) {
                 ctx.status(HttpStatus.BAD_REQUEST);
+                ctx.result("{\"error\":\"replication is running; stop it before editing the offset\"}");
                 return;
             }
             String body = ctx.body();
             JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);
-            String binlogFile = (String) jsonObject.get(BINLOG_FILE);
-            String binlogPosition = (String) jsonObject.get(BINLOG_POS);
-            String gtid = (String) jsonObject.get(GTID);
+            // Accept numbers as well as strings for the position: the edit is
+            // validated and stored as a number by DebeziumOffsetStorage
+            // (spec 09.03 section 3.4).
+            String binlogFile = Utils.stringOrNull(jsonObject.get(BINLOG_FILE));
+            String binlogPosition = Utils.stringOrNull(jsonObject.get(BINLOG_POS));
+            String gtid = Utils.stringOrNull(jsonObject.get(GTID));
 
             String sourceHost = (String) jsonObject.get(SOURCE_HOST);
             String sourcePort = (String) jsonObject.get(SOURCE_PORT);
@@ -230,10 +259,18 @@ public class DebeziumEmbeddedRestApi {
 
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-            Connection connection = getDatabaseConnection(finalProps1);
-            debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
-                    finalProps1, binlogFile, binlogPosition, gtid);
-            connection.close();
+            try (Connection connection = getDatabaseConnection(finalProps1)) {
+                debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
+                        finalProps1, binlogFile, binlogPosition, gtid);
+            } catch (IllegalArgumentException invalid) {
+                // A malformed edit is the caller's error, not a server fault:
+                // say what is wrong instead of writing it into the offset store
+                // for Debezium to choke on at the next start.
+                log.warn("Rejected update-binlog request: {} ({})", body, invalid.getMessage());
+                ctx.status(HttpStatus.BAD_REQUEST);
+                ctx.result("{\"error\":\"" + invalid.getMessage().replace("\"", "'") + "\"}");
+                return;
+            }
             log.info("Received update-binlog request: " + body);
         });
 
@@ -247,9 +284,9 @@ public class DebeziumEmbeddedRestApi {
             try {
                 DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                         new DebeziumJdbcStorageOperations();
-                Connection connection = getDatabaseConnection(finalProps1);
-                debeziumJdbcStorageOperations.deleteSchemaHistory(connection, config, finalProps1);
-                connection.close();
+                try (Connection connection = getDatabaseConnection(finalProps1)) {
+                    debeziumJdbcStorageOperations.deleteSchemaHistory(connection, config, finalProps1);
+                }
             } catch (Exception e) {
                 log.error("Client - Error deleting schema history", e);
                 ctx.result(e.toString());
@@ -267,9 +304,9 @@ public class DebeziumEmbeddedRestApi {
                             PropertiesHelper.toMap(finalProps1));
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-                Connection connection = getDatabaseConnection(finalProps1);
-                response = debeziumJdbcStorageOperations.getErrorTableStatus(connection, finalProps1);
-                connection.close();
+                try (Connection connection = getDatabaseConnection(finalProps1)) {
+                    response = debeziumJdbcStorageOperations.getErrorTableStatus(connection, finalProps1);
+                }
             } catch (Exception e) {
                 log.error("Client - Error getting error table status", e);      
                 ctx.result(e.toString());
@@ -280,9 +317,14 @@ public class DebeziumEmbeddedRestApi {
         });
                     
         app.post("/lsn", ctx -> {
+            if (ReplicationStatusSingleton.getInstance().isReplicationRunning()) {
+                ctx.status(HttpStatus.BAD_REQUEST);
+                ctx.result("{\"error\":\"replication is running; stop it before editing the offset\"}");
+                return;
+            }
             String body = ctx.body();
             JSONObject jsonObject = (JSONObject) new JSONParser().parse(body);
-            String lsn = (String) jsonObject.get(LSN);
+            String lsn = Utils.stringOrNull(jsonObject.get(LSN));
 
             ClickHouseSinkConnectorConfig config =
                     new ClickHouseSinkConnectorConfig(
@@ -290,11 +332,16 @@ public class DebeziumEmbeddedRestApi {
 
             DebeziumJdbcStorageOperations debeziumJdbcStorageOperations =
                     new DebeziumJdbcStorageOperations();
-            Connection connection = getDatabaseConnection(finalProps1);
-            debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
-                    finalProps1, lsn);
-            connection.close();
-            log.info("Received update-binlog request: " + body);
+            try (Connection connection = getDatabaseConnection(finalProps1)) {
+                debeziumJdbcStorageOperations.updateDebeziumStorageStatus(connection, config,
+                        finalProps1, lsn);
+            } catch (IllegalArgumentException invalid) {
+                log.warn("Rejected update-lsn request: {} ({})", body, invalid.getMessage());
+                ctx.status(HttpStatus.BAD_REQUEST);
+                ctx.result("{\"error\":\"" + invalid.getMessage().replace("\"", "'") + "\"}");
+                return;
+            }
+            log.info("Received update-lsn request: " + body);
         });
 
         Properties finalProps = props;
@@ -315,7 +362,33 @@ public class DebeziumEmbeddedRestApi {
             ctx.result("Started Replication....");
         });
 
-        MySQLDDLParserService finalSqlddlParserService = sqlddlParserService;
+        // --- Flush: drain buffered records and pause writes to ClickHouse ---
+        app.get("/flush", ctx -> {
+            try {
+                log.info("REST /flush: flushing and pausing batch executor");
+                liveEngine(debeziumChangeEventCapture).flushAndPause();
+                ctx.result("{\"status\":\"flushed\"}");
+            } catch (Exception e) {
+                log.error("REST /flush: error", e);
+                ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
+                ctx.result("{\"error\":\"" + e.getMessage() + "\"}");
+            }
+        });
+
+        // --- Resume: resume writes to ClickHouse after a flush ---
+        app.get("/resume", ctx -> {
+            try {
+                log.info("REST /resume: resuming batch executor");
+                liveEngine(debeziumChangeEventCapture).resumeAfterFlush();
+                ctx.result("{\"status\":\"resumed\"}");
+            } catch (Exception e) {
+                log.error("REST /resume: error", e);
+                ctx.status(HttpStatus.INTERNAL_SERVER_ERROR);
+                ctx.result("{\"error\":\"" + e.getMessage() + "\"}");
+            }
+        });
+
+        DDLParserService finalSqlddlParserService = sqlddlParserService;
         app.post("/ddl-translate", ctx -> {
             String ddl = ctx.body();
             log.info(String.format("Received DDL for translation %s", ddl));

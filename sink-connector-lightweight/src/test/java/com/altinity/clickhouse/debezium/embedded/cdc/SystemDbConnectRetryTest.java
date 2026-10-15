@@ -32,7 +32,7 @@ public class SystemDbConnectRetryTest {
     public void testReturnsImmediatelyWhenFirstAttemptSucceeds() {
         Connection stub = StubConnection.create();
         AtomicInteger calls = new AtomicInteger();
-        Connection result = DebeziumChangeEventCapture.connectWithRetry(() -> {
+        Connection result = SystemDbConnectionRetry.connectWithRetry(() -> {
             calls.incrementAndGet();
             return stub;
         }, 1L);
@@ -46,7 +46,7 @@ public class SystemDbConnectRetryTest {
         AtomicInteger calls = new AtomicInteger();
         // Unavailable for the first two attempts, exactly like a ClickHouse
         // container that is still coming up.
-        Connection result = DebeziumChangeEventCapture.connectWithRetry(
+        Connection result = SystemDbConnectionRetry.connectWithRetry(
                 () -> calls.incrementAndGet() < 3 ? null : stub, 1L);
         Assert.assertSame(stub, result);
         Assert.assertEquals(3, calls.get());
@@ -55,21 +55,21 @@ public class SystemDbConnectRetryTest {
     @Test
     public void testGivesUpAfterConfiguredAttempts() {
         AtomicInteger calls = new AtomicInteger();
-        Connection result = DebeziumChangeEventCapture.connectWithRetry(() -> {
+        Connection result = SystemDbConnectionRetry.connectWithRetry(() -> {
             calls.incrementAndGet();
             return null;
         }, 1L);
         Assert.assertNull(result);
         Assert.assertEquals(
-                DebeziumChangeEventCapture.SYSTEM_DB_CONNECT_ATTEMPTS, calls.get());
+                SystemDbConnectionRetry.SYSTEM_DB_CONNECT_ATTEMPTS, calls.get());
     }
 
     @Test
     public void testRetryBudgetCoversARealisticColdStart() {
         // 30 attempts x 2s must exceed the ClickHouse healthcheck start_period
         // (30s) used by the docker-compose stacks, with margin.
-        long budgetMs = (long) DebeziumChangeEventCapture.SYSTEM_DB_CONNECT_ATTEMPTS
-                * DebeziumChangeEventCapture.SYSTEM_DB_CONNECT_RETRY_MS;
+        long budgetMs = (long) SystemDbConnectionRetry.SYSTEM_DB_CONNECT_ATTEMPTS
+                * SystemDbConnectionRetry.SYSTEM_DB_CONNECT_RETRY_MS;
         Assert.assertTrue("retry budget " + budgetMs + "ms is too small for a cold start",
                 budgetMs >= 30_000L);
     }

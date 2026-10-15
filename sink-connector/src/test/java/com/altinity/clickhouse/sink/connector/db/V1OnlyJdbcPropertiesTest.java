@@ -1,9 +1,20 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.Logger;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Properties;
+import java.util.Set;
 
 /**
  * Tests for the V1-only JDBC connection-property filter.
@@ -83,5 +94,74 @@ public class V1OnlyJdbcPropertiesTest {
         Assert.assertArrayEquals(
                 new String[]{"keepalive.timeout", "max_buffer_size"},
                 BaseDbWriter.V1_ONLY_PROPERTIES);
+    }
+
+
+    /** Collects everything BaseDbWriter logs during one call. */
+    private static final class CapturingAppender extends AbstractAppender {
+
+        private final List<LogEvent> events = Collections.synchronizedList(new ArrayList<>());
+
+        CapturingAppender() {
+            super("capture-v1-only-warn-once", null, null, true, Property.EMPTY_ARRAY);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            events.add(event.toImmutable());
+        }
+    }
+
+    /**
+     * Clears the once-per-JVM record so the test is deterministic no matter
+     * which earlier test in this JVM already went through createConnection().
+     * Tolerates the field's absence so the test also compiles and runs (red)
+     * against code without the dedupe.
+     */
+    private static void resetOnceOnlyWarnings() throws Exception {
+        try {
+            Field f = BaseDbWriter.class.getDeclaredField("WARNED_V1_ONLY_PROPERTIES");
+            f.setAccessible(true);
+            ((Set<?>) f.get(null)).clear();
+        } catch (NoSuchFieldException absent) {
+            // pre-fix code: every call warns, nothing to reset
+        }
+    }
+
+    private static long warnsMentioning(List<LogEvent> events, String key) {
+        return events.stream()
+                .filter(e -> e.getLevel() == Level.WARN
+                        && e.getMessage().getFormattedMessage().contains("'" + key + "'"))
+                .count();
+    }
+
+    /**
+     * dropV1OnlyProperties runs on EVERY createConnection() call -- with a
+     * worker pool, several times a minute for the life of the process. The
+     * properties must be dropped every time, but the WARN telling the operator
+     * about it belongs once per property key per JVM; afterwards it is DEBUG.
+     *
+     * <p>Against the pre-fix code this fails with two WARNs per key.</p>
+     */
+    @Test
+    public void warnsOncePerPropertyKeyPerJvm() throws Exception {
+        resetOnceOnlyWarnings();
+        Logger coreLogger = (Logger) LogManager.getLogger(BaseDbWriter.class);
+        CapturingAppender appender = new CapturingAppender();
+        appender.start();
+        coreLogger.addAppender(appender);
+        try {
+            // Two connection attempts, each with the full docker property set.
+            Assert.assertEquals(2, BaseDbWriter.dropV1OnlyProperties(dockerConfigProperties()));
+            Assert.assertEquals(2, BaseDbWriter.dropV1OnlyProperties(dockerConfigProperties()));
+        } finally {
+            coreLogger.removeAppender(appender);
+            appender.stop();
+        }
+
+        Assert.assertEquals("keepalive.timeout must be reported at WARN exactly once per JVM, "
+                        + "not on every connection", 1, warnsMentioning(appender.events, "keepalive.timeout"));
+        Assert.assertEquals("max_buffer_size must be reported at WARN exactly once per JVM, "
+                        + "not on every connection", 1, warnsMentioning(appender.events, "max_buffer_size"));
     }
 }

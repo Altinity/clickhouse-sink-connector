@@ -29,7 +29,24 @@ jobs:
     steps:
       - uses: actions/checkout@v2
 
+      # setup-java resolves "17" through the distribution's metadata API on
+      # every run (empty tool cache on a fresh runner) and, at this pin, does
+      # not retry that request. One dropped TLS handshake there fails the job
+      # before any Java runs. Retry the step itself: the first attempt tolerates
+      # failure, the identical second attempt runs only if the first did not
+      # succeed, and a genuine failure still fails the job on that second try.
+      # (`outcome` is the step result before continue-on-error is applied.)
       - name: Set up JDK 17
+        id: setup-jdk
+        uses: actions/setup-java@v3
+        continue-on-error: true
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+          cache: maven
+
+      - name: Set up JDK 17 (retry)
+        if: steps.setup-jdk.outcome == 'failure'
         uses: actions/setup-java@v3
         with:
           java-version: '17'

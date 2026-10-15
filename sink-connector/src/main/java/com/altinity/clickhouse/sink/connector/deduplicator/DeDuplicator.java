@@ -13,9 +13,12 @@ import java.util.Map;
 /**
  * DeDuplicator performs SinkRecord items de-duplication.
  * <p>
- * The DeDuplicator ensures that duplicate records are identified based on a de-duplication key.
- * It maintains a pool of records for each topic and manages de-duplication policies (such as keeping
- * old or new records) within that pool.
+ * The DeDuplicator identifies a REDELIVERED record -- the same event, i.e. the
+ * same (topic, partition, offset), seen twice -- and reports it as not new.
+ * It maintains a bounded pool of accepted event identities for each topic and
+ * manages de-duplication policies (such as keeping old or new records) within
+ * that pool. It never keys on the row (primary) key: distinct events for one
+ * row are distinct changes and must all reach ClickHouse (Spec 10.05).
  * </p>
  */
 public class DeDuplicator {
@@ -30,10 +33,11 @@ public class DeDuplicator {
     private ClickHouseSinkConnectorConfig config;
 
     /**
-     * Pool of record for de-duplication. Maps a deduplication key to a record.
-     * In case such a deduplication key already exists, deduplication policy comes into play -
-     * what record to keep (an old one (already registered) or a newly coming one).
-     * Key is topic name.
+     * Pool of records for de-duplication, per topic. Maps an EVENT identity
+     * ({@code topic/partition/offset}, see {@link #prepareDeDuplicationKey})
+     * to the record accepted under it. When an identity is seen again the
+     * policy decides which record object the pool retains (the old one or the
+     * new one); either way the second arrival is reported as not new.
      * <p>
      * TODO: Consider how this works when there are multiple tables assigned to one topic.
      * </p>
@@ -41,8 +45,11 @@ public class DeDuplicator {
     private Map<String, Map<Object, Object>> records;
 
     /**
-     * FIFO of de-duplication keys. Is limited by maxPoolSize. As soon as the limit is exceeded,
-     * all older entries are removed from both FIFO and the pool.
+     * FIFO of accepted identities, per topic, bounding {@link #records}. As
+     * soon as a topic's FIFO exceeds {@code maxPoolSize} the oldest identities
+     * are evicted from BOTH the FIFO and that topic's pool -- the map
+     * {@link #isNew} actually consults. (An earlier implementation pruned only
+     * this FIFO, which nothing ever populated, so the pool grew without bound.)
      */
     private final Map<String, LinkedList<Object>> queue;
 
@@ -96,91 +103,97 @@ public class DeDuplicator {
         }
 
         // Update the deduplication pool with the new key
-        updateDedupePool(deDuplicationKey);
+        updateDedupePool(topicName, deDuplicationKey);
 
         return true;
     }
 
     /**
-     * Updates the de-duplication pool by adding a new key and removing old records
-     * if the pool size exceeds the maximum allowed size.
+     * Records a newly accepted identity in the topic's FIFO and evicts the
+     * oldest identities from the topic's pool once the FIFO exceeds
+     * {@code maxPoolSize} (Spec 10.05 section 3.2).
      *
-     * @param deDuplicationKey the key to add to the pool
+     * @param topicName        the topic whose pool the key belongs to
+     * @param deDuplicationKey the identity that was just accepted
      */
-    public void updateDedupePool(Object deDuplicationKey) {
+    public void updateDedupePool(String topicName, Object deDuplicationKey) {
 
         log.debug("add new key to the pool:" + deDuplicationKey);
 
-        // Iterate through all topics and corresponding pools
-        for (Map.Entry<String, LinkedList<Object>> entry : this.queue.entrySet()) {
+        LinkedList<Object> fifo = this.queue.computeIfAbsent(topicName, t -> new LinkedList<>());
+        fifo.addLast(deDuplicationKey);
 
-            LinkedList<Object> matchingQueue = entry.getValue();
-
-            // If the pool size exceeds maxPoolSize, remove the oldest entries
-            while (matchingQueue.size() > this.maxPoolSize) {
-                log.info("records pool is too big, need to flush:" + this.queue.size());
-                Object key = matchingQueue.removeFirst();
-                if (key == null) {
-                    log.warn("unable to removeFirst() in the queue");
-                } else {
-                    matchingQueue.remove(key);
-                    log.info("removed key: " + key);
-                }
+        Map<Object, Object> pool = this.records.get(topicName);
+        // If the pool size exceeds maxPoolSize, remove the oldest entries from
+        // the pool that isNew() consults, not only from the FIFO.
+        while (fifo.size() > this.maxPoolSize) {
+            Object oldest = fifo.removeFirst();
+            if (pool != null) {
+                pool.remove(oldest);
             }
+            log.debug("de-duplication pool for topic {} is full ({}); evicted identity {}",
+                    topicName, this.maxPoolSize, oldest);
         }
     }
 
     /**
-     * Checks whether the new record is a duplicate.
+     * Registers the identity in the topic's pool unless it is already there.
      *
      * @param topicName          the topic name
-     * @param deDuplicationKey   the key to check for duplication
+     * @param deDuplicationKey   the event identity to check
      * @param record             the record to check
-     * @return true if the record is a duplicate, false otherwise
+     * @return true if the identity is NEW (now registered), false if it was
+     *         already seen (a redelivery)
      */
     public boolean checkIfRecordIsDuplicate(String topicName, Object deDuplicationKey, SinkRecord record) {
-        boolean result = false;
+        Map<Object, Object> matchingRecords =
+                this.records.computeIfAbsent(topicName, t -> new HashMap<>());
 
-        // Get matching records for the topic
-        Map<Object, Object> matchingRecords = this.records.get(topicName);
+        if (matchingRecords.containsKey(deDuplicationKey)) {
+            log.warn("Duplicate delivery of event {} on topic {}; dropping the redelivered record",
+                    deDuplicationKey, topicName);
 
-        if (matchingRecords == null) {
-            // New record for topic, add it to the records pool
-            matchingRecords = new HashMap<>();
-            matchingRecords.put(deDuplicationKey, record);
-
-            this.records.put(topicName, matchingRecords);
-            result = true;
-        } else {
-            if (matchingRecords.containsKey(deDuplicationKey)) {
-                log.warn("already seen this key:" + deDuplicationKey);
-
-                // Depending on the policy, replace the record or keep the old one
-                if (this.policy == DeDuplicationPolicy.NEW) {
-                    matchingRecords.put(deDuplicationKey, record);
-                    this.records.put(topicName, matchingRecords);
-                    log.info("replace the key:" + deDuplicationKey);
-                }
-                result = false;
+            // Depending on the policy, replace the retained record or keep the old one
+            if (this.policy == DeDuplicationPolicy.NEW) {
+                matchingRecords.put(deDuplicationKey, record);
+                log.debug("replaced the retained record for identity {}", deDuplicationKey);
             }
+            return false;
         }
 
-        return result;
+        matchingRecords.put(deDuplicationKey, record);
+        return true;
     }
 
     /**
-     * Prepares the de-duplication key out of a record.
-     * If the key is null, the value will be used as the de-duplication key.
+     * The de-duplication key is the record's EVENT identity:
+     * {@code topic / partition / offset}.
+     *
+     * <p>Kafka guarantees one event per (topic, partition, offset) and a
+     * redelivery reproduces it exactly, which is the only thing de-duplication
+     * may drop. The row key ({@code record.key()}, the source primary key) is
+     * NOT an event identity: every later UPDATE and DELETE of a row carries
+     * the same key as its INSERT, so keying on it dropped every subsequent
+     * change to a row and froze its first image in ClickHouse forever
+     * (Spec 10.05 section 3.1).</p>
      *
      * @param record the record to prepare the de-duplication key from
-     * @return the de-duplication key constructed out of the record
+     * @return the event identity of the record
      */
     private Object prepareDeDuplicationKey(SinkRecord record) {
-        Object key = record.key();
-        if (key == null) {
-            key = record.value();
-        }
-        return key;
+        return record.topic() + "/" + record.kafkaPartition() + "/" + record.kafkaOffset();
+    }
+
+    /**
+     * Number of identities currently held for a topic; the map {@link #isNew}
+     * consults. Exposed for tests of the pool bound.
+     *
+     * @param topicName the topic
+     * @return the pool size for that topic, 0 if none
+     */
+    int poolSize(String topicName) {
+        Map<Object, Object> matchingRecords = this.records.get(topicName);
+        return matchingRecords == null ? 0 : matchingRecords.size();
     }
 
     /**

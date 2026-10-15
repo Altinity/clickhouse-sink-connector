@@ -49,7 +49,7 @@ public class BinLogHistory {
     public static final String RAW_COLUMN = "_raw";
     public static final String RAW_COLUMN_DATA_TYPE = "String";
     public static final String TIME_COLUMN = "_time";
-    public static final String TIME_COLUMN_DATA_TYPE = "DateTime64(0, 'UTC')";
+    public static final String TIME_COLUMN_DATA_TYPE = "DateTime64(9, 'UTC')";
     public static final String IS_DELETED_COLUMN = "is_deleted";
     public static final String IS_DELETED_COLUMN_DATA_TYPE = "UInt8";
     public static final String OPERATION_COLUMN = "_operation";
@@ -118,7 +118,7 @@ public class BinLogHistory {
 
         StringBuilder sb = new StringBuilder();
         sb.append(CREATE_TABLE).append(" ").append(IF_NOT_EXISTS)
-                .append(' ').append(databaseName)
+                .append(' ').append("`").append(databaseName).append("`")
                 .append(".`").append(historyTableName).append("`(");
 
         // Iterate through all history columns (LinkedHashMap preserves insertion order)
@@ -128,7 +128,7 @@ public class BinLogHistory {
                     String dataType = entry.getValue();
                     // Add timezone to TIME_COLUMN with DateTime64 for second precision
                     if (entry.getKey().equals(TIME_COLUMN) && serverTimeZone != null) {
-                        dataType = "DateTime64(0, '" + serverTimeZone + "')";
+                        dataType = "DateTime64(9, '" + serverTimeZone + "')";
                     }
                     return "`" + entry.getKey() + "` " + dataType;
                 })
@@ -298,7 +298,13 @@ public class BinLogHistory {
             case ROW_COLUMN:
                 return struct.getRow();
             case SEQUENCE_COLUMN:
-                return struct.getSequenceNumber();
+                // The sorting key is (server_id, logfile, position, sequence, _time).
+                // The lightweight engine assigns a unique sequence number; the Kafka
+                // Connect path never does, and binding its -1 sentinel gave every row
+                // of a multi-row statement the same key, collapsing them into one
+                // row. The row index within the event is unique per (logfile,
+                // position) and stands in for it (spec 02.01 section 3.5 d).
+                return struct.getSequenceNumber() >= 0 ? struct.getSequenceNumber() : (long) struct.getRow();
             default:
                 return null;
         }

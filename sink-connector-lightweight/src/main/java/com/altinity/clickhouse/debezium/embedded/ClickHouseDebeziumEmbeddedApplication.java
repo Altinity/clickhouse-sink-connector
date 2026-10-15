@@ -69,7 +69,9 @@ public class ClickHouseDebeziumEmbeddedApplication {
      * The DebeziumChangeEventCapture instance that captures and
      * processes change events from the source database.
      */
-    private static DebeziumChangeEventCapture debeziumChangeEventCapture;
+    // Replaced by every start() (REST pool and monitor threads) and read by REST
+    // handler threads, so it is volatile for safe publication.
+    private static volatile DebeziumChangeEventCapture debeziumChangeEventCapture;
 
     /**
      * A Properties object used to hold additional user-defined
@@ -344,9 +346,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
                                             conn, props
                                     );
                             conn.close();
-                            if (storedOffsetsInTable == -1) {
-                                lastRecordTimestamp = storedOffsetsInTable;
-                            }
+                            lastRecordTimestamp = effectiveLastRecordTimestamp(
+                                    lastRecordTimestamp, storedOffsetsInTable);
                         }
                         long deltaInSecs = (System.currentTimeMillis()
                                 - lastRecordTimestamp) / 1000;
@@ -390,10 +391,40 @@ public class ClickHouseDebeziumEmbeddedApplication {
     }
 
     /**
+     * The timestamp the restart monitor measures idleness from.
+     *
+     * @param inMemory the newest record timestamp observed by this process
+     *                 ({@code -1} when none has been observed yet).
+     * @param stored   the newest {@code record_insert_ts} in the offset table
+     *                 ({@code -1} when the table is empty or unreadable).
+     * @return the timestamp to compare against the clock, or {@code -1} when
+     *         neither side knows one.
+     */
+    static long effectiveLastRecordTimestamp(long inMemory, long stored) {
+        // The previous test was `if (stored == -1) lastRecordTimestamp = stored`,
+        // which adopted the stored value only when it was the sentinel: a valid
+        // stored timestamp was never used, the delta was measured from -1, and
+        // the monitor restarted the engine on every tick until the first record
+        // arrived -- each restart going through stop() (spec 01.01 §3.2).
+        return inMemory != -1 ? inMemory : stored;
+    }
+
+    /**
      * Returns the DebeziumChangeEventCapture instance.
      *
      * @return the DebeziumChangeEventCapture
      */
+    /**
+     * The engine currently owned by the application: every {@code start()}
+     * replaces it, so callers that outlive a restart (the REST server) must ask
+     * here at use time instead of keeping a reference.
+     *
+     * @return the current engine, or {@code null} before the first start
+     */
+    public static DebeziumChangeEventCapture currentEventCapture() {
+        return debeziumChangeEventCapture;
+    }
+
     public DebeziumChangeEventCapture getDebeziumEventCapture() {
         return debeziumChangeEventCapture;
     }

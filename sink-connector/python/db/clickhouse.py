@@ -1,72 +1,17 @@
-import logging
-import warnings 
-from clickhouse_driver import connect
-import xml.etree.ElementTree as ET
-import yaml
+"""Legacy path of ``ch_sink_tools.db.clickhouse`` -- kept so existing imports keep working.
+
+There is ONE implementation, in ``sink-connector/python/ch_sink_tools/db/clickhouse.py`` (Spec 13.01 section 3.16). Importing this name
+returns the same module object as ``ch_sink_tools.db.clickhouse``, so the two names cannot drift and patching either
+patches both. Works with or without the package installed: the Python root that holds
+``ch_sink_tools`` is put on ``sys.path`` first.
+"""
 import os
+import sys
 
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 
-def clickhouse_connection(host, database='default', user='default',  password='', port=9000,
-                          secure=False):
-    conn = connect(host=host,
-                   user=user,
-                   password=password,
-                   port=port,
-                   database=database,
-                   connect_timeout=20,
-                   secure=secure
-                   )
-    return conn
+import ch_sink_tools.db.clickhouse as _implementation  # noqa: E402
 
-
-def clickhouse_execute_conn(conn, sql):
-    logging.debug(sql)
-    cursor = conn.cursor()
-    try:
-        cursor.execute(sql)
-        result = cursor.fetchall()
-        return result
-    finally:
-        cursor.close()
-
-def get_table_partition_key(conn, database, table):
-   sql = f"SELECT partition_key FROM system.tables WHERE name = '{table}'  AND database = '{database}' FORMAT TabSeparated"
-   res = clickhouse_execute_conn(conn, sql)
-   return res
-
-def execute_sql(conn, strSql):
-    """
-    # -- =======================================================================
-    # -- Connect to the SQL server and execute the command
-    # -- =======================================================================
-    """
-    logging.debug("SQL="+strSql)
-    rowset = None
-    with warnings.catch_warnings(record=True) as w:
-        warnings.simplefilter('always')
-        rowset = clickhouse_execute_conn(conn, strSql)
-        rowcount = len(rowset)
-    if len(w) > 0:
-        logging.warning("SQL warnings : "+str(len(w)))
-        logging.warning("first warning : "+str(w[0].message))
-
-    return (rowset, rowcount)
-
-
-def resolve_credentials_from_config(config_file):
-    assert config_file is not None, "A config file --clickhouse_config_file must be passed if --password is not specified"
-    assert os.path.isfile(config_file), f"Path {config_file} must exist"
-    assert config_file.endswith(".xml") or config_file.endswith(".yml") or config_file.endswith(".yaml"), f"Supported configuration extensions .xml or .yaml or .yml"
-
-    if config_file.endswith(".xml"):
-        tree = ET.parse(config_file)
-        root = tree.getroot()
-        clickhouse_user = root.findtext('user')
-        clickhouse_password = root.findtext('password')
-    elif config_file.endswith(".yml") or config_file.endswith(".yaml"):
-        with open(config_file, 'r') as f:
-            valuesYaml = yaml.safe_load(f)
-            clickhouse_user = valuesYaml['config']['user']
-            clickhouse_password = valuesYaml['config']['password']
-    logging.debug(f"clickhouse_user {clickhouse_user} clickhouse_password ****")
-    return (clickhouse_user, clickhouse_password)
+sys.modules[__name__] = _implementation

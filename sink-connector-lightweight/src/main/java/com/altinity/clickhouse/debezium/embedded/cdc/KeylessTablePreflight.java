@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.ddl.DdlCaptureFilter;
 import com.altinity.clickhouse.sink.connector.db.KeylessTableWarning;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -487,9 +488,9 @@ public class KeylessTablePreflight {
      */
     static List<String> withoutExcluded(List<String> keyless, Properties props) {
         List<java.util.regex.Pattern> excludes =
-                compilePatterns(props.getProperty("table.exclude.list"));
+                compilePatterns(props.getProperty(DdlCaptureFilter.TABLE_EXCLUDE_LIST));
         List<java.util.regex.Pattern> includes =
-                compilePatterns(props.getProperty("table.include.list"));
+                compilePatterns(props.getProperty(DdlCaptureFilter.TABLE_INCLUDE_LIST));
 
         List<String> inScope = new ArrayList<>();
         for (String table : keyless) {
@@ -554,7 +555,7 @@ public class KeylessTablePreflight {
     }
 
     static String databaseFilter(Properties props) {
-        String include = props.getProperty("database.include.list");
+        String include = props.getProperty(DdlCaptureFilter.DATABASE_INCLUDE_LIST);
         if (include == null || include.trim().isEmpty()) {
             return null;
         }

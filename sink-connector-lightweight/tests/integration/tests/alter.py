@@ -398,7 +398,16 @@ def modify_column_null(self, node=None):
     )
 )
 def modify_column_not_null(self, node=None):
-    """Check that after `MODIFY COLUMN data_type NOT NULL` query MySQL and Clickhouse has the same columns."""
+    """Check that after `MODIFY COLUMN data_type NOT NULL` query MySQL and Clickhouse has the same columns.
+
+    For MODIFY COLUMN the ClickHouse column keeps its existing nullability
+    (Spec 06.05 section 3.2 rule 2). The tables of this suite declare
+    `x INT NOT NULL`, so the replica column is non-Nullable `Int32` and the
+    MODIFY re-types it to non-Nullable `String`, exactly what the source
+    declares. Only an existing Nullable column would stay Nullable: converting
+    it to non-Nullable needs a DEFAULT expression, otherwise ClickHouse rejects
+    the ALTER (Code: 36) and, because DDL is retried indefinitely, the whole
+    replication stream stalls."""
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
@@ -433,7 +442,10 @@ def modify_column_not_null(self, node=None):
                         self.context.cluster.node("clickhouse").query,
                         timeout=100,
                         delay=5,
-                    )(f"DESC test.{table_name} FORMAT CSV", message='"x","String"')
+                    )(
+                        f"DESC test.{table_name} FORMAT CSV",
+                        message='"x","String"',
+                    )
 
 
 @TestFeature
@@ -557,7 +569,14 @@ def change_column_name_to_new_name_null(self, node=None):
     )
 )
 def change_column_name_to_new_name_not_null(self, node=None):
-    """Check that after `CHANGE COLUMN old_name new_name data_type NOT NULL` query MySQL and Clickhouse has the same columns."""
+    """Check that after `CHANGE COLUMN old_name new_name data_type NOT NULL` query MySQL and Clickhouse has the same columns.
+
+    As for MODIFY COLUMN, the renamed ClickHouse column keeps its existing
+    nullability (Spec 06.05 section 3.2 rule 2): the suite's `x INT NOT NULL`
+    is a non-Nullable `Int32` on the replica, so it becomes a non-Nullable
+    `String` named `x2`. Only an existing Nullable column would stay Nullable,
+    because converting it to non-Nullable needs a DEFAULT expression and would
+    otherwise be rejected with Code: 36, stalling the replication stream."""
     if node is None:
         node = self.context.cluster.node("mysql-master")
 
@@ -593,7 +612,10 @@ def change_column_name_to_new_name_not_null(self, node=None):
                         self.context.cluster.node("clickhouse").query,
                         timeout=100,
                         delay=5,
-                    )(f"DESC test.{table_name} FORMAT CSV", message='"x2","String"')
+                    )(
+                        f"DESC test.{table_name} FORMAT CSV",
+                        message='"x2","String"',
+                    )
 
 
 @TestFeature

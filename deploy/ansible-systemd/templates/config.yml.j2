@@ -73,9 +73,6 @@ clickhouse.server.password: "{{ item.clickhouse.password }}"
 # Port number for the ClickHouse server (HTTP interface).
 clickhouse.server.port: "{{ item.clickhouse.port }}"
 
-# (Deprecated) Name of the ClickHouse database. Defaults to the source database name.
-clickhouse.server.database: "{{ item.clickhouse.database | default('default') }}"
-
 # Optional mapping to override the ClickHouse database name for specific source databases.
 {% if item.clickhouse.database_override_map is defined %}
 clickhouse.database.override.map: "{{ item.clickhouse.database_override_map }}"
@@ -101,8 +98,10 @@ thread.pool.size: {{ item.sink_connector.thread_pool_size | default(10) }}
 # Maximum number of records per batch.
 max.batch.size: {{ item.sink_connector.max_batch_size | default(10000) }}
 
-# Maximum queue size for pending records before flush.
-max.queue.size: 100000
+# Maximum number of pending record batches held in memory before the CDC
+# thread blocks (the sink's own queue; `max.queue.size` without the prefix is
+# Debezium's internal event queue and was the key this template used to emit).
+sink.connector.max.queue.size: {{ item.sink_connector.max_queue_size | default(100000) }}
 
 # Automatically restarts the CDC event loop if no messages arrive within a timeout period.
 {% if item.sink_connector.skip_restart_event_loop is not defined %}
@@ -179,9 +178,11 @@ schema.history.internal.jdbc.schema.history.table.ddl: "CREATE TABLE if not exis
 schema.history.internal.jdbc.schema.history.table.name: "{{ item.schema_history_clickhouse.table_name | default('altinity_sink_connector.replicate_schema_history') }}"
 {% endif %}
 
-# SAFETY: skip DDL that Debezium cannot parse instead of crashing.
-# Particularly useful for MySQL 8.0+ functional indexes.
-# Caused by: io.debezium.text.ParsingException: DDL statement couldn't be parsed
+# SAFETY: false (the default) stops the connector on DDL Debezium cannot parse
+# (io.debezium.text.ParsingException: DDL statement couldn't be parsed), e.g.
+# MySQL 8.0+ functional indexes. true silently discards that DDL from the schema
+# history, so later rows of the table are decoded against a stale schema --
+# silent loss. Enable per connector only as a deliberate workaround.
 schema.history.internal.skip.unparseable.ddl: "{{ item.sink_connector.skip_unparseable_ddl | default(sink_connector_skip_unparseable_ddl_default) | lower }}"
 
 # Prevents parsing DDL during snapshots to improve performance.
@@ -189,17 +190,13 @@ enable.snapshot.ddl: "false"
 
 # Whether the connector may auto-create target tables in ClickHouse.
 auto.create.tables: "{{ item.clickhouse.auto_create_tables | default('false') }}"
-{% if item.clickhouse.table_engine is defined %}
-clickhouse.table.engine: "{{ item.clickhouse.table_engine }}"
-{% endif %}
-{% if item.clickhouse.sign_column is defined %}
-clickhouse.table.sign.column: "{{ item.clickhouse.sign_column }}"
-{% endif %}
-{% if item.clickhouse.version_column is defined %}
-clickhouse.table.version.column: "{{ item.clickhouse.version_column }}"
-{% endif %}
 {% if item.sink_connector.ignore_delete is defined %}
-ignore.delete: "{{ item.sink_connector.ignore_delete }}"
+# LOSS BY DESIGN: ignore_delete=true never marks a row deleted in ClickHouse,
+# so rows the source deleted stay visible forever and the replica no longer
+# equals the source. The connector logs a WARN at startup when it is set.
+# (The key is `ignore_delete`; the `ignore.delete` spelling this template used
+# to emit was never read by the connector.)
+ignore_delete: "{{ item.sink_connector.ignore_delete }}"
 {% endif %}
 
 # Limit schema history storage to captured tables/databases only (startup optimization).

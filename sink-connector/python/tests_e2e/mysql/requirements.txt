@@ -1,0 +1,7 @@
+# Test-side dependencies of the Python toolset MySQL e2e suite (the pytest process:
+# seeding, waits, direct reads). The tools under test get their own dependencies the
+# way the scheduled job installs them: `source ./install.sh` in the job workspace
+# (a venv with sink-connector/python/requirements.txt).
+pytest>=7
+pymysql
+clickhouse-driver>=0.2.9

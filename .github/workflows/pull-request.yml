@@ -23,6 +23,21 @@ jobs:
     with:
       SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
 
+  # The non-streaming Python toolset (sink-connector/python) end to end: the scheduled
+  # checksum job and the manual checksum/count recipes exactly as operators run them,
+  # snapshot dump/load, resync, and the PostgreSQL dump and verification tools (Spec 13).
+  python-toolset-e2e-mysql:
+    needs: [build-kafka-lightweight]
+    uses: ./.github/workflows/python-toolset-e2e-mysql.yml
+    with:
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
+
+  python-toolset-e2e-postgres:
+    needs: [build-kafka-lightweight]
+    uses: ./.github/workflows/python-toolset-e2e-postgres.yml
+    with:
+      SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
+
 #  testflows-kafka:
 #    needs: [build-kafka-lightweight]
 #    uses: ./.github/workflows/testflows-sink-connector-kafka.yml
@@ -76,3 +91,19 @@ jobs:
     uses: ./.github/workflows/sink-connector-lightweight-tests.yml
     with:
       SINK_CONNECTOR_IMAGE: altinityinfra/clickhouse-sink-connector:${{ github.event.number }}-${{ github.sha }}-lt
+
+  publish-lightweight-jar:
+    needs: [build-kafka-lightweight]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Lightweight jar artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: clickhouse-sink-connector-lt-${{ github.event.number }}-${{ github.sha }}.jar
+          path: ./artifacts
+
+      - name: Upload Lightweight jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: clickhouse-sink-connector-lt.jar
+          path: ./artifacts/*.jar

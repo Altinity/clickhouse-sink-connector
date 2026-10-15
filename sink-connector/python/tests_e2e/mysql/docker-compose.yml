@@ -1,0 +1,49 @@
+# Compose stack of the Python toolset MySQL e2e suite (CI mode of conftest.py).
+#
+# MySQL, ClickHouse and ZooKeeper are the services of sink-connector-lightweight/docker;
+# the connector runs with this directory's connector-config.yml (binary.handling.mode
+# base64, database.connectionTimeZone UTC, a database override map). MySQL runs in UTC,
+# the zone the connector is told; ClickHouse keeps the America/Chicago server zone of
+# sink-connector-lightweight/clickhouse/config.xml, which the bitemporal per-table where
+# of the scheduled job relies on. The checksum drivers' side scripts use the default
+# ports, so MySQL is published on 3306 and ClickHouse native on 9000.
+services:
+  mysql-master:
+    extends:
+      file: ../../../../sink-connector-lightweight/docker/mysql-master-service.yml
+      service: mysql-master
+    environment:
+      - TZ=UTC
+
+  zookeeper:
+    extends:
+      file: ../../../../sink-connector-lightweight/docker/zookeeper-service.yml
+      service: zookeeper
+
+  clickhouse:
+    extends:
+      file: ../../../../sink-connector-lightweight/docker/clickhouse-service.yml
+      service: clickhouse
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+
+  clickhouse-sink-connector-lt:
+    image: ${CLICKHOUSE_SINK_CONNECTOR_LT_IMAGE}
+    entrypoint: ["sh", "-c", "java -Xms1g -Xmx2g -Dlog4j2.configurationFile=log4j2.xml -jar /app.jar /config.yml com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication"]
+    restart: "no"
+    ports:
+      - "8083:8083"
+    volumes:
+      - ../../../../sink-connector-lightweight/docker/log4j2.xml:/log4j2.xml
+      - ./connector-config.yml:/config.yml
+    depends_on:
+      mysql-master:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: "100m"
+        max-file: "1"

@@ -47,4 +47,29 @@ public class TableMetaDataWriterTest {
         Assert.assertNotNull(jsonString);
         Assert.assertTrue(jsonString.equalsIgnoreCase(expectedString));
     }
+
+    /**
+     * Spec 07.07 section 3.2.2 rule 3: the store.raw.data copy of the row must
+     * not render a source NULL as the Connect-schema default ({@code Struct.get}
+     * substitutes {@code schema.defaultValue()}, which Debezium fills from the
+     * MySQL column DEFAULT).
+     */
+    @Test
+    public void testConvertRecordToJSONDoesNotSubstituteSchemaDefault() throws Exception {
+        Schema schema = SchemaBuilder.struct()
+                .field("id", Schema.INT32_SCHEMA)
+                .field("status", SchemaBuilder.string().optional().defaultValue("new").build())
+                .build();
+        Struct row = new Struct(schema).put("id", 1);
+        Assert.assertEquals("precondition: Struct.get substitutes the schema default",
+                "new", row.get("status"));
+
+        String json = TableMetaDataWriter.convertRecordToJSON(row);
+
+        Assert.assertFalse("the raw copy rendered the schema default for a source NULL: " + json,
+                json.contains("\"new\""));
+        Assert.assertFalse("a NULL field is omitted, not rendered as its default: " + json,
+                json.contains("status"));
+        Assert.assertTrue(json.contains("\"id\":1"));
+    }
 }

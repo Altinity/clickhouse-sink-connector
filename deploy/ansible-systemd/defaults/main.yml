@@ -4,11 +4,15 @@
 # Set to false (-e start_service=false) to deploy configs without starting.
 start_service: true
 
-# Default for schema.history.internal.skip.unparseable.ddl.
-# true prevents connector crashes on DDL Debezium cannot parse
-# (e.g. MySQL 8.0+ functional indexes).
-# Can be overridden per connector via item.sink_connector.skip_unparseable_ddl
-sink_connector_skip_unparseable_ddl_default: true
+# Default for schema.history.internal.skip.unparseable.ddl (Debezium's own
+# default is false, and so is this one).
+# true makes Debezium discard any DDL it cannot parse (e.g. MySQL 8.0+
+# functional indexes) instead of stopping: the schema history then diverges from the
+# source and every later row of that table is decoded against a stale schema
+# -- silent loss. Set it to true per connector
+# (item.sink_connector.skip_unparseable_ddl: true) only as a deliberate,
+# short-lived workaround for a specific known statement.
+sink_connector_skip_unparseable_ddl_default: false
 
 # The JAR symlink name the service file references.
 # Allows hot-swapping connector versions without editing the unit file:

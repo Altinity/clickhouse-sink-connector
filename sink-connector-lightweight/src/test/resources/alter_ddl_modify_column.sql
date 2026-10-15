@@ -3,6 +3,12 @@ create table add_test(col1 varchar(255), col2 int, col3 int);
 
 create table office(office_id INT PRIMARY KEY, office_name VARCHAR(50) NOT NULL, office_address VARCHAR(255) NOT NULL, office_code int DEFAULT NULL);
 
+-- Keyless on purpose: testAlterAddPrimaryKeyAndModifyNotNull adds the PRIMARY KEY
+-- itself, as the first clause of a multi-clause ALTER. MySQL rejects ADD PRIMARY
+-- KEY on a table that already has one ("Multiple primary key defined"), so that
+-- step cannot run against `office`.
+create table branch(branch_id int, branch_name varchar(50), branch_address varchar(255));
+
 
 --insert into ship_class values(1, "test_class", 20.2, 20.2, 1997, 1997, 1998);
 --insert into ship_class values(2, "test_class", 20.2, 20.2, 1997, 1997, 1998);

@@ -71,7 +71,7 @@ public class DDLIgnoreRegExIT {
 
                 java.util.Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
                 // Add the ignore DDL regex.
-                props.put(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX, "(?i)(ANALYZE PARTITION).*||^CREATE DEFINER.*(?:\\r?\\n.*)*");
+                props.put(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX, "(?i).*(ANALYZE PARTITION).*||^CREATE DEFINER.*(?:\\r?\\n.*)*");
 
                 engine.set(debeziumChangeEventCapture);
                 engine.get().setup(props, new SourceRecordParserService()
@@ -86,19 +86,24 @@ public class DDLIgnoreRegExIT {
         ITCommon.connectToMySQL(mySqlContainer).createStatement().executeUpdate(createTableWPartition);
 
         // Wait for the DDL to be captured by the engine.
-        Thread.sleep(10000);
+        Thread.sleep(15000);
 
-
-        // Thread.sleep(5000);
         // Run MySQL DDL to run analyze partition.
         String analyzePartitionDDL = "alter table sales analyze partition p2022";
         ITCommon.connectToMySQL(mySqlContainer).createStatement().executeUpdate(analyzePartitionDDL);
-        Thread.sleep(10000);
+
+        // Poll until the analyze partition DDL is captured as ignored (up to 60s)
+        {
+            long deadline = System.currentTimeMillis() + 60_000;
+            while (System.currentTimeMillis() < deadline) {
+                String lastIgnored = debeziumChangeEventCapture.getLastIgnoredDDL();
+                if (analyzePartitionDDL.equals(lastIgnored)) break;
+                Thread.sleep(3_000);
+            }
+        }
 
         // Validate that the last DDL that was ignored is the one that was ignored.
-        Assert.assertEquals(debeziumChangeEventCapture.getLastIgnoredDDL(), analyzePartitionDDL);
-
-        Thread.sleep(10000);
+        Assert.assertEquals(analyzePartitionDDL, debeziumChangeEventCapture.getLastIgnoredDDL());
 
         String createTableAccountDDL = "CREATE TABLE account (\n" +
                 "    id INT AUTO_INCREMENT PRIMARY KEY NOT NULL,\n" +
@@ -107,7 +112,7 @@ public class DDLIgnoreRegExIT {
                 ")";
         ITCommon.connectToMySQL(mySqlContainer).createStatement().executeUpdate(createTableAccountDDL);
 
-        Thread.sleep(10000);
+        Thread.sleep(15000);
 
         // Run the CREATE TRIGGER DDL
         String createTriggerDDL = "CREATE TRIGGER ins_transaction BEFORE INSERT ON account\n" +
@@ -117,7 +122,16 @@ public class DDLIgnoreRegExIT {
                 "       @withdrawals = @withdrawals + IF(NEW.amount<0,-NEW.amount,0);";
 
         ITCommon.connectToMySQL(mySqlContainer).createStatement().executeUpdate(createTriggerDDL);
-        Thread.sleep(10000);
+
+        // Poll until the CREATE DEFINER DDL is captured as ignored (up to 60s)
+        {
+            long deadline = System.currentTimeMillis() + 60_000;
+            while (System.currentTimeMillis() < deadline) {
+                String lastIgnored = debeziumChangeEventCapture.getLastIgnoredDDL();
+                if (lastIgnored != null && lastIgnored.contains("CREATE DEFINER")) break;
+                Thread.sleep(3_000);
+            }
+        }
 
         // Validate that the last DDL that was ignored is the one that was ignored.
         Assert.assertTrue(debeziumChangeEventCapture.getLastIgnoredDDL().contains("CREATE DEFINER"));

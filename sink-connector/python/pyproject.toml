@@ -15,7 +15,7 @@ authors = [
 
 dependencies = [
     "clickhouse-driver>=0.2.9",
-    "psycopg2-binary",
+    "pg8000>=1.31,<1.32",
     "pyyaml",
 ]
 
@@ -47,6 +47,7 @@ ch-pg-dump     = "ch_sink_tools.db_dump.postgres_dumper:main"
 ch-mysql-checksum = "ch_sink_tools.db_compare.top_level_table_checksum:main"
 ch-mysql-dump     = "ch_sink_tools.db_dump.mysql_dumper:main"
 ch-mysql-load     = "ch_sink_tools.db_load.clickhouse_loader:main"
+ch-mysql-resync   = "ch_sink_tools.db_load.mysql_resync:main"
 
 [tool.setuptools.packages.find]
 include = ["ch_sink_tools*"]

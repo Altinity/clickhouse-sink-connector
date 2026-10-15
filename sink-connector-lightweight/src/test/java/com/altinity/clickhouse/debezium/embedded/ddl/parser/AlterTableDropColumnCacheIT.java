@@ -79,6 +79,35 @@ public class AlterTableDropColumnCacheIT extends DDLBaseIT {
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
         Connection chConn = writer.getConnection();
         
+        // Poll until the cache_test table exists in ClickHouse (DDL replication may take time)
+        boolean tableExists = false;
+        for (int retry = 0; retry < 20; retry++) {
+            try (Statement checkStmt = chConn.createStatement()) {
+                ResultSet checkRs = checkStmt.executeQuery(
+                    "SELECT count(*) as cnt FROM system.tables WHERE database = 'employees' AND name = 'cache_test'");
+                if (checkRs.next() && checkRs.getInt("cnt") > 0) {
+                    tableExists = true;
+                    break;
+                }
+            }
+            Thread.sleep(3000);
+        }
+        Assert.assertTrue("cache_test table should exist in ClickHouse employees database", tableExists);
+
+        // Poll until the initial row is replicated
+        boolean rowReplicated = false;
+        for (int retry = 0; retry < 10; retry++) {
+            try (Statement checkStmt = chConn.createStatement()) {
+                ResultSet checkRs = checkStmt.executeQuery("SELECT count(*) as cnt FROM employees.cache_test WHERE id = 1");
+                if (checkRs.next() && checkRs.getInt("cnt") > 0) {
+                    rowReplicated = true;
+                    break;
+                }
+            }
+            Thread.sleep(3000);
+        }
+        Assert.assertTrue("Initial row should be replicated to ClickHouse", rowReplicated);
+
         // Check that the initial row exists with the age column
         try (Statement stmt = chConn.createStatement()) {
             ResultSet rs = stmt.executeQuery("SELECT id, name, email, age FROM employees.cache_test WHERE id = 1");

@@ -104,7 +104,20 @@ jobs:
 
       - name: Zip Lightweight jar
         working-directory: ./artifacts/lightweight
-        run: zip "clickhouse-sink-connector-lt-${{ env.release_tag }}.jar.zip" *.jar
+        run: |
+          zip "clickhouse-sink-connector-lt-${{ env.release_tag }}.jar.zip" *.jar
+          # Third-party notices and license texts travel with the binaries.
+          (cd "${{ github.workspace }}" && zip -r "${{ github.workspace }}/artifacts/lightweight/clickhouse-sink-connector-lt-${{ env.release_tag }}.jar.zip" THIRD_PARTY_NOTICES.md licenses)
+
+      - name: Upload third-party notices to release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_name: THIRD_PARTY_NOTICES.md
+          asset_path: ./THIRD_PARTY_NOTICES.md
+          asset_content_type: text/markdown
 
       - name: Upload Lightweight jar to release
         uses: actions/upload-release-asset@v1

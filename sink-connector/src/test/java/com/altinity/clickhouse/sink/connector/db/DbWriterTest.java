@@ -65,22 +65,37 @@ public class DbWriterTest {
 
     }
 
+    /**
+     * A source row shaped like the {@code employees} fixture table in
+     * {@code init_clickhouse.sql} (emp_no, birth_date, first_name, last_name,
+     * gender, hire_date).
+     *
+     * <p>The record's schema must name only columns the target table has: a
+     * source column that does not exist in ClickHouse is not dropped from the
+     * INSERT any more, it fails the batch with
+     * {@code MissingTargetColumnException} unless {@code schema.evolution}
+     * adds it (Spec 08.04 section 3.3). The tests that group these records
+     * against the real fixture table exercise offset bookkeeping, not that
+     * rule, so the row mirrors the table.</p>
+     */
     public static Struct getKafkaStruct() {
         Schema kafkaConnectSchema = SchemaBuilder
                 .struct()
+                .field("emp_no", Schema.INT32_SCHEMA)
+                .field("birth_date", io.debezium.time.Date.schema())
                 .field("first_name", Schema.STRING_SCHEMA)
                 .field("last_name", Schema.STRING_SCHEMA)
-                .field("quantity", Schema.INT32_SCHEMA)
-                .field("amount", Schema.FLOAT64_SCHEMA)
-                .field("employed", Schema.BOOLEAN_SCHEMA)
+                .field("gender", Schema.STRING_SCHEMA)
+                .field("hire_date", io.debezium.time.Date.schema())
                 .build();
 
         Struct kafkaConnectStruct = new Struct(kafkaConnectSchema);
+        kafkaConnectStruct.put("emp_no", 10001);
+        kafkaConnectStruct.put("birth_date", 9000);   // days since epoch (1994-08-23)
         kafkaConnectStruct.put("first_name", "John");
         kafkaConnectStruct.put("last_name", "Doe");
-        kafkaConnectStruct.put("quantity", 100);
-        kafkaConnectStruct.put("amount", 23.223);
-        kafkaConnectStruct.put("employed", true);
+        kafkaConnectStruct.put("gender", "M");
+        kafkaConnectStruct.put("hire_date", 12000);   // days since epoch (2002-11-09)
 
 
         return kafkaConnectStruct;
@@ -265,14 +280,14 @@ public class DbWriterTest {
                 BaseDbWriter.SYSTEM_DB, sinkConnectorConfig);
         DbWriter dbWriter = new DbWriter(dbHostName, port, database, tableName, userName, password, sinkConnectorConfig, null, conn);
 
-        Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>> queryToRecordsMap = new HashMap<>();
+        List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> querySegments = new ArrayList<>();
 
         Map<TopicPartition, Long> result = new HashMap<>();
         GroupInsertQueryWithBatchRecords groupInsertQueryWithBatchRecords = new GroupInsertQueryWithBatchRecords();
 
         DBMetadata metadata = new DBMetadata(sinkConnectorConfig);
-        boolean resultStatus =groupInsertQueryWithBatchRecords.groupQueryWithRecords(getSampleRecords()
-                , queryToRecordsMap, result, sinkConnectorConfig, tableName, database, dbWriter.getConnection(),
+        groupInsertQueryWithBatchRecords.groupQueryWithRecords(getSampleRecords()
+                , querySegments, result, sinkConnectorConfig, tableName, database, dbWriter.getConnection(),
                 metadata.getColumnsDataTypesForTable(conn, tableName, "employees"));
 
         Assert.assertTrue(result.isEmpty() == false);

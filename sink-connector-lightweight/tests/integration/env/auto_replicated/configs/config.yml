@@ -19,7 +19,7 @@ offset.storage.jdbc.table.name: altinity_sink_connector.replica_source_info
 offset.storage.jdbc.url: jdbc:clickhouse://clickhouse:8123/altinity_sink_connector
 offset.storage.jdbc.user: root
 offset.storage.jdbc.password: root
-offset.storage.jdbc.offset.table.ddl: |-
+offset.storage.jdbc.table.ddl: |-
   CREATE TABLE if not exists %s
   (
       `id` String,
@@ -32,18 +32,19 @@ offset.storage.jdbc.offset.table.ddl: |-
   ENGINE = ReplacingMergeTree(_version)
   ORDER BY offset_key
   SETTINGS index_granularity = 8198
-offset.storage.jdbc.offset.table.delete: delete from %s where 1=1
+offset.storage.jdbc.table.delete: delete from %s where 1=1
 schema.history.internal: io.debezium.storage.jdbc.history.JdbcSchemaHistory
 schema.history.internal.jdbc.url: jdbc:clickhouse://clickhouse:8123/altinity_sink_connector
 schema.history.internal.jdbc.user: root
 schema.history.internal.jdbc.password: root
-schema.history.internal.jdbc.schema.history.table.ddl: |-
+schema.history.internal.jdbc.table.ddl: |-
   CREATE TABLE if not exists %s
   (`id` VARCHAR(36) NOT NULL, `history_data` VARCHAR(65000), `history_data_seq` INTEGER, `record_insert_ts` TIMESTAMP NOT NULL, `record_insert_seq` INTEGER NOT NULL) ENGINE=ReplacingMergeTree(record_insert_seq) order by id
-schema.history.internal.jdbc.schema.history.table.name: altinity_sink_connector.replicate_schema_history
+schema.history.internal.jdbc.table.name: altinity_sink_connector.replicate_schema_history
 replacingmergetree.delete.column: _sign
 enable.snapshot.ddl: 'true'
 database.connectionTimeZone: UTC
 database.serverTimezone: UTC
 clickhouse.datetime.timezone: UTC
 auto.create.tables: 'true'
+clamp.out.of.range: 'true'

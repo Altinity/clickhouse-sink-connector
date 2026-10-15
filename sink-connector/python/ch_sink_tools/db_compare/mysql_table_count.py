@@ -41,9 +41,12 @@ def compute_count(table, statements, mysql_user, mysql_password):
         conn.close()
     return count
 
-@staticmethod
 def fstr(template, partition_expression):
-        return eval(f"f'{template}'")
+        # Safe substitution: only replace {partition_expression} placeholder
+        # instead of eval() which allows arbitrary code execution
+        if partition_expression is not None:
+            return template.replace('{partition_expression}', str(partition_expression))
+        return template
 
 def select_table_statements(conn, table):
     # TODO adjust the number as a parameter
@@ -64,7 +67,8 @@ def select_table_statements(conn, table):
                                            non_partitioned_tables_only=args.non_partitioned_tables_only)
 
 
-    partitions = partitions.fetchall()
+    # by column name through mappings() (SQLAlchemy 2.x rows are tuples, spec 13.06 D-13.06-9)
+    partitions = partitions.mappings().fetchall()
     if len(partitions) > 0:
         for partition in partitions:
             partition_name = partition['partition_name']
@@ -102,10 +106,12 @@ def calculate_sql_count(conn, table, mysql_user, mysql_password):
                 futures.append(executor.submit(
                     compute_count, table, queries, mysql_user, mysql_password))
             for future in concurrent.futures.as_completed(futures):
-                result = future.result()
-                row_count += result
-                if future.exception() is not None:
-                    raise future.exception()
+                try:
+                    result = future.result()
+                    row_count += result
+                except Exception:
+                    logging.error(f"Count failed for {table}")
+                    raise
             logging.info("Count for table "+args.mysql_database + "."+table+" = "+str(row_count))
     finally:
         conn.close()
@@ -210,7 +216,10 @@ def main():
         tables = get_tables_from_regexp(conn, args.include_tables_regex)
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.threads) as executor:
             futures = []
-            for table in tables.fetchall():
+            # --no_wc: get_tables_from_regex returns [[<include_tables_regex>]], the table name
+            # itself, not a result set (spec 13.06 D-13.06-26).
+            table_rows = [{'table_name': row[0]} for row in tables] if args.no_wc else tables.mappings().fetchall()
+            for table in table_rows:
                 futures.append(executor.submit(
                     calculate_table_count, table['table_name'], mysql_user, mysql_password))
             for future in concurrent.futures.as_completed(futures):

@@ -27,7 +27,11 @@ def truncate(
         )
 
     with When(f"I insert data in MySQL table"):
-        mysql.query(f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');")
+        if primary_key is None:
+            # No `id` column: the table is (k, c, pad).
+            mysql.query(f"INSERT INTO {table_name} values (2,'a','b'), (3,'a','b');")
+        else:
+            mysql.query(f"INSERT INTO {table_name} values (1,2,'a','b'), (2,3,'a','b');")
 
     with Then("I check that clickhouse table received data"):
         verify_table_creation_in_clickhouse(
@@ -108,7 +112,6 @@ def simple_primary_key_innodb(self):
 @TestFeature
 def complex_primary_key(self):
     """Check for `DELETE` with complex primary key without engine InnoDB."""
-    xfail("complex keys need to be fixed")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             truncate(
@@ -123,7 +126,6 @@ def complex_primary_key(self):
 @TestFeature
 def complex_primary_key_innodb(self):
     """Check for `DELETE` with complex primary key with engine InnoDB."""
-    xfail("complex keys need to be fixed")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             truncate(

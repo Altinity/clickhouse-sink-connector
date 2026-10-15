@@ -24,7 +24,12 @@ def simple_insert(
         )
 
     with When("I insert data in MySQL table"):
-        mysql.query(f"INSERT INTO {table_name} (col1,col2,col3) VALUES {input};")
+        # The table's primary key `id` is INT NOT NULL with no default, so the
+        # row must name it; inserting only (col1,col2,col3) is rejected by
+        # MySQL itself (ERROR 1364: Field 'id' doesn't have a default value).
+        mysql.query(
+            f"INSERT INTO {table_name} (id,col1,col2,col3) VALUES (1,{input.strip()[1:]};"
+        )
 
     with Then("I check data inserted correct"):
         verify_table_creation_in_clickhouse(
@@ -45,7 +50,6 @@ def default_with_null(
     clickhouse_columns="col1 Nullable(Int32), col2 Int32, col3 Int32",
 ):
     """Check replication of insert that contains only one DEFAULT value which is set to NULL."""
-    xfail("doesn't work")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             simple_insert(
@@ -66,7 +70,6 @@ def default_with_null_and_non_null(
     clickhouse_columns="col1 Nullable(Int32), col2 Int32, col3 Int32",
 ):
     """Check replication of insert that contains two DEFAULT values one of which is set to NULL value."""
-    xfail("doesn't work")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             simple_insert(
@@ -87,7 +90,6 @@ def use_select_constant_as_value(
     clickhouse_columns="col1 Int32, col2 Int32, col3 Int32",
 ):
     """Check insert of a value defined using a SELECT constant query."""
-    xfail("doesn't work")
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         with Example({clickhouse_table_engine}, flags=TE):
             simple_insert(
@@ -108,7 +110,6 @@ def use_select_from_table_as_value(
     clickhouse_columns="col1 Int32, col2 Int32, col3 Int32",
 ):
     """Check insert of a value defined using a SELECT from auxiliary table query."""
-    xfail("doesn't work")
     auxiliary_table = f"auxiliary_table"
     try:
         with Given(f"I create auxiliary MySQL table", description=auxiliary_table):
@@ -289,10 +290,6 @@ def many_partitions_one_part(self, node=None):
 
         for table_name in tables_names:
             if table_name.endswith("complex") or table_name.endswith("no_primary_key"):
-                if table_name.endswith("_no_primary_key"):
-                    xfail(
-                        "doesn't work without primary key as only last row of insert is replicated"
-                    )
                 with Example(f"{table_name}", flags=TE):
                     with When(
                         "I perform insert in MySQL to create many partitions and one part in replicated "
@@ -415,7 +412,6 @@ def many_partitions_mixed_parts(self, node=None):
 @TestFeature
 @Name("one million datapoints")
 def one_million_datapoints(self, node=None):
-    xfail("too big insert")
     """Check that `INSERT` of one million entries to MySQL is properly propagated to the replicated ClickHouse table."""
     name = f"tb_{getuid()}"
 
@@ -429,10 +425,6 @@ def one_million_datapoints(self, node=None):
             )
 
         for table_name in tables_names:
-            if table_name.endswith("_no_primary_key"):
-                xfail(
-                    "doesn't work without primary key as only last row of insert is replicated"
-                )
             with Example(f"{table_name}", flags=TE):
                 with When(
                     "I perform insert in MySQL to create one million entries in replicated ClickHouse table"
@@ -472,10 +464,14 @@ def parallel(self):
             )
 
         for table_name in tables_names:
-            if table_name.endswith("_no_primary_key"):
-                xfail(
-                    "doesn't work without primary key as only last row of insert is replicated"
-                )
+            # Every shape is (id, x); the keyless ones just have no PRIMARY KEY.
+            # The three parallel inserts use disjoint id ranges (1, 2..101,
+            # 102..1101). Overlapping ranges made MySQL reject the later
+            # inserts on keyed tables (duplicate key, retried for the step's
+            # full 300 s), and on keyless tables produced identical whole rows,
+            # which a keyless ReplacingMergeTree collapses under FINAL
+            # (spec 08.05), so the counts could never match.
+            values = ["({x},{y})"]
             with Example(f"{table_name}", flags=TE):
                 with When(
                     "I perform insert in MySQL to make parallel inserts in replicated ClickHouse table"
@@ -483,7 +479,8 @@ def parallel(self):
                     By(f"one raw insert", test=complex_insert, parallel=True)(
                         node=self.context.cluster.node("mysql-master"),
                         table_name=table_name,
-                        values=["({x},{y})", "({x},{y})"],
+                        values=values,
+                        start_id=1,
                         partitions=1,
                         parts_per_partition=1,
                         block_size=1,
@@ -492,7 +489,8 @@ def parallel(self):
                     By(f"100 rows insert", test=complex_insert, parallel=True)(
                         node=self.context.cluster.node("mysql-master"),
                         table_name=table_name,
-                        values=["({x},{y})", "({x},{y})"],
+                        values=values,
+                        start_id=2,
                         partitions=100,
                         parts_per_partition=1,
                         block_size=1,
@@ -501,8 +499,8 @@ def parallel(self):
                     By(f"1000 rows insert", test=complex_insert, parallel=True)(
                         node=self.context.cluster.node("mysql-master"),
                         table_name=table_name,
-                        values=["({x},{y})", "({x},{y})"],
-                        start_id=2,
+                        values=values,
+                        start_id=102,
                         partitions=1000,
                         parts_per_partition=1,
                         block_size=1,

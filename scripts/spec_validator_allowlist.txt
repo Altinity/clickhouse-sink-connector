@@ -1,0 +1,20 @@
+# Temporary waivers for scripts/validate_specs.py passes 4 and 5
+# (Codebase Mapping path resolution and Verification citation existence).
+#
+# Format: one entry per line, comments start with '#'.
+#   specs/<domain>/<file>.md                  waive every finding in that file
+#   specs/<domain>/<file>.md | <exact token>  waive one backticked token only
+#
+# Waived findings are still printed as warnings. Every entry below covers a
+# spec that is being rewritten in a concurrent change; remove the entry when
+# that change lands and let the validator enforce the file. An entry that no
+# longer waives anything is reported as "allowlist entry no longer needed".
+
+# 01.05 -- cites DebeziumChangeEventCaptureTest.testAppendToRecordsBackpressure(),
+# which does not exist; also carries stale buffer defaults.
+
+# 02.05 -- cites ClickHouseStructTest.testRejectUnderivableVersion(), which does not exist.
+
+# No waivers are currently in force. Every finding the validator reported on
+# 2.11.0 has been fixed in the spec it came from; add an entry here only for a
+# spec that a concurrent, not yet merged change is rewriting.

@@ -19,7 +19,8 @@ RUN 'mkdir' '-p' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d' \
 # Copy confluent
 RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-connect-avro-converter-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-connect-avro-converter/7.2.1/kafka-connect-avro-converter-7.2.1.jar'
 RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-avro-serializer-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-avro-serializer/7.2.1/kafka-avro-serializer-7.2.1.jar'
-RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-schema-registry-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-schema-registry/7.2.1/kafka-schema-registry-7.2.1.jar'
+# kafka-schema-registry (registry server, Confluent Community License 1.0) is
+# not needed by the Avro converter and is not downloaded; see THIRD_PARTY_NOTICES.md.
 RUN 'curl' '-L' '--output' '/opt/kafka/plugins/clickhouse-sink-connector/3542976d/kafka-serde-tools-package-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-serde-tools-package/7.2.1/kafka-serde-tools-package-7.2.1.jar'
 RUN 'curl' '-L' '--output' '/opt/kafka/libs/kafka-serde-tools-package-7.2.1.jar' 'https://packages.confluent.io/maven/io/confluent/kafka-serde-tools-package/7.2.1/kafka-serde-tools-package-7.2.1.jar'
 

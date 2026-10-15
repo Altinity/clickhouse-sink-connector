@@ -113,6 +113,11 @@ def select(
         90:
     ]
 
+    # Expected values written by a test are comma-separated (the CSV the other
+    # two branches below request); the MySQL client's own output is
+    # tab-separated, like ClickHouse's default format.
+    final_format = "" if manual_output is None else " FORMAT CSV"
+
     if manual_output is None:
         manual_output = mysql_output
 
@@ -122,7 +127,7 @@ def select(
             timeout=timeout,
             delay=10,
         )(
-            f"SELECT {statement} FROM test.{table_name} FINAL",
+            f"SELECT {statement} FROM test.{table_name} FINAL{final_format}",
             message=f"{manual_output}",
         )
     elif with_optimize:
