@@ -526,4 +526,33 @@ public class DebeziumConverterTest {
         Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2100-01-01 00:00:00"));
     }
 
+    /**
+     * Spec 12.04 section 3.3: a true instant (Debezium {@code source.ts_ms}) is rendered
+     * as epoch text, never reinterpreted as a wall time in a zone.
+     */
+    @Test
+    public void instantEpochTextRendersTheInstantUnchanged() {
+        ZoneId chicago = ZoneId.of("America/Chicago");
+        Assert.assertEquals("1709290200.123000", DebeziumConverter.TimestampConverter.instantEpochText(1709290200123L, chicago));
+        Assert.assertEquals("1709290200.123000", DebeziumConverter.TimestampConverter.instantEpochText(1709290200123L, ZoneId.of("UTC")));
+        // The second occurrence of 01:30 America/Chicago on the 2026 fall-back day.
+        long secondOneThirty = Instant.parse("2026-11-01T07:30:00Z").toEpochMilli();
+        Assert.assertEquals("1793518200.000000", DebeziumConverter.TimestampConverter.instantEpochText(secondOneThirty, chicago));
+        Assert.assertEquals("0.000000", DebeziumConverter.TimestampConverter.instantEpochText(0L, chicago));
+        Assert.assertEquals("-1.000000", DebeziumConverter.TimestampConverter.instantEpochText(-1000L, chicago));
+        Assert.assertEquals("-2.500000", DebeziumConverter.TimestampConverter.instantEpochText(-2500L, chicago));
+    }
+
+    /**
+     * ClickHouse reads {@code '-0.500000'} back as +0.5 s, so the one second before the epoch
+     * is bound as digits in the column zone (Spec 07.03 section 3.1.4 exclusions), exact there.
+     */
+    @Test
+    public void instantEpochTextBindsDigitsInTheSecondBeforeTheEpoch() {
+        Assert.assertEquals("1969-12-31 17:59:59.500",
+                DebeziumConverter.TimestampConverter.instantEpochText(-500L, ZoneId.of("America/Chicago")));
+        Assert.assertEquals("1969-12-31 23:59:59.999",
+                DebeziumConverter.TimestampConverter.instantEpochText(-1L, ZoneId.of("UTC")));
+    }
+
 }
