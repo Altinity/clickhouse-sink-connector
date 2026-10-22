@@ -8,6 +8,8 @@ covered separately by the e2e suite.
 """
 import re
 
+import pytest
+
 from db_load import clickhouse_loader as cl
 from db_load.mysql_parser.mysql_parser import convert_to_clickhouse_table_antlr
 
@@ -49,9 +51,10 @@ class TestUnixTimezoneFromMysqlTimezone:
         off = datetime.datetime.now(zoneinfo.ZoneInfo(tz)).utcoffset().total_seconds()
         assert off == 0
 
-    def test_unknown_offset_falls_back_to_utc(self):
-        # No real zone is at +99:00, so the documented default is returned.
-        assert cl.get_unix_timezone_from_mysql_timezone("+99:00") == "UTC"
+    def test_unknown_offset_is_refused(self):
+        # +99:00 is outside MySQL's offset range: no zone is guessed for it, not even UTC (Spec 13.04 section 3.9).
+        with pytest.raises(ValueError):
+            cl.get_unix_timezone_from_mysql_timezone("+99:00")
 
 
 class TestSourceIntrospection:

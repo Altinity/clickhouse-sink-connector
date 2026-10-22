@@ -8,8 +8,8 @@ every test to the fix it proves.
 import pytest
 
 from mysql_e2e_support import (CH_HOST, DB, DB2, DB2_CH, DOLLAR_TABLE, DOLLAR_TABLE_REGEX, MYSQL_HOST,
-                               JOB_LOG_NON_PARTITIONED, ch_query, parse_side_results, parse_verdicts, planted,
-                               warning_lines)
+                               SOURCE_TIMEZONE, JOB_LOG_NON_PARTITIONED, ch_query, parse_side_results,
+                               parse_verdicts, planted, warning_lines)
 
 SINGLE = "top_level_table_checksum_single.log"
 
@@ -71,7 +71,8 @@ PACKAGED_DRIVER = ["-m", "ch_sink_tools.db_compare.top_level_table_checksum"]
 
 def run_packaged_driver(ws, cwd, config):
     return ws.run([ws.python, *PACKAGED_DRIVER, "--config_file", ws.ws / config, "--defaults_file", ws.my_cnf,
-                   "--mysql_database", DB2, "--tables_regex", "^accounts$", "--threads", "2"],
+                   "--mysql_database", DB2, "--source_timezone", SOURCE_TIMEZONE, "--tables_regex", "^accounts$",
+                   "--threads", "2"],
                   cwd=cwd, env={"PYTHONPATH": str(ws.ws)})
 
 
@@ -105,7 +106,8 @@ def test_loader_loads_a_table_with_a_dollar_in_its_name(ws):
     try:
         load = ws.py("db_load/clickhouse_loader.py", "--clickhouse_host", CH_HOST, "--clickhouse_config_file",
                      "clickhouse-client.xml", "--clickhouse_database", database, "--mysql_source_database", DB,
-                     "--dump_dir", dump_dir, "--threads", "2", "--mysqlshell", "--rmt_delete_support")
+                     "--dump_dir", dump_dir, "--threads", "2", "--mysqlshell", "--rmt_delete_support",
+                     "--source_timezone", SOURCE_TIMEZONE)
         assert load.returncode == 0, load
         assert ch_query(f"SELECT count() FROM `{database}`.`{DOLLAR_TABLE}`")[0][0] == 2
     finally:

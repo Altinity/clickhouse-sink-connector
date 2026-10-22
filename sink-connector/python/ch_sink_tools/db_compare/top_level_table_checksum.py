@@ -5,8 +5,9 @@ import os
 import argparse
 import logging
 from ch_sink_tools.db.mysql import *
-from ch_sink_tools.db.checksum_common import (validate_timezone, JSON_COLUMNS_HINT_RE, DATETIME_MIN, DATETIME_MAX,
-                                 DATETIME64_MIN_UTC, DATETIME64_MAX_UTC, canonical_datetime_bound)
+from ch_sink_tools.db.checksum_common import (validate_timezone, resolve_source_zone, check_source_timezone_flag, JSON_COLUMNS_HINT_RE,
+                                 DATETIME_MIN, DATETIME_MAX, DATETIME64_MIN_UTC, DATETIME64_MAX_UTC, canonical_datetime_bound)
+import ast
 import concurrent.futures
 import functools
 import json
@@ -121,14 +122,22 @@ def validate_config(config):
 CHECKSUM_LINE = re.compile(r" - INFO - .* - Checksum for table (?P<table>\S.*) = (?P<checksum>[0-9a-f]{32}) count (?P<count>\d+)\s*$")
 # A side ERROR or CRITICAL line means the side did not produce a trustworthy
 # result: it is relayed at ERROR and the table gets no verdict. A side WARNING
-# (columns not compared, clamped values, SQL or client-library warnings)
-# qualifies the verdict without failing it: it is relayed at INFO as a "side
-# note", without the level word. WARNING in the driver log is reserved for
-# "Checksum difference" -- scheduled jobs fail on any line containing WARNING
-# (spec 13.06 section 3.17).
+# (SQL or client-library warnings) qualifies the verdict without failing it: it
+# is relayed at INFO as a "side note", without the level word. A clamp WARNING
+# is not such a note: see CLAMP_NOTICE.
+# The exception is a floating point "Not compared" line, relayed at WARNING
+# (spec 11.02 section 3.9). Scheduled jobs fail on any line containing WARNING
+# (spec 13.06 section 3.17), so a skipped floating point column fails that scan.
 SIDE_ERROR_MARKERS = (" - CRITICAL - ", " - ERROR - ")
 SIDE_WARNING_MARKER = " - WARNING - "
 SIDE_OUTPUT_TAIL_LINES = 20
+# A side's clamp WARNING (clickhouse_table_checksum.py: "<n> out-of-range datetime
+# values clamped to ..."; mysql_table_checksum.py: "<n> out-of-range
+# date/datetime values clamped ..."). A clamped value compares as the bound on
+# both sides, so equal checksums do not prove equal rows: the count is read back
+# and any clamp on any side makes the table DIFFERENT (spec 11.02 section 3.4).
+# Tests pin both side texts (db_compare/tests/test_checksum_verdicts.py).
+CLAMP_NOTICE = re.compile(r" - WARNING - .* - (?P<count>\d+) out-of-range (?:date/datetime|datetime) values clamped")
 
 VERDICT_MATCH = "MATCH"
 VERDICT_DIFFERENT = "DIFFERENT"
@@ -180,6 +189,43 @@ REPLICA_ONLY_RE = re.compile(r"Replica-only columns in table (?P<table>\S+): (?P
 # Filled while the run's tables are compared, read by report_run_summary().
 replica_only_findings = {}
 replica_only_lock = threading.Lock()
+# The side's "Not compared" report (spec 11.02 section 3.9): floating point and JSON columns the
+# verdict leaves out by default, with their count. Filled from the side notes, read by report_run_summary() at INFO.
+NOT_COMPARED_RE = re.compile(r"Not compared in table (?P<table>\S+): (?P<count>\d+) (?P<kind>floating point|JSON) columns? "
+                             r"(?P<columns>\[.*?\])")
+not_compared_findings = {}
+not_compared_lock = threading.Lock()
+
+
+def is_floating_point_not_compared(line):
+    """True when ``line`` is a side's report of skipped floating point columns. Those are relayed at WARNING
+    (spec 11.02 section 3.9, the brief's c08); a JSON report stays a side note at INFO."""
+    match = NOT_COMPARED_RE.search(line)
+    return bool(match) and match.group('kind') == 'floating point'
+
+
+def record_not_compared(line):
+    """Remember the columns a side reported as not compared, once per (table, kind) for the run.
+    The side's own line is still relayed (at WARNING for floating point columns, else at INFO as a
+    side note); this only feeds the run summary, which counts the named holes."""
+    match = NOT_COMPARED_RE.search(line)
+    if not match:
+        return
+    key = (match.group('table'), match.group('kind'))
+    with not_compared_lock:
+        not_compared_findings.setdefault(key, match.group('columns'))
+
+
+def not_compared_summary():
+    """The run-level line for the named holes, or None when the run compared every column."""
+    if not not_compared_findings:
+        return None
+    entries = sorted(not_compared_findings.items())
+    count = sum(len(ast.literal_eval(columns)) for (_key, columns) in entries)
+    tables = len({table for ((table, _kind), _columns) in entries})
+    detail = "; ".join(f"{table}: {kind} columns {columns}" for ((table, kind), columns) in entries)
+    return (f"NOT COMPARED (named, left out of the verdicts by default): {count} column(s) in {tables} table(s): "
+            f"{detail}. Pass --include_floating_point_columns / --include_json_columns to compare them.")
 
 
 def allow_replica_only_columns():
@@ -216,11 +262,13 @@ def record_replica_only(host, line):
 def relay_side_messages(data, host, table):
     """Re-log the side script's ERROR/CRITICAL lines at ERROR and its WARNING
     lines (columns not compared, clamped values, SQL warnings) at INFO as side
-    notes: they qualify the verdict (spec 13.06 FM-13.06-8). The replica-only
-    report is the exception, checked first regardless of its own level: it is
-    always tolerated (spec 11.02 section 3.9), so record_replica_only() logs
-    it at INFO whether the side emitted it at INFO or WARNING. Returns True
-    when the side logged an ERROR or CRITICAL line."""
+    notes: they qualify the verdict (spec 13.06 FM-13.06-8). The exception is a
+    floating point "Not compared" line, which is re-logged at WARNING with its
+    count and column names (spec 11.02 section 3.9). The replica-only report is
+    checked first regardless of its own level: it is always tolerated (spec
+    11.02 section 3.9), so record_replica_only() logs it at INFO whether the
+    side emitted it at INFO or WARNING. Returns True when the side logged an
+    ERROR or CRITICAL line."""
     side_failed = False
     for line in side_output_text(data).splitlines():
         if any(marker in line for marker in SIDE_ERROR_MARKERS):
@@ -229,7 +277,11 @@ def relay_side_messages(data, host, table):
         elif record_replica_only(host, line):
             continue
         elif SIDE_WARNING_MARKER in line:
-            logging.info(f"{host} {table} side note: {side_note_text(line)}")
+            record_not_compared(line)
+            if is_floating_point_not_compared(line):
+                logging.warning(f"{host} {table} side note: {side_note_text(line)}")
+            else:
+                logging.info(f"{host} {table} side note: {side_note_text(line)}")
     return side_failed
 
 
@@ -321,8 +373,56 @@ def run_snapshot_side(cmd, host, table, on_position):
     return (side_result(cmd, host, table, rc, stdout, time.perf_counter() - start), stdout, position, payload)
 
 
+def clamped_side_count(data):
+    """The values a side clamped to the datetime bounds, summed over its clamp
+    notices (CLAMP_NOTICE); 0 when it clamped none."""
+    total = 0
+    for line in side_output_text(data).splitlines():
+        match = CLAMP_NOTICE.search(line)
+        if match:
+            total += int(match.group('count'))
+    return total
+
+
+class SideResult(tuple):
+    """(host, table, md5, count) of one side: a plain tuple for equality, text
+    and indexing, with the side's clamped-value count as the attribute
+    ``clamped`` (0 when the side clamped none)."""
+
+    def __new__(cls, host, table, checksum, count, clamped=0):
+        result = super().__new__(cls, (host, table, checksum, count))
+        result.clamped = clamped
+        return result
+
+
+def result_clamped(result):
+    """Clamped values of one side result; a plain tuple, as a caller may build
+    one, clamped none."""
+    return getattr(result, "clamped", 0)
+
+
+def report_clamped(results, mysql_host, replica_hosts, label, recheck_note=None):
+    """Log one line per side that clamped values and return True when any did.
+    The line is a WARNING, or INFO on a pass that a re-check follows (only the
+    last pass logs WARNING, as for a difference)."""
+    found = False
+    for index, result in enumerate(results):
+        clamped = result_clamped(result)
+        if clamped <= 0:
+            continue
+        found = True
+        host = mysql_host if index == 0 else replica_hosts[index - 1]
+        message = (f"Clamped values on {host} for {label}: {clamped} out-of-range value(s) were clamped to the "
+                   "datetime bounds, so their true values are not compared; verdict DIFFERENT")
+        if recheck_note is None:
+            logging.warning(message)
+        else:
+            logging.info(f"{message} ({recheck_note})")
+    return found
+
+
 def side_result(cmd, host, table, rc, stdout, duration):
-    """(host, table, md5, count) of a finished side run, or None."""
+    """(host, table, md5, count, clamped) of a finished side run, or None."""
     side_failed = relay_side_messages(stdout, host, table)
     result = None
     if rc == '0' and side_failed:
@@ -333,7 +433,7 @@ def side_result(cmd, host, table, rc, stdout, duration):
         if checksum is None:
             log_side_output_tail(stdout, host, table)
         logging.info(f"{( host, table, checksum, count)} in {duration:0.3f} seconds" )
-        result = ( host, table, checksum, count)
+        result = SideResult(host, table, checksum, count, clamped_side_count(stdout))
     else:
         logging.error(f"{command_text(cmd)}. failed with return code {rc}")
         log_side_output_tail(stdout, host, table)
@@ -345,16 +445,15 @@ def table_where(table_name, where, table_overrides_map):
     if table_name in table_overrides_map and 'where' in table_overrides_map[table_name]:
         if where is None:
             where =''
-        if where != '':
-            where+= " and "
         logging.info(f"Where override found for {table_name}")
-        where+= table_overrides_map[table_name]['where']
+        override = table_overrides_map[table_name]['where']
+        where = f"({where}) and ({override})" if where != '' else override
     return where
 
 
 def side_commands(mysql_database, database_override_map, table, mysql_host, replica_hosts, pk, max_pk, where,
                   ignored_columns=[], debug_output=False, defaults_file=None, partition_key=None, timestamp_columns=(),
-                  binary_columns=(), json_columns=(), mysql_threads_per_table=None, mysql_extra_flags=(),
+                  binary_columns=(), json_columns=(), char_columns=(), mysql_threads_per_table=None, mysql_extra_flags=(),
                   ch_extra_where=None, source_columns=()):
     """(MySQL side argv, [(replica host, ClickHouse side argv)]) for one table and ``where``.
     ``ch_extra_where`` is ANDed onto the ClickHouse sides' filter only; it is a
@@ -372,7 +471,7 @@ def side_commands(mysql_database, database_override_map, table, mysql_host, repl
         extra_where = ch_extra_where(replica_host) if callable(ch_extra_where) else ch_extra_where
         if extra_where:
             replica_where = f"({where}) and {extra_where}" if where else extra_where
-        cmd = get_clickhouse_checksum_command(replica_host, replica_database, table, pk, max_pk, where=replica_where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns, source_columns=source_columns)
+        cmd = get_clickhouse_checksum_command(replica_host, replica_database, table, pk, max_pk, where=replica_where, ignored_columns=ignored_columns, debug_output=debug_output, partition_key = partition_key, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns, char_columns=char_columns, source_columns=source_columns)
         ch_commands.append((replica_host, cmd))
     return (mysql_cmd, ch_commands)
 
@@ -394,7 +493,7 @@ def replica_database_for(replica_host, mysql_database, database_override_map, lo
     return replica_database
 
 
-def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306, timestamp_columns=(), binary_columns=(), json_columns=(), lock_wait_timeout=None, fences=None, source_columns=()):
+def compute_checksum (mysql_database, database_override_map, table_overrides_map,  table, mysql_user, mysql_password, mysql_host, replica_hosts, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, partition_key = None, lock_enabled=False, sleep_after_lock=3, mysql_port=3306, timestamp_columns=(), binary_columns=(), json_columns=(), lock_wait_timeout=None, fences=None, source_columns=(), char_columns=()):
     table_name = f"{mysql_database}.{table}"
     logging.info(f"Checksumming {table_name}")
     where = table_where(table_name, where, table_overrides_map)
@@ -402,7 +501,7 @@ def compute_checksum (mysql_database, database_override_map, table_overrides_map
         mysql_database, database_override_map, table, mysql_host, replica_hosts, pk, max_pk, where,
         ignored_columns=ignored_columns, debug_output=debug_output, defaults_file=defaults_file,
         partition_key=partition_key, timestamp_columns=timestamp_columns, binary_columns=binary_columns,
-        json_columns=json_columns, source_columns=source_columns)
+        json_columns=json_columns, char_columns=char_columns, source_columns=source_columns)
 
     # Lock held during all checksums (MySQL source + ClickHouse replicas)
     # to ensure a consistent comparison. Without --wait_for_connector the
@@ -561,11 +660,16 @@ def mysql_json_columns(conn, mysql_database, mysql_table):
     return mysql_columns_by_data_type(conn, mysql_database, mysql_table, ('json',))
 
 
+def mysql_char_columns(conn, mysql_database, mysql_table):
+    """Names of the table's MySQL CHAR columns, in ordinal order. The ClickHouse side trims their trailing spaces (PAD SPACE)."""
+    return mysql_columns_by_data_type(conn, mysql_database, mysql_table, ('char',))
+
+
 def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, ignored_columns=[], debug_output=False, defaults_file=None, threads_per_table=None):
     partition_date = args.partition_date
     where_value = " 1=1 "
     if where:
-        where_value += f" and {where} "
+        where_value += f" and ({where}) "
     if partition_date:
       where_value += f""" and {{partition_expression}}={partition_date:%Y%m%d}"""
 
@@ -597,11 +701,11 @@ def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, i
 
 
 
-def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, where=None, ignored_columns=[], debug_output=False, partition_key = None, timestamp_columns=(), binary_columns=(), json_columns=(), source_columns=()):
+def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, where=None, ignored_columns=[], debug_output=False, partition_key = None, timestamp_columns=(), binary_columns=(), json_columns=(), source_columns=(), char_columns=()):
     partition_date = args.partition_date
     where_value = " 1=1 "
     if where:
-        where_value += f" and {where} "
+        where_value += f" and ({where}) "
     if partition_date:
       # Plain single quotes: fstr() on the ClickHouse side is a literal
       # substitution. The former backslash escapes (toDate(\\'...\\')) only
@@ -641,6 +745,10 @@ def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, w
     json_columns_clause = []
     if json_columns:
         json_columns_clause = ["--json_columns", ",".join(json_columns)]
+    # String columns whose MySQL type is CHAR (MySQL PAD SPACE, spec 11.02 section 3.3).
+    char_columns_clause = []
+    if char_columns:
+        char_columns_clause = ["--char_columns", ",".join(char_columns)]
     # The source table's column set: replica columns outside it hold no
     # replicated value and are not compared (spec 11.02 section 3.3). A JSON
     # list, so a column name holding a comma or a space survives the trip.
@@ -653,7 +761,7 @@ def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, w
            "--clickhouse_host", str(replica_host), "--clickhouse_database", str(database),
            "--tables_regex", exact_table_regex(table), "--where", where_value,
            "--source_timezone", str(getattr(args, "source_timezone", None))]
-    cmd += timestamp_columns_clause + json_columns_clause + source_columns_clause + binary_encoding_clause + include_flags()
+    cmd += timestamp_columns_clause + json_columns_clause + char_columns_clause + source_columns_clause + binary_encoding_clause + include_flags()
     cmd += datetime_bound_flags()
     cmd += ["--exclude_columns", ignored_columns_value, "--sign_column", ""]
     cmd += debug_output_clause + partition_key_clause
@@ -662,19 +770,14 @@ def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, w
 
 def resolve_source_timezone(conn, explicit):
     """The IANA zone MySQL DATETIME values are interpreted in (spec 11.02
-    section 3.2 step 1): ``--source_timezone`` when given, else the server's
-    session zone, falling back to the system zone when that is SYSTEM. It must
-    be the zone the connector's database.connectionTimeZone names."""
-    if explicit:
-        validate_timezone(explicit, "--source_timezone")
-        return explicit
-    (rowset, rowcount) = execute_mysql(conn, "select @@session.time_zone as session_time_zone, @@system_time_zone as system_time_zone")
-    row = list(rowset.mappings())[0]
-    zone = row['session_time_zone']
-    if str(zone).upper() == 'SYSTEM':
-        zone = row['system_time_zone']
-    validate_timezone(zone, "the MySQL server time zone (pass --source_timezone with the IANA name the connector's database.connectionTimeZone uses)")
-    logging.info(f"Source time zone resolved from MySQL: {zone} (override with --source_timezone; it must match the connector's database.connectionTimeZone)")
+    section 3.2 step 1): ``--source_timezone`` and nothing else. The MySQL
+    server is not queried (``conn`` is not used) and no default applies. It must
+    be the zone the connector's database.connectionTimeZone names. One zone
+    applies to every table of the run; a mixed-zone set needs one run per zone
+    (--tables_regex)."""
+    (zone, source) = resolve_source_zone(explicit, option_name="--source_timezone")
+    logging.info(f"source time zone: {zone} (source={source}); one source time zone per run: it applies to every "
+                 "table this run compares, so tables whose connector zone differs need their own run (--tables_regex)")
     return zone
 
 
@@ -687,7 +790,10 @@ def analyze_differences(results, mysql_host, replica_hosts, table_name=None, rec
     host string as MySQL still gets a verdict (spec 13.06 FM-13.06-4). A side
     that failed (None) or printed no parseable checksum (None md5 or count)
     makes the table an ERROR, never a match (FM-13.06-1, FM-13.06-2). Equal
-    results with zero rows are EMPTY, not a match (FM-13.06-5).
+    results with zero rows are EMPTY, not a match (FM-13.06-5). A side that
+    clamped out-of-range values makes the table DIFFERENT, even when the
+    checksums are equal: a clamped value compares as the bound (spec 11.02
+    section 3.4).
 
     ``recheck_note`` is set when a re-check of this table follows (spec 13.06
     section 3.7.3): a difference is then logged at INFO with the note, and
@@ -719,7 +825,8 @@ def analyze_differences(results, mysql_host, replica_hosts, table_name=None, rec
                 # reserved for the difference the last pass still sees.
                 logging.info(f"Checksum mismatch {recheck_note}: {replica_result} to {source_result}")
             is_difference = True
-    if is_difference:
+    is_clamped = report_clamped(results, mysql_host, replica_hosts, label, recheck_note)
+    if is_difference or is_clamped:
         return VERDICT_DIFFERENT
     if mysql_count == 0:
         # INFO, not WARNING: empty partitions are normal in date-partitioned
@@ -982,7 +1089,7 @@ def mysql_where_for_slicing(where, partition_key):
     cannot be resolved (no partition key)."""
     where_value = " 1=1 "
     if where:
-        where_value += f" and {where} "
+        where_value += f" and ({where}) "
     if args.partition_date:
         where_value += f" and {{partition_expression}}={args.partition_date:%Y%m%d}"
     if "{partition_expression}" in where_value:
@@ -1107,7 +1214,7 @@ def snapshot_slices(conn, table, pk, mysql_where, slice_rows, min_slices=1):
 
 
 def compare_slice(results, mysql_host, replica_hosts, table_name, condition, recheck_note=None, fence_notes=()):
-    """MATCH, DIFFERENT, EMPTY or ERROR for one slice. Only a difference on
+    """MATCH, DIFFERENT, EMPTY or ERROR for one slice. A clamp on any side is DIFFERENT too. Only a difference on
     the last pass logs the WARNING ``Checksum difference``; the table's own
     verdict line is logged by verify_table_in_slices."""
     label = f"{table_name} slice [{condition or 'all rows'}]"
@@ -1119,7 +1226,8 @@ def compare_slice(results, mysql_host, replica_hosts, table_name, condition, rec
         return VERDICT_ERROR
     source_result = results[0]
     differences = [r for r in results[1:] if (r[2], r[3]) != (source_result[2], source_result[3])]
-    if not differences:
+    is_clamped = report_clamped(results, mysql_host, replica_hosts, label, recheck_note)
+    if not differences and not is_clamped:
         logging.info(f"Slice match in {label}: {source_result[3]} rows")
         return VERDICT_EMPTY if source_result[3] == 0 else VERDICT_MATCH
     for replica_result in differences:
@@ -1266,7 +1374,7 @@ def replicas_have_version_column(fences, databases, table):
 def verify_table_in_slices(mysql_database, database_override_map, table_overrides_map, table, mysql_user,
                            mysql_password, mysql_host, replica_hosts, pk, max_pk, where, fences, ignored_columns=[],
                            defaults_file=None, partition_key=None, mysql_port=3306, timestamp_columns=(),
-                           binary_columns=(), json_columns=(), source_columns=()):
+                           binary_columns=(), json_columns=(), source_columns=(), char_columns=()):
     """Verdict of a table compared slice by slice under --consistent_snapshot
     (spec 13.06 section 3.7.4). No lock is taken: each slice is one InnoDB
     read view on the source, held only while that slice is read."""
@@ -1291,7 +1399,7 @@ def verify_table_in_slices(mysql_database, database_override_map, table_override
         return side_commands(mysql_database, database_override_map, table, mysql_host, replica_hosts, pk, max_pk,
                              slice_where, ignored_columns=ignored_columns, defaults_file=defaults_file,
                              partition_key=partition_key, timestamp_columns=timestamp_columns,
-                             binary_columns=binary_columns, json_columns=json_columns,
+                             binary_columns=binary_columns, json_columns=json_columns, char_columns=char_columns,
                              mysql_threads_per_table=1,
                              mysql_extra_flags=["--consistent_snapshot", "--exclude_keys_from_stdin"],
                              ch_extra_where=ch_extra_where, source_columns=source_columns)
@@ -1345,20 +1453,57 @@ def verify_table_in_slices(mysql_database, database_override_map, table_override
     return VERDICT_MATCH
 
 
-def report_run_summary(verdicts, fail_on_empty):
+MIXED_ZONE_LIMIT_NOTE = ("Mixed-zone limit for {table}: DIFFERENT, and this run read every DATETIME/TIMESTAMP value in "
+                         "{zone} (--source_timezone). If the connector wrote {table} in another zone (for example after "
+                         "database.connectionTimeZone changed during the table's life), the rows written in that zone "
+                         "differ from MySQL, and the checksum cannot tell that from data drift. The other zone is not "
+                         "known to this tool, so it is not named: check the table's zone history, and run each zone's "
+                         "tables separately with --tables_regex.")
+
+
+def mixed_zone_limit_notices(different, source_zone):
+    """One WARNING line per DIFFERENT table, naming the table and the zone this run compares in (spec 11.02 section
+    3.2 step 1). A table written under another connector zone is DIFFERENT for the same reason as a table with drift,
+    and no checksum can tell the two apart, so the limit is stated on every such verdict. ``source_zone`` is None when
+    the caller gives none; the line then says the zone was not given. Clean runs get no line."""
+    zone = source_zone if source_zone else "(not given to the run summary)"
+    return [MIXED_ZONE_LIMIT_NOTE.format(table=table, zone=zone) for table in different]
+
+
+def report_run_summary(verdicts, fail_on_empty, coverage_gap_tables=(), allow_coverage_gap=False,
+                       fail_on_different=False, source_zone=None):
     """Log the per-verdict totals; return the process exit code.
 
-    ERROR (a table with no verdict) always fails the run. EMPTY fails it only
-    with --fail_on_empty. DIFFERENT keeps exit 0 (spec 11.02 FM-11.02-1).
-    Replica-only columns are tolerated and never affect the exit code (spec
-    11.02 section 3.9, CONSTITUTION.md "Parity scope")."""
+    ERROR (a table with no verdict) always fails the run. A table skipped for a
+    source lock timeout is a COVERAGE GAP: it fails the run unless
+    allow_coverage_gap accepts it, and the gap is named either way. EMPTY fails
+    the run only with fail_on_empty. DIFFERENT keeps exit 0 unless
+    fail_on_different is set (spec 11.02 FM-11.02-1). Every DIFFERENT table
+    also gets a mixed-zone WARNING naming it and ``source_zone`` (spec 11.02
+    section 3.2 step 1). Replica-only columns are tolerated and never affect
+    the exit code (spec 11.02 section 3.9, CONSTITUTION.md "Parity scope")."""
     by_verdict = {}
     for table_name, verdict in verdicts.items():
         by_verdict.setdefault(verdict, []).append(table_name)
     counts = ", ".join(f"{len(by_verdict.get(v, []))} {v}"
                        for v in (VERDICT_MATCH, VERDICT_DIFFERENT, VERDICT_EMPTY, VERDICT_ERROR))
-    logging.info(f"Run summary: {len(verdicts)} table(s) verified: {counts}")
+    logging.info(f"Run summary: {len(verdicts)} table(s) verified: {counts}"
+                 f"; {len(coverage_gap_tables)} table(s) NOT compared (coverage gap)")
+    named_holes = not_compared_summary()
+    if named_holes:
+        logging.info(named_holes)
     exit_code = 0
+    different = by_verdict.get(VERDICT_DIFFERENT, [])
+    if different:
+        for notice in mixed_zone_limit_notices(different, source_zone):
+            logging.warning(notice)
+        if fail_on_different:
+            logging.error(f"{len(different)} table(s) DIFFERENT (failing the run: --fail_on_different): "
+                          + ", ".join(different))
+            exit_code = 1
+        else:
+            logging.info(f"{len(different)} table(s) DIFFERENT (the run exits 0; pass --fail_on_different "
+                         "to fail the run): " + ", ".join(different))
     empty = by_verdict.get(VERDICT_EMPTY, [])
     if empty:
         message = (f"EMPTY on both sides: {len(empty)} table(s) compared 0 rows"
@@ -1369,6 +1514,17 @@ def report_run_summary(verdicts, fail_on_empty):
             exit_code = 1
         else:
             logging.info(message)
+    if coverage_gap_tables:
+        gap_names = ", ".join(coverage_gap_tables)
+        if allow_coverage_gap:
+            # INFO, not WARNING: the driver log keeps WARNING for differences only (spec 11.02 3.2 step 4).
+            logging.info(f"COVERAGE GAP accepted (--allow_coverage_gap): {len(coverage_gap_tables)} table(s) "
+                         f"were NOT compared (source lock timeout): {gap_names}")
+        else:
+            logging.error(f"COVERAGE GAP: {len(coverage_gap_tables)} table(s) were NOT compared (source lock "
+                          f"timeout), so the run fails: {gap_names}. Pass --allow_coverage_gap to accept the gap, "
+                          "or --fail_on_lock_timeout to abort at the timeout.")
+            exit_code = 1
     errors = by_verdict.get(VERDICT_ERROR, [])
     if errors:
         logging.error(f"{len(errors)} table(s) have NO verdict (a side failed or its output could not be parsed): "
@@ -1521,6 +1677,7 @@ def run_config(config):
     if getattr(args, "wait_for_connector", False) or consistent_snapshot:
         fences = build_connector_fences(config)
     verdicts = {}
+    skipped_tables = []
     with replica_only_lock:
         replica_only_findings.clear()
     for database in databases:
@@ -1556,6 +1713,7 @@ def run_config(config):
                     if getattr(args, "binary_encoding", "hex") == 'raw':
                         binary_columns = mysql_columns_by_data_type(conn, database, table, binary_datatypes)
                     json_columns = mysql_json_columns(conn, database, table)
+                    char_columns = mysql_char_columns(conn, database, table)
                     source_columns = mysql_column_names(conn, database, table)
                     ignored_columns = []
                     if database in ignored_columns_map and table in ignored_columns_map[database]:
@@ -1572,16 +1730,15 @@ def run_config(config):
                             fences, ignored_columns=ignored_columns, defaults_file=args.defaults_file,
                             partition_key=partition_key, mysql_port=args.mysql_port,
                             timestamp_columns=timestamp_columns, binary_columns=binary_columns,
-                            json_columns=json_columns, source_columns=source_columns)
+                            json_columns=json_columns, char_columns=char_columns, source_columns=source_columns)
                     else:
                         checksum = functools.partial(
-                            compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns, lock_wait_timeout=getattr(args, "lock_wait_timeout", 30), fences=fences, source_columns=source_columns)
+                            compute_checksum, database, database_override_map, table_overrides_map, table, mysql_user, mysql_password, mysql_host, replica_hosts, pk_column, max_pk, args.where, ignored_columns = ignored_columns, debug_output = args.debug_output, defaults_file=args.defaults_file, partition_key = partition_key, lock_enabled=args.lock_tables_on_source, sleep_after_lock=args.sleep_after_lock, mysql_port=args.mysql_port, timestamp_columns=timestamp_columns, binary_columns=binary_columns, json_columns=json_columns, char_columns=char_columns, lock_wait_timeout=getattr(args, "lock_wait_timeout", 30), fences=fences, source_columns=source_columns)
                         future = executor.submit(
                             verify_table, checksum, mysql_host, replica_hosts, table_name,
                             *recheck_settings(args))
                     futures.append(future)
                     future_to_table[future] = table_name
-                skipped_tables = []
                 for future in concurrent.futures.as_completed(futures):
                     table_name = future_to_table[future]
                     exc = future.exception()
@@ -1589,11 +1746,11 @@ def run_config(config):
                         if isinstance(exc, LockAcquisitionError) and not getattr(args, "fail_on_lock_timeout", False):
                             # Default: a single un-lockable (continuously-written)
                             # table must not abort the whole run. Skip it and keep
-                            # comparing the rest. The skip is NOT silent -- it is
-                            # logged here and summarized loudly below as an explicit
-                            # coverage gap, so a green run never hides that a table
-                            # went unverified. Pass --fail_on_lock_timeout to make
-                            # any such timeout abort the run instead.
+                            # comparing the rest. The skip is an explicit coverage
+                            # gap: it is logged here and report_run_summary() names
+                            # the table and makes the run exit 1, unless
+                            # --allow_coverage_gap accepts the gap. Pass
+                            # --fail_on_lock_timeout to abort the run at the timeout.
                             logging.warning(
                                 "COVERAGE GAP -- skipping checksum for " + table_name +
                                 ": source lock could not be acquired: " + str(exc))
@@ -1611,13 +1768,6 @@ def run_config(config):
                         raise exc
                     else:
                         verdicts[table_name] = future.result()
-                if skipped_tables:
-                    logging.warning(
-                        "COVERAGE GAP -- checksum finished but " +
-                        str(len(skipped_tables)) +
-                        " table(s) were NOT compared (source lock timeout; pass "
-                        "--fail_on_lock_timeout to fail the run instead): " +
-                        ", ".join(skipped_tables))
 
         except (KeyboardInterrupt, SystemExit):
             logging.info("Received interrupt")
@@ -1627,7 +1777,11 @@ def run_config(config):
             logging.error(traceback.format_exc())
             sys.exit(1)
 
-    exit_code = report_run_summary(verdicts, args.fail_on_empty)
+    exit_code = report_run_summary(
+        verdicts, args.fail_on_empty, skipped_tables,
+        allow_coverage_gap=getattr(args, "allow_coverage_gap", False),
+        fail_on_different=getattr(args, "fail_on_different", False),
+        source_zone=getattr(args, "source_timezone", None))
     logging.debug("Exiting Main Thread")
     sys.exit(exit_code)
 
@@ -1736,13 +1890,13 @@ def main():
     parser.add_argument('--lock_tables_on_source', action='store_true', default=False,
                         help='Lock the table on the source so that source and target are in sync ...', required=False)
     parser.add_argument('--sleep_after_lock', type=int, help='When locking, sleeping n seconds', default=3)
-    parser.add_argument('--source_timezone', help='IANA time zone the connector interprets MySQL DATETIME values in (its database.connectionTimeZone); default: resolved from the MySQL server', required=False, default=None)
+    parser.add_argument('--source_timezone', help='IANA region name the connector interprets MySQL DATETIME values in (its database.connectionTimeZone), for example America/Chicago. REQUIRED: there is no default and the MySQL server zone is not read; pass UTC explicitly when the connector used UTC. One zone per run: a mixed-zone set needs one run per zone with --tables_regex', required=False, default=None)
     parser.add_argument('--binary_encoding', choices=['hex', 'base64', 'raw'], default='hex', required=False,
                         help='how the connector wrote binary values: hex text (default), base64 text (binary.handling.mode=base64) or raw bytes (persist.raw.bytes=true); passed to both sides')
     parser.add_argument('--min_datetime_value', required=False, default=None,
-                        help='Lower clamp bound for DATETIME/TIMESTAMP values, a UTC instant YYYY-MM-DD[ HH:MM:SS[.ffffff]]; passed to both sides only when given. Every value earlier than it compares as the bound on both sides, so differences below it are not detected. Default: not passed, each side uses the ClickHouse DateTime64 minimum (1900-01-01 00:00:00)')
+                        help='Lower clamp bound for DATETIME/TIMESTAMP values, a UTC instant YYYY-MM-DD[ HH:MM:SS[.ffffff]]; passed to both sides only when given. Every value earlier than it is clamped to it on the side that holds it, and a table with any clamped value is DIFFERENT (a clamped value cannot be compared exactly). Default: not passed, each side uses the ClickHouse DateTime64 minimum (1900-01-01 00:00:00)')
     parser.add_argument('--max_datetime_value', required=False, default=None,
-                        help='Upper clamp bound for DATETIME/TIMESTAMP values, a UTC instant YYYY-MM-DD[ HH:MM:SS[.ffffff]]; passed to both sides only when given. Every value at or after it compares as the bound on both sides, so differences above it are not detected; for example 2299-12-31 makes every value on 2299-12-31 compare equal whatever its time of day. Default: not passed, each side uses the ClickHouse DateTime64 maximum (2299-12-31 23:59:59)')
+                        help='Upper clamp bound for DATETIME/TIMESTAMP values, a UTC instant YYYY-MM-DD[ HH:MM:SS[.ffffff]]; passed to both sides only when given. Every value at or after it is clamped to it on the side that holds it, and a table with any clamped value is DIFFERENT. Default: not passed, each side uses the ClickHouse DateTime64 maximum (2299-12-31 23:59:59)')
     parser.add_argument('--include_floating_point_columns', action='store_true', default=False,
                         help='compare floating point columns (text renderings, not guaranteed identical in exponent notation); passed to both sides')
     parser.add_argument('--include_json_columns', action='store_true', default=False,
@@ -1750,7 +1904,11 @@ def main():
     parser.add_argument('--lock_wait_timeout', type=int, default=30,
                         help='Seconds to wait for the source READ lock on each table before giving up on that table (default 30). Bounds the wait so a continuously-written table fails fast instead of stalling the whole run for the server-default timeout.')
     parser.add_argument('--fail_on_lock_timeout', action='store_true', default=False,
-                        help='Abort the whole run if any table cannot be locked within --lock_wait_timeout. Default is to log a loud COVERAGE GAP warning, skip that one table, and keep checksumming the rest so a single continuously-written table does not fail the whole job.')
+                        help='Abort the whole run if any table cannot be locked within --lock_wait_timeout (that table gets no verdict and the run exits 1). Default: skip that one table, keep checksumming the rest, and exit 1 after the summary names the uncompared tables (a COVERAGE GAP).')
+    parser.add_argument('--allow_coverage_gap', action='store_true', default=False,
+                        help='Accept a COVERAGE GAP: a table skipped for a source lock timeout is still named in an INFO line, and the run exits 0 when nothing else fails it. Without this flag a skipped table fails the run (exit 1).')
+    parser.add_argument('--fail_on_different', action='store_true', default=False,
+                        help='Exit 1 when any table has a checksum difference (verdict DIFFERENT). Default: a difference is logged and the run exits 0 (spec 11.02 FM-11.02-1), so existing schedulers see no change.')
     parser.add_argument('--allow_replica_only_columns', action='store_true', default=False,
                         help='No-op, kept for drop-in compatibility. Columns that exist on a ClickHouse replica table but not in the source table (added on the destination only) are always out of parity scope: they are never compared and are logged once per table at INFO as tolerated, with no effect on the exit code, whether or not this flag is passed.')
     parser.add_argument('--fail_on_empty', action='store_true', default=False,
@@ -1776,6 +1934,7 @@ def main():
 
     global args
     args = parser.parse_args()
+    check_source_timezone_flag(parser, args.source_timezone)
     if args.consistent_snapshot and args.lock_tables_on_source:
         parser.error("--consistent_snapshot takes no lock: do not combine it with --lock_tables_on_source")
     if args.consistent_snapshot and args.debug_output:
@@ -1801,7 +1960,7 @@ def main():
     bounds = resolve_datetime_bounds(args, parser)
     if bounds:
         logging.info(f"Datetime clamp bounds passed to both sides: [{bounds[0]}, {bounds[1]}] (UTC instants); "
-                     f"values outside them compare as the bound")
+                     f"a table with a value outside them is DIFFERENT (clamped, not compared exactly)")
 
     # Parse the configuration file
     config = parse_config(args.config_file)

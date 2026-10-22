@@ -165,7 +165,9 @@ class TestScheduledJobRecheck(unittest.TestCase):
         sides = {"shop.orders": {"mysql": [[MD5_A, 5]], "clickhouse": [[MD5_B, 5]]},
                  "shop.items": {"mysql": [[MD5_B, 3]], "clickhouse": [[MD5_B, 3]]}}
         (code, log, sleeps) = self.run_job(sides, JOB_FLAGS)
-        warnings = [line for line in log if "WARNING" in line]
+        # The mixed-zone limit is logged once by the run summary, not once per pass, so it is left out here.
+        warnings = [line for line in log if "WARNING" in line and "Mixed-zone limit" not in line]
+        self.assertEqual(len([line for line in log if "Mixed-zone limit for shop.orders:" in line]), 1, "\n".join(log))
         self.assertEqual(len(warnings), 1, "\n".join(log))
         self.assertTrue(warnings[0].endswith(
             f" - Checksum difference : ('ch-host', 'shop.orders', '{MD5_B}', 5) to ('db1', 'shop.orders', '{MD5_A}', 5)"),
@@ -180,7 +182,7 @@ class TestScheduledJobRecheck(unittest.TestCase):
         sides = {"shop.orders": {"mysql": [[MD5_A, 5]], "clickhouse": [[MD5_B, 5], [MD5_A, 5]]},
                  "shop.items": {"mysql": [[MD5_B, 3]], "clickhouse": [[MD5_B, 3]]}}
         (code, log, sleeps) = self.run_job(sides, JOB_FLAGS + ["--recheck_differences", "0"])
-        warnings = [line for line in log if "WARNING" in line]
+        warnings = [line for line in log if "WARNING" in line and "Mixed-zone limit" not in line]
         self.assertEqual(len(warnings), 1, "\n".join(log))
         self.assertIn(" - Checksum difference : ('ch-host', 'shop.orders'", warnings[0])
         self.assertEqual(sleeps, [])

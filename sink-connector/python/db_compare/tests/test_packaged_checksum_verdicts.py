@@ -24,6 +24,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 import ch_sink_tools.db_compare.top_level_table_checksum as pt  # noqa: E402
 import ch_sink_tools.db_compare.mysql_table_checksum as pm  # noqa: E402
 import ch_sink_tools.db_compare.clickhouse_table_checksum as pc  # noqa: E402
+from ch_sink_tools.db.checksum_common import (  # noqa: E402
+    clickhouse_escape_piece_sql, mysql_escape_piece_sql,
+)
+
+
+def ch_piece(expression):
+    """A ClickHouse value piece as the row builder emits it (spec 11.02 section 3.3)."""
+    return clickhouse_escape_piece_sql(expression)
+
+
+def my_piece(expression):
+    """A MySQL value piece as the row builder emits it (spec 11.02 section 3.3)."""
+    return mysql_escape_piece_sql(expression)
 
 MYSQL_HOST = "db1"
 CH_HOST = "ch-host"
@@ -178,7 +191,8 @@ class TestPackagedParsingQuotingAndVerdicts(unittest.TestCase):
         self.assertFalse(any("No difference" in line for line in logs), logs)
         self.assertTrue(any(line.startswith("INFO:") and "side note" in line and "checksum_ratio" in line for line in logs),
                         "side WARNINGs must reach the driver log as side notes")
-        self.assertEqual([line for line in logs if "WARNING" in line],
+        # The run summary's mixed-zone limit is a WARNING of its own; this test pins the difference WARNING.
+        self.assertEqual([line for line in logs if "WARNING" in line and "Mixed-zone limit" not in line],
                          [f"WARNING:root:Checksum difference : ('{CH_HOST}', 'shop.orders', '{MD5_B}', 2) to "
                           f"('{MYSQL_HOST}', 'shop.orders', '{MD5_A}', 2)"])
 
@@ -190,7 +204,7 @@ class TestPackagedParsingQuotingAndVerdicts(unittest.TestCase):
             regex = value_after(cmd, "--tables_regex")
             self.assertTrue(re.fullmatch(regex, "orders$archive"), regex)
             self.assertFalse(re.fullmatch(regex, "orders"), regex)
-            self.assertIn(f" and {where} ", value_after(cmd, "--where"))
+            self.assertIn(f" and ({where}) ", value_after(cmd, "--where"))
         self.assertEqual(value_after(cmd, "--partition_key"), "to_days(dt)")
 
     def test_partition_literal_is_what_the_packaged_fstr_expects(self):
@@ -268,8 +282,10 @@ class TestPackagedDatetimeBounds(unittest.TestCase):
         self.assertNotIn("1969", ch_select)
 
     def test_standalone_side_defaults_agree(self):
-        mysql_defaults = parsed_defaults(pm, ["--mysql_host", "h", "--mysql_database", "d", "--tables_regex", "t"])
-        ch_defaults = parsed_defaults(pc, ["--clickhouse_host", "h", "--clickhouse_database", "d", "--tables_regex", "t"])
+        mysql_defaults = parsed_defaults(pm, ["--mysql_host", "h", "--mysql_database", "d", "--tables_regex", "t",
+                                              "--source_timezone", "UTC"])
+        ch_defaults = parsed_defaults(pc, ["--clickhouse_host", "h", "--clickhouse_database", "d", "--tables_regex", "t",
+                                           "--source_timezone", "UTC"])
         self.assertEqual(mysql_defaults.min_datetime_value, ch_defaults.min_datetime_value)
         self.assertEqual(mysql_defaults.max_datetime_value, ch_defaults.max_datetime_value)
 
@@ -278,24 +294,26 @@ class TestPackagedJsonCoverage(unittest.TestCase):
     """FM-13.06-7: JSON is excluded on both sides by default, with a WARNING."""
 
     def test_standalone_defaults_exclude_json(self):
-        self.assertFalse(parsed_defaults(pm, ["--mysql_host", "h", "--mysql_database", "d", "--tables_regex", "t"]).include_json_columns)
-        self.assertFalse(parsed_defaults(pc, ["--clickhouse_host", "h", "--clickhouse_database", "d", "--tables_regex", "t"]).include_json_columns)
+        self.assertFalse(parsed_defaults(pm, ["--mysql_host", "h", "--mysql_database", "d", "--tables_regex", "t",
+                                              "--source_timezone", "UTC"]).include_json_columns)
+        self.assertFalse(parsed_defaults(pc, ["--clickhouse_host", "h", "--clickhouse_database", "d", "--tables_regex", "t",
+                                              "--source_timezone", "UTC"]).include_json_columns)
 
     def test_mysql_side_excludes_json_with_a_warning(self):
         with self.assertLogs(level="WARNING") as logs:
             select = mysql_select_for([("id", "int", "NO", None), ("j", "json", "YES", None), ("name", "varchar(10)", "NO", "utf8mb4_bin")])
         self.assertNotIn("json_pretty", select)
         self.assertNotIn("`j`", select)
-        self.assertTrue(any("JSON columns ['j']" in line for line in logs.output), logs.output)
+        self.assertTrue(any("1 JSON column ['j']" in line for line in logs.output), logs.output)
 
     def test_clickhouse_side_excludes_named_json_string_columns_with_a_warning(self):
         with self.assertLogs(level="WARNING") as logs:
             select = clickhouse_select_for([("id", "Int32", 0, None), ("j", "Nullable(String)", 1, None),
                                             ("name", "String", 0, None)], args_overrides={"json_columns": "j"})
-        self.assertEqual(select, "toString(\"id\")||'#'||toString(\"name\")"
-                                 "||'#'||case when \"id\" is null then '1' else '0' end "
+        self.assertEqual(select, ch_piece('toString("id")') + "||'#'||" + ch_piece('toString("name")')
+                                 + "||'#'||case when \"id\" is null then '1' else '0' end "
                                  "|| case when \"name\" is null then '1' else '0' end")
-        self.assertTrue(any("JSON columns ['j']" in line for line in logs.output), logs.output)
+        self.assertTrue(any("1 JSON column ['j']" in line for line in logs.output), logs.output)
 
     def test_driver_derives_json_columns_for_the_clickhouse_side(self):
         captured = []
@@ -310,8 +328,8 @@ class TestPackagedJsonCoverage(unittest.TestCase):
 
     def test_skipped_last_column_leaves_no_dangling_separator(self):
         select = clickhouse_select_for([("id", "Int32", 0, None), ("name", "String", 0, None), ("f", "Float64", 0, None)])
-        self.assertEqual(select, "toString(\"id\")||'#'||toString(\"name\")"
-                                 "||'#'||case when \"id\" is null then '1' else '0' end "
+        self.assertEqual(select, ch_piece('toString("id")') + "||'#'||" + ch_piece('toString("name")')
+                                 + "||'#'||case when \"id\" is null then '1' else '0' end "
                                  "|| case when \"name\" is null then '1' else '0' end")
 
 
@@ -321,7 +339,7 @@ class TestPackagedClickHouseSideIsReadOnly(unittest.TestCase):
     def test_main_runs_no_ddl(self):
         execute = MagicMock(return_value=([], 0))
         argv = ["ch-ch-checksum", "--clickhouse_host", "h", "--clickhouse_database", "d", "--tables_regex", "t",
-                "--clickhouse_user", "u", "--clickhouse_password", "p"]
+                "--clickhouse_user", "u", "--clickhouse_password", "p", "--source_timezone", "UTC"]
         root = logging.getLogger()
         handlers = list(root.handlers)
         with patch.object(sys, "argv", argv), patch.object(pc, "get_connection", return_value=MagicMock()), \
@@ -429,12 +447,14 @@ class TestPackagedNullFlagsOverEveryComparedColumn(unittest.TestCase):
                                            ("is_valid", "Int8", 0, None)])
         self.assertEqual(packaged_mysql_flag_columns(mysql_select), ["id", "name", "is_valid"])
         self.assertEqual(packaged_clickhouse_flag_columns(ch_select), ["id", "name", "is_valid"])
-        self.assertEqual(mysql_select, "`id`,ifnull(`name`,''),ifnull(`is_valid`,''),"
-                                       "concat(ISNULL(`id`),ISNULL(`name`),ISNULL(`is_valid`))")
+        self.assertEqual(mysql_select, my_piece("`id`") + "," + my_piece("ifnull(`name`,'')") + ","
+                                       + my_piece("ifnull(`is_valid`,'')")
+                                       + ",concat(ISNULL(`id`),ISNULL(`name`),ISNULL(`is_valid`))")
         self.assertEqual(ch_select,
-                         "toString(\"id\")||'#'||case when \"name\" is null then '' else toString(\"name\") end"
-                         "||'#'||toString(\"is_valid\")"
-                         "||'#'||case when \"id\" is null then '1' else '0' end "
+                         ch_piece('toString("id")') + "||'#'||"
+                         + ch_piece("case when \"name\" is null then '' else toString(\"name\") end")
+                         + "||'#'||" + ch_piece('toString("is_valid")')
+                         + "||'#'||case when \"id\" is null then '1' else '0' end "
                          "|| case when \"name\" is null then '1' else '0' end "
                          "|| case when \"is_valid\" is null then '1' else '0' end")
 
@@ -446,10 +466,10 @@ class TestPackagedNullFlagsOverEveryComparedColumn(unittest.TestCase):
                                            ("j", "Nullable(String)", 1, None), ("secret", "Nullable(String)", 1, None),
                                            ("name", "String", 0, None)],
                                           args_overrides={"exclude_columns": ["secret"], "json_columns": "j"})
-        self.assertEqual(mysql_select, "`id`,`name`,concat(ISNULL(`id`),ISNULL(`name`))")
+        self.assertEqual(mysql_select, my_piece("`id`") + "," + my_piece("`name`") + ",concat(ISNULL(`id`),ISNULL(`name`))")
         self.assertEqual(ch_select,
-                         "toString(\"id\")||'#'||toString(\"name\")"
-                         "||'#'||case when \"id\" is null then '1' else '0' end "
+                         ch_piece('toString("id")') + "||'#'||" + ch_piece('toString("name")')
+                         + "||'#'||case when \"id\" is null then '1' else '0' end "
                          "|| case when \"name\" is null then '1' else '0' end")
 
     def test_table_without_nullable_columns_gets_one_flag_per_column(self):

@@ -25,9 +25,10 @@ from ch_sink_tools.db.clickhouse import (
 )
 from ch_sink_tools.db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
                                 clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
-                                validate_timezone, shift_datetime_bounds, saturation_floor, parse_column_list,
-                                warn_not_compared,
-                                parse_exclude_columns)
+                                validate_timezone, resolve_source_zone, check_source_timezone_flag, shift_datetime_bounds, saturation_floor,
+                                parse_column_list, warn_not_compared,
+                                parse_exclude_columns, clickhouse_escape_piece_sql, clickhouse_decimal_text,
+                                clickhouse_pad_space_text)
 
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
@@ -143,8 +144,9 @@ def clickhouse_column_expression(column_name, data_type, numeric_scale, options,
         # toString(Bool) would give true / false.
         return "toString(toUInt8(" + column_name + "))"
     if "Decimal" in data_type:
-        # toString() drops trailing zeros; MySQL prints the declared scale.
-        return "toDecimalString(" + column_name + "," + str(numeric_scale) + ")"
+        # toString() drops trailing zeros; MySQL prints the declared scale. Both sides then drop the
+        # trailing zeros, so the same value at a different declared scale compares equal (spec 11.02 section 3.3).
+        return clickhouse_decimal_text("toDecimalString(" + column_name + "," + str(numeric_scale) + ")")
     if is_datetime_type(data_type):
         return clamp_datetime_expression(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1], 'clickhouse',
                                          saturate_from)
@@ -198,6 +200,8 @@ def build_clickhouse_row_expression(columns_metadata, options):
     # String columns that replicate a MySQL JSON column; the catalog cannot
     # tell them from any other String (spec 11.02 section 3.9).
     json_columns = parse_column_list(options.json_columns)
+    # String columns whose MySQL type is CHAR: trailing spaces are not significant (PAD SPACE, spec 11.02 section 3.3).
+    char_columns = parse_column_list(getattr(options, "char_columns", ""))
     skipped = {"floating point": [], "JSON": []}
     for row in columns_metadata:
         column_name = '"' + row[0] + '"'
@@ -218,13 +222,15 @@ def build_clickhouse_row_expression(columns_metadata, options):
             continue
         expression = clickhouse_column_expression(column_name, data_type, numeric_scale, options, bounds, zone,
                                                   raw_bytes=(row[0] in hex_columns), saturate_from=floor)
+        if row[0] in char_columns and 'String' in data_type and row[0] not in hex_columns:
+            expression = clickhouse_pad_space_text(expression)
         if is_datetime_type(data_type):
             clamped_flags.append(clamped_datetime_flag(clickhouse_datetime_rendering(column_name, zone), bounds[0], bounds[1],
                                                        floor))
         if is_nullable == 1:
             nullables.append(column_name)
             expression = "case when " + column_name + " is null then '' else " + expression + " end"
-        parts.append(expression)
+        parts.append(clickhouse_escape_piece_sql(expression))
         compared.append(column_name)
     logging.debug(str(nullables))
     if len(compared) > 0:
@@ -392,7 +398,9 @@ def select_table_statements(table, query, select_query, order_by, external_colum
         limit = " limit "+args.debug_limit
     where = "1=1"
     if _where:
-       where = _where
+       # the user text is one operand: parenthesised before the sign filter is
+       # ANDed onto it (spec 11.02 section 3.11)
+       where = f"({_where})" if sign_column else _where
     schema=args.clickhouse_database
     # skip deleted rows of a Collapsing engine; a ReplacingMergeTree with
     # is_deleted needs no filter, FINAL drops them (spec 11.02 section 3.8)
@@ -531,7 +539,7 @@ def build_argument_parser():
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
     parser.add_argument('--exclude_columns', help='columns to exclude (comma or space separated)', nargs='+', default=['_sign,_version,is_deleted,_is_deleted'])
     parser.add_argument('--threads', type=int, help='number of parallel threads', default=1)
-    parser.add_argument('--source_timezone', help='IANA time zone the connector interprets MySQL DATETIME values in (its database.connectionTimeZone); DateTime columns not listed in --timestamp_columns are rendered in it', default='UTC', required=False)
+    parser.add_argument('--source_timezone', help='IANA region name the connector interprets MySQL DATETIME values in (its database.connectionTimeZone), for example America/Chicago; DateTime columns not listed in --timestamp_columns are rendered in it. REQUIRED: no default and no server query; pass UTC explicitly when the connector used UTC', default=None, required=False)
     parser.add_argument('--timestamp_columns', help='comma separated names of the columns that replicate a MySQL TIMESTAMP; they are compared as UTC instants', default='', required=False)
     parser.add_argument('--min_datetime_value', help='Lower clamp bound for datetime values (same value on both sides; default is the ClickHouse DateTime64 minimum)', default=DATETIME_MIN, required=False)
     parser.add_argument('--max_datetime_value', help='Upper clamp bound for datetime values (same value on both sides; default is the ClickHouse DateTime64 maximum)', default=DATETIME_MAX, required=False)
@@ -541,6 +549,7 @@ def build_argument_parser():
     parser.add_argument('--include_json_columns', action='store_true', default=False,
                         help='JSON columns (native JSON and the String columns named in --json_columns) are not compared by default (each table logs a WARNING naming them); this compares the stored text against the MySQL side\'s best-effort rendering. Pass it to both sides.', required=False)
     parser.add_argument('--json_columns', help='comma separated names of the String columns that replicate a MySQL JSON column', default='', required=False)
+    parser.add_argument('--char_columns', help='comma separated names of the String columns whose MySQL type is CHAR: trailing spaces are not compared (MySQL PAD SPACE). Forwarded by the driver; pass it to this side when running it alone.', default='', required=False)
     parser.add_argument('--source_columns', help='the source table\'s column names as a JSON list (the driver passes this) or comma separated; replica columns absent from it are not compared (each table logs a WARNING naming them). Empty: every replica column is compared', default='', required=False)
     return parser
 
@@ -549,8 +558,10 @@ def main():
     parser = build_argument_parser()
     global args
     args = parser.parse_args()
+    check_source_timezone_flag(parser, args.source_timezone)
     (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
-    validate_timezone(args.source_timezone, '--source_timezone')
+    (args.source_timezone, zone_source) = resolve_source_zone(args.source_timezone)
+    logging.info(f"source time zone: {args.source_timezone} (source={zone_source})")
 
     root = logging.getLogger()
     root.setLevel(logging.INFO)

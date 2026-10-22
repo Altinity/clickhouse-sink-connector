@@ -83,7 +83,7 @@ NON_PARTITIONED_RUN = ["--binary_encoding", "base64", "--source_timezone", "UTC"
                        "--exclude_tables_regex", "(temp|_p[0-9]|no_partition|heartbeat)"]
 
 CLEAN_NOTES = [
-    ("WARNING", "Not compared in table shop.orders: JSON columns ['doc'] (pass --include_json_columns for a best-effort text comparison)"),
+    ("WARNING", "Not compared in table shop.orders: 1 JSON column ['doc'] (pass --include_json_columns for a best-effort text comparison)"),
     ("WARNING", "Connection was closed, reconnecting."),
     ("WARNING", "first warning : WARNING-level server notice"),
 ]
@@ -175,7 +175,7 @@ class TestScheduledJobLogContract(unittest.TestCase):
             self.assertTrue(any(" - INFO - " in line and "EMPTY on both sides for shop.empty_t" in line for line in log), log)
             self.assertTrue(any(" - INFO - " in line and "EMPTY on both sides: 1 table(s) compared 0 rows" in line
                                 for line in log), log)
-            self.assertTrue(any(" - INFO - " in line and "side note" in line and "JSON columns ['doc']" in line
+            self.assertTrue(any(" - INFO - " in line and "side note" in line and "1 JSON column ['doc']" in line
                                 for line in log), log)
             self.assertTrue(any("Run summary: 3 table(s) verified: 2 MATCH, 0 DIFFERENT, 1 EMPTY, 0 ERROR" in line
                                 for line in log), log)
@@ -187,8 +187,10 @@ class TestScheduledJobLogContract(unittest.TestCase):
         sides = clean_sides()
         sides["shop.orders"]["clickhouse"] = [MD5_B, 5, CLEAN_NOTES, 0]
         (code, log) = self.run_job(sides, PARTITIONED_RUN)
-        warnings = [line for line in log if "WARNING" in line]
+        # The run summary adds one mixed-zone WARNING for the DIFFERENT table; the difference WARNING is still the only other one.
+        warnings = [line for line in log if "WARNING" in line and "Mixed-zone limit" not in line]
         self.assertEqual(len(warnings), 1, "\n".join(log))
+        self.assertEqual(len([line for line in log if "Mixed-zone limit for shop.orders:" in line]), 1, "\n".join(log))
         self.assertIn(" - WARNING - ", warnings[0])
         self.assertTrue(warnings[0].endswith(
             f" - Checksum difference : ('ch-host', 'shop.orders', '{MD5_B}', 5) to ('db1', 'shop.orders', '{MD5_A}', 5)"),
