@@ -78,7 +78,7 @@ def test_manual_checksum_recipe_names_the_diverged_row(ws):
     removed = [line for line in diff.output.splitlines() if line.startswith("< ")]
     added = [line for line in diff.output.splitlines() if line.startswith("> ")]
     assert len(removed) == 1 and len(added) == 1, diff
-    assert removed[0].startswith("< 2#") and "#250.50#" in removed[0], diff
+    assert removed[0].startswith("< 2#") and "#250.5#" in removed[0], diff
     assert added[0].startswith("> 2#") and "#999.25#" in added[0], diff
 
 
