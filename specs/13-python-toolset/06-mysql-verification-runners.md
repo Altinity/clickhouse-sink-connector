@@ -162,10 +162,9 @@ Each side script writes its log to **stdout** (`logging.StreamHandler(sys.stdout
 code is the side script's own `str(process.poll())`. A side that cannot be started (`OSError`) gives rc `127`.
 `run_quick_safe_checksum` then:
 
-- relays every side line containing ` - ERROR - ` or ` - CRITICAL - ` at ERROR, a side floating point `Not
-  compared` line at WARNING, and every other side line containing ` - WARNING - ` at INFO as `<host> <table>
-  side note: <line>`, with the level word removed and any other `WARNING` lowered (`relay_side_messages`,
-  `side_note_text`, §3.17);
+- relays every side line containing ` - ERROR - ` or ` - CRITICAL - ` at ERROR, and every side line containing
+  ` - WARNING - `, a floating point `Not compared` line included, at INFO as `<host> <table> side note: <line>`,
+  with the level word removed and any other `WARNING` lowered (`relay_side_messages`, `side_note_text`, §3.17);
 - on rc 0 when the side logged an ERROR or CRITICAL line, logs `<argv>. logged an ERROR although it exited 0`
   and the last 20 side lines at ERROR, and returns `None`, so the table is `ERROR`;
 - otherwise on rc 0, parses the output with `parse_checksum` (§3.8). An unparseable output logs the last 20 side
@@ -1083,9 +1082,9 @@ Faults:
   `execute_mysql` logs when the client library raises a Python warning on the driver's own catalog or lock
   queries. Side scripts run standalone still log their notices at WARNING. Pinned by
   `sink-connector/python/db_compare/tests/test_checksum_job_log_contract.py::TestScheduledJobLogContract`.
-- **Side output.** The driver relays side ERROR and CRITICAL lines at ERROR, a side floating point `Not compared`
-  line at WARNING, and other side WARNING lines at INFO (above), logs the last 20 side lines at ERROR when a side fails or its output cannot be parsed, and logs the
-  command and the side output at DEBUG.
+- **Side output.** The driver relays side ERROR and CRITICAL lines at ERROR and every side WARNING line, a
+  floating point `Not compared` line included, at INFO (above), logs the last 20 side lines at ERROR when a side
+  fails or its output cannot be parsed, and logs the command and the side output at DEBUG.
 - **Resources.** Per table, the legacy driver holds:
   - one lock connection (when locking);
   - one metadata connection per database, never closed;

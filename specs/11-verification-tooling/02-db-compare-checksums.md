@@ -361,7 +361,7 @@ precision, never trimmed:
     names every table it covers; the driver passing each table's zone into the
     side commands it builds for that table (it already runs both side scripts
     once per table with `--tables_regex`); the zone in the INFO line and in the
-    mixed-zone WARNING; and a rule for a table missing from the map. It is not a
+    mixed-zone INFO line; and a rule for a table missing from the map. It is not a
     trivial change, and no tool can check the zone an operator gives for a
     table, so it is not built.
   - **Loader (`db_load`) and ch-mysql-resync: the flag is required on every run.**
@@ -928,8 +928,8 @@ connect to a database.
   - `TestFloatAndJsonCoverage` — §3.9: by default both sides skip float and
     JSON columns (MySQL by `DATA_TYPE`; ClickHouse by `Float*`, `JSON`,
     `Object('json')` and `--json_columns`) and log one `Not compared` line per
-    table and kind naming them (a float line is a WARNING in the driver log, a
-    JSON line an INFO side note); the opt-in flags include them; the driver passes
+    table and kind naming them (the driver relays a float line and a JSON line
+    as INFO side notes; a side run on its own logs both at WARNING); the opt-in flags include them; the driver passes
     `--json_columns` and the two include flags through.
   - `TestClampedRowCounts` — §3.4: both aggregate queries carry
     `coalesce(sum(clamped),0)`; a table without datetime columns contributes
