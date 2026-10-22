@@ -29,8 +29,8 @@ retention.
 Created once at engine start (`connectorStarted`, when `enable=true`) as
 `CREATE DATABASE IF NOT EXISTS <replication.history.database.name>` followed
 by (golden text from `BinLogHistoryTest.testCreateHistoryTableSyntax()`, with
-`ttl = replication.history.ttl` and `tz` = `clickhouse.datetime.timezone` if
-set, else the server's `timezone()`):
+`ttl = replication.history.ttl` and `tz` = `clickhouse.datetime.timezone`, which
+is mandatory with no server-zone fallback (Spec 07.03 §3.1.2)):
 
 ```
 CREATE TABLE IF NOT EXISTS `<db>`.`<table>`(
@@ -90,8 +90,30 @@ Sorting key `(server_id, logfile, position, sequence, _time)`:
 | `row` | `struct.getRow()` | same |
 | `sequence` | §3.2 | same |
 
-`_operation` spelling differs from the SCD2 tables (12.03 §3.7). The
-timezones default to UTC when unset.
+`_operation` spelling differs from the SCD2 tables (12.03 §3.7).
+
+### 3.5 Zones of the history table and the instants it stores
+- **History zone** (the `tz` of §3.1, the zone of the `_time` column and the
+  zone the history statements render wall digits in) is
+  `clickhouse.datetime.timezone`. The key is mandatory (Spec 07.03 §3.1.2), so there
+  is no fallback to the ClickHouse server zone (`SELECT timezone()`) and no fallback to UTC.
+  This is the single resolution; §3.1 and the `_time` DDL both use it.
+- **Source zone** (`database.connectionTimeZone`) does not apply to history
+  rows: every history timestamp is an instant (`source.ts_ms`, the record's
+  `tsSec`, the sentinel), not zone-less digits, so none of them is reinterpreted
+  through the source zone.
+- **Every history instant is epoch-exact** (07.03 §3.1.9, §3.1.12): `_time`
+  is epoch text; `_valid_from`, `_valid_to`, `deleted_time` and
+  `deleted_from_time` are written as `toDateTime(<epoch seconds>)` in the SQL
+  statements and bound as a numeric epoch where a bind is used. The wall digits of
+  an instant in the history zone are not written, because a second-precision
+  column cannot hold the second pass of a fall-back overlap hour in digits.
+- **Open-row sentinel**: `_valid_to` open rows are `4102444800`
+  (`2100-01-01T00:00:00Z`), the same instant in the bind, the closing predicate
+  and the column DEFAULT (07.03 §3.1.12).
+- Tests: `BinLogHistoryTest.historyInstantsAreEpochExactInEveryZone()`,
+  `QueryFormatterTest.historyInstantLiteralsAreEpochSeconds()`,
+  `ReplicationHistoryHandlerTest.openRowSentinelIsOneInstantInEveryPosition()`.
 
 ### 3.4 When rows are written
 - **DML**: the **first** step of every batch on both executors

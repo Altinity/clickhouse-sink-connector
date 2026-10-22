@@ -224,9 +224,18 @@ UPDATE arrives with its untouched (or BLOB/TEXT) columns absent, and the
 full-row replace writes them as NULL — silent, count-clean, on every update.
 `BinlogRowImagePreflight.check(props)` therefore refuses to start
 (`IllegalStateException` out of `setup()`, with an ERROR banner naming the
-value and the fix) when the source reports a readable value other than `FULL`;
-an unreadable value is a WARN, and `binlog.row.image.check.skip=true` is a WARN
-banner on every start (spec 01.01 §3.2).
+value and the fix) when the source reports a value other than `FULL`, and when
+the value cannot be read: a source that cannot be asked is not a source that
+can be shown to log full images. `binlog_row_value_options` containing
+`PARTIAL_JSON` is refused the same way, and a partial update event met at
+runtime stops the engine (spec 01.10 section 3.1). `binlog.row.image.check.skip=true`
+is a WARN banner on every start (spec 01.01 §3.2).
+
+The check is repeated before every in-process engine restart. A refusal there
+is terminal, not retried: the source has changed to a value the connector does
+not replicate, and a restarted engine would write NULLs at once. An unreadable
+value there is a failed attempt that draws on the retry budget (section 3.5),
+so a source that is briefly unreachable does not end replication on its own.
 
 ### 3.7 Loss-by-design options are announced, never defaulted on
 Two options make the replica diverge from the source on purpose. They are
@@ -434,6 +443,26 @@ parsed statement's shape, decided before any translation is attempted,
 so a genuine translation failure on a managed table can never be
 mistaken for one of them.
 
+### 3.11 A DDL that rewrites stored values, and an invalid ignore rule, halt
+Some DDL changes the stored values of rows MySQL already holds, and the binlog
+carries no row event for it: `ALTER TABLE ... CONVERT TO CHARACTER SET` (MySQL
+re-encodes every string column in place), `DISCARD TABLESPACE` and `IMPORT
+TABLESPACE`, and `EXCHANGE PARTITION ... WITH TABLE`, `DISCARD PARTITION` and
+`IMPORT PARTITION`. Before this fix these clauses were no-ops: the replica kept
+the old values, the offset advanced, and a count-clean compare never showed the
+divergence. `MySqlDDLParserListenerImpl` now throws `DDLReplicationException`
+naming the clause, so the connector halts (spec 06.08 section 3.1) instead of
+acknowledging the statement. `DEFAULT CHARACTER SET` changes no existing row
+and stays a no-op. `DROP PARTITION` and `TRUNCATE PARTITION` are not in this
+class: they stay ignored under `disable.drop.truncate` (spec 06.08 section 3.3),
+with a WARN.
+
+An `ignore.ddl.regex` rule that is blank or does not compile was the same kind
+of silent loss: the failure was caught where the DDL was filtered, and the DDL
+was skipped. `IgnoreDdlRegexPreflight.check` now refuses the start for such a
+rule, and a rule that fails when it is evaluated throws `DDLReplicationException`
+and halts (spec 01.03 FM-01.03-2).
+
 ---
 
 ## 4. Invariants Preserved
@@ -605,4 +634,29 @@ A FATAL classification, a dead worker and an exhausted engine budget all end in 
   - **RTO**: detection immediate; restart as FM-10.04-1; unmeasured.
   - **Test**: `PostgreSQLDDLParserServiceTest.unparseablePostgresDdlPropagatesInsteadOfBeingSwallowed()`.
 
-Summary: 9 failure modes, 2 DEFECT, 2 GAP.
+- **FM-10.04-10 A DDL that rewrites stored values, or an invalid ignore rule, halts instead of being skipped (fixed)**
+  - **Trigger**: an `ALTER TABLE` on a captured table carrying `CONVERT TO
+    CHARACTER SET`, `DISCARD TABLESPACE`, `IMPORT TABLESPACE`, `EXCHANGE
+    PARTITION`, `DISCARD PARTITION` or `IMPORT PARTITION` (section 3.11); or an
+    `ignore.ddl.regex` entry that is blank or does not compile.
+  - **Behaviour**: `MySqlDDLParserListenerImpl` throws `DDLReplicationException`
+    naming the clause and the statement. `IgnoreDdlRegexPreflight.check`
+    refuses the start with `IllegalStateException` ("Refusing to start"), and
+    a rule that fails at evaluation throws `DDLReplicationException` naming the
+    rule. Before the fix the clause was skipped as a no-op, and the rule failure
+    dropped the DDL and let the offset pass it.
+  - **Detection**: at start, the "Refusing to start" message; during replication,
+    the engine stops with `DDLReplicationException` and the ERROR/FATAL sequence
+    of FM-10.04-1.
+  - **Blast radius**: the pipeline stops; the statement is not applied and the
+    offset is not committed past it. Before the fix, ClickHouse kept the old
+    values of every affected row and the count-clean compare did not show it.
+  - **Recovery**: for a rewrite clause, apply the equivalent change to ClickHouse
+    out of band and skip the statement at the source; for a rule, correct
+    `ignore.ddl.regex`. Restart per FM-10.04-6.
+  - **RTO**: detection immediate; restart as FM-10.04-1; unmeasured.
+  - **Test**: `DdlTranslationFailureModesTest.dataChangingPartitionOperationIsLoud()`,
+    `MySqlDDLParserListenerImplTest.testAlterConvertCharsetIsRefusedNotSkipped()`,
+    `IgnoreDdlRegexPreflightTest`, `DdlIgnoreRuleFailureIsLoudTest.invalidIgnoreRegexDoesNotSilentlySkipTheDdl()`.
+
+Summary: 10 failure modes, 2 DEFECT, 2 GAP.

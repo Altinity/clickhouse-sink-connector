@@ -64,14 +64,38 @@ For every table selected by `--tables_regex` (and the optional
 1. Reads the integer primary key, its min/max, the partition expression and
    the list of `TIMESTAMP` columns from MySQL `information_schema` on a
    shared connection, and resolves the **source time zone**
-   (`resolve_source_timezone()`): `--source_timezone` if given, else
-   `@@session.time_zone`, falling back to `@@system_time_zone` when that is
-   `SYSTEM`. The value must be an IANA name (a `CST`-style abbreviation or a
-   `+05:00` offset is refused with an error naming the flag) and it must be
-   the zone the connector's `database.connectionTimeZone` names, because it
+   (`resolve_source_timezone()`) from `--source_timezone` only. The flag is
+   required by every checksum tool: the top-level driver, `mysql_table_checksum.py`,
+   `clickhouse_table_checksum.py` and their wrappers. A run without it is refused
+   before any connection is opened, with an error that names `--source_timezone`,
+   suggests a region (for example `--source_timezone America/Chicago`) and states
+   that `--source_timezone UTC` must be passed explicitly when the connector used
+   UTC. No tool queries `@@session.time_zone` or `@@system_time_zone`, and no tool
+   assumes UTC (§3.4). `resolve_source_zone(flag)` validates the flag: an empty
+   flag is refused, never read as unset. Every run prints the effective zone on
+   one line, `source time zone: <zone> (source=flag)`, and the one-zone rule
+   (below). The value must be an IANA name (a `CST`-style abbreviation, an empty
+   value or a `+05:00` offset is refused with an error naming the flag) and it must
+   be the zone the connector's `database.connectionTimeZone` names, because it
    defines what instant a MySQL `DATETIME` denotes (§3.4). The zone is passed
    to both side scripts as `--source_timezone`, the column list to the
    replica script as `--timestamp_columns`.
+   **One zone per invocation.** `connectionTimeZone` is a property of the
+   connector instance, so one run compares every selected table in one zone. A
+   database whose tables were written in different zones (mixed zone) needs one
+   invocation per zone, each selecting its tables with `--tables_regex` (and
+   `--exclude_tables_regex`). **Mixed-zone detection: not implemented, and it
+   cannot be done from the data.** A checksum digest does not record the zone a
+   table was written in, and a DATETIME verdict of DIFFERENT looks the same for a
+   wrong zone and for data drift. The tool therefore does not claim a detection.
+   It prints the one-zone rule on every run, and each table with a DIFFERENT
+   verdict gets one WARNING in the run summary (spec 13.06) that names the table
+   and the zone this run compared in: `Mixed-zone limit for <table>: DIFFERENT,
+   and this run read every DATETIME/TIMESTAMP value in <zone> (--source_timezone)
+   ...`. That WARNING is the documented, loud limit of a mixed-zone database, not
+   a silent false positive. It names only the run's zone, because the tool does
+   not know the other zone. A clean run logs none. The per-table zone option that
+   would remove the limit is described in §3.4 and is not built.
 2. If `--lock_tables_on_source` is set, opens a dedicated MySQL connection,
    runs `SET SESSION lock_wait_timeout = <--lock_wait_timeout>` (default 30
    seconds) and then `LOCK TABLES <table> READ`, and sleeps
@@ -93,15 +117,21 @@ For every table selected by `--tables_regex` (and the optional
      deliberately not a `1205` substring match: an unrelated error on a
      table named `trades_1205`, or any message that merely contains those
      digits, must never be reclassified as a skippable timeout.
-   - **Default: skip-and-warn.** `run_config()` logs
+   - **Default: skip, name, and fail the run.** `run_config()` logs
      `WARNING COVERAGE GAP -- skipping checksum for <db>.<table>: source
      lock could not be acquired`, records the table, and keeps
-     checksumming the remaining tables; after the last table it logs one
-     `WARNING COVERAGE GAP -- checksum finished but <n> table(s) were NOT
-     compared` naming every skipped table (§3.9). Both are driver log
-     lines, not side-script output, so step 4's parser never sees them.
-     `--fail_on_lock_timeout` makes any such timeout abort the run instead,
-     as every other exception from a table still does.
+     checksumming the remaining tables. The skipped list spans every
+     database of the run. After the last table `report_run_summary()`
+     logs `ERROR COVERAGE GAP: <n> table(s) were NOT compared (source lock
+     timeout), so the run fails: <names>` and the run exits 1 (§3.9).
+     `--allow_coverage_gap` is the opt-out: the same names are logged as
+     `INFO COVERAGE GAP accepted (--allow_coverage_gap)` and the run
+     exits 0 when nothing else fails it. The accepted line is INFO, not
+     WARNING: the driver log keeps WARNING for differences only (step 4). Both are driver log lines, not
+     side-script output, so step 4's parser never sees them.
+     `--fail_on_lock_timeout` makes any such timeout abort the run instead
+     (that table gets no verdict, so the run exits 1), as every other
+     exception from a table still does.
 3. Runs `mysql_table_checksum.py` and one `clickhouse_table_checksum.py` per
    replica host **concurrently under the lock** (`compute_checksum()`), each
    restricted to the table with `--tables_regex "^<table>$"` and the same
@@ -200,18 +230,57 @@ single character `#`:
   for equal values, while a MySQL NULL against the ClickHouse default still
   differs in its flag (spec 13.06 D-13.06-40,
   `test_checksum_fidelity.py::TestNullFlagsOverEveryComparedColumn`).
+- **Escaping (format v2).** Every value piece is escaped before the join:
+  each backslash is doubled first, then each `#` is prefixed with a
+  backslash (`escape_checksum_piece()` / `join_checksum_pieces()` in
+  `db/checksum_common.py`). The join is therefore injective on the pieces: an
+  unescaped `#` in the joined text can only be a separator, so `a#b` + `c` and
+  `a` + `b#c` are different texts (before v2 both gave `a#b#c`). The NULL guard
+  and the value expression are escaped together, so an empty piece stays empty.
+  The flags element is `0`/`1` text and is not escaped. Both renderers apply the
+  same escape with the same vectors: MySQL
+  `REPLACE(REPLACE(<piece>, CHAR(92 USING utf8mb4), CONCAT(CHAR(92 USING utf8mb4), CHAR(92 USING utf8mb4))), '#', CONCAT(CHAR(92 USING utf8mb4), '#'))`,
+  ClickHouse `replaceAll(replaceAll(<piece>, char(92), concat(char(92), char(92))), '#', concat(char(92), '#'))`.
+  The backslash is produced by `CHAR(92)` / `char(92)`, not written as a
+  literal, so the result does not depend on `NO_BACKSLASH_ESCAPES`. Vectors:
+  `a#b` -> `a\#b`, `a\b` -> `a\\b`, `a\#b` -> `a\\\#b`
+  (`db_compare/tests/test_checksum_row_escaping.py`;
+  `test_checksum_fidelity.py::TestClickHouseRowExpression`). Changing the
+  escape changes every row hash, so the printed checksum carries the format tag
+  `v2` (§3.5).
 - Per-type rendering (both sides must produce byte-identical text for equal
   values):
 
 | MySQL type (`DATA_TYPE`) | ClickHouse type | MySQL expression | ClickHouse expression |
 |---|---|---|---|
 | integers, `year`, `char`/`varchar`/`text`, `enum`, `set` | `Int*`/`UInt*`, `String`, `LowCardinality(String)` | the column (`convert(col using utf8mb4)` when the table mixes collations) | `toString(col)` |
-| `decimal` | `Decimal(p,s)` | the column (MySQL prints the declared scale) | `toDecimalString(col, s)` (`numeric_scale` from `system.columns`; `toString` would drop trailing zeros) |
-| `date` | `Date`/`Date32` | `case when col >= max then max when col <= min then min else col end` with `--min_date_value` / `--max_date_value` | `toString(col)` |
+| `decimal` | `Decimal(p,s)` | the column, then the trailing zeros after the point and the bare point removed (`mysql_decimal_text`) | `toDecimalString(col, s)` (`numeric_scale` from `system.columns`), then the same removal (`clickhouse_decimal_text`) |
+| `date` | `Date`/`Date32` | `case when col >= max then max when col <= min then min else col end` with `--min_date_value` / `--max_date_value`; the clamp is counted (`clamped_date_flag`, §3.4) | `toString(col)` (a Date32 replica cannot hold an out-of-range value, so it counts nothing) |
 | `time(p)`, any `p` | `String` holding `[-]HH:MM:SS.ffffff` (spec 07.03 §3.2) | `cast(col as time(6))` — six fraction digits unconditionally; the old `substr(cast(col as time(6)),1,length(col))` truncated `time(0)` to `10:00:00` and reported DIFFERENT (`test_checksum_fidelity.py::TestMySQLTemporalRendering.test_time_is_rendered_with_six_fraction_digits_for_every_precision`) | `toString(col)` |
 | `datetime(p)`, `timestamp(p)` | `DateTime`, `DateTime64(s[, tz])` | §3.4 | §3.4 |
 | `bit(1)` (`COLUMN_TYPE` exactly `bit(1)`; Debezium emits it as BOOLEAN) | `Bool`, `Nullable(Bool)` (or `UInt8`) | `col+0` — renders `1`/`0`; the generic binary rendering gave the hex text `01` | `toString(toUInt8(col))` — matched with `'Bool' in type`, so `Nullable(Bool)` no longer falls through to `toString(col)` = `true`/`false` (`test_checksum_fidelity.py::TestBooleanAndBit`) |
 | binary, floating point, JSON | — | see the following sections | see the following sections |
+
+Two normalisations apply to the table above (unit D; the same value must give
+the same row text on both sides, and a difference in declared scale or padding
+is not a data difference):
+
+- **DECIMAL.** Both sides drop the trailing zeros after the point and then the
+  bare point (`10.50` and `10.5000` both give `10.5`; `12.000` gives `12`).
+  Text without a point is unchanged. The comparison is therefore by value: the
+  same DECIMAL value declared at two scales compares equal, and two different
+  values never do (`test_checksum_fidelity.py::TestUnitDNormalisation`;
+  e2e case c07).
+- **CHAR (PAD SPACE).** MySQL does not return the trailing spaces of a `CHAR`
+  value, so a `CHAR` column whose value ends in spaces would differ from its
+  replica. The driver reads the `CHAR` columns of the source table from
+  `information_schema` (`DATA_TYPE = 'char'`) and forwards their names to the
+  ClickHouse side as `--char_columns`. The ClickHouse side then trims trailing
+  spaces (`replaceRegexpOne(toString(col), ' +$', '')`) only for those `String`
+  columns; a `VARCHAR` or `TEXT` column keeps its trailing spaces, and a `FixedString`
+  or hex-encoded column is never trimmed. A standalone ClickHouse run (not
+  started by the driver) must pass `--char_columns` itself, or a `CHAR` column
+  with trailing spaces reports DIFFERENT (e2e case c03).
 
 ### 3.4 DATETIME / TIMESTAMP: one canonical rendering, one clamp
 Both sides render a DATETIME or TIMESTAMP value to the **fixed-width** text
@@ -229,7 +298,7 @@ precision, never trimmed:
   connector's record-schema path creates `DateTime64(p,'UTC')` columns but
   formats the value in the server zone, so it stores an instant off by the
   server offset while the two wall-clock texts still agree; the old tool
-  reported such a table EQUAL (finding C1, spec 08.05 §3.1). The tool now
+  reported such a table EQUAL (spec 08.05 §3.1). The tool now
   compares instants:
   - `TIMESTAMP` is an instant in MySQL. The source script runs
     `set time_zone = '+00:00'` on its session, so `date_format` prints the
@@ -253,13 +322,120 @@ precision, never trimmed:
     `2300-01-01 08:59:59` in `Asia/Tokyo`), which is exactly the wall clock
     the connector writes for an out-of-range value. `--min/--max_datetime_value`
     are therefore given as UTC instants.
-  - `--source_timezone` defaults to `UTC` on both side scripts (a fully-UTC
-    deployment needs no flags); the driver resolves it from MySQL (§3.2 step
-    1) and passes it, together with `--timestamp_columns`, to the scripts.
+  - **No default.** `--source_timezone` has no default on any checksum tool.
+    No tool falls back to UTC, and none reads the MySQL server zone. The side
+    scripts parse the flag with no default and check it in `main()`, before any
+    connection is opened: a missing flag exits with an error that names
+    `--source_timezone`, suggests `America/Chicago`, and says UTC must be passed
+    explicitly when the connector used UTC. The driver applies the same check
+    and passes the flag, together with `--timestamp_columns`, to both side
+    scripts. `resolve_source_zone(flag)` has no session-zone or default input.
+    An accepted flag logs at INFO as `source=flag`.
+  - **Effect on existing invocations.** A run that passed a valid zone keeps
+    its effective zone. Three kinds of invocation change: (a) a top-level run
+    given `--source_timezone ""` used to fall back to the session zone silently
+    and now fails with an error naming the flag; (b) a run whose zone is a
+    refused name (`EST`, `CST6CDT`, `Etc/GMT+5`, a `posix/` name, an offset)
+    fails instead of comparing a zone the connector never used; (c) a run with
+    no flag, which used the MySQL session zone (top level) or UTC (side
+    scripts), is refused before any connection and must be re-run with the
+    connector's zone.
+  - **One zone per run; mixed zones are not detected; a DIFFERENT table gets a
+    named limit.** The tools cannot detect a set of tables written under
+    different connector zones. A checksum row does not carry the zone the
+    connector used, so the run has no evidence to compare against. The driver
+    logs one INFO line per run that names the zone it applies to every compared
+    table. Each DIFFERENT table also gets one WARNING in the run summary
+    (`Mixed-zone limit for <table>: DIFFERENT, ... in <zone> (--source_timezone)
+    ...`, spec 13.06) that names the table and the run's zone and says that a
+    table written in another zone is DIFFERENT in the same way as a table with
+    drift. The other zone is not named, because the tool does not know it. The
+    WARNING does not change the exit code. Tables whose connector zones differ
+    need one run per zone, selected with `--tables_regex`.
+    **Per-table zone option (described, not built).** Removing the limit needs
+    one zone per table instead of one per run. That would take: a table-to-zone
+    input (a file or a repeated option), validated the way the flag is, that
+    names every table it covers; the driver passing each table's zone into the
+    side commands it builds for that table (it already runs both side scripts
+    once per table with `--tables_regex`); the zone in the INFO line and in the
+    mixed-zone WARNING; and a rule for a table missing from the map. It is not a
+    trivial change, and no tool can check the zone an operator gives for a
+    table, so it is not built.
+  - **Loader (`db_load`) and ch-mysql-resync: the flag is required on every run.**
+    `clickhouse_loader.py` `main()` calls `check_source_timezone_flag` right after
+    argument parsing, so a run without `--source_timezone` exits 2 before any
+    connection, and the message names the flag, suggests `America/Chicago` and
+    says UTC must be passed explicitly. A dump that records a zone still uses the
+    recorded zone (`get_unix_timezone_from_mysql_timezone`); a flag that
+    disagrees with it is an error. `ch-mysql-resync patch` has the same required
+    `--source_timezone` and passes it to the loader it runs (spec 13.04). Only
+    the explicit flag decides a load; the MySQL server zone is never read.
+    **The flag is trusted, not validated, except against a recorded dump zone.**
+    The checksum entry points (`ch-mysql-checksum`, `ch-ch-checksum`, and the
+    side scripts the driver runs) trust the flag. No tool reads the MySQL server
+    zone, and a checksum does not record the zone a table was written in, so a
+    flag that names the wrong zone cannot be detected. It shows up only as
+    DIFFERENT verdicts on DATETIME values. The loader (`ch-mysql-load`) and
+    resync can reject a contradicting flag only when the dump records its zone:
+    `get_unix_timezone_from_mysql_timezone` raises a `ValueError` that names
+    `--source_timezone`. A dump without a recorded zone takes the flag as given.
+    `ch-mysql-resync rewind-sql` takes no zone. `ch-mysql-dump`, `ch-ch-count`
+    and the PostgreSQL tools take no MySQL zone flag, so this change does not
+    cover them.
+  - **UNREPRESENTABLE-IN-ZONE.** `classify_wall_clock(text,
+    zone)` classifies one canonical wall clock with the zone's own rules,
+    without a database: `gap` (a DST spring-forward skips it: Chicago
+    2026-03-08 02:00-02:59, Lord Howe 2026-10-04 02:00-02:29, Europe/London
+    2026-03-29 01:00-01:59, Pacific/Chatham 2026-09-27 02:45-03:44), `fold` (a
+    fall-back repeats it: Chicago 2026-11-01 01:00-01:59, Lord Howe 2027-04-04
+    01:30-01:59), `before-range` / `after-range` (outside the zone's shifted
+    DATETIME bounds) or `ok`. ClickHouse cannot round-trip a gap time (Chicago
+    02:30 becomes 01:30), so a MySQL row holding one can never match its
+    ClickHouse copy by text. **Integration limit (not fixed):** the aggregate
+    checksum of §3.2 does not expose per-row values, so the tools do not yet
+    tag each mismatched row with its class; a mismatch on such a table reports
+    `DIFFERENT`, which is loud and never masked. A per-row report would need
+    the row-level path and is a follow-up. Unit tests:
+    `db_compare/tests/test_checksum_timezone.py::TestWallClockClassifier`
+    (every minute of each transition day).
+  - **ClickHouse 25.8 edge limits.** Probe with `clickhouse local`,
+    clickhouse-client 25.8.16.20002. Agreeing with zoneinfo: St_Johns 1900 LMT (UTC
+    1900-01-01 04:00 renders 00:29:08; wall 1900-01-01 00:00 parses to 03:30:52
+    UTC), Asia/Kolkata 1900 LMT, Chicago 1900 CST, and the east-zone walls of
+    2299-12-31 23:59:59 (Kolkata, Tokyo). **Not agreeing, recorded and not
+    fixed:** (a) ClickHouse clamps pre-1900 local walls in its text to
+    `1900-01-01 00:00:00` (Chicago UTC 1900-01-01 00:00; St_Johns UTC 01:00); the
+    epoch is correct; (b) Asia/Kolkata wall 2300-01-01 00:00 parses to
+    2299-12-30 18:30 UTC, one day early (zoneinfo: 2299-12-31 18:30); (c) the
+    west-zone walls 2299-12-31 23:59:59 (Chicago, St_Johns) come back as
+    1970 values (ClickHouse LUT beyond 2037). MySQL is the truth and the tools
+    use zoneinfo; `shift_datetime_bounds` and `saturation_floor` equal zoneinfo
+    for the eight tested zones. A value in one of these
+    ClickHouse windows is a DIFFERENT on that table (FM-11.02-15), and its
+    zoneinfo class is one of the classes listed above. Test constants:
+    `db_compare/tests/test_checksum_timezone.py::TestClickHouse258Probe`.
     Standalone runs in a non-UTC deployment must pass both, or they report
     DIFFERENT for every `TIMESTAMP` column — noise on the safe side, never a
     masked divergence. The value must be an IANA name accepted by both
     Python's `zoneinfo` and ClickHouse (`validate_timezone()`).
+  - **Zone names.** `validate_timezone()` accepts exactly three
+    forms: `UTC`, `GMT` and `Etc/UTC` (the three zero-offset names the
+    connector resolves too), and a region identifier `Area/Location` (one or
+    more `/` separated segments, e.g. `America/Chicago`, `US/Central`,
+    `America/Argentina/Buenos_Aires`). It refuses, each with an error that
+    names the option: a blank or padded value; `SYSTEM` (resolve it from
+    `@@system_time_zone` first); an abbreviation or legacy fixed zone with no
+    region (`CST`, `EST`, `MST`, `HST`, `CST6CDT`, `EST5EDT`); any other
+    `Etc/` name (`Etc/GMT+5` has the inverted sign); `SystemV/`, `posix/` and
+    `right/` names; and an offset (`+05:00`). Python's `zoneinfo` accepts
+    several of these, so the rule is applied before the lookup, not left to it.
+  - **tzdata missing is not an unknown name.** When the zone
+    database itself is unavailable (no system `tzdata` and no `pip` `tzdata`
+    package), `ZoneInfo` raises the same exception as for an unknown name. The
+    tool first checks that `UTC` resolves: if it does not, the error says the
+    IANA database is not installed and names the fix (install the system
+    `tzdata` package or `pip install tzdata`), and the valid name is not
+    blamed. Only when `UTC` resolves is a region name reported as unknown.
   (`test_checksum_fidelity.py::TestInstantComparison`)
 - Why fixed width: the connector widens precision (`datetime(0)` is stored
   as `DateTime64(3)`), so the two sides legitimately print different numbers
@@ -326,8 +502,21 @@ precision, never trimmed:
   `cnt,a,b,c,d`. It is **never hashed**; when it is non-zero the side script
   logs `WARNING <n> out-of-range datetime values clamped to [min, max] in
   table <db>.<table>` (a line that does not contain the word "checksum",
-  see §3.2 step 4) so an operator knows the EQUAL verdict rests on clamped
-  values (`test_checksum_fidelity.py::TestClampedRowCounts`).
+  see §3.2 step 4). The driver reads the count back from that line
+  (`CLAMP_NOTICE`), and any clamp on either side makes the table **DIFFERENT**,
+  never MATCH, even when the checksums are equal: a clamped value compares as
+  the bound, so equal checksums say nothing about its real value
+  (`db_compare/tests/test_checksum_verdicts.py::TestClampedValuesMakeTheVerdictDifferent`;
+  the side's count is `test_checksum_fidelity.py::TestClampedRowCounts`).
+  The MySQL side also clamps `date` values to `[--min_date_value,
+  --max_date_value]` (default `1900-01-01` .. `2299-12-31`, the Date32 range
+  the replica can hold) and counts them in the same `clamped` value
+  (`clamped_date_flag`, unit D). Its WARNING therefore reads
+  `<n> out-of-range date/datetime values clamped (datetime to [...], date to
+  [...]) in table <db>.<table>`. The ClickHouse side has no DATE clamp to count,
+  so its WARNING keeps the datetime-only wording. A clamp on either side makes
+  the verdict DIFFERENT, as above (`TestClampedValuesMakeTheVerdictDifferent`);
+  the normalisation of the counted values is `test_checksum_fidelity.py::TestUnitDNormalisation`.
 
 ### 3.5 Aggregate (the actual algorithm)
 The checksum is **not** `MD5(groupArray(cityHash64(*)))` and there is no
@@ -335,10 +524,11 @@ The checksum is **not** `MD5(groupArray(cityHash64(*)))` and there is no
 engines can compute it over any physical order and MySQL can compute it in
 parallel chunks:
 
-1. Per row, `hash = md5(row_string)` as 32 lowercase hex characters. MySQL:
-   `md5(convert(concat_ws('#', <pieces>) using utf8mb4))`; ClickHouse:
-   `hex(MD5(<pieces joined by ||'#'||>))` (case does not matter, the hex is
-   consumed numerically).
+1. Per row, `hash = md5(row_string)` as 32 lowercase hex characters, where the
+   row string is the escaped pieces (§3.3) joined by `#`. MySQL:
+   `md5(convert(concat_ws('#', <escaped pieces>) using utf8mb4))`; ClickHouse:
+   `hex(MD5(<escaped pieces joined by ||'#'||>))` (case does not matter, the hex
+   is consumed numerically).
 2. The hash is split into four 32-bit words: `a = hex[0:8]`, `b = hex[8:16]`,
    `c = hex[16:24]`, `d = hex[24:32]`, each read as an unsigned integer
    (MySQL `cast(conv(substring(h, k, 8), -16, 10) as signed)`; ClickHouse
@@ -347,10 +537,13 @@ parallel chunks:
    variables `@a := @a + ...` with `max()` over the derived table; ClickHouse
    `sum(...)`).
 3. The side script prints
-   `Checksum for table <db>.<table> = md5('<cnt>#<a>#<b>#<c>#<d>#') count <cnt>`
+   `Checksum for table <db>.<table> = md5('v2#<cnt>#<a>#<b>#<c>#<d>#') count <cnt>`
    — `checksum_from_aggregate()` in `db/checksum_common.py` is the single
-   definition of that final step and both scripts call it. An empty table
-   yields `md5('0#0#0#0#0#')` on both sides.
+   definition of that final step and both scripts call it. The `v2` tag is the
+   format of the row text (§3.3 escaping): a checksum printed by an earlier
+   version (no tag, unescaped pieces) is not comparable with a v2 checksum, so
+   the two sides must run the same tool version. An empty table yields
+   `md5('v2#0#0#0#0#0#')` on both sides.
 4. ClickHouse reads `FROM <db>.<table> FINAL` so that
    `ReplacingMergeTree` versions collapse before hashing. MySQL, when the table
    has an integer primary key and `--threads_per_table > 1`, splits the key
@@ -442,10 +635,29 @@ nothing referenced them.
 ### 3.9 Coverage: what is compared, what is not, and how loudly
 A column the tool does not compare is a hole in the only value-level proof,
 so it is never silent. Per table, each side logs **one `WARNING`** naming the
-skipped columns (`Not compared in table <db>.<table>: floating point columns
-[...]` / `... JSON columns [...]`; the line does not contain the word
-"checksum", §3.2 step 4). The driver relays it at INFO as a side note
-(spec 13.06 §3.17). Compared by default: every type in the §3.3 table,
+count and the skipped floating point columns, in the form `Not compared in table
+<db>.<table>: N floating point columns [...] (pass --include_floating_point_columns
+...)`; the count word is `column` when N is 1 (the line does not contain the word
+"checksum", §3.2 step 4). JSON columns are logged the same way with `N JSON
+column(s) [...]`. The default skip does not change for either type.
+
+The driver relays a floating point line at **WARNING** with the same count and
+names, so a float column left out by default is loud in the driver output. A JSON
+line stays an INFO side note, as before. The floating point WARNING is a change
+from earlier builds, which logged it at INFO. This has a consequence for
+scheduled jobs: the job WARNING scan (spec 13.06 §3.17) fails on any WARNING, so
+a table with a float column fails that scan on every run even when its values
+match. The
+choice is open and belongs to the job owners: accept the failure, add
+`--include_floating_point_columns` to the job (which compares the column and
+removes the line), or change the scan. This spec does not make that choice.
+
+A run-level summary follows: after the per-table lines, the driver logs one INFO
+line `NOT COMPARED (named, left out of the verdicts by default): N column(s) in T
+table(s): ...` that names every hole found in the run, with the flag that
+compares it (the side line text is unchanged by the summary). A table whose only
+difference lies in a named hole reports MATCH by design, and the INFO summary is
+the operator's record of that. Compared by default: every type in the §3.3 table,
 §3.4 temporal, §3.6 binary, `Bool`/`bit(1)`. Not compared by default:
 
 - **Floating point** (`float`, `double` / `Float32`, `Float64`), unless
@@ -517,10 +729,25 @@ skipped columns (`Not compared in table <db>.<table>: floating point columns
 A **table** the driver could not lock within `--lock_wait_timeout` (§3.2
 step 2) is a coverage gap of the same kind, one level up: it is neither
 confirmed equal nor reported different, only **not compared**. It is named
-twice — once when it is skipped and once in the end-of-run `COVERAGE GAP`
-summary — so a run that exits 0 never hides an unverified table. Operators
-who would rather have the run fail than run with a gap pass
-`--fail_on_lock_timeout`. (`test_bounded_source_lock.py`)
+twice — once when it is skipped and once in the end-of-run summary — and the
+run **exits 1** unless `--allow_coverage_gap` accepts the gap, so a
+green exit never hides an unverified table. `--fail_on_lock_timeout` aborts
+at the timeout instead. (`test_checksum_failure_modes.py::TestRunExitCode`,
+`test_coverage_gap_exit.py`)
+
+The exit rules of the run, applied by `report_run_summary()`:
+
+| Outcome | Default | Opt-in flag |
+|---|---|---|
+| a side failed or was unparseable (ERROR) | exit 1 | none |
+| a coverage gap (lock timeout, not compared) | exit 1 | `--allow_coverage_gap` accepts it (exit 0, still named) |
+| a checksum difference (DIFFERENT) | exit 0, named at INFO | `--fail_on_different` exit 1 |
+| EMPTY on both sides (0 rows compared) | exit 0, named at INFO | `--fail_on_empty` exit 1 |
+
+EMPTY keeps its documented default: an empty partition is normal in
+date-partitioned runs. Whether a run that compared zero rows overall should
+also fail by default is an open decision for the maintainers; the default
+stays as documented until that decision is made.
 
 ### 3.10 Removed dead paths
 - The replica script executed `CREATE FUNCTION IF NOT EXISTS format_decimal
@@ -540,6 +767,41 @@ who would rather have the run fail than run with a gap pass
   space-separated words and comma-separated lists alike
   (`parse_exclude_columns`, spec 13.06 D-13.06-17).
   (`test_checksum_fidelity.py::TestRemovedDeadPaths`)
+
+### 3.11 User WHERE composition
+The operator's `--where` text is one predicate written by the operator, and a
+per-table `where` override is operator text too. The tools combine both with
+other predicates: the sign filter that skips deleted rows (§3.8), the
+primary-key chunk bounds (`and <pk> between L and U`), the `--partition_date`
+predicate, the consistent-snapshot exclusion and slice bounds, and the
+per-replica extra filter.
+
+SQL binds `AND` tighter than `OR`. Text that contains a top-level `OR` and is
+joined bare to another predicate gives that predicate to the last branch only.
+`1=1 and a = 'x' or b = 'zz' and sign > 0` keeps every row with `a = 'x'`,
+deleted or not, and the sign filter and the chunk bounds never reach that
+branch: a checksum over that text counts the wrong rows, and every chunk of a
+chunked run counts all the rows with `a = 'x'` again.
+
+Rule: whenever the user text is combined with another predicate, it is emitted
+as `(<user text>)` before the `and`, so it is one operand. A text that is the
+only predicate of a statement needs no parentheses. The rule holds on the
+source side and on the replica side, on every path:
+- the MySQL checksum: the single-thread builder (unchunked and chunked), the
+  chunk divider's row-count and bounds queries, and the consistent-snapshot
+  filter;
+- the ClickHouse checksum: the builder that appends the sign filter;
+- the top-level driver: the MySQL and ClickHouse command builders, the
+  per-slice filter, and the table override joined to the user text;
+- the standalone ClickHouse count tool, which appends the text to its base
+  predicate;
+- the PostgreSQL checksum: the tier-1 and tier-2 chunk queries.
+
+With the rule, `--where "a = 'x' or b = 'zz'"` reaches both sides as
+`(a = 'x' or b = 'zz')` followed by the sign filter or the chunk bounds, so
+each statement and each chunk counts exactly the rows the operator asked for.
+The rule is checked by the builders' SQL in
+`sink-connector/python/db_compare/tests/test_where_parenthesised.py`.
 
 ---
 
@@ -640,11 +902,14 @@ connect to a database.
     UTC, shifts into `Asia/Tokyo`, and refuses a non-IANA name; MySQL
     `timestamp` clamps with the UTC bounds and `datetime` with the shifted
     bounds; ClickHouse renders `--timestamp_columns` in `UTC` and the other
-    datetime columns in `--source_timezone` with matching bounds, and
-    defaults to `UTC` for every column; the driver passes
+    datetime columns in `--source_timezone` with matching bounds, and has no
+    zone default; the driver passes
     `--source_timezone` to both scripts and `--timestamp_columns` to the
-    replica script, and resolves the zone from `@@session.time_zone` /
-    `@@system_time_zone` when not given, refusing an abbreviation.
+    replica script; the driver resolves the zone from the flag only, never
+    queries `@@session.time_zone` or `@@system_time_zone`, refuses a run without
+    the flag, and refuses an abbreviation. The side scripts refuse a run without
+    `--source_timezone` (`TestNoFlagIsRefused` in
+    `db_compare/tests/test_explicit_source_zone.py`).
   - `TestBooleanAndBit` — §3.3: `Bool` and `Nullable(Bool)` render through
     `toUInt8`; MySQL `bit(1)` renders as `col+0` while `bit(8)` stays hex.
   - `TestBinaryEncoding` — §3.6: MySQL renders hex by default, base64 on
@@ -663,8 +928,9 @@ connect to a database.
     explicit `--sign_column` is used without consulting the engine.
   - `TestFloatAndJsonCoverage` — §3.9: by default both sides skip float and
     JSON columns (MySQL by `DATA_TYPE`; ClickHouse by `Float*`, `JSON`,
-    `Object('json')` and `--json_columns`) and log one WARNING per table
-    naming them; the opt-in flags include them; the driver passes
+    `Object('json')` and `--json_columns`) and log one `Not compared` line per
+    table and kind naming them (a float line is a WARNING in the driver log, a
+    JSON line an INFO side note); the opt-in flags include them; the driver passes
     `--json_columns` and the two include flags through.
   - `TestClampedRowCounts` — §3.4: both aggregate queries carry
     `coalesce(sum(clamped),0)`; a table without datetime columns contributes
@@ -733,15 +999,15 @@ connect to a database.
 ## 7. Failure Modes & Recovery
 `db_compare` is read-only on both engines: none of its failures can change replicated data (the one side effect is the optional source `LOCK TABLES ... READ`), and every run can be repeated. Its recovery posture is "re-run, narrower if needed". The failures that matter are the ones that make it lie: EQUAL while the values differ, or a green exit while it reported a difference. Those are listed first.
 
-- **FM-11.02-1 A checksum difference ends the run with exit code 0**
+- **FM-11.02-1 A checksum difference ends the run with exit code 0 (default)**
   - **Trigger**: any table whose replica `(md5, count)` differs from the source.
-  - **Behaviour**: `analyze_differences()` only logs `WARNING Checksum difference : <replica> to <source>`. `run_config()` then ends in `sys.exit(0)` whatever was found (`top_level_table_checksum.py`).
-  - **Detection**: only the log line `Checksum difference :`, printed as soon as that table's checksums return. The exit code says nothing.
-  - **Blast radius**: a scheduler or CI job that trusts the exit code reports a diverged replica as verified. The divergence itself keeps growing until someone reads the log.
-  - **Recovery**: grep every run's output for `Checksum difference`. Then repair the table (spec 11.04) and re-run the checksum for it (`--tables_regex '^<table>$'`).
+  - **Behaviour**: `analyze_differences()` only logs `WARNING Checksum difference : <replica> to <source>`. Without `--fail_on_different` `report_run_summary()` keeps exit 0 whatever was found (`top_level_table_checksum.py`). With `--fail_on_different` the run exits 1 and names every DIFFERENT table.
+  - **Detection**: the log line `Checksum difference :`, printed as soon as that table's checksums return. With the default flags the exit code says nothing.
+  - **Blast radius**: a scheduler or CI job that trusts the exit code and does not pass `--fail_on_different` reports a diverged replica as verified. The divergence itself keeps growing until someone reads the log.
+  - **Recovery**: grep every run's output for `Checksum difference`, or pass `--fail_on_different` in the job. Then repair the table (spec 11.04) and re-run the checksum for it (`--tables_regex '^<table>$'`).
   - **RTO**: unbounded while the log goes unread. The repair is the spec 11.04 RTO.
-  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestRunExitCode::test_a_difference_makes_the_run_exit_non_zero` (skipped, DEFECT). The equal path is pinned by `...::TestRunExitCode::test_equal_run_exits_zero`.
-  - **DEFECT**: the verdict of the only value-level proof is not in the exit code.
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestRunExitCode::test_a_difference_fails_the_run_when_asked` (opt-in), `...::test_a_difference_is_exit_zero_by_default` (documented default), and `test_coverage_gap_exit.py::TestDifferentIsOptIn`. The original skipped test `...::test_a_difference_makes_the_run_exit_non_zero` stays skipped by design.
+  - **STATUS**: opt-in fix. The default stays exit 0 until the jobs that schedule the tool pass `--fail_on_different`; this is a human change in the job definitions, listed in the release notes for this change.
 
 - **FM-11.02-2 Two unparseable side outputs are reported as "No difference"**
   - **Trigger**: a database or table whose name contains `checksum` (any case). Each side script logs to stdout, and the driver keeps every line matching `grep -i checksum` (§3.2 step 4). The replica script always logs `REGEX QUERY: ... match(name,'^<table>$')`. Both sides log `Not compared in table <db>.<table>: ...` when a float or JSON column is skipped, and the clamp WARNING of §3.4 when values are clamped. So the pipeline hands back two lines instead of one.
@@ -775,7 +1041,7 @@ connect to a database.
 - **FM-11.02-5 EQUAL although values differ (structural blind spots)**
   - **Trigger**: a divergence that the row string of §3.3 cannot see. That is a `#` moved between adjacent text values (§6 item 1), two same-typed columns swapped in every row (§6 item 4), word sums past about 2^31 rows (§6 item 2), float and JSON columns (excluded by default), or datetimes outside the clamp range or inside its saturated last day (§3.4).
   - **Behaviour**: the checksums match.
-  - **Detection**: floats and JSON give one `WARNING Not compared in table ...` per table and side. Clamping gives `WARNING <n> out-of-range datetime values clamped ...`. The `#` shift and the column swap give none.
+  - **Detection**: floating point columns give one `WARNING Not compared in table ...` per table and side; JSON columns give the same line as an INFO side note (the driver relays it at INFO). Clamping gives `WARNING <n> out-of-range datetime values clamped ...`. The `#` shift and the column swap give none.
   - **Blast radius**: a real divergence is certified equal.
   - **Recovery**: for suspected tables, compare the affected columns value by value (`SELECT` both sides by primary key). Include floats with `--include_floating_point_columns` and inspect any difference by value (§3.9).
   - **RTO**: unbounded for the silent cases.
@@ -793,12 +1059,12 @@ connect to a database.
 
 - **FM-11.02-7 The source lock cannot be acquired**
   - **Trigger**: a continuously written table never gets its metadata lock within `--lock_wait_timeout` (default 30 s).
-  - **Behaviour**: `lock_tables()` raises `LockAcquisitionError`, recognised only from errno 1205. `run_config()` logs `COVERAGE GAP -- skipping checksum for <db>.<table>: source lock could not be acquired` and continues. At the end it logs `COVERAGE GAP -- checksum finished but <n> table(s) were NOT compared`. `--fail_on_lock_timeout` aborts the run instead.
-  - **Detection**: the two WARNING lines above, within `--lock_wait_timeout` seconds per table.
-  - **Blast radius**: that table is unverified for this run. Nothing else is affected.
+  - **Behaviour**: `lock_tables()` raises `LockAcquisitionError`, recognised only from errno 1205. `run_config()` logs `COVERAGE GAP -- skipping checksum for <db>.<table>: source lock could not be acquired` and continues. At the end `report_run_summary()` logs `ERROR COVERAGE GAP: <n> table(s) were NOT compared ... the run fails: <names>` and the run exits 1. `--allow_coverage_gap` accepts the gap (exit 0, still named); `--fail_on_lock_timeout` aborts the run at the timeout.
+  - **Detection**: the skip line and the end-of-run COVERAGE GAP line, within `--lock_wait_timeout` seconds per table; the exit code is 1 by default.
+  - **Blast radius**: that table is unverified for this run, and the run fails so the job shows it. Nothing else is affected.
   - **Recovery**: re-run that table at a quieter time, or with a longer `--lock_wait_timeout`.
   - **RTO**: `--lock_wait_timeout` per attempt, plus one table re-run.
-  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestRunExitCode::test_lock_timeout_skips_the_table_and_names_it_in_the_summary`, `...::test_lock_timeout_fails_the_run_when_asked`, and `test_bounded_source_lock.py::TestLockTables`.
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestRunExitCode::test_lock_timeout_skips_the_table_and_names_it_in_the_summary` (exit 1 by default), `...::test_lock_timeout_gap_is_accepted_with_allow_coverage_gap`, `...::test_lock_timeout_gap_in_an_earlier_database_still_fails_the_run`, `...::test_lock_timeout_fails_the_run_when_asked`, `test_coverage_gap_exit.py::TestCoverageGap`, and `test_bounded_source_lock.py::TestLockTables`.
 
 - **FM-11.02-8 The driver is killed half way**
   - **Trigger**: Ctrl-C, `kill -9`, or the host rebooting during a run.
@@ -814,7 +1080,7 @@ connect to a database.
   - **Behaviour**: the driver applies the same `--where` to both sides, and its replica exclusion list is `_version,is_deleted,_is_deleted,__is_deleted`. It therefore compares every closed version against the current MySQL rows, and always reports a difference. (Since FM-11.02-10 the history columns, which the source table does not have, are out of parity scope: they are left out and reported as tolerated replica-only columns at INFO, no flag needed; the closed versions still differ.)
   - **Detection**: `WARNING Checksum difference` on every history table. This is noise, never a masked equality.
   - **Blast radius**: mode-2 replicas have no value-level proof through the driver.
-  - **Recovery**: run the side scripts standalone. On the source, run `mysql_table_checksum.py` with `--tables_regex '^t$'`. On the replica, run `clickhouse_table_checksum.py --clickhouse_database <history db> --tables_regex '^t$' --where "_valid_to = toDateTime('2100-01-01 00:00:00', '<column tz>')" --exclude_columns _sign _version is_deleted _is_deleted _valid_from _valid_to _operation`, then compare the two `Checksum for table` lines (spec 12.02 §4). `FINAL` already drops the delete markers.
+  - **Recovery**: run the side scripts standalone. On the source, run `mysql_table_checksum.py` with `--tables_regex '^t$'`. On the replica, run `clickhouse_table_checksum.py --clickhouse_database <history db> --tables_regex '^t$' --where "_valid_to = toDateTime(4102444800)" --exclude_columns _sign _version is_deleted _is_deleted _valid_from _valid_to _operation`, then compare the two `Checksum for table` lines (spec 12.02 §4). `FINAL` already drops the delete markers.
   - **RTO**: one standalone pair of runs per table.
   - **Test**: GAP: a replica-script test asserting the open-row filter and the history-column exclusions produce the source's checksum for a fixture with closed versions.
   - **DEFECT**: the driver cannot verify a replication-history replica.
@@ -828,4 +1094,45 @@ connect to a database.
   - **RTO**: replica-only: not applicable (no action required). Missing: the spec 11.04 RTO.
   - **Test**: `sink-connector/python/db_compare/tests/test_checksum_fidelity.py::TestReplicaOnlyColumns`, `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestSourceColumnSetReachesTheReplicaSide`, `sink-connector/python/db_compare/tests/test_checksum_job_log_contract.py::TestScheduledJobLogContract`; Java side: spec 04.03 FM-04.03-4.
 
-Summary: 10 failure modes, 4 DEFECT, 4 GAP.
+- **FM-11.02-11 A zone name is refused although the zone exists (tzdata missing on the tool host)**
+  - **Trigger**: the Python on the host has no IANA database (no system `tzdata`, no `tzdata` package), so `zoneinfo` cannot load any region, including `UTC`.
+  - **Detection**: the run stops before any table with `cannot check '<zone>': the IANA time zone database (tzdata) is not available`. It names the cause, not a bad zone name.
+  - **Recovery**: install the system `tzdata` package or `pip install tzdata` in the tool's environment, then re-run. Nothing was compared, so there is nothing to repair on either engine.
+  - **RTO**: one package install plus one re-run of the tool.
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_timezone.py::TestZoneNameRules::test_missing_tzdata_is_named_as_such_not_as_an_unknown_zone`.
+
+- **FM-11.02-12 A zone spelling the connector cannot resolve reaches the tool**
+  - **Trigger**: `--source_timezone` is an abbreviation or legacy zone (`CST`, `EST`, `MST`, `HST`, `CST6CDT`, `EST5EDT`), an `Etc/` name other than `Etc/UTC`, a `SystemV/`, `posix/` or `right/` name, blank, `SYSTEM` or an offset. Python's `zoneinfo` and ClickHouse may accept some of these, so a run could compare a zone the connector never used.
+  - **Detection**: the tool exits before any comparison with an error naming the option and the refused value. A run that previously passed with one of these values now fails. That is the intended refusal, because the connector cannot resolve these names either; the affected invocations are the ones whose effective zone is one of the refused names (§3.2 step 1 lists them).
+  - **Recovery**: set the MySQL session zone (or the connector's `database.connectionTimeZone`) to a region name, or pass `--source_timezone <Area/Location>` that matches the connector, then re-run.
+  - **RTO**: one configuration change plus one re-run of the checksum job.
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_timezone.py::TestZoneNameRules`.
+
+- **FM-11.02-13 A checksum run without `--source_timezone` compares DATETIME in a guessed zone**
+  - **Trigger**: any checksum tool (top-level driver, `mysql_table_checksum.py`, `clickhouse_table_checksum.py`, or a wrapper) is run with no `--source_timezone`. Before this rule the top-level driver read the MySQL session zone and the side scripts assumed UTC; on a connector whose `database.connectionTimeZone` is not UTC, DATETIME columns then compared wrong.
+  - **Behaviour**: refused before any connection is opened. The parser exits with status 2 and an error that names `--source_timezone`, suggests a region (for example `America/Chicago`) and states that `--source_timezone UTC` must be passed explicitly when the connector used UTC. No server zone is queried and no UTC is assumed.
+  - **Detection**: the refusal message and the non-zero exit status; no table is compared.
+  - **Blast radius**: none on data; a scheduled run without the flag fails until the flag is added.
+  - **Recovery**: add `--source_timezone <connector zone>` (the value of the connector's `database.connectionTimeZone`) and re-run.
+  - **RTO**: one configuration change plus one re-run.
+  - **Test**: `sink-connector/python/db_compare/tests/test_explicit_source_zone.py::TestNoFlagIsRefused` and `::TestNoServerZoneQuery`.
+
+- **FM-11.02-14 A DST gap or fold wall clock is compared as if it had one meaning (UNREPRESENTABLE-IN-ZONE)**
+  - **Trigger**: a DATETIME value on the source falls in a spring-forward gap (it never existed on the clock) or a fall-back fold (it happened twice), in the connector's source zone.
+  - **Behaviour**: ClickHouse cannot store a gap time as written (Chicago 2026-03-08 02:30 becomes 01:30), so the replica row cannot match the source text. The classifier (§3.4, `classify_wall_clock`) names the class; the aggregate checksum reports `DIFFERENT` for the table. A fold is ambiguous as text, so it is reported the same way.
+  - **Detection**: the table's `Checksum difference` verdict; the classifier is a pure function that a row-level follow-up can call to name the class of each mismatched row. Today the class is not printed per row (§3.4 integration limit).
+  - **Blast radius**: one table's verdict is DIFFERENT for a value that was never representable in the zone. No data is changed by the tool.
+  - **Recovery**: the connector writes such values as the source's own text (spec 07.03); the owner decides whether the source row is correct and whether the replica value should be corrected. Nothing in the tool rewrites data.
+  - **RTO**: the spec 11.04 backfill of the affected rows, when the owner decides a correction is needed.
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_timezone.py::TestWallClockClassifier`.
+
+- **FM-11.02-15 A ClickHouse edge value renders or parses differently from the MySQL value (not fixed)**
+  - **Trigger**: a DATETIME value near a ClickHouse 25.8 limit: a pre-1900 local wall in a west zone (text clamped to `1900-01-01 00:00:00`), a 2300-01-01 wall in Asia/Kolkata (parsed one day early), or a west-zone wall at 2299-12-31 23:59:59 (returned as a 1970 value).
+  - **Behaviour**: ClickHouse computes a different text or epoch from zoneinfo for that value. The row cannot match its MySQL copy, so the table reports `DIFFERENT`. The tools do not mask it, and they do not change the bounds to hide it.
+  - **Detection**: the table's `Checksum difference` verdict; the constants of `TestClickHouse258Probe` document which windows are affected.
+  - **Blast radius**: the table's verdict only. Affected values are rare (pre-1900 or beyond-2037 west-zone walls); no data is changed by the tool.
+  - **Recovery**: none in the tool. The owner decides whether the value is in scope (`--where` excludes it on both sides), or upgrades ClickHouse and re-runs the probe, which the constants test will flag when the behaviour changes.
+  - **RTO**: one re-run after the ClickHouse upgrade or the `--where` change.
+  - **Test**: `sink-connector/python/db_compare/tests/test_checksum_timezone.py::TestClickHouse258Probe`.
+
+Summary: 15 failure modes. DEFECT label on FM-11.02-1, -4, -5, -9; GAP test label on FM-11.02-4, -5, -8, -9. FM-11.02-11 to -15 are later additions with unit tests (counted in the lines above, not in the DEFECT/GAP totals).

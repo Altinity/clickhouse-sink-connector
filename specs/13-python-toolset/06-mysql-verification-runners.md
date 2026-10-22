@@ -57,8 +57,9 @@ lists without a shell, parse the side output in Python (exactly one `Checksum fo
 table), relay every side ERROR line (that side then gives no result) and every side WARNING line (at INFO, as a
 side note), give every table an explicit verdict (`MATCH`, `DIFFERENT`, `EMPTY` or `ERROR`) and exit 1 when
 any table has no verdict. `EMPTY` (zero rows on both sides) is logged at INFO with exit 0 unless
-`--fail_on_empty` is passed: in the driver log, WARNING is reserved for `Checksum difference`, the line
-scheduled jobs scan for (§3.17). The packaged driver runs the packaged side modules with its own interpreter,
+`--fail_on_empty` is passed: in the driver log, WARNING is reserved for `Checksum difference` and for a
+floating point column left out by default (`Not compared`), the lines scheduled
+jobs scan for (§3.17). The packaged driver runs the packaged side modules with its own interpreter,
 passes the full DateTime64 range to both sides, and excludes JSON on both sides by default. The manual paths
 work in both copies: `--no_wc` (driver, MySQL side, both count runners), `--exclude_columns` as
 space-separated words or comma lists alike on both sides, the ClickHouse count without
@@ -161,9 +162,10 @@ Each side script writes its log to **stdout** (`logging.StreamHandler(sys.stdout
 code is the side script's own `str(process.poll())`. A side that cannot be started (`OSError`) gives rc `127`.
 `run_quick_safe_checksum` then:
 
-- relays every side line containing ` - ERROR - ` or ` - CRITICAL - ` at ERROR, and every side line containing
-  ` - WARNING - ` at INFO as `<host> <table> side note: <line>`, with the level word removed and any other
-  `WARNING` lowered (`relay_side_messages`, `side_note_text`, §3.17);
+- relays every side line containing ` - ERROR - ` or ` - CRITICAL - ` at ERROR, a side floating point `Not
+  compared` line at WARNING, and every other side line containing ` - WARNING - ` at INFO as `<host> <table>
+  side note: <line>`, with the level word removed and any other `WARNING` lowered (`relay_side_messages`,
+  `side_note_text`, §3.17);
 - on rc 0 when the side logged an ERROR or CRITICAL line, logs `<argv>. logged an ERROR although it exited 0`
   and the last 20 side lines at ERROR, and returns `None`, so the table is `ERROR`;
 - otherwise on rc 0, parses the output with `parse_checksum` (§3.8). An unparseable output logs the last 20 side
@@ -196,15 +198,17 @@ from `sink-connector/python` with that directory on `PYTHONPATH` (§3.1). A miss
 | `--debug` | flag | Root logger DEBUG. Logs each command and the captured side output line by line, through the same WARNING filter as the side notes (§3.17) | yes |
 | `--debug_output` | flag | Forwarded to both sides, which write their per-row strings to `out.<table>.mysql.txt` / `out.<table>.ch.txt` in the cwd and still print the checksum line, so the verdict is unaffected. Before the fix they printed no checksum line and every table failed (D-13.06-27, fixed) | yes |
 | `--no_wc` | flag | `--tables_regex` is the table name: `get_tables_from_regex` returns `[[regex]]` and `run_config` takes it as that one table. Before the fix it called `.fetchall()` on the list: AttributeError, exit 1 (D-13.06-26, fixed) | yes |
-| `--where` | str | ANDed into both sides' where, inside a double-quoted shell word (§3.13) | yes |
+| `--where` | str | ANDed into both sides' where, inside a double-quoted shell word (§3.13). Each side wraps the text in parentheses before it is ANDed with another predicate, so an `or` in it cannot bind the sign filter or the chunk bounds (spec 11.02 §3.11) | yes |
 | `--lock_tables_on_source` | flag | §3.7 | yes |
 | `--sleep_after_lock` | int, 3 | Seconds slept after the lock, before the sides start | yes |
-| `--source_timezone` | str, resolved | 11.02 §3.2 step 1. Forwarded to both sides | yes |
+| `--source_timezone` | str, required (no default, no server query) | 11.02 §3.2 step 1. Forwarded to both sides | yes |
 | `--binary_encoding` | `hex`/`base64`/`raw`, `hex` | Forwarded to both sides. With `raw`, `--hex_columns` is derived per table | yes |
-| `--min_datetime_value`, `--max_datetime_value` | str (UTC instant `YYYY-MM-DD[ HH:MM:SS[.ffffff]]`), none | Not passed by default, so each side clamps to the full DateTime64 range. When given: canonicalised and confined by `canonical_datetime_bound` in `main` (`resolve_datetime_bounds`; a non-datetime value or min >= max is a `parser.error`, exit 2) and forwarded as identical text to both sides (11.02 §3.4). `--max_datetime_value 2299-12-31` makes every value on 2299-12-31 compare equal; since the saturated last day (11.02 §3.4) the default range does that too | yes |
+| `--min_datetime_value`, `--max_datetime_value` | str (UTC instant `YYYY-MM-DD[ HH:MM:SS[.ffffff]]`), none | Not passed by default, so each side clamps to the full DateTime64 range. When given: canonicalised and confined by `canonical_datetime_bound` in `main` (`resolve_datetime_bounds`; a non-datetime value or min >= max is a `parser.error`, exit 2) and forwarded as identical text to both sides (11.02 §3.4). `--max_datetime_value 2299-12-31` clamps every value on 2299-12-31 and so makes its table DIFFERENT, as any clamped value does (11.02 §3.4); the saturated last day (11.02 §3.4) does the same with the default range | yes |
 | `--include_floating_point_columns`, `--include_json_columns` | flag | Forwarded to both sides | yes |
 | `--lock_wait_timeout` | int, 30 | `SET SESSION lock_wait_timeout` before `LOCK TABLES` | yes |
-| `--fail_on_lock_timeout` | flag | A lock timeout aborts the run instead of skip-and-warn | yes |
+| `--fail_on_lock_timeout` | flag | A lock timeout aborts the run (that table gets no verdict, exit 1) instead of skip-and-warn | yes |
+| `--allow_coverage_gap` | flag | Accepts a COVERAGE GAP (a table skipped for a lock timeout): still named, at INFO (the driver log keeps WARNING for differences only), exit 0. Default: the skipped table makes the run exit 1 (11.02 §3.2) | yes |
+| `--fail_on_different` | flag | A table with verdict `DIFFERENT` makes the run exit 1. Default: logged, exit 0 (FM-11.02-1;) | yes |
 | `--fail_on_empty` | flag | A table with verdict `EMPTY` (zero rows on both sides) makes the run exit 1. Default: INFO only, exit 0 (§3.8) | yes |
 | `--recheck_differences` | int ≥ 0, 1 | How many more times a `DIFFERENT` table is checksummed before its difference is reported; 0 restores the single pass (§3.7.3) | yes |
 | `--recheck_delay_seconds` | int ≥ 0, 60 | Seconds slept before each re-check (§3.7.3) | yes |
@@ -216,9 +220,11 @@ from `sink-connector/python` with that directory on `PYTHONPATH` (§3.1). A miss
 | `--fence_poll_seconds` | int ≥ 0, 1 | Seconds between reads of the connector offset | yes |
 | `--fence_idle_seconds` | int ≥ 0, 10 | The source wrote nothing after the target and the offset has not moved for this long: the wait ends; later waits reuse that verdict at once while the source head and the offset are unchanged (§3.7.1) | yes |
 
-The packaged driver (PT404-445) has the same flags **minus** `--source_timezone`, `--binary_encoding`, the two
-include flags, `--lock_wait_timeout` and `--fail_on_lock_timeout`. It has `--fail_on_empty`. Their effects
-differ as described in §3.6.2, §3.7.2 and §3.16.
+The packaged driver (PT404-445) has the same flags **minus** `--binary_encoding`, the two include flags,
+`--lock_wait_timeout` and `--fail_on_lock_timeout` (this list was not re-verified in the zone change). It has
+`--fail_on_empty`. It takes the same required `--source_timezone` as the legacy driver: both run one implementation,
+`ch_sink_tools/db_compare/top_level_table_checksum.py`, and `db_compare/top_level_table_checksum.py` is a shim that
+imports it. Their effects differ as described in §3.6.2, §3.7.2 and §3.16.
 
 The scheduled job runs the legacy driver from a bash script with `set -euo pipefail` that sources
 `install.sh` (a venv with `requirements.txt`, then `PYTHONPATH="${PYTHONPATH:-}":.`), runs the partitioned and
@@ -280,8 +286,9 @@ Parsing rules as built:
 ### 3.5 Table enumeration, ordering and concurrency (legacy)
 
 1. Databases are processed **sequentially** in config order. Each one gets a new metadata connection, which is
-   never closed. `resolve_source_timezone` runs on the first database and stores its result in
-   `args.source_timezone`, so later databases reuse it.
+   never closed. `resolve_source_timezone` validates the required `--source_timezone` (no server query) and
+   stores its result in `args.source_timezone`, so later databases reuse it. One zone applies to the whole
+   run (11.02 §3.2 step 1); a database with tables in different zones needs one run per zone.
 2. Tables come from `get_tables_from_regex_sql` (Spec 13.02): `select TABLE_SCHEMA, TABLE_NAME from
    information_schema.tables where table_type='BASE TABLE' and table_schema='<db>' and table_name rlike '<re>'
    [and table_name not rlike '<ex>'] [partition subqueries] order by 1`. `order by 1` sorts by schema, which is
@@ -310,14 +317,14 @@ Both builders return an **argv list**; each element below is one argv word:
 ```
 python db_compare/mysql_table_checksum.py --threads_per_table <N> --threads=<T>
   --min_date_value 1900-01-01 --mysql_host <host> --mysql_database <db> --tables_regex <exact table regex>
-  --where " 1=1 [ and <where> ][ and {partition_expression}=YYYYMMDD]" --source_timezone <tz>
+  --where " 1=1 [ and (<where>) ][ and {partition_expression}=YYYYMMDD]" --source_timezone <tz>
   --binary_encoding <enc> [--include_floating_point_columns] [--include_json_columns]
   [--min_datetime_value <min>] [--max_datetime_value <max>]
   [--exclude_columns a,b] [--debug_output] [--defaults_file=<file>]
 
 python db_compare/clickhouse_table_checksum.py --max_memory_usage 80000000000 --threads=<T>
   --clickhouse_host <replica> --clickhouse_database <db|override> --tables_regex <exact table regex>
-  --where " 1=1 [ and <where> ][ and {partition_expression}=toDate('YYYY-MM-DD') ]" --source_timezone <tz>
+  --where " 1=1 [ and (<where>) ][ and {partition_expression}=toDate('YYYY-MM-DD') ]" --source_timezone <tz>
   [--timestamp_columns c1,c2] [--json_columns j1] --binary_encoding <enc> [--hex_columns b1,b2]
   [include flags] [--min_datetime_value <min>] [--max_datetime_value <max>]
   --exclude_columns _version,is_deleted,_is_deleted,__is_deleted[,ignored...]
@@ -356,6 +363,9 @@ value, no shell). They differ from the legacy ones in five ways:
   ClickHouse side as `--json_columns`. Both packaged sides exclude JSON by default with a WARNING, as the
   legacy sides do (D-13.06-7, fixed). No `--source_timezone`, `--timestamp_columns`, `--hex_columns` or include
   flags are passed.
+- The MySQL `char` columns (read from `information_schema.columns`, `DATA_TYPE = 'char'`, `mysql_char_columns`)
+  are passed to the ClickHouse side as `--char_columns` (unit D, 11.02 §3.3). The ClickHouse side trims trailing
+  spaces from those `String` columns only. The MySQL side is not given the list.
 - The partition literal is `toDate(\'YYYY-MM-DD\')` (one backslash before each quote), which the packaged
   `eval`-based `fstr` turns into `toDate('YYYY-MM-DD')`. This is the text the side received through the shell
   before the fix.
@@ -372,7 +382,7 @@ Timeline per table, when `--lock_tables_on_source` is set:
 1. A new SQLAlchemy connection to `source.mysql.host` (`get_mysql_connection`, `wait_timeout=28000`).
 2. `SET SESSION lock_wait_timeout = <int(--lock_wait_timeout)>`, then ``LOCK TABLES `<t>` READ`` (backticks
    doubled by `quote_mysql_identifier`). Errno 1205, read from the structured driver error code or from the
-   exact message, becomes `LockAcquisitionError`. That gives skip-and-warn, or exit 1 with
+   exact message, becomes `LockAcquisitionError`. That gives a skipped table (a COVERAGE GAP: exit 1 unless `--allow_coverage_gap`), or an abort with
    `--fail_on_lock_timeout` (11.02 §3.2 step 2, FM-11.02-7).
 3. `time.sleep(--sleep_after_lock)`.
 4. The MySQL side and every ClickHouse side start **at the same time**. Each side runs its own sessions. A
@@ -640,21 +650,31 @@ logs the table's verdict:
 At the end of the run `report_run_summary` logs `Run summary: N table(s) verified: a MATCH, b DIFFERENT,
 c EMPTY, d ERROR`, then `EMPTY on both sides: <n> table(s) compared 0 rows ...: <tables>` when any table is
 EMPTY (at INFO; at ERROR with `--fail_on_empty`, which fails the run), and an ERROR `<n> table(s) have NO verdict ...: <tables>` when any is ERROR. It returns the
-exit code: 1 when any table is `ERROR`, or when any is `EMPTY` and `--fail_on_empty` is set; otherwise 0. A
-lock-timeout skip keeps its own `COVERAGE GAP` summary (legacy).
+exit code: 1 when any table is `ERROR`, when any table is a COVERAGE GAP (a lock-timeout skip) and
+`--allow_coverage_gap` is not set, when any table is `DIFFERENT` and `--fail_on_different` is set, or when any is
+`EMPTY` and `--fail_on_empty` is set; otherwise 0. The skipped list spans every database of the run.
+For each `DIFFERENT` table the summary also logs one WARNING, `Mixed-zone limit for <table>: DIFFERENT, and this run
+read every DATETIME/TIMESTAMP value in <zone> (--source_timezone) ...`, naming the table and the zone the run compared
+in (11.02 §3.2 step 1). The zone is `(not given to the run summary)` only when a caller passes none, which the driver
+never does. The WARNING does not change the exit code, and a clean run logs none.
+The rules are pinned by `db_compare/tests/test_coverage_gap_exit.py`.
 
 Outcome table (`exit` is the process exit code of the driver):
 
 | Situation | Legacy driver | Packaged driver |
 |---|---|---|
 | All sides equal | `No difference for db.t`, exit 0 | same |
-| A replica differs | `WARNING Checksum difference` after the re-check(s) still differ, exit 0 (FM-11.02-1, unchanged) | same |
+| A replica differs | `WARNING Checksum difference` after the re-check(s) still differ, exit 0 (FM-11.02-1, unchanged by default); exit 1 with `--fail_on_different` | same |
 | A replica differs on one pass and matches on the re-check (a write raced the pass) | INFO `Checksum mismatch on pass 1 of 2, ...`, then `No difference`, verdict `MATCH`, exit 0 (§3.7.3) | same |
 | One side script exits non-zero (connection refused, SQL error, script or module not found) | `ERROR` for that table, the other tables still get verdicts, exit 1 | same (before the fix: `Checksum difference`, exit 0) |
 | **Both** sides fail | `ERROR`, exit 1 | same (before the fix: **`No difference`, exit 0**, D-13.06-1) |
 | Side exits 0 but prints no checksum line (table missing on the replica) | `ERROR`, exit 1 (before the fix the legacy driver reported `Checksum difference`, exit 0, for a missing replica table) | same |
 | Side logs an ERROR or CRITICAL line but exits 0 | `ERROR`, exit 1 | same |
-| Side logs a WARNING (columns not compared, clamped values, SQL or client-library warnings) | INFO side note, verdict unchanged | same |
+| Side logs a WARNING (columns not compared, SQL or client-library warnings) | INFO side note, verdict unchanged; a floating point `Not compared` line is a WARNING in the driver log (11.02 §3.9), verdict unchanged | same |
+| Side logs a clamp WARNING (`<n> out-of-range ... values clamped ...`) | WARNING `Clamped values on <host> for <table>` in the driver log, and the verdict is DIFFERENT (11.02 §3.4); on a re-check pass it is INFO | same |
+| A table is DIFFERENT, for any cause (drift, a clamp, or a table written in another zone) | one run-summary WARNING `Mixed-zone limit for <table>: DIFFERENT, ... in <zone> (--source_timezone)` (11.02 §3.2 step 1); the exit code is unchanged | same |
+
+Unit D adds one run-level INFO line after the per-table lines, `NOT COMPARED (named, left out of the verdicts by default): N column(s) in T table(s): ...`, which names every float or JSON hole the run found and the flag that compares it (11.02 §3.9). Each side WARNING gives the count and the names (`N floating point column(s) [...]`), and the driver relays every such line as its own WARNING (11.02 §3.9); the default skip is unchanged. A table whose only difference lies in a named hole reports MATCH by design, and the INFO line is the record of it.
 | `--debug_output` | normal verdict, per-row files written by both sides (before the fix: `ERROR` for every table, D-13.06-27) | same |
 | A name containing "checksum" in other side log lines | parsed correctly, normal verdict | same |
 | MySQL host string equals a replica host | normal verdict | same |
@@ -691,8 +711,8 @@ Outcome table (`exit` is the process exit code of the driver):
 | `--debug_output` | flag | Also writes the per-row strings to `out.<table>.mysql.txt` (truncated per run, appended per chunk; `--debug_limit` applies to this query only). The checksum line is still printed. Before the fix it printed **no** checksum (D-13.06-27, fixed) | yes |
 | `--debug_limit` | none | `limit N` on the debug query only | yes |
 | `--binary_encoding` | `hex` (choices) | §3.11 | yes |
-| `--min_date_value` / `--max_date_value` | `1900-01-01` / `2299-12-31` | DATE clamp (not counted or warned, D-13.06-34) | yes |
-| `--source_timezone` | `UTC` | DATETIME clamp bounds shifted into the zone | yes |
+| `--min_date_value` / `--max_date_value` | `1900-01-01` / `2299-12-31` | DATE clamp: counted and warned like the DATETIME clamp, so a clamped DATE makes its table DIFFERENT (11.02 §3.4; supersedes D-13.06-34's "not counted") | yes |
+| `--source_timezone` | none: required, refused without it | DATETIME clamp bounds shifted into the zone. The zone is trusted, not validated, for checksum runs (11.02 §3.4); each DIFFERENT table's run-summary WARNING names it | yes |
 | `--min_datetime_value` / `--max_datetime_value` | `DATETIME_MIN` / `DATETIME_MAX` | canonicalised and confined (11.02 §3.4) | yes |
 | `--debug` | flag | DEBUG logging | yes |
 | `--exclude_columns` | `nargs='+'`, `[]` | Space-separated words and comma-separated lists alike: each token is split on `,` and stripped (`parse_exclude_columns`, the same parser as the ClickHouse side, D-13.06-17) | yes |
@@ -732,7 +752,7 @@ from ( select @md5sum := md5(convert(concat_ws('#', <pieces>) using utf8mb4)) as
 
 5. The chunk tuples are summed in Python (arbitrary precision). `checksum_from_aggregate(cnt, a, b, c, d)` is
    computed, and `INFO Checksum for table <db>.<table> = <md5> count <cnt>` is printed. A `WARNING <n>
-   out-of-range datetime values clamped ...` is printed when `clamped > 0`.
+   out-of-range datetime values clamped ...` is printed when `clamped > 0`, and the driver makes that side's table DIFFERENT (11.02 §3.4). The MySQL side prints `out-of-range date/datetime values clamped (datetime to [...], date to [...])` (unit D: its `clamped` also counts DATE values, 11.02 §3.4).
 
 `<db>.<table>` in the aggregate is **not quoted**. Only the unused `query` string (LM184) is backticked. A table
 named with `-`, or a reserved word, fails here even though the lock path quotes it (D-13.06-28). Column names
@@ -760,10 +780,11 @@ argparse errors. A credential `assert` failure exits 1 with a raw traceback, out
 | `--hex_columns` | `nargs='+'`, `[]` | Joined with `,` and split again. Requires `raw`, else ValueError (exit 1) | yes |
 | `--exclude_columns` | `nargs='+'`, `['_sign,_version,is_deleted,_is_deleted']` | `parse_exclude_columns`: space-separated words and comma-separated lists alike, as on the MySQL side. Before the fix it was `"','".join(tokens).split(',')`, so several tokens got stray quotes and nothing was excluded (D-13.06-17, fixed) | yes |
 | `--threads` | 1 | tables in parallel | yes |
-| `--source_timezone`, `--timestamp_columns` | `UTC`, `''` | 11.02 §3.4 | yes |
+| `--source_timezone`, `--timestamp_columns` | none (`--source_timezone` required), `''` | 11.02 §3.4 | yes |
 | `--min_datetime_value` / `--max_datetime_value` | `DATETIME_MIN` / `DATETIME_MAX` | 11.02 §3.4 | yes |
 | `--max_memory_usage` | none | `settings max_memory_usage = N` | yes |
 | `--include_floating_point_columns`, `--include_json_columns`, `--json_columns` | False, False, `''` | 11.02 §3.9 | yes |
+| `--char_columns` (ClickHouse side) | `''` | 11.02 §3.3 CHAR PAD SPACE: trailing spaces are trimmed from the named `String` columns on the ClickHouse side only. A standalone ClickHouse run must pass it | yes (the driver forwards the MySQL `char` names) |
 
 Per table (`calculate_checksum`, LC364-400):
 
@@ -1049,17 +1070,20 @@ Faults:
 - **Log-level contract (both drivers).** In the driver log, WARNING is reserved for `Checksum difference`,
   whose message format is unchanged. Scheduled jobs tee the driver's stdout to a file and fail when any line
   contains the word WARNING; that scan exists to catch differences. So everything a clean run logs is INFO or
-  below: `No difference`, `EMPTY on both sides`, the run summary and the side notes. A side WARNING (columns not
-  compared, clamped values, SQL or client-library warnings) is relayed at INFO as `<host> <table> side note:
-  ...`, with the level word removed and any other `WARNING` lowered (`side_note_text`). A side ERROR or
+  below: `No difference`, `EMPTY on both sides`, the run summary and the side notes. One exception: a floating
+  point `Not compared in table ... floating point columns [...]` line (spec 11.02 §3.9) is relayed at WARNING, so
+  a table with a float column left out by default fails the scan on every run, even when it matches. This is a
+  deliberate loudness change, and the job-owner decision it needs is open (11.02 §3.9). A side WARNING (JSON
+  columns not compared, clamped values, SQL or client-library warnings) is relayed at INFO as `<host> <table>
+  side note: ...`, with the level word removed and any other `WARNING` lowered (`side_note_text`). A side ERROR or
   CRITICAL line is relayed at ERROR and voids that side's result, so the table is `ERROR` and the run exits 1.
   `--debug` dumps the side output line by line through the same filter. Pre-existing driver WARNINGs are
   unchanged: the lock-timeout `COVERAGE GAP` lines, `Failed to close connection`, and the `SQL warnings` that
   `execute_mysql` logs when the client library raises a Python warning on the driver's own catalog or lock
   queries. Side scripts run standalone still log their notices at WARNING. Pinned by
   `sink-connector/python/db_compare/tests/test_checksum_job_log_contract.py::TestScheduledJobLogContract`.
-- **Side output.** The driver relays side ERROR and CRITICAL lines at ERROR and side WARNING lines at INFO
-  (above), logs the last 20 side lines at ERROR when a side fails or its output cannot be parsed, and logs the
+- **Side output.** The driver relays side ERROR and CRITICAL lines at ERROR, a side floating point `Not compared`
+  line at WARNING, and other side WARNING lines at INFO (above), logs the last 20 side lines at ERROR when a side fails or its output cannot be parsed, and logs the
   command and the side output at DEBUG.
 - **Resources.** Per table, the legacy driver holds:
   - one lock connection (when locking);
@@ -1300,7 +1324,7 @@ database or network is contacted. Side scripts are stubbed, or the shell runs a 
 | R08 `r08_packaged_datetime_model.py` | Python model of the packaged datetime SQL | `1950-05-05` and `1961-01-01` both render `1969-12-31 18:00:00` → EQUAL; legacy DIFFERENT |
 | R09 `r09_urls_and_creds.py` | URL encoding and ClickHouse credential logging | legacy `'a b'` → `'a+b'`; packaged `p@ss:w/rd` → ValueError; packaged DEBUG `clickhouse_password S3cret!` |
 | R10 `r10_config_parsing.py` | include-list pre-filter, override whitespace, `--secure` | `db1\.orders` → ALL tables; override with a space → database `db2`; `'False'` is truthy |
-| R11 `r11_warnings_dropped_by_driver.py` | Same as R07 with a float column `ratio` and equal data | each side logs `Not compared in table db1.t1: floating point columns ['ratio']`; after grep/awk only `db1.t1 <md5> 2` remains |
+| R11 `r11_warnings_dropped_by_driver.py` | Same as R07 with a float column `ratio` and equal data | each side logs `Not compared in table db1.t1: 1 floating point column ['ratio'] (pass ...)`; after grep/awk only `db1.t1 <md5> 2` remains |
 | R12 `r12_abort_waits_for_all.py` | Failure-modes harness: the first table fails | exit 1, `tables computed after the failure: ['b', 'c', 'd']`, no verdict for them |
 
 ## 6. Failure Modes & Recovery
@@ -1329,7 +1353,7 @@ cross-referenced where this spec adds a trigger or corrects them.
 
 - **FM-13.06-2 A name containing "checksum" makes both outputs unparseable**
   - **Trigger**: a table, database or **column** whose name contains `checksum` (any case) appears in a side
-    script's own log lines. Column cases: `Not compared ... floating point columns ['checksum_ratio']`,
+    script's own log lines. Column cases: `Not compared ... 1 floating point column ['checksum_ratio']`,
     `Excluded columns, [...]` / `Excluding column ...` for an ignored column, `Row filter ... engine
     <engine_full>` when it names such a column, `FINAL per partition: ... ['checksum_date']`.
   - **Behaviour**: `grep -i checksum` keeps two lines per side. Each parses to `(None, None)`, and
@@ -1424,7 +1448,7 @@ cross-referenced where this spec adds a trigger or corrects them.
   - **Recovery**: run the side scripts standalone for tables with float, JSON or out-of-range datetime columns.
   - **RTO**: one standalone pair per table (unmeasured).
   - **Test**: `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestSideWarningsReachTheDriverLog::test_side_warnings_are_logged_by_the_driver`.
-  - **FIXED**: D-13.06-8. Both drivers relay every side ERROR/CRITICAL line at ERROR (that side gives no result) and every side WARNING line at INFO as a side note (§3.17).
+  - **FIXED**: D-13.06-8. Both drivers relay every side ERROR/CRITICAL line at ERROR (that side gives no result) and every side WARNING line at INFO as a side note (§3.17). Exception (F08, 11.02 §3.9): a floating point `Not compared` line is relayed at WARNING, so the job WARNING scan fails on a table with a float column left out by default.
 
 - **FM-13.06-9 The tools crash on SQLAlchemy 2.x**
   - **Trigger**: a fresh install from `requirements.txt` or `pyproject.toml` (`sqlalchemy>=1.4` resolves to
