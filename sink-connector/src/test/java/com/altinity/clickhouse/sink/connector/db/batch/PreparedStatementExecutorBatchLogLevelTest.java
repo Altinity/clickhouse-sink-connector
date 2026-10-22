@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -158,7 +159,7 @@ public class PreparedStatementExecutorBatchLogLevelTest {
         try {
             new PreparedStatementExecutor("is_deleted", true, null, "_version", "db", ZoneId.of("UTC"))
                     .addToPreparedStatementBatch("topic", Collections.singletonList(queryToRecords),
-                            new BlockMetaData(), new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                            new BlockMetaData(), new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                             connectionReturning(recordingStatement()),
                             "orders", columns, DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         } finally {

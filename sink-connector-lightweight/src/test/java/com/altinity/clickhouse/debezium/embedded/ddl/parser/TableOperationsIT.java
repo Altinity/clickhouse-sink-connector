@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumJdbcStorageOperations;
@@ -85,7 +86,7 @@ public class TableOperationsIT {
                 try {
 
                     engine.set(debeziumChangeEventCapture);
-                    ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
+                    ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(PropertiesHelper.toMap(props)));
                     engine.get().setup(props, new SourceRecordParserService(),false);
                 } catch (Exception e) {
                     throw new RuntimeException(e);

@@ -1,7 +1,9 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import org.apache.kafka.common.config.ConfigException;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
 
@@ -23,21 +25,31 @@ public class DualJdbcDriverToggleTest {
     public void testConfigDefaultsToV2Driver() {
         Map<String, String> props = new HashMap<>();
         props.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
         Assert.assertFalse("clickhouse.jdbc.v1 must default to false (V2 driver)",
                 config.getBoolean(
                         ClickHouseSinkConnectorConfigVariables.JDBC_V1_DRIVER.toString()));
     }
 
+    /**
+     * clickhouse.jdbc.v1=true is refused when the configuration is parsed, so
+     * the connector fails at start (spec 03.08) instead of stalling on the
+     * DateTimeParseException the V1 driver raises for epoch-text datetimes.
+     */
     @Test
-    public void testConfigAcceptsV1Toggle() {
+    public void testConfigRefusesV1Toggle() {
         Map<String, String> props = new HashMap<>();
         props.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
         props.put(ClickHouseSinkConnectorConfigVariables.JDBC_V1_DRIVER.toString(), "true");
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
-        Assert.assertTrue("clickhouse.jdbc.v1=true must be honored",
-                config.getBoolean(
-                        ClickHouseSinkConnectorConfigVariables.JDBC_V1_DRIVER.toString()));
+        try {
+            new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
+            Assert.fail("clickhouse.jdbc.v1=true must be refused at start");
+        } catch (ConfigException expected) {
+            Assert.assertTrue("the refusal must name the key",
+                    expected.getMessage().contains("clickhouse.jdbc.v1"));
+            Assert.assertTrue("the refusal must name the datetime failure",
+                    expected.getMessage().contains("DateTimeParseException"));
+        }
     }
 
     @Test

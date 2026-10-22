@@ -9,6 +9,8 @@ import org.junit.jupiter.api.Test;
 import java.time.*;
 import java.time.temporal.ChronoUnit;
 
+import static org.junit.Assert.assertEquals;
+
 
 
 public class DebeziumConverterTest {
@@ -134,15 +136,15 @@ public class DebeziumConverterTest {
 
         // DateTime64 and UTC timezone
         String formattedTimestamp = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("UTC"), ZoneId.of("UTC"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2299-12-31 23:59:59.00000000"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2299-12-31 23:59:59.99999900"));
 
         // DateTime64 and America/Chicago timezone.
         String formattedTimestampChicagoTZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestampChicagoTZ.equalsIgnoreCase("2299-12-31 23:59:59.00000000"));
+        Assert.assertTrue(formattedTimestampChicagoTZ.equalsIgnoreCase("2299-12-31 23:59:59.99999900"));
 
         // DateTime64 and America/Los Angeles timezone.
         String formattedTimestampLATZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Los_Angeles"), ZoneId.of("America/Los_Angeles"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestampLATZ.equalsIgnoreCase("2299-12-31 23:59:59.00000000"));
+        Assert.assertTrue(formattedTimestampLATZ.equalsIgnoreCase("2299-12-31 23:59:59.99999900"));
 
         // DateTime32 and UTC timezone
         String formattedTimestampDate32 = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("UTC"), ZoneId.of("UTC"), ClickHouseDataType.DateTime);
@@ -165,7 +167,10 @@ public class DebeziumConverterTest {
         Object timestampEpoch3 = LocalDateTime.of(2026, 3, 8, 2, 0, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000 * 1000;
         String formattedTimestampChicagoTZ3 = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch3, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"), ClickHouseDataType.DateTime);
 
-        Assert.assertTrue(formattedTimestampChicagoTZ3.equalsIgnoreCase("2026-03-08 02:00:00"));
+        // 02:00:00 does not exist in America/Chicago on 2026-03-08 (spec 07.03 section 3.1.1): the digits are
+        // bound as the instant with the offset before the transition, which the zone shows as 03:00:00, and the
+        // shift is reported as dst_gap.
+        Assert.assertEquals("2026-03-08 03:00:00", formattedTimestampChicagoTZ3);
 
         // DST end time.(2026) - Nov 1st 2026 2 am.
         Object timestampEpoch4 = LocalDateTime.of(2026, 11, 1, 2, 0, 0).atZone(ZoneId.of("UTC")).toEpochSecond() * 1000 * 1000;
@@ -179,7 +184,7 @@ public class DebeziumConverterTest {
     public void testDateConverter() {
 
         Integer date = Math.toIntExact(LocalDate.of(1925, 1, 1).toEpochDay());
-        java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date32);
+        LocalDate formattedDate = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date32);
 
         Assert.assertTrue(formattedDate.toString().equalsIgnoreCase("1925-01-01"));
     }
@@ -191,11 +196,11 @@ public class DebeziumConverterTest {
         Integer date = Math.toIntExact(LocalDate.of(1960, 1, 1).toEpochDay());
 
         //Date32
-        java.sql.Date formattedDate32 = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date32);
+        LocalDate formattedDate32 = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date32);
         Assert.assertTrue(formattedDate32.toString().equalsIgnoreCase("1960-01-01"));
 
         //Date
-        java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date);
+        LocalDate formattedDate = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date);
         Assert.assertTrue(formattedDate.toString().equalsIgnoreCase("1970-01-01"));
     }
 
@@ -206,11 +211,11 @@ public class DebeziumConverterTest {
         Integer date = Math.toIntExact(LocalDate.of(2299, 1, 1).toEpochDay());
 
         //Date32
-        java.sql.Date formattedDate32 = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date32);
+        LocalDate formattedDate32 = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date32);
         Assert.assertTrue(formattedDate32.toString().equalsIgnoreCase("2299-01-01"));
 
         //Date
-        java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date);
+        LocalDate formattedDate = DebeziumConverter.DateConverter.convert(date, ClickHouseDataType.Date);
         Assert.assertTrue(formattedDate.toString().equalsIgnoreCase("2149-06-06"));
 
     }
@@ -220,7 +225,7 @@ public class DebeziumConverterTest {
 
         // Epoch (days)
         Integer epochInDays = 8249;
-        java.sql.Date formattedDate = DebeziumConverter.DateConverter.convert(epochInDays, ClickHouseDataType.Date32);
+        LocalDate formattedDate = DebeziumConverter.DateConverter.convert(epochInDays, ClickHouseDataType.Date32);
         Assert.assertTrue(formattedDate.toString().equalsIgnoreCase("1992-08-02"));
     }
 
@@ -238,7 +243,7 @@ public class DebeziumConverterTest {
 
         // Test max limit
         String formattedTimestamp4 = DebeziumConverter.ZonedTimestampConverter.convert("2338-01-19T03:14:07.99Z", ZoneId.of("UTC"));
-        Assert.assertTrue(formattedTimestamp4.equalsIgnoreCase("2299-12-31 23:59:59.000000"));
+        Assert.assertTrue(formattedTimestamp4.equalsIgnoreCase("2299-12-31 23:59:59.999999"));
     }
 
     @Test
@@ -251,7 +256,7 @@ public class DebeziumConverterTest {
         // to map them onto the representable DateTime64 range instead of silently
         // producing an empty string. See Altinity/clickhouse-sink-connector#1231.
         String positiveInfinity = DebeziumConverter.ZonedTimestampConverter.convert("infinity", ZoneId.of("UTC"));
-        Assert.assertEquals("2299-12-31 23:59:59.000000", positiveInfinity);
+        Assert.assertEquals("2299-12-31 23:59:59.999999", positiveInfinity);
 
         String negativeInfinity = DebeziumConverter.ZonedTimestampConverter.convert("-infinity", ZoneId.of("UTC"));
         Assert.assertEquals("1900-01-01 00:00:00.000000", negativeInfinity);
@@ -305,27 +310,33 @@ public class DebeziumConverterTest {
      * to push the digits through TimeZone.getRawOffset/inDaylightTime, which
      * moved every spring-forward gap time back by an hour: 2026-03-08 02:30:00
      * in America/Chicago came out as 01:30:00. MicroTimestampConverter already
-     * decoded the digits as UTC (the inverse of Debezium's encoding); this pins
-     * the same behaviour for DATETIME(0..3).
+     * decoded the digits as UTC (the inverse of Debezium's encoding). Both now
+     * resolve a gap or an overlap wall time with the transition rules (the
+     * offset before the transition, the earlier occurrence), bind the resulting
+     * instant, and report the shift as dst_gap or dst_overlap, so the shift is
+     * the one ClickHouse makes for the same digits, never a silent one.
      */
     @Test
-    public void testTimestampConverterGapTimePreserved() {
+    public void testTimestampConverterSameZoneGapAndOverlapAreResolvedByTheTransitionRules() {
         ZoneId chicago = ZoneId.of("America/Chicago");
 
+        // 02:30 does not exist in Chicago on 2026-03-08; 02:30 CST is 08:30 UTC (1772958600), 03:30 CDT.
         long gap = datetimeDigitsAsUtcEpochMillis(LocalDateTime.of(2026, 3, 8, 2, 30, 0));
-        Assert.assertEquals("a wall time inside the spring-forward gap must keep its digits",
-                "2026-03-08 02:30:00.000",
+        Assert.assertEquals("a wall time inside the spring-forward gap binds the offset-before-transition instant",
+                "1772958600.000000",
                 DebeziumConverter.TimestampConverter.convert(gap, ClickHouseDataType.DateTime64, chicago, chicago));
-        Assert.assertEquals("2026-03-08 02:30:00",
+        Assert.assertEquals("a DateTime column cannot take epoch text, so it takes the zone's wall time of that instant",
+                "2026-03-08 03:30:00",
                 DebeziumConverter.TimestampConverter.convert(gap, ClickHouseDataType.DateTime, chicago, chicago));
 
+        // 01:30 occurs twice on 2026-11-01; the earlier occurrence is 01:30 CDT = 06:30 UTC (1793514600).
         long overlap = datetimeDigitsAsUtcEpochMillis(LocalDateTime.of(2026, 11, 1, 1, 30, 0));
-        Assert.assertEquals("a wall time inside the fall-back overlap must keep its digits",
-                "2026-11-01 01:30:00.000",
+        Assert.assertEquals("a wall time inside the fall-back overlap binds the earlier occurrence",
+                "1793514600.000000",
                 DebeziumConverter.TimestampConverter.convert(overlap, ClickHouseDataType.DateTime64, chicago, chicago));
 
         // Same digits, same-zone decode, both converters agree.
-        Assert.assertEquals("2026-03-08 02:30:00.00000000",
+        Assert.assertEquals("1772958600.000000",
                 DebeziumConverter.MicroTimestampConverter.convert(gap * 1000L, chicago, chicago, ClickHouseDataType.DateTime64));
 
         // Explicitly different zones: the digits are a Chicago wall time; a gap
@@ -398,10 +409,10 @@ public class DebeziumConverterTest {
         // The DateTime64 bounds as epoch text: clamped, and the PostgreSQL
         // infinity literals (10413791999 is 2299-12-31T23:59:59Z, -2208988800
         // is 1900-01-01T00:00:00Z).
-        Assert.assertEquals("10413791999.000000",
+        Assert.assertEquals("10413791999.999999",
                 DebeziumConverter.ZonedTimestampConverter.convert("2338-01-19T03:14:07.99Z", utc,
                         ClickHouseDataType.DateTime64, clamp));
-        Assert.assertEquals("10413791999.000000",
+        Assert.assertEquals("10413791999.999999",
                 DebeziumConverter.ZonedTimestampConverter.convert("infinity", chicago,
                         ClickHouseDataType.DateTime64, clamp));
         Assert.assertEquals("-2208988800.000000",
@@ -553,6 +564,20 @@ public class DebeziumConverterTest {
                 DebeziumConverter.TimestampConverter.instantEpochText(-500L, ZoneId.of("America/Chicago")));
         Assert.assertEquals("1969-12-31 23:59:59.999",
                 DebeziumConverter.TimestampConverter.instantEpochText(-1L, ZoneId.of("UTC")));
+    }
+
+    @Test
+    @DisplayName("Epoch text floors the sub-microsecond part: a negative instant is never one microsecond late (Spec 07.03 section 3.1.11)")
+    public void epochTextFloorsNegativeSubMicrosecond() {
+        // 1969-12-31T23:59:59.9999995Z = -0.0000005 s: the microsecond floor is -0.000001
+        assertEquals("-0.000001", DebeziumConverter.epochText(Instant.ofEpochSecond(-1, 999_999_500)));
+        // 1969-12-31T23:59:58.9999995Z = -1.0000005 s
+        assertEquals("-1.000001", DebeziumConverter.epochText(Instant.ofEpochSecond(-2, 999_999_500)));
+        // 1969-12-31T23:59:58.000000500Z = -1.9999995 s; DOWN gave -1.999999, which is later than the instant
+        assertEquals("-2.000000", DebeziumConverter.epochText(Instant.ofEpochSecond(-2, 000_000_500)));
+        // Positive instants are unchanged: floor and truncation agree
+        assertEquals("1.999999", DebeziumConverter.epochText(Instant.ofEpochSecond(1, 999_999_999)));
+        assertEquals("1793518200.123456", DebeziumConverter.epochText(Instant.ofEpochSecond(1793518200L, 123_456_789)));
     }
 
 }

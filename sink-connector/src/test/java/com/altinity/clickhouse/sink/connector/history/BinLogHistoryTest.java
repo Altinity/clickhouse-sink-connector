@@ -84,7 +84,8 @@ public class BinLogHistoryTest {
         java.util.Map<String, String> props = new java.util.HashMap<>();
         com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig.setDefaultValues(props);
         com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig config =
-                new com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig(props);
+                new com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig(
+                        com.altinity.clickhouse.sink.connector.ZoneFixtures.withZones(props));
 
         com.altinity.clickhouse.sink.connector.model.ClickHouseStruct kafkaRow =
                 new com.altinity.clickhouse.sink.connector.model.ClickHouseStruct();
@@ -125,7 +126,8 @@ public class BinLogHistoryTest {
         java.util.Map<String, String> props = new java.util.HashMap<>();
         com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig.setDefaultValues(props);
         com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig config =
-                new com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig(props);
+                new com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig(
+                        com.altinity.clickhouse.sink.connector.ZoneFixtures.withZones(props));
         com.altinity.clickhouse.sink.connector.model.ClickHouseStruct row =
                 new com.altinity.clickhouse.sink.connector.model.ClickHouseStruct();
         row.setTs_ms(tsMs);
@@ -174,9 +176,17 @@ public class BinLogHistoryTest {
         assertEquals("1969-12-31 23:59:59.999", boundTime(-1L, "UTC", "UTC"));
     }
 
-    /** Empty zone names default to UTC and must not change the bound instant. */
+    /**
+     * An empty source zone does not change the bound instant (the source zone is not used for
+     * binding). An empty or null SERVER zone is refused: it used to default silently to UTC
+     * (spec 07.03 section 3.1.6, B3); the caller now resolves the effective server zone.
+     */
     @Test
-    public void timeColumnIgnoresEmptyZoneNames() throws Exception {
-        assertEquals("1709290200.123000", boundTime(1709290200123L, "", null));
+    public void timeColumnIgnoresEmptySourceZoneAndRefusesEmptyServerZone() throws Exception {
+        assertEquals("1709290200.123000", boundTime(1709290200123L, "", "UTC"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> boundTime(1709290200123L, "", null));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> boundTime(1709290200123L, "UTC", ""));
     }
 }

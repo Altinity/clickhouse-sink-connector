@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
@@ -76,7 +77,7 @@ public class PreparedStatementFieldMapperEngineColumnTest {
         Map<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString(),
                 Boolean.toString(historyMode));
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static Map<String, String> rmtColumns() {
@@ -221,7 +222,7 @@ public class PreparedStatementFieldMapperEngineColumnTest {
     private static ClickHouseSinkConnectorConfig configIgnoringDeletes() {
         Map<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.IGNORE_DELETE.toString(), "true");
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     @Test

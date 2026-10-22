@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
@@ -54,7 +55,7 @@ public class DbWriterTest {
         HashMap<String, String> rawConfig = new HashMap<>();
 
         rawConfig.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(rawConfig);
+        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(rawConfig));
 
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
@@ -125,7 +126,7 @@ public class DbWriterTest {
 
         HashMap<String, String> config = new HashMap<>();
         config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config));
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
@@ -133,7 +134,7 @@ public class DbWriterTest {
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
                 sinkConnectorConfig, null, conn);
-        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
         Map<String, String> columnDataTypesMap = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
 
         Assert.assertTrue(columnDataTypesMap.isEmpty() == false);
@@ -142,7 +143,7 @@ public class DbWriterTest {
         String database2 = "employees2";
         String jdbcUrl2 = BaseDbWriter.getConnectionString(dbHostName, port, database2);
         Connection conn2 = DbWriter.createConnection(jdbcUrl2, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
         DbWriter writer2 = new DbWriter(dbHostName, port, database2, tableName, userName, password,
                 sinkConnectorConfig, null, conn2);
         Map<String, String> columnDataTypesMap2 = metadata.getColumnsDataTypesForTable(conn, "employees", "employees");
@@ -165,7 +166,7 @@ public class DbWriterTest {
 
         HashMap<String, String> config = new HashMap<>();
         config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config));
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
@@ -201,7 +202,7 @@ public class DbWriterTest {
 
         HashMap<String, String> config = new HashMap<>();
         config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config));
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
@@ -273,7 +274,7 @@ public class DbWriterTest {
 
         HashMap<String, String> config = new HashMap<>();
         config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config));
 
         //String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
         Connection conn = DbWriter.createConnection(connectionUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
@@ -323,7 +324,7 @@ public class DbWriterTest {
 
         HashMap<String, String> config = new HashMap<>();
         config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config));
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 BaseDbWriter.SYSTEM_DB, sinkConnectorConfig);
@@ -357,7 +358,7 @@ public class DbWriterTest {
 
         HashMap<String, String> config = new HashMap<>();
         config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config));
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
         Connection conn2 = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 BaseDbWriter.SYSTEM_DB, sinkConnectorConfig);
@@ -426,7 +427,7 @@ public class DbWriterTest {
 
         HashMap<String, String> config = new HashMap<>();
         config.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config));
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
         Connection conn2 = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
                 BaseDbWriter.SYSTEM_DB, sinkConnectorConfig);

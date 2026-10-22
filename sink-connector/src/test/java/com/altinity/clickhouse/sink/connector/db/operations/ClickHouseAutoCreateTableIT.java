@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
@@ -43,7 +44,7 @@ public class ClickHouseAutoCreateTableIT extends com.altinity.clickhouse.sink.co
 
     @BeforeEach
     public void setUp() {
-        config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+        config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()));
     }
     @BeforeAll
     public static void initialize() throws InterruptedException {
@@ -59,7 +60,7 @@ public class ClickHouseAutoCreateTableIT extends com.altinity.clickhouse.sink.co
         String password = "root";
         String tableName = "auto_create_table";
 
-        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(new HashMap<>());
+        ClickHouseSinkConnectorConfig config= new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()));
 
 
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, database);
@@ -76,7 +77,7 @@ public class ClickHouseAutoCreateTableIT extends com.altinity.clickhouse.sink.co
     public void getColumnNameToCHDataTypeMappingTest() {
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
         Field[] fields = createFields();
-        Map<String, String> colNameToDataTypeMap = act.getColumnNameToCHDataTypeMapping(fields,new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Map<String, String> colNameToDataTypeMap = act.getColumnNameToCHDataTypeMapping(fields,new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         Map<String, String> expectedColNameToDataTypeMap = getExpectedColumnToDataTypesMap();
 
@@ -98,10 +99,10 @@ public class ClickHouseAutoCreateTableIT extends com.altinity.clickhouse.sink.co
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), null, conn);
 
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
         ArrayList<String> primaryKeys = new ArrayList<>();
@@ -129,12 +130,12 @@ public class ClickHouseAutoCreateTableIT extends com.altinity.clickhouse.sink.co
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
 
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), null, conn);
 
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
         ArrayList<String> primaryKeys = new ArrayList<>();
@@ -142,7 +143,7 @@ public class ClickHouseAutoCreateTableIT extends com.altinity.clickhouse.sink.co
 
         try {
             act.createNewTable(primaryKeys, tableName, "test", this.createFields(), writer.getConnection(),
-                    false, false, null,new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                    false, false, null,new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
         } catch(SQLException se) {
             Assert.assertTrue(false);
         }

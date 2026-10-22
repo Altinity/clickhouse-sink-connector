@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -37,7 +38,7 @@ public class MySqlDDLParserListenerImplTest {
     private static MySQLDDLParserService mySQLDDLParserService;
     @BeforeAll
     static public void init() {
-        mySQLDDLParserService = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()),
+        mySQLDDLParserService = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                 "employees");
         DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine = true;
     }
@@ -64,7 +65,7 @@ public class MySqlDDLParserListenerImplTest {
         String q = translate("CREATE TABLE audit (a INT, b VARCHAR(20) NOT NULL, "
                 + "c DATETIME(3), d INT GENERATED ALWAYS AS (a + 1))");
         String expected = "CREATE TABLE if not exists `employees`.audit("
-                + "a Nullable(Int32),b String NOT NULL ,c Nullable(DateTime64(3, 0)),d Nullable(Int32) DEFAULT a+1,"
+                + "a Nullable(Int32),b String NOT NULL ,c Nullable(DateTime64(3,'UTC')),d Nullable(Int32) DEFAULT a+1,"
                 + "`_version` UInt64,`is_deleted` UInt8) "
                 + "Engine=ReplacingMergeTree(_version,is_deleted) "
                 + "ORDER BY (a,b,c) SETTINGS allow_nullable_key=1";
@@ -84,7 +85,7 @@ public class MySqlDDLParserListenerImplTest {
         HashMap<String, String> configMap = new HashMap<>();
         configMap.put("databases.employees.tables.audit4.primary_key", "(b)");
         MySQLDDLParserService overridden = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(configMap), "employees");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(configMap)), "employees");
         String withOverride = translate(overridden, "CREATE TABLE audit4 (a INT, b INT NOT NULL)");
         Assert.assertTrue(withOverride, withOverride.toLowerCase().endsWith("order by (b)"));
     }
@@ -144,7 +145,7 @@ public class MySqlDDLParserListenerImplTest {
                 + "ADD COLUMN IF NOT EXISTS h Nullable(Float64), "
                 + "ADD COLUMN IF NOT EXISTS r Nullable(Float32), "
                 + "ADD COLUMN IF NOT EXISTS d Nullable(Decimal(7,3)), "
-                + "ADD COLUMN IF NOT EXISTS ts Nullable(DateTime64(3, 0))";
+                + "ADD COLUMN IF NOT EXISTS ts Nullable(DateTime64(3,'UTC'))";
         Assert.assertEquals(expected, squash(translate("ALTER TABLE t "
                 + "ADD COLUMN f FLOAT(7,3), ADD COLUMN g FLOAT, ADD COLUMN h DOUBLE(10,2), "
                 + "ADD COLUMN r REAL, ADD COLUMN d DECIMAL(7,3), ADD COLUMN ts DATETIME(3)")));
@@ -327,7 +328,7 @@ public class MySqlDDLParserListenerImplTest {
                 ") ENGINE=InnoDB DEFAULT CHARSET=latin1;";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery6, "Persons", clickHouseQuery);
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(6, 0) NOT NULL ,`Mid_Value` DateTime64(6, 0) NOT NULL ,`Maximum_Value` DateTime64(6, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(6, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(6,'UTC') NOT NULL ,`Mid_Value` DateTime64(6,'UTC') NOT NULL ,`Maximum_Value` DateTime64(6,'UTC') NOT NULL ,`Null_Value` Nullable(DateTime64(6,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
 
         String createQuery1 = "CREATE TABLE `temporal_types_DATETIME4` (\n" +
                 "  `Type` varchar(50) NOT NULL,\n" +
@@ -339,7 +340,7 @@ public class MySqlDDLParserListenerImplTest {
                 ") ENGINE=InnoDB DEFAULT CHARSET=latin1;";
         StringBuffer clickHouseQuery1 = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery1, "Persons", clickHouseQuery1);
-        Assert.assertTrue(clickHouseQuery1.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(1, 0) NOT NULL ,`Mid_Value` DateTime64(1, 0) NOT NULL ,`Maximum_Value` DateTime64(1, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(1, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
+        Assert.assertTrue(clickHouseQuery1.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(1,'UTC') NOT NULL ,`Mid_Value` DateTime64(1,'UTC') NOT NULL ,`Maximum_Value` DateTime64(1,'UTC') NOT NULL ,`Null_Value` Nullable(DateTime64(1,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
 
         String createQuery2 = "CREATE TABLE `temporal_types_DATETIME4` (\n" +
                 "  `Type` varchar(50) NOT NULL,\n" +
@@ -351,7 +352,7 @@ public class MySqlDDLParserListenerImplTest {
                 ") ENGINE=InnoDB DEFAULT CHARSET=latin1;";
         StringBuffer clickHouseQuery2 = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery2, "Persons", clickHouseQuery2);
-        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(2, 0) NOT NULL ,`Mid_Value` DateTime64(2, 0) NOT NULL ,`Maximum_Value` DateTime64(2, 0) NOT NULL ,`Null_Value` Nullable(DateTime64(2, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
+        Assert.assertTrue(clickHouseQuery2.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(2,'UTC') NOT NULL ,`Mid_Value` DateTime64(2,'UTC') NOT NULL ,`Maximum_Value` DateTime64(2,'UTC') NOT NULL ,`Null_Value` Nullable(DateTime64(2,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
 
 
     }
@@ -364,13 +365,13 @@ public class MySqlDDLParserListenerImplTest {
         String createQuery3 = "CREATE TABLE table_1 (id INT NOT NULL PRIMARY KEY, data DATETIME(3))";
         StringBuffer clickHouseQuery3 = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery3, "Persons", clickHouseQuery3);
-        Assert.assertTrue(clickHouseQuery3.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.table_1(id Int32 NOT NULL ,data Nullable(DateTime64(3, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+        Assert.assertTrue(clickHouseQuery3.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.table_1(id Int32 NOT NULL ,data Nullable(DateTime64(3,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
 
         // DateTime(4) with Primary Key
         String createQuery4 = "CREATE TABLE table_1 (id INT NOT NULL PRIMARY KEY, data DATETIME(4))";
         StringBuffer clickHouseQuery4 = new StringBuffer();
         mySQLDDLParserService.parseSql(createQuery4, "Persons", clickHouseQuery4);
-        Assert.assertTrue(clickHouseQuery4.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.table_1(id Int32 NOT NULL ,data Nullable(DateTime64(4, 0)),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
+        Assert.assertTrue(clickHouseQuery4.toString().equalsIgnoreCase("CREATE TABLE if not exists `employees`.table_1(id Int32 NOT NULL ,data Nullable(DateTime64(4,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY id"));
     }
 
     @Test
@@ -379,9 +380,9 @@ public class MySqlDDLParserListenerImplTest {
 
         StringBuffer clickHouseQuery = new StringBuffer();
         HashMap<String, String> props = new HashMap<>();
-        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "datatypes");
+        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), "datatypes");
         mySQLDDLParserService1.parseSql(createQuery, "Persons", clickHouseQuery);
-        String expectedQuery = "CREATE TABLE if not exists `datatypes`.autocreate_e904bc35_aac8_11f0_9925_e114ebd31e17(id Int32 NOT NULL ,D4 Nullable(Decimal(2,1)),D5 Nullable(Decimal(30,10)),Doublex Nullable(Float64),x_date Nullable(Date32),x_datetime6 Nullable(DateTime64(6, 0)),x_time Nullable(String),x_time6 Nullable(String),Intmin Nullable(Int32),Intmax Nullable(Int32),UIntmin Nullable(UInt32),UIntmax Nullable(UInt32),BIGIntmin Nullable(Int64),BIGIntmax Nullable(Int64),UBIGIntmin Nullable(UInt64),UBIGIntmax Nullable(UInt64),TIntmin Nullable(Int8),TIntmax Nullable(Int8),UTIntmin Nullable(UInt8),UTIntmax Nullable(UInt8),SIntmin Nullable(Int16),SIntmax Nullable(Int16),USIntmin Nullable(UInt16),USIntmax Nullable(UInt16),MIntmin Nullable(Int32),MIntmax Nullable(Int32),UMIntmin Nullable(UInt32),UMIntmax Nullable(UInt32),x_char Nullable(String),x_text Nullable(String),x_varchar Nullable(String),x_Blob Nullable(String),x_Mediumblob Nullable(String),x_Longblob Nullable(String),x_binary Nullable(String),x_varbinary Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
+        String expectedQuery = "CREATE TABLE if not exists `datatypes`.autocreate_e904bc35_aac8_11f0_9925_e114ebd31e17(id Int32 NOT NULL ,D4 Nullable(Decimal(2,1)),D5 Nullable(Decimal(30,10)),Doublex Nullable(Float64),x_date Nullable(Date32),x_datetime6 Nullable(DateTime64(6,'UTC')),x_time Nullable(String),x_time6 Nullable(String),Intmin Nullable(Int32),Intmax Nullable(Int32),UIntmin Nullable(UInt32),UIntmax Nullable(UInt32),BIGIntmin Nullable(Int64),BIGIntmax Nullable(Int64),UBIGIntmin Nullable(UInt64),UBIGIntmax Nullable(UInt64),TIntmin Nullable(Int8),TIntmax Nullable(Int8),UTIntmin Nullable(UInt8),UTIntmax Nullable(UInt8),SIntmin Nullable(Int16),SIntmax Nullable(Int16),USIntmin Nullable(UInt16),USIntmax Nullable(UInt16),MIntmin Nullable(Int32),MIntmax Nullable(Int32),UMIntmin Nullable(UInt32),UMIntmax Nullable(UInt32),x_char Nullable(String),x_text Nullable(String),x_varchar Nullable(String),x_Blob Nullable(String),x_Mediumblob Nullable(String),x_Longblob Nullable(String),x_binary Nullable(String),x_varbinary Nullable(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (id)";
         Assert.assertEquals(expectedQuery.toLowerCase(), clickHouseQuery.toString().toLowerCase());
     }
     @Test
@@ -399,7 +400,7 @@ public class MySqlDDLParserListenerImplTest {
         HashMap<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "UTC");
 
-        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "datatypes");
+        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), "datatypes");
         mySQLDDLParserService1.parseSql(createQuery6, "Persons", clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `datatypes`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(6,'UTC') NOT NULL ,`Mid_Value` DateTime64(6,'UTC') NOT NULL ,`Maximum_Value` DateTime64(6,'UTC') NOT NULL ,`Null_Value` Nullable(DateTime64(6,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
         log.info("Create table " + clickHouseQuery);
@@ -420,7 +421,7 @@ public class MySqlDDLParserListenerImplTest {
         HashMap<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "UTC");
 
-        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "datatypes");
+        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), "datatypes");
         mySQLDDLParserService1.parseSql(createQuery6, "Persons", clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("CREATE TABLE if not exists `datatypes`.`temporal_types_DATETIME4`(`Type` String NOT NULL ,`Minimum_Value` DateTime64(1,'UTC') NOT NULL ,`Mid_Value` DateTime64(2,'UTC') NOT NULL ,`Maximum_Value` DateTime64(3,'UTC') NOT NULL ,`Null_Value` Nullable(DateTime64(4,'UTC')),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Type`)"));
         log.info("Create table " + clickHouseQuery);
@@ -433,7 +434,7 @@ public class MySqlDDLParserListenerImplTest {
         Map<String, String> config = new HashMap<>();
         config.put(CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "test:test2");
 
-        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config), "test");
+        MySQLDDLParserService mySQLDDLParserService1 = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config)), "test");
         mySQLDDLParserService1.parseSql(dropQuery, "test", clickHouseQuery);
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("DROP DATABASE IF EXISTS test2"));
         log.info("Drop database " + clickHouseQuery);
@@ -449,7 +450,7 @@ public class MySqlDDLParserListenerImplTest {
         config.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
         config.put(CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "mysql1:ch1");
 
-        ClickHouseSinkConnectorConfig clickHouseSinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
+        ClickHouseSinkConnectorConfig clickHouseSinkConnectorConfig = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config));
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(clickHouseSinkConnectorConfig, "ch1");
         mySQLDDLParserService.parseSql(createDB, "Persons", clickHouseQuery);
         log.info("Create table " + clickHouseQuery);
@@ -574,7 +575,10 @@ public class MySqlDDLParserListenerImplTest {
     public void testAlterDatabaseAddColumnDataTypeMapping() {
 
         String addColumnNullable = "ALTER TABLE foo_new9 ADD COLUMN gmt_time3 DATETIME";
-        String clickhouseExpectedQuery = "ALTER TABLE `employees`.foo_new9 ADD COLUMN IF NOT EXISTS gmt_time3 Nullable(DateTime64)";
+        // A zone-configured DATETIME without a fraction is DateTime64(0, zone): the same shape the translator
+        // emits for every configured deployment (DataTypeConverterTest pins it). A bare DateTime64 was only
+        // produced when no zone was configured, which the connector now refuses.
+        String clickhouseExpectedQuery = "ALTER TABLE `employees`.foo_new9 ADD COLUMN IF NOT EXISTS gmt_time3 Nullable(DateTime64(0,'UTC'))";
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(addColumnNullable, "foo_new9", clickHouseQuery);
 
@@ -826,7 +830,7 @@ public class MySqlDDLParserListenerImplTest {
 
         Map<String, String> props = new HashMap<>();
         props.put(CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "mysql1:ch1");
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "ch1");
 
         StringBuffer clickHouseQuery = new StringBuffer();
@@ -1052,7 +1056,35 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "rename table mydb.old_table to new_table";
         mySQLDDLParserService.parseSql(sql, "table1", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE IF EXISTS employees.old_table to employees.new_table"));
+        // The source side is in mydb, not in the DDL's database: the table is renamed from mydb, and the
+        // unqualified target is in the DDL's database. Dropping mydb would rename employees.old_table, which
+        // does not exist, and IF EXISTS would make that a silent no-op.
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE IF EXISTS mydb.old_table to employees.new_table"));
+    }
+
+    @Test
+    @DisplayName("RENAME TABLE across databases keeps each side's database")
+    public void renameTableAcrossDatabasesKeepsEachSideDatabase() {
+        // A table moved from one captured database into another: each side names its own database.
+        Assert.assertTrue(translateRename("RENAME TABLE srcdb.t TO dstdb.t")
+                .equalsIgnoreCase("RENAME TABLE IF EXISTS srcdb.t to dstdb.t"));
+        Assert.assertTrue(translateRename("RENAME TABLE `src`.t TO `dst`.t")
+                .equalsIgnoreCase("RENAME TABLE IF EXISTS src.t to dst.t"));
+    }
+
+    @Test
+    @DisplayName("RENAME TABLE within the DDL's database is unchanged")
+    public void renameTableWithinOneDatabaseIsUnchanged() {
+        Assert.assertTrue(translateRename("RENAME TABLE employees.a TO employees.b")
+                .equalsIgnoreCase("RENAME TABLE IF EXISTS employees.a to employees.b"));
+        Assert.assertTrue(translateRename("RENAME TABLE a TO b")
+                .equalsIgnoreCase("RENAME TABLE IF EXISTS employees.a to employees.b"));
+    }
+
+    private static String translateRename(String mysqlDdl) {
+        StringBuffer clickHouseQuery = new StringBuffer();
+        mySQLDDLParserService.parseSql(mysqlDdl, "table1", clickHouseQuery);
+        return clickHouseQuery.toString();
     }
 
     @Test
@@ -1133,7 +1165,7 @@ public class MySqlDDLParserListenerImplTest {
 
         HashMap<String, String> props = new HashMap<>();
         props.put(CLICKHOUSE_DATABASE_OVERRIDE_MAP.toString(), "employees:employees2, products:productsnew");
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "employees2");
 
         String sql = "rename table employees.add_test to employees.add_test_old";
@@ -1187,7 +1219,7 @@ public class MySqlDDLParserListenerImplTest {
 
         HashMap<String, String> map = new HashMap<>();
         map.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(map);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(map));
 
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "test");
         String sql = "create database if not exists repl_test_ddl";
@@ -1236,7 +1268,9 @@ public class MySqlDDLParserListenerImplTest {
         String sql = "rename /* gh-ost */ table `trade_prod`.`enriched_trade` to `trade_prod`.`_enriched_trade_del`, `trade_prod`.`_enriched_trade_gho` to `trade_prod`.`enriched_trade`\n";
         mySQLDDLParserService.parseSql(sql, "", clickHouseQuery);
 
-        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE IF EXISTS employees.`enriched_trade` to employees.`_enriched_trade_del`,employees.`_enriched_trade_gho` to employees.`enriched_trade`"));
+        // The gh-ost cutover names trade_prod on both sides, so both sides stay in trade_prod; before the
+        // fix both were rewritten to the listener's database.
+        Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase("RENAME TABLE IF EXISTS trade_prod.`enriched_trade` to trade_prod.`_enriched_trade_del`,trade_prod.`_enriched_trade_gho` to trade_prod.`enriched_trade`"));
     }
     @Test
     public void alterTableRenameTable() {
@@ -1380,7 +1414,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testReplicatedReplacingMergeTreeWithoutIsDeletedColumn() {
         HashMap configMap = new HashMap();
         configMap.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(configMap);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(configMap));
         MySQLDDLParserService mySQLDDLParserService = new MySQLDDLParserService(config, "datatypes");
         StringBuffer clickHouseQuery = new StringBuffer();
         AtomicBoolean isDropOrTruncate = new AtomicBoolean();
@@ -1389,7 +1423,7 @@ public class MySqlDDLParserListenerImplTest {
         mySQLDDLParserService.parseSql(sql, "temporal_types_DATETIME4", clickHouseQuery, isDropOrTruncate);
 
         // Keyless table: the stored column is the sorting key (Spec 06.05 §3.6), never tuple().
-        String expectedResult = "CREATE TABLE if not exists `datatypes`.temporal_types_TIMESTAMP1 ON CLUSTER `{cluster}`(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplicatedReplacingMergeTree(_version, is_deleted) ORDER BY (`Mid_Value`)";
+        String expectedResult = "CREATE TABLE if not exists `datatypes`.temporal_types_TIMESTAMP1 ON CLUSTER `{cluster}`(`Mid_Value` DateTime64(1,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplicatedReplacingMergeTree(_version, is_deleted) ORDER BY (`Mid_Value`)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedResult));
 
 
@@ -1397,12 +1431,12 @@ public class MySqlDDLParserListenerImplTest {
 
     @ParameterizedTest
     @CsvSource(
-            value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` timestamp(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
-            "CREATE TABLE temporal_types_TIMESTAMP2(`Mid_Value` timestamp(2) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP2(`Mid_Value` DateTime64(2, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
-            "CREATE TABLE temporal_types_TIMESTAMP3(`Mid_Value` timestamp(3) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP3(`Mid_Value` DateTime64(3, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
-            "CREATE TABLE temporal_types_TIMESTAMP4(`Mid_Value` timestamp(4) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP4(`Mid_Value` DateTime64(4, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
-            "CREATE TABLE temporal_types_TIMESTAMP5(`Mid_Value` timestamp(5) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP5(`Mid_Value` DateTime64(5, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
-            "CREATE TABLE temporal_types_TIMESTAMP6(`Mid_Value` timestamp(6) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP6(`Mid_Value` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)"}
+            value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` timestamp(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+            "CREATE TABLE temporal_types_TIMESTAMP2(`Mid_Value` timestamp(2) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP2(`Mid_Value` DateTime64(2,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+            "CREATE TABLE temporal_types_TIMESTAMP3(`Mid_Value` timestamp(3) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP3(`Mid_Value` DateTime64(3,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+            "CREATE TABLE temporal_types_TIMESTAMP4(`Mid_Value` timestamp(4) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP4(`Mid_Value` DateTime64(4,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+            "CREATE TABLE temporal_types_TIMESTAMP5(`Mid_Value` timestamp(5) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP5(`Mid_Value` DateTime64(5,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+            "CREATE TABLE temporal_types_TIMESTAMP6(`Mid_Value` timestamp(6) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP6(`Mid_Value` DateTime64(6,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)"}
     ,delimiter = ':')
     @DisplayName("Test to validate if the timestamp data type precision is maintained from MySQL to ClickHouse")
     public void checkIfTimestampDataTypePrecisionIsMaintained(String sql, String expectedResult) {
@@ -1416,12 +1450,12 @@ public class MySqlDDLParserListenerImplTest {
 
     @ParameterizedTest
     @CsvSource(
-            value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` TIMESTAMP(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
-                    "CREATE TABLE temporal_types_TIMESTAMP2(`Mid_Value` TIMESTAMP(2) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP2(`Mid_Value` DateTime64(2, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
-                    "CREATE TABLE temporal_types_TIMESTAMP3(`Mid_Value` TIMESTAMP(3) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP3(`Mid_Value` DateTime64(3, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
-                    "CREATE TABLE temporal_types_TIMESTAMP4(`Mid_Value` TIMESTAMP(4) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP4(`Mid_Value` DateTime64(4, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
-                    "CREATE TABLE temporal_types_TIMESTAMP5(`Mid_Value` TIMESTAMP(5) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP5(`Mid_Value` DateTime64(5, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
-                    "CREATE TABLE temporal_types_TIMESTAMP6(`Mid_Value` TIMESTAMP(6) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP6(`Mid_Value` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)"}
+            value = {"CREATE TABLE temporal_types_TIMESTAMP1(`Mid_Value` TIMESTAMP(1) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP1(`Mid_Value` DateTime64(1,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+                    "CREATE TABLE temporal_types_TIMESTAMP2(`Mid_Value` TIMESTAMP(2) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP2(`Mid_Value` DateTime64(2,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+                    "CREATE TABLE temporal_types_TIMESTAMP3(`Mid_Value` TIMESTAMP(3) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP3(`Mid_Value` DateTime64(3,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+                    "CREATE TABLE temporal_types_TIMESTAMP4(`Mid_Value` TIMESTAMP(4) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP4(`Mid_Value` DateTime64(4,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+                    "CREATE TABLE temporal_types_TIMESTAMP5(`Mid_Value` TIMESTAMP(5) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP5(`Mid_Value` DateTime64(5,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)",
+                    "CREATE TABLE temporal_types_TIMESTAMP6(`Mid_Value` TIMESTAMP(6) NOT NULL) ENGINE=InnoDB;: CREATE TABLE if not exists `employees`.temporal_types_TIMESTAMP6(`Mid_Value` DateTime64(6,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`Mid_Value`)"}
             ,delimiter = ':')
     @DisplayName("Test to validate if the timestamp data type precision(uppercase timestamp is maintained from MySQL to ClickHouse")
     public void checkIfTimestampDataTypeUpperCasePrecisionIsMaintained(String sql, String expectedResult) {
@@ -2113,8 +2147,8 @@ public class MySqlDDLParserListenerImplTest {
 
         StringBuffer clickHouseQuery = new StringBuffer();
         mySQLDDLParserService.parseSql(sql2, "employees", clickHouseQuery);
-        //String expectedQuery = "CREATE TABLE if not exists `employees`.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` UInt16 NOT NULL ,`incomplete_lookup_type_id` UInt16 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
-        String expectedQuery = "CREATE TABLE if not exists `employees`.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` UInt16 NOT NULL ,`incomplete_lookup_type_id` UInt16 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6, 0) NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  clearing_date ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
+        //String expectedQuery = "CREATE TABLE if not exists `employees`.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` UInt16 NOT NULL ,`incomplete_lookup_type_id` UInt16 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
+        String expectedQuery = "CREATE TABLE if not exists `employees`.`clearing_position_incomplete_detail`(`clearing_position_incomplete_detail_id` UInt64 NOT NULL ,`clearing_date` Date32 NOT NULL ,`incomplete_reason_id` UInt16 NOT NULL ,`incomplete_lookup_type_id` UInt16 NOT NULL ,`clearing_position_id` Nullable(Int64),`ref_lookup_db_time` DateTime64(6,'UTC') NOT NULL ,`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  clearing_date ORDER BY (`clearing_position_incomplete_detail_id`,`clearing_date`)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
         //Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
@@ -2716,8 +2750,8 @@ public class MySqlDDLParserListenerImplTest {
         // is_reversal's bit-mask expression is translated (Spec 06.06 section
         // 3.4); the verbatim `a&(1<<0)` previously pinned here is a ClickHouse
         // syntax error (Code 62).
-        String expectedQuery = "CREATE TABLE if not exists `employees`.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` UInt16 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` UInt16 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(UInt16),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(UInt32),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(UInt16),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(UInt32),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) DEFAULT ((bitAnd(toUInt64(`enriched_trade_attributes_1`), toUInt64((1))))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  trade_date ORDER BY (`enriched_trade_id`,`trade_date`)";
-        //String expectedQuery = "CREATE TABLE if not exists `employees`.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` UInt16 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` UInt16 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(UInt16),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(UInt32),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(UInt16),`valid_time` DateTime64(6, 0) NOT NULL ,`db_from` DateTime64(6, 0) NOT NULL ,`db_to` DateTime64(6, 0) NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(UInt32),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) DEFAULT ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`enriched_trade_id`,`trade_date`)";
+        String expectedQuery = "CREATE TABLE if not exists `employees`.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` UInt16 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` UInt16 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(UInt16),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(UInt32),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(UInt16),`valid_time` DateTime64(6,'UTC') NOT NULL ,`db_from` DateTime64(6,'UTC') NOT NULL ,`db_to` DateTime64(6,'UTC') NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(UInt32),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) DEFAULT ((bitAnd(toUInt64(`enriched_trade_attributes_1`), toUInt64((1))))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY  trade_date ORDER BY (`enriched_trade_id`,`trade_date`)";
+        //String expectedQuery = "CREATE TABLE if not exists `employees`.`enriched_trade`(`enriched_trade_id` UInt64 NOT NULL ,`enriched_trade_key` UInt64 NOT NULL ,`version_num` UInt16 NOT NULL ,`pos_agg_id` Nullable(UInt64),`is_complete` Int8 NOT NULL ,`enriched_trade_type_id` UInt16 NOT NULL ,`trade_date` Date32 NOT NULL ,`street_trade_date` Nullable(Date32),`settlement_date` Nullable(Date32),`direction_id` Int8 NOT NULL ,`price` Nullable(Decimal(24,10)),`quantity` Decimal(30,10) NOT NULL ,`sid` Nullable(UInt64),`currency_sid` Nullable(UInt64),`currency_id` Nullable(UInt16),`unit_value` Nullable(Decimal(30,10)),`exchange_lglent_id` Nullable(Int32),`exec_broker_lglent_id` Nullable(Int32),`branch_id` Nullable(Int32),`dim_risk_strategy_id` Nullable(UInt32),`account_id` Nullable(Int32),`parent_account_id` Nullable(Int32),`child_account_id` Nullable(Int32),`account_relshp_type_id` Nullable(UInt16),`valid_time` DateTime64(6,'UTC') NOT NULL ,`db_from` DateTime64(6,'UTC') NOT NULL ,`db_to` DateTime64(6,'UTC') NOT NULL ,`created_by` Int32 NOT NULL ,`capped_by` Nullable(Int32),`user_id` Int32 NOT NULL ,`valid_ts` Nullable(UInt64),`kafka_ts` Nullable(UInt64),`kafka_offset` Nullable(Int64),`kafka_partition` Nullable(UInt32),`inst_type_id` Int32 NOT NULL ,`enriched_trade_attributes_1` Nullable(UInt64),`is_reversal` Nullable(Int32) DEFAULT ((`enriched_trade_attributes_1`&(1<<0))>0),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) ORDER BY (`enriched_trade_id`,`trade_date`)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
 
@@ -2823,8 +2857,8 @@ public class MySqlDDLParserListenerImplTest {
         config.put(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString(), "true");
         config.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "America/Chicago");
         
-        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(config);
-        MySQLDDLParserService parserService = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config),
+        ClickHouseSinkConnectorConfig sinkConnectorConfig = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config));
+        MySQLDDLParserService parserService = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config)),
                 "employees");
         String sql = "CREATE TABLE `test_table` (\n" +
                 "  `id` INT PRIMARY KEY,\n" +
@@ -2835,7 +2869,7 @@ public class MySqlDDLParserListenerImplTest {
         StringBuffer clickHouseQuery = new StringBuffer();
         parserService.parseSql(sql, "test_db", clickHouseQuery);
 
-        String expectedQuery = "CREATE TABLE if not exists `employees`.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64(0,'America/Chicago') NOT NULL ,`_valid_from` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',`_valid_to` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',`_operation` LowCardinality(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`_valid_to`) ORDER BY (`id`,`_valid_to`) TTL `_valid_to` + toIntervalDay(30)";
+        String expectedQuery = "CREATE TABLE if not exists `employees`.`test_table`(`id` Int32 NOT NULL ,`name` String NOT NULL ,`created_at` DateTime64(0,'America/Chicago') NOT NULL ,`_valid_from` DateTime('America/Chicago') DEFAULT 4102444800,`_valid_to` DateTime('America/Chicago') DEFAULT 4102444800,`_operation` LowCardinality(String),`_version` UInt64,`is_deleted` UInt8) Engine=ReplacingMergeTree(_version,is_deleted) PARTITION BY toDate(`_valid_to`) ORDER BY (`id`,`_valid_to`) TTL `_valid_to` + toIntervalDay(30)";
         Assert.assertTrue(clickHouseQuery.toString().equalsIgnoreCase(expectedQuery));
     }
 
@@ -2843,7 +2877,7 @@ public class MySqlDDLParserListenerImplTest {
         HashMap<String, String> config = new HashMap<>();
         config.put(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString(), "true");
         config.putAll(extra);
-        return new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config), "employees");
+        return new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config)), "employees");
     }
 
     /**
@@ -3151,7 +3185,7 @@ public class MySqlDDLParserListenerImplTest {
         // value is lost and the change is checksum-safe.
         String alter = "ALTER TABLE sample_tbl MODIFY dt_from DATETIME(6) NOT NULL";
         String expected = "ALTER TABLE `employees`.sample_tbl "
-                + "MODIFY COLUMN dt_from Nullable(DateTime64(6, 0))";
+                + "MODIFY COLUMN dt_from Nullable(DateTime64(6,'UTC'))";
         StringBuffer out = new StringBuffer();
         mySQLDDLParserService.parseSql(alter, "employees", out);
         log.info("CLICKHOUSE QUERY[modify-notnull]:" + out);
@@ -3200,7 +3234,7 @@ public class MySqlDDLParserListenerImplTest {
     private static MySQLDDLParserService parserWithTarget(Map<String, String> columnTypes,
                                                           List<String> sortingKey) {
         MySQLDDLParserService service = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "employees");
         service.setTargetSchemaLookup(TargetSchemaLookup.fromColumns(columnTypes, sortingKey));
         return service;
     }
@@ -3248,9 +3282,27 @@ public class MySqlDDLParserListenerImplTest {
                 + "ADD COLUMN IF NOT EXISTS b Nullable(Int32)";
         // DESTRUCTIVE: none -- string assertion on generated DDL text; no database is contacted.
         String q = translate("ALTER TABLE t ADD COLUMN a INT, ADD INDEX idx_a (a), ADD COLUMN b INT, "
-                + "DROP INDEX idx_b, ALTER COLUMN a SET DEFAULT 1, CONVERT TO CHARACTER SET utf8mb4, "
+                + "DROP INDEX idx_b, ALTER COLUMN a SET DEFAULT 1, "
                 + "ADD UNIQUE KEY uk_b (b), DROP FOREIGN KEY fk_x, COMMENT='x'");
         Assert.assertEquals(expected, q);
+    }
+
+    @Test
+    @DisplayName("CONVERT TO CHARACTER SET re-encodes existing rows, so it is refused loudly, never skipped")
+    public void testAlterConvertCharsetIsRefusedNotSkipped() {
+        // MySQL re-encodes every string column in place with no row events.
+        // Skipping it left the ClickHouse values at the pre-conversion bytes.
+        assertThrows(DDLReplicationException.class,
+                () -> translate("ALTER TABLE t ADD COLUMN a INT, CONVERT TO CHARACTER SET utf8mb4"));
+        assertThrows(DDLReplicationException.class,
+                () -> translate("ALTER TABLE t CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"));
+    }
+
+    @Test
+    @DisplayName("ALTER TABLE ... DEFAULT CHARACTER SET changes no existing row and stays a no-op")
+    public void testAlterDefaultCharsetStaysANoOp() {
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS a Nullable(Int32)",
+                translate("ALTER TABLE t ADD COLUMN a INT, DEFAULT CHARACTER SET utf8mb4"));
     }
 
     @Test
@@ -3424,7 +3476,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testPrimaryKeyChangeIsLoudWhenRebuildDisabled() {
         Map<String, String> config = new HashMap<>();
         config.put(SinkConnectorLightWeightConfig.DDL_PRIMARY_KEY_REBUILD, "false");
-        MySQLDDLParserService disabled = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config),
+        MySQLDDLParserService disabled = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config)),
                 "employees");
         disabled.setTargetSchemaLookup(TargetSchemaLookup.fromColumns(
                 columns("id", "Int32", "tenant", "Int32", "name", "Nullable(String)"),
@@ -3450,7 +3502,7 @@ public class MySqlDDLParserListenerImplTest {
         // Restatement and unknown key are unaffected by the switch.
         Assert.assertEquals("", translate(disabled, "ALTER TABLE t ADD PRIMARY KEY (id)").trim());
         MySQLDDLParserService disabledUnknown = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(config), "employees");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config)), "employees");
         Assert.assertEquals("", translate(disabledUnknown, "ALTER TABLE t DROP PRIMARY KEY").trim());
     }
 
@@ -3704,7 +3756,7 @@ public class MySqlDDLParserListenerImplTest {
     public void testKeyColumnChangeIsLoudWhenRebuildDisabled() {
         Map<String, String> config = new HashMap<>();
         config.put(SinkConnectorLightWeightConfig.DDL_PRIMARY_KEY_REBUILD, "false");
-        MySQLDDLParserService disabled = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config),
+        MySQLDDLParserService disabled = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config)),
                 "employees");
         disabled.setTargetSchemaLookup(TargetSchemaLookup.fromColumns(
                 columns("id", "Int32", "name", "Nullable(String)"), Collections.singletonList("id")));
@@ -3834,7 +3886,7 @@ public class MySqlDDLParserListenerImplTest {
     @DisplayName("A no-op MODIFY of a DateTime64 key column is suppressed whatever timezone the existing column renders with")
     public void testModifyDateTimeKeyWithTimezoneIsSuppressed() {
         MySQLDDLParserService keyed = parserWithTarget(
-                columns("ts", "DateTime64(6, 'UTC')", "d", "DateTime('UTC')", "v", "Nullable(Int32)"),
+                columns("ts", "DateTime64(6,'UTC')", "d", "DateTime('UTC')", "v", "Nullable(Int32)"),
                 Arrays.asList("ts", "d"));
         Assert.assertEquals("", translate(keyed, "ALTER TABLE t MODIFY COLUMN ts DATETIME(6) NOT NULL").trim());
         Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
@@ -3844,9 +3896,9 @@ public class MySqlDDLParserListenerImplTest {
         // renders with that zone; still the same column.
         HashMap<String, String> zoned = new HashMap<>();
         zoned.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "America/Chicago");
-        MySQLDDLParserService zonedKeyed = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(zoned), "employees");
+        MySQLDDLParserService zonedKeyed = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(zoned)), "employees");
         zonedKeyed.setTargetSchemaLookup(TargetSchemaLookup.fromColumns(
-                columns("ts", "DateTime64(6, 'UTC')", "d", "DateTime('UTC')", "v", "Nullable(Int32)"),
+                columns("ts", "DateTime64(6,'UTC')", "d", "DateTime('UTC')", "v", "Nullable(Int32)"),
                 Arrays.asList("ts", "d")));
         Assert.assertEquals("", translate(zonedKeyed, "ALTER TABLE t MODIFY COLUMN ts DATETIME(6) NOT NULL").trim());
 
@@ -3862,13 +3914,13 @@ public class MySqlDDLParserListenerImplTest {
 
         // The comparison itself, on the rendered strings.
         Assert.assertEquals(KeyColumnTypeChange.Verdict.SAME_OR_NARROWER,
-                KeyColumnTypeChange.compare("DateTime64(6, 'UTC')", "DateTime64(6, 0)"));
+                KeyColumnTypeChange.compare("DateTime64(6,'UTC')", "DateTime64(6,'UTC')"));
         Assert.assertEquals(KeyColumnTypeChange.Verdict.SAME_OR_NARROWER,
                 KeyColumnTypeChange.compare("Nullable(DateTime64(6, 'Europe/Berlin'))", "DateTime64(6,'UTC')"));
         Assert.assertEquals(KeyColumnTypeChange.Verdict.SAME_OR_NARROWER,
                 KeyColumnTypeChange.compare("DateTime('UTC')", "DateTime"));
         Assert.assertEquals(KeyColumnTypeChange.Verdict.NOT_COMPARABLE,
-                KeyColumnTypeChange.compare("DateTime64(3, 'UTC')", "DateTime64(6, 0)"));
+                KeyColumnTypeChange.compare("DateTime64(3,'UTC')", "DateTime64(6,'UTC')"));
     }
 
     @Test
@@ -3912,7 +3964,7 @@ public class MySqlDDLParserListenerImplTest {
     @Test
     @DisplayName("MODIFY/CHANGE back-fill nothing, so a non-literal DEFAULT is dropped there")
     public void testModifyColumnDefaultCurrentTimestampIsDropped() {
-        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN ts Nullable(DateTime64(6, 0))",
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN ts Nullable(DateTime64(6,'UTC'))",
                 translate("ALTER TABLE t MODIFY COLUMN ts DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6)"));
         Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN n Nullable(Int32)",
                 translate("ALTER TABLE t MODIFY COLUMN n INT DEFAULT (1 + 2)"));
@@ -3928,19 +3980,20 @@ public class MySqlDDLParserListenerImplTest {
         // every pre-existing row at 1970-01-01 while MySQL back-filled the
         // ALTER's own timestamp (Spec 06.04 §3.2.2).
         MySQLDDLParserService stamped = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "employees");
         stamped.setDdlEventTimestampMs(1700000000123L); // 2023-11-14 22:13:20.123 UTC
-        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS ts DateTime64(6, 0) "
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS ts DateTime64(6,'UTC') "
                         + "DEFAULT toDateTime64('2023-11-14 22:13:20.123', 6, 'UTC')",
                 squash(translate(stamped, "ALTER TABLE t ADD COLUMN ts DATETIME(6) NOT NULL "
                         + "DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)")));
-        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS created Nullable(DateTime64) "
-                        + "DEFAULT toDateTime64('2023-11-14 22:13:20.123', 3, 'UTC')",
+        // A DATETIME without a fraction has scale 0, so the back-filled instant carries no fraction.
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS created Nullable(DateTime64(0,'UTC')) "
+                        + "DEFAULT toDateTime64('2023-11-14 22:13:20', 0, 'UTC')",
                 squash(translate(stamped, "ALTER TABLE t ADD COLUMN created DATETIME NULL DEFAULT CURRENT_TIMESTAMP")));
-        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS t1 DateTime64(1, 0) "
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS t1 DateTime64(1,'UTC') "
                         + "DEFAULT toDateTime64('2023-11-14 22:13:20.1', 1, 'UTC')",
                 squash(translate(stamped, "ALTER TABLE t ADD COLUMN t1 TIMESTAMP(1) NOT NULL DEFAULT NOW(1)")));
-        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS t2 DateTime64(2, 0) "
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS t2 DateTime64(2,'UTC') "
                         + "DEFAULT toDateTime64('2023-11-14 22:13:20.12', 2, 'UTC'), "
                         + "ADD COLUMN IF NOT EXISTS c Nullable(Int32)",
                 squash(translate(stamped, "ALTER TABLE t ADD COLUMN t2 DATETIME(2) NOT NULL DEFAULT LOCALTIMESTAMP(2), "
@@ -4013,7 +4066,7 @@ public class MySqlDDLParserListenerImplTest {
         // back-fill must be the raw bytes too.
         HashMap<String, String> raw = new HashMap<>();
         raw.put(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString(), "true");
-        MySQLDDLParserService rawBytes = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(raw), "employees");
+        MySQLDDLParserService rawBytes = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(raw)), "employees");
         Assert.assertEquals("ALTER TABLE `employees`.t "
                         + "ADD COLUMN IF NOT EXISTS h Nullable(String) DEFAULT unhex('0A0B'), "
                         + "ADD COLUMN IF NOT EXISTS bs Nullable(String) DEFAULT unhex('41')",
@@ -4158,7 +4211,7 @@ public class MySqlDDLParserListenerImplTest {
             }
         };
         MySQLDDLParserService service = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "employees");
         service.setTargetSchemaLookup(recording);
 
         // Quoted and qualified identifiers, no explicit NULL/NOT NULL: the

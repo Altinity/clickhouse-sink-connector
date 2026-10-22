@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.junit.jupiter.api.DisplayName;
@@ -22,7 +23,7 @@ public class ClickHouseBatchWriterDatabaseResolutionTest {
         if (customProps != null) {
             props.putAll(customProps);
         }
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static ClickHouseStruct createStructWithDatabase(String db) {

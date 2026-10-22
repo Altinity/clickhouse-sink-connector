@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
@@ -142,7 +143,7 @@ public class ReplicationHistoryHandlerTest {
     @Test
     public void testGenerateUpdateQuery() {
         // Create params manually for testing
-        String validToMax = "2100-01-01 00:00:00";
+        String validToMax = "4102444800";
         String binlogRecordTimestamp = "2025-03-01 10:30:00";
         long version = 1234567890L;
 
@@ -189,7 +190,7 @@ public class ReplicationHistoryHandlerTest {
     @Test
     public void testGenerateUpdateQueryWithStringPrimaryKey() {
         // Create params with String primary key
-        String validToMax = "2100-01-01 00:00:00";
+        String validToMax = "4102444800";
         String binlogRecordTimestamp = "2025-03-01 10:30:00";
         long version = 1234567890L;
 
@@ -238,7 +239,7 @@ public class ReplicationHistoryHandlerTest {
     @Test
     public void testUpdateQueryParamsToString() {
         ReplicationHistoryHandler.UpdateQueryParams params = new ReplicationHistoryHandler.UpdateQueryParams(
-                "2100-01-01 00:00:00",
+                "4102444800",
                 "2025-03-01 10:30:00",
                 1234567890L,
                 "employeeNumber",
@@ -264,7 +265,7 @@ public class ReplicationHistoryHandlerTest {
     @Test
     public void testGenerateDeleteQuery() {
         // Test DELETE uses generateDeleteQuery (2-SELECT pattern, no delete marker from update query)
-        String validToMax = "2100-01-01 00:00:00";
+        String validToMax = "4102444800";
         String binlogRecordTimestamp = "2025-03-01 10:30:00";
         long version = 1234567890L;
 
@@ -423,7 +424,7 @@ public class ReplicationHistoryHandlerTest {
     // ---- Spec 12.03 sections 3.2-3.5: before-image key, one version, bulk close ----
 
     private static final String OPEN_ROW_AT_1001 =
-            "WHERE `employeeNumber`=1001 AND `_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC') AND `is_deleted` = 0";
+            "WHERE `employeeNumber`=1001 AND `_valid_to` = toDateTime(4102444800) AND `is_deleted` = 0";
 
     /** An UPDATE record whose before image has key {@code beforeKey} and whose after image has key {@code afterKey}. */
     private ClickHouseStruct updateRecord(int beforeKey, int afterKey) {
@@ -499,7 +500,7 @@ public class ReplicationHistoryHandlerTest {
         Assert.assertTrue("1001 is marked deleted: " + marker, marker.contains("1 as `is_deleted`"));
         Assert.assertTrue("... by the UPDATE: " + marker, marker.contains("'U' as `_operation`"));
         Assert.assertTrue("... at its open sorting key: " + marker,
-                marker.contains("toDateTime('2100-01-01 00:00:00', 'UTC') as `_valid_to`"));
+                marker.contains("toDateTime(4102444800) as `_valid_to`"));
         Assert.assertTrue("the after image (2002) is bound as parameters", result.right.containsKey("employeeNumber"));
         Assert.assertTrue(params.isKeyChanged());
         System.out.println("Generated Query for key-changing UPDATE: " + query);
@@ -597,7 +598,7 @@ public class ReplicationHistoryHandlerTest {
     public void bulkCloseUsesEventTimeAndVersion() throws Exception {
         Map<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString(), "true");
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
         ReplicationHistoryHandler handler = new ReplicationHistoryHandler(queryFormatter, new DBMetadata(config));
         RecordingJdbc jdbc = new RecordingJdbc();
 
@@ -608,11 +609,11 @@ public class ReplicationHistoryHandlerTest {
                 Arrays.asList(RecordingJdbc.PREPARE, RecordingJdbc.EXECUTE), jdbc.kinds());
         String sql = jdbc.events.get(0).sql;
         Assert.assertTrue("closes at the event time: " + sql,
-                sql.contains("toDateTime('2024-03-01 10:50:00', 'UTC') AS `_valid_to`"));
+                sql.contains("toDateTime(1709290200) AS `_valid_to`"));
         Assert.assertTrue("markers start at the event time: " + sql,
-                sql.contains("toDateTime('2024-03-01 10:50:00', 'UTC') AS `_valid_from`"));
+                sql.contains("toDateTime(1709290200) AS `_valid_from`"));
         Assert.assertTrue("open rows are selected by the sentinel: " + sql,
-                sql.contains("WHERE `_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC') AND `is_deleted` = 0"));
+                sql.contains("WHERE `_valid_to` = toDateTime(4102444800) AND `is_deleted` = 0"));
         Assert.assertEquals("every row carries the event's version: " + sql, 2, occurrences(sql, "4242 AS `_version`"));
         Assert.assertTrue("markers record the TRUNCATE: " + sql, sql.contains("'T' AS `_operation`"));
         Assert.assertTrue("targets the qualified table: " + sql, sql.startsWith("INSERT INTO `test_history`.`employees` "));

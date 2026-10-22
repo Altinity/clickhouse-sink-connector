@@ -690,7 +690,7 @@ public class PrimaryKeyChangeIT {
                 clickHouseContainer.getFirstMappedPort(), DB);
         Connection conn = BaseDbWriter.createConnection(url, BaseDbWriter.DATABASE_CLIENT_NAME,
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), DB,
-                new ClickHouseSinkConnectorConfig(config));
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config)));
         Assert.assertNotNull("could not open a direct ClickHouse connection", conn);
         return conn;
     }

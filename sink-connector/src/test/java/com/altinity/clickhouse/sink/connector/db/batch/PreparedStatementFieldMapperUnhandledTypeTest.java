@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -82,7 +83,7 @@ public class PreparedStatementFieldMapperUnhandledTypeTest {
         DataException e = assertThrows(DataException.class, () ->
                 new PreparedStatementFieldMapper("is_deleted", true, null, "_version", "db", ZoneId.of("UTC"))
                         .insertPreparedStatement(indexMap, recording(bound), after.schema().fields(),
-                                record, after, false, new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                                record, after, false, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                                 columns, DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, "orders"),
                 "a MAP field has no handler; continuing leaves parameter 2 unbound (or, on the V2 "
                         + "driver, bound to the previous row's value)");

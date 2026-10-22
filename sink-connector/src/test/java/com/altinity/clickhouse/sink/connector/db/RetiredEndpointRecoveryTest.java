@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -121,7 +122,7 @@ public class RetiredEndpointRecoveryTest {
         Properties p = new Properties();
         p.setProperty("user", "default");
         HikariDataSource returned = HikariDbSource.getInstance(new SinkConnectorDataSource(url(), p), DB,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "default", "");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "default", "");
 
         assertSame(pool, returned, "the live cached pool is reused, not rebuilt");
         assertFalse(RetiredEndpointRecoveryTest.<Set<String>>staticField("deadEndpoints").contains(endpoint()),

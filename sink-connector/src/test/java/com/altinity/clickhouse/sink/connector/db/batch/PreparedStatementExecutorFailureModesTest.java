@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -144,7 +145,7 @@ public class PreparedStatementExecutorFailureModesTest {
 
         RuntimeException thrown = assertThrows(RuntimeException.class, () ->
                 executor().addToPreparedStatementBatch("topic", segment(2), new BlockMetaData(),
-                        new ClickHouseSinkConnectorConfig(props), connectionReturning(ps), "t", columns(),
+                        new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), connectionReturning(ps), "t", columns(),
                         DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE));
 
         assertTrue(String.valueOf(thrown).contains("Code: 252") || String.valueOf(thrown.getCause()).contains("Code: 252"),
@@ -187,12 +188,12 @@ public class PreparedStatementExecutorFailureModesTest {
         List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> attempt1Segments =
                 new ArrayList<>();
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(records, attempt1Segments,
-                new HashMap<>(), new ClickHouseSinkConnectorConfig(props), "t", "db",
+                new HashMap<>(), new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), "t", "db",
                 connectionReturning(failingPs), columns());
 
         assertThrows(RuntimeException.class, () ->
                 executor().addToPreparedStatementBatch("topic", attempt1Segments, new BlockMetaData(),
-                        new ClickHouseSinkConnectorConfig(props), connectionReturning(failingPs), "t", columns(),
+                        new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), connectionReturning(failingPs), "t", columns(),
                         DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE));
         assertEquals(Collections.singletonList(1), executedAttempt1, "chunk 1 executed; chunk 2 threw");
         assertTrue(records.get(0).isAppliedToClickHouse(),
@@ -208,7 +209,7 @@ public class PreparedStatementExecutorFailureModesTest {
         List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> attempt2Segments =
                 new ArrayList<>();
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(records, attempt2Segments,
-                new HashMap<>(), new ClickHouseSinkConnectorConfig(props), "t", "db",
+                new HashMap<>(), new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), "t", "db",
                 connectionReturning(succeedingPs), columns());
 
         List<ClickHouseStruct> regrouped = new ArrayList<>();
@@ -222,7 +223,7 @@ public class PreparedStatementExecutorFailureModesTest {
         assertTrue(regrouped.get(0) == records.get(1), "the only record carried into the retry is record 2");
 
         boolean result = executor().addToPreparedStatementBatch("topic", attempt2Segments, new BlockMetaData(),
-                new ClickHouseSinkConnectorConfig(props), connectionReturning(succeedingPs), "t", columns(),
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), connectionReturning(succeedingPs), "t", columns(),
                 DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         assertTrue(result, "the retry succeeds");
         assertEquals(Collections.singletonList(1), executedAttempt2,
@@ -240,7 +241,7 @@ public class PreparedStatementExecutorFailureModesTest {
         boolean written;
         try {
             written = executor().addToPreparedStatementBatch("topic", segment(2), new BlockMetaData(),
-                    new ClickHouseSinkConnectorConfig(new HashMap<>()), connectionReturning(ps), "t", columns(),
+                    new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), connectionReturning(ps), "t", columns(),
                     DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         } catch (Exception e) {
             written = false;

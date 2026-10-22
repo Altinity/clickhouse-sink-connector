@@ -1,10 +1,12 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import org.junit.Assert;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.containers.ClickHouseContainer;
@@ -56,7 +58,7 @@ public class DualJdbcDriverEndToEndIT {
                 String.valueOf(useV1Driver));
         raw.put(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString(),
                 String.valueOf(poolDisabled));
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(raw);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(raw));
 
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, "default");
         Connection conn = BaseDbWriter.createConnection(jdbcUrl,
@@ -116,10 +118,22 @@ public class DualJdbcDriverEndToEndIT {
         roundTrip(false, "dual_jdbc_v2_rt");
     }
 
+    /**
+     * clickhouse.jdbc.v1=true is refused when the configuration is parsed
+     * (spec 03.08), so no V1 connection is ever opened.
+     */
     @Test
     @Tag("IntegrationTest")
-    public void testV1DriverRoundTrip() throws SQLException {
-        roundTrip(true, "dual_jdbc_v1_rt");
+    public void testV1DriverIsRefusedAtStart() {
+        HashMap<String, String> raw = new HashMap<>();
+        raw.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
+        raw.put(ClickHouseSinkConnectorConfigVariables.JDBC_V1_DRIVER.toString(), "true");
+        try {
+            new ClickHouseSinkConnectorConfig(raw);
+            Assert.fail("clickhouse.jdbc.v1=true must be refused at start");
+        } catch (org.apache.kafka.common.config.ConfigException expected) {
+            Assert.assertTrue(expected.getMessage().contains("clickhouse.jdbc.v1"));
+        }
     }
 
     /**
@@ -131,6 +145,7 @@ public class DualJdbcDriverEndToEndIT {
      */
     @Test
     @Tag("IntegrationTest")
+    @Disabled("clickhouse.jdbc.v1=true is refused at start (spec 03.08); there is no V1 writer to read back")
     public void testCrossDriverReadback() throws SQLException {
         String tableName = "dual_jdbc_cross";
         Connection v2 = connect(false, true);

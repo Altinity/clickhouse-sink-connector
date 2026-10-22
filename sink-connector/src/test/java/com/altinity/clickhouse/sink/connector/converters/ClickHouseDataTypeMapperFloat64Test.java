@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseTableOperationsBase;
 import com.clickhouse.data.ClickHouseDataType;
@@ -45,7 +46,7 @@ public class ClickHouseDataTypeMapperFloat64Test {
     private static final double ISSUE_VALUE = 123456789.123456789;
 
     private static ClickHouseSinkConnectorConfig emptyConfig() {
-        return new ClickHouseSinkConnectorConfig(new HashMap<>());
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()));
     }
 
     /** FLOAT64 must map to Float64. Before the fix this returned Float32. */

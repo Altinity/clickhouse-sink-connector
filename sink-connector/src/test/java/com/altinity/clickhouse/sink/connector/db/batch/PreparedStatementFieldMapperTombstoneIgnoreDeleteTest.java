@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -96,7 +97,7 @@ public class PreparedStatementFieldMapperTombstoneIgnoreDeleteTest {
         Map<Integer, Object> bound = new HashMap<>();
         new PreparedStatementFieldMapper("is_deleted", true, null, "_version", "db", ZoneId.of("UTC"))
                 .insertTombstonePreparedStatement(index, recordingStatement(bound), ROW_SCHEMA.fields(), record,
-                        record.getBeforeStruct(), new ClickHouseSinkConnectorConfig(props), types,
+                        record.getBeforeStruct(), new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), types,
                         DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, "t");
 
         assertEquals(1, bound.get(4), "the tombstone must be a delete marker (is_deleted = 1) whatever ignore_delete "

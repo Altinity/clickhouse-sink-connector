@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import io.debezium.engine.ChangeEvent;
@@ -122,7 +123,7 @@ public class WorkerErrorDeathIsLoudTest {
 
         RuntimeException thrown = assertThrows(RuntimeException.class, () ->
                 capture.handleChangeEventBatch(Collections.singletonList(heartbeat()), committer,
-                        new Properties(), new SourceRecordParserService(), new ClickHouseSinkConnectorConfig(props)));
+                        new Properties(), new SourceRecordParserService(), new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props))));
         assertTrue(thrown.getCause() instanceof OutOfMemoryError, "the Error is the engine stop's cause: " + thrown);
         assertTrue(thrown.getMessage().contains("is dead"), thrown.getMessage());
         assertTrue(committer.calls == 0, "nothing is committed once a worker is dead");

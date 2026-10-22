@@ -1,0 +1,27 @@
+# Findings pinned for the shipped sample configurations of the lightweight connector (data-driven test ConfigKeyPinTest).
+# file: path relative to the sink-connector-lightweight module directory.
+# Only keys with a finding are listed; every other key of the file must be known (no finding).
+# expected: the finding kind reported by ConfigKeyCheck. Under the default mode each finding is a WARN and nothing is refused.
+# Under strict mode (config.keys.strict=true) the UNKNOWN and RENAMED rows refuse the start; RENAMED_IGNORED and IGNORED rows do not.
+file	key	expected
+docker/config-2.yml	database.server.name	RENAMED_IGNORED
+docker/config.yml	database.server.name	RENAMED_IGNORED
+docker/config_keepermap_storage.yml	database.server.name	RENAMED
+docker/config_local.yml	database.server.name	RENAMED
+docker/config_oracle.yml	database.connection.adapter	UNKNOWN
+docker/config_oracle.yml	database.connection.reconnect.backoff.max.ms	UNKNOWN
+docker/config_oracle.yml	database.connection.reconnect.backoff.ms	UNKNOWN
+docker/config_oracle.yml	database.connection.url	UNKNOWN
+docker/config_oracle.yml	database.keep.alive.interval.`ms	UNKNOWN
+docker/config_oracle.yml	database.pdb.name	UNKNOWN
+docker/config_oracle.yml	database.server.name	RENAMED
+docker/config_postgres.yml	database.server.name	RENAMED
+docker/config_postgres_local.yml	database.server.name	RENAMED
+k8s/config.yml	database.server.name	RENAMED_IGNORED
+src/main/resources/config.properties	converter.schemas.enable	IGNORED
+src/main/resources/config.properties	database.server.name	RENAMED_IGNORED
+src/main/resources/config.properties	schema.history.internal.table.ddl	IGNORED
+src/main/resources/config.properties	schema.history.internal.table.name	IGNORED
+src/main/resources/config.properties	schemas.enable	IGNORED
+src/test/resources/config.yml	database.server.name	RENAMED
+src/test/resources/config_postgres.yml	database.server.name	RENAMED

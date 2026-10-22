@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import org.junit.jupiter.api.Assertions;
@@ -33,7 +34,7 @@ public class CreateTableIdempotentTest {
             config.put(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString(), "true");
         }
         config.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "America/Chicago");
-        return new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(config), "employees");
+        return new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(config)), "employees");
     }
 
     @Test
