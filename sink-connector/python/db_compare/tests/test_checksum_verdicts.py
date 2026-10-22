@@ -309,16 +309,34 @@ class TestSideWarningsReachTheDriverLog(unittest.TestCase):
         self.assertTrue(any(line.startswith("INFO:") and "side note" in line and coverage in line for line in logs), logs)
         self.assertTrue(any(line.startswith("INFO:") and "side note" in line and clamp in line for line in logs), logs)
         # Both sides carry the same clamp here, so each side's notice is one WARNING; the coverage note adds none.
-        # The run summary's mixed-zone limit is the one further WARNING a DIFFERENT table gets (one line).
-        warnings = [line for line in logs if line.startswith("WARNING:") and "Mixed-zone limit" not in line]
+        # The run summary's mixed-zone limit is one further line a DIFFERENT table gets, at INFO.
+        warnings = [line for line in logs if line.startswith("WARNING:")]
         self.assertEqual(len(warnings), 2, logs)
         self.assertTrue(all("Clamped values on" in line for line in warnings), logs)
-        self.assertEqual(len([line for line in logs if "Mixed-zone limit for shop.orders:" in line]), 1, logs)
+        self.assertEqual(len([line for line in logs if line.startswith("INFO:") and "Mixed-zone limit for shop.orders:" in line]), 1, logs)
         self.assertFalse(any("No difference for shop.orders" in line for line in logs), logs)
         self.assertTrue(any("1 table(s) DIFFERENT" in line for line in logs), logs)
 
+    def test_a_skipped_floating_point_column_is_a_side_note_at_info_never_a_warning(self):
+        """The line a side really prints carries the count. The scheduled job fails on any WARNING line (spec 13.06
+        section 3.17), so a table whose values match must pass; the hole is named at INFO, per side and in the run
+        summary (spec 11.02 section 3.9)."""
+        coverage = ("Not compared in table shop.orders: 1 floating point column ['ratio'] "
+                    "(pass --include_floating_point_columns to compare their text renderings)")
+        def outputs(cmd):
+            return "0", side_output("shop.orders", MD5_A, 2, (side_line("WARNING", coverage),))
+        with patch.dict(tl.not_compared_findings, clear=True):
+            code, logs = run_driver(outputs)
+        self.assertEqual(code, 0)
+        self.assertEqual([line for line in logs if line.startswith("WARNING:")], [], logs)
+        self.assertEqual(len([line for line in logs if line.startswith("INFO:") and "side note" in line
+                              and "1 floating point column ['ratio']" in line]), 2, logs)
+        self.assertTrue(any(line.startswith("INFO:") and "NOT COMPARED (named" in line
+                            and "shop.orders: floating point columns ['ratio']" in line for line in logs), logs)
+        self.assertTrue(any("No difference for shop.orders" in line for line in logs), logs)
 
-MYSQL_CLAMP_NOTICE = ("3 out-of-range date/datetime values clamped (datetime to [1900-01-01 00:00:00, 2299-12-31 23:59:59], "
+
+MYSQL_CLAMP_NOTICE =("3 out-of-range date/datetime values clamped (datetime to [1900-01-01 00:00:00, 2299-12-31 23:59:59], "
                       "date to [1000-01-01, 9999-12-31]) in table shop.orders")
 CH_CLAMP_NOTICE = "2 out-of-range datetime values clamped to [1900-01-01 00:00:00, 2299-12-31 23:59:59] in table shop.orders"
 
@@ -430,48 +448,53 @@ def mixed_side_outputs(cmd):
     return "0", side_output("shop.orders", MD5_A if is_mysql_side(cmd) else MD5_B, 3)
 
 
-class TestMixedZoneLimitIsLoud(unittest.TestCase):
+class TestMixedZoneLimitIsNamed(unittest.TestCase):
     """A table the connector wrote in another zone is DIFFERENT, and no checksum can tell that from drift.
-    Each DIFFERENT table gets a WARNING that names it and the run's zone (spec 11.02 section 3.2 step 1);
-    a clean run gets none."""
+    Each DIFFERENT table gets one INFO line that names it and the run's zone (spec 11.02 section 3.2 step 1),
+    never a WARNING: the job log keeps WARNING for the difference itself, one line per table (spec 13.06
+    section 3.17); a clean run gets none."""
 
-    def mixed_zone_warnings(self, verdicts, **kwargs):
-        with patch.object(tl.logging, "warning") as warn:
+    def mixed_zone_notes(self, verdicts, **kwargs):
+        with patch.object(tl.logging, "info") as info, patch.object(tl.logging, "warning") as warn:
             code = tl.report_run_summary(verdicts, False, **kwargs)
-        return code, [call.args[0] for call in warn.call_args_list if "Mixed-zone limit" in call.args[0]]
+        self.assertEqual([call for call in warn.call_args_list if "Mixed-zone limit" in call.args[0]], [])
+        return code, [call.args[0] for call in info.call_args_list if "Mixed-zone limit" in call.args[0]]
 
-    def test_a_different_table_gets_a_mixed_zone_warning(self):
-        code, lines = self.mixed_zone_warnings({"orders": tl.VERDICT_DIFFERENT, "users": tl.VERDICT_MATCH})
+    def test_a_different_table_gets_a_mixed_zone_note(self):
+        code, lines = self.mixed_zone_notes({"orders": tl.VERDICT_DIFFERENT, "users": tl.VERDICT_MATCH})
         self.assertEqual(len(lines), 1, lines)
         self.assertIn("Mixed-zone limit for orders:", lines[0])
         self.assertNotIn("users", lines[0])
         self.assertEqual(code, 0)
 
-    def test_the_warning_names_the_run_zone(self):
-        code, lines = self.mixed_zone_warnings({"orders": tl.VERDICT_DIFFERENT}, source_zone="America/Chicago")
+    def test_the_note_names_the_run_zone(self):
+        code, lines = self.mixed_zone_notes({"orders": tl.VERDICT_DIFFERENT}, source_zone="America/Chicago")
         self.assertEqual(len(lines), 1, lines)
         self.assertIn("America/Chicago (--source_timezone)", lines[0])
         self.assertNotIn("not given", lines[0])
 
-    def test_each_different_table_gets_its_own_warning(self):
-        code, lines = self.mixed_zone_warnings(
+    def test_each_different_table_gets_its_own_note(self):
+        code, lines = self.mixed_zone_notes(
             {"a_tbl": tl.VERDICT_DIFFERENT, "b_tbl": tl.VERDICT_DIFFERENT, "c_tbl": tl.VERDICT_MATCH}, source_zone="UTC")
         self.assertEqual(len(lines), 2, lines)
         self.assertTrue(any("for a_tbl:" in line for line in lines), lines)
         self.assertTrue(any("for b_tbl:" in line for line in lines), lines)
         self.assertFalse(any("for c_tbl:" in line for line in lines), lines)
 
-    def test_a_clean_run_gets_no_mixed_zone_warning(self):
-        code, lines = self.mixed_zone_warnings({"users": tl.VERDICT_MATCH, "empty_t": tl.VERDICT_EMPTY})
+    def test_a_clean_run_gets_no_mixed_zone_note(self):
+        code, lines = self.mixed_zone_notes({"users": tl.VERDICT_MATCH, "empty_t": tl.VERDICT_EMPTY})
         self.assertEqual(lines, [])
         self.assertEqual(code, 0)
 
-    def test_the_driver_names_the_run_zone_in_the_warning(self):
+    def test_the_driver_names_the_run_zone_in_the_note_at_info(self):
         code, logs = run_driver(mixed_side_outputs)
         self.assertEqual(code, 0)
         notices = [line for line in logs if "Mixed-zone limit for shop.orders:" in line]
         self.assertEqual(len(notices), 1, logs)
+        self.assertTrue(notices[0].startswith("INFO:"), notices)
         self.assertIn("in UTC (--source_timezone)", notices[0])
+        # The difference itself is the only WARNING of the table: one line, which fails the job scan.
+        self.assertEqual(len([line for line in logs if line.startswith("WARNING:")]), 1, logs)
 
 
 class TestSourceColumnSetReachesTheReplicaSide(unittest.TestCase):

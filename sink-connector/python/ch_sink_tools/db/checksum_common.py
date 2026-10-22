@@ -434,10 +434,10 @@ def warn_not_compared(database, table, skipped, warned, json_hint=False):
     columns the tool does not compare (spec 11.02 section 3.9). ``skipped`` maps
     a kind of NOT_COMPARED_HINTS to column names; ``warned`` is the caller's set
     of (database, table, kind) already reported, so chunked tables warn once.
-    The driver relays every side WARNING line into its own log (spec 13.06
-    FM-13.06-8); a floating point line is relayed at WARNING (spec 11.02 section
-    3.9). ``json_hint`` (the MySQL side) adds json_columns_hint to the JSON
-    warning."""
+    The driver relays every side WARNING line into its own log at INFO (spec
+    13.06 FM-13.06-8) and names the columns again in its run summary (spec
+    11.02 section 3.9). ``json_hint`` (the MySQL side) adds json_columns_hint
+    to the JSON warning."""
     for kind, names in skipped.items():
         if names and (database, table, kind) not in warned:
             warned.add((database, table, kind))

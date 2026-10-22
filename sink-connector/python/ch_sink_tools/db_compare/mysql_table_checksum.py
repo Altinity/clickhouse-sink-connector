@@ -537,16 +537,9 @@ def main():
     parser = build_argument_parser()
     global args
     args = parser.parse_args()
-    check_source_timezone_flag(parser, args.source_timezone)
-    (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
-    (args.source_timezone, zone_source) = resolve_source_zone(args.source_timezone)
-    logging.info(f"source time zone: {args.source_timezone} (source={zone_source})")
-    if args.consistent_snapshot and args.threads_per_table > 1:
-        # PK chunks run on separate connections, each with its own read view.
-        parser.error("--consistent_snapshot reads through one connection: use --threads_per_table 1")
-    if args.exclude_keys_from_stdin and not args.consistent_snapshot:
-        parser.error("--exclude_keys_from_stdin applies inside a snapshot: add --consistent_snapshot")
 
+    # The handler goes first: the first logging call made with no handler on the root logger
+    # installs a second, stderr one, and every later line is then printed twice.
     root = logging.getLogger()
     root.setLevel(logging.INFO)
 
@@ -561,6 +554,16 @@ def main():
     if args.debug:
         root.setLevel(logging.DEBUG)
         handler.setLevel(logging.DEBUG)
+
+    check_source_timezone_flag(parser, args.source_timezone)
+    (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
+    (args.source_timezone, zone_source) = resolve_source_zone(args.source_timezone)
+    logging.info(f"source time zone: {args.source_timezone} (source={zone_source})")
+    if args.consistent_snapshot and args.threads_per_table > 1:
+        # PK chunks run on separate connections, each with its own read view.
+        parser.error("--consistent_snapshot reads through one connection: use --threads_per_table 1")
+    if args.exclude_keys_from_stdin and not args.consistent_snapshot:
+        parser.error("--exclude_keys_from_stdin applies inside a snapshot: add --consistent_snapshot")
 
     mysql_user = args.mysql_user
     mysql_password = args.mysql_password

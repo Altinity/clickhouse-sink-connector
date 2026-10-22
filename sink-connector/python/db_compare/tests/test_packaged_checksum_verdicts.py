@@ -191,8 +191,8 @@ class TestPackagedParsingQuotingAndVerdicts(unittest.TestCase):
         self.assertFalse(any("No difference" in line for line in logs), logs)
         self.assertTrue(any(line.startswith("INFO:") and "side note" in line and "checksum_ratio" in line for line in logs),
                         "side WARNINGs must reach the driver log as side notes")
-        # The run summary's mixed-zone limit is a WARNING of its own; this test pins the difference WARNING.
-        self.assertEqual([line for line in logs if "WARNING" in line and "Mixed-zone limit" not in line],
+        # The run summary's mixed-zone limit is an INFO line; the difference is the only WARNING.
+        self.assertEqual([line for line in logs if "WARNING" in line],
                          [f"WARNING:root:Checksum difference : ('{CH_HOST}', 'shop.orders', '{MD5_B}', 2) to "
                           f"('{MYSQL_HOST}', 'shop.orders', '{MD5_A}', 2)"])
 

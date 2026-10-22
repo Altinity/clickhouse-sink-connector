@@ -124,10 +124,9 @@ CHECKSUM_LINE = re.compile(r" - INFO - .* - Checksum for table (?P<table>\S.*) =
 # result: it is relayed at ERROR and the table gets no verdict. A side WARNING
 # (SQL or client-library warnings) qualifies the verdict without failing it: it
 # is relayed at INFO as a "side note", without the level word. A clamp WARNING
-# is not such a note: see CLAMP_NOTICE.
-# The exception is a floating point "Not compared" line, relayed at WARNING
-# (spec 11.02 section 3.9). Scheduled jobs fail on any line containing WARNING
-# (spec 13.06 section 3.17), so a skipped floating point column fails that scan.
+# is not such a note: see CLAMP_NOTICE. Scheduled jobs fail on any line containing
+# WARNING (spec 13.06 section 3.17), so a note that qualifies a verdict, such as a
+# skipped floating point column, stays at INFO and is named again in the run summary.
 SIDE_ERROR_MARKERS = (" - CRITICAL - ", " - ERROR - ")
 SIDE_WARNING_MARKER = " - WARNING - "
 SIDE_OUTPUT_TAIL_LINES = 20
@@ -197,17 +196,10 @@ not_compared_findings = {}
 not_compared_lock = threading.Lock()
 
 
-def is_floating_point_not_compared(line):
-    """True when ``line`` is a side's report of skipped floating point columns. Those are relayed at WARNING
-    (spec 11.02 section 3.9, the brief's c08); a JSON report stays a side note at INFO."""
-    match = NOT_COMPARED_RE.search(line)
-    return bool(match) and match.group('kind') == 'floating point'
-
-
 def record_not_compared(line):
     """Remember the columns a side reported as not compared, once per (table, kind) for the run.
-    The side's own line is still relayed (at WARNING for floating point columns, else at INFO as a
-    side note); this only feeds the run summary, which counts the named holes."""
+    The side's own line is still relayed at INFO as a side note; this only feeds the run summary,
+    which counts the named holes."""
     match = NOT_COMPARED_RE.search(line)
     if not match:
         return
@@ -262,9 +254,9 @@ def record_replica_only(host, line):
 def relay_side_messages(data, host, table):
     """Re-log the side script's ERROR/CRITICAL lines at ERROR and its WARNING
     lines (columns not compared, clamped values, SQL warnings) at INFO as side
-    notes: they qualify the verdict (spec 13.06 FM-13.06-8). The exception is a
-    floating point "Not compared" line, which is re-logged at WARNING with its
-    count and column names (spec 11.02 section 3.9). The replica-only report is
+    notes: they qualify the verdict (spec 13.06 FM-13.06-8). The columns a side
+    did not compare are named again in the run summary (spec 11.02 section
+    3.9). The replica-only report is
     checked first regardless of its own level: it is always tolerated (spec
     11.02 section 3.9), so record_replica_only() logs it at INFO whether the
     side emitted it at INFO or WARNING. Returns True when the side logged an
@@ -278,10 +270,7 @@ def relay_side_messages(data, host, table):
             continue
         elif SIDE_WARNING_MARKER in line:
             record_not_compared(line)
-            if is_floating_point_not_compared(line):
-                logging.warning(f"{host} {table} side note: {side_note_text(line)}")
-            else:
-                logging.info(f"{host} {table} side note: {side_note_text(line)}")
+            logging.info(f"{host} {table} side note: {side_note_text(line)}")
     return side_failed
 
 
@@ -1462,8 +1451,9 @@ MIXED_ZONE_LIMIT_NOTE = ("Mixed-zone limit for {table}: DIFFERENT, and this run 
 
 
 def mixed_zone_limit_notices(different, source_zone):
-    """One WARNING line per DIFFERENT table, naming the table and the zone this run compares in (spec 11.02 section
-    3.2 step 1). A table written under another connector zone is DIFFERENT for the same reason as a table with drift,
+    """One line per DIFFERENT table, naming the table and the zone this run compares in (spec 11.02 section
+    3.2 step 1), logged at INFO: the job log keeps WARNING for the difference itself (spec 13.06 section 3.17).
+    A table written under another connector zone is DIFFERENT for the same reason as a table with drift,
     and no checksum can tell the two apart, so the limit is stated on every such verdict. ``source_zone`` is None when
     the caller gives none; the line then says the zone was not given. Clean runs get no line."""
     zone = source_zone if source_zone else "(not given to the run summary)"
@@ -1479,7 +1469,7 @@ def report_run_summary(verdicts, fail_on_empty, coverage_gap_tables=(), allow_co
     allow_coverage_gap accepts it, and the gap is named either way. EMPTY fails
     the run only with fail_on_empty. DIFFERENT keeps exit 0 unless
     fail_on_different is set (spec 11.02 FM-11.02-1). Every DIFFERENT table
-    also gets a mixed-zone WARNING naming it and ``source_zone`` (spec 11.02
+    also gets a mixed-zone INFO line naming it and ``source_zone`` (spec 11.02
     section 3.2 step 1). Replica-only columns are tolerated and never affect
     the exit code (spec 11.02 section 3.9, CONSTITUTION.md "Parity scope")."""
     by_verdict = {}
@@ -1496,7 +1486,7 @@ def report_run_summary(verdicts, fail_on_empty, coverage_gap_tables=(), allow_co
     different = by_verdict.get(VERDICT_DIFFERENT, [])
     if different:
         for notice in mixed_zone_limit_notices(different, source_zone):
-            logging.warning(notice)
+            logging.info(notice)
         if fail_on_different:
             logging.error(f"{len(different)} table(s) DIFFERENT (failing the run: --fail_on_different): "
                           + ", ".join(different))

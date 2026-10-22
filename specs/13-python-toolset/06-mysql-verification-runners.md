@@ -653,10 +653,11 @@ EMPTY (at INFO; at ERROR with `--fail_on_empty`, which fails the run), and an ER
 exit code: 1 when any table is `ERROR`, when any table is a COVERAGE GAP (a lock-timeout skip) and
 `--allow_coverage_gap` is not set, when any table is `DIFFERENT` and `--fail_on_different` is set, or when any is
 `EMPTY` and `--fail_on_empty` is set; otherwise 0. The skipped list spans every database of the run.
-For each `DIFFERENT` table the summary also logs one WARNING, `Mixed-zone limit for <table>: DIFFERENT, and this run
+For each `DIFFERENT` table the summary also logs one INFO line, `Mixed-zone limit for <table>: DIFFERENT, and this run
 read every DATETIME/TIMESTAMP value in <zone> (--source_timezone) ...`, naming the table and the zone the run compared
 in (11.02 §3.2 step 1). The zone is `(not given to the run summary)` only when a caller passes none, which the driver
-never does. The WARNING does not change the exit code, and a clean run logs none.
+never does. The line is INFO so that the difference stays the one WARNING line per table the job's scan prints (§3.17).
+It does not change the exit code, and a clean run logs none.
 The rules are pinned by `db_compare/tests/test_coverage_gap_exit.py`.
 
 Outcome table (`exit` is the process exit code of the driver):
@@ -670,11 +671,11 @@ Outcome table (`exit` is the process exit code of the driver):
 | **Both** sides fail | `ERROR`, exit 1 | same (before the fix: **`No difference`, exit 0**, D-13.06-1) |
 | Side exits 0 but prints no checksum line (table missing on the replica) | `ERROR`, exit 1 (before the fix the legacy driver reported `Checksum difference`, exit 0, for a missing replica table) | same |
 | Side logs an ERROR or CRITICAL line but exits 0 | `ERROR`, exit 1 | same |
-| Side logs a WARNING (columns not compared, SQL or client-library warnings) | INFO side note, verdict unchanged; a floating point `Not compared` line is a WARNING in the driver log (11.02 §3.9), verdict unchanged | same |
+| Side logs a WARNING (columns not compared, SQL or client-library warnings) | INFO side note, verdict unchanged; a floating point `Not compared` line is an INFO side note too (11.02 §3.9) | same |
 | Side logs a clamp WARNING (`<n> out-of-range ... values clamped ...`) | WARNING `Clamped values on <host> for <table>` in the driver log, and the verdict is DIFFERENT (11.02 §3.4); on a re-check pass it is INFO | same |
-| A table is DIFFERENT, for any cause (drift, a clamp, or a table written in another zone) | one run-summary WARNING `Mixed-zone limit for <table>: DIFFERENT, ... in <zone> (--source_timezone)` (11.02 §3.2 step 1); the exit code is unchanged | same |
+| A table is DIFFERENT, for any cause (drift, a clamp, or a table written in another zone) | one run-summary INFO line `Mixed-zone limit for <table>: DIFFERENT, ... in <zone> (--source_timezone)` (11.02 §3.2 step 1); the exit code is unchanged | same |
 
-Unit D adds one run-level INFO line after the per-table lines, `NOT COMPARED (named, left out of the verdicts by default): N column(s) in T table(s): ...`, which names every float or JSON hole the run found and the flag that compares it (11.02 §3.9). Each side WARNING gives the count and the names (`N floating point column(s) [...]`), and the driver relays every such line as its own WARNING (11.02 §3.9); the default skip is unchanged. A table whose only difference lies in a named hole reports MATCH by design, and the INFO line is the record of it.
+Unit D adds one run-level INFO line after the per-table lines, `NOT COMPARED (named, left out of the verdicts by default): N column(s) in T table(s): ...`, which names every float or JSON hole the run found and the flag that compares it (11.02 §3.9). Each side WARNING gives the count and the names (`N floating point column(s) [...]`), and the driver relays every such line at INFO as a side note (11.02 §3.9); the default skip is unchanged. A table whose only difference lies in a named hole reports MATCH by design, and the INFO line is the record of it.
 | `--debug_output` | normal verdict, per-row files written by both sides (before the fix: `ERROR` for every table, D-13.06-27) | same |
 | A name containing "checksum" in other side log lines | parsed correctly, normal verdict | same |
 | MySQL host string equals a replica host | normal verdict | same |
@@ -1070,10 +1071,10 @@ Faults:
 - **Log-level contract (both drivers).** In the driver log, WARNING is reserved for `Checksum difference`,
   whose message format is unchanged. Scheduled jobs tee the driver's stdout to a file and fail when any line
   contains the word WARNING; that scan exists to catch differences. So everything a clean run logs is INFO or
-  below: `No difference`, `EMPTY on both sides`, the run summary and the side notes. One exception: a floating
-  point `Not compared in table ... floating point columns [...]` line (spec 11.02 §3.9) is relayed at WARNING, so
-  a table with a float column left out by default fails the scan on every run, even when it matches. This is a
-  deliberate loudness change, and the job-owner decision it needs is open (11.02 §3.9). A side WARNING (JSON
+  below: `No difference`, `EMPTY on both sides`, the run summary, the mixed-zone note of a DIFFERENT table and
+  the side notes. A floating point `Not compared in table ... floating point columns [...]` line (spec 11.02
+  §3.9) is a side note like the others, so a table with a float column left out by default passes the scan when
+  it matches; the hole is named again in the run summary. A side WARNING (floating point or JSON
   columns not compared, clamped values, SQL or client-library warnings) is relayed at INFO as `<host> <table>
   side note: ...`, with the level word removed and any other `WARNING` lowered (`side_note_text`). A side ERROR or
   CRITICAL line is relayed at ERROR and voids that side's result, so the table is `ERROR` and the run exits 1.
@@ -1448,7 +1449,7 @@ cross-referenced where this spec adds a trigger or corrects them.
   - **Recovery**: run the side scripts standalone for tables with float, JSON or out-of-range datetime columns.
   - **RTO**: one standalone pair per table (unmeasured).
   - **Test**: `sink-connector/python/db_compare/tests/test_checksum_verdicts.py::TestSideWarningsReachTheDriverLog::test_side_warnings_are_logged_by_the_driver`.
-  - **FIXED**: D-13.06-8. Both drivers relay every side ERROR/CRITICAL line at ERROR (that side gives no result) and every side WARNING line at INFO as a side note (§3.17). Exception (F08, 11.02 §3.9): a floating point `Not compared` line is relayed at WARNING, so the job WARNING scan fails on a table with a float column left out by default.
+  - **FIXED**: D-13.06-8. Both drivers relay every side ERROR/CRITICAL line at ERROR (that side gives no result) and every side WARNING line at INFO as a side note (§3.17), a floating point `Not compared` line included (11.02 §3.9): the job WARNING scan passes on a table with a float column left out by default.
 
 - **FM-13.06-9 The tools crash on SQLAlchemy 2.x**
   - **Trigger**: a fresh install from `requirements.txt` or `pyproject.toml` (`sqlalchemy>=1.4` resolves to

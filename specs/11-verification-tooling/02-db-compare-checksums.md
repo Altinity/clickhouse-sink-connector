@@ -89,11 +89,13 @@ For every table selected by `--tables_regex` (and the optional
    table was written in, and a DATETIME verdict of DIFFERENT looks the same for a
    wrong zone and for data drift. The tool therefore does not claim a detection.
    It prints the one-zone rule on every run, and each table with a DIFFERENT
-   verdict gets one WARNING in the run summary (spec 13.06) that names the table
+   verdict gets one INFO line in the run summary (spec 13.06) that names the table
    and the zone this run compared in: `Mixed-zone limit for <table>: DIFFERENT,
    and this run read every DATETIME/TIMESTAMP value in <zone> (--source_timezone)
-   ...`. That WARNING is the documented, loud limit of a mixed-zone database, not
-   a silent false positive. It names only the run's zone, because the tool does
+   ...`. That line is the documented limit of a mixed-zone database, not a silent
+   false positive. It is INFO because the driver log keeps WARNING for the
+   difference itself, one line per table (step 4), which is what the scheduled
+   job's WARNING scan reads. It names only the run's zone, because the tool does
    not know the other zone. A clean run logs none. The per-table zone option that
    would remove the limit is described in §3.4 and is not built.
 2. If `--lock_tables_on_source` is set, opens a dedicated MySQL connection,
@@ -345,12 +347,13 @@ precision, never trimmed:
     different connector zones. A checksum row does not carry the zone the
     connector used, so the run has no evidence to compare against. The driver
     logs one INFO line per run that names the zone it applies to every compared
-    table. Each DIFFERENT table also gets one WARNING in the run summary
+    table. Each DIFFERENT table also gets one INFO line in the run summary
     (`Mixed-zone limit for <table>: DIFFERENT, ... in <zone> (--source_timezone)
     ...`, spec 13.06) that names the table and the run's zone and says that a
     table written in another zone is DIFFERENT in the same way as a table with
     drift. The other zone is not named, because the tool does not know it. The
-    WARNING does not change the exit code. Tables whose connector zones differ
+    line is INFO so that a difference stays one WARNING line in the job log, and
+    it does not change the exit code. Tables whose connector zones differ
     need one run per zone, selected with `--tables_regex`.
     **Per-table zone option (described, not built).** Removing the limit needs
     one zone per table instead of one per run. That would take: a table-to-zone
@@ -641,16 +644,12 @@ count and the skipped floating point columns, in the form `Not compared in table
 "checksum", §3.2 step 4). JSON columns are logged the same way with `N JSON
 column(s) [...]`. The default skip does not change for either type.
 
-The driver relays a floating point line at **WARNING** with the same count and
-names, so a float column left out by default is loud in the driver output. A JSON
-line stays an INFO side note, as before. The floating point WARNING is a change
-from earlier builds, which logged it at INFO. This has a consequence for
-scheduled jobs: the job WARNING scan (spec 13.06 §3.17) fails on any WARNING, so
-a table with a float column fails that scan on every run even when its values
-match. The
-choice is open and belongs to the job owners: accept the failure, add
-`--include_floating_point_columns` to the job (which compares the column and
-removes the line), or change the scan. This spec does not make that choice.
+The driver relays a floating point line, like every side WARNING, at **INFO** as
+a side note with the same count and names (spec 13.06 §3.17). The scheduled job
+fails on any WARNING line, and a table whose values match must pass, so a float
+column left out by default is named at INFO, per side and in the run summary
+below, and never fails that scan. A relay at WARNING was tried and removed: it
+failed every clean run of the production job in the end-to-end suite.
 
 A run-level summary follows: after the per-table lines, the driver logs one INFO
 line `NOT COMPARED (named, left out of the verdicts by default): N column(s) in T

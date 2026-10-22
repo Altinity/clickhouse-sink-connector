@@ -7,6 +7,7 @@ point columns skipped by default produce a WARNING that names the count and the 
 """
 import atexit
 import inspect
+import logging
 import os
 import shutil
 import subprocess
@@ -118,14 +119,18 @@ class TestOneZonePerRun(unittest.TestCase):
 
 
 class TestSkippedFloatingPointColumnsWarn(unittest.TestCase):
-    """A float column skipped by default is a WARNING naming the count and the columns (default skip unchanged)."""
+    """A float column skipped by default is named with its count: a WARNING on the side, an INFO note in the driver.
 
-    def test_side_note_about_skipped_float_columns_is_a_warning_with_count_and_names(self):
+    The driver log is scanned for WARNING by the production job, and a skipped column is not a difference.
+    """
+
+    def test_side_note_about_skipped_float_columns_is_an_info_note_with_count_and_names(self):
         line = ("2026-10-22 10:00:00,000 - WARNING - MainThread - Not compared in table db1.t1: "
                 "2 floating point columns ['price', 'ratio'] (pass --include_floating_point_columns "
                 "to compare their text renderings)")
-        with self.assertLogs(level="WARNING") as logs:
+        with self.assertLogs(level="INFO") as logs:
             tl.relay_side_messages(line, "mysql-host", "t1")
+        self.assertEqual([r for r in logs.records if r.levelno >= logging.WARNING], [])
         text = "\n".join(logs.output)
         self.assertIn("2 floating point columns", text)
         self.assertIn("'price'", text)

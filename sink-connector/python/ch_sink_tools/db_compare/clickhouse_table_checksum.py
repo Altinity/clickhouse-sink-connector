@@ -558,11 +558,9 @@ def main():
     parser = build_argument_parser()
     global args
     args = parser.parse_args()
-    check_source_timezone_flag(parser, args.source_timezone)
-    (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
-    (args.source_timezone, zone_source) = resolve_source_zone(args.source_timezone)
-    logging.info(f"source time zone: {args.source_timezone} (source={zone_source})")
 
+    # The handler goes first: the first logging call made with no handler on the root logger
+    # installs a second, stderr one, and every later line is then printed twice.
     root = logging.getLogger()
     root.setLevel(logging.INFO)
 
@@ -577,6 +575,11 @@ def main():
     if args.debug:
         root.setLevel(logging.DEBUG)
         handler.setLevel(logging.DEBUG)
+
+    check_source_timezone_flag(parser, args.source_timezone)
+    (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
+    (args.source_timezone, zone_source) = resolve_source_zone(args.source_timezone)
+    logging.info(f"source time zone: {args.source_timezone} (source={zone_source})")
 
     clickhouse_user = args.clickhouse_user
     clickhouse_password = args.clickhouse_password

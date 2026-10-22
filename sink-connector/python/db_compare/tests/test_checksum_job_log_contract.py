@@ -187,10 +187,12 @@ class TestScheduledJobLogContract(unittest.TestCase):
         sides = clean_sides()
         sides["shop.orders"]["clickhouse"] = [MD5_B, 5, CLEAN_NOTES, 0]
         (code, log) = self.run_job(sides, PARTITIONED_RUN)
-        # The run summary adds one mixed-zone WARNING for the DIFFERENT table; the difference WARNING is still the only other one.
-        warnings = [line for line in log if "WARNING" in line and "Mixed-zone limit" not in line]
+        # The job's grep prints exactly one line for the difference. The run summary adds a mixed-zone note
+        # for the DIFFERENT table at INFO, so it is not part of that scan.
+        warnings = [line for line in log if "WARNING" in line]
         self.assertEqual(len(warnings), 1, "\n".join(log))
-        self.assertEqual(len([line for line in log if "Mixed-zone limit for shop.orders:" in line]), 1, "\n".join(log))
+        self.assertEqual(len([line for line in log if " - INFO - " in line and "Mixed-zone limit for shop.orders:" in line]),
+                         1, "\n".join(log))
         self.assertIn(" - WARNING - ", warnings[0])
         self.assertTrue(warnings[0].endswith(
             f" - Checksum difference : ('ch-host', 'shop.orders', '{MD5_B}', 5) to ('db1', 'shop.orders', '{MD5_A}', 5)"),
