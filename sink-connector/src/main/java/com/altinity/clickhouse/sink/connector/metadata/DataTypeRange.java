@@ -52,17 +52,50 @@ public class DataTypeRange {
                     .atZone(ZoneId.of("UTC")))
                     .plusNanos(DATETIME64_MIN * 1000 % 1_000);
 
+    /** The scale used when a DateTime64 column's scale is not known: DateTime64(6). */
+    public static final int DATETIME64_DEFAULT_SCALE = 6;
+
     /**
-     * Maximum {@link Instant} for supported DateTime64 in ClickHouse,
-     * derived from {@code DATETIME64_MAX}.
+     * The largest DateTime64(9) value: ClickHouse stores the instant as an
+     * Int64 count of nanoseconds, so 2262-04-11 23:47:16.854775807 is the
+     * last representable instant (measured on 24.8.8.17 and 25.8.16:
+     * 2299-12-31 23:59:59.999999999 raises DECIMAL_OVERFLOW, code 407).
      */
-    public static final Instant CLICKHOUSE_MAX_SUPPORTED_DATETIME64 =
-            from(ofEpochMilli(DATETIME64_MAX * 1000)
-                    .atZone(ZoneId.of("UTC"))
-                    .withHour(23)
-                    .withMinute(59)
-                    .withSecond(59)
-                    .withNano(000000));
+    private static final long DATETIME64_SCALE9_MAX_SECONDS = 9_223_372_036L;
+    private static final long DATETIME64_SCALE9_MAX_NANOS = 854_775_807L;
+
+    /**
+     * The largest value of a DateTime64 with {@code scale} fractional digits.
+     * For scales 0..8 it is 2299-12-31 23:59:59 followed by {@code scale}
+     * nines (measured: the value with more digits is accepted and wraps for
+     * scales 0..8, and is rejected for scale 9). Scale 9 is capped by the
+     * Int64 nanosecond representation (see {@link #DATETIME64_SCALE9_MAX_SECONDS}).
+     *
+     * @param scale the number of fractional digits, 0..9
+     * @return the inclusive upper bound for that scale
+     * @throws IllegalArgumentException when {@code scale} is outside 0..9
+     */
+    public static Instant dateTime64Max(int scale) {
+        if (scale < 0 || scale > 9) {
+            throw new IllegalArgumentException("DateTime64 scale must be 0..9, got " + scale);
+        }
+        if (scale == 9) {
+            return Instant.ofEpochSecond(DATETIME64_SCALE9_MAX_SECONDS, DATETIME64_SCALE9_MAX_NANOS);
+        }
+        long unitNanos = 1L;
+        for (int i = scale; i < 9; i++) {
+            unitNanos *= 10L;
+        }
+        return Instant.ofEpochSecond(DATETIME64_MAX, 1_000_000_000L - unitNanos);
+    }
+
+    /**
+     * Maximum {@link Instant} for supported DateTime64 in ClickHouse at the
+     * default scale 6: 2299-12-31 23:59:59.999999. (It was 23:59:59.000 before
+     * the per-scale bounds of Spec 07.03 section 3.1.8: the fraction was
+     * zeroed, which stored a value the source never held.)
+     */
+    public static final Instant CLICKHOUSE_MAX_SUPPORTED_DATETIME64 = dateTime64Max(DATETIME64_DEFAULT_SCALE);
 
     // DateTime and DateTime32
 

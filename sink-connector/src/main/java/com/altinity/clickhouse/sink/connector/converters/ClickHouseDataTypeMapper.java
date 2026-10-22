@@ -2,6 +2,8 @@ package com.altinity.clickhouse.sink.connector.converters;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.clickhouse.data.ClickHouseColumn;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.data.value.ClickHouseDoubleValue;
@@ -30,12 +32,13 @@ import org.locationtech.jts.io.WKBReader;
 
 import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.math.RoundingMode;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -166,36 +169,21 @@ public class ClickHouseDataTypeMapper {
         return 0;
     }
 
-    /** Whether the empty-source-zone resolution has been logged (once per JVM). */
-    private static final AtomicBoolean SOURCE_ZONE_DEFAULT_LOGGED = new AtomicBoolean(false);
-
     /**
-     * Resolves the source (MySQL) zone used to interpret DATETIME digits.
+     * Resolves the source (MySQL) zone used to interpret DATETIME digits (spec 07.03 section 3.1.2).
      *
-     * <p>An empty {@code database.connectionTimeZone} means "the ClickHouse
-     * session zone": the digits MySQL holds are the digits stored (the same-zone
-     * decode of Spec 07.03 section 3.1.1). It previously meant UTC while an
-     * empty {@code clickhouse.datetime.timezone} meant the server zone, so the
-     * default configuration on a non-UTC server shifted every DATETIME by the
-     * server offset (Spec 07.03 section 3.1.2).</p>
+     * <p>{@code database.connectionTimeZone} is mandatory. The config constructor refuses an unset value before
+     * any mapper is built; this method refuses it again, so no caller can reach a default.</p>
      *
-     * @param config         the connector configuration
-     * @param sessionTimeZone the resolved ClickHouse session zone
+     * @param config the connector configuration
      * @return the source zone; never null
-     * @throws java.time.DateTimeException when the configured zone is not a valid zone id
+     * @throws IllegalArgumentException when the zone is unset or not accepted by {@link TimeZoneResolver}
+     *         (no silent fallback)
      */
-    public static ZoneId resolveSourceTimeZone(ClickHouseSinkConnectorConfig config, ZoneId sessionTimeZone) {
-        String configured = config.getString(
-                ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-        if (configured != null && !configured.isEmpty()) {
-            return ZoneId.of(configured);
-        }
-        if (SOURCE_ZONE_DEFAULT_LOGGED.compareAndSet(false, true)) {
-            log.info("{} is not set; DATETIME values keep the digits MySQL holds (no wall-clock "
-                            + "shift). Effective source zone: {} (the ClickHouse session zone).",
-                    ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE, sessionTimeZone);
-        }
-        return sessionTimeZone;
+    public static ZoneId resolveSourceTimeZone(ClickHouseSinkConnectorConfig config) {
+        return TimeZoneResolver.resolve(TimeZoneResolver.SOURCE_CONNECTION_TIMEZONE,
+                config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()),
+                TimeZoneResolver.Kind.SOURCE);
     }
 
     /**
@@ -282,6 +270,33 @@ public class ClickHouseDataTypeMapper {
         }
         TimeZone tz = column.getTimeZone();
         return tz == null ? null : tz.toZoneId();
+    }
+
+    private static final Pattern DATETIME64_SCALE = Pattern.compile("DateTime64\\(\\s*(\\d+)");
+
+    /**
+     * The fractional-digit scale a declared DateTime64 type carries, e.g. 3 for
+     * {@code Nullable(DateTime64(3, 'UTC'))}. The upper bound of the column
+     * depends on it (Spec 07.03 section 3.1.8). A type that is not DateTime64,
+     * or is null, has no scale of its own and yields the default 6.
+     *
+     * @param columnType the ClickHouse column type string, may be null
+     * @return the scale, 0..9
+     * @throws IllegalArgumentException when the declared scale is above 9
+     */
+    public static int dateTime64Scale(String columnType) {
+        if (columnType == null) {
+            return DataTypeRange.DATETIME64_DEFAULT_SCALE;
+        }
+        Matcher m = DATETIME64_SCALE.matcher(columnType);
+        if (!m.find()) {
+            return DataTypeRange.DATETIME64_DEFAULT_SCALE;
+        }
+        String digits = m.group(1);
+        if (digits.length() > 2 || Integer.parseInt(digits) > 9) {
+            throw new IllegalArgumentException("DateTime64 scale must be 0..9 in '" + columnType + "'");
+        }
+        return Integer.parseInt(digits);
     }
 
     /**
@@ -526,6 +541,26 @@ public class ClickHouseDataTypeMapper {
                                   ClickHouseDataType clickHouseDataType, ZoneId serverTimeZone,
                                   ZoneId columnTimeZone, DebeziumConverter.RangePolicy rangePolicy)
             throws SQLException {
+        return convert(type, schemaName, value, index, ps, config, clickHouseDataType, serverTimeZone,
+                columnTimeZone, rangePolicy, null);
+    }
+
+    /**
+     * As {@link #convert(Schema.Type, String, Object, int, PreparedStatement,
+     * ClickHouseSinkConnectorConfig, ClickHouseDataType, ZoneId, ZoneId,
+     * DebeziumConverter.RangePolicy)}, with the field's schema parameters, which
+     * carry the propagated source column type. The propagated type lets a
+     * {@code BIGINT UNSIGNED} value at or above 2^63 be reported (Spec 07.11).
+     *
+     * @param schemaParameters the field schema parameters, may be null
+     */
+    public static boolean convert(Schema.Type type, String schemaName,
+                                  Object value, int index, PreparedStatement ps,
+                                  ClickHouseSinkConnectorConfig config,
+                                  ClickHouseDataType clickHouseDataType, ZoneId serverTimeZone,
+                                  ZoneId columnTimeZone, DebeziumConverter.RangePolicy rangePolicy,
+                                  Map<String, String> schemaParameters)
+            throws SQLException {
 
         boolean result = true;
         // ClickHouse parses a DateTime literal in the COLUMN's zone, so an
@@ -577,29 +612,52 @@ public class ClickHouseDataTypeMapper {
                 // ClickHouse(DateTime64): the instant is bound as epoch text,
                 // exact in any column zone (Spec 07.03 section 3.1.4); a
                 // DateTime or String target keeps the digits in the column zone.
+                // The propagated source type tells a MySQL TIMESTAMP, whose epoch instant is the zero
+                // TIMESTAMP, from a PostgreSQL timestamptz, for which the epoch is a real value (Spec 07.03
+                // section 3.1.15).
                 ps.setString(
                         index,
                         DebeziumConverter.ZonedTimestampConverter
-                                .convert(value, instantFormatZone, clickHouseDataType, rangePolicy));
+                                .convert(value, instantFormatZone, clickHouseDataType, rangePolicy,
+                                        isMysqlTimestampSource(schemaParameters)));
             } else if (schemaName != null
                     && schemaName.equalsIgnoreCase(Json.LOGICAL_NAME)) {
                 // if the column is JSON,
                 // it should be written as String or JSON in CH
                 ps.setObject(index, value);
+            } else if (schemaName != null
+                    && schemaName.equalsIgnoreCase(Enum.LOGICAL_NAME)) {
+                // Debezium (MySQL) passes the ENUM option through as its MySQL literal body, so each
+                // backslash of the label arrives doubled, and it writes each comma as a backslash and
+                // a comma (MySqlAntlrDdlParser.escapeOption). Undo the comma escape, then collapse
+                // each doubled backslash. Spec 07.04 section 3.2.
+                ps.setString(index, ((String) value).replace("\\,", ",").replace("\\\\", "\\"));
             } else {
                 ps.setString(index, (String) value);
             }
         } else if (isFieldTypeInt) {
             if (schemaName != null
+                    && schemaName.equalsIgnoreCase(Year.SCHEMA_NAME)) {
+                // The binlog stream delivers the MySQL zero year 0000 as 1900; MySQL holds the number 0
+                // (Spec 07.01 section 3.4). The mapped value takes the integer bind below.
+                value = zeroYearValue(value);
+            }
+            if (schemaName != null
                     && schemaName.equalsIgnoreCase(Date.SCHEMA_NAME)) {
                 // Date field arrives as INT32 with schema name
                 // set to io.debezium.time.Date
-                ps.setDate(index,
+                // A DATE is a calendar day: its yyyy-MM-dd text is parsed by ClickHouse
+                // with no zone. java.sql.Date would carry a JVM-zone instant (Spec 07.03 section 3.1.7).
+                ps.setString(index,
                         DebeziumConverter.DateConverter.convert(
-                                value, clickHouseDataType, rangePolicy));
+                                value, clickHouseDataType, rangePolicy).toString());
             } else if (schemaName != null
                     && schemaName.equalsIgnoreCase(Timestamp.SCHEMA_NAME)) {
-                ps.setTimestamp(index, (java.sql.Timestamp) value);
+                // Spec 07.03 section 3.1.2: bind with an explicit Calendar in the ClickHouse zone that the
+                // column interprets, never the JVM default zone.
+                ps.setTimestamp(index, (java.sql.Timestamp) value,
+                        java.util.Calendar.getInstance(java.util.TimeZone.getTimeZone(TimeZoneResolver.clickHouseZone(
+                                config.getString(TimeZoneResolver.CLICKHOUSE_DATETIME_TIMEZONE)))));
             } else if (isWiderIntegerTarget(clickHouseDataType)) {
                 // Debezium schema may lag after ALTER (e.g. INT32) while CH column is UInt64
                 ps.setObject(index, value);
@@ -613,6 +671,7 @@ public class ClickHouseDataTypeMapper {
                 // Read the value as a Number so the boxed type is irrelevant;
                 // intValue() on an Integer is the identity, so the INT32 case
                 // is unchanged. See issue #385.
+                reportIntegerNarrowing(((Number) value).longValue(), clickHouseDataType, rangePolicy);
                 ps.setInt(index, ((Number) value).intValue());
             }
         } else if (isFieldTypeFloat) {
@@ -640,14 +699,21 @@ public class ClickHouseDataTypeMapper {
                 // alone.
                 ps.setObject(index, new BigInteger(Long.toUnsignedString((Long) value)));
             } else {
+                // Spec 07.11: a BIGINT UNSIGNED value at or above 2^63 is reported once, with
+                // its unsigned text. It is not also reported as a narrowing (the return is
+                // non-null only when the unsigned report was made).
+                String unsignedStored = isFieldTypeBigInt
+                        ? reportUnsignedBigintWrap(value, schemaParameters, clickHouseDataType, rangePolicy)
+                        : null;
+                if (unsignedStored == null && value instanceof Number) {
+                    reportIntegerNarrowing(((Number) value).longValue(), clickHouseDataType, rangePolicy);
+                }
                 ps.setObject(index, value);
             }
         } else if (isFieldDateTime || isFieldTime) {
             if (isFieldDateTime) {
-                // Empty database.connectionTimeZone means the session zone --
-                // the digits MySQL holds are stored -- never UTC (Spec 07.03
-                // section 3.1.2).
-                ZoneId sourceTimeZone = resolveSourceTimeZone(config, serverTimeZone);
+                // database.connectionTimeZone is mandatory (Spec 07.03 section 3.1.2): an unset value is refused.
+                ZoneId sourceTimeZone = resolveSourceTimeZone(config);
                 if  (schemaName != null && schemaName.equalsIgnoreCase(MicroTimestamp.SCHEMA_NAME)) {
                     // DATETIME(4), DATETIME(5), DATETIME(6)
 
@@ -993,6 +1059,290 @@ public class ClickHouseDataTypeMapper {
                 || chType == ClickHouseDataType.UInt64
                 || chType == ClickHouseDataType.UInt32
                 || chType == ClickHouseDataType.Int32;
+    }
+
+    /**
+     * Reports an integer that the target column cannot hold exactly (Spec
+     * 07.03 section 3.1.14): a value other than 0 or 1 into a {@code Bool}
+     * column (stored as true), or a value outside a narrower integer column
+     * (stored truncated to the column width, as ClickHouse converts it). The
+     * bind itself is unchanged; the report names what ClickHouse will store.
+     * Int64 and UInt64 targets take every long value a narrowing applies to
+     * here: a negative value into UInt64 is the BIGINT UNSIGNED case handled by
+     * the caller.
+     */
+    static void reportIntegerNarrowing(long value, ClickHouseDataType target,
+                                       DebeziumConverter.RangePolicy policy) {
+        if (target == null) {
+            return;
+        }
+        if (target == ClickHouseDataType.Bool) {
+            if (value != 0L && value != 1L) {
+                policy.lossy(LossyConversionReporter.Kind.BOOL_COLLAPSE, Long.toString(value), "true");
+            }
+            return;
+        }
+        String wrapped = wrappedText(value, target);
+        if (wrapped != null) {
+            policy.lossy(LossyConversionReporter.Kind.INT_WRAP, Long.toString(value), wrapped);
+        }
+    }
+
+    /**
+     * Reports a decimal with more fractional digits than the bound Decimal column
+     * (Spec 07.09 section 3.1). The bind is unchanged: ClickHouse keeps the
+     * column scale and truncates toward zero, and this names that value.
+     *
+     * @param value  the Connect decimal value about to be bound (null or a
+     *               non-BigDecimal is not checked)
+     * @param column the parsed declared column; null when the type is unknown
+     * @param policy the range policy that names the column and the mode
+     * @return the value ClickHouse stores when it differs from {@code value},
+     *         otherwise null
+     * @throws DebeziumConverter.ValueOutOfRangeException under strict mode
+     */
+    public static BigDecimal reportDecimalScaleNarrowing(Object value, ClickHouseColumn column,
+                                                  DebeziumConverter.RangePolicy policy) {
+        if (!(value instanceof BigDecimal) || column == null || !isDecimalType(column.getDataType())) {
+            return null;
+        }
+        BigDecimal source = (BigDecimal) value;
+        BigDecimal stored = source.setScale(column.getScale(), RoundingMode.DOWN);
+        if (stored.compareTo(source) == 0) {
+            return null;
+        }
+        policy.lossy(LossyConversionReporter.Kind.DECIMAL_TRUNCATE, source.toPlainString(), stored.toPlainString());
+        return stored;
+    }
+
+    /**
+     * Reports a text value whose last byte is NUL when it is bound into a FixedString(N) column (Spec 07.12).
+     * ClickHouse pads a FixedString with NUL bytes and reads it back without them, so a trailing NUL of the source
+     * cannot be told apart from the padding. A value that does not end in NUL is the FixedString contract and is not
+     * reported. A value longer than N bytes is refused by ClickHouse (Code 131) and is not reported here.
+     *
+     * @param value  the value about to be bound; only a {@link String} is checked
+     * @param column the parsed declared column; null when the type is unknown
+     * @param policy the range policy that names the column and the mode
+     * @return the value without its trailing NUL bytes, as ClickHouse reads it back, when it is reported;
+     *         otherwise null
+     * @throws DebeziumConverter.ValueOutOfRangeException under strict mode
+     */
+    public static String reportFixedStringNul(Object value, ClickHouseColumn column,
+                                              DebeziumConverter.RangePolicy policy) {
+        if (!(value instanceof String) || column == null || column.getDataType() != ClickHouseDataType.FixedString) {
+            return null;
+        }
+        String source = (String) value;
+        if (source.isEmpty() || source.charAt(source.length() - 1) != '\0') {
+            return null;
+        }
+        // getPrecision() is N for FixedString(N) and Nullable(FixedString(N)); getEstimatedLength() is 1 for the Nullable form.
+        if (source.getBytes(StandardCharsets.UTF_8).length > column.getPrecision()) {
+            return null;
+        }
+        int end = source.length();
+        while (end > 0 && source.charAt(end - 1) == '\0') {
+            end--;
+        }
+        String stored = source.substring(0, end);
+        policy.lossy(LossyConversionReporter.Kind.FIXEDSTRING_NUL, escapeNul(source), escapeNul(stored));
+        return stored;
+    }
+
+    /** Makes NUL bytes visible in a log line. */
+    private static String escapeNul(String text) {
+        return text.replace("\0", "\\0");
+    }
+
+    /**
+     * Whether the propagated source column type names a MySQL {@code TIMESTAMP} (Spec 07.03 section 3.1.15).
+     * The type is the whole word {@code TIMESTAMP}, with or without a {@code (n)} suffix, in any case. A
+     * PostgreSQL {@code timestamptz} is also delivered as {@code io.debezium.time.ZonedTimestamp} but names
+     * {@code timestamptz}, so it does not match; without a propagated type nothing matches.
+     *
+     * @param schemaParameters the field schema parameters, may be null
+     */
+    public static boolean isMysqlTimestampSource(Map<String, String> schemaParameters) {
+        if (schemaParameters == null) {
+            return false;
+        }
+        String sourceType = schemaParameters.get(DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM);
+        if (sourceType == null) {
+            return false;
+        }
+        int paren = sourceType.indexOf('(');
+        String word = (paren < 0 ? sourceType : sourceType.substring(0, paren)).trim();
+        return "TIMESTAMP".equalsIgnoreCase(word);
+    }
+
+    /**
+     * The value the binlog stream delivers for the MySQL zero year {@code 0000}. The binlog row decoder
+     * adds 1900 to the stored byte, and the stored byte of {@code 0000} is 0, so the stream carries 1900.
+     * MySQL's real years run from 1901, so 1900 can come only from {@code 0000}.
+     */
+    public static final int STREAM_ZERO_YEAR = 1900;
+
+    /**
+     * Maps a {@code YEAR} value of the binlog stream to the number MySQL holds (Spec 07.01 section 3.4):
+     * the stream value 1900 is the zero year {@code 0000}, whose numeric value is 0; every other value is
+     * returned unchanged. Only a field whose schema is {@code io.debezium.time.Year} is passed in.
+     *
+     * @param value the Connect value of the field
+     * @return {@code Integer 0} for the stream value 1900, else {@code value} itself
+     */
+    public static Object zeroYearValue(Object value) {
+        if (value instanceof Number && ((Number) value).longValue() == STREAM_ZERO_YEAR) {
+            return 0;
+        }
+        return value;
+    }
+
+    /**
+     * Reports a DATETIME fraction with more digits than the bound DateTime,
+     * DateTime32 or DateTime64 column keeps (Spec 07.10 section 3.1). ClickHouse
+     * keeps the leading digits of the fraction and drops the rest. The value is
+     * bound unchanged. Under strict mode the policy refuses the value before the bind.
+     *
+     * @param value      the bound value; only a {@link Long} micro or milli count is checked
+     * @param schemaName the Debezium logical type name of the field
+     * @param column     the parsed target column; its scale is the kept fraction width
+     * @param policy     the range policy that names the column
+     * @return the fraction digits ClickHouse keeps (empty for a DateTime with no
+     *         fraction), or null when no digit is dropped or the value is not checked
+     * @throws DebeziumConverter.ValueOutOfRangeException under strict mode
+     */
+    public static String reportFractionTruncation(Object value, String schemaName, ClickHouseColumn column,
+                                                  DebeziumConverter.RangePolicy policy) {
+        if (!(value instanceof Long) || schemaName == null || column == null) {
+            return null;
+        }
+        int sourceScale;
+        if (MicroTimestamp.SCHEMA_NAME.equalsIgnoreCase(schemaName)) {
+            sourceScale = 6;
+        } else if (Timestamp.SCHEMA_NAME.equalsIgnoreCase(schemaName)) {
+            sourceScale = 3;
+        } else {
+            return null;
+        }
+        ClickHouseDataType type = column.getDataType();
+        if (type != ClickHouseDataType.DateTime && type != ClickHouseDataType.DateTime32
+                && type != ClickHouseDataType.DateTime64) {
+            return null;
+        }
+        int targetScale = column.getScale();
+        if (targetScale >= sourceScale) {
+            return null;
+        }
+        long fractionUnits = powerOfTen(sourceScale);
+        long keptUnits = powerOfTen(sourceScale - targetScale);
+        long fraction = Math.floorMod((Long) value, fractionUnits);
+        if (fraction % keptUnits == 0) {
+            return null;
+        }
+        String sourceDigits = String.format("%0" + sourceScale + "d", fraction);
+        String storedDigits = targetScale == 0
+                ? ""
+                : String.format("%0" + targetScale + "d", fraction / keptUnits);
+        policy.lossy(LossyConversionReporter.Kind.FRACTION_TRUNCATE, sourceDigits, storedDigits);
+        return storedDigits;
+    }
+
+    /**
+     * Reports a BIGINT UNSIGNED value at or above 2^63 bound into a column that
+     * cannot hold it (Spec 07.11 section 3.1). Debezium's default
+     * {@code bigint.unsigned.handling.mode=long} delivers such a value as a negative
+     * long. The bind is unchanged: an {@code Int64} column stores the negative
+     * number, a narrower integer column stores its low bits, and a {@code Bool}
+     * column stores {@code true}. The report names the unsigned value MySQL held
+     * and the value stored. It needs the propagated source type
+     * ({@link #DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM}): without it a signed negative
+     * BIGINT cannot be told apart. A {@code UInt64} target is restored exactly and
+     * is not reported; other targets are outside Spec 07.11 and are not reported.
+     *
+     * @param value            the bound value; only a negative {@link Long} is checked
+     * @param schemaParameters the field schema parameters, may be null
+     * @param target           the parsed target ClickHouse type
+     * @param policy           the range policy that names the column and the mode
+     * @return the text ClickHouse stores when the value is reported, otherwise null
+     * @throws DebeziumConverter.ValueOutOfRangeException under strict mode
+     */
+    public static String reportUnsignedBigintWrap(Object value, Map<String, String> schemaParameters,
+                                                  ClickHouseDataType target, DebeziumConverter.RangePolicy policy) {
+        if (!(value instanceof Long) || (Long) value >= 0L || schemaParameters == null || target == null) {
+            return null;
+        }
+        if (!"UInt64".equals(getUnsignedClickHouseType(schemaParameters.get(DEBEZIUM_SOURCE_COLUMN_TYPE_PARAM)))) {
+            return null;
+        }
+        long source = (Long) value;
+        String sourceText = Long.toUnsignedString(source);
+        String stored;
+        switch (target) {
+            case Bool:
+                policy.lossy(LossyConversionReporter.Kind.BOOL_COLLAPSE, sourceText, "true");
+                return "true";
+            case Int64:
+                stored = Long.toString(source);
+                break;
+            case Int8:
+            case Int16:
+            case Int32:
+            case UInt8:
+            case UInt16:
+            case UInt32:
+                // A negative long fits a signed target only when it is in range; the
+                // unsigned targets always take the low bits.
+                stored = wrappedText(source, target);
+                if (stored == null) {
+                    stored = Long.toString(source);
+                }
+                break;
+            default:
+                return null;
+        }
+        policy.lossy(LossyConversionReporter.Kind.INT_WRAP, sourceText, stored);
+        return stored;
+    }
+
+    private static long powerOfTen(int exponent) {
+        long result = 1L;
+        for (int i = 0; i < exponent; i++) {
+            result *= 10L;
+        }
+        return result;
+    }
+
+    private static boolean isDecimalType(ClickHouseDataType type) {
+        return type == ClickHouseDataType.Decimal
+                || type == ClickHouseDataType.Decimal32
+                || type == ClickHouseDataType.Decimal64
+                || type == ClickHouseDataType.Decimal128
+                || type == ClickHouseDataType.Decimal256;
+    }
+
+    /**
+     * The decimal text ClickHouse stores for {@code value} in the narrower
+     * integer {@code target} (the low bits, read in the target's signedness), or
+     * null when the value fits.
+     */
+    static String wrappedText(long value, ClickHouseDataType target) {
+        switch (target) {
+            case Int8:
+                return value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE ? null : Long.toString((byte) value);
+            case UInt8:
+                return value >= 0 && value <= 0xFFL ? null : Long.toString(value & 0xFFL);
+            case Int16:
+                return value >= Short.MIN_VALUE && value <= Short.MAX_VALUE ? null : Long.toString((short) value);
+            case UInt16:
+                return value >= 0 && value <= 0xFFFFL ? null : Long.toString(value & 0xFFFFL);
+            case Int32:
+                return value >= Integer.MIN_VALUE && value <= Integer.MAX_VALUE ? null : Long.toString((int) value);
+            case UInt32:
+                return value >= 0 && value <= 0xFFFFFFFFL ? null : Long.toString(value & 0xFFFFFFFFL);
+            default:
+                return null;
+        }
     }
 
     /**

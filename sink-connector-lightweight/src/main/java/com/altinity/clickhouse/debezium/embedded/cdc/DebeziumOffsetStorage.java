@@ -11,7 +11,6 @@ import org.json.simple.parser.ParseException;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.SQLException;
-import java.sql.Timestamp;
 import java.util.Properties;
 import java.util.UUID;
 
@@ -114,7 +113,7 @@ public class DebeziumOffsetStorage {
      *
      * @param props      Startup properties.
      * @param connection Database connection.
-     * @return The latest record timestamp as a string.
+     * @return The latest record timestamp as epoch seconds text, or null when the table has no row.
      * @throws SQLException If a database error occurs.
      */
     public String getDebeziumLatestRecordTimestamp(Properties props,
@@ -127,8 +126,11 @@ public class DebeziumOffsetStorage {
 
         // I14-scan-allowed: the connector-owned offset table (spec 09.03 section 3),
         // a handful of rows keyed by offset_key; read by the restart monitor.
+        // Epoch seconds, not the column's text: record_insert_ts is a zone-less DateTime, so its text is wall-clock
+        // digits in the server zone. toUnixTimestamp returns the instant, whatever zone the connector's JVM runs in
+        // (Spec 07.03 section 3.1.10).
         String query = String.format(
-                "select max(record_insert_ts) from %s", tableName);
+                "select toUnixTimestamp(max(record_insert_ts)) from %s", tableName);
         DBMetadata dbMetadata = new DBMetadata(props);
         return dbMetadata.executeSystemQuery(connection, query);
     }
@@ -404,7 +406,10 @@ public class DebeziumOffsetStorage {
             sql.setString(1, deterministicId);
             sql.setString(2, offsetKey);
             sql.setString(3, offsetVal);
-            sql.setTimestamp(4, new Timestamp(currentTs));
+            // record_insert_ts is a zone-less DateTime (spec 07.03 section 3.1.2). A Timestamp bind renders the
+            // instant in the JVM's default zone, so the bind is the epoch second instead: ClickHouse reads an integer
+            // into DateTime as an instant. Truncated to the second, as DateTime is.
+            sql.setLong(4, currentTs / 1000L);
             sql.setInt(5, DEFAULT_RECORD_INSERT_SEQ);
             sql.executeUpdate();
         }

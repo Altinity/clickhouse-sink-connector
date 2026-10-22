@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.db.batch;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.BareReplacingMergeTreeDeleteRefusedException;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
@@ -274,8 +275,11 @@ public class PreparedStatementFieldMapper {
         String declaredType = columnNameToDataTypeMap.get(colName);
         ColumnBinding binding = columnBindings.get(colName);
         if (binding == null || !Objects.equals(binding.declaredType, declaredType)) {
+            // The bound's DateTime64 upper limit depends on the column's declared
+            // scale (Spec 07.03 section 3.1.8), so the scale is read from the type.
             binding = new ColumnBinding(declaredType, parseColumn(colName, columnNameToDataTypeMap),
-                    DebeziumConverter.RangePolicy.of(config, databaseName + "." + tableName + "." + colName));
+                    DebeziumConverter.RangePolicy.of(config, databaseName + "." + tableName + "." + colName,
+                            ClickHouseDataTypeMapper.dateTime64Scale(declaredType)));
             columnBindings.put(colName, binding);
         }
         return binding;
@@ -531,8 +535,17 @@ public class PreparedStatementFieldMapper {
             ClickHouseDataType chDataType = binding.dataType;
             ZoneId columnTimeZone = binding.columnTimeZone;
             DebeziumConverter.RangePolicy rangePolicy = binding.rangePolicy;
+            // Spec 07.09: ClickHouse keeps only the column's decimal scale. The bind is
+            // unchanged; the narrowing is reported before it (or refused under strict mode).
+            ClickHouseDataTypeMapper.reportDecimalScaleNarrowing(value, binding.column, rangePolicy);
+            // Spec 07.10: a DATETIME fraction beyond the column's scale is reported before the bind.
+            ClickHouseDataTypeMapper.reportFractionTruncation(value, schemaName, binding.column, rangePolicy);
+            // Spec 07.12: a text value whose trailing NUL would read back as FixedString padding is reported before the bind.
+            ClickHouseDataTypeMapper.reportFixedStringNul(value, binding.column, rangePolicy);
+            // Spec 07.11: the field's schema parameters carry the propagated source type, which
+            // lets convert(...) report a BIGINT UNSIGNED value at or above 2^63 once, before the bind.
             if (!ClickHouseDataTypeMapper.convert(type, schemaName, value, index, ps, config, chDataType,
-                    serverTimeZone, columnTimeZone, rangePolicy)) {
+                    serverTimeZone, columnTimeZone, rangePolicy, f.schema().parameters())) {
                 // An unhandled type leaves the parameter unbound. Logging and
                 // continuing (the previous behaviour) let the V2 JDBC driver
                 // -- whose addBatch() does not clear its bound values -- write
@@ -651,7 +664,8 @@ public class PreparedStatementFieldMapper {
             if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.STORE_KAFKA_METADATA.toString())) {
                 if (columnNameToDataTypeMap.containsKey(metaDataColName)) {
                     if (columnNameToIndexMap != null && columnNameToIndexMap.containsKey(metaDataColName)) {
-                        TableMetaDataWriter.addKafkaMetaData(metaDataColName, record, columnNameToIndexMap.get(metaDataColName), ps);
+                        TableMetaDataWriter.addKafkaMetaData(metaDataColName, record, columnNameToIndexMap.get(metaDataColName), ps,
+                                serverTimeZone);
                     }
                 }
             }
@@ -717,44 +731,27 @@ public class PreparedStatementFieldMapper {
             return;
         }
 
-        String sourceTimeZone = "UTC";
-        if(config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null){
-            String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-            if(configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
-                sourceTimeZone = configSourceTimeZone;
-            }
-        }
+        // Spec 12.04 section 3.5: history instants are unix epoch seconds bound as numbers.
+        // A DateTime column rejects epoch text, and wall-clock text in a zone loses the
+        // second pass of a DST overlap, so no zone is read here.
+        // deleted_time / deleted_from_time (DateTime): DELETE and UPDATE close at the
+        // event time; the open-row sentinel is used otherwise.
+        // DateTime (UInt32) has no negative instants; 0 is its floor, as in ReplicationHistoryHandler.
+        long eventEpochSeconds = Math.max(0L, record.getTsSec());
+        long sentinelEpochSeconds = DataTypeRange.DATETIME32_MAX_TTL;
 
         // Handle deleted_time column
         if (columnNameToDataTypeMap.containsKey(DELETED_TIME_COLUMN) && columnNameToIndexMap.containsKey(DELETED_TIME_COLUMN)) {
             if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation())) {
-                ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
-                        DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
-                                ZoneId.of(sourceTimeZone), serverTimeZone));
-            } else if(record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
-                ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
-                        DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-                                ZoneId.of(sourceTimeZone), serverTimeZone));
-
+                ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), eventEpochSeconds);
             } else {
-                ps.setString(columnNameToIndexMap.get(DELETED_TIME_COLUMN),
-                        DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(DataTypeRange.DATETIME32_MAX_TTL * 1000, ClickHouseDataType.DateTime,
-                                ZoneId.of(sourceTimeZone), serverTimeZone));
+                ps.setLong(columnNameToIndexMap.get(DELETED_TIME_COLUMN), sentinelEpochSeconds);
             }
         }
 
         // Handle deleted_from_time column
         if (columnNameToDataTypeMap.containsKey(DELETED_FROM_TIME_COLUMN) && columnNameToIndexMap.containsKey(DELETED_FROM_TIME_COLUMN)) {
-            if (record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.DELETE.getOperation()) ||
-                    record.getCdcOperation().getOperation().equalsIgnoreCase(ClickHouseConverter.CDC_OPERATION.UPDATE.getOperation())) {
-                ps.setString(columnNameToIndexMap.get(DELETED_FROM_TIME_COLUMN),
-                        DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
-                                ZoneId.of(sourceTimeZone), serverTimeZone));
-            } else {
-                ps.setString(columnNameToIndexMap.get(DELETED_FROM_TIME_COLUMN),
-                        DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(record.getTsSec() * 1000, ClickHouseDataType.DateTime,
-                                ZoneId.of(sourceTimeZone), serverTimeZone));
-            }
+            ps.setLong(columnNameToIndexMap.get(DELETED_FROM_TIME_COLUMN), eventEpochSeconds);
         }
 
         // Handle operation column
@@ -882,6 +879,29 @@ public class PreparedStatementFieldMapper {
         if (this.replacingMergeTreeDeleteColumn != null
                 && columnNameToDataTypeMap.containsKey(this.replacingMergeTreeDeleteColumn)) {
             return;
+        }
+        if (this.replacingMergeTreeDeleteColumn == null) {
+            // A bare ReplacingMergeTree(ver) names no delete column and the
+            // engine never reads is_deleted or _sign. ALTER cannot change the
+            // engine's arguments, so the message gives the rebuild a human runs.
+            // Terminal (spec 08.06 section 6.5): no ALTER can add a delete
+            // argument to the engine, so a retry never succeeds.
+            throw new BareReplacingMergeTreeDeleteRefusedException(String.format(
+                    "%1$s for ReplacingMergeTree table %2$s.%3$s cannot be replicated: its engine clause is "
+                            + "ReplacingMergeTree(%4$s) and has no delete argument, so ClickHouse never removes a "
+                            + "row for a delete. Written as is, the before image would become a LIVE row with a "
+                            + "higher version and resurrect the key. replacingmergetree.delete.column is not "
+                            + "consulted for this table, and no flag is written into its columns. ALTER cannot "
+                            + "change an engine's arguments, so rebuild the table, then restart the connector: "
+                            + "(1) if the table has no is_deleted column, ALTER TABLE `%2$s`.`%3$s` ADD COLUMN IF "
+                            + "NOT EXISTS is_deleted UInt8 DEFAULT 0; "
+                            + "(2) CREATE TABLE `%2$s`.`%3$s_rmt` AS `%2$s`.`%3$s` ENGINE = ReplacingMergeTree(%4$s, "
+                            + "is_deleted); "
+                            + "(3) INSERT INTO `%2$s`.`%3$s_rmt` SELECT every column, with is_deleted = 0 for the "
+                            + "live rows, FROM `%2$s`.`%3$s`; "
+                            + "(4) EXCHANGE TABLES `%2$s`.`%3$s` AND `%2$s`.`%3$s_rmt`. "
+                            + "Or set ignore_delete=true if deletes must not be replicated. Refusing the row.",
+                    what, databaseName, tableName, versionColumn));
         }
         throw new IllegalStateException(String.format(
                 "%s for ReplacingMergeTree table %s.%s cannot be replicated: the table has no "

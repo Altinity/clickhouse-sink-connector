@@ -5,6 +5,7 @@ import static com.altinity.clickhouse.sink.connector.db.ClickHouseDbConstants.CH
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.ServerTimeZoneUnavailableException;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.logging.log4j.LogManager;
@@ -12,6 +13,7 @@ import org.apache.logging.log4j.Logger;
 import org.apache.maven.artifact.versioning.DefaultArtifactVersion;
 
 import java.sql.*;
+import java.time.DateTimeException;
 import java.time.ZoneId;
 import java.util.*;
 
@@ -505,86 +507,114 @@ public class DBMetadata {
      * @param conn The database connection.
      * @param database The database name.
      * @param config The configuration for the ClickHouse sink connector.
-     * @return A map containing the column names as keys and their data types as values.
+     * @return A map containing the column names as keys and their data types as values. Empty only when the
+     *         table does not exist.
+     * @throws ColumnMetadataUnavailableException when the column list cannot be read after MAX_RETRIES
+     *         attempts. A failed read is never returned as an empty map, including a listing with no rows
+     *         for a table that system.tables lists.
      */
     public Map<String, String> getColumnsDataTypesForTable(String tableName, Connection conn, String database) {
-        // Add retry logic.
+        // One listing supplies the columns and their default_kind, so ALIAS and
+        // MATERIALIZED columns are dropped here without a second query (spec 08.06 section 3.2).
+        // A read that cannot complete is raised, never returned as an empty map (spec 08.06 section 3.1).
         int retryCount = 0;
-        Set<String> aliasColumns = new HashSet<>();
-        try {
-            aliasColumns = getAliasAndMaterializedColumnsForTableAndDatabase(tableName, database, conn);
-        } catch (Exception e) {
-            log.error("Error getting alias columns, retrying ({}/{})", retryCount,MAX_RETRIES,e);
-
-            try {
-                conn = reconnectIfPooled(conn, database);
-            } catch (SQLException e1) {
-                log.error("Error initiating new connection retrying ({}/{})", retryCount,MAX_RETRIES,e1);
-
-            }
-        }
-        LinkedHashMap<String, String> result = new LinkedHashMap<>();
-        // Add retry logic.
-        retryCount = 0;
+        Connection current = conn;
+        Exception lastFailure = null;
         while (retryCount < MAX_RETRIES) {
             try {
                 String query = String.format(
                         "SELECT name, type, default_kind FROM system.columns WHERE database = '%s' AND table = '%s' ORDER BY position",
                         database, tableName);
-                ResultSet columns = conn.createStatement().executeQuery(query);
-                while (columns.next()) {
-                    String columnName = columns.getString("name");
-                    String typeName = columns.getString("type");
-                    String defaultKind = columns.getString("default_kind");
+                LinkedHashMap<String, String> result = new LinkedHashMap<>();
+                try (Statement statement = current.createStatement();
+                     ResultSet columns = statement.executeQuery(query)) {
+                    while (columns.next()) {
+                        String columnName = columns.getString("name");
+                        String typeName = columns.getString("type");
+                        String defaultKind = columns.getString("default_kind");
 
-                    if ("ALIAS".equals(defaultKind) || "MATERIALIZED".equals(defaultKind)) {
-                        continue;
+                        if ("ALIAS".equals(defaultKind) || "MATERIALIZED".equals(defaultKind)) {
+                            continue;
+                        }
+                        result.put(columnName, typeName);
                     }
-                    if (aliasColumns.contains(columnName)) {
-                        log.debug("Skipping alias column: " + columnName);
-                        continue;
-                    }
-                    result.put(columnName, typeName);
                 }
-                columns.close();
-                break;
-            } catch (SQLException sq) {
+                if (result.isEmpty() && tableExists(current, database, tableName)) {
+                    // An existing table always has at least one column, so a successful listing with no rows
+                    // means the rows were hidden or lost (for example by a row policy on system.columns).
+                    // Retry it like a failed read; an empty map here would make the writer build with no columns.
+                    throw new SQLException(String.format(
+                            "system.columns returned no rows for %s.%s, although system.tables lists it",
+                            database, tableName));
+                }
+                return result;
+            } catch (Exception e) {
+                lastFailure = e;
                 log.error("Exception retrieving Column Metadata, retrying ({}/{}), use error.max.retries to configure",
-                        retryCount,MAX_RETRIES, sq);
+                        retryCount, MAX_RETRIES, e);
                 try {
-                    conn = reconnectIfPooled(conn, database);
+                    current = reconnectIfPooled(current, database);
                 } catch (SQLException e1) {
-                    log.error("Error initiating new connection, retrying ({}/{})", retryCount,MAX_RETRIES,e1);
+                    log.error("Error initiating new connection, retrying ({}/{})", retryCount, MAX_RETRIES, e1);
                 }
                 retryCount++;
             }
         }
-        return result;
+        throw new ColumnMetadataUnavailableException(String.format(
+                "Could not read the column list of %s.%s after %d attempts", database, tableName, MAX_RETRIES),
+                lastFailure);
     }
 
     /**
-     * Retrieves the server's timezone. Defaults to UTC if the query fails or no
-     * timezone is provided.
+     * Returns true when system.tables lists the table. Called only after system.columns returned no rows, to tell
+     * a table that does not exist (an empty column map is correct) from a column list that could not be read.
+     */
+    private boolean tableExists(Connection conn, String database, String tableName) throws SQLException {
+        String query = String.format(
+                "SELECT count() FROM system.tables WHERE database = '%s' AND name = '%s'", database, tableName);
+        try (Statement statement = conn.createStatement();
+             ResultSet tables = statement.executeQuery(query)) {
+            return tables.next() && tables.getLong(1) > 0;
+        }
+    }
+
+    /**
+     * Retrieves the ClickHouse server's timezone ({@code SELECT timezone()}).
+     *
+     * <p>Fails loudly (spec 07.03 §3.1.2, B2): there is no UTC fallback. A missing connection, a failed
+     * query, an empty result, or a zone this JVM cannot resolve throws
+     * {@link ServerTimeZoneUnavailableException}, so the caller's batch or start fails instead of writing
+     * DateTime values in a zone nobody configured.</p>
      *
      * @param conn The database connection.
      * @return The server's timezone.
+     * @throws ServerTimeZoneUnavailableException when the server zone cannot be read or resolved.
      */
     public ZoneId getServerTimeZone(Connection conn) {
-        ZoneId result = ZoneId.of("UTC");
-        if (conn != null) {
-            try {
-                // Perform a query to get the server timezone
-                ResultSet rs = conn.prepareStatement("SELECT timezone()").executeQuery();
-                if (rs.next()) {
-                    String serverTimeZone = rs.getString(1);
-                    result = ZoneId.of(serverTimeZone);
-                }
-                rs.close();
-            } catch (Exception e) {
-                log.error("Error retrieving server timezone", e);
-            }
+        if (conn == null) {
+            throw new ServerTimeZoneUnavailableException(
+                    "No ClickHouse connection to read the server timezone (SELECT timezone())");
         }
-        return result;
+        String serverTimeZone;
+        try (PreparedStatement ps = conn.prepareStatement("SELECT timezone()");
+             ResultSet rs = ps.executeQuery()) {
+            if (!rs.next()) {
+                throw new ServerTimeZoneUnavailableException("SELECT timezone() returned no row");
+            }
+            serverTimeZone = rs.getString(1);
+        } catch (SQLException e) {
+            throw new ServerTimeZoneUnavailableException("SELECT timezone() failed: " + e.getMessage(), e);
+        }
+        if (serverTimeZone == null || serverTimeZone.trim().isEmpty()) {
+            throw new ServerTimeZoneUnavailableException("SELECT timezone() returned an empty zone");
+        }
+        try {
+            return ZoneId.of(serverTimeZone);
+        } catch (DateTimeException e) {
+            throw new ServerTimeZoneUnavailableException("ClickHouse reports server timezone '" + serverTimeZone
+                    + "', which this JVM cannot resolve to a zone (abbreviations such as EST are not zone ids here)",
+                    e);
+        }
     }
 
     /**
@@ -872,38 +902,43 @@ public class DBMetadata {
      * @param databaseName The name of the database.
      * @param conn The database connection.
      * @return A set of column names that are aliases or materialized.
-     * @throws SQLException if an error occurs while querying the database.
+     * @throws ColumnMetadataUnavailableException when the listing cannot be read after MAX_RETRIES attempts.
+     *         A failed read is never returned as an empty set.
      */
     public Set<String> getAliasAndMaterializedColumnsForTableAndDatabase(String tableName, String databaseName,
                                                                          Connection conn) throws SQLException {
         // Add retry logic.
         int retryCount = 0;
-        Set<String> aliasColumns = new HashSet<>();
+        Connection current = conn;
+        Exception lastFailure = null;
         while (retryCount < MAX_RETRIES) {
             try {
                 String query = "SELECT name FROM system.columns WHERE (table = '%s') AND (database = '%s') and " +
                         "(default_kind='ALIAS' or default_kind='MATERIALIZED')";
                 String formattedQuery = String.format(query, tableName, databaseName);
 
-                // Execute query
-                ResultSet rs = conn.createStatement().executeQuery(formattedQuery);
-
-                // Get the list of columns from rs.
-                if (rs != null) {
+                Set<String> aliasColumns = new HashSet<>();
+                try (Statement statement = current.createStatement();
+                     ResultSet rs = statement.executeQuery(formattedQuery)) {
                     while (rs.next()) {
-                        String response = rs.getString(1);
-                        aliasColumns.add(response);
+                        aliasColumns.add(rs.getString(1));
                     }
                 }
-                rs.close();
-                break;
+                return aliasColumns;
             } catch (Exception e) {
-                log.error("Error getting alias columns, retrying ({}/{})", retryCount,MAX_RETRIES,e);
-                conn = reconnectIfPooled(conn, databaseName);
+                lastFailure = e;
+                log.error("Error getting alias columns, retrying ({}/{})", retryCount, MAX_RETRIES, e);
+                try {
+                    current = reconnectIfPooled(current, databaseName);
+                } catch (SQLException e1) {
+                    log.error("Error initiating new connection, retrying ({}/{})", retryCount, MAX_RETRIES, e1);
+                }
                 retryCount++;
             }
         }
-        return aliasColumns;
+        throw new ColumnMetadataUnavailableException(String.format(
+                "Could not read the alias and materialized columns of %s.%s after %d attempts",
+                databaseName, tableName, MAX_RETRIES), lastFailure);
     }
 
     /**
@@ -1127,20 +1162,20 @@ public class DBMetadata {
      * @param conn The database connection.
      * @param tableName The name of the table.
      * @param database The name of the database.
-     * @return A map of column names to their data types.
-     * @throws SQLException if an error occurs while querying the database.
+     * @return A map of column names to their data types. Empty only when the table has no columns.
+     * @throws ColumnMetadataUnavailableException when there is no connection, or when the column list
+     *         cannot be read after MAX_RETRIES attempts. A failed read is never returned as an empty map.
      */
     public Map<String, String> getColumnsDataTypesForTable(Connection conn, String tableName, String database) {
+        if (conn == null) {
+            throw new ColumnMetadataUnavailableException(String.format(
+                    "No connection to read the column list of %s.%s", database, tableName), null);
+        }
         // Add retry logic.
         int retryCount = 0;
-        LinkedHashMap<String, String> result = new LinkedHashMap<>();
+        Exception lastFailure = null;
         while (retryCount < MAX_RETRIES) {
             try {
-                if (conn == null) {
-                    log.error("Error with DB connection");
-                    return result;
-                }
-
                 // Query system.columns directly instead of
                 // DatabaseMetaData.getColumns(null, database, tableName, null).
                 //
@@ -1164,16 +1199,26 @@ public class DBMetadata {
                 String query = String.format(
                         "SELECT name, type FROM system.columns WHERE database = '%s' AND table = '%s' ORDER BY position",
                         database, tableName);
-                ResultSet columns = conn.createStatement().executeQuery(query);
-                while (columns.next()) {
-                    String columnName = columns.getString("name");
-                    String typeName = columns.getString("type");
+                LinkedHashMap<String, String> result = new LinkedHashMap<>();
+                try (Statement statement = conn.createStatement();
+                     ResultSet columns = statement.executeQuery(query)) {
+                    while (columns.next()) {
+                        String columnName = columns.getString("name");
+                        String typeName = columns.getString("type");
 
-                    result.put(columnName, typeName);
+                        result.put(columnName, typeName);
+                    }
                 }
-                columns.close();
-                break;
+                if (result.isEmpty() && tableExists(conn, database, tableName)) {
+                    // Same rule as the other overload: an existing table always has a column, so an empty
+                    // listing for it is a read that lost its rows, and is retried rather than returned.
+                    throw new SQLException(String.format(
+                            "system.columns returned no rows for %s.%s, although system.tables lists it",
+                            database, tableName));
+                }
+                return result;
             } catch (Exception sq) {
+                lastFailure = sq;
                 log.error("Exception retrieving Column Metadata, retrying ({}/{}),use error.max.retries to configure",
                         retryCount,MAX_RETRIES,sq);
                 try {
@@ -1185,7 +1230,9 @@ public class DBMetadata {
                 retryCount++;
             }
         }
-        return result;
+        throw new ColumnMetadataUnavailableException(String.format(
+                "Could not read the column list of %s.%s after %d attempts", database, tableName, MAX_RETRIES),
+                lastFailure);
     }
 
     /**

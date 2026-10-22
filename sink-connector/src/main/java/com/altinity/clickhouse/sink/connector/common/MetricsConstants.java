@@ -105,6 +105,16 @@ public class MetricsConstants {
             "clickhouse_sink_binlog_connection_lost";
 
     /**
+     * Metric name for values stored as something other than the source held
+     * (spec 07.03 section 3.1.9), labelled {@code kind}: {@code range_clamp},
+     * {@code dst_gap}, {@code dst_overlap}, {@code bool_collapse},
+     * {@code int_wrap}, {@code decimal_truncate}, {@code fraction_truncate}. Exposed as
+     * {@code clickhouse_sink_lossy_conversions_total}.
+     */
+    public static final String CLICKHOUSE_SINK_LOSSY_CONVERSIONS =
+            "clickhouse_sink_lossy_conversions";
+
+    /**
      * Metric name for XA transactions rolled back on the source after XA
      * PREPARE since start (spec 01.10): their rows were replicated and must be
      * repaired by re-synchronising the tables named in the ERROR line.
@@ -144,6 +154,8 @@ public class MetricsConstants {
                 "1 when the Transaction_payload zstd decoder self-test passed at start, 0 otherwise");
         metricsToHelp.put(CLICKHOUSE_SINK_BINLOG_CONNECTION_LOST,
                 "Binlog connections found dead since start (closed by the source, or silent past binlog.read.timeout.ms)");
+        metricsToHelp.put(CLICKHOUSE_SINK_LOSSY_CONVERSIONS,
+                "Values stored as something other than the source held, by kind (range_clamp, dst_gap, dst_overlap, bool_collapse, int_wrap, decimal_truncate, fraction_truncate); see the WARN line for the first occurrence per column");
         metricsToHelp.put(CLICKHOUSE_SINK_BINLOG_XA_ROLLBACK_AFTER_PREPARE,
                 "XA transactions rolled back after XA PREPARE since start; their replicated rows need a re-synchronisation");
     }
