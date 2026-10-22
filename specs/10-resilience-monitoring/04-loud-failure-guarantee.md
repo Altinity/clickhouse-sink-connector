@@ -231,6 +231,14 @@ can be shown to log full images. `binlog_row_value_options` containing
 runtime stops the engine (spec 01.10 section 3.1). `binlog.row.image.check.skip=true`
 is a WARN banner on every start (spec 01.01 §3.2).
 
+The refusal of an unreadable source does not cost a start that only began too early. `MySqlSourceWait.await`
+(spec 01.01 §3.2 step 3) runs first and probes the source up to `errors.max.retries` times after the first
+probe, `SLEEP_TIME` apart, the same budget the engine's own retry loop gives a failing engine; each failed
+probe is a WARN with its cause. A connector started together with its source (the compose order: the MySQL
+container runs its init script with the network off and only then listens) therefore starts as soon as the
+source answers, as it did before the refusal existed, and a source that stays unreachable is refused when the
+budget is spent: the wait delays that refusal, it never replaces it.
+
 The check is repeated before every in-process engine restart. A refusal there
 is terminal, not retried: the source has changed to a value the connector does
 not replicate, and a restarted engine would write NULLs at once. An unreadable
@@ -496,6 +504,7 @@ and halts (spec 01.03 FM-01.03-2).
 - `TerminalFailureExitTest.successIsANoOp()`.
 - `DdlDrainDeadlockTest.testUndrainableQueueWithLiveWorkersKeepsWaiting()`, `DdlDrainDeadlockTest.testStuckQueueWithDeadWorkerAborts()` — §3.5 point 3: live workers are waited for; only a dead worker aborts.
 - `BinlogRowImagePreflightTest.minimalIsRefused()`, `BinlogRowImagePreflightTest.noblobIsRefused()`, `BinlogRowImagePreflightTest.skipIsLoud()` — §3.6.
+- `MySqlSourceWaitTest.comesUpLaterIsWaitedFor()`, `MySqlSourceWaitTest.neverReachableSpendsTheBudgetThenReturnsFalse()`, `MySqlSourceWaitTest.budgetGrid()` — §3.6: a source that comes up within the budget is waited for; one that never does is probed `errors.max.retries + 1` times and left to the preflights to refuse.
 - `IgnoreDeleteWarningTest.trueIsDetectedCaseAndSpaceInsensitively()`, `IgnoreDeleteWarningTest.unsetFalseOrNullIsNot()` — §3.7: the predicate behind the startup WARN.
 - §3.8 has no unit test: constructing a `DbWriter` needs a live ClickHouse (`DbWriterTest` is Testcontainers-based); the change is two `catch (ColumnTypeOverrideMismatchException e) { throw e; }` clauses ahead of the generic catches.
 - `PostgreSQLDDLParserServiceTest.unparseablePostgresDdlPropagatesInsteadOfBeingSwallowed()` — §3.10 / FM-10.04-9: a statement the PostgreSQL grammar cannot parse now throws out of `parseSql` instead of logging and returning an empty translation (pre-fix: caught, logged at ERROR, `parsedQuery` left empty, offset still acknowledged by the caller).

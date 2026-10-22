@@ -840,6 +840,11 @@ public class DebeziumChangeEventCapture {
         // and Debezium's MySQL connector itself need it: refuse once, naming
         // how to supply it, instead of failing inside the retry loop.
         MySqlJdbcDriver.check(props);
+        // The source may still be coming up (the container's MySQL runs its init script with the network
+        // off; a host restarted with its replica). Wait for it within the retry budget the engine itself
+        // gets, so the refusals below do not end a start the old retry loop used to ride out. When the
+        // budget is spent this returns and the preflights read the source and decide (spec 01.01 3.2).
+        MySqlSourceWait.await(props, MAX_RETRIES, SLEEP_TIME);
         // A source table with no PRIMARY KEY and no non-null UNIQUE key has no
         // row identity in the binlog, so nothing downstream can keep its
         // ClickHouse copy correct. Name every such table here, with the ALTER
