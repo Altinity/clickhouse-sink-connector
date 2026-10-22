@@ -6,7 +6,6 @@ import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import com.altinity.clickhouse.sink.connector.db.QueryFormatter;
-import com.clickhouse.data.ClickHouseDataType;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -211,10 +210,10 @@ public class BinLogHistory {
                         ps.setString(paramIndex++, DDL);
 
                     }   else if(columnName.equals(TIME_COLUMN)) {
-                        String convertedDateTime64Time = DebeziumConverter.TimestampConverter.convert(struct.getTs_ms(),
-                        ClickHouseDataType.DateTime64, ZoneId.of(sourceTimeZone), ZoneId.of(serverTimeZone));
-                            ps.setString(paramIndex++, convertedDateTime64Time);
-                    } 
+                        // ts_ms is an instant, not DATETIME digits: bind epoch text
+                        ps.setString(paramIndex++, DebeziumConverter.TimestampConverter
+                                .instantEpochText(struct.getTs_ms(), ZoneId.of(serverTimeZone)));
+                    }
                     else {
                         Object value = getValueFromStruct(struct, columnName, config);
                         ps.setObject(paramIndex++, value);

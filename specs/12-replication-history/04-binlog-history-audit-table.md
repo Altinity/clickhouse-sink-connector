@@ -79,7 +79,7 @@ Sorting key `(server_id, logfile, position, sequence, _time)`:
 | `before` | `beforeModifiedFieldsToJson()` or `""` | `""` |
 | `after` | `afterModifiedFieldsToJson()` or `""` | `""` |
 | `_raw` | `sourceRecordToJson()` — the full Debezium record | same |
-| `_time` | `ts_ms` converted to `DateTime64` from the source timezone to the server timezone (`TimestampConverter.convert`) | same |
+| `_time` | the instant `source.ts_ms`, bound as epoch text `<seconds>.<6 fraction digits>` (`TimestampConverter.instantEpochText`); never reinterpreted through the source timezone. The one second before 1970-01-01 UTC is bound as digits in the server timezone (T1) | same |
 | `is_deleted` | `0` | `0` |
 | `_operation` | the `CDC_OPERATION` **enum name** (`CREATE`, `UPDATE`, `DELETE`, `READ`, `TRUNCATE`), `""` if unknown | as parsed for the DDL record |
 | `_version` | Snowflake of `(ts_ms, gtid)` | same |
@@ -143,6 +143,18 @@ table receives the same coordinates again — collapsed by `FINAL` (§3.2).
   startup creation failure fails the engine start (12.01 §3.5).
 - **Invariant I6 (Column Authority)**: `db_time MATERIALIZED now()` is on a
   connector-owned table with no source counterpart.
+- **Property T1 (`_time` is the instant of `source.ts_ms`)**: for every
+  `ts_ms`, every source timezone and every server timezone, the bound `_time`
+  text parses in the `DateTime64(9, '<server tz>')` column to exactly the
+  instant `ts_ms` milliseconds after the epoch. `source.ts_ms` is a true
+  instant (statement execution time, 02.01 §3.5), so it is not a wall time
+  in any zone: the zone-less DATETIME rule of `TimestampConverter.convert`
+  (digits read as source-zone wall time, or as UTC digits when the zones are
+  equal) does not apply to it. Epoch text is zone-independent in the column
+  and keeps the second 01:30 of a fall-back hour, which digits cannot store.
+  The one second before 1970-01-01 UTC cannot be epoch text (ClickHouse drops
+  the sign of `-0.5`, 07.03 §3.1.4 exclusions): it is bound as digits in the
+  server timezone, which are exact there (1969-12-31 has no overlap hour).
 - **Spec 10.05 / 02.04 (redelivery)**: identical coordinates collapse under
   `ReplacingMergeTree` on the coordinate sorting key; no row-key
   de-duplication is involved.
@@ -152,6 +164,9 @@ table receives the same coordinates again — collapsed by `FINAL` (§3.2).
 ## 5. Verification Criteria
 - `BinLogHistoryTest.testCreateHistoryTableSyntax()`, `BinLogHistoryTest.testCreateHistoryTableSyntaxWithDifferentNames()` — §3.1 golden DDL.
 - `BinLogHistoryTest.kafkaPathUsesRowIndexAsSequence()` — §3.2 `sequence` fallback.
+- `BinLogHistoryTest.timeColumnBindsTheInstantAsEpochTextForEveryZoneCombination()`, `timeColumnKeepsTheSecondOccurrenceOfAnOverlapHour()`, `timeColumnBindsDigitsInTheSecondBeforeTheEpoch()`, `timeColumnIgnoresEmptyZoneNames()` — T1: the bound `_time` is the epoch text of `ts_ms` for equal and different source/server zones, for an overlap-hour instant and for empty zone names.
+- `DebeziumConverterTest.instantEpochTextRendersTheInstantUnchanged()`, `instantEpochTextBindsDigitsInTheSecondBeforeTheEpoch()` — T1 helper contract, including the digits fallback in the unbindable second.
+- `specs/lean/HistoryTimeInstant.lean`, `specs/dafny/HistoryTimeInstant.dfy`, `specs/tla/HistoryTimeInstant.tla` (with `.cfg`), `specs/hypothesis/test_history_time_instant.py` — T1 checked four ways over one model of `instantEpochText`. Lean and Dafny prove, for every integer `ts_ms`, that the epoch text is read back exactly (six fraction digits hold a millisecond instant without truncation), that the digits fallback fires exactly for `-1000 < ts_ms < 0` and is exact there, that the UTC digits the old code bound are read `offset` late in a zone of fixed offset (18000 s in `America/Chicago` summer, 21600 s in winter), and that the second occurrence of a fall-back hour is not storable as digits but is as epoch text. TLC checks the same invariants exhaustively for every millisecond from -2200 to 2200 and for four zones on a coarse clock (it proves only inside those bounds). The Hypothesis file is a model of the Java, not the Java: it is pinned to the values `DebeziumConverterTest` asserts and takes zone transitions from the system tz database. Run: `lean specs/lean/HistoryTimeInstant.lean`; `dafny verify specs/dafny/HistoryTimeInstant.dfy`; `java -cp tla2tools.jar tlc2.TLC -config specs/tla/HistoryTimeInstant.cfg specs/tla/HistoryTimeInstant.tla`; `pytest specs/hypothesis`. The Lean file uses core only and builds with Lean 4.34.1 (it is not part of `formal_specs/lean`, whose toolchain is pinned separately).
 - `BinLogHistoryIT.testBinLogHistory()` — end to end in mode 2: the table exists with exactly 19 columns of the expected names, `ddl != ''` rows exist for replayed DDL, `_operation = 'DELETE'` rows exist under `FINAL` for a source DELETE (its `_time`-equals-`ts_sec` check is present but not invoked).
 - `ReplicationLogOnlyIT.testReplicationLogOnlyWritesToBinlogHistoryOnly()` — §3.4 in mode 3: rows are written to the audit table while the data table stays empty.
 - `DBMetadataRetryClassificationTest.testTableAlreadyExistsIsNotRetryable()` — `TABLE_ALREADY_EXISTS` / `DATABASE_ALREADY_EXISTS` on the history database are permanent, not retried.
@@ -167,6 +182,7 @@ table receives the same coordinates again — collapsed by `FINAL` (§3.2).
 | G-12.04-1 | **Resolved** | `DebeziumChangeEventCapture.performDDLOperation` | the DDL audit insert's exception was caught and logged; the offset was acknowledged with the audit row missing | the exception propagates into the DDL failure handling; the DDL attempt fails before acknowledgement (§3.4, I9) |
 | G-12.04-2 | Open | `BinLogHistory.getValueFromStruct` | — | `_operation` stored as the enum name; SCD2 tables store the letter code: two spellings across the two history tables (02.01 §3.5 c) |
 | G-12.04-3 | Open | `createHistoryTableSyntax` | — | `ttl_only_drop_parts` commented out: TTL expiry is row-level rewriting inside daily partitions instead of part drops |
+| G-12.04-4 | **Resolved** | `BinLogHistory.executeInsertWithStructs`, `_time` | `ts_ms` went through `TimestampConverter.convert`, which treats it as zone-less DATETIME digits: with equal source and server zones it bound the instant's UTC digits, which a non-UTC `DateTime64` column read as local time (e.g. 6 h late in `America/Chicago`); with different zones it shifted the instant by the source zone's offset | `_time` is bound as the epoch text of the instant (§3.3, T1) in every zone combination. Rows already written with the shifted `_time` are not repaired by this change |
 
 ---
 

@@ -447,6 +447,15 @@ public class DebeziumConverter {
             return modifiedDTWithLimits.atZone(formatZone).format(destFormatter);
         }
 
+        /** Epoch text for an instant such as source.ts_ms, never read as a wall time. */
+        public static String instantEpochText(long epochMillis, ZoneId columnZone) {
+            Instant instant = Instant.ofEpochMilli(epochMillis);
+            if (!bindsAsEpochText(ClickHouseDataType.DateTime64, instant)) {
+                return instant.atZone(columnZone).format(MILLIS_FORMAT);
+            }
+            return epochText(instant);
+        }
+
 
         public static String convertWithoutTimeZoneAdjustment(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
             DateTimeFormatter destFormatter = MILLIS_FORMAT;
