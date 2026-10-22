@@ -306,11 +306,11 @@ public class DbWriterTest {
 
     @Test
     public void testGetClickHouseDataType() {
-        String hostName = "remoteClickHouse";
-        Integer port = 8123;
+        String hostName = clickHouseContainer.getHost();
+        Integer port = clickHouseContainer.getFirstMappedPort();
         String database = "test";
-        String userName = "root";
-        String password = "root";
+        String userName = clickHouseContainer.getUsername();
+        String password = clickHouseContainer.getPassword();
         String tableName = "employees";
 
         String connectionUrl = writer.getConnectionString(hostName, port, database);
