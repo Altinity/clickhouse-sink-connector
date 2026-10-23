@@ -23,7 +23,8 @@ the fast, no-container layer that runs on every commit.
 - **Loader**: `sink-connector/python/db_load/clickhouse_loader.py` —
   `parse_schema_path`, `parse_schema_path_mysqlshell`, `find_dump_timezone`,
   `find_create_table`, `find_primary_key`, `find_partitioning_options`,
-  `get_unix_timezone_from_mysql_timezone`, `convert_to_clickhouse_table`.
+  `convert_to_clickhouse_table`; `get_unix_timezone_from_mysql_timezone` is defined in
+  `sink-connector/python/ch_sink_tools/db/checksum_common.py` (FM-13.04-27).
 - **DDL translator**: `sink-connector/python/db_load/mysql_parser/mysql_parser.py`
   `convert_to_clickhouse_table_antlr` (the antlr path the loader uses).
 - **Postgres mapper/filter**: `sink-connector/python/ch_sink_tools/db_load/postgres_type_mapper.py`
@@ -52,9 +53,10 @@ schema-only dump, and `threads`/`bytesPerChunk` carried through.
 `parse_schema_path` (mydumper `db.table-schema.sql.gz`) and
 `parse_schema_path_mysqlshell` (mysqlsh `db@table.sql`) return `(db, table)`;
 `find_dump_timezone` extracts the dump's `SET TIME_ZONE='...'` (case
-insensitive) or `None`; `get_unix_timezone_from_mysql_timezone` maps a numeric
-offset to an IANA zone at that offset and falls back to `UTC` for an
-unmatched offset.
+insensitive) or `None`; `get_unix_timezone_from_mysql_timezone` maps a recorded
+offset to a fixed-offset zone, a named zone to itself, and `+00:00` to `UTC`; it refuses an
+unmatched offset and never falls back to `UTC` (FM-13.04-27). A dump that records no zone needs
+`--source_timezone`, and a flag that differs from the recorded zone is refused.
 
 ### 3.4 MySQL→ClickHouse DDL translation preserves the shape
 `convert_to_clickhouse_table_antlr` maps `DATETIME(p)`/`TIMESTAMP` to
@@ -144,7 +146,7 @@ The component here is the offline test layer and the logic it pins. A failure of
   - **Blast radius**: every `TIMESTAMP` column of the loaded tables can be shifted by the offset difference.
   - **Recovery**: the spec 11.04 canary (`CANARY_FAILED`) or the spec 11.02 checksum exposes it. Reload with the zone given explicitly.
   - **RTO**: a reload of the affected tables (proportional to size).
-  - **Test**: `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestUnixTimezoneFromMysqlTimezone::test_unknown_offset_falls_back_to_utc` pins the silent fallback.
+  - **Test**: `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestUnixTimezoneFromMysqlTimezone::test_unknown_offset_is_refused` pins the refusal (it asserted the silent UTC fallback before FM-13.04-27).
   - **DEFECT**: an unmatched or date-dependent offset is resolved without a warning.
 
 - **FM-11.05-5 The ANTLR translator fails and the regexp translator is used silently**

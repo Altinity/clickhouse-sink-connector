@@ -11,9 +11,10 @@ import org.apache.logging.log4j.Logger;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.sql.Date;import java.time.*;
+import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.zone.ZoneOffsetTransition;
+import java.time.zone.ZoneRules;
 import java.time.temporal.ChronoUnit;
 
 import static java.time.Instant.ofEpochMilli;
@@ -49,10 +50,23 @@ public class DebeziumConverter {
      * {@link #MICROS_FORMAT} truncates them.
      */
     static String epochText(Instant instant) {
+        // FLOOR, not DOWN: DOWN truncates toward zero, so a negative instant with a
+        // sub-microsecond part was one microsecond late (Spec 07.03 section 3.1.11).
         return BigDecimal.valueOf(instant.getEpochSecond())
                 .add(BigDecimal.valueOf(instant.getNano(), 9))
-                .setScale(6, RoundingMode.DOWN)
+                .setScale(6, RoundingMode.FLOOR)
                 .toPlainString();
+    }
+
+    /**
+     * Whether two zones are the same zone: equal identifiers, or equal
+     * {@link ZoneRules} (Spec 07.03 section 3.1.13). {@link ZoneId#equals} compares
+     * identifiers only, so {@code US/Central} and {@code America/Chicago} were
+     * "different zones" and the different-zones branch shifted zone-less digits by
+     * the source offset.
+     */
+    public static boolean sameZone(ZoneId a, ZoneId b) {
+        return a.equals(b) || a.getRules().equals(b.getRules());
     }
 
     /**
@@ -72,6 +86,77 @@ public class DebeziumConverter {
     }
 
     /**
+     * Binds a bounded instant for the target column (Spec 07.03 sections 3.1.4
+     * and 3.1.14). A DateTime64 column takes epoch text, which is exact in any
+     * zone. Any other column takes wall digits in its own zone, which are exact
+     * unless the instant is the second occurrence of those digits in that zone:
+     * ClickHouse keeps the first occurrence of digits, so that case is reported
+     * as {@link LossyConversionReporter.Kind#DST_OVERLAP} and the stored value is
+     * the first occurrence, an hour before the source instant.
+     *
+     * @param formatZone the zone the column declares, or the server zone when it declares none
+     */
+    static String renderResolved(Instant instant, ClickHouseDataType type, ZoneId formatZone,
+                                 DateTimeFormatter formatter, boolean outOfRange, RangePolicy policy) {
+        if (bindsAsEpochText(type, instant)) {
+            return epochText(instant);
+        }
+        if (outOfRange) {
+            return instant.atZone(ZoneOffset.UTC).format(formatter);
+        }
+        if (WallTime.isLaterOccurrence(formatZone, instant)) {
+            String stored = instant.atZone(formatZone).toLocalDateTime().format(formatter);
+            policy.lossy(LossyConversionReporter.Kind.DST_OVERLAP,
+                    instant + " (second occurrence of its wall time in " + formatZone.getId() + ")",
+                    stored + " (first occurrence in " + formatZone.getId() + ")");
+            return stored;
+        }
+        return instant.atZone(formatZone).format(formatter);
+    }
+
+    /**
+     * The digits of a value whose source zone is the server zone (Spec 07.03
+     * section 3.1.1). The digits name a wall time in the zone the column
+     * declares, so they are exact when that wall time occurs once there; a gap
+     * or an overlap is resolved by {@link WallTime} and reported.
+     */
+    static String sameZoneWall(LocalDateTime wall, ZoneId formatZone, ClickHouseDataType type,
+                               DateTimeFormatter formatter, RangePolicy policy, DateTimeFormatter sourceFormat) {
+        boolean[] rangeExceeded = new boolean[1];
+        Instant bounded = policy.boundDateTime(wall.toInstant(ZoneOffset.UTC), type, rangeExceeded);
+        LocalDateTime boundedWall = LocalDateTime.ofInstant(bounded, ZoneOffset.UTC);
+        LossyConversionReporter.Kind kind = rangeExceeded[0]
+                ? null : WallTime.ambiguity(formatZone.getRules(), boundedWall);
+        if (kind == null) {
+            return bounded.atZone(ZoneOffset.UTC).format(formatter);
+        }
+        Instant resolved = WallTime.instantOf(formatZone.getRules(), boundedWall);
+        String stored = renderResolved(resolved, type, formatZone, formatter, false, policy);
+        policy.lossy(kind, WallTime.describe(boundedWall, formatZone, sourceFormat), stored);
+        return stored;
+    }
+
+    /**
+     * The digits of a value whose source zone differs from the server zone: a
+     * wall time in the source zone (Spec 07.03 section 3.1.1). A gap takes the
+     * offset before the transition, an overlap the earlier offset; either is
+     * reported as lossy.
+     */
+    static String differentZoneWall(LocalDateTime wall, ZoneId sourceZone, ZoneId formatZone,
+                                    ClickHouseDataType type, DateTimeFormatter formatter, RangePolicy policy,
+                                    DateTimeFormatter sourceFormat) {
+        ZoneRules sourceRules = sourceZone.getRules();
+        LossyConversionReporter.Kind kind = WallTime.ambiguity(sourceRules, wall);
+        boolean[] rangeExceeded = new boolean[1];
+        Instant bounded = policy.boundDateTime(WallTime.instantOf(sourceRules, wall), type, rangeExceeded);
+        String stored = renderResolved(bounded, type, formatZone, formatter, rangeExceeded[0], policy);
+        if (kind != null && !rangeExceeded[0]) {
+            policy.lossy(kind, WallTime.describe(wall, sourceZone, sourceFormat), stored);
+        }
+        return stored;
+    }
+
+    /**
      * Raised when a source value does not fit the ClickHouse column type and
      * {@code clamp.out.of.range} is false (Spec 07.03 section 3.3). The batch
      * fails; nothing is written for it.
@@ -86,36 +171,36 @@ public class DebeziumConverter {
      * What to do with a value outside the ClickHouse type's range: saturate to
      * the bound (default, {@code clamp.out.of.range=true}) or fail the batch
      * ({@code clamp.out.of.range=false}). Under the default a saturation is
-     * the documented mapping of the sentinel, not an event: it is logged at
-     * DEBUG only (Spec 07.03 section 3.3 rule 2). At WARN it flooded the log
-     * -- one line per row was 98% of a connector log, and one line per
-     * column per minute still buried the messages that matter under a
-     * steady stream across hundreds of bitemporal columns.
+     * stored and counted, and logged at WARN once per column with a bounded
+     * summary after that (Spec 07.03 sections 3.3 rule 2 and 3.1.14). Every
+     * lossy kind, not only the range clamp, is refused under strict mode.
      */
     public static final class RangePolicy {
 
         /**
-         * Saturate to the bound (logged at DEBUG). Used by the policy-less
-         * converter overloads, which have no configuration to consult.
+         * Saturate to the bound, counted and logged at WARN once per column
+         * (Spec 07.03 section 3.1.14). Used by the policy-less converter
+         * overloads, which have no configuration to consult.
          */
-        public static final RangePolicy CLAMP = new RangePolicy(true, null);
+        public static final RangePolicy CLAMP = new RangePolicy(true, null, DataTypeRange.DATETIME64_DEFAULT_SCALE);
 
         /** Fail the batch ({@code clamp.out.of.range=false}). */
-        public static final RangePolicy STRICT = new RangePolicy(false, null);
-
-        private static final DateTimeFormatter BOUND_FORMAT =
-                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneOffset.UTC);
+        public static final RangePolicy STRICT = new RangePolicy(false, null, DataTypeRange.DATETIME64_DEFAULT_SCALE);
 
         private final boolean clamp;
         private final String column;
+        private final int scale;
 
-        private RangePolicy(boolean clamp, String column) {
+        private RangePolicy(boolean clamp, String column, int scale) {
             this.clamp = clamp;
             this.column = column;
+            this.scale = scale;
         }
 
         /**
-         * The policy for one bound column, from the connector configuration.
+         * The policy for one bound column at the default DateTime64 scale (6).
+         * Use {@link #of(ClickHouseSinkConnectorConfig, String, int)} for a
+         * DateTime64 column whose declared scale is known.
          *
          * @param config the connector configuration (null means the default, which saturates)
          * @param column the column being bound, e.g. {@code db.orders.expires_at};
@@ -123,9 +208,26 @@ public class DebeziumConverter {
          * @return the policy
          */
         public static RangePolicy of(ClickHouseSinkConnectorConfig config, String column) {
+            return of(config, column, DataTypeRange.DATETIME64_DEFAULT_SCALE);
+        }
+
+        /**
+         * The policy for one bound column, from the connector configuration and
+         * the column's declared DateTime64 scale (Spec 07.03 section 3.1.8): the
+         * DateTime64 upper bound is the one for that scale, not a scale-6 bound
+         * applied to every column.
+         *
+         * @param config the connector configuration (null means the default, which saturates)
+         * @param column the column being bound; may be null when unknown
+         * @param scale  the DateTime64 scale of the column, 0..9
+         * @return the policy
+         * @throws IllegalArgumentException when {@code scale} is outside 0..9
+         */
+        public static RangePolicy of(ClickHouseSinkConnectorConfig config, String column, int scale) {
+            DataTypeRange.dateTime64Max(scale); // validates the scale
             boolean clamp = config == null || config.getBoolean(
                     ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE.toString());
-            return new RangePolicy(clamp, column);
+            return new RangePolicy(clamp, column, scale);
         }
 
         /** Whether out-of-range values are saturated rather than rejected. */
@@ -138,17 +240,32 @@ public class DebeziumConverter {
             return column;
         }
 
+        /** The DateTime64 scale the upper bound is computed for, 0..9. */
+        public int scale() {
+            return scale;
+        }
+
         /**
          * Bounds a DateTime/DateTime64 instant; {@code rangeExceeded[0]} is set
          * when the value was outside the range (the callers then render the
          * bound in UTC).
          */
         Instant boundDateTime(Instant provided, ClickHouseDataType type, boolean[] rangeExceeded) {
-            Instant bounded = checkIfDateTimeExceedsSupportedRange(provided, type, rangeExceeded);
+            Instant bounded = checkIfDateTimeExceedsSupportedRange(provided, type, rangeExceeded, scale);
             if (rangeExceeded[0]) {
-                report(provided.toString(), BOUND_FORMAT.format(bounded), type.name(), dateTimeBounds(type));
+                int reportScale = type == ClickHouseDataType.DateTime64 ? scale : 0;
+                report(provided.toString(), formatBound(bounded, reportScale), type.name(), dateTimeBounds(type));
             }
             return bounded;
+        }
+
+        /**
+         * Renders a bound with {@code scale} fractional digits, so the message
+         * shows the value that is actually stored (23:59:59.999999, not .000).
+         */
+        static String formatBound(Instant bound, int scale) {
+            String pattern = scale == 0 ? "yyyy-MM-dd HH:mm:ss" : "yyyy-MM-dd HH:mm:ss." + "S".repeat(scale);
+            return DateTimeFormatter.ofPattern(pattern).withZone(ZoneOffset.UTC).format(bound);
         }
 
         /** Bounds a Date/Date32 value given as epoch days. */
@@ -163,15 +280,19 @@ public class DebeziumConverter {
 
         /** Bounds a TIMESTAMP (ZonedTimestamp) instant to the DateTime64 range. */
         Instant boundZonedTimestamp(Instant provided) {
-            long millis = provided.toEpochMilli();
+            // Compared at full precision: the old millisecond test with a
+            // seconds-only bound zeroed the fraction of every value in the last
+            // second of 2299 (23:59:59.500 became 23:59:59.000).
+            Instant max = DataTypeRange.dateTime64Max(scale);
+            Instant min = DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64;
             Instant bounded = provided;
-            if (millis > BinaryStreamUtils.DATETIME64_MAX * 1000) {
-                bounded = Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX);
-            } else if (millis < BinaryStreamUtils.DATETIME64_MIN * 1000) {
-                bounded = Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN);
+            if (provided.isAfter(max)) {
+                bounded = max;
+            } else if (provided.isBefore(min)) {
+                bounded = min;
             }
             if (bounded != provided) {
-                report(provided.toString(), BOUND_FORMAT.format(bounded), ClickHouseDataType.DateTime64.name(),
+                report(provided.toString(), formatBound(bounded, scale), ClickHouseDataType.DateTime64.name(),
                         dateTimeBounds(ClickHouseDataType.DateTime64));
             }
             return bounded;
@@ -193,33 +314,49 @@ public class DebeziumConverter {
             return bounded;
         }
 
-        private void report(String provided, String bounded, String type, String bounds) {
-            String where = column == null ? "" : " for column " + column;
+        /**
+         * Reports a lossy conversion this policy governs (Spec 07.03 section
+         * 3.1.14): counted and logged under the default; refused under
+         * {@code clamp.out.of.range=false}. {@code source} is the value as the
+         * source held it, {@code stored} the value that would be bound.
+         */
+        void lossy(LossyConversionReporter.Kind kind, String source, String stored) {
             if (clamp) {
-                // The documented mapping, not an event: DEBUG only (spec 07.03
-                // section 3.3 rule 2). Never WARN here -- a bitemporal schema
-                // saturates on every row of every table.
-                log.debug("Value {}{} is outside the ClickHouse {} range {}; stored as {} ({}=true)",
-                        provided, where, type, bounds, bounded,
-                        ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE);
+                LossyConversionReporter.report(kind, column, source, stored);
                 return;
             }
-            throw new ValueOutOfRangeException(String.format(
-                    "Value %s%s is outside the ClickHouse %s range %s. Refusing to store %s in its "
-                            + "place: the source never held that value. Widen the ClickHouse column "
-                            + "type, or return to the default %s=true to saturate out-of-range values "
-                            + "(logged at DEBUG only).",
-                    provided, where, type, bounds, bounded,
-                    ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE));
+            throw refusal(kind, source, stored);
         }
 
-        private static String dateTimeBounds(ClickHouseDataType type) {
+        private void report(String provided, String bounded, String type, String bounds) {
+            lossy(LossyConversionReporter.Kind.RANGE_CLAMP, provided + " (" + type + " range " + bounds + ")",
+                    bounded);
+        }
+
+        /**
+         * The refusal under {@code clamp.out.of.range=false}: the batch fails,
+         * and the message names the column, the value, what the default would
+         * have stored and the two ways out.
+         */
+        private ValueOutOfRangeException refusal(LossyConversionReporter.Kind kind, String source, String stored) {
+            String where = column == null ? "" : " for column " + column;
+            return new ValueOutOfRangeException(String.format(
+                    "Value %s%s cannot be stored exactly in ClickHouse (%s). The default would store %s "
+                            + "instead, and the source never held that value, so the batch is refused. "
+                            + "Either widen or retype the ClickHouse column, or set %s=true to store the "
+                            + "value and count it in clickhouse_sink_lossy_conversions_total{kind=\"%s\"} "
+                            + "(logged at WARN once per column).",
+                    source, where, kind.label(), stored,
+                    ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE, kind.label()));
+        }
+
+        private String dateTimeBounds(ClickHouseDataType type) {
             if (type == ClickHouseDataType.DateTime || type == ClickHouseDataType.DateTime32) {
                 return "[" + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MIN) + " .. "
                         + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX) + "]";
             }
-            return "[" + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME64_MIN) + " .. "
-                    + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME64_MAX) + "]";
+            return "[" + formatBound(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64, scale) + " .. "
+                    + formatBound(DataTypeRange.dateTime64Max(scale), scale) + "]";
         }
 
         private static String dateBounds(ClickHouseDataType type) {
@@ -315,49 +452,18 @@ public class DebeziumConverter {
             long epochSeconds = epochMicroSeconds / 1_000_000L;
             long nanoOffset = ( epochMicroSeconds % 1_000_000L ) * 1_000L ;
 
-            if (sourceTimezone.equals(serverTimezone)) {
-                // Replication: Debezium encoded local digits as UTC epoch; decode back to the same digits by
-                // formatting as UTC. Preserves gap times (e.g. 02:00 on spring-forward day) that no real zone
-                // can format as local wall clock.
-                long seconds = epochMicroSeconds / 1_000_000L;
-                long nanos = (epochMicroSeconds % 1_000_000L) * 1_000L;
-                Instant i = Instant.ofEpochSecond(seconds, nanos);
-                boolean[] rangeExceeded = new boolean[1];
-                Instant modifiedDT = policy.boundDateTime(i, clickHouseDataType, rangeExceeded);
-                return modifiedDT.atZone(ZoneOffset.UTC).format(destFormatter);
+            // Debezium encoded the zone-less digits as a UTC epoch: the digits, read as UTC.
+            LocalDateTime wall = LocalDateTime.ofInstant(Instant.ofEpochSecond(epochSeconds, nanoOffset), ZoneOffset.UTC);
+            if (sameZone(sourceTimezone, serverTimezone)) {
+                // The digits are the source's wall time. They are exact in the column zone
+                // unless that zone has a gap or an overlap at that wall time (Spec 07.03 3.1.1).
+                return sameZoneWall(wall, formatZone, clickHouseDataType, destFormatter, policy,
+                        MICROS_FORMAT);
             }
 
-            // sourceTimezone != serverTimezone: offset correction for "wrong epoch" encoding
-            LocalDateTime localDT = LocalDateTime.ofInstant(Instant.ofEpochSecond(epochSeconds, nanoOffset), ZoneOffset.UTC);
-            ZonedDateTime zonedInSource = localDT.atZone(sourceTimezone);
-            ZoneOffsetTransition transition = sourceTimezone.getRules().getTransition(localDT);
-            int sourceOffset;
-            if (transition != null && transition.isGap()) {
-                sourceOffset = transition.getOffsetBefore().getTotalSeconds() * 1000;
-            } else {
-                sourceOffset = zonedInSource.getOffset().getTotalSeconds() * 1000;
-            }
-
-            long sourceOffsetMicros = sourceOffset * 1000L;
-
-            Long epochMicrosWithOffset = epochMicroSeconds - sourceOffsetMicros;
-            long seconds = epochMicrosWithOffset / 1_000_000;
-            long nanos = (epochMicrosWithOffset % 1_000_000) * 1_000;
-
-            Instant i = Instant.ofEpochSecond(seconds, nanos);
-
-            boolean[] rangeExceeded = new boolean[1];
-            Instant modifiedDT = policy.boundDateTime(i, clickHouseDataType, rangeExceeded);
-            // The digits are now an instant; into a DateTime64 column it is
-            // bound as epoch text, which no column zone can misread
-            // (Spec 07.03 section 3.1.4). A saturated instant is an instant too.
-            if (bindsAsEpochText(clickHouseDataType, modifiedDT)) {
-                return epochText(modifiedDT);
-            }
-            if(rangeExceeded[0]) {
-                return modifiedDT.atZone(ZoneOffset.UTC).format(destFormatter).toString();
-            }
-            return modifiedDT.atZone(formatZone).format(destFormatter);
+            // Different zones: the digits are a wall time in the source zone (Spec 07.03 3.1.1).
+            return differentZoneWall(wall, sourceTimezone, formatZone, clickHouseDataType, destFormatter, policy,
+                    MICROS_FORMAT);
         }
     }
 
@@ -406,45 +512,45 @@ public class DebeziumConverter {
 
             ZoneId formatZone = columnTimeZone == null ? serverTimezone : columnTimeZone;
             Long epochMillis = (Long) value;
-            boolean[] rangeExceeded = new boolean[1];
 
-            if (sourceTimeZone.equals(serverTimezone)) {
-                // Debezium encoded the zone-less DATETIME digits as a UTC epoch
-                // (LocalDateTime.toInstant(UTC)); the only decode that returns
-                // the same digits is the inverse: format as UTC. Pushing the
-                // digits through a real DST zone -- the previous
-                // TimeZone.getRawOffset / inDaylightTime code -- moved every
-                // spring-forward gap time back an hour (2026-03-08 02:30:00
-                // America/Chicago became 01:30:00), silently. Same rule as
-                // MicroTimestampConverter (Spec 07.03 section 3.1.1).
-                Instant encoded = Instant.ofEpochMilli(epochMillis);
-                Instant modifiedDTWithLimits = policy.boundDateTime(encoded, clickHouseDataType, rangeExceeded);
-                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
-            }
-
-            // Explicitly different zones: the digits are a wall time in the
-            // source zone. A wall time inside a spring-forward gap does not
-            // exist in that zone; take the offset before the transition, as
-            // MicroTimestampConverter does, so both converters agree.
             LocalDateTime wallTime = LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillis), ZoneOffset.UTC);
-            ZoneOffsetTransition transition = sourceTimeZone.getRules().getTransition(wallTime);
-            ZoneOffset sourceOffset = (transition != null && transition.isGap())
-                    ? transition.getOffsetBefore()
-                    : sourceTimeZone.getRules().getOffset(wallTime);
-            Instant i = wallTime.toInstant(sourceOffset);
+            if (sameZone(sourceTimeZone, serverTimezone)) {
+                // Debezium encoded the zone-less digits as a UTC epoch; the digits are the source's
+                // wall time. Exact in the column zone unless that zone has a gap or an overlap at
+                // that wall time (Spec 07.03 section 3.1.1), which sameZoneWall reports.
+                return sameZoneWall(wallTime, formatZone, clickHouseDataType, destFormatter, policy,
+                        MILLIS_FORMAT);
+            }
 
-            Instant modifiedDTWithLimits = policy.boundDateTime(i, clickHouseDataType, rangeExceeded);
-            // The digits are now an instant; into a DateTime64 column it is
-            // bound as epoch text, which no column zone can misread
-            // (Spec 07.03 section 3.1.4). A saturated instant is an instant too.
-            if (bindsAsEpochText(clickHouseDataType, modifiedDTWithLimits)) {
-                return epochText(modifiedDTWithLimits);
+            // Explicitly different zones: the digits are a wall time in the source zone (Spec 07.03 3.1.1).
+            return differentZoneWall(wallTime, sourceTimeZone, formatZone, clickHouseDataType, destFormatter,
+                    policy, MILLIS_FORMAT);
+        }
+
+        /**
+         * Renders an epoch-millisecond value that already IS an instant, such as
+         * Debezium's {@code source.ts_ms}, as epoch text for a {@code DateTime64}
+         * column (Spec 12.04 section 3.3). The value is never reinterpreted as
+         * a wall time in any zone: {@link #convert(Object, ClickHouseDataType,
+         * ZoneId, ZoneId)} is for zone-less DATETIME digits and shifts a true
+         * instant by the source zone's offset when source and server zones differ.
+         *
+         * <p>The one second before the epoch is the exclusion of Spec 07.03 section 3.1.4
+         * (ClickHouse drops the sign of epoch text there): it is bound as digits
+         * in {@code columnZone}, as {@link #bindsAsEpochText} prescribes for every
+         * other converter. Those digits are exact: 1969-12-31 has no overlap hour.
+         *
+         * @param epochMillis milliseconds since 1970-01-01T00:00:00Z
+         * @param columnZone the zone of the {@code DateTime64} column
+         * @return {@code <seconds>.<6 fraction digits>}, or {@code yyyy-MM-dd HH:mm:ss.SSS}
+         *         in {@code columnZone} for the one second before the epoch
+         */
+        public static String instantEpochText(long epochMillis, ZoneId columnZone) {
+            Instant instant = Instant.ofEpochMilli(epochMillis);
+            if (!bindsAsEpochText(ClickHouseDataType.DateTime64, instant)) {
+                return instant.atZone(columnZone).format(MILLIS_FORMAT);
             }
-            if (rangeExceeded[0]) {
-                // return the modifiedDTWithLimits as a string without timezone conversion
-                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
-            }
-            return modifiedDTWithLimits.atZone(formatZone).format(destFormatter);
+            return epochText(instant);
         }
 
 
@@ -465,10 +571,8 @@ public class DebeziumConverter {
 
             boolean[] rangeExceeded = new boolean[1];
             Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
-            if (rangeExceeded[0]) {
-                // return the modifiedDTWithLimits as a string without timezone conversion
-                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter).toString();
-            }
+            // The (possibly saturated) instant is formatted as wall time in serverTimezone, the zone ClickHouse
+            // reads this text in. UTC text would read back hours late (the old out-of-range defect).
             return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter).toString();
         }
 
@@ -498,9 +602,6 @@ public class DebeziumConverter {
 
             boolean[] rangeExceeded = new boolean[1];
             Instant modifiedDTWithLimits = checkIfDateTimeExceedsSupportedRange(i, clickHouseDataType, rangeExceeded);
-            if (rangeExceeded[0]) {
-                return modifiedDTWithLimits.atZone(ZoneOffset.UTC).format(destFormatter);
-            }
             return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter);
         }
 
@@ -528,7 +629,24 @@ public class DebeziumConverter {
     }
 
 
+    /**
+     * As {@link #checkIfDateTimeExceedsSupportedRange(Instant, ClickHouseDataType, boolean[], int)}
+     * at the default DateTime64 scale ({@link DataTypeRange#DATETIME64_DEFAULT_SCALE}).
+     * Used only by the policy-less overloads, which have no column to read a scale from.
+     */
     public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, ClickHouseDataType clickHouseDataType, boolean[] rangeExceeded) {
+        return checkIfDateTimeExceedsSupportedRange(providedDateTime, clickHouseDataType, rangeExceeded,
+                DataTypeRange.DATETIME64_DEFAULT_SCALE);
+    }
+
+    /**
+     * Bounds an instant to the range of {@code clickHouseDataType}. For DateTime64 the
+     * upper bound depends on {@code scale} (Spec 07.03 section 3.1.8).
+     *
+     * @param scale the DateTime64 scale of the target column, 0..9; ignored for DateTime/DateTime32
+     */
+    public static Instant checkIfDateTimeExceedsSupportedRange(Instant providedDateTime, ClickHouseDataType clickHouseDataType,
+                                                               boolean[] rangeExceeded, int scale) {
         rangeExceeded[0] = false;
 
         if(clickHouseDataType == ClickHouseDataType.DateTime ||
@@ -541,12 +659,13 @@ public class DebeziumConverter {
                 return Instant.ofEpochSecond(DataTypeRange.DATETIME32_MAX);
             }
         } else if(clickHouseDataType == ClickHouseDataType.DateTime64) {
+            Instant max = DataTypeRange.dateTime64Max(scale);
             if (providedDateTime.isBefore(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64)) {
                 rangeExceeded[0] = true;
                 return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64;
-            } else if (providedDateTime.isAfter(DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME64)) {
+            } else if (providedDateTime.isAfter(max)) {
                 rangeExceeded[0] = true;
-                return DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME64;
+                return max;
             }
         }
 
@@ -559,12 +678,15 @@ public class DebeziumConverter {
          * MySQL: The DATE type is used for values with a date part but no time part.
          * MySQL retrieves and displays DATE values in 'YYYY-MM-DD' format. The supported range is '1000-01-01' to '9999-12-31'.
          *
-         * Function to convert Debezium Date fields
-         * to java.sql.Date
+         * Function to convert Debezium Date fields to the calendar day they name.
+         * A {@link LocalDate}, not a {@code java.sql.Date}: {@code java.sql.Date.valueOf}
+         * builds the value at local midnight in the JVM zone, and where that midnight
+         * does not exist the day moves (Pacific/Apia skipped 2011-12-30). The bind
+         * writes {@code yyyy-MM-dd} text (Spec 07.03 section 3.1.7).
          * @param value - NUMBER OF DAYS since epoch.
-         * @return
+         * @return the day, zone-free
          */
-        public static Date convert(Object value, ClickHouseDataType chDataType) {
+        public static LocalDate convert(Object value, ClickHouseDataType chDataType) {
             return convert(value, chDataType, RangePolicy.CLAMP);
         }
 
@@ -573,11 +695,9 @@ public class DebeziumConverter {
          * to a value outside the ClickHouse Date/Date32 range (Spec 07.03
          * section 3.3). The policy-less overload saturates and WARNs.
          */
-        public static Date convert(Object value, ClickHouseDataType chDataType, RangePolicy policy) {
+        public static LocalDate convert(Object value, ClickHouseDataType chDataType, RangePolicy policy) {
             int epochInDays = policy.boundDate((Integer) value, chDataType);
-            LocalDate d = LocalDate.ofEpochDay(epochInDays);
-
-            return Date.valueOf(d);
+            return LocalDate.ofEpochDay(epochInDays);
         }
 
         /**
@@ -652,7 +772,27 @@ public class DebeziumConverter {
          */
         public static String convert(Object value, ZoneId serverTimezone, ClickHouseDataType targetType,
                                      RangePolicy policy) {
+            return convert(value, serverTimezone, targetType, policy, false);
+        }
+
+        /**
+         * As {@link #convert(Object, ZoneId, ClickHouseDataType, RangePolicy)}. When
+         * {@code mysqlTimestamp} is true the value is known to come from a MySQL
+         * {@code TIMESTAMP} column, whose smallest real value is 1970-01-01 00:00:01
+         * UTC; the instant 1970-01-01 00:00:00 UTC exactly is then the zero TIMESTAMP
+         * {@code 0000-00-00 00:00:00}, which has no ClickHouse value of its own. It is
+         * stored as the epoch and reported as {@code ZERO_TIMESTAMP} (Spec 07.03
+         * section 3.1.15): counted and logged by default, refused under
+         * {@code clamp.out.of.range=false}. A PostgreSQL {@code timestamptz} at the
+         * epoch is a real value and must be passed with {@code false}.
+         */
+        public static String convert(Object value, ZoneId serverTimezone, ClickHouseDataType targetType,
+                                     RangePolicy policy, boolean mysqlTimestamp) {
             Instant bounded = boundedInstant(value, serverTimezone, policy);
+            if (mysqlTimestamp && Instant.EPOCH.equals(bounded)) {
+                policy.lossy(LossyConversionReporter.Kind.ZERO_TIMESTAMP, "0000-00-00 00:00:00",
+                        "1970-01-01 00:00:00 UTC");
+            }
             if (bindsAsEpochText(targetType, bounded)) {
                 return epochText(bounded);
             }
@@ -678,9 +818,9 @@ public class DebeziumConverter {
             if (value instanceof String) {
                 String literal = ((String) value).trim();
                 if (POSITIVE_INFINITY.equalsIgnoreCase(literal)) {
-                    return Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MAX);
+                    return DataTypeRange.dateTime64Max(policy.scale());
                 } else if (NEGATIVE_INFINITY.equalsIgnoreCase(literal)) {
-                    return Instant.ofEpochSecond(BinaryStreamUtils.DATETIME64_MIN);
+                    return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64;
                 }
             }
 

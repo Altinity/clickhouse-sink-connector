@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import org.apache.kafka.connect.data.Field;
@@ -72,7 +73,7 @@ public class ClickHouseTableOperationsBaseUntypedInt64Test {
         logger.addAppender(appender);
         try {
             ClickHouseTableOperationsBase base = new ClickHouseTableOperationsBase();
-            ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+            ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()));
             Field[] untyped = new Field[]{
                     new Field("id", 0, Schema.INT32_SCHEMA),
                     int64("big_id", null),

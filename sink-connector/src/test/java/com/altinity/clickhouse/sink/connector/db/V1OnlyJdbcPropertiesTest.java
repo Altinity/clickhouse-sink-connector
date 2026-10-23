@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.clickhouse.client.api.ClientConfigProperties;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LogEvent;
@@ -12,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
@@ -94,6 +96,41 @@ public class V1OnlyJdbcPropertiesTest {
         Assert.assertArrayEquals(
                 new String[]{"keepalive.timeout", "max_buffer_size"},
                 BaseDbWriter.V1_ONLY_PROPERTIES);
+    }
+
+    @Test
+    public void testTimeoutPropertiesArePassedThroughUnchanged() {
+        // socket_timeout (V2: Integer, milliseconds), connection_timeout (V2: Long,
+        // milliseconds) and http_keep_alive_timeout (V2: Long, milliseconds) are V2
+        // properties, so the filter must leave them alone.
+        Properties p = new Properties();
+        p.setProperty("socket_timeout", "30000");
+        p.setProperty("connection_timeout", "5000");
+        p.setProperty("http_keep_alive_timeout", "60000");
+
+        Assert.assertEquals(0, BaseDbWriter.dropV1OnlyProperties(p));
+        Assert.assertEquals("30000", p.getProperty("socket_timeout"));
+        Assert.assertEquals("5000", p.getProperty("connection_timeout"));
+        Assert.assertEquals("60000", p.getProperty("http_keep_alive_timeout"));
+    }
+
+    @Test
+    public void testDropListAgreesWithTheV2DriverPropertyTable() {
+        // Cross-check against the V2 driver's own property table (clickhouse-jdbc
+        // 0.9.8, ClientConfigProperties). A dropped key that the table knows would
+        // mean the drop list is wrong; a pass-through timeout the table does not know
+        // would mean the pass-through claim in doc/jdbc-property-mapping.md is wrong.
+        Set<String> v2Keys = new HashSet<>();
+        for (ClientConfigProperties property : ClientConfigProperties.values()) {
+            v2Keys.add(property.getKey());
+        }
+        for (String key : BaseDbWriter.V1_ONLY_PROPERTIES) {
+            Assert.assertFalse(key + " is a V2 property; remove it from V1_ONLY_PROPERTIES",
+                    v2Keys.contains(key));
+        }
+        Assert.assertTrue(v2Keys.contains("socket_timeout"));
+        Assert.assertTrue(v2Keys.contains("connection_timeout"));
+        Assert.assertTrue(v2Keys.contains("http_keep_alive_timeout"));
     }
 
 

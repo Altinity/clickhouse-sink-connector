@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.executor.OffsetAcknowledgementFailureTest.FailingOnceCommitter;
 import com.altinity.clickhouse.sink.connector.executor.OffsetTestSupport.RecordingCommitter;
@@ -81,7 +82,7 @@ public class CoalescedQueuedBatchesTest {
         props.put("batch.retry.backoff.initial.ms", "1");
         props.put("batch.retry.backoff.max.ms", "2");
         props.put("buffer.max.records", Long.toString(bufferMaxRecords));
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static ClickHouseSinkConnectorConfig configWithWait(long bufferMaxRecords, long waitMs) {
@@ -91,7 +92,7 @@ public class CoalescedQueuedBatchesTest {
         props.put("batch.retry.backoff.max.ms", "2");
         props.put("buffer.max.records", Long.toString(bufferMaxRecords));
         props.put("coalesce.max.wait.ms", Long.toString(waitMs));
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     /** Hands off {@code names} on {@code topic} after {@code delayMs}, from another thread. */

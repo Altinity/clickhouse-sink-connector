@@ -1,9 +1,11 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
+import com.altinity.clickhouse.sink.connector.db.ColumnMetadataUnavailableException;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import org.apache.commons.lang3.tuple.MutablePair;
@@ -13,13 +15,13 @@ import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -60,11 +62,32 @@ public class SchemaCacheFailureModesTest {
         final List<String> queries = new ArrayList<>();
         /** when true every column listing throws, as a server refusing metadata reads would */
         boolean listingFails = false;
+        /** ALTER TABLE statements issued so far (they are accepted and change nothing here) */
+        int alters = 0;
+        /** listings throw once this many ALTERs have been issued */
+        int refuseListingsAfterAlters = Integer.MAX_VALUE;
 
         FakeCatalog() {
             columns.add(new String[]{"id", "Int32", ""});
             columns.add(new String[]{"_version", "UInt64", ""});
             columns.add(new String[]{"is_deleted", "UInt8", ""});
+        }
+
+        private void countIfAlter(String sql) {
+            if (sql.startsWith("ALTER")) {
+                alters++;
+            }
+        }
+
+        /** executeSystemQuery sends its DDL through prepareStatement(...).execute(); only ALTER is expected here. */
+        private PreparedStatement preparedAlter(String sql) {
+            if (!sql.startsWith("ALTER")) {
+                throw new IllegalStateException("unexpected prepared statement: " + sql);
+            }
+            countIfAlter(sql);
+            InvocationHandler h = (proxy, method, args) -> defaultFor(method.getReturnType());
+            return (PreparedStatement) Proxy.newProxyInstance(getClass().getClassLoader(),
+                    new Class<?>[]{PreparedStatement.class}, h);
         }
 
         private String[] find(String name) {
@@ -78,9 +101,13 @@ public class SchemaCacheFailureModesTest {
 
         private List<String[]> answer(String sql) throws SQLException {
             queries.add(sql);
+            if (sql.startsWith("ALTER")) {
+                countIfAlter(sql);
+                return new ArrayList<>();
+            }
             boolean listing = sql.startsWith("SELECT name, type, default_kind FROM system.columns")
                     || sql.contains("default_kind='ALIAS' or default_kind='MATERIALIZED'");
-            if (listing && listingFails) {
+            if (listing && (listingFails || alters >= refuseListingsAfterAlters)) {
                 throw new SQLException("Code: 202. DB::Exception: Too many simultaneous queries");
             }
             if (sql.contains("default_kind='ALIAS' or default_kind='MATERIALIZED'")) {
@@ -142,6 +169,10 @@ public class SchemaCacheFailureModesTest {
                 if ("executeQuery".equals(method.getName())) {
                     return resultSet(answer((String) args[0]));
                 }
+                if (method.getName().startsWith("execute") && args != null && args.length > 0
+                        && args[0] instanceof String) {
+                    countIfAlter((String) args[0]);
+                }
                 return defaultFor(method.getReturnType());
             };
             final Statement stmt = (Statement) Proxy.newProxyInstance(getClass().getClassLoader(),
@@ -150,6 +181,8 @@ public class SchemaCacheFailureModesTest {
                 switch (method.getName()) {
                     case "createStatement":
                         return stmt;
+                    case "prepareStatement":
+                        return preparedAlter((String) args[0]);
                     case "toString":
                         return "FakeCatalogConnection";
                     case "hashCode":
@@ -166,10 +199,15 @@ public class SchemaCacheFailureModesTest {
     }
 
     private static ClickHouseSinkConnectorConfig config() {
+        return config(false);
+    }
+
+    private static ClickHouseSinkConnectorConfig config(boolean schemaEvolution) {
         Map<String, String> props = new HashMap<>();
-        props.put(ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION.toString(), "false");
+        props.put(ClickHouseSinkConnectorConfigVariables.ENABLE_SCHEMA_EVOLUTION.toString(),
+                String.valueOf(schemaEvolution));
         props.put(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString(), "true");
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     /** The writer's cached column map: the three columns the table had when the writer was built. */
@@ -197,11 +235,25 @@ public class SchemaCacheFailureModesTest {
     /** One batch through a NEW grouper, exactly as ClickHouseBatchRunnable#processBatchRecords does per batch. */
     private static List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> groupBatch(
             FakeCatalog catalog, List<ClickHouseStruct> batch, Map<String, String> cached) {
+        return groupBatch(catalog, batch, cached, false);
+    }
+
+    private static List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> groupBatch(
+            FakeCatalog catalog, List<ClickHouseStruct> batch, Map<String, String> cached, boolean schemaEvolution) {
         List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> segments = new ArrayList<>();
         Map<TopicPartition, Long> offsets = new HashMap<>();
-        new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(batch, segments, offsets, config(),
-                "t", "db", catalog.connection(), cached);
+        new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(batch, segments, offsets,
+                config(schemaEvolution), "t", "db", catalog.connection(), cached);
         return segments;
+    }
+
+    private static boolean causedBy(Throwable failure, Class<? extends Throwable> type) {
+        for (Throwable t = failure; t != null; t = t.getCause()) {
+            if (type.isInstance(t)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     @BeforeEach
@@ -233,9 +285,9 @@ public class SchemaCacheFailureModesTest {
             assertFalse(groupBatch(catalog, records(schema, "computed", 200), cached).isEmpty());
         }
 
-        assertEquals(3, catalog.queries.size(), "one probe for the whole stream: the ALIAS/MATERIALIZED "
-                + "list, the column listing and one default_kind lookup; anything proportional to records "
-                + "or batches is the metadata storm. Queries: " + catalog.queries);
+        assertEquals(2, catalog.queries.size(), "one probe for the whole stream: the column listing (which "
+                + "carries default_kind) and one default_kind lookup for the column; anything proportional to "
+                + "records or batches is the metadata storm. Queries: " + catalog.queries);
         for (String sql : catalog.queries) {
             assertTrue(sql.contains("system.columns"), "a stale-cache probe reads only the system "
                     + "catalog, never the replicated table (Invariant I14): " + sql);
@@ -247,9 +299,9 @@ public class SchemaCacheFailureModesTest {
         // A DDL on the table retires the proof: the column is probed exactly once more.
         CacheInvalidationManager.getInstance().invalidateTable("db.t");
         groupBatch(catalog, records(schema, "computed", 200), cached);
-        assertEquals(6, catalog.queries.size(), "one more probe after the DDL, then silence");
+        assertEquals(4, catalog.queries.size(), "one more probe after the DDL (two queries), then silence");
         groupBatch(catalog, records(schema, "computed", 200), cached);
-        assertEquals(6, catalog.queries.size());
+        assertEquals(4, catalog.queries.size());
     }
 
     @Test
@@ -263,8 +315,8 @@ public class SchemaCacheFailureModesTest {
 
         assertThrows(MissingTargetColumnException.class,
                 () -> groupBatch(catalog, records(schema, "note", 500), cachedMap()));
-        assertEquals(3, catalog.queries.size(), "the failing attempt costs one probe, not one per record: "
-                + catalog.queries);
+        assertEquals(2, catalog.queries.size(), "the failing attempt costs one listing and one default_kind "
+                + "lookup, not one per record: " + catalog.queries);
         assertFalse(CacheInvalidationManager.getInstance().isColumnProvenAbsent("db.t", "note"),
                 "a missing column is never proven absent, so the retry re-probes and a fixed table heals");
 
@@ -280,10 +332,6 @@ public class SchemaCacheFailureModesTest {
     }
 
     @Test
-    @Disabled("DEFECT FM-08.03-4: when the stale-cache re-read fails (every column listing throws), "
-            + "refreshIfRecordHasUnknownColumn logs a WARN and returns null, the grouper memoises the stale map "
-            + "as verified, and the INSERT is built without a column ClickHouse has and the record carries; the "
-            + "bind-time backstop walks the stale map and cannot see the column, so the value is dropped")
     @DisplayName("a failed stale-cache re-read never yields an INSERT that omits a column the record carries")
     public void failedReReadNeverDropsTheColumn() {
         FakeCatalog catalog = new FakeCatalog();
@@ -306,5 +354,47 @@ public class SchemaCacheFailureModesTest {
                     + "carries it and ClickHouse has it: the value is silently dropped and the offset advances "
                     + "past it. INSERT: " + template.getLeft());
         }
+    }
+
+    @Test
+    @DisplayName("a column read refused on the schema-evolution branch fails the batch with the metadata failure")
+    public void schemaEvolutionReReadFailureIsRaised() {
+        FakeCatalog catalog = new FakeCatalog();
+        catalog.columns.add(new String[]{"note", "Nullable(String)", ""});
+        catalog.refuseListingsAfterAlters = 0;
+        Map<String, String> cached = cachedMap();
+        cached.put("note", "Nullable(String)");
+        Schema schema = SchemaBuilder.struct()
+                .field("id", Schema.INT32_SCHEMA)
+                .field("note", Schema.OPTIONAL_STRING_SCHEMA)
+                .build();
+
+        // Every column the record carries is already cached, so no ALTER is needed; the
+        // schema-evolution branch still re-reads the column list after each AFTER record.
+        assertThrows(ColumnMetadataUnavailableException.class,
+                () -> groupBatch(catalog, records(schema, "note", 10), cached, true),
+                "the re-read on the schema-evolution branch was refused: the batch must fail, not continue "
+                        + "with the map it had before");
+    }
+
+    @Test
+    @DisplayName("a column read refused after the evolve-branch ADD COLUMN is a metadata failure, not a missing column")
+    public void addColumnReReadFailureIsRaisedNotReportedAsMissing() {
+        FakeCatalog catalog = new FakeCatalog();
+        // The cached map lacks 'note', so the evolve branch issues ADD COLUMN; the fake accepts
+        // the ALTER without changing its column list, and the listing after it is refused.
+        catalog.refuseListingsAfterAlters = 1;
+        Schema schema = SchemaBuilder.struct()
+                .field("id", Schema.INT32_SCHEMA)
+                .field("note", Schema.OPTIONAL_STRING_SCHEMA)
+                .build();
+
+        StaleSchemaCacheException failure = assertThrows(StaleSchemaCacheException.class,
+                () -> groupBatch(catalog, records(schema, "note", 10), cachedMap(), true),
+                "a refused re-read must not surface as MissingTargetColumnException, which claims the "
+                        + "ADD COLUMN did not take");
+        assertTrue(causedBy(failure, ColumnMetadataUnavailableException.class),
+                "the stale-cache failure keeps the metadata failure as its cause: " + failure);
+        assertEquals(1, catalog.alters, "the evolve-branch ADD COLUMN was issued before the refused re-read");
     }
 }

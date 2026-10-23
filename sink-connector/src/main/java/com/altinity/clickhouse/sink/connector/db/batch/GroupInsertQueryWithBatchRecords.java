@@ -38,6 +38,9 @@ public class GroupInsertQueryWithBatchRecords {
     private static final Logger log =
             LogManager.getLogger(GroupInsertQueryWithBatchRecords.class);
 
+    /** "table.column" keys already reported as ALIAS namesakes by {@link #warnAliasNamesake}. */
+    private static final Set<String> ALIAS_NAMESAKES_REPORTED = ConcurrentHashMap.newKeySet();
+
     /** See {@link #enforcementLock(String)}. */
     private static final ConcurrentHashMap<String, Object> ENFORCEMENT_LOCKS =
             new ConcurrentHashMap<>();
@@ -342,6 +345,10 @@ public class GroupInsertQueryWithBatchRecords {
                 Map<String, String> verified = refreshIfRecordHasUnknownColumn(
                         record, columnNameToDataTypeMap, tableName, databaseName,
                         connection, config);
+                // refresh either returns a fresh map, returns null because no
+                // unknown column exists, or throws StaleSchemaCacheException
+                // when no verdict could be reached. Only a reached verdict
+                // reaches the memo below (spec 04.06, failed staleness re-read).
                 if (verified != null) {
                     columnNameToDataTypeMap = verified;
                 } else if (witnessSchema != null) {
@@ -377,12 +384,16 @@ public class GroupInsertQueryWithBatchRecords {
                         new ClickHouseAlterTable().alterTable(
                                 record.getAfterStruct().schema().fields(),
                                 tableName, connection, columnNameToDataTypeMap, config);
-                        columnNameToDataTypeMap = new DBMetadata(config)
-                                .getColumnsDataTypesForTable(tableName,
-                                        connection, databaseName);
                     } catch (Exception e) {
                         log.error("**** ERROR ALTER TABLE: " + tableName, e);
                     }
+                    // The re-read stays outside the catch above. A column read
+                    // that fails must fail the batch (ColumnMetadataUnavailableException,
+                    // Spec 08.06 section 3.5); keeping the pre-ALTER map here would
+                    // build the INSERT without the columns the record carries.
+                    columnNameToDataTypeMap = new DBMetadata(config)
+                            .getColumnsDataTypesForTable(tableName,
+                                    connection, databaseName);
                 }
                 // columnNameToDataTypeMap = new DBMetadata().getColumnsDataTypesForTable(
                 // tableName, connection, databaseName, config );
@@ -550,6 +561,26 @@ public class GroupInsertQueryWithBatchRecords {
                 columnNameToDataTypeMap, record.getDatabase());
         MutablePair<String, Map<String, Integer>> response = templateMemo.get(templateKey);
         if (response == null) {
+            // A bare ReplacingMergeTree(ver) has a resolved version column
+            // and no delete column. The engine never reads is_deleted or _sign,
+            // so those names are plain columns for it: they are not
+            // connector-managed, and the configured default is not adopted as
+            // its delete column. Replication history keeps the historical
+            // behaviour (its own tables are ReplacingMergeTree(_version, is_deleted)).
+            boolean replicationHistory = config.getBoolean(
+                    ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString());
+            boolean bareReplacingMergeTree = versionColumn != null && deleteColumn == null;
+            boolean nameGuessedFlagsManaged = replicationHistory || !bareReplacingMergeTree;
+            // The table's resolved delete column when the writer knows it
+            // (new-style RMT: read from the engine clause), else the configured
+            // name where the historical behaviour applies, else none.
+            String effectiveDeleteColumn = deleteColumn != null && !deleteColumn.isEmpty()
+                    ? deleteColumn
+                    : nameGuessedFlagsManaged
+                    ? config.getString(
+                            ClickHouseSinkConnectorConfigVariables
+                                    .REPLACING_MERGE_TREE_DELETE_COLUMN.toString())
+                    : null;
             response = new QueryFormatter().getInsertQueryUsingInputFunction(
                         tableName, modifiedFields, columnNameToDataTypeMap,
                         config.getBoolean(
@@ -562,15 +593,8 @@ public class GroupInsertQueryWithBatchRecords {
                                 ClickHouseSinkConnectorConfigVariables.STORE_RAW_DATA_COLUMN
                                         .toString()),
                         record.getDatabase(),
-                        // The table's resolved delete column when the writer
-                        // knows it (new-style RMT: read from the engine
-                        // clause), else the configured name.
-                        deleteColumn != null && !deleteColumn.isEmpty()
-                                ? deleteColumn
-                                : config.getString(
-                                        ClickHouseSinkConnectorConfigVariables
-                                                .REPLACING_MERGE_TREE_DELETE_COLUMN.toString()),
-                        schemaFields, versionColumn, signColumn);
+                        effectiveDeleteColumn,
+                        schemaFields, versionColumn, signColumn, nameGuessedFlagsManaged);
             if (response != null && response.getKey() != null && response.getValue() != null) {
                 templateMemo.put(templateKey, response);
             }
@@ -602,6 +626,28 @@ public class GroupInsertQueryWithBatchRecords {
             recordsList.add(record);
             queryToRecordsMap.put(mp, recordsList);
         }
+    }
+
+    /**
+     * Reports a source column that ClickHouse defines as ALIAS (spec 08.04 section 3.1).
+     * ClickHouse computes such a column and never stores it, so the source's value for it is
+     * not replicated. This is a real divergence, not a stale cache, so it is WARNed once per
+     * table and column per process, and the WARN names the expression ClickHouse computes.
+     *
+     * @param fullyQualifiedTableName the database-qualified table.
+     * @param column                  the ALIAS column the source carries.
+     * @param expression              the ALIAS expression, or null when it could not be read.
+     * @return true when this call wrote the WARN, false when the namesake was already reported.
+     */
+    static boolean warnAliasNamesake(String fullyQualifiedTableName, String column, String expression) {
+        if (!ALIAS_NAMESAKES_REPORTED.add(fullyQualifiedTableName + "." + column)) {
+            return false;
+        }
+        log.warn("Column '{}' of {} is an ALIAS in ClickHouse ({}), so ClickHouse computes it and the "
+                        + "source's value for it is NOT replicated: the record's value is ignored. "
+                        + "Logged once per table and column.",
+                column, fullyQualifiedTableName, expression != null ? expression : "expression unknown");
+        return true;
     }
 
     /**
@@ -684,9 +730,10 @@ public class GroupInsertQueryWithBatchRecords {
             return null;
         }
 
-        log.warn("Cached schema for {}.{} does not contain column '{}' carried by the "
-                        + "incoming record; the cache is stale relative to the source. "
-                        + "Re-reading table metadata before building the INSERT.",
+        // DEBUG, not WARN: the probe only asks whether the cache is stale. The re-read decides it, and
+        // an ALIAS or MATERIALIZED column is a legitimate miss that the re-read reports as such.
+        log.debug("Cached schema for {}.{} does not contain column '{}' carried by the "
+                        + "incoming record. Re-reading table metadata before building the INSERT.",
                 databaseName, tableName, unknown);
         try {
             Map<String, String> fresh = new DBMetadata(config)
@@ -697,6 +744,9 @@ public class GroupInsertQueryWithBatchRecords {
                     // version so every other cached writer for this table
                     // rebuilds too, rather than each one rediscovering the
                     // staleness independently on its own next batch.
+                    log.info("Column '{}' of {} was missing from the cached schema and is present in "
+                                    + "ClickHouse; the cached schema for the table is refreshed.",
+                            unknown, fullyQualifiedTableName);
                     invalidation.invalidateTable(fullyQualifiedTableName);
                     return fresh;
                 }
@@ -719,10 +769,11 @@ public class GroupInsertQueryWithBatchRecords {
                     // unbounded system.columns query storm for as long as the
                     // table keeps receiving traffic. This is the ONLY kind
                     // that is ever proven absent.
-                    log.debug("Column '{}' is an ALIAS on {} and is not stored, so no stored "
-                                    + "value can disagree with the source and there is nothing "
-                                    + "to enforce. The record's value for it is ignored.",
-                            unknown, fullyQualifiedTableName);
+                    // The source's value is not replicated, so the divergence is reported (loud), once per
+                    // table and column; nothing is enforced because no stored value exists.
+                    String expression = new DBMetadata(config).getColumnDefaultExpression(
+                            tableName, databaseName, unknown, connection);
+                    warnAliasNamesake(fullyQualifiedTableName, unknown, expression);
                     invalidation.markColumnProvenAbsent(fullyQualifiedTableName, unknown);
                     return fresh;
                 }
@@ -829,16 +880,21 @@ public class GroupInsertQueryWithBatchRecords {
                     try {
                         new ClickHouseAlterTable().alterTable(struct.schema().fields(),
                                 tableName, connection, fresh, config);
-                        Map<String, String> added = new DBMetadata(config)
-                                .getColumnsDataTypesForTable(tableName, connection,
-                                        databaseName);
-                        if (added != null && containsColumn(added, unknown)) {
-                            invalidation.invalidateTable(fullyQualifiedTableName);
-                            return added;
-                        }
                     } catch (Exception e) {
                         log.error("ALTER TABLE ... ADD COLUMN for '{}' on {} failed",
                                 unknown, fullyQualifiedTableName, e);
+                    }
+                    // The re-read is outside the catch above. A read that fails is
+                    // a metadata failure (Spec 08.06 section 3.5), not evidence that
+                    // the ADD COLUMN did not take: it must not be reported as a
+                    // missing column. The outer handler of this method turns it
+                    // into a retriable StaleSchemaCacheException.
+                    Map<String, String> added = new DBMetadata(config)
+                            .getColumnsDataTypesForTable(tableName, connection,
+                                    databaseName);
+                    if (added != null && containsColumn(added, unknown)) {
+                        invalidation.invalidateTable(fullyQualifiedTableName);
+                        return added;
                     }
                 }
                 throw new MissingTargetColumnException(String.format(
@@ -855,18 +911,33 @@ public class GroupInsertQueryWithBatchRecords {
                                         .ENABLE_SCHEMA_EVOLUTION + "=true to let the connector add "
                                         + "it, or add the column to the ClickHouse table."));
             }
-            log.warn("Re-read of {}.{} returned no columns; keeping the cached map. The "
-                            + "bind-time check will fail the batch if a value would be dropped.",
-                    databaseName, tableName);
+            // An empty re-read is not an answer: it does not show that the
+            // column is absent or present. Keeping the cached map here would
+            // let the verdict be memoised against a map nothing confirmed.
+            // Invalidate and fail the batch with a retriable cause (spec 04.06
+            // and spec 08.06 section 3.1).
+            invalidation.invalidateTable(fullyQualifiedTableName);
+            throw new StaleSchemaCacheException(String.format(
+                    "Re-read of %s.%s returned no columns while the record carries column '%s', "
+                            + "which the cached schema lacks. The batch is failed and retried "
+                            + "against freshly read metadata.",
+                    databaseName, tableName, unknown));
         } catch (MissingTargetColumnException e) {
             // Deliberately loud: this is the outcome, not a metadata failure.
             throw e;
+        } catch (StaleSchemaCacheException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("Could not re-read metadata for {}.{}; keeping the cached map. The "
-                            + "bind-time check will fail the batch if a value would be dropped.",
-                    databaseName, tableName, e);
+            // The read or the classification failed, so the cached map is
+            // neither confirmed nor refuted. Invalidate and fail the batch with
+            // a retriable cause attached, rather than binding from the stale map.
+            invalidation.invalidateTable(fullyQualifiedTableName);
+            throw new StaleSchemaCacheException(String.format(
+                    "Could not re-read the column list of %s.%s to bind column '%s', which the "
+                            + "cached schema lacks. The batch is failed and retried against "
+                            + "freshly read metadata.",
+                    databaseName, tableName, unknown), e);
         }
-        return null;
     }
 
     /**

@@ -8,8 +8,8 @@ files are sorted and diffed. The count runners are run with and without
 """
 import pytest
 
-from mysql_e2e_support import (CH_HOST, DB, MYSQL_HOST, YESTERDAY, ch_query, mysql_query, parse_checksum_lines,
-                               parse_counts, planted)
+from mysql_e2e_support import (CH_HOST, DB, MYSQL_HOST, SOURCE_TIMEZONE, YESTERDAY, ch_query, mysql_query,
+                               parse_checksum_lines, parse_counts, planted)
 
 PARTITION_FILTER = f"trade_date = '{YESTERDAY}'"
 CH_EXCLUDE = ["_version", "is_deleted", "_is_deleted", "__is_deleted"]
@@ -18,14 +18,16 @@ MYSQL_EXCLUDE = ["_sign", "_version", "is_deleted", "_is_deleted", "__is_deleted
 
 def clickhouse_recipe(ws, table, extra=()):
     return ws.py("db_compare/clickhouse_table_checksum.py", "--clickhouse_host", CH_HOST, "--clickhouse_database", DB,
-                 "--tables_regex", table, "--no_wc", "--clickhouse_config_file", "clickhouse-client.xml",
+                 "--tables_regex", table, "--no_wc", "--source_timezone", SOURCE_TIMEZONE,
+                 "--clickhouse_config_file", "clickhouse-client.xml",
                  "--where", PARTITION_FILTER, "--sign_column", "", "--exclude_columns", *CH_EXCLUDE, "--debug_output",
                  *extra)
 
 
 def mysql_recipe(ws, table, extra=()):
     return ws.py("db_compare/mysql_table_checksum.py", "--mysql_host", MYSQL_HOST, "--mysql_database", DB,
-                 "--tables_regex", table, "--no_wc", "--defaults_file", ".my.cnf", "--where", PARTITION_FILTER,
+                 "--tables_regex", table, "--no_wc", "--defaults_file", ".my.cnf", "--source_timezone", SOURCE_TIMEZONE,
+                 "--where", PARTITION_FILTER,
                  "--exclude_columns", *MYSQL_EXCLUDE, "--debug_output", *extra)
 
 
@@ -76,7 +78,7 @@ def test_manual_checksum_recipe_names_the_diverged_row(ws):
     removed = [line for line in diff.output.splitlines() if line.startswith("< ")]
     added = [line for line in diff.output.splitlines() if line.startswith("> ")]
     assert len(removed) == 1 and len(added) == 1, diff
-    assert removed[0].startswith("< 2#") and "#250.50#" in removed[0], diff
+    assert removed[0].startswith("< 2#") and "#250.5#" in removed[0], diff
     assert added[0].startswith("> 2#") and "#999.25#" in added[0], diff
 
 

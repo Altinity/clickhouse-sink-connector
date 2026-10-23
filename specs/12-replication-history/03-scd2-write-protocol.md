@@ -36,7 +36,7 @@ of the new property, so the change can be audited.
 Notation: `k` = the source primary key (all its columns); `kb` / `ka` = the
 key of the before / after image of an UPDATE; `ts` = the event's `ts_sec`
 rendered as `DateTime` "without timezone adjustment" from the source
-timezone to the server timezone; `S` = the sentinel `2100-01-01 00:00:00`
+timezone to the server timezone; `S` = the sentinel, epoch `4102444800` (`2100-01-01T00:00:00Z`; Spec 12.04 section 3.5)
 (12.02 §3.1); `V = historyVersion(record)` — the snowflake encoding of the event's **standard** version (§3.5, §3.5.1); `tz` = the resolved server timezone id. All FINAL reads below are
 `SELECT ... FROM <table> FINAL WHERE <key predicate> AND `_valid_to` =
 toDateTime('S', 'tz') [AND `is_deleted` = 0]` — the **open-row predicate**;
@@ -347,8 +347,8 @@ Formal: `Replication.History.snowflake_encode_strict_mono`,
 
 ### 3.6 Timezones
 `ts` and `S` are converted with `convertWithoutTimeZoneAdjustment` from the
-source timezone (`source.datetime.timezone`, default UTC) to the server
-timezone; the statement literals wrap them in `toDateTime(..., 'tz')`. See
+source timezone (`database.connectionTimeZone`, mandatory with no default; Spec 07.03 §3.1.2) to the
+ClickHouse zone (`clickhouse.datetime.timezone`, also mandatory); the statement literals wrap them in `toDateTime(..., 'tz')`. See
 12.02 §3.1 / Gap G-12.02-1 for the equality requirement between the
 statement timezone and the column timezone.
 

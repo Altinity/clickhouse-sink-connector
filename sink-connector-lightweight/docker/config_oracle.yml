@@ -133,8 +133,10 @@ auto.create.tables: "true"
 
 clickhouse.jdbc.params: "keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"
 
-# clickhouse.datetime.timezone: This timezone will override the default timezone of ClickHouse server. Timezone columns will be set to this timezone.
-#clickhouse.datetime.timezone: "UTC"
+# database.connectionTimeZone: Required, no default. The timezone of the source database. See doc/timezone.md.
+database.connectionTimeZone: "UTC"
+# clickhouse.datetime.timezone: Required, no default. Timezone columns will be set to this timezone.
+clickhouse.datetime.timezone: "UTC"
 
 # skip_replica_start: If set to true, the connector will skip replication on startup. sink-connector-client start_replica will start replication.
 #skip_replica_start: "false"

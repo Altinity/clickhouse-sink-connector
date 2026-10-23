@@ -2,7 +2,8 @@
 from subprocess import Popen, PIPE
 import shlex
 from ch_sink_tools.db.mysql import is_binary_datatype
-from ch_sink_tools.db.checksum_common import DATETIME_MIN, DATETIME_MAX
+from ch_sink_tools.db.checksum_common import DATETIME_MIN, DATETIME_MAX, get_unix_timezone_from_mysql_timezone, \
+    check_source_timezone_flag
 import argparse
 import sys
 import logging
@@ -281,36 +282,6 @@ def convert_to_clickhouse_table(user_name, table_name, source, rmt_delete_suppor
         return convert_to_clickhouse_table_regexp(user_name, table_name, source, rmt_delete_support, datetime_timezone)
 
 
-def get_unix_timezone_from_mysql_timezone(timezone):
-    """IANA zone name for the TZ variable that reproduces a MySQL time_zone value exactly.
-
-    Deterministic (Spec 13.04 section 3.9): '+00:00' (and '-00:00') is 'UTC'; another whole-hour offset is the
-    fixed-offset zone 'Etc/GMT-N' / 'Etc/GMT+N' (POSIX sign: 'Etc/GMT-5' is UTC+05:00), never a regional zone that
-    happens to have that offset today, whose DST would shift part of the year. A named zone known to zoneinfo is used
-    as is. A value that names no zone (None, SYSTEM, empty, malformed or out of MySQL's range) gives 'UTC' with a
-    WARNING. A valid offset no IANA name represents (e.g. '+05:30') raises: no choice of zone would be correct.
-    """
-    value = (timezone or '').strip()
-    match = re.fullmatch(r'([+-])(\d{1,2}):(\d{2})', value)
-    if match:
-        sign, hours, minutes = match.group(1), int(match.group(2)), int(match.group(3))
-        if minutes < 60 and hours * 60 + minutes <= 14 * 60:
-            if hours == 0 and minutes == 0:
-                return "UTC"
-            if minutes == 0:
-                name = f"Etc/GMT{'-' if sign == '+' else '+'}{hours}"
-                if name in zoneinfo.available_timezones():
-                    return name
-            raise ValueError(
-                f"The dump's TIMESTAMP values are in time zone {value}, which no fixed-offset IANA zone represents. "
-                f"Re-dump in UTC (MySQL Shell tzUtc: true, the default; mydumper --tz-utc).")
-    elif value and value.upper() != 'SYSTEM' and value in zoneinfo.available_timezones():
-        return value
-    logging.warning(f"Time zone of the dump's TIMESTAMP values cannot be determined (got {timezone!r}); "
-                    f"loading them as UTC")
-    return "UTC"
-
-
 def find_mysqlshell_dump_timezone(dump_dir):
     """MySQL time_zone of the TIMESTAMP text of a MySQL Shell dump, read from <dump_dir>/@.json, or None.
 
@@ -335,12 +306,32 @@ def find_mysqlshell_dump_timezone(dump_dir):
     return None
 
 
+def find_mydumper_dump_timezone(dump_dir):
+    """MySQL time_zone of a mydumper dump, from the SET TIME_ZONE statements of its schema files, or None.
+
+    One dump has one zone: two schema files that record different zones raise, so glob order never picks between them.
+    """
+    timezone = None
+    for file in glob.glob(dump_dir + '/*-schema.sql.gz'):
+        with gzip.open(file, "r") as schema_file:
+            file_timezone = find_dump_timezone(schema_file.read().decode('UTF-8'))
+        if file_timezone is not None:
+            if timezone is not None and file_timezone != timezone:
+                raise ValueError(f"{file} sets TIME_ZONE='{file_timezone}' but an earlier schema file "
+                                 f"set '{timezone}'; the dump's TIMESTAMP zone is ambiguous")
+            timezone = file_timezone
+    return timezone
+
+
 def load_schema(args, clickhouse_user=None, clickhouse_password=None,  dry_run=False, datetime_timezone=None):
 
     if args.mysqlshell:
         return load_schema_mysqlshell(args,   clickhouse_user=clickhouse_user, clickhouse_password=clickhouse_password, dry_run=dry_run, datetime_timezone=datetime_timezone)
 
     schema_map = {}
+    # the zone is decided before any statement runs (Spec 13.04 section 3.9)
+    tz = get_unix_timezone_from_mysql_timezone(find_mydumper_dump_timezone(args.dump_dir), args.source_timezone)
+    logging.info(f"Timezone {tz}")
     # create database
     with get_connection(args, clickhouse_user, clickhouse_password) as conn:
 
@@ -354,7 +345,6 @@ def load_schema(args, clickhouse_user=None, clickhouse_password=None,  dry_run=F
                 clickhouse_execute_conn(conn, source)
 
     # create tables
-    timezone = None
     with get_connection(args, clickhouse_user, clickhouse_password, args.clickhouse_database) as conn:
 
         schema_file = args.dump_dir + '/*-schema.sql.gz'
@@ -368,27 +358,20 @@ def load_schema(args, clickhouse_user=None, clickhouse_password=None,  dry_run=F
                 (table_source, columns) = convert_to_clickhouse_table(
                     db, table, source, args.rmt_delete_support, args.use_regexp_parser, datetime_timezone)
                 logging.info(table_source)
-                file_timezone = find_dump_timezone(source)
-                if file_timezone is not None:
-                    # one dump, one zone: never let glob order pick between two
-                    if timezone is not None and file_timezone != timezone:
-                        raise ValueError(f"{file} sets TIME_ZONE='{file_timezone}' but an earlier schema file "
-                                         f"set '{timezone}'; the dump's TIMESTAMP zone is ambiguous")
-                    timezone = file_timezone
-                logging.info(f"Timezone {timezone}")
 
                 if table_source != '':
                     schema_map[f"{db}.{table}"] = columns
                     if not dry_run:
                         clickhouse_execute_conn(conn, table_source)
 
-    tz = get_unix_timezone_from_mysql_timezone(timezone)
-
     return (tz, schema_map)
 
 
 def load_schema_mysqlshell(args, clickhouse_user, clickhouse_password, dry_run=False, datetime_timezone=None):
 
+    # the zone is decided before any statement runs (Spec 13.04 section 3.9)
+    tz = get_unix_timezone_from_mysql_timezone(find_mysqlshell_dump_timezone(args.dump_dir), args.source_timezone)
+    logging.info(f"Timezone {tz}")
     schema_map = {}
     # create database
     with get_connection(args, clickhouse_user, clickhouse_password) as conn:
@@ -400,7 +383,6 @@ def load_schema_mysqlshell(args, clickhouse_user, clickhouse_password, dry_run=F
             except Exception as e:
                 logging.error(f"Database create error: {e}")
     # create tables
-    timezone = find_mysqlshell_dump_timezone(args.dump_dir)
     with get_connection(args, clickhouse_user, clickhouse_password, args.clickhouse_database) as conn:
 
         schema_file_wildcard = args.dump_dir + \
@@ -422,13 +404,10 @@ def load_schema_mysqlshell(args, clickhouse_user, clickhouse_password, dry_run=F
                 (table_source, columns) = convert_to_clickhouse_table(
                     db, table, source, args.rmt_delete_support, args.use_regexp_parser, datetime_timezone)
                 logging.info(table_source)
-                logging.info(f"Timezone {timezone}")
                 if table_source != '':
                     schema_map[f"{db}.{table}"] = columns
                     if not dry_run:
                         clickhouse_execute_conn(conn, table_source)
-
-    tz = get_unix_timezone_from_mysql_timezone(timezone)
 
     return (tz, schema_map)
 
@@ -851,6 +830,11 @@ def main():
                         action='store_true', default=False)
     parser.add_argument('--clickhouse_datetime_timezone',
                         help='Timezone for CH date times', required=False, default=None)
+    parser.add_argument('--source_timezone', default=None,
+                        help="REQUIRED on every run: IANA region name (Area/Location such as America/Chicago, or UTC) of "
+                             "the zone the source MySQL server stored the dump's TIMESTAMP text in: the connector's "
+                             "database.connectionTimeZone. There is no default and no server-zone read. When the dump "
+                             "records a zone, the flag must name the same zone or the load is refused.")
     parser.add_argument('--binary_handling_mode', choices=['bytes', 'base64', 'hex'], default='bytes',
                         help='Set to the binary.handling.mode of the connector that streams into these tables, so '
                              'binary/varbinary/blob values are loaded in the text it stores: bytes = lower-case hex '
@@ -861,6 +845,8 @@ def main():
                              'loaded as raw bytes instead of hex (for binary types only with --binary_handling_mode bytes)')
     global args
     args = parser.parse_args()
+    # no run without an explicit zone flag: no UTC fallback, no server-zone guess (spec 11.02 section 3.2 step 1)
+    check_source_timezone_flag(parser, args.source_timezone)
     schema = not args.data_only
     data = not args.schema_only
     timezone = None

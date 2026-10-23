@@ -22,9 +22,9 @@ from ch_sink_tools.db.mysql import (
     divide_table_into_even_chunks, resolve_credentials_from_config,
 )
 from ch_sink_tools.db.checksum_common import (checksum_from_aggregate, DATETIME_MIN, DATETIME_MAX, datetime_bounds,
-                                clamp_datetime_expression, clamped_datetime_flag, clamped_count_expression,
-                                validate_timezone, shift_datetime_bounds, saturation_floor, warn_not_compared,
-                                parse_exclude_columns)
+                                clamp_datetime_expression, clamped_datetime_flag, clamped_date_flag, clamped_count_expression,
+                                validate_timezone, resolve_source_zone, check_source_timezone_flag, shift_datetime_bounds, saturation_floor,
+                                warn_not_compared, parse_exclude_columns, mysql_escape_piece_sql, mysql_decimal_text)
 runTime = datetime.datetime.now().strftime("%Y.%m.%d-%H.%M.%S")
 
 
@@ -103,6 +103,9 @@ def mysql_column_expression(column, options, binary_encoding, same_charset, boun
     if data_type == 'date':  # Date are converted to Date32 in CH
         # CH date range is not the same as MySQL https://clickhouse.com/docs/en/sql-reference/data-types/date
         return f"case when {column_name} >='{max_date_value}' then CAST('{max_date_value}' AS date) else case when {column_name} <= '{min_date_value}' then CAST('{min_date_value}' AS date) else {column_name} end end"
+    if data_type == 'decimal':
+        # Trailing zeros dropped, so the same value at a different declared scale compares equal (spec 11.02 section 3.3).
+        return mysql_decimal_text(column_name)
     if data_type == 'bit' and column['column_type'].lower() == 'bit(1)':
         # Debezium emits BIT(1) as BOOLEAN and the connector stores Bool;
         # ClickHouse renders it as 1 / 0 (toUInt8), so render the bit as an integer.
@@ -173,10 +176,12 @@ def build_mysql_row_expression(columns, options, binary_encoding, excluded_colum
         if data_type in ('datetime', 'timestamp'):
             clamped_flags.append(clamped_datetime_flag(mysql_datetime_rendering(column_name), bounds[0], bounds[1],
                                                        floor))
+        elif data_type == 'date':
+            clamped_flags.append(clamped_date_flag(column_name, options.min_date_value, options.max_date_value))
         if column['is_nullable'] == 'YES':
             nullables.append(column_name)
             expression = f"ifnull({expression},'')"
-        pieces.append(expression)
+        pieces.append(mysql_escape_piece_sql(expression))
         compared.append(column_name)
         data_types[name] = column['column_type']
     logging.debug(str(nullables))
@@ -385,7 +390,7 @@ def calculate_checksum_single_thread(mysql_table, mysql_user, mysql_password, ch
     conn = get_mysql_connection(args.mysql_host, mysql_user, mysql_password, args.mysql_port, args.mysql_database)
     _where = "1=1"
     if where:
-        _where += " and "+ where
+        _where += f" and ({where})"
     if pk:
         min_pk = int(chunk['min_pk'])
         max_pk = int(chunk['max_pk'])
@@ -453,7 +458,8 @@ def calculate_checksum(mysql_table, mysql_user, mysql_password, excluded_columns
     checksum = checksum_from_aggregate(cnt, a, b, c, d)
     if clamped > 0:
         (min_datetime_value, max_datetime_value) = datetime_bounds(args)
-        logging.warning(f"{clamped} out-of-range datetime values clamped to [{min_datetime_value}, {max_datetime_value}] in table {args.mysql_database}.{mysql_table}")
+        logging.warning(f"{clamped} out-of-range date/datetime values clamped (datetime to [{min_datetime_value}, {max_datetime_value}], "
+                        f"date to [{args.min_date_value}, {args.max_date_value}]) in table {args.mysql_database}.{mysql_table}")
     logging.info("Checksum for table "+args.mysql_database + "."+mysql_table+" = "+checksum + " count "+str(cnt))
 
 # hack to add the user to the logger, which needs it apparently
@@ -502,7 +508,7 @@ def build_argument_parser():
     parser.add_argument(
         '--max_date_value', help='Maximum Date32/Datetime64 date', default='2299-12-31', required=False)
     parser.add_argument(
-            '--source_timezone', help='IANA time zone the connector interprets DATETIME values in (its database.connectionTimeZone); only used to clamp DATETIME columns with the same bounds as the ClickHouse side', default='UTC', required=False)
+            '--source_timezone', help='IANA region name the connector interprets DATETIME values in (its database.connectionTimeZone), for example America/Chicago; only used to clamp DATETIME columns with the same bounds as the ClickHouse side. REQUIRED: no default and no server query; pass UTC explicitly when the connector used UTC', default=None, required=False)
     parser.add_argument(
             '--min_datetime_value', help='Lower clamp bound for datetime/timestamp values (same value on both sides; default is the ClickHouse DateTime64 minimum)', default=DATETIME_MIN, required=False)
     parser.add_argument(
@@ -531,14 +537,9 @@ def main():
     parser = build_argument_parser()
     global args
     args = parser.parse_args()
-    (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
-    validate_timezone(args.source_timezone, '--source_timezone')
-    if args.consistent_snapshot and args.threads_per_table > 1:
-        # PK chunks run on separate connections, each with its own read view.
-        parser.error("--consistent_snapshot reads through one connection: use --threads_per_table 1")
-    if args.exclude_keys_from_stdin and not args.consistent_snapshot:
-        parser.error("--exclude_keys_from_stdin applies inside a snapshot: add --consistent_snapshot")
 
+    # The handler goes first: the first logging call made with no handler on the root logger
+    # installs a second, stderr one, and every later line is then printed twice.
     root = logging.getLogger()
     root.setLevel(logging.INFO)
 
@@ -553,6 +554,16 @@ def main():
     if args.debug:
         root.setLevel(logging.DEBUG)
         handler.setLevel(logging.DEBUG)
+
+    check_source_timezone_flag(parser, args.source_timezone)
+    (args.min_datetime_value, args.max_datetime_value) = datetime_bounds(args)
+    (args.source_timezone, zone_source) = resolve_source_zone(args.source_timezone)
+    logging.info(f"source time zone: {args.source_timezone} (source={zone_source})")
+    if args.consistent_snapshot and args.threads_per_table > 1:
+        # PK chunks run on separate connections, each with its own read view.
+        parser.error("--consistent_snapshot reads through one connection: use --threads_per_table 1")
+    if args.exclude_keys_from_stdin and not args.consistent_snapshot:
+        parser.error("--exclude_keys_from_stdin applies inside a snapshot: add --consistent_snapshot")
 
     mysql_user = args.mysql_user
     mysql_password = args.mysql_password

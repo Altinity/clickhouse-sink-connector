@@ -87,25 +87,26 @@ public class CreateTableDataTypesIT extends DDLBaseIT {
         Assert.assertTrue(decimalTable.get("Maximum_Value").equalsIgnoreCase("Decimal(65, 30)"));
 
 
-        // Validate dateTime64 records.
+        // Validate dateTime64 records. The zone is explicit in every column type: the connector takes it from
+        // clickhouse.datetime.timezone (UTC in config.yml) and never from the server default.
         Assert.assertTrue(dateTimeTable6.get("Type").equalsIgnoreCase("String"));
-        Assert.assertTrue(dateTimeTable6.get("Minimum_Value").equalsIgnoreCase("DateTime64(6)"));
-        Assert.assertTrue(dateTimeTable6.get("Mid_Value").equalsIgnoreCase("DateTime64(6)"));
-        Assert.assertTrue(dateTimeTable6.get("Maximum_Value").equalsIgnoreCase("DateTime64(6)"));
-        Assert.assertTrue(dateTimeTable6.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(6))"));
+        Assert.assertTrue(dateTimeTable6.get("Minimum_Value").equalsIgnoreCase("DateTime64(6, 'UTC')"));
+        Assert.assertTrue(dateTimeTable6.get("Mid_Value").equalsIgnoreCase("DateTime64(6, 'UTC')"));
+        Assert.assertTrue(dateTimeTable6.get("Maximum_Value").equalsIgnoreCase("DateTime64(6, 'UTC')"));
+        Assert.assertTrue(dateTimeTable6.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(6, 'UTC'))"));
 
         Assert.assertTrue(dateTimeTable2.get("Type").equalsIgnoreCase("String"));
-        Assert.assertTrue(dateTimeTable2.get("Minimum_Value").equalsIgnoreCase("DateTime64(2)"));
-        Assert.assertTrue(dateTimeTable2.get("Mid_Value").equalsIgnoreCase("DateTime64(2)"));
-        Assert.assertTrue(dateTimeTable2.get("Maximum_Value").equalsIgnoreCase("DateTime64(2)"));
-        Assert.assertTrue(dateTimeTable2.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(2))"));
+        Assert.assertTrue(dateTimeTable2.get("Minimum_Value").equalsIgnoreCase("DateTime64(2, 'UTC')"));
+        Assert.assertTrue(dateTimeTable2.get("Mid_Value").equalsIgnoreCase("DateTime64(2, 'UTC')"));
+        Assert.assertTrue(dateTimeTable2.get("Maximum_Value").equalsIgnoreCase("DateTime64(2, 'UTC')"));
+        Assert.assertTrue(dateTimeTable2.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(2, 'UTC'))"));
 
         // Validate timestamp records
         Assert.assertTrue(timestampTable.get("Type").equalsIgnoreCase("String"));
-        Assert.assertTrue(timestampTable.get("Minimum_Value").equalsIgnoreCase("DateTime64(6)"));
-        Assert.assertTrue(timestampTable.get("Mid_Value").equalsIgnoreCase("DateTime64(6)"));
-        Assert.assertTrue(timestampTable.get("Maximum_Value").equalsIgnoreCase("DateTime64(6)"));
-        Assert.assertTrue(timestampTable.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(6))"));
+        Assert.assertTrue(timestampTable.get("Minimum_Value").equalsIgnoreCase("DateTime64(6, 'UTC')"));
+        Assert.assertTrue(timestampTable.get("Mid_Value").equalsIgnoreCase("DateTime64(6, 'UTC')"));
+        Assert.assertTrue(timestampTable.get("Maximum_Value").equalsIgnoreCase("DateTime64(6, 'UTC')"));
+        Assert.assertTrue(timestampTable.get("Null_Value").equalsIgnoreCase("Nullable(DateTime64(6, 'UTC'))"));
 
         writer.getConnection().close();
         //Thread.sleep(10000);

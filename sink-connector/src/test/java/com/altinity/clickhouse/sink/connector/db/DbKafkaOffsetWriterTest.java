@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
@@ -47,7 +48,7 @@ public class DbKafkaOffsetWriterTest {
 
         HashMap<String, String> rawConfig = new HashMap<>();
         rawConfig.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(rawConfig);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(rawConfig));
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,

@@ -165,7 +165,10 @@ class TestScheduledJobRecheck(unittest.TestCase):
         sides = {"shop.orders": {"mysql": [[MD5_A, 5]], "clickhouse": [[MD5_B, 5]]},
                  "shop.items": {"mysql": [[MD5_B, 3]], "clickhouse": [[MD5_B, 3]]}}
         (code, log, sleeps) = self.run_job(sides, JOB_FLAGS)
+        # The mixed-zone note is logged once by the run summary, at INFO, not once per pass.
         warnings = [line for line in log if "WARNING" in line]
+        self.assertEqual(len([line for line in log if " - INFO - " in line and "Mixed-zone limit for shop.orders:" in line]),
+                         1, "\n".join(log))
         self.assertEqual(len(warnings), 1, "\n".join(log))
         self.assertTrue(warnings[0].endswith(
             f" - Checksum difference : ('ch-host', 'shop.orders', '{MD5_B}', 5) to ('db1', 'shop.orders', '{MD5_A}', 5)"),

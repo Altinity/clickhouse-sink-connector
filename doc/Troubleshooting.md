@@ -34,10 +34,11 @@ This can be limited by passing this configuration parameter to the JVM:
 -XX:ParallelGCThreads=<N>.
 ```
 ### Caused by: java.sql.BatchUpdateException: Connect to timed out
-Set `keepalive.timeout=3` in clickhouse server and make sure
-the following configuration 
-`clickhouse.jdbc.params: "keepalive.timeout=3,max_buffer_size=1000000,socket_timeout=30000,connection_timeout=30000"`
-is added to `config.yml`
+Set `socket_timeout` and `connection_timeout` (milliseconds) in `config.yml`, for example
+`clickhouse.jdbc.params: "socket_timeout=30000,connection_timeout=30000"`.
+Choose values longer than the longest expected INSERT. Do not set `keepalive.timeout` or
+`max_buffer_size`: the ClickHouse V2 driver does not recognise them, and the connector removes
+them with a WARN. See `doc/jdbc-property-mapping.md`.
 
 ### Slow startup when replicating Database with high number of tables.
 Use the following configuration to limit the number of tables that Debezium would capture in the no_data mode.

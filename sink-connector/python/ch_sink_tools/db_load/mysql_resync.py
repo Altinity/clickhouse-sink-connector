@@ -407,7 +407,7 @@ def run_loader(args, restore_db: str, schema: str, table: str, table_dir: str, l
                                   "--clickhouse_host", args.ch_host, "--clickhouse_port", str(args.ch_port),
                                   "--clickhouse_database", restore_db, "--mysql_source_database", schema,
                                   "--dump_dir", table_dir, "--threads", str(args.load_threads),
-                                  "--clickhouse_config_file", args.ch_config]
+                                  "--clickhouse_config_file", args.ch_config, "--source_timezone", args.source_timezone]
     if not args.apply:
         cmd.append("--dry_run")
     pkg_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -469,6 +469,11 @@ def canary_ratio(ch: ClickHouse, schema: str, restore_db: str, table: str, sorti
 
 def cmd_patch(args) -> int:
     global LOG_FILE
+    # the loader refuses a run without a zone; refuse here first, before anything is written (spec 11.02 section 3.2)
+    if args.source_timezone is None:
+        sys.exit("--source_timezone is required: pass the IANA time zone the connector interprets MySQL DATETIME values in "
+                 "(its database.connectionTimeZone), for example --source_timezone America/Chicago. Pass --source_timezone UTC "
+                 "only when the connector used UTC. The MySQL server zone is not read and no zone is assumed.")
     if not os.path.isfile(args.ch_config):
         sys.exit(f"ClickHouse client config not found: {args.ch_config}")
     # The scratch database <schema><suffix> is recreated table by table. An empty suffix makes it the live database,
@@ -845,6 +850,9 @@ def main(argv=None) -> int:
     p.add_argument("--force", action="store_true", help="continue to REPLACE even if the canary check fails")
     p.add_argument("--loader-cmd", default=None, help="override the loader command (default: python -m ch_sink_tools.db_load.clickhouse_loader)")
     p.add_argument("--loader-cwd", default=None)
+    p.add_argument("--source_timezone", default=None,
+                   help="REQUIRED: IANA region name (e.g. America/Chicago, or UTC) of the zone the connector interprets MySQL "
+                        "DATETIME values in (database.connectionTimeZone). Passed to the loader; no default, no server-zone read")
     p.add_argument("--offset-table", default=None, help="the connector's offset table (db.table): before any REPLACE its durable "
                                                         "offset must be at or past the dump position (required with --apply "
                                                         "unless --skip-connector-position-check)")

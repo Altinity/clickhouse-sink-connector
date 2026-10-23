@@ -37,7 +37,22 @@ public class TableMetaDataWriter {
      * @return true if the column was updated, false otherwise.
      * @throws SQLException if an SQL error occurs while setting the value.
      */
-    public static boolean addKafkaMetaData(String colName, ClickHouseStruct record, int index, PreparedStatement ps) throws SQLException {
+    /**
+     * Renders the Kafka {@code _timestamp} value as the wall-clock text ClickHouse reads back in the
+     * destination server zone. The zone is an explicit argument: the JVM default zone never enters.
+     *
+     * @param epochMillis     the record timestamp, epoch milliseconds
+     * @param serverTimeZone  the zone ClickHouse interprets the text in (required, not null)
+     * @return {@code yyyy-MM-dd HH:mm:ss} wall-clock text in {@code serverTimeZone}
+     */
+    public static String kafkaTimestampText(long epochMillis, ZoneId serverTimeZone) {
+        LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli(epochMillis),
+                java.util.Objects.requireNonNull(serverTimeZone, "serverTimeZone"));
+        return date.format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+    }
+
+    public static boolean addKafkaMetaData(String colName, ClickHouseStruct record, int index, PreparedStatement ps,
+                                           ZoneId serverTimeZone) throws SQLException {
         boolean columnUpdated = true;
 
         // Set Kafka metadata columns
@@ -50,10 +65,7 @@ public class TableMetaDataWriter {
         } else if (colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP_MS.getColumn())) {
             ps.setLong(index, record.getTimestamp());
         } else if (colName.equalsIgnoreCase(KafkaMetaData.TIMESTAMP.getColumn())) {
-            LocalDateTime date = LocalDateTime.ofInstant(Instant.ofEpochMilli(record.getTimestamp()),
-                    ZoneId.systemDefault());
-            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
-            ps.setObject(index, date.format(formatter));
+            ps.setObject(index, kafkaTimestampText(record.getTimestamp(), serverTimeZone));
 
         } else if (colName.equalsIgnoreCase(KafkaMetaData.KEY.getColumn())) {
             if (record.getKey() != null) {

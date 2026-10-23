@@ -1,7 +1,11 @@
-clickhouse-driver>=0.2.9
-pg8000>=1.31,<1.32
-pymysql
-pyyaml
-sqlalchemy>=1.4
+# Exact runtime pins: the versions the unit suites pass on under Python 3.9.2, the floor in pyproject.toml.
+# Install with: pip install -r requirements.txt. pytest is test-only and is not pinned here.
+# tzdata supplies zone data to zoneinfo where the image has none (slim Python images).
+clickhouse-driver==0.2.11
+pg8000==1.31.5
+pyyaml==6.0.3
+tzdata==2026.5
+pymysql==1.2.3
+sqlalchemy==2.0.54
 antlr4-python3-runtime==4.11.1
-pandas
+pandas==2.3.3

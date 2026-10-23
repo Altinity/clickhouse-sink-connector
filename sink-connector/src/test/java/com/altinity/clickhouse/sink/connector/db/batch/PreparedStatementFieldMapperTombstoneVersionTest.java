@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -115,7 +116,7 @@ public class PreparedStatementFieldMapperTombstoneVersionTest {
         new PreparedStatementFieldMapper(DELETE_COLUMN, true, null, VERSION_COLUMN, "db",
                 ZoneId.of("UTC")).insertTombstonePreparedStatement(
                 indexMap(), recordingStatement(longs, ints), ROW_SCHEMA.fields(), record,
-                record.getBeforeStruct(), new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                record.getBeforeStruct(), new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                 typeMap(), DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, "t");
 
         long recordVersion = record.getVersion();
@@ -138,7 +139,7 @@ public class PreparedStatementFieldMapperTombstoneVersionTest {
         new PreparedStatementFieldMapper(DELETE_COLUMN, true, null, VERSION_COLUMN, "db",
                 ZoneId.of("UTC")).insertTombstonePreparedStatement(
                 indexMap(), recordingStatement(longs, ints), ROW_SCHEMA.fields(), record,
-                record.getBeforeStruct(), new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                record.getBeforeStruct(), new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                 typeMap(), DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, "t");
 
         assertEquals(1, (int) ints.get(4), "is_deleted must be 1 on the tombstone");

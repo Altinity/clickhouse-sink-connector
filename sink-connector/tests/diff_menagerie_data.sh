@@ -1,8 +1,8 @@
 cd ../python
 DATABASE=menagerie
 
-python3 db_compare/mysql_table_checksum.py --mysql_host localhost --mysql_user root --mysql_password root  --mysql_database $DATABASE --tables_regex "^*" --debug_output
-python3 db_compare/clickhouse_table_checksum.py --clickhouse_host localhost --clickhouse_user root --clickhouse_password root  --clickhouse_database $DATABASE --tables_regex "^*" --debug_output
+python3 db_compare/mysql_table_checksum.py --mysql_host localhost --mysql_user root --mysql_password root  --mysql_database $DATABASE --tables_regex "^*" --source_timezone UTC --debug_output
+python3 db_compare/clickhouse_table_checksum.py --clickhouse_host localhost --clickhouse_user root --clickhouse_password root  --clickhouse_database $DATABASE --tables_regex "^*" --source_timezone UTC --debug_output
 
 mysql_information_schema_query="select TABLE_NAME from information_schema.tables where TABLE_SCHEMA='$DATABASE'"
 echo $mysql_information_schema_query
