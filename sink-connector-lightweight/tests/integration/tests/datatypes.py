@@ -29,16 +29,13 @@ def adjust_precision(datetime_str, precision):
     return f"{main_part}.{adjusted_microseconds}"
 
 
-def replace_nines_with_zeroes(datetime_str):
-    """Replace nines in the precision part of a datetime string with zeroes."""
-    parts = datetime_str.split(".")
-    if len(parts) == 1:
-        return datetime_str
+def clickhouse_datetime_maximum(precision):
+    """The largest value a ClickHouse DateTime64 column of the given precision holds: 2299-12-31 23:59:59 followed by
+    one nine per fractional digit. A MySQL value above it is stored as this value (Spec 07.03 section 3.1.8)."""
+    if precision == "0":
+        return "2299-12-31 23:59:59"
 
-    main_part = parts[0]
-    precision_part = parts[1].replace("9", "0")
-
-    return f"{main_part}.{precision_part}"
+    return f"2299-12-31 23:59:59.{'9' * int(precision)}"
 
 
 @TestStep(Given)
@@ -64,9 +61,6 @@ def create_table_with_datetime_column(self, table_name, data, precision):
 def check_datetime_column(self, precision, data):
     table_name = "table_" + getuid()
     clickhouse_node = self.context.clickhouse_node
-
-    if data == "2299-12-31 23:59:59.999999":
-        data = replace_nines_with_zeroes(datetime_str=data)
 
     data = adjust_precision(datetime_str=data, precision=precision)
 
@@ -107,27 +101,9 @@ def check_datetime_column(self, precision, data):
                 datetime_str="1900-01-01 00:00:00", precision=precision
             ), error()
         elif data[:19] == "9999-12-31 23:59:59":
-            if precision != "0":
-                assert (
-                    clickhouse_values.output.strip().replace('"', "")
-                    == f"2299-12-31 23:59:59.{'0'*int(precision)}"
-                ), error()
-            else:
-                assert (
-                    clickhouse_values.output.strip().replace('"', "")
-                    == "2299-12-31 23:59:59"
-                ), error()
-        elif data[:19] == "2299-12-31 23:59:59.0":
-            if precision != "0":
-                assert (
-                    clickhouse_values.output.strip().replace('"', "")
-                    == f"2299-12-31 23:59:59.{'0'*int(precision)}"
-                ), error()
-            else:
-                assert (
-                    clickhouse_values.output.strip().replace('"', "")
-                    == "2299-12-31 23:59:59"
-                ), error()
+            assert clickhouse_values.output.strip().replace(
+                '"', ""
+            ) == clickhouse_datetime_maximum(precision), error()
         else:
             assert clickhouse_values.output.strip().replace('"', "") == data, error()
 
