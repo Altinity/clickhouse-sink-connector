@@ -139,7 +139,10 @@ public class CreateTableSchemaOverrideByDataTypeMappingIT {
             insertCheck = true;
             String gmtTime = resultSet.getString("gmt_time");
             System.out.println(gmtTime);
-            Assert.assertTrue(gmtTime.equalsIgnoreCase("2025-04-10 12:34:56.000"));
+            // The source row holds 12:34:56 in database.connectionTimeZone (America/Chicago in config.yml, CDT on that
+            // date), which is the instant 17:34:56Z. A String column holds the instant formatted in
+            // clickhouse.datetime.timezone (UTC in config.yml; spec 07.03 section 3.1.3), never in the server zone.
+            Assert.assertTrue(gmtTime, gmtTime.equalsIgnoreCase("2025-04-10 17:34:56.000"));
         }
         Thread.sleep(10000);
 
