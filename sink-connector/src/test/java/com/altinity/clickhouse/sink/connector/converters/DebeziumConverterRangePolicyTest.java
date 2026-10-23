@@ -431,6 +431,21 @@ public class DebeziumConverterRangePolicyTest {
     }
 
     @Test
+    @DisplayName("The DateTime64 bound strings the integration tests compare against are the bound of their scale")
+    public void dateTime64MaxStringConstantsMatchTheBoundOfEachScale() {
+        String[] constants = {DataTypeRange.DATETIME_MAX, DataTypeRange.DATETIME_1_MAX, DataTypeRange.DATETIME_2_MAX,
+                DataTypeRange.DATETIME_3_MAX, DataTypeRange.DATETIME_4_MAX, DataTypeRange.DATETIME_5_MAX,
+                DataTypeRange.DATETIME_6_MAX};
+        for (int scale = 0; scale < constants.length; scale++) {
+            // Timestamp.valueOf(LocalDateTime) and Timestamp#toString do not read the JVM default zone.
+            String rendered = java.sql.Timestamp.valueOf(
+                    LocalDateTime.ofInstant(DataTypeRange.dateTime64Max(scale), ZoneOffset.UTC)).toString();
+            assertEquals(rendered, constants[scale], "scale " + scale);
+        }
+        assertEquals(DataTypeRange.DATETIME_6_MAX, DataTypeRange.DATETIME64_6_MAX);
+    }
+
+    @Test
     @DisplayName("A DateTime64 value above its scale's bound saturates to that bound, rendered at the bound's precision (Spec 07.03 section 3.1.8)")
     public void dateTime64ClampsToTheBoundOfItsScale() throws Exception {
         long sentinel = datetimeMillis(LocalDateTime.of(9999, 12, 31, 23, 59, 59));
