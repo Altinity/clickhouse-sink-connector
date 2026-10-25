@@ -124,20 +124,6 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
         }
         Assert.assertTrue("Data should be replicated to employees.temporal_types_DATETIME", dataReady);
 
-        /**
-         * DATE TIME
-         * 1969-12-31 18:00:00.0
-         * 2022-09-28 20:47:46.0
-         * 2106-02-07 00:28:15.0
-         * DATE TIME 1
-         * 1969-12-31 18:00:00.0
-         * 2022-09-28 20:48:25.0
-         * 2106-02-07 00:28:15.0
-         * DATE TIME 2
-         * 1969-12-31 18:00:00.0
-         * 2022-09-28 20:49:05.0
-         * 2106-02-07 00:28:15.0
-         */
         // Validate temporal_types_DATETIME data.
         ResultSet dateTimeResult = ITCommon.executeQueryWithResultSet("select * from employees.temporal_types_DATETIME", writer.getConnection() );
 
@@ -150,7 +136,7 @@ public class DateTimeWithUserProvidedTimeZoneSchemaOnlyIT {
             System.out.println(dateTimeResult.getTimestamp("Maximum_Value").toString());
 
             Assert.assertTrue(dateTimeResult.getTimestamp("Minimum_Value").toString().equalsIgnoreCase(DataTypeRange.DATETIME_MIN));
-            // The MySQL rows are America/Chicago wall time (database.connectionTimeZone in config.yml) and the
+            // The MySQL rows are America/Chicago wall time (database.connectionTimeZone in src/test/resources/config.yml) and the
             // connector declares the replicated columns DateTime64(n, 'UTC') (clickhouse.datetime.timezone in
             // config.yml), so the driver returns each instant as UTC wall time: 01:47:46 CDT is 06:47:46Z.
             // A value above the range is stored as the largest value of that scale (Spec 07.03 section 3.1.8).

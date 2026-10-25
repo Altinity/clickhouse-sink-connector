@@ -78,7 +78,7 @@ public class DateTimeWithTimeZoneIT {
 
                 Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
                 // Both zones are explicit: the MySQL rows are America/Chicago wall time (database.connectionTimeZone in
-                // config.yml) and the ClickHouse columns carry America/Chicago too, so the DST rows below exercise the
+                // src/test/resources/config.yml) and the ClickHouse columns carry America/Chicago too, so the DST rows below exercise the
                 // same-zone path (a wall time in a gap or an overlap, Spec 07.03 section 3.1.1).
                 props.setProperty("clickhouse.datetime.timezone", "America/Chicago");
 
