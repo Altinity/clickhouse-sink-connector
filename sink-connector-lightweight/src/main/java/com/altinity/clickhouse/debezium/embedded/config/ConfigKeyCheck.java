@@ -113,6 +113,8 @@ public final class ConfigKeyCheck {
             "errors.max.retries", "column.propagate.source.type",
             // KeylessTablePreflight.SKIP_PROPERTY and BinlogRowImagePreflight.SKIP_PROPERTY
             "keyless.table.check.skip", "binlog.row.image.check.skip",
+            // OffsetExtraInfo.ENABLE_PROPERTY
+            "offset.extra.info.enable",
             // read by strictOf
             STRICT_KEY);
 

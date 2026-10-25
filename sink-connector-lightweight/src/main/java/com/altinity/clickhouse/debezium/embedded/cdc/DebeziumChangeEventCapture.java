@@ -376,6 +376,13 @@ public class DebeziumChangeEventCapture {
         // store. See ensureHeartbeatInterval for why this is not optional.
         ensureHeartbeatInterval(props);
 
+        // Best effort, never throws and never refuses the start: when the offset table has (or can get) an
+        // extra_info column, the offset insert statement is extended to write the connector's static facts
+        // there (spec 09.05). It runs after the JDBC URL rewrites above, so it reads the offset table
+        // through the endpoint Debezium will use, and before the engine is built, so the statement
+        // Debezium reads is final.
+        OffsetExtraInfo.prepare(props, systemDbConnection, config);
+
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder =
                     DebeziumEngine.create(Connect.class);

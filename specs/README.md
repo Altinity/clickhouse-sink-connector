@@ -104,6 +104,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 - **[09.02: Mutual Exclusion & Debezium Flush Semaphore Protection](09-offset-management/02-offset-commit-lock.md)**: `OFFSET_COMMIT_LOCK` synchronization.
 - **[09.03: ClickHouse-Backed Durable Offset Storage (`replica_source_info`)](09-offset-management/03-clickhouse-offset-store.md)**: ReplacingMergeTree offset store.
 - **[09.04: Non-DML Control Record Commit & Quiescence Gating](09-offset-management/04-quiescent-control-commit.md)**: Gating control record commits.
+- **[09.05: Optional `extra_info` Column of the Offset Table](09-offset-management/05-offset-extra-info.md)**: version and static facts written next to each offset; optional, never blocks the connector.
 
 ---
 
