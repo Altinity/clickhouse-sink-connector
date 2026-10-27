@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
@@ -59,7 +60,7 @@ public class SortingKeyReadFailureTest {
             + "lifetime and the executor reads as 'no sorting key' -- relocating UPDATEs then leave ghost rows")
     @DisplayName("A failed sorting-key read is reported as a failure, never as an empty sorting key")
     public void aFailedSortingKeyReadIsNotAnEmptySortingKey() {
-        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
         assertThrows(Exception.class, () -> {
             List<String> key = metadata.getSortingKeyColumns(failingConnection(), "db", "t");
             // Reaching here means the failure was swallowed.

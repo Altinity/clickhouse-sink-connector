@@ -48,5 +48,7 @@ enable.snapshot.ddl: "true"
 persist.raw.bytes: "false"
 auto.create.tables: "true"
 database.connectionTimeZone: "UTC"
+# clickhouse.datetime.timezone: Required, no default. Zone of DateTime columns written to ClickHouse.
+clickhouse.datetime.timezone: "UTC"
 restart.event.loop: "true"
 restart.event.loop.timeout.period.secs: "3000"

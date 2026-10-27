@@ -18,6 +18,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -25,6 +27,7 @@ import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -181,5 +184,58 @@ public class BinlogEventAuditTest {
         assertDoesNotThrow(() -> audit.onEvent(event(EventType.QUERY, null)));
         assertDoesNotThrow(() -> audit.onEvent(null));
         assertDoesNotThrow(() -> BinlogEventAudit.observeInner(null));
+    }
+
+    /** The socket bytes a refused read must leave untouched. */
+    private static ByteArrayInputStream socketBytes() {
+        return new ByteArrayInputStream(new byte[] {1, 2, 3, 4});
+    }
+
+    @Test
+    void partialUpdateEventStopsTheReadThroughTheGuard() throws IOException {
+        ByteArrayInputStream socket = socketBytes();
+        BinlogConnectionGuard.PeerCloseIsAFailure guarded = new BinlogConnectionGuard.PeerCloseIsAFailure(socket);
+        BinlogEventAudit audit = new BinlogEventAudit(null);
+        feed(audit, tableMap(7, "shop", "orders"), event(EventType.PARTIAL_UPDATE_ROWS_EVENT, null));
+
+        IOException refused = assertThrows(IOException.class, guarded::read,
+                "the connector must not read on past an event Debezium cannot replicate");
+        assertTrue(refused.getMessage().contains("shop.orders"), refused.getMessage());
+        assertTrue(refused.getMessage().contains("binlog_row_value_options"), refused.getMessage());
+        assertEquals(4, socket.available(), "a refused read must consume nothing from the socket");
+        assertThrows(IOException.class, () -> guarded.read(new byte[8], 0, 8),
+                "the bulk read path is refused the same way");
+        assertTrue(appender.errors().stream().anyMatch(m -> m.contains("partial update event")),
+                appender.errors().toString());
+    }
+
+    @Test
+    void partialUpdateInsideACompressedTransactionStopsTheReadToo() {
+        BinlogConnectionGuard.PeerCloseIsAFailure guarded =
+                new BinlogConnectionGuard.PeerCloseIsAFailure(socketBytes());
+        BinlogEventAudit.observeInner(tableMap(9, "shop", "items"));
+        BinlogEventAudit.observeInner(event(EventType.PARTIAL_UPDATE_ROWS_EVENT, null));
+
+        IOException refused = assertThrows(IOException.class, guarded::read);
+        assertTrue(refused.getMessage().contains("shop.items"), refused.getMessage());
+    }
+
+    @Test
+    void resetForgetsTheRecordedStop() {
+        ByteArrayInputStream socket = socketBytes();
+        BinlogConnectionGuard.PeerCloseIsAFailure guarded = new BinlogConnectionGuard.PeerCloseIsAFailure(socket);
+        feed(new BinlogEventAudit(null), event(EventType.PARTIAL_UPDATE_ROWS_EVENT, null));
+        BinlogEventAudit.reset();
+        assertDoesNotThrow(() -> guarded.read(),
+                "a new task re-reads the stream, so the stop recorded by the old one is cleared");
+    }
+
+    @Test
+    void ordinaryRowEventsDoNotStopTheRead() {
+        ByteArrayInputStream socket = socketBytes();
+        BinlogConnectionGuard.PeerCloseIsAFailure guarded = new BinlogConnectionGuard.PeerCloseIsAFailure(socket);
+        feed(new BinlogEventAudit(null), tableMap(7, "shop", "orders"), writeRows(7));
+        assertDoesNotThrow(() -> guarded.read());
+        assertEquals(0, appender.errors().size(), appender.errors().toString());
     }
 }

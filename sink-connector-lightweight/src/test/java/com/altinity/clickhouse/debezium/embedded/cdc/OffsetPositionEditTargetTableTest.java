@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
 
 import org.junit.jupiter.api.Disabled;
@@ -39,7 +40,7 @@ public class OffsetPositionEditTargetTableTest {
         props.setProperty(JdbcOffsetBackingStoreConfig.OFFSET_STORAGE_PREFIX
                 + JdbcOffsetBackingStoreConfig.PROP_TABLE_NAME.name(), OFFSET_TABLE);
         props.setProperty("name", "company-1");
-        return props;
+        return ZoneFixtures.withZones(props);
     }
 
     private static List<String> writes(VersionHighWaterMarkTest.FakeClickHouse fake) {

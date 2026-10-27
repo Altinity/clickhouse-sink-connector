@@ -46,8 +46,10 @@ table.exclude.list:  "{{ item.mysql.table_exclude_list }}"
 # Maximum size of packets from the MySQL replication stream.
 driver.max_packet_size: 1073741824
 
-# Timezone of the MySQL server for correctly adjusting timestamps.
-database.connectionTimeZone: "{{ item.mysql.source_mysql_timezone | default('UTC') }}"
+# Required, no default: timezone of the MySQL server for correctly adjusting timestamps.
+# Set mysql.source_mysql_timezone for each source. Rendering fails when it is undefined; the connector
+# refuses to start when it is empty. See doc/timezone.md.
+database.connectionTimeZone: "{{ item.mysql.source_mysql_timezone | mandatory }}"
 
 # How binary values should be formatted (default: base64 encoding).
 binary.handling.mode: "base64"
@@ -58,8 +60,10 @@ binary.handling.mode: "base64"
 # See: https://github.com/Altinity/clickhouse-sink-connector/issues/470
 enable.time.adjuster: "{{ item.sink_connector.enable_time_adjuster | default('false') }}"
 
-# Overrides the default timezone of ClickHouse for datetime columns.
-clickhouse.datetime.timezone: "{{ item.clickhouse.timezone | default('UTC') }}"
+# Required, no default: timezone of DateTime and DateTime64 columns written to ClickHouse.
+# Set clickhouse.timezone for each source. Rendering fails when it is undefined; the connector
+# refuses to start when it is empty. See doc/timezone.md.
+clickhouse.datetime.timezone: "{{ item.clickhouse.timezone | mandatory }}"
 
 # ClickHouse server hostname or IP.
 clickhouse.server.url: "{{ item.clickhouse.host }}"
@@ -215,12 +219,9 @@ snapshot.locking.mode: "none"
 # Enables fast disconnects for improved recovery from errors.
 use.nongraceful.disconnect: "true"
 
-# Sends a keepalive message every 30 seconds to maintain the connection.
-database.keep.alive.interval.ms: "30000"
-
-# Backoff for database reconnection attempts (initial / max, milliseconds).
-database.connection.reconnect.backoff.ms: "1000"
-database.connection.reconnect.backoff.max.ms: "10000"
+# Read by the binlog connection guard (binlog.read.timeout.ms defaults to twice this value) and by
+# Debezium only when connect.keep.alive=true; keep-alive is off by default (spec 01.07 section 3.4).
+connect.keep.alive.interval.ms: "60000"
 
 # SSL mode for the MySQL connection. Enable where your environment supports it.
 database.ssl.mode: "{{ item.mysql.ssl_mode | default('disabled') }}"

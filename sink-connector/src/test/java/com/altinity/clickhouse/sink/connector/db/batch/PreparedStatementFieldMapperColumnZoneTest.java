@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -7,6 +8,7 @@ import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
 import io.debezium.time.MicroTimestamp;
 import io.debezium.time.Timestamp;
 import io.debezium.time.ZonedTimestamp;
+import org.apache.kafka.common.config.ConfigException;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -24,6 +26,8 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Spec 07.03 sections 3.1.2 and 3.1.3, end to end through
@@ -136,7 +140,7 @@ public class PreparedStatementFieldMapperColumnZoneTest {
     @Test
     @DisplayName("TIMESTAMP into a DateTime64(6,'UTC') column binds the instant as epoch text")
     public void testTimestampIntoUtcColumnWhenSessionZoneIsChicago() throws Exception {
-        Map<Integer, String> bound = bind(new ClickHouseSinkConnectorConfig(new HashMap<>()),
+        Map<Integer, String> bound = bind(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                 columns("Nullable(DateTime64(6, 'UTC'))", "DateTime64(3, 'UTC')", "DateTime64(6, 'UTC')"));
 
         assertEquals("1641052800.000000", bound.get(2),
@@ -154,7 +158,7 @@ public class PreparedStatementFieldMapperColumnZoneTest {
     @Test
     @DisplayName("Overlap-hour TIMESTAMP into a DateTime64(6,'America/Chicago') column binds the exact epoch")
     public void testOverlapInstantBindsExactEpochIntoChicagoColumn() throws Exception {
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()));
         Struct after = row().put("ts", "2026-11-01T07:30:00Z");
 
         Map<Integer, String> chicagoColumn = bind(config, after,
@@ -179,15 +183,15 @@ public class PreparedStatementFieldMapperColumnZoneTest {
      * for a shift; DATETIME digits are stored as MySQL holds them.
      */
     @Test
-    @DisplayName("Empty database.connectionTimeZone keeps DATETIME digits (was: treated as UTC and shifted)")
-    public void testEmptySourceZoneKeepsDatetimeDigits() throws Exception {
-        Map<Integer, String> bound = bind(new ClickHouseSinkConnectorConfig(new HashMap<>()),
-                columns("Nullable(DateTime64(6, 'UTC'))", "DateTime64(3, 'UTC')", "DateTime64(6, 'UTC')"));
+    @DisplayName("Blank database.connectionTimeZone is refused at construction; no path keeps DATETIME digits unzoned")
+    public void testBlankSourceZoneIsRefusedNotKeptAsDigits() {
+        Map<String, String> props = new HashMap<>();
+        props.put("database.connectionTimeZone", "  ");
 
-        assertEquals("2022-01-01 10:00:00.000", bound.get(3),
-                "DATETIME(3) digits must be stored unchanged when no source zone is configured");
-        assertEquals("2022-01-01 10:00:00.00000000", bound.get(4),
-                "DATETIME(6) digits must be stored unchanged when no source zone is configured");
+        ConfigException refused = assertThrows(ConfigException.class,
+                () -> new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)));
+        assertTrue(refused.getMessage().contains("database.connectionTimeZone is not set"), refused.getMessage());
+        assertTrue(refused.getMessage().contains("database.connectionTimeZone=UTC"), refused.getMessage());
     }
 
     /**
@@ -201,7 +205,7 @@ public class PreparedStatementFieldMapperColumnZoneTest {
     public void testExplicitSourceZoneShiftsIntoTheColumnZone() throws Exception {
         Map<String, String> props = new HashMap<>();
         props.put("database.connectionTimeZone", "UTC");
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
 
         Map<Integer, String> utcColumns = bind(config,
                 columns("DateTime64(6, 'UTC')", "DateTime64(3, 'UTC')", "DateTime64(6, 'UTC')"));

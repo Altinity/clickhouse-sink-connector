@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.apache.commons.lang3.tuple.MutablePair;
 import org.junit.jupiter.api.Disabled;
@@ -29,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 public class CollapsingEngineParsingTest {
 
     private static DBMetadata metadata() {
-        return new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        return new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.junit.jupiter.api.BeforeAll;
@@ -35,7 +36,7 @@ public class GeneratedColumnBitOperatorTest {
     @BeforeAll
     static void init() {
         parser = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "db1");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "db1");
         DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine = true;
     }
 

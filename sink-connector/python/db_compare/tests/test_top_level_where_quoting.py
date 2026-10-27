@@ -92,7 +92,7 @@ class ClickHouseWhereQuotingTestCase(unittest.TestCase):
                                                  where="db_from >= toDateTime('2026-09-27 16:30:00')",
                                                  partition_key="trade_date")
         self.assertEqual(where_word(cmd),
-                         " 1=1  and db_from >= toDateTime('2026-09-27 16:30:00')  and {partition_expression}=toDate('2026-09-28') ")
+                         " 1=1  and (db_from >= toDateTime('2026-09-27 16:30:00'))  and {partition_expression}=toDate('2026-09-28') ")
 
     def test_no_partition_date_emits_no_partition_clause(self):
         tl.args = top_level_args(partition_date=None)

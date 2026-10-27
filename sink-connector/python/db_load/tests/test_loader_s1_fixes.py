@@ -45,7 +45,7 @@ def loader_args(dump_dir, **overrides):
                   clickhouse_password=None, mysql_source_database="db1", dump_dir=str(dump_dir), threads=2,
                   truncate_tables=False, dry_run=False, mysqlshell=True, rmt_delete_support=True,
                   use_regexp_parser=False, virtual_columns=['`_sign`', '`_version`', '`is_deleted`', '`_is_deleted`'],
-                  binary_handling_mode="bytes", persist_raw_bytes=False)
+                  binary_handling_mode="bytes", persist_raw_bytes=False, source_timezone=None)
     values.update(overrides)
     return Namespace(**values)
 
@@ -65,26 +65,35 @@ class TestDumpTimezoneMapping:
     def test_named_zone_is_kept(self, loader):
         assert loader.get_unix_timezone_from_mysql_timezone("Europe/Paris") == "Europe/Paris"
 
-    @pytest.mark.parametrize("value", [None, "", "SYSTEM", "+99:00", "not-a-zone"])
-    def test_undeterminable_zone_is_utc_with_a_warning(self, loader, value, caplog):
-        with caplog.at_level(logging.WARNING):
-            assert loader.get_unix_timezone_from_mysql_timezone(value) == "UTC"
-        assert any(r.levelno == logging.WARNING and "cannot be determined" in r.getMessage() for r in caplog.records)
+    @pytest.mark.parametrize("value", [None, "", "SYSTEM"])
+    def test_undeterminable_zone_without_flag_is_refused(self, loader, value):
+        # no implicit UTC (Spec 13.04 section 3.9): the refusal names the flag that decides the zone
+        with pytest.raises(ValueError, match="--source_timezone"):
+            loader.get_unix_timezone_from_mysql_timezone(value)
+
+    @pytest.mark.parametrize("value", ["+99:00", "not-a-zone"])
+    def test_invalid_recorded_zone_is_refused_with_or_without_flag(self, loader, value):
+        with pytest.raises(ValueError):
+            loader.get_unix_timezone_from_mysql_timezone(value)
+        with pytest.raises(ValueError):
+            loader.get_unix_timezone_from_mysql_timezone(value, "America/Chicago")
 
     def test_offset_without_a_fixed_iana_zone_is_refused(self, loader):
         with pytest.raises(ValueError, match=r"\+05:30"):
             loader.get_unix_timezone_from_mysql_timezone("+05:30")
 
     def test_deterministic_across_hash_seeds(self, loader):
+        # a dump that records no zone takes the flag, so the result is fixed by the input, not by the hash seed
         code = ("import sys; sys.path.insert(0, %r); import importlib; m = importlib.import_module(%r); "
-                "print(m.get_unix_timezone_from_mysql_timezone('+00:00'), m.get_unix_timezone_from_mysql_timezone(None))"
+                "print(m.get_unix_timezone_from_mysql_timezone('+00:00'), "
+                "m.get_unix_timezone_from_mysql_timezone(None, 'America/Chicago'))"
                 % (ROOT, loader.__name__))
         seen = set()
         for seed in range(6):
             out = subprocess.run([sys.executable, "-c", code], env=dict(os.environ, PYTHONHASHSEED=str(seed)),
                                  capture_output=True, text=True, check=True).stdout.split()
             seen.add(tuple(out))
-        assert seen == {("UTC", "UTC")}
+        assert seen == {("UTC", "America/Chicago")}
 
 
 class TestMysqlShellDumpTimezone:
@@ -111,12 +120,16 @@ class TestMysqlShellDumpTimezone:
         with pytest.raises(ValueError, match="tzUtc: false"):
             self.load(loader, tmp_path)
 
-    def test_missing_metadata_is_utc_with_a_warning(self, loader, tmp_path, caplog):
+    def test_missing_metadata_without_flag_is_refused_before_any_statement(self, loader, tmp_path, caplog):
         self.write_dump(tmp_path, None)
         os.remove(tmp_path / "@.json")
-        with caplog.at_level(logging.WARNING):
-            (tz, _) = self.load(loader, tmp_path)
-        assert tz == "UTC"
+        execute = mock.MagicMock()
+        with caplog.at_level(logging.WARNING), \
+                mock.patch.object(loader, "get_connection", mock.MagicMock()), \
+                mock.patch.object(loader, "clickhouse_execute_conn", execute):
+            with pytest.raises(ValueError, match="--source_timezone"):
+                loader.load_schema(loader_args(tmp_path), dry_run=False)
+        execute.assert_not_called()
         assert any(r.levelno == logging.WARNING and "@.json not found" in r.getMessage() for r in caplog.records)
 
 

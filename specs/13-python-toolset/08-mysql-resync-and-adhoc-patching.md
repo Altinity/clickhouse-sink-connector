@@ -451,8 +451,10 @@ is reported only by the next checksum.
 #### 3.9.3 Time zones (D-13.08-2, S1, packaged loader, fixed)
 - **Since the fix** (Spec 13.04 §3.9, D-13.04-2): the loader reads `tzUtc` from the dump's `@.json`, which
   `isolate_table_dir` now hard-links into `_bytable/<t>/` next to the table's files. The dumps `ch-mysql-resync`
-  takes never set `tzUtc`, so it is `true` and `TZ=UTC`, deterministically. Without `@.json` the loader logs a
-  WARNING and uses UTC. The bullets below up to the legacy loader record the 2.11.0 behaviour.
+  takes never set `tzUtc`, so it is `true` and `TZ=UTC`, deterministically. Without `@.json` (or without a
+  `tzUtc` value) the loader refuses before any statement unless `--source_timezone` names the zone (Spec 13.04
+  §3.9, FM-13.04-27). Resync passes no zone flag, so such a table is reported LOAD_FAILED. The bullets below up
+  to the legacy loader record the 2.11.0 behaviour.
 - `load_schema_mysqlshell` fixed the dump zone at `'+00:00'` (`clickhouse_loader.py:347`). MySQL Shell's
   default `tzUtc` writes `TIMESTAMP` values in UTC.
 - `get_unix_timezone_from_mysql_timezone` (`:268-285`) walks `zoneinfo.available_timezones()`. That is a `set`:

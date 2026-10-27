@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.junit.Assert;
 import org.junit.jupiter.api.Test;
@@ -31,7 +32,7 @@ public class ClickHouseUnavailableTest {
 
     private static ClickHouseSinkConnectorConfig emptyConfig() {
         Map<String, String> props = new HashMap<>();
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     @Test

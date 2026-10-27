@@ -19,9 +19,7 @@ import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
-import java.text.SimpleDateFormat;
 import java.time.LocalDateTime;
-import java.util.Date;
 import java.util.List;
 import java.util.Properties;
 import java.util.regex.Matcher;
@@ -360,25 +358,38 @@ public class DebeziumJdbcStorageOperations {
         String latestRecordTs = this.debeziumOffsetStorage.getDebeziumLatestRecordTimestamp(props, conn);
         if (latestRecordTs == null || latestRecordTs.isEmpty()) {
             // The query returned no result, e.g. because ClickHouse was not
-            // reachable. Without this guard SimpleDateFormat.parse() below
-            // throws a NullPointerException, which the ParseException handler
-            // does not catch.
+            // reachable. Without this guard the conversion below would fail on
+            // a null value.
             log.error("Latest record timestamp is not available");
             return result;
         }
-        // Convert date string from "yyyy-MM-dd HH:mm:ss" format to milliseconds.
-        SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
-        Date date = null;
-        try {
-            date = sdf.parse(latestRecordTs);
-            ReplicationStatusSingleton.getInstance().setLastRecordTimestamp(date.getTime());
-        } catch (java.text.ParseException e) {
-            log.error("Error parsing date", e);
+        // The value is epoch seconds (DebeziumOffsetStorage reads toUnixTimestamp): an instant, so it is
+        // converted without a zone. Parsing the server's wall-clock text in the JVM zone shifted it by the
+        // difference of the two zones (Spec 07.03 section 3.1.10).
+        result = latestRecordEpochMillis(latestRecordTs);
+        if (result < 0) {
+            log.error("Error parsing latest record timestamp: " + latestRecordTs);
+            return -1;
         }
-        if (date != null) {
-            result = date.getTime();
-        }
+        ReplicationStatusSingleton.getInstance().setLastRecordTimestamp(result);
         return result;
+    }
+
+    /**
+     * Converts the offset table's newest {@code record_insert_ts}, as epoch seconds text, to epoch milliseconds.
+     *
+     * @param epochSecondsText the value read from the offset table, or null when the table had no row.
+     * @return the epoch milliseconds, or -1 when the text is not an epoch-seconds value.
+     */
+    static long latestRecordEpochMillis(String epochSecondsText) {
+        if (epochSecondsText == null || epochSecondsText.trim().isEmpty()) {
+            return -1;
+        }
+        try {
+            return Long.parseLong(epochSecondsText.trim()) * 1000L;
+        } catch (NumberFormatException e) {
+            return -1;
+        }
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.AppInjector;
 import com.altinity.clickhouse.debezium.embedded.ClickHouseDebeziumEmbeddedApplication;
 import com.altinity.clickhouse.debezium.embedded.api.DebeziumEmbeddedRestApi;
@@ -102,7 +103,7 @@ public class DebeziumStorageViewIT {
                 "altinity_sink_connector");
         Connection chConn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,
                 clickHouseContainer.getUsername(), clickHouseContainer.getPassword(),
-                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                BaseDbWriter.SYSTEM_DB, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
         BaseDbWriter writer = new BaseDbWriter(clickHouseContainer.getHost(), clickHouseContainer.getFirstMappedPort(),
                 "altinity_sink_connector", clickHouseContainer.getUsername(), clickHouseContainer.getPassword(), null, chConn);
 

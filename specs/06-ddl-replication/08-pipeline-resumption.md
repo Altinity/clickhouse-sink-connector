@@ -105,7 +105,10 @@ when any of the following holds, in this order:
 1. `disable.ddl=true` — no DDL is replicated at all.
 2. The statement matches an entry of `ignore.ddl.regex` (a `||`-separated list
    of regular expressions, `find` semantics) or one of the bundled patterns
-   (`IgnoreDDLRegexLoader`).
+   (`IgnoreDDLRegexLoader`). An entry that does not compile, or a blank entry
+   (which would match every DDL), refuses the start (`IgnoreDdlRegexPreflight.check`).
+   An entry that still fails when it is evaluated throws `DDLReplicationException`
+   and halts the pipeline; it is never logged and skipped (spec 01.03 FM-01.03-2).
 3. **The DDL belongs to a table the connector does not capture.** The source
    database is read from the schema-change record (`sourceDatabaseName`: the
    key's `databaseName`/`db`, else the value's `source.db`; never the
@@ -150,7 +153,12 @@ Then, **after** `parseSql` (which is what computes the statement kind):
    `enterTruncateTable` / `enterDropDatabase`; the token helpers in both parser
    services test the first significant tokens). `ALTER TABLE ... DROP COLUMN`,
    `DROP INDEX` and `ALTER COLUMN ... DROP DEFAULT` are schema evolution and
-   are never caught. The statement is logged at WARN and skipped.
+   are never caught. A skipped `TRUNCATE` is logged at ERROR; a skipped `DROP TABLE`
+   or `DROP DATABASE` is logged at WARN. Both are skipped, never executed. The
+   TRUNCATE ERROR names the table, the binlog position of the event (`file:pos` from
+   its source offset, or `not available` when the event carries none) and the
+   consequence: ClickHouse keeps the rows the source truncated, so the table no
+   longer matches MySQL until it is resynced (`ch-mysql-resync`, spec 11.04).
 
    **Snapshot-phase DDL is exempt.** The suppression applies only to streaming
    DDL (`isSnapshotDDL(sr)` is false). With `enable.snapshot.ddl=true` Debezium
@@ -169,7 +177,26 @@ Then, **after** `parseSql` (which is what computes the statement kind):
    history and is off by default. Before this revision the option was dead: it
    was tested BEFORE `parseSql` set the flag it reads (always false), and the
    flag was raised by ANY `DROP` token, so had it worked it would also have
-   swallowed column drops and index drops.
+   swallowed column drops and index drops. Each skipped TRUNCATE is logged at
+   ERROR (item 5) because a silent skip leaves the replica divergent with no
+   operator-visible sign.
+
+   The WARN names what was kept and the setting that kept it, in the same form as
+   the other `disable.drop.truncate` WARNs: `DROP of [<tables>] kept because
+   disable.drop.truncate=true: ...` (a skipped DROP TABLE or DROP DATABASE; the
+   TRUNCATE of item 5 has its own ERROR line).
+
+   **Partition DROP and TRUNCATE are always ignored.** `ALTER TABLE t DROP PARTITION p`
+   and `ALTER TABLE t TRUNCATE PARTITION p` are ignored by the bundled rules whatever
+   `disable.drop.truncate` is set to. The source removes the partition's rows and
+   ClickHouse keeps them: a deliberate divergence. It is ignored, not refused, so that
+   routine partition rotation does not halt a replica. For a captured table the
+   connector logs one WARN naming the table and the partition
+   (`Ignoring DROP PARTITION p of table t: ...`). A partition operation on an
+   uncaptured table is silent, like any uncaptured DDL.
+   Limitation (open): the bundled rules match anywhere in the statement, so a
+   multi-clause `ALTER` that contains a partition DROP or TRUNCATE is ignored as a
+   whole, including its other clauses. Splitting the clauses is not done in this revision.
 
 ---
 
@@ -186,6 +213,9 @@ Then, **after** `parseSql` (which is what computes the statement kind):
 - `DdlIgnoreRulesTest.ddlOutsideIncludeListIsIgnored`, `DdlIgnoreRulesTest.excludeAndDatabaseListsApply`, `DdlIgnoreRulesTest.multiTableAndNoLists` — §3.3 rule 3 through `checkIfDDLNeedsToBeIgnored` with schema-change records carrying `databaseName` and `tableChanges`.
 - `DdlIgnoreRulesTest.mysqlFlagIsStatementKind`, `DdlIgnoreRulesTest.postgresFlagIsStatementKind` — §3.3 rule 5: `DROP TABLE`/`TRUNCATE`/`DROP DATABASE|SCHEMA` set the flag; `DROP COLUMN`, `DROP INDEX`, `DROP DEFAULT` do not (pre-fix: any `DROP` token).
 - `DdlIgnoreRulesTest.disableDropTruncateIsScopedAndLive` — §3.5 through `processEveryChangeRecord`: with `disable.drop.truncate=true` a STREAMING `DROP TABLE`/`TRUNCATE` returns without executing and is recorded as `lastIgnoredDDL`; a `DROP COLUMN` still reaches execution; without the property the `DROP TABLE` reaches execution (pre-fix: the property was dead).
+- `DdlIgnoreRulesTest.skippedTruncateLogsAtErrorNamingTableAndPosition` — §3.3 item 5: a streaming `TRUNCATE TABLE` skipped under `disable.drop.truncate=true` is logged at ERROR, naming the table, the binlog `file:pos` of the event and the resync requirement, and is not executed.
+- `DdlIgnoreRulesTest.skippedTruncateWithoutPositionSaysSo` — §3.3 item 5: a skipped TRUNCATE whose event carries no source offset says the position is `not available`, it is not guessed.
+- `DdlIgnoreRulesTest.skippedDropTableStaysAtWarn` — §3.3 item 5: a skipped `DROP TABLE` stays at WARN (only TRUNCATE is raised).
 - `DdlIgnoreRulesTest.disableDropTruncateExemptsSnapshotDdl` — §3.5 snapshot exemption: a snapshot `DROP TABLE` (source offset `snapshot=INITIAL`, `enable.snapshot.ddl=true`) reaches execution despite `disable.drop.truncate=true`, so the snapshot schema bootstrap is not frozen.
 - `DdlFailureLoudTest.ddlFailurePropagatesInsteadOfBeingSwallowed()` — a DDL whose drain aborts throws `DDLReplicationException` out of `processEveryChangeRecord` rather than returning null.
 - `DdlFailureLoudTest.drainIsNoOpWhenExecutorIsNull()` — single-threaded mode drains as a no-op instead of an NPE.
@@ -257,7 +287,7 @@ The contract of this spec is binary: a DDL is either applied on ClickHouse and t
 - **FM-06.08-6 A needed DDL is dropped by an ignore rule or the capture filter**
   - **Trigger**: an over-broad `ignore.ddl.regex` (or a bundled pattern), `disable.ddl=true`, `disable.drop.truncate=true`, or capture lists that exclude a table whose rows are nevertheless replicated.
   - **Behaviour**: `checkIfDDLNeedsToBeIgnored()` drops the statement before the drain (§3.3), records it in `lastIgnoredDDL`, commits nothing for it (the next acknowledged record covers its offset).
-  - **Detection**: one INFO naming the rule (WARN for `disable.drop.truncate`: `Ignoring DROP/TRUNCATE statement because disable.drop.truncate=true...`). Later rows fail loudly only for a missing column (spec 08.04).
+  - **Detection**: one INFO naming the rule (for `disable.drop.truncate`, ERROR `Ignoring TRUNCATE of table <t> because disable.drop.truncate=true; ...` with the binlog position and the resync requirement (§3.3 item 5), and WARN `DROP of [...] kept because disable.drop.truncate=true...` for a dropped table or database; WARN for a partition DROP or TRUNCATE on a captured table: `Ignoring DROP PARTITION p of table t...`). Later rows fail loudly only for a missing column (spec 08.04).
   - **Blast radius**: silent schema divergence of the affected tables (deliberate for `disable.drop.truncate`).
   - **Recovery**: narrow the rule, restart, apply the dropped DDL by hand on ClickHouse, re-synchronise the table if rows were affected (spec 11.04).
   - **RTO**: operator time; unmeasured.

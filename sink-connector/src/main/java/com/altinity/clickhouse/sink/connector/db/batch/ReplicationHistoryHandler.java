@@ -3,6 +3,7 @@ package com.altinity.clickhouse.sink.connector.db.batch;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -77,14 +78,11 @@ public class ReplicationHistoryHandler {
         this.queryFormatter = new QueryFormatter();
         this.dbMetadata = dbMetadata;
 
-        String sourceTz = "UTC";
-        if (config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()) != null) {
-            String configSourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-            if (configSourceTimeZone != null && !configSourceTimeZone.isEmpty()) {
-                sourceTz = configSourceTimeZone;
-            }
-        }
-        this.sourceTimeZone = ZoneId.of(sourceTz);
+        // Spec 07.03 section 3.1.6: an unset database.connectionTimeZone is the default zone, never UTC. An invalid
+        // value throws here (TimeZoneResolver), as it does at validation.
+        this.sourceTimeZone = TimeZoneResolver.effective(TimeZoneResolver.SOURCE_CONNECTION_TIMEZONE,
+                config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()),
+                TimeZoneResolver.Kind.SOURCE).zone();
         this.serverTimeZone = serverTimeZone;
         this.useSnowflakeId = config.getBoolean(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString());
     }
@@ -111,8 +109,11 @@ public class ReplicationHistoryHandler {
      * source timezone to the server timezone (Spec 12.03 section 3.6).
      */
     private String serverDateTime(long epochSeconds) {
-        return DebeziumConverter.TimestampConverter.convertWithoutTimeZoneAdjustment(epochSeconds * 1000,
-                ClickHouseDataType.DateTime, sourceTimeZone, serverTimeZone);
+        // Epoch-exact (Spec 12.04 section 3.5): the instant is passed to ClickHouse as a
+        // unix timestamp, so no zone is involved. Rendering wall-clock digits in the server
+        // zone lost the second pass of a DST overlap and shifted pre-1970 values.
+        // DateTime (UInt32) cannot hold a negative instant; 0 is its floor.
+        return Long.toString(Math.max(0L, epochSeconds));
     }
 
     /** The open-row sentinel {@code 2100-01-01 00:00:00} (Spec 12.02 section 3.1), rendered like {@link #serverDateTime}. */

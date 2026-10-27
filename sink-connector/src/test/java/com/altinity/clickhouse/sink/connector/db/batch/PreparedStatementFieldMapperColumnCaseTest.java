@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -97,7 +98,7 @@ public class PreparedStatementFieldMapperColumnCaseTest {
         List<Integer> nulls = new ArrayList<>();
         new PreparedStatementFieldMapper("is_deleted", true, null, "_version", "db", ZoneId.of("UTC"))
                 .insertPreparedStatement(indexMap, recording(bound, nulls), record.getAfterModifiedFields(),
-                        record, after, false, new ClickHouseSinkConnectorConfig(new HashMap<>()), columns,
+                        record, after, false, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), columns,
                         DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, "orders");
 
         assertEquals(7, bound.get(1), "id must be bound to `ID`; bound: " + bound);

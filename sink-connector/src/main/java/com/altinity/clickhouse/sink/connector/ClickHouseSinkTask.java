@@ -1,8 +1,12 @@
 package com.altinity.clickhouse.sink.connector;
 
+import com.altinity.clickhouse.sink.connector.common.StartupZonePolicy;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.common.Version;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
+import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
+import com.altinity.clickhouse.sink.connector.db.ClickHouseZoneCrossCheck;
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicator;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchExecutor;
 import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchRunnable;
@@ -19,11 +23,13 @@ import org.apache.kafka.connect.sink.SinkTask;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import java.sql.Connection;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.ArrayList;
 import java.util.Map;
+import java.util.function.Supplier;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
@@ -136,6 +142,33 @@ public class ClickHouseSinkTask extends SinkTask {
 
         this.id = "task-" + this.config.getLong(
                 ClickHouseSinkConnectorConfigVariables.TASK_ID.toString());
+
+        // B5 (spec 07.03 section 3.1.6): the configured ClickHouse zone against timezone() and the zones
+        // of existing DateTime columns. Once per connector, from task 0, so N tasks do not repeat the
+        // same ERROR lines. Loud ERROR per mismatch; a failure to run it is a WARN and never blocks start.
+        if (this.config.getLong(ClickHouseSinkConnectorConfigVariables.TASK_ID.toString()) == 0L) {
+            // Spec 07.03 section 3.1.2: both zone settings are mandatory and the config constructor has
+            // already refused an unset one. Log both effective zones once per connector.
+            String clickHouseRaw = this.config.getString(TimeZoneResolver.CLICKHOUSE_DATETIME_TIMEZONE);
+            String sourceRaw = this.config.getString(
+                    ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
+            StartupZonePolicy.logEffective(TimeZoneResolver.clickHouseZone(clickHouseRaw).getId(),
+                    TimeZoneResolver.resolve(TimeZoneResolver.SOURCE_CONNECTION_TIMEZONE, sourceRaw,
+                            TimeZoneResolver.Kind.SOURCE).getId());
+            final String zoneCheckUrl = BaseDbWriter.getConnectionString(
+                    this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_URL.toString()),
+                    this.config.getInt(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PORT.toString()),
+                    BaseDbWriter.SYSTEM_DB);
+            // The resolved zone, not the raw value: the config constructor has already refused an unset value.
+            final String zone = TimeZoneResolver.clickHouseZone(
+                    this.config.getString(TimeZoneResolver.CLICKHOUSE_DATETIME_TIMEZONE)).getId();
+            final Supplier<Connection> zoneConnections = () -> BaseDbWriter.createConnection(zoneCheckUrl,
+                    BaseDbWriter.DATABASE_CLIENT_NAME,
+                    this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_USER.toString()),
+                    this.config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_PASS.toString()),
+                    BaseDbWriter.SYSTEM_DB, this.config);
+            ClickHouseZoneCrossCheck.checkAtStartup(zone, zoneConnections);
+        }
 
         int maxQueueSize = this.config.getInt(
                 ClickHouseSinkConnectorConfigVariables.MAX_QUEUE_SIZE.toString());

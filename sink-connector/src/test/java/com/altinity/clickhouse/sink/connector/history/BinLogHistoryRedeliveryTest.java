@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.history;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
@@ -74,7 +75,7 @@ public class BinLogHistoryRedeliveryTest {
                 (proxy, method, args) -> method.getName().equals("prepareStatement") ? ps : null);
         Map<String, String> props = new HashMap<>();
         ClickHouseSinkConnectorConfig.setDefaultValues(props);
-        new BinLogHistory().executeInsertWithStructs(new ClickHouseSinkConnectorConfig(props), conn,
+        new BinLogHistory().executeInsertWithStructs(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), conn,
                 "INSERT INTO binlog_history.history", "", Arrays.asList(structs), "UTC", "UTC");
         List<String> columns = new ArrayList<>(BinLogHistory.HISTORY_COLUMNS.keySet());
         List<Map<String, Object>> rows = new ArrayList<>();

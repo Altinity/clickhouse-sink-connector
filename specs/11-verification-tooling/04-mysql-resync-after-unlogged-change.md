@@ -73,6 +73,7 @@ ch-mysql-resync patch      --dump-base DIR [--stamp YYYYMMDD] --schemas S [S ...
                            [--load-parallel 2] [--load-threads 4] [--skip-load]
                            [--canary-list FILE] [--canary-threshold 0.99] [--force]
                            [--loader-cmd CMD] [--loader-cwd DIR]
+                           --source_timezone ZONE
                            [--offset-table DB.TABLE [--offset-key KEY] | --skip-connector-position-check]
 ch-mysql-resync rewind-sql --dump-base DIR [--stamp YYYYMMDD] --offset-table DB.TABLE [--offset-key KEY]
                            --ch-host HOST --ch-config client.xml --connector-stopped
@@ -95,6 +96,16 @@ which `<schema><suffix>` is a selected schema (the empty suffix included)
 exits 1 before any statement. `patch --apply` requires `--offset-table` (the
 position gate of §3.3 step 6) unless `--skip-connector-position-check` is
 given, which is logged as a `WARNING`.
+
+`patch` also requires `--source_timezone ZONE` on every run, dry run included:
+ZONE is the IANA region name the connector interprets MySQL DATETIME values in
+(its `database.connectionTimeZone`). Without it `patch` exits before any
+connection is opened, with a message that names the flag and suggests
+`--source_timezone America/Chicago`. There is no UTC fallback and no
+MySQL-server zone read. `patch` forwards the value to the loader, which applies
+the same refusal (spec 11.02 §3.2 step 1; spec 13.04). Callers that invoked
+`patch` or the loader without the flag must add it before this change takes
+effect.
 
 ### 3.2 `dump`
 1. If `binlog_position_<stamp>.json` does not exist, run `SHOW MASTER STATUS`
