@@ -2,7 +2,7 @@
 from subprocess import Popen, PIPE
 import shlex
 from ch_sink_tools.db.mysql import is_binary_datatype
-from ch_sink_tools.db.checksum_common import DATETIME_MIN, DATETIME_MAX, get_unix_timezone_from_mysql_timezone, \
+from ch_sink_tools.db.checksum_common import DATETIME_MIN, datetime64_max_text, get_unix_timezone_from_mysql_timezone, \
     check_source_timezone_flag
 import argparse
 import sys
@@ -475,14 +475,19 @@ def target_column_types(args, clickhouse_user, clickhouse_password, database, ta
 
 def datetime_clamp_expression(column, column_name, target_types=None):
     """A MySQL DATETIME field of the dump (text, input() declares it String), saturated as the streaming connector
-    saturates it (Spec 13.04 D-13.04-34): above 2299-12-31 23:59:59 the instant 2299-12-31 23:59:59 UTC, below
-    1900-01-01 00:00:00 the instant 1900-01-01 00:00:00 UTC (DataTypeRange.DATETIME64_MAX/MIN, clamp.out.of.range;
-    the checksum tools' DATETIME_MIN/DATETIME_MAX). The bounds are instants, so the column or server zone cannot
-    move them; ClickHouse left alone keeps the fraction (2299-12-31 23:59:59.999999) or, parsing in another zone,
-    stores another instant. A value equal to a bound takes the bound too (the same instant, whatever the zone);
-    any other value is cast to the column type exactly as the INSERT cast it before. The dump writes
-    'YYYY-MM-DD HH:MM:SS[.ffffff]', so text order is time order: '>= max' catches the bound and anything later,
-    '< min + 1 microsecond' the bound written with or without a fraction and anything earlier.
+    saturates it (Spec 13.04 D-13.04-34): at or above the high bound the instant of that bound, below
+    1900-01-01 00:00:00 the instant 1900-01-01 00:00:00 UTC (DataTypeRange.DATETIME64_SATURATION_MAX,
+    CLICKHOUSE_MIN_SUPPORTED_DATETIME64; clamp.out.of.range; the checksum tools' DATETIME_MIN/DATETIME_MAX). The
+    bounds are instants, so the column or server zone cannot move them; ClickHouse left alone keeps the fraction
+    (2299-12-31 23:59:59.999999) or, parsing in another zone, stores another instant. A value equal to a bound
+    takes the bound too (the same instant, whatever the zone); any other value is cast to the column type
+    exactly as the INSERT cast it before. The dump writes 'YYYY-MM-DD HH:MM:SS[.ffffff]', so text order is time
+    order: '>= max' catches the bound and anything later, '< min + 1 microsecond' the bound written with or
+    without a fraction and anything earlier.
+
+    The high bound TEXT is per precision: 2299-12-31 23:59:59 for scales 0..8, and 2262-04-11 23:47:16.854775807
+    for scale 9, whose Int64 nanosecond representation ends there (``datetime64_max_text``). Parsing the 2299 text
+    at precision 9 raises ``Code: 407 Decimal math overflow``, so a scale-9 load used to fail outright.
 
     The type cast to is the target table's own column type (``target_types``, from system.columns), so an
     in-range value is converted in the target column's zone as the implicit INSERT conversion did; the loader's
@@ -495,7 +500,7 @@ def datetime_clamp_expression(column, column_name, target_types=None):
             target = f"Nullable({target})"
     precision = DATETIME64_PRECISION.search(target)
     precision = precision.group(1) if precision else '6'
-    (low, high) = (DATETIME_MIN[:19], DATETIME_MAX[:19])
+    (low, high) = (DATETIME_MIN[:19], datetime64_max_text(precision))
     return (f"multiIf({column_name} >= '{high}', CAST(toDateTime64('{high}', {precision}, 'UTC') AS {target}), "
             f"{column_name} < '{low}.000001', CAST(toDateTime64('{low}', {precision}, 'UTC') AS {target}), "
             f"CAST({column_name} AS {target}))")

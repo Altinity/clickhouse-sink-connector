@@ -30,6 +30,32 @@ DATETIME64_MAX_UTC = DATETIME_MAX[:19]
 DATE32_MIN = DATETIME_MIN[:10]
 DATE32_MAX = DATETIME_MAX[:10]
 
+# The upper bound a DateTime64(9) column can HOLD. A DateTime64(9) stores the
+# instant as an Int64 count of nanoseconds, so its last representable instant is
+# 2262-04-11 23:47:16.854775807 and the range text above is past it:
+# ``toDateTime64('2299-12-31 23:59:59', 9, 'UTC')`` raises
+# ``Code: 407. DB::Exception: Decimal math overflow`` and
+# ``parseDateTime64BestEffortOrNull('2299-12-31 23:59:59', 9, 'UTC')`` returns
+# NULL (both measured on 24.8.14.10545.altinitystable). Any expression that
+# parses the DATETIME64_MAX_UTC text at precision 9 therefore breaks; this is the
+# form it must use instead, verified to round-trip exactly at precision 9
+# (``toUnixTimestamp64Nano`` = 9223372036854775807).
+DATETIME64_MAX_UTC_SCALE9 = "2262-04-11 23:47:16.854775807"
+
+
+def datetime64_max_text(precision):
+    """The upper-bound TEXT that a ``DateTime64(precision)`` parse accepts.
+
+    Precision 0..8 accept :data:`DATETIME64_MAX_UTC` (2299-12-31 23:59:59);
+    precision 9 cannot, because the Int64 nanosecond representation ends at
+    2262-04-11 23:47:16.854775807, so it takes :data:`DATETIME64_MAX_UTC_SCALE9`.
+
+    :param precision: the DateTime64 scale, 0..9 (an int or its decimal string)
+    :return: the bound text for that precision
+    """
+    return DATETIME64_MAX_UTC_SCALE9 if int(precision) == 9 else DATETIME64_MAX_UTC
+
+
 # Canonical text of a DATETIME / TIMESTAMP value on both sides: fixed width,
 # six fraction digits, never trimmed (spec 11.02 section 3.4). Fixed width keeps
 # the mapping injective (trimming trailing zeros turned '10:00:10' into '10:00:1'
@@ -126,10 +152,18 @@ def saturation_floor(utc_bounds, zone):
     and never above the upper bound in that zone.
 
     Every value from this instant on renders as the upper bound on both sides,
-    so all the representations of an out-of-range source value that ClickHouse
-    can hold compare equal: the connector stores ``2299-12-31 23:59:59`` (or
-    ``.999999``), a bulk load stores the source's own time of day on
-    ``2299-12-31`` (``00:00:00``, ``05:59:00``, ...).
+    so the representations of an out-of-range source value compare equal: the
+    connector stores ``2299-12-31 23:59:59.000000`` at every scale, and a bulk
+    load stores the source's own time of day on ``2299-12-31``
+    (``00:00:00``, ``05:59:00``, ...).
+
+    The connector's stored saturated value is ONE value, never a per-scale one.
+    A saturated value is part of the row's ReplacingMergeTree sorting key, so a
+    ``.999999`` variant would be a different row from the ``.000000`` one for
+    the same source value: a delete written after an upgrade would not replace
+    the row it deletes, and both representations would show up under ``FINAL``.
+    Sink-connector 2.11.1 briefly stored ``.999999`` at scale 6; the tolerance
+    that used to be written here is what let that pass unnoticed.
     """
     utc_floor = utc_bounds[1][:10] + " 00:00:00.000000"
     (floor,) = shift_datetime_bounds((utc_floor,), zone)

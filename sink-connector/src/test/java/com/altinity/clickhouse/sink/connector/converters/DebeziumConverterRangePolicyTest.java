@@ -35,6 +35,7 @@ import java.util.Map;
 import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -370,7 +371,7 @@ public class DebeziumConverterRangePolicyTest {
         DebeziumConverter.ValueOutOfRangeException decimal = assertThrows(DebeziumConverter.ValueOutOfRangeException.class,
                 () -> new DebeziumConverter.BigDecimalConverter().truncate(
                         BinaryStreamUtils.DECIMAL128_MAX.add(BigDecimal.ONE), strict));
-        assertTrue(decimal.getMessage().contains("Decimal128"), decimal.getMessage());
+        assertTrue(decimal.getMessage().contains("Decimal(38, 0)"), decimal.getMessage());
 
         // In-range values pass through every bounded converter untouched.
         assertEquals("2021-12-31 19:01:00.000000",
@@ -396,7 +397,7 @@ public class DebeziumConverterRangePolicyTest {
                     DebeziumConverter.DateConverter.convert((int) LocalDate.of(2200, 1, 1).toEpochDay(), ClickHouseDataType.Date));
             assertEquals("2299-12-31 23:59:59.000000",
                     DebeziumConverter.ZonedTimestampConverter.convert("2338-01-19T03:14:07.99Z", UTC));
-            assertEquals(BinaryStreamUtils.DECIMAL128_MAX,
+            assertEquals(DataTypeRange.decimalMax(DataTypeRange.DECIMAL128_MAX_PRECISION, 0),
                     new DebeziumConverter.BigDecimalConverter().truncate(BinaryStreamUtils.DECIMAL128_MAX.add(BigDecimal.ONE)));
 
             List<String> warnings = appender.warnings();
@@ -450,7 +451,7 @@ public class DebeziumConverterRangePolicyTest {
         assertEquals(Instant.ofEpochSecond(9_223_372_036L, 854_775_807L), DataTypeRange.dateTime64Max(9));
         assertEquals(Long.MAX_VALUE,
                 Math.addExact(Math.multiplyExact(9_223_372_036L, 1_000_000_000L), 854_775_807L));
-        assertEquals(DataTypeRange.dateTime64Max(6), DataTypeRange.CLICKHOUSE_MAX_SUPPORTED_DATETIME64);
+        assertEquals(DataTypeRange.dateTime64Max(6), DataTypeRange.clickHouseMaxSupportedDateTime64());
         assertThrows(IllegalArgumentException.class, () -> DataTypeRange.dateTime64Max(10));
         assertThrows(IllegalArgumentException.class, () -> DataTypeRange.dateTime64Max(-1));
     }
@@ -615,5 +616,66 @@ public class DebeziumConverterRangePolicyTest {
         assertThrows(IllegalArgumentException.class,
                 () -> DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 10));
         assertEquals(9, DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 9).scale());
+    }
+
+    @Test
+    @DisplayName("A saturated decimal lands on the bound of its own column, which the column can hold (Spec 07.02 section 3.2.1)")
+    public void decimalSaturatesToTheBoundOfItsOwnColumn() {
+        // ClickHouse accepts at most 38 significant digits for a Decimal128 and rejects the
+        // 39-digit Int128 constant in clickhouse-data, so a value saturated to that constant
+        // is one the server refuses to store. Measured on 24.8.14:
+        //   toDecimal128OrNull('170141183460469231731687303715884105727', 0) -> NULL
+        //   toDecimal128OrNull('99999999999999999999999999999999999999',    0) -> the value
+        BigDecimal tooWide = new BigDecimal("100000000000000000000000000000000000000");
+        assertEquals(new BigDecimal("99999999999999999999999999999999999999"),
+                DataTypeRange.decimalMax(38, 0), "38 nines is the largest storable Decimal128");
+        assertEquals(DataTypeRange.decimalMax(38, 0),
+                new DebeziumConverter.BigDecimalConverter().truncate(tooWide),
+                "an unknown column falls back to the widest Decimal128 bound, not the Int128 one");
+
+        // A declared column bounds to ITS precision and scale: Decimal(18, 6) holds
+        // 999999999999.999999, twelve integer digits and six fractional ones.
+        DebeziumConverter.RangePolicy d18s6 = DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 6, 18, 6);
+        assertEquals(new BigDecimal("999999999999.999999"), DataTypeRange.decimalMax(18, 6));
+        assertEquals(new BigDecimal("999999999999.999999"),
+                new DebeziumConverter.BigDecimalConverter().truncate(new BigDecimal("1234567890123456.5"), d18s6));
+        assertEquals(new BigDecimal("-999999999999.999999"),
+                new DebeziumConverter.BigDecimalConverter().truncate(new BigDecimal("-1234567890123456.5"), d18s6),
+                "the low side is the negation of the same bound");
+
+        // A value the column CAN hold passes through untouched, however many digits it has.
+        assertEquals(new BigDecimal("999999999999.999998"),
+                new DebeziumConverter.BigDecimalConverter()
+                        .truncate(new BigDecimal("999999999999.999998"), d18s6));
+        assertEquals(BigDecimal.TEN, new DebeziumConverter.BigDecimalConverter().truncate(BigDecimal.TEN, d18s6));
+
+        // Scale 0 is the whole-number bound, and the fixed-width spellings are the
+        // same bounds under another name (measured: Decimal32(2) IS Decimal(9, 2)).
+        assertEquals(new BigDecimal("999999999"), DataTypeRange.decimalMax(9, 0));
+        assertEquals(new BigDecimal("999999999999999999"), DataTypeRange.decimalMax(18, 0));
+        assertThrows(IllegalArgumentException.class, () -> DataTypeRange.decimalMax(0, 0));
+        assertThrows(IllegalArgumentException.class, () -> DataTypeRange.decimalMax(77, 0));
+        assertThrows(IllegalArgumentException.class, () -> DataTypeRange.decimalMax(10, 11));
+        assertThrows(IllegalArgumentException.class, () -> DataTypeRange.decimalMax(10, -1));
+    }
+
+    @Test
+    @DisplayName("A column's declared Decimal(p, s) is read from its type, so the column decides the bound")
+    public void decimalPrecisionScaleIsReadFromTheDeclaredType() {
+        assertArrayEquals(new int[]{18, 6}, ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal(18, 6)"));
+        assertArrayEquals(new int[]{18, 6}, ClickHouseDataTypeMapper.decimalPrecisionScale("Nullable(Decimal(18, 6))"));
+        assertArrayEquals(new int[]{38, 9}, ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal( 38 , 9 )"));
+        // The fixed-width spellings carry the same bound: Decimal128(s) is Decimal(38, s).
+        assertArrayEquals(new int[]{9, 2}, ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal32(2)"));
+        assertArrayEquals(new int[]{18, 3}, ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal64(3)"));
+        assertArrayEquals(new int[]{38, 6}, ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal128(6)"));
+        assertArrayEquals(new int[]{76, 4}, ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal256(4)"));
+        // Not a decimal, or a declaration this reader cannot trust: the caller keeps its default.
+        assertNull(ClickHouseDataTypeMapper.decimalPrecisionScale("DateTime64(6, 'UTC')"));
+        assertNull(ClickHouseDataTypeMapper.decimalPrecisionScale("String"));
+        assertNull(ClickHouseDataTypeMapper.decimalPrecisionScale(null));
+        assertNull(ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal(10, 11)"), "scale > precision");
+        assertNull(ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal(0, 0)"), "precision 0");
+        assertNull(ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal(77, 0)"), "past Decimal256");
     }
 }

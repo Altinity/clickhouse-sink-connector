@@ -4,6 +4,7 @@ import com.clickhouse.data.format.BinaryStreamUtils;
 import static java.time.Instant.from;
 import static java.time.Instant.ofEpochMilli;
 
+import java.math.BigDecimal;
 import java.time.*;
 
 /**
@@ -115,8 +116,94 @@ public class DataTypeRange {
      * Maximum {@link Instant} for supported DateTime64 in ClickHouse at the
      * default scale 6: 2299-12-31 23:59:59.999999, the largest value a
      * {@code DateTime64(6)} column accepts.
+     *
+     * <p>It is the scale-6 ACCEPTANCE bound and nothing else. It is not the
+     * saturation value ({@link #DATETIME64_SATURATION_MAX}), and it must not be
+     * used to bound a column whose scale is not 6: the write path asks
+     * {@link #dateTime64Max(int)} for the scale of the column it is writing.</p>
+     *
+     * @deprecated a constant only tells the reader about scale 6 while the bound
+     *             is per column; keep the field for binary compatibility and
+     *             call {@link #dateTime64Max(int)} with the column's own scale.
      */
+    @Deprecated
     public static final Instant CLICKHOUSE_MAX_SUPPORTED_DATETIME64 = dateTime64Max(DATETIME64_DEFAULT_SCALE);
+
+    /**
+     * {@link #CLICKHOUSE_MAX_SUPPORTED_DATETIME64} as a method, for callers that
+     * would rather not reference a deprecated constant.
+     *
+     * @return the scale-6 acceptance bound, 2299-12-31 23:59:59.999999
+     */
+    public static Instant clickHouseMaxSupportedDateTime64() {
+        return dateTime64Max(DATETIME64_DEFAULT_SCALE);
+    }
+
+    /**
+     * The number of decimal digits a ClickHouse {@code Decimal128} column can
+     * hold: 38. The largest storable magnitude is therefore {@code 10^38 - 1}
+     * (99999999999999999999999999999999999999), NOT the Java Int128 constant
+     * in clickhouse-data ({@code BinaryStreamUtils.DECIMAL128_MAX} =
+     * 170141183460469231731687303715884105727, which has 39 digits).
+     *
+     * <p>Measured on 24.8.14.10545.altinitystable: {@code
+     * toDecimal128OrNull('170141183460469231731687303715884105727', 0)} returns
+     * NULL and {@code toDecimal128OrNull('99999999999999999999999999999999999999', 0)}
+     * returns the value, so a decimal saturated to the Java constant is a value
+     * the server refuses to store. The same holds for the smaller precisions
+     * ({@code toDecimal32OrNull} rejects 10 digits, {@code toDecimal64OrNull}
+     * rejects 19), which is why the bound is computed from the DECLARED
+     * precision rather than fixed at one number.</p>
+     */
+    public static final int DECIMAL128_MAX_PRECISION = 38;
+
+    /**
+     * The widest precision ClickHouse defines for a Decimal column
+     * ({@code Decimal256(S)}), which is also the largest precision this class
+     * will compute a bound for.
+     */
+    public static final int DECIMAL_MAX_PRECISION = 76;
+
+    /**
+     * The largest value a ClickHouse {@code Decimal(precision, scale)} column
+     * can hold: {@code 10^(precision - scale) - 10^-scale}, the number written
+     * with {@code precision} nines and a point {@code scale} digits from the
+     * right. For {@code Decimal(18, 6)} that is 999999999999.999999.
+     *
+     * <p>{@code scale == 0} gives the whole-number bound {@code 10^precision - 1}.
+     * The bound is a property of the COLUMN, so a saturated decimal must be
+     * computed from the declared precision and scale, not from one constant:
+     * a value larger than this cannot be stored, and bounding to something the
+     * column refuses would not be a bound at all.</p>
+     *
+     * @param precision total significant digits, 1..{@value #DECIMAL_MAX_PRECISION}
+     * @param scale     fractional digits, 0..precision
+     * @return the inclusive upper bound
+     * @throws IllegalArgumentException when a parameter is outside its range
+     */
+    public static BigDecimal decimalMax(int precision, int scale) {
+        if (precision < 1 || precision > DECIMAL_MAX_PRECISION) {
+            throw new IllegalArgumentException("Decimal precision must be 1.." + DECIMAL_MAX_PRECISION
+                    + ", got " + precision);
+        }
+        if (scale < 0 || scale > precision) {
+            throw new IllegalArgumentException("Decimal scale must be 0.." + precision + ", got " + scale);
+        }
+        return BigDecimal.TEN.pow(precision).subtract(BigDecimal.ONE).movePointLeft(scale);
+    }
+
+    /**
+     * The smallest value a ClickHouse {@code Decimal(precision, scale)} column
+     * can hold: the negation of {@link #decimalMax(int, int)}.
+     *
+     * @param precision total significant digits, 1..{@value #DECIMAL_MAX_PRECISION}
+     * @param scale     fractional digits, 0..precision
+     * @return the inclusive lower bound
+     * @throws IllegalArgumentException when a parameter is outside its range
+     */
+    public static BigDecimal decimalMin(int precision, int scale) {
+        return decimalMax(precision, scale).negate();
+    }
 
     // DateTime and DateTime32
 

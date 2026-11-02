@@ -277,9 +277,14 @@ public class PreparedStatementFieldMapper {
         if (binding == null || !Objects.equals(binding.declaredType, declaredType)) {
             // The bound's DateTime64 upper limit depends on the column's declared
             // scale (Spec 07.03 section 3.1.8), so the scale is read from the type.
+            // A decimal's upper limit likewise depends on the declared precision
+            // and scale (Spec 07.02 section 3.1.4), which is why both travel with
+            // the policy; -1 marks a column that declares no decimal type.
+            int[] decimal = ClickHouseDataTypeMapper.decimalPrecisionScale(declaredType);
             binding = new ColumnBinding(declaredType, parseColumn(colName, columnNameToDataTypeMap),
                     DebeziumConverter.RangePolicy.of(config, databaseName + "." + tableName + "." + colName,
-                            ClickHouseDataTypeMapper.dateTime64Scale(declaredType)));
+                            ClickHouseDataTypeMapper.dateTime64Scale(declaredType),
+                            decimal == null ? -1 : decimal[0], decimal == null ? -1 : decimal[1]));
             columnBindings.put(colName, binding);
         }
         return binding;
@@ -512,7 +517,12 @@ public class PreparedStatementFieldMapper {
             if (type == Schema.Type.ARRAY) {
                 // Check if the ClickHouse column is a non-Array type (e.g. String/Nullable(String)).
                 // PG text[] columns may be auto-created as Nullable(String) in ClickHouse,
-                // so we serialize the array as a JSON string instead of using setArray().
+                // so we serialize the array as a string instead of using setArray().
+                // The form is java.util.List#toString ([a, b, c], no quoting), NOT JSON and
+                // not the PostgreSQL array literal ({a,b,c}) the snapshot path (ch-pg-dump)
+                // stores for the same source value. Changing this form mid-stream would
+                // store one source value two ways across releases and split a
+                // ReplacingMergeTree key, so it is left as built and reported instead.
                 String chColumnType = columnNameToDataTypeMap.get(colName);
                 if (chColumnType != null && !chColumnType.startsWith("Array")) {
                     if (value == null) {

@@ -163,6 +163,7 @@ class TimeZoneMatrixTest {
     }
 
     @Test
+    @SuppressWarnings("deprecation") // pins the retired helper's scale-6 behaviour so it cannot drift back into use
     void outOfRangeDateTime64TextReadsBackAsTheFixedSaturationValueInEveryServerZone() {
         // A value past the last DateTime64(6) value saturates to the fixed historical value, 2299-12-31 23:59:59
         // with no fraction, at every scale -- not to the per-scale bound (.999999 at scale 6), which is only the

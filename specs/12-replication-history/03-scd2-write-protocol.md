@@ -346,11 +346,23 @@ Formal: `Replication.History.snowflake_encode_strict_mono`,
 `Replication.History.old_raw_sequence_version_loses_to_legacy_open_row`.
 
 ### 3.6 Timezones
-`ts` and `S` are converted with `convertWithoutTimeZoneAdjustment` from the
-source timezone (`database.connectionTimeZone`, mandatory with no default; Spec 07.03 §3.1.2) to the
-ClickHouse zone (`clickhouse.datetime.timezone`, also mandatory); the statement literals wrap them in `toDateTime(..., 'tz')`. See
-12.02 §3.1 / Gap G-12.02-1 for the equality requirement between the
-statement timezone and the column timezone.
+`ts` and `S` are rendered by `ReplicationHistoryHandler.serverDateTime` as the
+**unix timestamp itself** (`Long.toString(epochSeconds)`, floored at 0 because a
+`DateTime` is an unsigned 32-bit count) and embedded as `toDateTime(<epoch>)`
+with no time-zone text at all. No zone is involved, so no zone can shift the
+value: a wall-clock rendering lost the second occurrence of a DST fall-back hour
+and moved pre-1970 stamps. `source.ts_ms` is a true instant (12.04 §3.5 /
+Property T1), not a wall time in any zone, which is what makes this the correct
+form for it.
+
+This replaces the earlier `convertWithoutTimeZoneAdjustment` rendering, which
+converted source-zone wall time to the ClickHouse zone and wrapped it as
+`toDateTime(..., '<tz>')`. `database.connectionTimeZone` (Spec 07.03 §3.1.2) and
+`clickhouse.datetime.timezone` stay mandatory and still govern the zone-less
+DATETIME columns of the DATA path; they no longer take part in the history
+statements. See 12.02 §3.1 / Gap G-12.02-1 for the equality requirement between
+the statement timezone and the column timezone, which holds trivially here
+because the statement carries no timezone.
 
 ### 3.7 Operation codes
 SCD2 tables store the **single-letter** codes: `'C'`, `'r'`, `'U'`, `'D'`

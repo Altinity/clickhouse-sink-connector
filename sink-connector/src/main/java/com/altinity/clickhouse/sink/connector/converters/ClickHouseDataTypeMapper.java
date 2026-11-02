@@ -274,6 +274,63 @@ public class ClickHouseDataTypeMapper {
 
     private static final Pattern DATETIME64_SCALE = Pattern.compile("DateTime64\\(\\s*(\\d+)");
 
+    private static final Pattern DECIMAL_TYPE = Pattern.compile("Decimal\\(\\s*(\\d+)\\s*,\\s*(\\d+)\\s*\\)");
+
+    private static final Pattern DECIMAL_FIXED_WIDTH = Pattern.compile("Decimal(32|64|128|256)\\(\\s*(\\d+)\\s*\\)");
+
+    /**
+     * The {@code Decimal(precision, scale)} a declared ClickHouse type
+     * carries, e.g. {@code {12, 6}} for
+     * {@code Nullable(Decimal(12, 6))}, so an out-of-range decimal saturates to
+     * the bound of the column it is bound into (Spec 07.02 section 3.2.1).
+     *
+     * <p>Returns {@code null} when the type is not a {@code Decimal(p, s)}:
+     * the fixed-width ClickHouse spellings ({@code Decimal32(s)},
+     * {@code Decimal64(s)}, {@code Decimal128(s)}, {@code Decimal256(s)}) and
+     * a type this expression does not match leave the bound to the caller's
+     * default.</p>
+     *
+     * @param columnType the ClickHouse column type string, may be null
+     * @return {precision, scale}, or null when the declaration is unknown
+     */
+    public static int[] decimalPrecisionScale(String columnType) {
+        if (columnType == null) {
+            return null;
+        }
+        Matcher m = DECIMAL_TYPE.matcher(columnType);
+        if (!m.find()) {
+            // The fixed-width spellings carry the SAME bound with fewer digits of
+            // precision: Decimal32 is Decimal(9, s), Decimal64 is Decimal(18, s),
+            // Decimal128 is Decimal(38, s), Decimal256 is Decimal(76, s).
+            Matcher fixed = DECIMAL_FIXED_WIDTH.matcher(columnType);
+            if (!fixed.find()) {
+                return null;
+            }
+            int scale;
+            try {
+                scale = Integer.parseInt(fixed.group(2));
+            } catch (NumberFormatException e) {
+                return null;
+            }
+            int bits = Integer.parseInt(fixed.group(1));
+            int width = bits == 32 ? 9 : bits == 64 ? 18 : bits == 128 ? DataTypeRange.DECIMAL128_MAX_PRECISION
+                    : DataTypeRange.DECIMAL_MAX_PRECISION;
+            return scale < 0 || scale > width ? null : new int[]{width, scale};
+        }
+        int precision;
+        int scale;
+        try {
+            precision = Integer.parseInt(m.group(1));
+            scale = Integer.parseInt(m.group(2));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+        if (precision < 1 || precision > DataTypeRange.DECIMAL_MAX_PRECISION || scale < 0 || scale > precision) {
+            return null;
+        }
+        return new int[]{precision, scale};
+    }
+
     /**
      * The fractional-digit scale a declared DateTime64 type carries, e.g. 3 for
      * {@code Nullable(DateTime64(3, 'UTC'))}. The upper bound of the column

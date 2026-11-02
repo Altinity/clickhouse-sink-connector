@@ -329,10 +329,17 @@ Every value except `TIMESTAMP` columns is parsed as `String` and converted by Cl
   DateTime64 range to the instants 1900-01-01 00:00:00 and 2299-12-31 23:59:59 UTC (`DataTypeRange.DATETIME64_MIN`
   / `DATETIME64_MAX`, `clamp.out.of.range`, Spec 07.03), and the checksum tools clamp to the same bounds
   (`db/checksum_common.py` `DATETIME_MIN`/`DATETIME_MAX`). `datetime_clamp_expression` gives the dump's text the
-  same treatment: `multiIf(col >= '2299-12-31 23:59:59', CAST(toDateTime64('2299-12-31 23:59:59', p, 'UTC') AS T),
+  same treatment: `multiIf(col >= high, CAST(toDateTime64(high, p, 'UTC') AS T),
   col < '1900-01-01 00:00:00.000001', CAST(toDateTime64('1900-01-01 00:00:00', p, 'UTC') AS T), CAST(col AS T))`
   with `T` the target table's own column type, read from `system.columns` before the INSERT
-  (`target_column_types`; the loader's translation only when it is unknown). A `--data_only` load into a table
+  (`target_column_types`; the loader's translation only when it is unknown). **`high` is the highest text a
+  `DateTime64(p)` parse accepts, and it is not the same at every precision** (`datetime64_max_text(p)`):
+  `2299-12-31 23:59:59` for p in 0..8, and `2262-04-11 23:47:16.854775807` for p = 9, whose Int64 nanosecond
+  representation ends there. Parsing the 2299 text at precision 9 raises `Code: 407 Decimal math overflow` and
+  `parseDateTime64BestEffortOrNull(..., 9, 'UTC')` returns NULL, so a scale-9 load used to fail outright; the
+  PostgreSQL source mapper (`postgres_type_mapper.py` `_datetime64_expr`, spec 13.05 §3.8 and §3.9.2) carries the
+  same per-precision bound and an extra `col >= high` saturation branch at p = 9, where the year test alone cannot
+  catch a 2263 value. A `--data_only` load into a table
   created elsewhere (the connector's `DateTime64(6, 'UTC')`, or ch-mysql-resync's scratch table `CREATE TABLE ... AS`
   the live table, loaded without `--clickhouse_datetime_timezone`) must convert exactly as the implicit INSERT
   conversion into that table did: a first version cast to the zone-less translation, and an end-to-end resync under

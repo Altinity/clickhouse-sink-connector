@@ -16,6 +16,7 @@ import java.time.format.DateTimeFormatter;
 import java.time.zone.ZoneOffsetTransition;
 import java.time.zone.ZoneRules;
 import java.time.temporal.ChronoUnit;
+import java.util.Locale;
 
 import static java.time.Instant.ofEpochMilli;
 
@@ -47,14 +48,43 @@ public class DebeziumConverter {
      * {@code '2026-11-01 01:30:00'} in {@code America/Chicago} names two
      * instants and ClickHouse stores the first, so the second cannot be
      * stored through digits at all. Sub-microsecond digits are truncated, as
-     * {@link #MICROS_FORMAT} truncates them.
+     * {@link #MICROS_FORMAT} truncates them; use {@link #epochText(Instant, int)}
+     * for a column that keeps more digits than six, or the extra digits are
+     * dropped without a report.
      */
     static String epochText(Instant instant) {
+        return epochText(instant, DataTypeRange.DATETIME64_DEFAULT_SCALE);
+    }
+
+    /**
+     * Renders an instant as epoch text with {@code scale} fractional digits, the
+     * number the target {@code DateTime64(scale)} column keeps (Spec 07.03
+     * section 3.1.4). ClickHouse parses epoch text at the COLUMN's scale and
+     * TRUNCATES toward the scale, so rendering exactly {@code scale} digits is
+     * lossless: the parsed instant is the one rendered.
+     *
+     * <p>Rendering fewer digits than the column keeps is the loss this overload
+     * exists to avoid. Measured on 24.8.14:
+     * {@code toDateTime64('9223372036.854775807', 9, 'UTC')} stores
+     * {@code 2262-04-11 23:47:16.854775807} exactly, while the same instant
+     * rendered with six digits ({@code '9223372036.854775'}) stores
+     * {@code ...854775000} -- the last three digits were dropped by the
+     * RENDERING, not by ClickHouse.</p>
+     *
+     * @param instant the instant to render
+     * @param scale   the fractional digits to render, 0..9 (the target column's
+     *                scale); a value above 9 is refused
+     * @return {@code <seconds>.<scale fraction digits>}
+     */
+    static String epochText(Instant instant, int scale) {
+        if (scale < 0 || scale > 9) {
+            throw new IllegalArgumentException("epoch text scale must be 0..9, got " + scale);
+        }
         // FLOOR, not DOWN: DOWN truncates toward zero, so a negative instant with a
         // sub-microsecond part was one microsecond late (Spec 07.03 section 3.1.11).
         return BigDecimal.valueOf(instant.getEpochSecond())
                 .add(BigDecimal.valueOf(instant.getNano(), 9))
-                .setScale(6, RoundingMode.FLOOR)
+                .setScale(scale, RoundingMode.FLOOR)
                 .toPlainString();
     }
 
@@ -99,7 +129,7 @@ public class DebeziumConverter {
     static String renderResolved(Instant instant, ClickHouseDataType type, ZoneId formatZone,
                                  DateTimeFormatter formatter, boolean outOfRange, RangePolicy policy) {
         if (bindsAsEpochText(type, instant)) {
-            return epochText(instant);
+            return epochText(instant, Math.max(DataTypeRange.DATETIME64_DEFAULT_SCALE, policy.scale()));
         }
         if (outOfRange) {
             return instant.atZone(ZoneOffset.UTC).format(formatter);
@@ -190,11 +220,19 @@ public class DebeziumConverter {
         private final boolean clamp;
         private final String column;
         private final int scale;
+        private final int decimalPrecision;
+        private final int decimalScale;
 
         private RangePolicy(boolean clamp, String column, int scale) {
+            this(clamp, column, scale, -1, -1);
+        }
+
+        private RangePolicy(boolean clamp, String column, int scale, int decimalPrecision, int decimalScale) {
             this.clamp = clamp;
             this.column = column;
             this.scale = scale;
+            this.decimalPrecision = decimalPrecision;
+            this.decimalScale = decimalScale;
         }
 
         /**
@@ -230,6 +268,31 @@ public class DebeziumConverter {
             return new RangePolicy(clamp, column, scale);
         }
 
+        /**
+         * The policy for one bound column that carries a declared DateTime64
+         * scale AND a declared {@code Decimal(precision, scale)}, so a decimal
+         * out of range saturates to the bound of the COLUMN it is bound into
+         * rather than to a fixed Decimal128 constant (Spec 07.02 section 3.2.1).
+         *
+         * @param config           the connector configuration (null means the default, which saturates)
+         * @param column           the column being bound; may be null when unknown
+         * @param scale            the DateTime64 scale of the column, 0..9
+         * @param decimalPrecision the declared decimal precision, or -1 when the column is not a decimal
+         * @param decimalScale     the declared decimal scale, or -1 when the column is not a decimal
+         * @return the policy
+         * @throws IllegalArgumentException when a parameter is outside its range
+         */
+        public static RangePolicy of(ClickHouseSinkConnectorConfig config, String column, int scale,
+                                     int decimalPrecision, int decimalScale) {
+            DataTypeRange.dateTime64Max(scale); // validates the scale
+            boolean clamp = config == null || config.getBoolean(
+                    ClickHouseSinkConnectorConfigVariables.CLAMP_OUT_OF_RANGE.toString());
+            if (decimalPrecision >= 0) {
+                DataTypeRange.decimalMax(decimalPrecision, decimalScale); // validates both
+            }
+            return new RangePolicy(clamp, column, scale, decimalPrecision, decimalScale);
+        }
+
         /** Whether out-of-range values are saturated rather than rejected. */
         public boolean clamps() {
             return clamp;
@@ -243,6 +306,16 @@ public class DebeziumConverter {
         /** The DateTime64 scale the upper bound is computed for, 0..9. */
         public int scale() {
             return scale;
+        }
+
+        /** The declared decimal precision the bound is computed for, or -1 when unknown. */
+        public int decimalPrecision() {
+            return decimalPrecision;
+        }
+
+        /** The declared decimal scale the bound is computed for, or -1 when unknown. */
+        public int decimalScale() {
+            return decimalScale;
         }
 
         /**
@@ -261,7 +334,10 @@ public class DebeziumConverter {
 
         /**
          * Renders a bound with {@code scale} fractional digits, so the message
-         * shows the value that is actually stored (23:59:59.999999, not .000).
+         * shows the value that will actually be written: the saturation instant
+         * itself is {@link DataTypeRange#DATETIME64_SATURATION_MAX}
+         * (2299-12-31 23:59:59.000 UTC at every scale), and only the digits
+         * after the point follow the column's scale.
          */
         static String formatBound(Instant bound, int scale) {
             String pattern = scale == 0 ? "yyyy-MM-dd HH:mm:ss" : "yyyy-MM-dd HH:mm:ss." + "S".repeat(scale);
@@ -307,18 +383,38 @@ public class DebeziumConverter {
             return bounded;
         }
 
-        /** Bounds a decimal to the Decimal128 range. */
+        /**
+         * Bounds a decimal to the range of the DECLARED column (Spec 07.02
+         * section 3.2.1): {@code 10^(precision-scale) - 10^-scale}, and its
+         * negative.
+         *
+         * <p>The bound is the column's own, not a fixed constant, because a
+         * bound the column cannot hold is not a bound. This previously used
+         * {@code BinaryStreamUtils.DECIMAL128_MAX}
+         * (170141183460469231731687303715884105727), the Int128 maximum, which
+         * has 39 significant digits; ClickHouse's decimal parser accepts at
+         * most 38, so the value a saturated decimal was stored as was one the
+         * server refuses (measured on 24.8.14.10545.altinitystable:
+         * {@code toDecimal128OrNull('170141183460469231731687303715884105727',
+         * 0)} is NULL, {@code ...('99999999999999999999999999999999999999', 0)}
+         * is the value). When the column's declaration is unknown the policy
+         * falls back to the widest Decimal128 precision, 38, at scale 0.</p>
+         */
         BigDecimal boundDecimal(BigDecimal value) {
+            int precision = decimalPrecision < 0 ? DataTypeRange.DECIMAL128_MAX_PRECISION : decimalPrecision;
+            int boundScale = decimalScale < 0 ? 0 : decimalScale;
+            BigDecimal high = DataTypeRange.decimalMax(precision, boundScale);
+            BigDecimal low = high.negate();
             BigDecimal bounded = value;
-            if (value.compareTo(BinaryStreamUtils.DECIMAL128_MAX) > 0) {
-                bounded = BinaryStreamUtils.DECIMAL128_MAX;
-            } else if (value.compareTo(BinaryStreamUtils.DECIMAL128_MIN) < 0) {
-                bounded = BinaryStreamUtils.DECIMAL128_MIN;
+            if (value.compareTo(high) > 0) {
+                bounded = high;
+            } else if (value.compareTo(low) < 0) {
+                bounded = low;
             }
             if (bounded != value) {
-                report(value.toPlainString(), bounded.toPlainString(), "Decimal128",
-                        "[" + BinaryStreamUtils.DECIMAL128_MIN.toPlainString() + " .. "
-                                + BinaryStreamUtils.DECIMAL128_MAX.toPlainString() + "]");
+                report(value.toPlainString(), bounded.toPlainString(), "Decimal(" + precision + ", "
+                                + boundScale + ")",
+                        "[" + low.toPlainString() + " .. " + high.toPlainString() + "]");
             }
             return bounded;
         }
@@ -411,7 +507,11 @@ public class DebeziumConverter {
             long minutes = (magnitude % MICROS_PER_HOUR) / MICROS_PER_MINUTE;
             long seconds = (magnitude % MICROS_PER_MINUTE) / MICROS_PER_SECOND;
             long fraction = magnitude % MICROS_PER_SECOND;
-            return String.format("%s%02d:%02d:%02d.%06d", sign, hours, minutes, seconds, fraction);
+            // Locale.ROOT: String.format renders with the DEFAULT locale, and in a
+            // locale with non-ASCII digits (ar-EG, fa-IR, ...) the digits written to
+            // the column would not be the digits MySQL holds. Every other value
+            // formatter in this class is locale-free; this one was not.
+            return String.format(Locale.ROOT, "%s%02d:%02d:%02d.%06d", sign, hours, minutes, seconds, fraction);
         }
     }
 
@@ -563,6 +663,34 @@ public class DebeziumConverter {
         }
 
 
+        /**
+         * Dead path: nothing in the connector calls it. It survives only because a
+         * published artifact's public method cannot be withdrawn inside a patch
+         * release. The live conversions are
+         * {@link #convert(Object, ClickHouseDataType, ZoneId, ZoneId, ZoneId, RangePolicy)}
+         * and {@link #instantEpochText(long, ZoneId)}.
+         *
+         * <p>It carries two hazards the live path does not, which is why it is
+         * deprecated rather than reused for a new caller. It bounds through the
+         * scale-less
+         * {@link #checkIfDateTimeExceedsSupportedRange(Instant, ClickHouseDataType, boolean[])},
+         * so it applies the scale-6 acceptance range to EVERY column: aimed at a
+         * {@code DateTime64(9)} column it saturates an out-of-range value to
+         * 2299-12-31, which that column refuses outright
+         * ({@code DECIMAL_OVERFLOW}, code 407, measured on 24.8.14) instead of
+         * the scale-9 bound, and it cannot express a value the column could hold
+         * between those two bounds (Spec 07.03 section 3.1.8). And it renders
+         * wall-clock digits in {@code serverTimezone} rather than epoch text, so
+         * the string is only the right instant when the reader uses exactly that
+         * zone, and no choice of zone can name the second occurrence of a DST
+         * fall-back hour; epoch text carries the instant itself (section 3.1.4).
+         * {@code sourceTimeZone} is accepted and never read.
+         *
+         * @deprecated no caller; use {@link #convert(Object, ClickHouseDataType,
+         *             ZoneId, ZoneId, ZoneId, RangePolicy)}, which sizes the bound to
+         *             the column's declared scale and binds epoch text.
+         */
+        @Deprecated
         public static String convertWithoutTimeZoneAdjustment(Object value, ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
             DateTimeFormatter destFormatter = MILLIS_FORMAT;
 
@@ -586,16 +714,27 @@ public class DebeziumConverter {
         }
 
         /**
-         * Converts timestamp with nanosecond precision for DateTime64 columns.
-         * 
+         * Dead path: no caller in the connector. Added for the nanosecond
+         * {@code binlog_history._time}, which now renders through
+         * {@link #instantEpochText(long, ZoneId)}.
+         *
+         * <p>Do not wire a new caller to this: it bounds through the scale-less
+         * {@link #checkIfDateTimeExceedsSupportedRange(Instant, ClickHouseDataType, boolean[])}
+         * and returns wall-clock digits, carrying the same two defects as
+         * {@link #convertWithoutTimeZoneAdjustment} (Spec 07.03 sections 3.1.8
+         * and 3.1.4).</p>
+         *
          * @param epochSeconds seconds from epoch
          * @param nanoAdjustment nanoseconds within the second (0-999999999)
          * @param clickHouseDataType the target ClickHouse data type
-         * @param sourceTimeZone source timezone
+         * @param sourceTimeZone accepted and never read
          * @param serverTimezone server timezone
          * @return formatted timestamp string with nanosecond precision
+         * @deprecated no caller; use {@link #instantEpochText(long, ZoneId)} or
+         *             {@link #convert(Object, ClickHouseDataType, ZoneId, ZoneId, ZoneId, RangePolicy)}.
          */
-        public static String convertWithoutTimeZoneAdjustmentNanos(long epochSeconds, int nanoAdjustment, 
+        @Deprecated
+        public static String convertWithoutTimeZoneAdjustmentNanos(long epochSeconds, int nanoAdjustment,
                 ClickHouseDataType clickHouseDataType, ZoneId sourceTimeZone, ZoneId serverTimezone) {
             // Use 9-digit nanosecond precision for DateTime64
             DateTimeFormatter destFormatter = NANOS_FORMAT;
@@ -614,8 +753,16 @@ public class DebeziumConverter {
             return modifiedDTWithLimits.atZone(serverTimezone).format(destFormatter);
         }
 
+        /**
+         * Dead path: no caller in the connector, same two defects as
+         * {@link #convertWithoutTimeZoneAdjustment}.
+         *
+         * @deprecated no caller; use {@link #instantEpochText(long, ZoneId)} or
+         *             {@link #convert(Object, ClickHouseDataType, ZoneId, ZoneId, ZoneId, RangePolicy)}.
+         */
+        @Deprecated
         public static String convertWithoutTimeZoneAdjustmentNanos(long epochNanoseconds,
-                                                                   ClickHouseDataType clickHouseDataType,  ZoneId serverTimezone) {
+                                                                   ClickHouseDataType clickHouseDataType, ZoneId serverTimezone) {
             DateTimeFormatter destFormatter = NANOS_FORMAT;
 
             if (clickHouseDataType == ClickHouseDataType.DateTime || clickHouseDataType == ClickHouseDataType.DateTime32) {
@@ -829,7 +976,7 @@ public class DebeziumConverter {
                         "1970-01-01 00:00:00 UTC");
             }
             if (bindsAsEpochText(targetType, bounded)) {
-                return epochText(bounded);
+                return epochText(bounded, Math.max(DataTypeRange.DATETIME64_DEFAULT_SCALE, policy.scale()));
             }
             return ZonedDateTime.ofInstant(bounded, serverTimezone).format(MICROS_FORMAT.withZone(serverTimezone));
         }
