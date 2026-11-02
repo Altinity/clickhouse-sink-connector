@@ -479,8 +479,10 @@ precision, never trimmed:
   saturated last day (next item) to the UTC day of that bound.
 - **The last day of the range is saturated.** A source value past the
   range has more than one representation on the replica: the connector
-  stores the upper bound (`2299-12-31 23:59:59`, older builds
-  `2299-12-31 23:59:59.999999`), while a bulk load (initial snapshot, a
+  stores the fixed saturation value (`2299-12-31 23:59:59`, the one value
+  every release stores — 2.11.1 briefly stored the per-scale bound
+  `2299-12-31 23:59:59.999999` instead, which is the regression spec 07.03
+  section 3.1.8 rules out), while a bulk load (initial snapshot, a
   reload) stores the source's own time of day on `2299-12-31`
   (`9999-12-31 00:00:00` becomes `2299-12-31 00:00:00`, `9999-12-31 05:59:00`
   becomes `2299-12-31 05:59:00`). Bulk loading is a supported way to fill a

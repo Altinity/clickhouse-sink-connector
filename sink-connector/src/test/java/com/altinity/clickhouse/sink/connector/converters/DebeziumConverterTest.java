@@ -136,15 +136,15 @@ public class DebeziumConverterTest {
 
         // DateTime64 and UTC timezone
         String formattedTimestamp = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("UTC"), ZoneId.of("UTC"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2299-12-31 23:59:59.99999900"));
+        Assert.assertTrue(formattedTimestamp.equalsIgnoreCase("2299-12-31 23:59:59.00000000"));
 
         // DateTime64 and America/Chicago timezone.
         String formattedTimestampChicagoTZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Chicago"), ZoneId.of("America/Chicago"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestampChicagoTZ.equalsIgnoreCase("2299-12-31 23:59:59.99999900"));
+        Assert.assertTrue(formattedTimestampChicagoTZ.equalsIgnoreCase("2299-12-31 23:59:59.00000000"));
 
         // DateTime64 and America/Los Angeles timezone.
         String formattedTimestampLATZ = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("America/Los_Angeles"), ZoneId.of("America/Los_Angeles"), ClickHouseDataType.DateTime64);
-        Assert.assertTrue(formattedTimestampLATZ.equalsIgnoreCase("2299-12-31 23:59:59.99999900"));
+        Assert.assertTrue(formattedTimestampLATZ.equalsIgnoreCase("2299-12-31 23:59:59.00000000"));
 
         // DateTime32 and UTC timezone
         String formattedTimestampDate32 = DebeziumConverter.MicroTimestampConverter.convert(timestampEpoch, ZoneId.of("UTC"), ZoneId.of("UTC"), ClickHouseDataType.DateTime);
@@ -243,7 +243,7 @@ public class DebeziumConverterTest {
 
         // Test max limit
         String formattedTimestamp4 = DebeziumConverter.ZonedTimestampConverter.convert("2338-01-19T03:14:07.99Z", ZoneId.of("UTC"));
-        Assert.assertTrue(formattedTimestamp4.equalsIgnoreCase("2299-12-31 23:59:59.999999"));
+        Assert.assertTrue(formattedTimestamp4.equalsIgnoreCase("2299-12-31 23:59:59.000000"));
     }
 
     @Test
@@ -256,7 +256,7 @@ public class DebeziumConverterTest {
         // to map them onto the representable DateTime64 range instead of silently
         // producing an empty string. See Altinity/clickhouse-sink-connector#1231.
         String positiveInfinity = DebeziumConverter.ZonedTimestampConverter.convert("infinity", ZoneId.of("UTC"));
-        Assert.assertEquals("2299-12-31 23:59:59.999999", positiveInfinity);
+        Assert.assertEquals("2299-12-31 23:59:59.000000", positiveInfinity);
 
         String negativeInfinity = DebeziumConverter.ZonedTimestampConverter.convert("-infinity", ZoneId.of("UTC"));
         Assert.assertEquals("1900-01-01 00:00:00.000000", negativeInfinity);
@@ -409,10 +409,10 @@ public class DebeziumConverterTest {
         // The DateTime64 bounds as epoch text: clamped, and the PostgreSQL
         // infinity literals (10413791999 is 2299-12-31T23:59:59Z, -2208988800
         // is 1900-01-01T00:00:00Z).
-        Assert.assertEquals("10413791999.999999",
+        Assert.assertEquals("10413791999.000000",
                 DebeziumConverter.ZonedTimestampConverter.convert("2338-01-19T03:14:07.99Z", utc,
                         ClickHouseDataType.DateTime64, clamp));
-        Assert.assertEquals("10413791999.999999",
+        Assert.assertEquals("10413791999.000000",
                 DebeziumConverter.ZonedTimestampConverter.convert("infinity", chicago,
                         ClickHouseDataType.DateTime64, clamp));
         Assert.assertEquals("-2208988800.000000",

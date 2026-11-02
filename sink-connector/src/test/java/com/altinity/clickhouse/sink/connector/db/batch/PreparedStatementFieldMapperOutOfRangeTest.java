@@ -100,7 +100,7 @@ public class PreparedStatementFieldMapperOutOfRangeTest {
         // DateTime64(9) is capped at 2262-04-11 23:47:16.854775807; 2299-12-31 raises DECIMAL_OVERFLOW there.
         assertEquals("2262-04-11 23:47:16.854", bind(defaults, "DateTime64(9, 'UTC')").get(2));
         assertEquals("2299-12-31 23:59:59.000", bind(defaults, "DateTime64(0, 'UTC')").get(2));
-        assertEquals("2299-12-31 23:59:59.999", bind(defaults, "DateTime64(6, 'UTC')").get(2));
+        assertEquals("2299-12-31 23:59:59.000", bind(defaults, "DateTime64(6, 'UTC')").get(2));
     }
 
     @Test
@@ -111,8 +111,8 @@ public class PreparedStatementFieldMapperOutOfRangeTest {
         Map<String, String> defaults = new HashMap<>();
         defaults.put("database.connectionTimeZone", "UTC");
         Map<Integer, Object> bound = bind(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(defaults)));
-        assertEquals("2299-12-31 23:59:59.999", bound.get(2),
-                "the default saturates 9999-12-31 23:59:59 to the DateTime64 bound");
+        assertEquals("2299-12-31 23:59:59.000", bound.get(2),
+                "the default saturates 9999-12-31 23:59:59 to the fixed historical value");
 
         Map<String, String> props = new HashMap<>();
         props.put("clamp.out.of.range", "false");

@@ -147,27 +147,34 @@ class TimeZoneMatrixTest {
     }
 
     @Test
-    void infinityBoundsSaturateToTheScaleOfTheColumn() {
+    void infinitySaturatesToTheFixedValueAndScaleNineToItsOwnBound() {
+        // infinity is an out-of-range value, so it saturates like any other: the fixed historical value
+        // at every scale up to 8 (ONE stored value per source value across releases), and the scale-9
+        // bound only where the representation forces it.
         RangePolicy scale6 = RangePolicy.of(null, "db.t.ts", 6);
-        assertEquals(DataTypeRange.dateTime64Max(6),
+        assertEquals(DataTypeRange.DATETIME64_SATURATION_MAX,
                 ZonedTimestampConverter.boundedInstant("infinity", ZoneId.of("America/Chicago"), scale6));
         RangePolicy scale9 = RangePolicy.of(null, "db.t.ts", 9);
         assertEquals(Instant.ofEpochSecond(9_223_372_036L, 854_775_807L),
                 ZonedTimestampConverter.boundedInstant("infinity", ZoneId.of("Pacific/Kiritimati"), scale9));
-        assertNotEquals(DataTypeRange.dateTime64Max(6), DataTypeRange.dateTime64Max(9));
+        assertNotEquals(DataTypeRange.DATETIME64_SATURATION_MAX, DataTypeRange.dateTime64Max(9));
+        assertEquals(DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64,
+                ZonedTimestampConverter.boundedInstant("-infinity", ZoneId.of("UTC"), scale6));
     }
 
     @Test
-    void outOfRangeDateTime64TextReadsBackAsTheBoundInEveryServerZone() {
-        // One minute past the last DateTime64(6) millisecond saturates to 2299-12-31 23:59:59.999999.
-        // The text is wall time in the server zone, so reading it back in that zone is the same instant.
+    void outOfRangeDateTime64TextReadsBackAsTheFixedSaturationValueInEveryServerZone() {
+        // A value past the last DateTime64(6) value saturates to the fixed historical value, 2299-12-31 23:59:59
+        // with no fraction, at every scale -- not to the per-scale bound (.999999 at scale 6), which is only the
+        // acceptance range. The text is wall time in the server zone, so reading it back in that zone is the same
+        // instant, which is also what keeps the value a stable ReplacingMergeTree sorting key.
         long beyondMax = 10_413_791_999_999L + 60_000L;
         for (ZoneId zone : ZONES) {
             String text = TimestampConverter.convertWithoutTimeZoneAdjustment(
                     beyondMax, ClickHouseDataType.DateTime64, zone, zone);
             Instant read = LocalDateTime.parse(text, MILLIS).atZone(zone).toInstant();
             assertEquals(10_413_791_999L, read.getEpochSecond(), "zone=" + zone + " text=" + text);
-            assertEquals(999, read.getNano() / 1_000_000, "zone=" + zone + " text=" + text);
+            assertEquals(0, read.getNano() / 1_000_000, "zone=" + zone + " text=" + text);
         }
     }
 

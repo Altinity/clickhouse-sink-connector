@@ -228,27 +228,103 @@ creation (see FM-07.03-12 and `doc/timezone.md`).
 
 **Kafka Connect.** `ClickHouseSinkConnectorConfig` declares both zone keys with no default and refuses an unset or `SERVER` `database.connectionTimeZone` and an unset `clickhouse.datetime.timezone` at construction (§3.1.2), so `ClickHouseSinkTask.start` reads only configured zones. The session zone is not read on this path.
 
-#### 3.1.8 `DateTime64(p)` bounds are per scale, and the policy carries the scale
-The saturation bound of a `DateTime64` value depends on the column's scale
-`p`, because the largest representable value does:
+#### 3.1.8 `DateTime64(p)` accepts a per-scale range and saturates to ONE fixed value at every scale
+Two different quantities, and the distinction is the whole of this section:
+an **acceptance bound** decides what the column stores exactly, and a
+**saturation value** decides what it stores instead of a value it cannot hold.
+Only the acceptance bound depends on the column's scale `p`.
+
+**The acceptance range is per scale**, because the largest representable value
+is:
 
 | `p` | maximum (inclusive) | minimum (inclusive) |
 |---|---|---|
 | 0..8 | `2299-12-31 23:59:59` followed by `p` nines (`.9` for p=1, `.99999999` for p=8) | `1900-01-01 00:00:00` (all p) |
 | 9 | `2262-04-11 23:47:16.854775807` (the largest Int64 nanosecond) | `1900-01-01 00:00:00` |
 
-Values above the maximum saturate to the maximum of their own scale, and
-values below the minimum saturate to `1900-01-01 00:00:00` (§3.3 rule 1 or 2).
-A saturation to `2299-12-31 23:59:59.000` at any scale is wrong: it clamped
-`.500` and `.999999` to `.000`, and it was out of range for `DateTime64(9)`,
-which raises `DECIMAL_OVERFLOW` (code 407). `RangePolicy` therefore carries the
-column's scale, read from the declared type by `ClickHouseColumn.of`; a policy
-built without a declared scale uses scale 6. A `DateTime64` value above the
-bound of its own scale is not wrapped by ClickHouse (it wraps for p <= 8 and
-raises for p = 9), so the connector's clamp is the only guard.
+`RangePolicy` therefore carries the column's scale, read from the declared type
+by `ClickHouseColumn.of`; a policy built without a declared scale uses scale 6.
+`DataTypeRange.dateTime64Max(int)` computes the bound of a scale. A value
+INSIDE its own scale's bound is stored exactly and is never saturated
+(`dateTime64KeepsAValueInsideItsScaleRange`): `2299-12-31 23:59:59.999` is a
+valid `DateTime64(3)` value and keeps its fraction.
 
-Tests: `DebeziumConverterRangePolicyTest.dateTime64ClampsToTheBoundOfItsScale()`
-(p=3, p=6, p=8, p=9) and `DebeziumConverterRangePolicyTest.dateTime64BoundIsNotZeroedFraction()`.
+**The saturation value is NOT per scale.** A value above its scale's bound is
+stored as `DataTypeRange.DATETIME64_SATURATION_MAX`, one instant at every
+scale: `2299-12-31 23:59:59.000` UTC, no fraction. A value below
+`CLICKHOUSE_MIN_SUPPORTED_DATETIME64` is stored as that minimum. The single
+exception is `p` = 9, covered below.
+
+**Why a fixed value and not the per-scale bound (ReplacingMergeTree).** A
+saturated value is a real stored value, and a temporal column in a table's
+sorting key has to hold ONE value per source value or the table holds two rows
+for one source row. The `9999-12-31 23:59:59` open-ended sentinel is the common
+case — the end date of an instrument, a contract or a mapping. Every release
+before 2.11.1, and the bulk loader, store it as `2299-12-31 23:59:59.000000`
+(the bulk loader's clamp expression, and the saturation floor on the checksum
+side). A release that saturates to the per-scale bound instead stores
+`2299-12-31 23:59:59.999999` at `p` = 6: the same source value, a different
+sorting key. A tombstone written after such an upgrade then carries the new
+key, never replaces the row it deletes, and `FINAL` returns both rows, so a
+table whose MySQL side holds one row reads as two. Measured on a
+`DateTime64(6, 'America/Chicago')` sorting-key column: the pre-upgrade form is
+`10413813599000000` µs and the per-scale form `10413813599999999` µs, two
+distinct keys for one source value.
+
+The saturation value is therefore a FIXED HISTORICAL CONSTANT, deliberately not
+derived from the bound of the column's scale: changing it is a stored-value
+change that splits the sorting key of every table that has already loaded the
+sentinel, whether or not the column's own DDL changed.
+
+**Both carriers saturate to the same instant.** The digits path
+(`TimestampConverter`, `MicroTimestampConverter` — a MySQL `DATETIME`) renders
+the saturated instant as UTC-clock digits, which ClickHouse parses as wall time
+in the column's zone; the epoch-text path (`ZonedTimestampConverter` — a MySQL
+`TIMESTAMP`, §3.1.4) renders the same instant as epoch text. Both were verified
+to land on one stored value at a `DateTime64(6, 'America/Chicago')` column,
+because the saturation instant is a constant rather than a per-scale bound:
+a `DATETIME` and a `TIMESTAMP` naming one out-of-range instant bind one value.
+This is the condition that makes a saturated sorting-key value stable, so the
+two carriers are checked against each other
+(`bothCarriersSaturateToTheSameInstant`).
+
+**The `p` = 9 exception.** At scale 9 the representable limit is the Int64
+nanosecond count, and ClickHouse refuses anything past
+`2262-04-11 23:47:16.854775807` with `DECIMAL_OVERFLOW` (code 407) rather than
+accepting `2299-12-31`. The fixed saturation value is therefore unusable there,
+and a scale-9 column saturates to its own bound,
+`DataTypeRange.dateTime64Max(9)`. This is the one scale whose stored saturation
+value differs, and it is forced by the representation, not chosen.
+
+**The low side clamps to the minimum** at every scale including 9:
+`CLICKHOUSE_MIN_SUPPORTED_DATETIME64` (`1900-01-01 00:00:00` UTC).
+
+**`infinity` / `-infinity`** (§3.3 rule 4) are not numbers in range at all;
+they saturate to the same values before any parsing, through the same
+`saturationValue(int)` call, so an `infinity` and a source value above the
+bound land on ONE sorting key. At `p` = 6 that is the fixed historical value;
+at `p` = 9 it is the scale-9 bound; `-infinity` is
+`CLICKHOUSE_MIN_SUPPORTED_DATETIME64` at every scale.
+
+**Forward path only.** This rule fixes what the connector stores from now on.
+Rows already written with the per-scale value keep that value until they are
+re-synchronised, because a value already in a part is not rewritten by a code
+change; a re-sync is the only way to collapse them.
+
+Tests: `DebeziumConverterRangePolicyTest.dateTime64MaxIsTheMeasuredBoundOfEachScale()`
+(the acceptance bound of each scale, and scale 9 as the Int64 limit),
+`DebeziumConverterRangePolicyTest.dateTime64AcceptsPerScaleAndSaturatesToTheFixedValue()`
+(scales 0, 3 and 6 all saturate to `2299-12-31 23:59:59.000`, scale 9 to its own
+bound), `DebeziumConverterRangePolicyTest.dateTime64KeepsAValueInsideItsScaleRange()`
+(the in-range half of the rule), `DebeziumConverterRangePolicyTest.outOfRangeSentinelIsTheFixedHistoricalValueAtEveryScale()`
+(the production sentinel on a `DateTime64(6, 'America/Chicago')` sorting-key
+column stores `10413813599000000` µs, the pre-upgrade value),
+`DebeziumConverterRangePolicyTest.bothCarriersSaturateToTheSameInstant()` (the
+digits and epoch-text carriers agree),
+`DebeziumConverterRangePolicyTest.dateTime64SaturationStringConstantsAreTheSameAtEveryScale()`
+(the string constants the integration tests compare against are one value) and
+`TimeZoneMatrixTest.outOfRangeDateTime64TextReadsBackAsTheFixedSaturationValueInEveryServerZone()`
+(the saturated text reads back to the same instant in every server zone).
 
 #### 3.1.9 An instant bound into a second-precision column is epoch-exact, not wall digits
 `DateTime` (and `DateTime32`) has no sub-second part, and a wall-clock literal
@@ -516,8 +592,11 @@ that bounds a value (`TimestampConverter`, `MicroTimestampConverter`,
    type — `Date32` for `Date`, `DateTime64` for `DateTime` — or a `String`
    column) or returning to the default.
 2. `clamp.out.of.range=true` (**default**; a missing configuration means the
-   default, `RangePolicy.of(null, column)` saturates): the value is saturated
-   to the bound, and the saturation is **not silent** (§3.1.14):
+   default, `RangePolicy.of(null, column)` saturates): the value is stored as
+   the date-clamped value of §3.1.8 — the bound DATE with the value's own time
+   of day and fraction, which is what ClickHouse stores for the same digits,
+   or `dateTime64Max(9)` on the high side of `DateTime64(9)` — and the
+   saturation is **not silent** (§3.1.14):
    the first saturation of each column is logged at WARN with the source
    value, the stored value and the bounds; every saturation increments
    `clickhouse_sink_lossy_conversions{kind="range_clamp"}`; and later
@@ -679,7 +758,8 @@ default. When `enable.time.adjuster` is absent or blank it is set to `false`
   — §3.3 rule 2 as the default, through `ClickHouseDataTypeMapper.convert`
   with an empty configuration (and `RangePolicy.of(null, column)` with none):
   `DATETIME 9999-12-31 23:59:59` into `DateTime64` binds
-  `2299-12-31 23:59:59.999` and writes one WARN (§3.1.14), an in-range value
+  `2299-12-31 23:59:59.000` — the DATE clamped, the value's own `23:59:59`
+  kept (§3.1.8) — and writes one WARN (§3.1.14), an in-range value
   writes none; `DATE 9999-12-31` into `Date` binds `2149-06-06` and `DATE 1000-01-01`
   into `Date32` binds `1900-01-01`. A strict default throws instead, so the tests fail on it.
 - `DebeziumConverterRangePolicyTest.strictSettingRejectsOutOfRangeDatetimeAtTheMapper()`,
@@ -744,7 +824,7 @@ Recovery posture: every temporal value is either rendered faithfully, saturated 
 
 - **FM-07.03-1 Out-of-range value saturated under the default policy**
   - **Trigger**: a `DATE`/`DATETIME` outside the ClickHouse type's range — the `9999-12-31 23:59:59` open-ended sentinel, a `1000-01-01` floor, or a typo year such as `0201-05-01` — with the default `clamp.out.of.range=true`.
-  - **Behaviour**: `DebeziumConverter.RangePolicy.report` saturates to the bound (`DateTime64`/`Date32`: 1900-01-01 .. 2299-12-31; `Date`: 1970-01-01 .. 2149-06-06; `DateTime`: 1970 .. 2106) and logs at DEBUG only (§3.3 rule 2). The batch succeeds.
+  - **Behaviour**: `DebeziumConverter.RangePolicy.report` saturates to the bound (`DateTime64`/`Date32`: 1900-01-01 .. 2299-12-31; `Date`: 1970-01-01 .. 2149-06-06; `DateTime`: 1970 .. 2106), keeping the value's own time of day and fraction on the clamped DATE (§3.1.8), and logs at DEBUG only (§3.3 rule 2). The batch succeeds.
   - **Detection**: none at the default log level: DEBUG `Value <v> for column <db.t.c> is outside the ClickHouse <type> range [<min> .. <max>]; stored as <bound> (clamp.out.of.range=true)`; no counter metric. DEFECT.
   - **Blast radius**: the saturated rows hold a value MySQL never held; a typo year is indistinguishable from the sentinel; row counts intact. Deterministic, so redelivery writes the same bound (no duplication beyond ReplacingMergeTree dedup).
   - **Recovery**: if the value must be kept, P-FIX-TYPE to a type that holds it (`String`, or `Date32`/`DateTime64` for a `Date`/`DateTime` column) and P-RESYNC the table; a typo is repaired by fixing the source row (`UPDATE`), which replicates.

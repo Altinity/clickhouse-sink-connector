@@ -26,6 +26,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -58,6 +59,27 @@ public class DebeziumConverterRangePolicyTest {
     /** Debezium encodes DATETIME digits as a UTC epoch; this is that encoding. */
     private static long datetimeMillis(LocalDateTime digits) {
         return digits.toInstant(ZoneOffset.UTC).toEpochMilli();
+    }
+
+    /** The same encoding at the microsecond precision a MySQL {@code DATETIME(6)} carries. */
+    private static long datetimeMicros(LocalDateTime digits) {
+        Instant instant = digits.toInstant(ZoneOffset.UTC);
+        return instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1_000L;
+    }
+
+    /** The DateTime64 digits a {@code MicroTimestamp} conversion binds: 8 fraction digits. */
+    private static final DateTimeFormatter EIGHT_DIGITS =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSS");
+
+    /**
+     * The instant an epoch-text bind names, {@code <seconds>.<6 fraction digits>}.
+     * Seconds and fraction are taken apart before scaling: the 2299 boundary is
+     * 1.04e10 seconds, and multiplying that by 1e9 overflows a {@code long}.
+     */
+    private static Instant epochTextInstant(String bound) {
+        BigDecimal[] parts = new BigDecimal(bound).divideAndRemainder(BigDecimal.ONE);
+        return Instant.ofEpochSecond(parts[0].longValueExact(),
+                parts[1].movePointRight(9).longValueExact());
     }
 
     /** A configuration that sets {@code clamp.out.of.range} explicitly. */
@@ -138,9 +160,9 @@ public class DebeziumConverterRangePolicyTest {
             assertTrue(DebeziumConverter.RangePolicy.of(null, "db.orders.expires_at").clamps(),
                     "no configuration at all saturates");
 
-            assertEquals("2299-12-31 23:59:59.999",
+            assertEquals("2299-12-31 23:59:59.000",
                     bindDatetime(defaultConfig(), sentinel, ClickHouseDataType.DateTime64),
-                    "the default stores the DateTime64 bound");
+                    "the default stores the fixed saturation value the loader and pre-2.11.1 store");
             List<String> warnings = appender.warnings();
             assertEquals(1, warnings.size(), "a saturation under the default is one WARN per column: " + warnings);
             assertTrue(warnings.get(0).contains("9999-12-31T23:59:59Z"), warnings.get(0));
@@ -277,7 +299,7 @@ public class DebeziumConverterRangePolicyTest {
             assertTrue(policy.clamps());
             long sentinel = datetimeMillis(LocalDateTime.of(9999, 12, 31, 23, 59, 59));
             for (int i = 0; i < 1000; i++) {
-                assertEquals("2299-12-31 23:59:59.999", DebeziumConverter.TimestampConverter.convert(
+                assertEquals("2299-12-31 23:59:59.000", DebeziumConverter.TimestampConverter.convert(
                         sentinel, ClickHouseDataType.DateTime64, UTC, UTC, null, policy));
             }
             DebeziumConverter.RangePolicy other = DebeziumConverter.RangePolicy.of(config(true), "db.orders.expires_at");
@@ -295,7 +317,7 @@ public class DebeziumConverterRangePolicyTest {
             assertTrue(warns.get(1).contains("db.orders.expires_at"), warns.get(1));
 
             // The mapper honours the setting too.
-            assertEquals("2299-12-31 23:59:59.999",
+            assertEquals("2299-12-31 23:59:59.000",
                     bindDatetime(config(true), LocalDateTime.of(9999, 12, 31, 23, 59, 59), ClickHouseDataType.DateTime64));
         } finally {
             releaseReporter(appender);
@@ -368,11 +390,11 @@ public class DebeziumConverterRangePolicyTest {
         CapturingAppender appender = captureReporter();
         try {
             long farFuture = datetimeMillis(LocalDateTime.of(9999, 12, 31, 23, 59, 59));
-            assertEquals("2299-12-31 23:59:59.999",
+            assertEquals("2299-12-31 23:59:59.000",
                     DebeziumConverter.TimestampConverter.convert(farFuture, ClickHouseDataType.DateTime64, UTC, UTC));
             assertEquals(LocalDate.parse("2149-06-06"),
                     DebeziumConverter.DateConverter.convert((int) LocalDate.of(2200, 1, 1).toEpochDay(), ClickHouseDataType.Date));
-            assertEquals("2299-12-31 23:59:59.999999",
+            assertEquals("2299-12-31 23:59:59.000000",
                     DebeziumConverter.ZonedTimestampConverter.convert("2338-01-19T03:14:07.99Z", UTC));
             assertEquals(BinaryStreamUtils.DECIMAL128_MAX,
                     new DebeziumConverter.BigDecimalConverter().truncate(BinaryStreamUtils.DECIMAL128_MAX.add(BigDecimal.ONE)));
@@ -392,7 +414,10 @@ public class DebeziumConverterRangePolicyTest {
     @DisplayName("PostgreSQL infinity literals keep their documented saturation under the strict policy")
     public void infinityKeepsItsSaturation() {
         DebeziumConverter.RangePolicy strict = DebeziumConverter.RangePolicy.STRICT;
-        assertEquals("2299-12-31 23:59:59.999999",
+        // PostgreSQL infinity is an out-of-range value, so it saturates to the SAME fixed
+        // historical value every other out-of-range value stores (Spec 07.03 section 3.1.8),
+        // which is what keeps it one sorting key. It still sorts after every real instant.
+        assertEquals("2299-12-31 23:59:59.000000",
                 DebeziumConverter.ZonedTimestampConverter.convert("infinity", UTC, strict));
         assertEquals("1900-01-01 00:00:00.000000",
                 DebeziumConverter.ZonedTimestampConverter.convert("-infinity", UTC, strict));
@@ -431,30 +456,36 @@ public class DebeziumConverterRangePolicyTest {
     }
 
     @Test
-    @DisplayName("The DateTime64 bound strings the integration tests compare against are the bound of their scale")
-    public void dateTime64MaxStringConstantsMatchTheBoundOfEachScale() {
+    @DisplayName("The DateTime64 saturation strings the integration tests compare against are one value at every scale")
+    public void dateTime64SaturationStringConstantsAreTheSameAtEveryScale() {
+        // A saturated value is stored as the fixed historical value whatever the column's scale, so the strings the
+        // integration tests compare against are identical for scales 0..6 -- the per-scale acceptance bound in
+        // dateTime64Max(int) is a different rule and must not leak into them.
         String[] constants = {DataTypeRange.DATETIME_MAX, DataTypeRange.DATETIME_1_MAX, DataTypeRange.DATETIME_2_MAX,
                 DataTypeRange.DATETIME_3_MAX, DataTypeRange.DATETIME_4_MAX, DataTypeRange.DATETIME_5_MAX,
                 DataTypeRange.DATETIME_6_MAX};
         for (int scale = 0; scale < constants.length; scale++) {
             // Timestamp.valueOf(LocalDateTime) and Timestamp#toString do not read the JVM default zone.
             String rendered = java.sql.Timestamp.valueOf(
-                    LocalDateTime.ofInstant(DataTypeRange.dateTime64Max(scale), ZoneOffset.UTC)).toString();
+                    LocalDateTime.ofInstant(DataTypeRange.DATETIME64_SATURATION_MAX, ZoneOffset.UTC)).toString();
             assertEquals(rendered, constants[scale], "scale " + scale);
         }
         assertEquals(DataTypeRange.DATETIME_6_MAX, DataTypeRange.DATETIME64_6_MAX);
+        assertEquals(0, DataTypeRange.DATETIME64_SATURATION_MAX.getNano(),
+                "the saturation value has no fraction, so no scale truncates it");
     }
 
     @Test
-    @DisplayName("A DateTime64 value above its scale's bound saturates to that bound, rendered at the bound's precision (Spec 07.03 section 3.1.8)")
-    public void dateTime64ClampsToTheBoundOfItsScale() throws Exception {
+    @DisplayName("Acceptance is per scale, saturation is the fixed historical value (Spec 07.03 section 3.1.8)")
+    public void dateTime64AcceptsPerScaleAndSaturatesToTheFixedValue() throws Exception {
         long sentinel = datetimeMillis(LocalDateTime.of(9999, 12, 31, 23, 59, 59));
-        assertEquals("2299-12-31 23:59:59.000", DebeziumConverter.TimestampConverter.convert(sentinel,
-                ClickHouseDataType.DateTime64, UTC, UTC, null,
-                DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 0)));
-        assertEquals("2299-12-31 23:59:59.999", DebeziumConverter.TimestampConverter.convert(sentinel,
-                ClickHouseDataType.DateTime64, UTC, UTC, null,
-                DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 3)));
+        // A value above every scale's range saturates to the same stored value at scales 0, 3 and 6:
+        // one source value, one sorting key, so a later tombstone still replaces the row it deletes.
+        for (int scale : new int[] {0, 3, 6}) {
+            assertEquals("2299-12-31 23:59:59.000", DebeziumConverter.TimestampConverter.convert(sentinel,
+                    ClickHouseDataType.DateTime64, UTC, UTC, null,
+                    DebeziumConverter.RangePolicy.of(config(true), "db.t.c", scale)), "scale " + scale);
+        }
 
         // Scale 9: the bound is 2262-04-11 23:47:16.854775807. The millisecond rendering
         // truncates it to .854, which is below the bound, so ClickHouse accepts it.
@@ -467,6 +498,23 @@ public class DebeziumConverterRangePolicyTest {
     }
 
     @Test
+    @DisplayName("A value inside its scale's range is stored exactly and is not saturated (Spec 07.03 section 3.1.8)")
+    public void dateTime64KeepsAValueInsideItsScaleRange() throws Exception {
+        // The half of the rule the fixed saturation value must not lose: 2299-12-31 23:59:59.999
+        // is representable in DateTime64(3) and must be stored as itself, not pulled to .000.
+        long inRange = datetimeMillis(LocalDateTime.of(2299, 12, 31, 23, 59, 59, 999_000_000));
+        assertEquals("2299-12-31 23:59:59.999", DebeziumConverter.TimestampConverter.convert(inRange,
+                ClickHouseDataType.DateTime64, UTC, UTC, null,
+                DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 3)),
+                "in range at its own scale, so untouched");
+
+        // And a scale-3 value that IS out of range at scale 3 still saturates to the fixed value.
+        assertEquals("2299-12-31 23:59:59.000", DebeziumConverter.TimestampConverter.convert(
+                datetimeMillis(LocalDateTime.of(2400, 6, 15, 12, 34, 56)), ClickHouseDataType.DateTime64,
+                UTC, UTC, null, DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 3)));
+    }
+
+    @Test
     @DisplayName("A DateTime64 instant in the last second of 2299 keeps its fraction; the bound used to zero it (Spec 07.03 section 3.1.8)")
     public void dateTime64BoundIsNotZeroedFraction() {
         // In range at the default scale: kept exactly. The millisecond test with a
@@ -475,9 +523,83 @@ public class DebeziumConverterRangePolicyTest {
                 DebeziumConverter.ZonedTimestampConverter.convert("2299-12-31T23:59:59.5Z", UTC));
         assertEquals("2299-12-31 23:59:59.999999",
                 DebeziumConverter.ZonedTimestampConverter.convert("2299-12-31T23:59:59.999999Z", UTC));
-        // Above the bound: saturated to the bound of the scale, .999999 at the default scale.
-        assertEquals("2299-12-31 23:59:59.999999",
+        // Above the bound: saturated to the fixed historical value, the same one every earlier
+        // release and the bulk loader store, so the row stays replaceable across an upgrade.
+        assertEquals("2299-12-31 23:59:59.000000",
                 DebeziumConverter.ZonedTimestampConverter.convert("2338-01-19T03:14:07.99Z", UTC));
+    }
+
+    /**
+     * The production shape of the defect this fix removes: a MySQL
+     * {@code DATETIME(6)} open-ended sentinel in a
+     * {@code DateTime64(6, 'America/Chicago')} column that is part of the
+     * table's sorting key.
+     *
+     * <p>Every release before 2.11.1, and a bulk load that clamps with the same
+     * constant, store {@code 2299-12-31 23:59:59} for any out-of-range value.
+     * 2.11.1 stored the
+     * per-scale bound instead, {@code 2299-12-31 23:59:59.999999}, so one source
+     * value had two stored values. Because the column is in the sorting key, a
+     * tombstone written after the upgrade no longer replaces the row it deletes
+     * and {@code FINAL} returns both -- the extra rows the cross-check reports.</p>
+     */
+    @Test
+    @DisplayName("An out-of-range DateTime64 saturates to the value the loader and every release before 2.11.1 store (Spec 07.03 section 3.1.8)")
+    public void outOfRangeSentinelIsTheFixedHistoricalValueAtEveryScale() {
+        ZoneId chicago = ZoneId.of("America/Chicago");
+        long sentinelMicros = datetimeMicros(LocalDateTime.of(9999, 12, 31, 23, 59, 59));
+
+        // The exact digits the historical clamp substitutes: 2299-12-31 23:59:59, no fraction.
+        for (int scale : new int[] {0, 3, 6}) {
+            DebeziumConverter.RangePolicy policy =
+                    DebeziumConverter.RangePolicy.of(config(true), "db.t.c", scale);
+            String digits = DebeziumConverter.MicroTimestampConverter.convert(sentinelMicros, chicago, chicago,
+                    ClickHouseDataType.DateTime64, chicago, policy);
+            assertTrue(digits.startsWith("2299-12-31 23:59:59.000000"), "scale " + scale + ": " + digits);
+        }
+
+        // The value both carriers must agree on, and the value the pre-upgrade rows hold:
+        // 10413813599000000 microseconds in an America/Chicago column.
+        DebeziumConverter.RangePolicy policy =
+                DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 6);
+        String digits = DebeziumConverter.MicroTimestampConverter.convert(sentinelMicros, chicago, chicago,
+                ClickHouseDataType.DateTime64, chicago, policy);
+        // The converter emits six fraction digits; parse exactly what it emitted, so this check fails if the
+        // emitted text ever gains a fraction instead of tolerating it.
+        Instant stored = LocalDateTime.parse(digits.substring(0, 19) + ".000000",
+                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS")).atZone(chicago).toInstant();
+        assertEquals(10_413_813_599_000_000L,
+                Math.addExact(Math.multiplyExact(stored.getEpochSecond(), 1_000_000L),
+                        stored.getNano() / 1_000L),
+                "the pre-upgrade and bulk-loaded microsecond value in the column's zone");
+    }
+
+    /**
+     * The digits carrier and the epoch-text carrier must name the same instant,
+     * because a column can receive both for the same out-of-range source value
+     * (a MySQL {@code DATETIME(6)} arrives as digits, a {@code TIMESTAMP} as a
+     * {@code ZonedTimestamp}) and the value is part of the sorting key. They
+     * agree only if the saturation instant itself is the fixed constant, not the
+     * column's per-scale bound.
+     */
+    @Test
+    @DisplayName("Both carriers of one out-of-range instant saturate to the same instant (Spec 07.03 section 3.1.8)")
+    public void bothCarriersSaturateToTheSameInstant() {
+        DebeziumConverter.RangePolicy policy =
+                DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 6);
+
+        // Digits carrier: the digits 9999-12-31 23:59:59, read in UTC.
+        String digits = DebeziumConverter.MicroTimestampConverter.convert(
+                datetimeMicros(LocalDateTime.of(9999, 12, 31, 23, 59, 59)), UTC, UTC,
+                ClickHouseDataType.DateTime64, UTC, policy);
+        // Epoch-text carrier: the same instant, named as ISO-8601 text.
+        String epoch = DebeziumConverter.ZonedTimestampConverter.convert(
+                "9999-12-31T23:59:59Z", UTC, ClickHouseDataType.DateTime64, policy);
+
+        assertEquals("2299-12-31 23:59:59.00000000", digits, "digits carrier");
+        assertEquals("10413791999.000000", epoch, "epoch-text carrier");
+        assertEquals(LocalDateTime.parse(digits, EIGHT_DIGITS).toInstant(ZoneOffset.UTC),
+                epochTextInstant(epoch), "one source instant, one stored instant");
     }
 
     @Test

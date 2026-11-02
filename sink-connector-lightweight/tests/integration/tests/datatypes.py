@@ -30,12 +30,13 @@ def adjust_precision(datetime_str, precision):
 
 
 def clickhouse_datetime_maximum(precision):
-    """The largest value a ClickHouse DateTime64 column of the given precision holds: 2299-12-31 23:59:59 followed by
-    one nine per fractional digit. A MySQL value above it is stored as this value (Spec 07.03 section 3.1.8)."""
+    """The value ClickHouse stores for a source value above the DateTime64 range: the fixed historical value
+    2299-12-31 23:59:59, rendered at the column's precision. It has no fraction at any precision, so the same
+    source value keeps one stored value across every scale and across releases (Spec 07.03 section 3.1.8)."""
     if precision == "0":
         return "2299-12-31 23:59:59"
 
-    return f"2299-12-31 23:59:59.{'9' * int(precision)}"
+    return f"2299-12-31 23:59:59.{'0' * int(precision)}"
 
 
 @TestStep(Given)

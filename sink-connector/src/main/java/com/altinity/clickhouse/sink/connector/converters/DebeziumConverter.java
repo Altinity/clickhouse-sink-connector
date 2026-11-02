@@ -278,20 +278,29 @@ public class DebeziumConverter {
             return bounded;
         }
 
-        /** Bounds a TIMESTAMP (ZonedTimestamp) instant to the DateTime64 range. */
+        /**
+         * Bounds a TIMESTAMP (ZonedTimestamp) instant to the DateTime64 range.
+         *
+         * <p>One bound, here and in the digits path, so a source value saturates to the
+         * same instant whichever converter saw it (Spec 07.03 section 3.1.8). This path
+         * renders the bounded instant as EPOCH TEXT (section 3.1.4), which ClickHouse
+         * parses exactly; the value itself is
+         * {@link DebeziumConverter#saturationValue(int)}.
+         * An out-of-range epoch literal would NOT do instead: ClickHouse parses epoch
+         * text as a decimal count of seconds past 1970 and wraps it past the range
+         * ({@code toDateTime64('10413814399.000000', 6, 'UTC')} displays
+         * {@code 2299-12-31 23:13:19.000000}, measured on 24.8.14, for a value six hours
+         * past the bound), so the connector must bound it itself either way.</p>
+         *
+         * <p>Compared at full precision: the old millisecond test with a
+         * seconds-only bound zeroed the fraction of every value in the last
+         * second of 2299 (23:59:59.500 became 23:59:59.000).</p>
+         */
         Instant boundZonedTimestamp(Instant provided) {
-            // Compared at full precision: the old millisecond test with a
-            // seconds-only bound zeroed the fraction of every value in the last
-            // second of 2299 (23:59:59.500 became 23:59:59.000).
-            Instant max = DataTypeRange.dateTime64Max(scale);
-            Instant min = DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64;
-            Instant bounded = provided;
-            if (provided.isAfter(max)) {
-                bounded = max;
-            } else if (provided.isBefore(min)) {
-                bounded = min;
-            }
-            if (bounded != provided) {
+            boolean[] rangeExceeded = new boolean[1];
+            Instant bounded = checkIfDateTimeExceedsSupportedRange(provided, ClickHouseDataType.DateTime64,
+                    rangeExceeded, scale);
+            if (rangeExceeded[0]) {
                 report(provided.toString(), formatBound(bounded, scale), ClickHouseDataType.DateTime64.name(),
                         dateTimeBounds(ClickHouseDataType.DateTime64));
             }
@@ -665,12 +674,38 @@ public class DebeziumConverter {
                 return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64;
             } else if (providedDateTime.isAfter(max)) {
                 rangeExceeded[0] = true;
-                return max;
+                return saturationValue(scale);
             }
         }
 
         return providedDateTime;
     }
+
+    /**
+     * The value an out-of-range instant above the column's range saturates to
+     * (Spec 07.03 section 3.1.8).
+     *
+     * <p>It is {@link DataTypeRange#DATETIME64_SATURATION_MAX}, the value every
+     * release before 2.11.1 and the bulk loader store, at every scale -- one
+     * source value must map to ONE stored value or a ReplacingMergeTree row
+     * stops being replaceable across an upgrade. Returning the per-scale bound
+     * instead stored {@code .999999} at scale 6 and split the sorting key.</p>
+     *
+     * <p>Scale 9 is the exception, for the reason it is the exception in
+     * {@link DataTypeRange#dateTime64Max(int)}: the representation limit is the
+     * Int64 nanosecond count, and ClickHouse raises {@code DECIMAL_OVERFLOW}
+     * (code 407) for any value past 2262-04-11 23:47:16.854775807 rather than
+     * accepting {@code 2299-12-31}. Such a column saturates to its own bound.</p>
+     *
+     * @param scale the target column's DateTime64 scale, 0..9
+     */
+    private static Instant saturationValue(int scale) {
+        if (scale == 9) {
+            return DataTypeRange.dateTime64Max(9);
+        }
+        return DataTypeRange.DATETIME64_SATURATION_MAX;
+    }
+
     public static class DateConverter {
 
 
@@ -814,11 +849,14 @@ public class DebeziumConverter {
             // type - the same clamping already applied to out-of-range timestamps
             // below - which preserves the PostgreSQL ordering semantics that
             // infinity sorts after, and -infinity before, every other timestamp.
+            // The value is saturationValue(scale), the same one every other
+            // out-of-range path stores, so an infinity and a source value above the
+            // bound land on ONE sorting key (Spec 07.03 section 3.1.8).
             // https://github.com/Altinity/clickhouse-sink-connector/issues/1231
             if (value instanceof String) {
                 String literal = ((String) value).trim();
                 if (POSITIVE_INFINITY.equalsIgnoreCase(literal)) {
-                    return DataTypeRange.dateTime64Max(policy.scale());
+                    return saturationValue(policy.scale());
                 } else if (NEGATIVE_INFINITY.equalsIgnoreCase(literal)) {
                     return DataTypeRange.CLICKHOUSE_MIN_SUPPORTED_DATETIME64;
                 }
