@@ -771,7 +771,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         String tableSettings = tableConfig.getSettings();
         boolean hasUserSettings = tableSettings != null && !tableSettings.isEmpty();
         if ((nullableSortingKey || nullablePartitionKey)
-                && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {            this.query.append(Constants.SETTINGS);
+                && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {
+            this.query.append(Constants.SETTINGS);
             if (hasUserSettings) {
                 this.query.append(tableSettings).append(",");
             }
@@ -877,31 +878,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     /**
-     * The partition-key expression for a column list derived from the source
-     * DDL, as ClickHouse needs it.
-     *
-     * <p>A multi-column MySQL partition key ({@code PARTITION BY KEY(a,b)},
-     * {@code RANGE COLUMNS(a,b)}) is collected as the bare comma list
-     * {@code a,b}. ClickHouse has no such form -- the partition key is a
-     * SINGLE expression and a multi-column key is a tuple -- so the emitted
-     * {@code PARTITION BY a, b} fails with {@code Code: 62} (syntax error at
-     * the comma) and the CREATE TABLE never lands, which makes every later
-     * event for that table fail too. Measured on 24.8.8.17: the bare list is
-     * rejected, {@code PARTITION BY (a, b)} is accepted.</p>
-     *
-     * <p>Only a bare comma list is changed. A single column, a function call
-     * ({@code toYear(d)}) and a list that is already parenthesised
-     * ({@code (a,d,c)}, built by the RANGE COLUMNS branch) are returned as
-     * they are -- wrapping those again would nest the tuple.</p>
-     *
-     * <p>This is for DDL-derived keys only. An operator-supplied
-     * {@code partition_by} is a ClickHouse expression the operator wrote, and
-     * is emitted verbatim.</p>
-     *
-     * @param columns the partition key as collected from the source DDL.
-     * @return the same key, parenthesised when it is a bare comma list.
-     */
-    /**
      * True when a partition-key expression names a column that the source
      * declares nullable.
      *
@@ -952,6 +928,31 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         return false;
     }
 
+    /**
+     * The partition-key expression for a column list derived from the source
+     * DDL, as ClickHouse needs it.
+     *
+     * <p>A multi-column MySQL partition key ({@code PARTITION BY KEY(a,b)},
+     * {@code RANGE COLUMNS(a,b)}) is collected as the bare comma list
+     * {@code a,b}. ClickHouse has no such form -- the partition key is a
+     * SINGLE expression and a multi-column key is a tuple -- so the emitted
+     * {@code PARTITION BY a, b} fails with {@code Code: 62} (syntax error at
+     * the comma) and the CREATE TABLE never lands, which makes every later
+     * event for that table fail too. Measured on 24.8.8.17: the bare list is
+     * rejected, {@code PARTITION BY (a, b)} is accepted.</p>
+     *
+     * <p>Only a bare comma list is changed. A single column, a function call
+     * ({@code toYear(d)}) and a list that is already parenthesised
+     * ({@code (a,d,c)}, built by the RANGE COLUMNS branch) are returned as
+     * they are -- wrapping those again would nest the tuple.</p>
+     *
+     * <p>This is for DDL-derived keys only. An operator-supplied
+     * {@code partition_by} is a ClickHouse expression the operator wrote, and
+     * is emitted verbatim.</p>
+     *
+     * @param columns the partition key as collected from the source DDL.
+     * @return the same key, parenthesised when it is a bare comma list.
+     */
     static String parenIfCommaList(String columns) {
         if (columns == null) {
             return null;
