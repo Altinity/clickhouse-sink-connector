@@ -13,6 +13,14 @@ import java.util.regex.Pattern;
  * member, and the {@code CURRENT_TIMESTAMP} test used to decide whether a
  * default needs the DDL event's own instant.
  *
+ * <p>A literal may be wrapped in parentheses -- {@code DEFAULT (0)},
+ * {@code DEFAULT ('x')}, {@code DEFAULT ((0))}, {@code DEFAULT (-1)}. MySQL
+ * parses a parenthesised default through its {@code '(' expression ')'}
+ * rule, so the wrapping is not evidence of a computed value: the value MySQL
+ * back-filled the pre-existing rows with is the literal itself, and
+ * {@code DEFAULT 0} reproduces it exactly. The wrapping is therefore
+ * transparent here when the parentheses enclose nothing but one literal.</p>
+ *
  * <p>Stateless and side-effect free; extracted from
  * {@link MySqlDDLParserListenerImpl} so it is owned and tested on its own.
  * A default that is a function or expression other than
@@ -48,20 +56,83 @@ final class DefaultLiteralTranslator {
         }
         MySqlParser.ConstantContext constant = defaultValue.constant();
         if (constant == null) {
-            return null;
+            return parenthesizedLiteral(defaultValue, columnType, persistRawBytes);
         }
         MySqlParser.UnaryOperatorContext unary = defaultValue.unaryOperator();
         if (defaultValue.getChildCount() != (unary == null ? 1 : 2)) {
             return null;
         }
-        String sign = "";
-        if (unary != null) {
-            if (unary.MINUS() != null) {
-                sign = "-";
-            } else if (unary.PLUS() == null) {
-                return null; // !x, ~x, NOT x: expressions, not literals
-            }
+        Sign sign = new Sign();
+        if (unary != null && !sign.apply(unary)) {
+            return null; // !x, ~x, NOT x: expressions, not literals
         }
+        return constantLiteral(constant, sign.text, columnType, persistRawBytes);
+    }
+
+    /**
+     * Rewrites a {@code DEFAULT ( ... )} whose parentheses enclose nothing
+     * but one literal (Spec 06.04 §3.2.1), or returns null when the
+     * parentheses enclose any real expression -- a function call
+     * ({@code (UUID())}), an arithmetic, comparison or logical expression
+     * ({@code (1 + 2)}), a row value, a subquery or a variable.
+     *
+     * <p>The value of a parenthesised literal does not vary with time or with
+     * the row, so {@code DEFAULT <literal>} is exactly what MySQL back-filled
+     * the rows that pre-date the column with. Refusing it would stop a
+     * replication stream over a value the replica can reproduce perfectly.</p>
+     */
+    private static String parenthesizedLiteral(MySqlParser.DefaultValueContext defaultValue, String columnType,
+                                               boolean persistRawBytes) {
+        // The CAST(...) alternative also carries brackets; it is an expression,
+        // not a parenthesised literal, and stays with the caller's refusal.
+        if (defaultValue.CAST() != null || defaultValue.LR_BRACKET() == null
+                || defaultValue.RR_BRACKET() == null) {
+            return null;
+        }
+        Sign sign = new Sign();
+        MySqlParser.ConstantContext constant = soleConstant(defaultValue.expression(), sign);
+        if (constant == null) {
+            return null;
+        }
+        return constantLiteral(constant, sign.text, columnType, persistRawBytes);
+    }
+
+    /**
+     * The one constant an expression denotes when it is only nested
+     * parentheses and unary signs around a single literal, otherwise null.
+     */
+    private static MySqlParser.ConstantContext soleConstant(MySqlParser.ExpressionContext expression, Sign sign) {
+        if (!(expression instanceof MySqlParser.PredicateExpressionContext)) {
+            return null; // NOT x, a AND b, a IS NULL, ...
+        }
+        return soleConstant(((MySqlParser.PredicateExpressionContext) expression).predicate(), sign);
+    }
+
+    private static MySqlParser.ConstantContext soleConstant(MySqlParser.PredicateContext predicate, Sign sign) {
+        if (!(predicate instanceof MySqlParser.ExpressionAtomPredicateContext)) {
+            return null; // comparisons, IN, LIKE, BETWEEN, ...
+        }
+        return soleConstant(((MySqlParser.ExpressionAtomPredicateContext) predicate).expressionAtom(), sign);
+    }
+
+    private static MySqlParser.ConstantContext soleConstant(MySqlParser.ExpressionAtomContext atom, Sign sign) {
+        if (atom instanceof MySqlParser.ConstantExpressionAtomContext) {
+            return ((MySqlParser.ConstantExpressionAtomContext) atom).constant();
+        }
+        if (atom instanceof MySqlParser.UnaryExpressionAtomContext) {
+            MySqlParser.UnaryExpressionAtomContext unary = (MySqlParser.UnaryExpressionAtomContext) atom;
+            return sign.apply(unary.unaryOperator()) ? soleConstant(unary.expressionAtom(), sign) : null;
+        }
+        if (atom instanceof MySqlParser.NestedExpressionAtomContext) {
+            MySqlParser.NestedExpressionAtomContext nested = (MySqlParser.NestedExpressionAtomContext) atom;
+            return nested.expression().size() == 1 ? soleConstant(nested.expression(0), sign) : null;
+        }
+        return null; // function call, column reference, variable, subquery, ...
+    }
+
+    /** Rewrites one constant, with its sign resolved, to ClickHouse literal syntax; null when not representable. */
+    private static String constantLiteral(MySqlParser.ConstantContext constant, String sign, String columnType,
+                                          boolean persistRawBytes) {
         if (constant.nullLiteral != null) {
             return constant.NOT() == null && sign.isEmpty() ? "NULL" : null;
         }
@@ -89,7 +160,34 @@ final class DefaultLiteralTranslator {
             return bytesLiteral(hex.toUpperCase(), persistRawBytes);
         }
         // decimal, real and boolean literals are ClickHouse literals already.
+        // `- -1` is not carried: "-" + "-1" would emit `--1`, a ClickHouse
+        // comment, so the unrepresentable combination is refused instead.
+        if (!sign.isEmpty() && constant.getText().startsWith("-")) {
+            return null;
+        }
         return sign + constant.getText();
+    }
+
+    /**
+     * The at-most-one sign a literal can carry: {@code ""} or {@code "-"}.
+     * A second unary operator ({@code -(-1)}, {@code !0}) is not carried --
+     * the literal path refuses it rather than emit a token sequence that
+     * ClickHouse reads as something else (a leading {@code --} is a comment).
+     */
+    private static final class Sign {
+
+        private String text = "";
+        private boolean seen;
+
+        /** Applies one unary operator; false when it is not a sign or the literal already carries one. */
+        boolean apply(MySqlParser.UnaryOperatorContext unaryOperator) {
+            if (this.seen || (unaryOperator.MINUS() == null && unaryOperator.PLUS() == null)) {
+                return false;
+            }
+            this.seen = true;
+            this.text = unaryOperator.MINUS() != null ? "-" : "";
+            return true;
+        }
     }
 
     /**

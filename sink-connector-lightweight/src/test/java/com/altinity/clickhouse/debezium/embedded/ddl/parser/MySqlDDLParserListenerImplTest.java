@@ -3968,6 +3968,50 @@ public class MySqlDDLParserListenerImplTest {
     }
 
     @Test
+    @DisplayName("ADD COLUMN with a parenthesised literal DEFAULT is carried: the parentheses are transparent")
+    public void testParenthesizedLiteralDefaultIsTranslated() {
+        // MySQL parses a parenthesised default through its '(' expression ')'
+        // rule, so a plain constant arrives wrapped. The value does not vary
+        // with time or with the row, so DEFAULT <literal> is exactly what
+        // MySQL back-filled the pre-existing rows with.
+        String expected = "ALTER TABLE `employees`.t "
+                + "ADD COLUMN IF NOT EXISTS coins Int8 DEFAULT 0, "
+                + "ADD COLUMN IF NOT EXISTS depth Int8 DEFAULT 1, "
+                + "ADD COLUMN IF NOT EXISTS s String DEFAULT 'x', "
+                + "ADD COLUMN IF NOT EXISTS z Nullable(Int32) DEFAULT NULL";
+        Assert.assertEquals(expected, squash(translate("ALTER TABLE t "
+                + "ADD COLUMN coins TINYINT(1) NOT NULL DEFAULT (0), "
+                + "ADD COLUMN depth TINYINT NOT NULL DEFAULT ((1)), "
+                + "ADD COLUMN s VARCHAR(10) NOT NULL DEFAULT ('x'), "
+                + "ADD COLUMN z INT DEFAULT (NULL)")));
+
+        // A signed literal inside the parentheses keeps its sign.
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS n Nullable(Int32) DEFAULT -1",
+                squash(translate("ALTER TABLE t ADD COLUMN n INT DEFAULT (-1)")));
+
+        // A double-quoted string is re-quoted exactly as the unparenthesised
+        // form is (a double-quoted string is an identifier in ClickHouse).
+        Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS s String DEFAULT 'dq'",
+                squash(translate("ALTER TABLE t ADD COLUMN s VARCHAR(10) NOT NULL DEFAULT (\"dq\")")));
+
+        // MODIFY/CHANGE back-fills nothing, so the parenthesised literal is
+        // carried there too, as the unparenthesised form already was.
+        Assert.assertEquals("ALTER TABLE `employees`.t MODIFY COLUMN c Nullable(Int32) DEFAULT 0",
+                squash(translate("ALTER TABLE t MODIFY COLUMN c INT DEFAULT (0)")));
+
+        // The shape a MySQL client emits for a plain constant: backticked
+        // identifiers and a column position, with the literal parenthesised.
+        Assert.assertEquals("ALTER TABLE `employees`.`t` ADD COLUMN IF NOT EXISTS `c` Int8 DEFAULT 0 AFTER `b`",
+                squash(translate("ALTER TABLE `t` ADD COLUMN `c` TINYINT(1) NOT NULL DEFAULT (0) AFTER `b`")));
+
+        // Nested enclosing parentheses around a real expression are still an
+        // expression, not a literal: loud, never a zero-filled back-fill.
+        DDLReplicationException loud = assertThrows(DDLReplicationException.class,
+                () -> translate("ALTER TABLE t ADD COLUMN n INT DEFAULT ((1 + 2))"));
+        Assert.assertTrue(loud.getMessage(), loud.getMessage().contains("ignore.ddl.regex"));
+    }
+
+    @Test
     @DisplayName("ADD COLUMN ENUM(...) NOT NULL without a DEFAULT back-fills MySQL's implicit default, the first member")
     public void testAddEnumNotNullDefaultsToFirstMember() {
         Assert.assertEquals("ALTER TABLE `employees`.t ADD COLUMN IF NOT EXISTS status String DEFAULT 'new'",
