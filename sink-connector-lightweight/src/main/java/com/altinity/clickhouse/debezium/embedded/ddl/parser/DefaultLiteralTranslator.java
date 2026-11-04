@@ -2,7 +2,10 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
 
+import java.math.BigDecimal;
 import java.math.BigInteger;
+import java.math.RoundingMode;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -36,6 +39,37 @@ final class DefaultLiteralTranslator {
 
     /** A ClickHouse column type that is numeric, so a bit-string/hex literal targeting it is a number, not bytes. */
     private static final Pattern NUMERIC_CH_TYPE = Pattern.compile("^(U?Int\\d+|Float\\d+|Decimal.*|Bool)$");
+
+    /** The declared dimensions of a ClickHouse {@code Decimal(p, s)}, or a bare {@code Decimal(p)}. */
+    private static final Pattern DECIMAL_CH_TYPE = Pattern.compile("^Decimal\\((\\d+)(?:\\s*,\\s*(\\d+))?\\)$");
+
+    /** A ClickHouse binary floating-point type. */
+    private static final Pattern FLOAT_CH_TYPE = Pattern.compile("^Float\\d+$");
+
+    /**
+     * The number a MySQL string-to-number conversion reads from the start of a
+     * value for a fractional target: leading blanks, an optional sign, digits
+     * with an optional single decimal point on either side, and an optional
+     * exponent that only counts when a digit precedes it ({@code 'e3'}
+     * converts to 0, {@code '1e3'} to 1000 -- both measured on 8.0.41).
+     */
+    private static final Pattern MYSQL_NUMBER_PREFIX = Pattern.compile(
+            "^[ \\t]*([+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?)");
+
+    /**
+     * The INTEGER part a MySQL string-to-integer conversion reads, which is a
+     * smaller prefix than {@link #MYSQL_NUMBER_PREFIX}: it stops at the decimal
+     * point and never reads an exponent, so {@code '1.9e3'} is {@code 1} and
+     * {@code '.5e1'} is {@code 0} (measured on 8.0.41).
+     */
+    private static final Pattern MYSQL_INTEGER_PREFIX = Pattern.compile("^[ \\t]*([+-]?\\d+)");
+
+    /** The largest finite {@code double}, the range limit of a ClickHouse {@code Float64}. */
+    private static final BigDecimal DOUBLE_MAX = new BigDecimal(Double.MAX_VALUE);
+
+    private static final BigInteger SIGNED_64_MAX = BigInteger.valueOf(Long.MAX_VALUE);
+    private static final BigInteger SIGNED_64_MIN = BigInteger.valueOf(Long.MIN_VALUE);
+    private static final BigInteger UNSIGNED_64_MAX = BigInteger.ONE.shiftLeft(64).subtract(BigInteger.ONE);
 
     /**
      * Rewrites a literal {@code DEFAULT} to ClickHouse syntax
@@ -138,6 +172,17 @@ final class DefaultLiteralTranslator {
         }
         boolean numericTarget = columnType != null && NUMERIC_CH_TYPE.matcher(columnType).matches();
         if (constant.stringLiteral() != null) {
+            if (numericTarget) {
+                // MySQL converts a string DEFAULT to the column's numeric type
+                // when the DDL runs, so the value MySQL back-filled the
+                // existing rows with is that number -- never the text.
+                // ClickHouse accepts a quoted DEFAULT on a numeric column only
+                // when the text parses cleanly ('' -> Code 32, 'abc' -> Code 6,
+                // '12abc' -> Code 6, '1.5' on an integer -> Code 6, measured on
+                // 24.8), so passing the text through turns a MySQL-legal DDL
+                // into a statement the replica rejects and the stream dies on.
+                return numericStringLiteral(mysqlStringValue(constant.stringLiteral()), sign, columnType);
+            }
             return sign.isEmpty() ? clickHouseString(constant.stringLiteral()) : null;
         }
         if (constant.BIT_STRING() != null) {
@@ -157,15 +202,28 @@ final class DefaultLiteralTranslator {
             if (numericTarget) {
                 return sign + (hex.isEmpty() ? BigInteger.ZERO : new BigInteger(hex, 16));
             }
+            // MySQL reads a `0x` value as a byte string and left-pads an odd
+            // digit count to a whole byte: `0x1` IS the single byte 0x01, as
+            // HEX(0x1) = '01' shows. The writer stores a bytes value as two hex
+            // digits per byte, so the odd digit must be padded or the default
+            // would describe a byte the source never held.
+            if ((hex.length() & 1) == 1) {
+                hex = "0" + hex;
+            }
             return bytesLiteral(hex.toUpperCase(), persistRawBytes);
         }
-        // decimal, real and boolean literals are ClickHouse literals already.
         // `- -1` is not carried: "-" + "-1" would emit `--1`, a ClickHouse
         // comment, so the unrepresentable combination is refused instead.
         if (!sign.isEmpty() && constant.getText().startsWith("-")) {
             return null;
         }
-        return sign + constant.getText();
+        // decimal, real and boolean literals are ClickHouse literals already,
+        // except a real literal with no integer part: MySQL's grammar writes
+        // `.5` (REAL_LITERAL's `(DEC_DIGIT+)? '.' DEC_DIGIT+`) and ClickHouse
+        // rejects a number that starts with a dot. The leading zero is the
+        // only addition, and `.5`/`0.5` are the same value to both engines.
+        String text = constant.getText();
+        return sign + (text.startsWith(".") ? "0" + text : text);
     }
 
     /**
@@ -191,6 +249,112 @@ final class DefaultLiteralTranslator {
     }
 
     /**
+     * The number MySQL stores when a quoted string is declared as the DEFAULT
+     * of a numeric column, as a ClickHouse literal; null when the value cannot
+     * be reproduced exactly.
+     *
+     * <p>MySQL converts the text with its own string-to-number rules, so the
+     * number is what the rows that pre-date the column already hold. The rules
+     * below are measured on MySQL 8.0.41 (spec §3.2.1) rather than assumed:</p>
+     *
+     * <ul>
+     *   <li>Leading spaces and tabs are skipped; the digits end at the first
+     *       character that is not part of the number, so {@code '12abc'} is
+     *       {@code 12} and {@code '  7  '} is {@code 7}.</li>
+     *   <li>Text with no digits is {@code 0}: {@code ''}, {@code 'abc'},
+     *       {@code '.'}, {@code '-'} and {@code 'e3'} all convert to zero.</li>
+     *   <li>An integer target reads only the integer part: {@code '1.5'} is
+     *       {@code 1}, {@code '-1.5'} is {@code -1} and {@code '12e3'} is
+     *       {@code 12} -- the conversion stops at the decimal point and never
+     *       applies the exponent ({@code '1.9e3'} is {@code 1},
+     *       {@code '.5e1'} is {@code 0}).</li>
+     *   <li>An exponent IS applied for a {@code DOUBLE} or {@code DECIMAL}
+     *       target: {@code '1e3'} is {@code 1000} on both, and even
+     *       {@code '1.e3'} is {@code 1000}.</li>
+     *   <li>A {@code DECIMAL(p, s)} target rounds half away from zero to
+     *       {@code s} places: {@code '1.005'} is {@code 1.01} and
+     *       {@code '2.675'} is {@code 2.68}.</li>
+     *   <li>An unsigned target wraps: {@code CAST('-1' AS UNSIGNED)} is
+     *       {@code 18446744073709551615}. That wrapped value is refused here
+     *       rather than emitted: it is not the digits MySQL was given, and a
+     *       narrower unsigned column would wrap it a second time.</li>
+     * </ul>
+     *
+     * @param text       the MySQL string value, already unescaped.
+     * @param sign       the {@code ""}/{@code "-"} sign written on the DEFAULT.
+     * @param columnType the ClickHouse target type.
+     * @return the numeric ClickHouse literal, or null when not representable.
+     */
+    private static String numericStringLiteral(String text, String sign, String columnType) {
+        Matcher decimal = DECIMAL_CH_TYPE.matcher(columnType);
+        if (decimal.matches()) {
+            int scale = decimal.group(2) == null ? 0 : Integer.parseInt(decimal.group(2));
+            return signedNumber(text, sign).setScale(scale, RoundingMode.HALF_UP).toPlainString();
+        }
+        if (FLOAT_CH_TYPE.matcher(columnType).matches()) {
+            BigDecimal value = signedNumber(text, sign);
+            // A magnitude a double cannot hold is out of range for the column,
+            // so it is refused rather than emitted as a wrong number.
+            return value.abs().compareTo(DOUBLE_MAX) <= 0 ? value.toPlainString() : null;
+        }
+        // Every integer type, and Bool: MySQL reads the integer part only, so
+        // the conversion stops at the decimal point and an exponent is never
+        // applied ('1.9e3' is 1). BigDecimal's DOWN is truncation toward zero.
+        BigInteger integer = signedInteger(text, sign);
+        // A value outside the 64-bit range is refused rather than emitted:
+        // MySQL itself saturates it (CAST('9999999999999999999999' AS SIGNED)
+        // is -1 on 8.0.41), so the digits are not the value the source stored,
+        // and the caller's safe path is the loud/dropped one. A negative value
+        // on an unsigned column is refused for the same reason: MySQL wraps it
+        // to the type's own maximum, which is not the digits and not even the
+        // same number on the two engines.
+        boolean unsigned = columnType.startsWith("UInt");
+        BigInteger low = unsigned ? BigInteger.ZERO : SIGNED_64_MIN;
+        BigInteger high = unsigned ? UNSIGNED_64_MAX : SIGNED_64_MAX;
+        if (integer.compareTo(low) < 0 || integer.compareTo(high) > 0) {
+            return null;
+        }
+        return integer.toString();
+    }
+
+    /**
+     * The number a MySQL string denotes for a {@code DOUBLE} or
+     * {@code DECIMAL} target: leading spaces and tabs are skipped, an optional
+     * sign, one decimal point on either side of the digits and an exponent are
+     * read, and reading stops at the first character that cannot belong to the
+     * number. Text with no number at all is zero, which is what MySQL stores
+     * for {@code ''}, {@code 'abc'}, {@code '-'} and {@code '.'} (all measured
+     * on 8.0.41).
+     */
+    private static BigDecimal leadingNumber(String text) {
+        Matcher number = MYSQL_NUMBER_PREFIX.matcher(text);
+        return number.find() ? new BigDecimal(number.group(1)) : BigDecimal.ZERO;
+    }
+
+    /**
+     * The same number with the sign the DEFAULT wrote in front of the literal
+     * applied, which is how MySQL combines {@code DEFAULT -'12'}.
+     */
+    private static BigDecimal signedNumber(String text, String sign) {
+        BigDecimal value = leadingNumber(text);
+        return sign.isEmpty() ? value : value.negate();
+    }
+
+    /**
+     * The integer a MySQL string denotes for an integer target. MySQL reads the
+     * INTEGER part of the text and stops there -- it does not read a decimal
+     * point and it does not apply an exponent, so {@code '1.9e3'} is
+     * {@code 1}, {@code '12e3'} is {@code 12} and {@code '.5e1'} is
+     * {@code 0} (all measured on 8.0.41). A sign is part of the integer part;
+     * leading spaces and tabs are skipped.
+     */
+    private static BigInteger signedInteger(String text, String sign) {
+        Matcher number = MYSQL_INTEGER_PREFIX.matcher(text);
+        BigInteger value = number.find() ? new BigInteger(number.group(1)) : BigInteger.ZERO;
+        return sign.isEmpty() ? value : value.negate();
+    }
+
+    /**
      * The bytes a bit-string or hexadecimal literal denotes, in the
      * representation the writer stores for a BYTES value in a String column
      * (Spec 07.05): lowercase hex text, or the raw bytes under
@@ -204,11 +368,10 @@ final class DefaultLiteralTranslator {
     }
 
     /**
-     * A MySQL string literal as a ClickHouse single-quoted literal: a
-     * double-quoted MySQL string (an identifier in ClickHouse) is re-quoted
-     * with its {@code ""}/{@code \"} escapes unescaped and any {@code '}
-     * escaped; the national prefix and a charset introducer are dropped;
-     * adjacent literals are concatenated as MySQL does.
+     * A MySQL string literal rendered for a ClickHouse String column: the
+     * literal's own quoting and escapes are ClickHouse-compatible, so the
+     * body is carried as written. Unlike {@link #mysqlStringValue}, this is
+     * the REPRESENTATION, not the characters.
      */
     private static String clickHouseString(MySqlParser.StringLiteralContext literal) {
         StringBuilder body = new StringBuilder();
@@ -220,6 +383,58 @@ final class DefaultLiteralTranslator {
             body.append(stringBody(part.getText()));
         }
         return "'" + body + "'";
+    }
+
+    /**
+     * A MySQL string literal's VALUE -- the characters MySQL holds, with its
+     * escapes resolved -- as opposed to {@link #clickHouseString}, which
+     * renders the same literal for a ClickHouse String column.
+     */
+    private static String mysqlStringValue(MySqlParser.StringLiteralContext literal) {
+        StringBuilder body = new StringBuilder();
+        if (literal.START_NATIONAL_STRING_LITERAL() != null) {
+            String text = literal.START_NATIONAL_STRING_LITERAL().getText();
+            body.append(mysqlStringBody(text.substring(text.indexOf('\'')))); // N'...'
+        }
+        for (org.antlr.v4.runtime.tree.TerminalNode part : literal.STRING_LITERAL()) {
+            body.append(mysqlStringBody(part.getText()));
+        }
+        return body.toString();
+    }
+
+    /** The characters one quoted MySQL string token denotes. */
+    private static String mysqlStringBody(String token) {
+        if (token.length() < 2) {
+            return token;
+        }
+        char quote = token.charAt(0);
+        String inner = token.substring(1, token.length() - 1);
+        StringBuilder value = new StringBuilder(inner.length());
+        for (int at = 0; at < inner.length(); at++) {
+            char character = inner.charAt(at);
+            if (character == '\\' && at + 1 < inner.length()) {
+                value.append(unescape(inner.charAt(++at)));
+            } else if (character == quote && at + 1 < inner.length() && inner.charAt(at + 1) == quote) {
+                value.append(quote); // a doubled quote is one quote
+                at++;
+            } else {
+                value.append(character);
+            }
+        }
+        return value.toString();
+    }
+
+    /** MySQL's backslash escapes; an unrecognised one denotes the character itself. */
+    private static char unescape(char escaped) {
+        switch (escaped) {
+            case '0': return '\0';
+            case 'b': return '\b';
+            case 'n': return '\n';
+            case 'r': return '\r';
+            case 't': return '\t';
+            case 'Z': return 26;
+            default:  return escaped; // \\ \' \" \% \_ and any other character
+        }
     }
 
     /** The content of one quoted MySQL string token, escaped for a ClickHouse single-quoted literal. */

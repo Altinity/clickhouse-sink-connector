@@ -65,6 +65,17 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             Pattern.compile("(?<![A-Za-z0-9_$])_[A-Za-z0-9]+(?=['\"])");
 
     /**
+     * An identifier in a generated partition-key expression: a backtick-quoted
+     * name or a bare one. Used to find the source columns a translated
+     * partition clause refers to, so a nullable one can be told apart from a
+     * NOT NULL one. Function names also match and are harmless: they are not
+     * columns, so the membership test in
+     * {@link #namesNullableColumn} skips them.
+     */
+    private static final Pattern PARTITION_KEY_IDENTIFIER =
+            Pattern.compile("`([^`]+)`|([A-Za-z_][A-Za-z0-9_$]*)");
+
+    /**
      * Removes MySQL character-set introducers from a generated-column
      * expression so the result is valid ClickHouse.
      * <p>
@@ -693,18 +704,38 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.query.append(ReplacingMergeTreeKeyPolicy.engineClause(DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine,
                 isReplicatedReplacingMergeTree, VERSION_COLUMN, isDeletedColumn));
 
-        // Append partitioning and ordering clauses, using values from tableConfig if they exist
-
+        // Append partitioning and ordering clauses, using values from tableConfig if they exist.
+        // Constants.PARTITION_BY already carries its trailing space, so nothing
+        // is appended between it and the key.
+        String emittedPartitionKey = null;
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-            String deletedTimeColumnToDate = String.format(DELETED_TIME_COLUMN_TO_DATE, DELETED_TIME_COLUMN);
-            this.query.append(" PARTITION BY ").append(deletedTimeColumnToDate);
+            emittedPartitionKey = String.format(DELETED_TIME_COLUMN_TO_DATE, DELETED_TIME_COLUMN);
         } else if (tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
-            // Use the partition_by from tableConfig if it exists
-            this.query.append(Constants.PARTITION_BY).append(" ").append(tableConfig.getPartitionBy());
+            // Use the partition_by from tableConfig if it exists. It is an
+            // operator-written ClickHouse expression, emitted verbatim.
+            emittedPartitionKey = tableConfig.getPartitionBy();
         } else if (partitionByColumn.length() > 0) {
             // Fallback to partitionByColumn if tableConfig does not provide a partition_by value
-            this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
+            emittedPartitionKey = parenIfCommaList(partitionByColumn.toString());
         }
+        if (emittedPartitionKey != null) {
+            this.query.append(Constants.PARTITION_BY).append(emittedPartitionKey);
+        }
+
+        // A nullable column in the PARTITION key needs allow_nullable_key just
+        // as a nullable sorting key does: ClickHouse rejects it with Code: 44
+        // whether or not the sorting key is nullable. Measured on 24.8.8.17 --
+        // CREATE TABLE s5 (id Int32 NOT NULL, d Nullable(Date)) ENGINE =
+        // ReplacingMergeTree ORDER BY id PARTITION BY (d) fails with "Partition
+        // key contains nullable columns, but merge tree setting
+        // `allow_nullable_key` is disabled"; the same statement with SETTINGS
+        // allow_nullable_key = 1 is accepted. A source PRIMARY KEY makes the
+        // sorting key NOT NULL, so nullableSortingKey is false for exactly the
+        // tables where the partition column is the only nullable one: without
+        // this the CREATE TABLE never lands and every later event for the table
+        // fails.
+        boolean nullablePartitionKey = !isReplicationHistoryEnabled()
+                && namesNullableColumn(emittedPartitionKey, orderedColumnNames, notNullColumnNames);
 
         // Every branch goes through appendOrderBy, which appends _valid_to in
         // history mode (Spec 12.02 section 3.4, Gap G-12.02-3).
@@ -739,8 +770,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // Append to any user-supplied settings rather than replacing them.
         String tableSettings = tableConfig.getSettings();
         boolean hasUserSettings = tableSettings != null && !tableSettings.isEmpty();
-        if (nullableSortingKey && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {
-            this.query.append(Constants.SETTINGS);
+        if ((nullableSortingKey || nullablePartitionKey)
+                && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {            this.query.append(Constants.SETTINGS);
             if (hasUserSettings) {
                 this.query.append(tableSettings).append(",");
             }
@@ -843,6 +874,115 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             partitioningOptions = "PARTITION BY " + partitioningKeys;
         }
         return partitioningOptions;
+    }
+
+    /**
+     * The partition-key expression for a column list derived from the source
+     * DDL, as ClickHouse needs it.
+     *
+     * <p>A multi-column MySQL partition key ({@code PARTITION BY KEY(a,b)},
+     * {@code RANGE COLUMNS(a,b)}) is collected as the bare comma list
+     * {@code a,b}. ClickHouse has no such form -- the partition key is a
+     * SINGLE expression and a multi-column key is a tuple -- so the emitted
+     * {@code PARTITION BY a, b} fails with {@code Code: 62} (syntax error at
+     * the comma) and the CREATE TABLE never lands, which makes every later
+     * event for that table fail too. Measured on 24.8.8.17: the bare list is
+     * rejected, {@code PARTITION BY (a, b)} is accepted.</p>
+     *
+     * <p>Only a bare comma list is changed. A single column, a function call
+     * ({@code toYear(d)}) and a list that is already parenthesised
+     * ({@code (a,d,c)}, built by the RANGE COLUMNS branch) are returned as
+     * they are -- wrapping those again would nest the tuple.</p>
+     *
+     * <p>This is for DDL-derived keys only. An operator-supplied
+     * {@code partition_by} is a ClickHouse expression the operator wrote, and
+     * is emitted verbatim.</p>
+     *
+     * @param columns the partition key as collected from the source DDL.
+     * @return the same key, parenthesised when it is a bare comma list.
+     */
+    /**
+     * True when a partition-key expression names a column that the source
+     * declares nullable.
+     *
+     * <p>The expression is the connector's own translation of the source
+     * partition clause, so its identifiers are source column names wrapped in
+     * the ClickHouse functions the translator emits ({@code toYear(d)}). Every
+     * identifier-shaped token is therefore looked up: one that is not a known
+     * column is ignored, which makes an unrecognised function name harmless.</p>
+     *
+     * <p>Function names are deliberately not excluded by a list. Excluding
+     * them would need a list to be maintained against the translator and
+     * {@code toYear}/{@code toMonth}/{@code toDayOfMonth}/{@code toUnixTimestamp}
+     * are not columns, so they simply fail the
+     * {@code orderedColumnNames} membership test and are skipped.</p>
+     *
+     * @param expression        the emitted partition-key expression.
+     * @param orderedColumnNames every stored column, in declaration order.
+     * @param notNullColumnNames the subset of those declared NOT NULL.
+     * @return true when at least one identifier in the expression is a column
+     *         outside {@code notNullColumnNames}.
+     */
+    static boolean namesNullableColumn(String expression, List<String> orderedColumnNames,
+                                       Set<String> notNullColumnNames) {
+        if (expression == null || expression.isEmpty() || orderedColumnNames == null
+                || orderedColumnNames.isEmpty()) {
+            return false;
+        }
+        // Column names without quoting, matched case-insensitively: MySQL
+        // column names are case-insensitive and the parser preserves whatever
+        // quoting the DDL used.
+        Set<String> nullable = new HashSet<>();
+        for (String column : orderedColumnNames) {
+            String bare = stripBackticks(column).toLowerCase();
+            if (!notNullColumnNames.contains(stripBackticks(column))) {
+                nullable.add(bare);
+            }
+        }
+        if (nullable.isEmpty()) {
+            return false;
+        }
+        Matcher identifier = PARTITION_KEY_IDENTIFIER.matcher(expression);
+        while (identifier.find()) {
+            String name = identifier.group(1) != null ? identifier.group(1) : identifier.group(2);
+            if (nullable.contains(name.toLowerCase())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static String parenIfCommaList(String columns) {
+        if (columns == null) {
+            return null;
+        }
+        String keys = columns.trim();
+        if (keys.isEmpty()
+                || (keys.charAt(0) == '(' && keys.charAt(keys.length() - 1) == ')')
+                || !hasTopLevelComma(keys)) {
+            return keys;
+        }
+        return "(" + keys + ")";
+    }
+
+    /**
+     * True when a comma occurs outside every parenthesis, which is what makes a
+     * string a LIST of expressions rather than one expression that happens to
+     * carry a comma in its arguments ({@code cityHash64(a, b)}).
+     */
+    private static boolean hasTopLevelComma(String expression) {
+        int depth = 0;
+        for (int i = 0; i < expression.length(); i++) {
+            char c = expression.charAt(i);
+            if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -1062,6 +1202,31 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                 partitionByColumns.append(partitionColumn);
                             }
                         }
+                    } else if (partitionTree instanceof MySqlParser.PartitionFunctionHashContext) {
+                        // PARTITION BY HASH(expr) -- the column list is an
+                        // expression here, not a uid list. MySQL hashes the
+                        // expression's value; ClickHouse has no plain "hash"
+                        // function (Code: 46 UNKNOWN_FUNCTION), so the
+                        // expression is wrapped in cityHash64, which is the
+                        // same idea. A bare column keeps a stable, evenly
+                        // spread partition key.
+                        MySqlParser.ExpressionContext expression =
+                                ((MySqlParser.PartitionFunctionHashContext) partitionTree).expression();
+                        if (expression != null) {
+                            String hashed = expression.getText();
+                            log.info("Found partition hash expression: " + hashed);
+                            partitionByColumns.append("cityHash64(").append(hashed).append(")");
+                        }
+                    } else if (partitionTree instanceof MySqlParser.PartitionFunctionListContext) {
+                        // PARTITION BY LIST COLUMNS(a, b) -- same uid list
+                        // shape as KEY. LIST(expr) carries a bare expression
+                        // with no column list and is left alone: it has no
+                        // ClickHouse equivalent to translate to.
+                        MySqlParser.UidListContext listColumns =
+                                ((MySqlParser.PartitionFunctionListContext) partitionTree).uidList();
+                        if (listColumns != null) {
+                            partitionByColumns.append(listColumns.getText());
+                        }
                     } else if (partitionTree instanceof MySqlParser.PartitionFunctionRangeContext) {
                         for (ParseTree partitionFunctionRangeTree: ((MySqlParser.PartitionFunctionRangeContext) partitionTree).children) {
                             if (partitionFunctionRangeTree instanceof MySqlParser.UidListContext) {
@@ -1148,6 +1313,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         boolean isNullColumn = true;
         boolean isGeneratedColumn = false;
         String generatedColumn = "";
+        MySqlParser.DefaultColumnConstraintContext defaultConstraint = null;
 
         for (ParseTree colDefTree : ((MySqlParser.ColumnDeclarationContext) subtree).children) {
             if (colDefTree instanceof MySqlParser.FullColumnNameContext) {
@@ -1196,6 +1362,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (uniqueKeyColumns.length() == 0 && columnName != null) {
                             uniqueKeyColumns.append(columnName);
                         }
+                    } else if (colDefinitionChildTree instanceof MySqlParser.DefaultColumnConstraintContext) {
+                        // Resolved after the type and nullability are known,
+                        // the same way the ALTER path does it: the DEFAULT is a
+                        // clause of the column, not part of its type.
+                        defaultConstraint = (MySqlParser.DefaultColumnConstraintContext) colDefinitionChildTree;
                     } else if (colDefinitionChildTree instanceof MySqlParser.GeneratedColumnConstraintContext) {
                         // The shared helper, as on the ALTER path (Spec 06.06
                         // section 2): the two paths cannot translate the same
@@ -1237,15 +1408,26 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     continue;
                 }
 
+                // DEFAULT (Spec 06.04 §3.2): carried on CREATE too. It used to
+                // be dropped here, so a source table declaring `a INT DEFAULT
+                // 7` reached ClickHouse as a bare Nullable(Int32) and every
+                // row that omitted the column took 0 instead of 7.
+                String defaultModifier = resolveDefault(ColumnClause.CREATE, defaultConstraint, columnName,
+                        colDataType, (MySqlParser.ColumnDefinitionContext) colDefTree, isNullColumn);
+
                 // For non-generated columns, apply nullable constraints if applicable.
                 // (Spatial types are String now -- Spec 07.06 §3.2 -- so no type
                 // is exempt from Nullable any more.)
                 if (isNullColumn) {
                     this.query.append(Constants.NULLABLE).append("(").append(colDataType)
-                            .append(")").append(",");
+                            .append(")");
                 } else {
-                    this.query.append(colDataType).append(" ").append(Constants.NOT_NULLABLE).append(" ").append(",");
+                    this.query.append(colDataType).append(" ").append(Constants.NOT_NULLABLE).append(" ");
                 }
+                if (defaultModifier != null) {
+                    this.query.append(" ").append(defaultModifier);
+                }
+                this.query.append(",");
 
                 // Add column name to the set of column names.
                 columnNames.add(columnName);
@@ -1346,8 +1528,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
         DataType dt = DataTypeConverter.getDataType(dtc);
 
-        if (dt.name().equalsIgnoreCase("ENUM") || dt.name().equalsIgnoreCase("SET")) {
-            // Skip precision and scale for ENUM and SET types
+        if (dtc instanceof MySqlParser.CollectionDataTypeContext) {
+            // Skip precision and scale for ENUM and SET types. The check is on
+            // the parse-tree class, not on dt.name(): the resolver reports the
+            // JDBC name CHAR for both, so the old name test never matched and
+            // ENUM/SET fell through to the (precision, scale) branch below,
+            // which read the value list as numbers and logged an error for
+            // every such column.
         } else if (parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",")) {
             String sanitizedDataType = parsedDataType.split("COMMENT")[0].trim();
             try {
@@ -1484,8 +1671,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
     }
 
-    /** Which single-column ALTER clause is being translated. */
-    private enum ColumnClause { ADD, MODIFY, CHANGE }
+    /**
+     * Which clause is being translated. {@code CREATE} is a column of a new
+     * table: nothing pre-exists, so its DEFAULT describes only the value
+     * ClickHouse derives for a row that omits the column -- it back-fills
+     * nothing and is carried whenever it is reproducible.
+     */
+    private enum ColumnClause { CREATE, ADD, MODIFY, CHANGE }
 
     /**
      * Translates one ADD COLUMN / MODIFY COLUMN / CHANGE COLUMN clause: gathers
@@ -1913,6 +2105,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * <ul>
      *   <li>A literal default is carried on every clause, rewritten to
      *       ClickHouse literal syntax ({@link DefaultLiteralTranslator#literalDefault}).</li>
+     *   <li>On {@code CREATE TABLE} nothing pre-exists, so no row can be
+     *       diverged by the default: it is carried when it is a literal, and
+     *       a {@code CURRENT_TIMESTAMP}/{@code NOW()} default is carried as
+     *       ClickHouse's own equivalent. Any other expression is MySQL's
+     *       parenthesized form, dropped at INFO -- a CREATE back-fills no row,
+     *       so the source value always wins from the first replicated insert.</li>
      *   <li>On {@code ADD COLUMN}: {@code CURRENT_TIMESTAMP}/{@code NOW()}
      *       becomes the DDL event's own instant; an {@code ENUM ... NOT NULL}
      *       without a default gets MySQL's implicit default, the first
@@ -1939,7 +2137,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             // defaults coincide with ClickHouse's zero values (0, '') except
             // for ENUM NOT NULL, whose implicit default is the first member
             // while the String column's zero value is '' -- not a member.
-            if (clause == ColumnClause.ADD && !isNullColumn) {
+            if (clause != ColumnClause.MODIFY && clause != ColumnClause.CHANGE && !isNullColumn) {
                 String firstMember = DefaultLiteralTranslator.firstEnumMember(columnDefinition.dataType());
                 if (firstMember != null) {
                     return "DEFAULT " + firstMember;
@@ -1957,6 +2155,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (literal != null) {
             return "DEFAULT " + literal;
         }
+        if (clause == ColumnClause.CREATE) {
+            // Nothing pre-exists, so no row can be diverged by this DEFAULT.
+            // CURRENT_TIMESTAMP is the one non-literal a CREATE can carry
+            // exactly: ClickHouse derives the insert time the same way.
+            if (DefaultLiteralTranslator.isCurrentTimestampDefault(defaultValue)) {
+                return "DEFAULT " + derivedNowLiteral(columnType);
+            }
+            log.info("Column {}: DEFAULT {} is an expression; a CREATE TABLE back-fills no row, so it is "
+                            + "dropped and every replicated row carries the source value",
+                    columnName, defaultValue.getText());
+            return null;
+        }
         if (clause != ColumnClause.ADD) {
             log.info("Column {}: DEFAULT {} is a function or expression; a MODIFY/CHANGE back-fills nothing, "
                             + "so the DEFAULT is dropped (replicated rows carry the source value)",
@@ -1969,6 +2179,26 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         throw backfillNotReproducible(columnName, defaultValue.getText(),
                 "it is a value MySQL computed on the source (per row, or once at the ALTER) that the replica "
                         + "cannot reproduce for the rows that already exist");
+    }
+
+    /**
+     * A CREATE TABLE {@code DEFAULT CURRENT_TIMESTAMP} as ClickHouse's own
+     * derive-on-insert equivalent (Spec 06.04 §3.2). Nothing pre-exists on a
+     * CREATE, so the source instant is not known and is not needed: every row
+     * arrives with the value MySQL computed for it in the row image, and this
+     * expression only decides what an insert that omits the column gets.
+     *
+     * @param columnType the ClickHouse column type.
+     * @return the ClickHouse expression that derives the current instant.
+     */
+    private static String derivedNowLiteral(String columnType) {
+        String type = columnType == null ? "" : columnType;
+        if (type.startsWith("DateTime64")) {
+            Matcher scaleMatcher = DATETIME64_SCALE.matcher(type);
+            int scale = scaleMatcher.find() ? Integer.parseInt(scaleMatcher.group(1)) : 3;
+            return "now64(" + scale + ")";
+        }
+        return "now()";
     }
 
     /**

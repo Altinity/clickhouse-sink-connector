@@ -157,6 +157,18 @@ public class DataTypeConverter {
             return ClickHouseDataType.String.toString();
         }
 
+        // MySQL VECTOR(n) is an opaque binary value: n 4-byte floats. It is
+        // already registered in the resolver (DimensionDataTypeContext), so
+        // the statement parses, but Debezium has no VECTOR type of its own,
+        // so the schema it builds for the column does not carry a pair the
+        // shared type map can answer and the lookup below returns null.
+        // String keeps the value losslessly, like every other binary type
+        // here, and — unlike Array(Float32) — can be Nullable, which
+        // ClickHouse requires for every nullable column it creates.
+        if (isVectorType(columnDefChild)) {
+            return ClickHouseDataType.String.toString();
+        }
+
         // MySQL BIT(n) is a bit-string, not a boolean. Debezium emits it as
         // BYTES/io.debezium.data.Bits (BIT(1) is the only width that is
         // emitted as BOOLEAN), and the runtime value path already maps
@@ -256,6 +268,16 @@ public class DataTypeConverter {
     static boolean isSpatialType(MySqlParser.DataTypeContext dataType) {
         return dataType instanceof MySqlParser.SpatialDataTypeContext
                 && ((MySqlParser.SpatialDataTypeContext) dataType).JSON() == null;
+    }
+
+    /**
+     * True for {@code VECTOR[(n)]}. The grammar parses it through
+     * {@code DimensionDataTypeContext} (a {@code VECTOR} token plus an
+     * optional length), so this test is on the parse tree, not on the name.
+     */
+    static boolean isVectorType(MySqlParser.DataTypeContext dataType) {
+        return dataType instanceof MySqlParser.DimensionDataTypeContext
+                && ((MySqlParser.DimensionDataTypeContext) dataType).VECTOR() != null;
     }
 
     /**
@@ -457,6 +479,15 @@ public class DataTypeConverter {
                                 .setSuffixTokens(MySqlParser.BINARY),
                         new DataTypeResolver.DataTypeEntry(Types.NCHAR, MySqlParser.NATIONAL, MySqlParser.CHARACTER)
                                 .setSuffixTokens(MySqlParser.BINARY),
+                        // NATIONAL CHAR is a shorthand of NATIONAL CHARACTER and
+                        // has its own alternative in the grammar
+                        // (NationalStringDataTypeContext.CHAR()). Without this
+                        // entry the resolver falls through to
+                        // "Unrecognized dataType" and the whole statement
+                        // fails, so a source table using the spelling could
+                        // not be replicated at all.
+                        new DataTypeResolver.DataTypeEntry(Types.NCHAR, MySqlParser.NATIONAL, MySqlParser.CHAR)
+                                .setSuffixTokens(MySqlParser.BINARY),
                         new DataTypeResolver.DataTypeEntry(Types.NVARCHAR, MySqlParser.NCHAR, MySqlParser.VARCHAR)
                                 .setSuffixTokens(MySqlParser.BINARY)));
 
@@ -522,6 +553,26 @@ public class DataTypeConverter {
                         new DataTypeResolver.DataTypeEntry(Types.BINARY, MySqlParser.BINARY),
                         new DataTypeResolver.DataTypeEntry(Types.VARBINARY, MySqlParser.VARBINARY),
                         new DataTypeResolver.DataTypeEntry(Types.BLOB, MySqlParser.BLOB),
+                        // MySQL VECTOR is a fixed-length array of 4-byte
+                        // floats carried as an opaque binary value. The
+                        // grammar has an alternative for it
+                        // (DimensionDataTypeContext.VECTOR()) but the type
+                        // resolver had no entry, so every CREATE TABLE or
+                        // ALTER TABLE naming a VECTOR column threw
+                        // "Unrecognized dataType for VECTOR(n)" and stopped
+                        // replication for every later event on every table.
+                        //
+                        // It is registered against Types.BINARY so it takes
+                        // the same String mapping as BINARY / VARBINARY /
+                        // BLOB: the exact bytes MySQL holds, kept losslessly.
+                        // Array(Float32) would be the natural shape but is
+                        // not usable here — ClickHouse rejects
+                        // Nullable(Array(Float32)) (Code 43, "Nested type
+                        // Array(Float32) cannot be inside Nullable type"), so
+                        // a nullable VECTOR column could not be created at
+                        // all. String accepts the value under either
+                        // nullability and loses nothing.
+                        new DataTypeResolver.DataTypeEntry(Types.BINARY, MySqlParser.VECTOR),
                         new DataTypeResolver.DataTypeEntry(Types.INTEGER, MySqlParser.YEAR)));
 
         dataTypeResolverBuilder.registerDataTypes(

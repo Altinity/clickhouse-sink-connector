@@ -146,6 +146,16 @@ def regression(
             executor=executor,
         )
         Feature(
+            run=load("tests.create_ddl_matrix", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
+            run=load("tests.dml_ddl_matrix", "module"),
+            parallel=True,
+            executor=executor,
+        )
+        Feature(
             run=load("tests.parallel_alters", "module"),
             parallel=True,
             executor=executor,

@@ -34,7 +34,9 @@ ALTER TABLE
 | DROP TABLE name_1, name_2                        | Supported                           |
 | ALTER TABLE table_name to new_table_name         | RENAME table_name to new_table_name |
 | CREATE TABLE PARTITION BY KEY(col1)              | PARTITION BY col1                   |
-| CREATE TABLE PARTITION BY RANGE(col1,col2, col3) | PARTITION BY col1, col2, col3       |
+| CREATE TABLE PARTITION BY KEY(col1, col2)        | PARTITION BY (col1, col2)           |
+| CREATE TABLE PARTITION BY RANGE(col1,col2, col3) | PARTITION BY (col1, col2, col3)     |
+| CREATE TABLE PARTITION BY HASH(col1)             | PARTITION BY cityHash64(col1)       |
 | CREATE TABLE table1 as table2                    | Supported                           |
 | CREATE TABLE table1 GENERATED <col1>             | CREATE TABLE table1 MATERIALIZED    |
 

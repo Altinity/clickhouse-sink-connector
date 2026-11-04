@@ -125,6 +125,26 @@ public class DdlTranslationFailureModesTest {
     }
 
     /**
+     * The bundled grammar is a compiled artifact and rejects ordinary MySQL
+     * 8.0 in statement kinds this connector has no callback for (START
+     * REPLICA, RESTART, SHOW PROFILE). Those statements are dropped: nothing
+     * could have been emitted from them, and throwing would have stopped
+     * replication for every table on the host. A statement that COULD change
+     * a replicated table keeps throwing, so a real gap stays loud.
+     */
+    @Test
+    @DisplayName("FM-06.03-1 control: valid MySQL the grammar cannot read is dropped, not fatal")
+    public void validMySqlOutsideTheGrammarIsDroppedNotFatal() {
+        MySQLDDLParserService service = plainService();
+        assertEquals("", translate(service, "START REPLICA"));
+        assertEquals("", translate(service, "RESTART"));
+        assertEquals("", translate(service, "SHOW PROFILE CPU"));
+        RuntimeException e = assertThrows(RuntimeException.class,
+                () -> translate(plainService(), "ALTER TABLE t FROBNICATE COLUMN c"));
+        assertEquals("Error parsing DDL", e.getMessage());
+    }
+
+    /**
      * FM-06.03-2 control: partition maintenance that moves no row between
      * the table and anything else (ADD / REORGANIZE / COALESCE / ANALYZE /
      * OPTIMIZE PARTITION) is loss-free to skip, and is skipped.

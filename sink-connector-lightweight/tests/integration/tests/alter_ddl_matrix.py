@@ -6,8 +6,6 @@ from integration.tests.steps.alter import (
     alter_table,
     drop_table,
     rename_table,
-    create_index,
-    create_view,
     create_table_like,
 )
 
@@ -30,24 +28,37 @@ BASE_PARTITION = (
 PARENT_DDL = "CREATE TABLE IF NOT EXISTS test.ddl_matrix_parent (id INT NOT NULL PRIMARY KEY)"
 
 
-def live_row(self, table_name, value):
+@TestStep(Given)
+def live_row(table_name, value, context=None):
     """Insert one row through MySQL and require it in ClickHouse.
 
     A clause the translator mishandles rarely fails at DDL time: it stalls the
     stream, emits a statement ClickHouse rejects forever, or takes the table out
     of the captured set. Only a row written afterwards exposes all three.
+
+    A module-level step rather than a method: every caller passes
+    ``table_name=`` and ``value=`` by keyword, so a plain function leaves those
+    call sites untouched and the step stays usable from more than one test.
     """
-    mysql = self.context.cluster.node("mysql-master")
-    clickhouse = self.context.cluster.node("clickhouse")
+    mysql = context.cluster.node("mysql-master")
+    clickhouse = context.cluster.node("clickhouse")
 
     with When(f"I write row {value} to MySQL after the DDL"):
         mysql.query(f"INSERT INTO test.`{table_name}` (id) VALUES ({value});")
 
     with Then(f"I check row {value} reached ClickHouse, so the stream is alive"):
-        retry(clickhouse.query, timeout=120, delay=5)(
-            f"SELECT id FROM test.`{table_name}` FINAL WHERE id = {value} FORMAT CSV",
-            message=f"{value}",
-        )
+        # Counted, not matched as text: `message=` is a SUBSTRING test, so a
+        # value of 1 would also accept a row whose id reads 10.
+        for attempt in retries(timeout=120, delay=5):
+            with attempt:
+                found = int(clickhouse.query(
+                    f"SELECT count() FROM test.`{table_name}` FINAL "
+                    f"WHERE id = {value}"
+                ).output.strip())
+                assert found == 1, (
+                    f"row {value} is not in test.`{table_name}`; the stream "
+                    f"stopped after this DDL"
+                )
 
 
 def row(name, clause, **kwargs):
@@ -55,6 +66,29 @@ def row(name, clause, **kwargs):
     entry = {"name": name, "clause": clause}
     entry.update(kwargs)
     return entry
+
+@TestStep(Then)
+def column_arrived(table_name, column_name, context=None):
+    """Require a named column to exist on the replicated ClickHouse table.
+
+    Some rows exist to prove a bridge did NOT fire: a clause that must be
+    dropped is a clause whose KEYWORD may also appear as an ordinary column
+    name, and a bridge anchored anywhere but the start of a specification
+    would eat that column. Parsing proves nothing there -- the dropped column
+    would never reach ClickHouse -- so the column's presence is the assertion.
+
+    Fenced with pipes and read as TSVRaw because ``message=`` is a SUBSTRING
+    test; a bare name match would also accept a prefix of a different column.
+    """
+    clickhouse = context.cluster.node("clickhouse")
+
+    with Then(f"I check the column {column_name} reached ClickHouse"):
+        retry(clickhouse.query, timeout=120, delay=5)(
+            f"SELECT concat('|', name, '|') FROM system.columns "
+            f"WHERE database = 'test' AND table = '{table_name}' "
+            f"AND name = '{column_name}' FORMAT TSVRaw",
+            message=f"|{column_name}|",
+        )
 
 
 def matrix_rows():
@@ -86,6 +120,16 @@ def matrix_rows():
         they qualify an ADD/ALTER CHECK, which is covered in the forms below.
       * ADD SPATIAL INDEX -- needs a NOT NULL geometry column, which changes
         the replicated row shape every other row asserts against.
+      * SECONDARY_ENGINE = <engine>, SECONDARY_LOAD, SECONDARY_UNLOAD -- the
+        secondary-engine (RAPID) clauses. They are valid MySQL 8.0.13+, but
+        this suite runs `mysql:8.0.36` Community, which ships no RAPID engine,
+        so MySQL itself rejects them here and no binlog event is ever written.
+        A clause MySQL refuses proves nothing about the connector.
+        MySqlDdlNormalizerTest covers the parse and the bridge.
+
+    The `ALTER TABLE t AUTOEXTEND_SIZE = 4M` CREATE-side twin, `CREATE TABLE
+    ... ENGINE=InnoDB AUTOEXTEND_SIZE = 4M`, is covered by
+    `MySqlDdlNormalizerTest` and in the create matrix, not here.
     """
     s = getuid()
     return [
@@ -102,7 +146,10 @@ def matrix_rows():
         row(f"m10_{s}", "ADD COLUMN c_defnull INT DEFAULT (NULL)"),
         # --- columns: MODIFY / CHANGE / RENAME / DROP --------------------
         row(f"m11_{s}", "MODIFY COLUMN c_mod BIGINT NULL"),
-        row(f"m12_{s}", "MODIFY COLUMN c_mod INT NOT NULL"),
+        # DEFAULT 0 because c_mod is NULL in the row written before this clause
+        # and MySQL refuses NOT NULL on a column that already holds NULL
+        # (ERROR 1138); the clause under test is the widening, not the NULL.
+        row(f"m12_{s}", "MODIFY COLUMN c_mod INT NOT NULL DEFAULT 0"),
         row(f"m13_{s}", "MODIFY COLUMN c_mod BIGINT FIRST"),
         row(f"m14_{s}", "MODIFY COLUMN c_mod BIGINT AFTER id"),
         row(f"m15_{s}", "CHANGE COLUMN c_chg c_changed BIGINT"),
@@ -225,6 +272,32 @@ def matrix_rows():
         # --- column visibility (MySQL 8.0.23+) ----------------------------
         row(f"m65_{s}", "ALTER COLUMN c_base SET INVISIBLE"),
         row(f"m66_{s}", "ALTER COLUMN c_base SET VISIBLE"),
+        # --- AUTOEXTEND_SIZE (MySQL 8.0.23+) -------------------------------
+        # The bundled parser has no terminal for AUTOEXTEND_SIZE, so
+        # MySqlDdlNormalizer drops the specification before the parser sees it.
+        # These rows exist because a unit test proves only that the STATEMENT
+        # PARSES; it cannot prove the STREAM SURVIVES the statement. A clause
+        # bridged into the wrong text still parses and still stalls the table.
+        #
+        # AUTOEXTEND_SIZE sizes a tablespace's growth step, so it has no
+        # ClickHouse effect. The requirement is that the ALTER neither fails
+        # nor stalls. 4M is the documented multiple; InnoDB is asserted for
+        # every matrix table by create_mysql_table.
+        row(f"m67_{s}", "AUTOEXTEND_SIZE = 4M"),
+        # The same clause beside one that DOES translate, in both orders, so the
+        # bridge has to drop one specification without eating its neighbour's
+        # comma.
+        row(f"m68_{s}", "AUTOEXTEND_SIZE = 4M, MODIFY COLUMN c_mod BIGINT"),
+        row(f"m69_{s}", "MODIFY COLUMN c_mod BIGINT, AUTOEXTEND_SIZE = 8M"),
+        # A column NAMED after a bridged keyword must NOT be bridged away. The
+        # clause here is an ordinary ADD COLUMN, and the column has to reach
+        # ClickHouse: the keyword is matched where a specification starts, not
+        # anywhere the word appears.
+        row(
+            f"m70_{s}",
+            "ADD COLUMN secondary_load INT",
+            check_column="secondary_load",
+        ),
     ]
 
 
@@ -313,10 +386,33 @@ def alter_clause_matrix(self):
 
                 live_row(table_name=entry["name"], value=2)
 
+                if entry.get("check_column"):
+                    column_arrived(
+                        table_name=entry["name"],
+                        column_name=entry["check_column"],
+                    )
+
 
 @TestOutline
-def default_form(self, column_type, default_expression, expected_type):
-    """ADD COLUMN with one DEFAULT form, asserted on the replicated column."""
+def default_form(self, column_type, default_expression, expected_type, expected_default):
+    """ADD COLUMN with one DEFAULT form, asserted on the replicated column.
+
+    The DEFAULT itself is asserted, not only the type. A DEFAULT the translator
+    drops leaves the column TYPE untouched, so a type-only check passed the
+    defect this matrix exists to catch: `DEFAULT (0)` arrived at MySQL wrapped
+    in the grammar's `'(' expression ')'` alternative, the translator handled
+    only the bare literal, and the column was created without its default.
+    ClickHouse records the clause in `system.columns`: `default_kind` is
+    `DEFAULT` with a non-empty `default_expression` when it was carried, and
+    both are empty when it was not.
+
+    `expected_default` is the expression ClickHouse stores, which is the
+    value the translator emitted and NOT the MySQL spelling: the server
+    normalises it (`0x10` becomes `16`, `.5` becomes `0.5`, `0.0` becomes
+    `0.`, and a boolean becomes lower case). Each expectation here was read
+    from a ClickHouse server of the version this suite runs, not derived from
+    the input.
+    """
     table_name = f"d_{getuid()}"
     clickhouse = self.context.cluster.node("clickhouse")
 
@@ -331,9 +427,32 @@ def default_form(self, column_type, default_expression, expected_type):
 
     with Then("I check the ClickHouse column carries the source type"):
         retry(clickhouse.query, timeout=120, delay=5)(
-            f"SELECT type FROM system.columns WHERE database = 'test' "
-            f"AND table = '{table_name}' AND name = 'd' FORMAT TabSeparated",
-            message=expected_type,
+            f"SELECT concat('|', type, '|') FROM system.columns "
+            f"WHERE database = 'test' AND table = '{table_name}' "
+            f"AND name = 'd' FORMAT TSVRaw",
+            message=f"|{expected_type}|",
+        )
+
+    with And("I check a DEFAULT was carried at all, not only the type"):
+        retry(clickhouse.query, timeout=120, delay=5)(
+            f"SELECT concat('|', default_kind = 'DEFAULT', '|', "
+            f"default_expression != '', '|') FROM system.columns "
+            f"WHERE database = 'test' AND table = '{table_name}' "
+            f"AND name = 'd' FORMAT TSVRaw",
+            message="|1|1|",
+        )
+
+    with And("I check ClickHouse holds that DEFAULT and not a different one"):
+        # The framework asserts `message in output`, a SUBSTRING test, so the
+        # value is fenced between pipes: unfenced, an expected `''` matches
+        # every output and an expected `1` would also match `10`. TSVRaw is
+        # used because TabSeparated escapes quotes and a string literal would
+        # then never match the expression the server stored.
+        retry(clickhouse.query, timeout=120, delay=5)(
+            f"SELECT concat('|', lower(default_expression), '|') "
+            f"FROM system.columns WHERE database = 'test' "
+            f"AND table = '{table_name}' AND name = 'd' FORMAT TSVRaw",
+            message=f"|{expected_default.lower()}|",
         )
 
     with And("I write a row after the DDL and require it in ClickHouse"):
@@ -355,31 +474,87 @@ def default_literal_forms(self):
     literal, is the same defect at a different input.
     """
     forms = [
-        ("INT", "0", "Nullable(Int32)"),
-        ("INT", "(0)", "Nullable(Int32)"),
-        ("INT", "((0))", "Nullable(Int32)"),
-        ("INT", "1", "Nullable(Int32)"),
-        ("INT", "(1)", "Nullable(Int32)"),
-        ("INT", "(-1)", "Nullable(Int32)"),
-        ("INT", "(NULL)", "Nullable(Int32)"),
-        ("TINYINT(1)", "(0)", "Nullable(Int8)"),
-        ("TINYINT(1)", "(1)", "Nullable(Int8)"),
-        ("BIGINT", "(1)", "Nullable(Int64)"),
-        ("DECIMAL(10,2)", "(0.0)", "Nullable(Decimal(10,2))"),
-        ("DOUBLE", "(0.5)", "Nullable(Float64)"),
-        ("VARCHAR(10)", "('x')", "Nullable(String)"),
-        ("VARCHAR(10)", "('')", "Nullable(String)"),
-        ("VARCHAR(10)", "('a''b')", "Nullable(String)"),
-        ("CHAR(3)", "('abc')", "Nullable(String)"),
-        ("DATE", "('2020-01-01')", "Nullable(Date32)"),
+        # --- grammar `constant`: stringLiteral, bare and parenthesised --------
+        # A doubled quote is the MySQL spelling; ClickHouse stores the same
+        # value re-rendered with a backslash escape.
+        ("VARCHAR(10)", "'x'", "Nullable(String)", "'x'"),
+        ("VARCHAR(10)", "('x')", "Nullable(String)", "'x'"),
+        ("VARCHAR(10)", "''", "Nullable(String)", "''"),
+        ("VARCHAR(10)", "('')", "Nullable(String)", "''"),
+        ("VARCHAR(10)", "'a''b'", "Nullable(String)", "'a\\'b'"),
+        ("VARCHAR(10)", "('a''b')", "Nullable(String)", "'a\\'b'"),
+        ("CHAR(3)", "('abc')", "Nullable(String)", "'abc'"),
+        # --- grammar `constant`: decimalLiteral and '-' decimalLiteral --------
+        ("INT", "0", "Nullable(Int32)", "0"),
+        ("INT", "(0)", "Nullable(Int32)", "0"),
+        ("INT", "((0))", "Nullable(Int32)", "0"),
+        ("INT", "1", "Nullable(Int32)", "1"),
+        ("INT", "(1)", "Nullable(Int32)", "1"),
+        ("INT", "(-1)", "Nullable(Int32)", "-1"),
+        ("INT", "((-1))", "Nullable(Int32)", "-1"),
+        ("INT", "+1", "Nullable(Int32)", "1"),
+        ("TINYINT(1)", "(0)", "Nullable(Int8)", "0"),
+        ("TINYINT(1)", "(1)", "Nullable(Int8)", "1"),
+        ("BIGINT", "(1)", "Nullable(Int64)", "1"),
+        ("DECIMAL(10,2)", "0.0", "Nullable(Decimal(10, 2))", "0."),
+        ("DECIMAL(10,2)", "(0.0)", "Nullable(Decimal(10, 2))", "0."),
+        ("DOUBLE", "0.5", "Nullable(Float64)", "0.5"),
+        ("DOUBLE", "(0.5)", "Nullable(Float64)", "0.5"),
+        # A real literal may start at the dot: `.5` is valid MySQL and reaches
+        # ClickHouse as a leading digit, or the server rejects it (Code 62).
+        ("DOUBLE", ".5", "Nullable(Float64)", "0.5"),
+        ("DOUBLE", "(.5)", "Nullable(Float64)", "0.5"),
+        ("DOUBLE", "-.5", "Nullable(Float64)", "-0.5"),
+        ("DOUBLE", "(-.5)", "Nullable(Float64)", "-0.5"),
+        ("DECIMAL(10,2)", ".5", "Nullable(Decimal(10, 2))", "0.5"),
+        # --- grammar `constant`: booleanLiteral ------------------------------
+        ("INT", "TRUE", "Nullable(Int32)", "TRUE"),
+        ("INT", "FALSE", "Nullable(Int32)", "FALSE"),
+        ("BOOLEAN", "(TRUE)", "Nullable(Bool)", "TRUE"),
+        # --- grammar `constant`: hexadecimalLiteral --------------------------
+        # A hex literal keeps its numeric meaning for an integer column and its
+        # BYTES for a string column, and MySQL's HEX() pads an odd digit count,
+        # so `0x1` is the byte 01, not 1.
+        ("INT", "0x10", "Nullable(Int32)", "16"),
+        ("INT", "(0x10)", "Nullable(Int32)", "16"),
+        ("INT", "0x1", "Nullable(Int32)", "1"),
+        ("VARBINARY(4)", "0x1", "Nullable(String)", "'01'"),
+        ("VARBINARY(4)", "0xabc", "Nullable(String)", "'0abc'"),
+        ("VARBINARY(4)", "0x4142", "Nullable(String)", "'4142'"),
+        ("VARBINARY(4)", "X'4142'", "Nullable(String)", "'4142'"),
+        ("VARCHAR(8)", "X'4142'", "Nullable(String)", "'4142'"),
+        # --- grammar `constant`: BIT_STRING ----------------------------------
+        ("INT", "b'1010'", "Nullable(Int32)", "10"),
+        ("BIT(4)", "b'1010'", "Nullable(String)", "'0a'"),
+        ("VARCHAR(8)", "b'1010'", "Nullable(String)", "'0a'"),
+        # --- grammar `constant`: NOT? nullLiteral ----------------------------
+        ("INT", "NULL", "Nullable(Int32)", "null"),
+        ("INT", "(NULL)", "Nullable(Int32)", "null"),
+        ("VARCHAR(10)", "NULL", "Nullable(String)", "null"),
+        # --- grammar `constant`: REAL_LITERAL exponent form ------------------
+        # ClickHouse evaluates the exponent, so the stored expression is the
+        # plain value rather than the spelling the translator emitted.
+        ("DOUBLE", "1.5e3", "Nullable(Float64)", "1500."),
+        ("DOUBLE", "1.5E-3", "Nullable(Float64)", "0.0015"),
+        # --- grammar `defaultValue`: '(' expression ')' around a constant -----
+        # The outermost wrapper is the one that shipped broken; the nested form
+        # proves the unwrap is a loop, not a single depth.
+        ("INT", "((1))", "Nullable(Int32)", "1"),
+        # --- a DATE literal, whose ClickHouse type is Date32 ------------------
+        ("DATE", "'2020-01-01'", "Nullable(Date32)", "'2020-01-01'"),
+        ("DATE", "('2020-01-01')", "Nullable(Date32)", "'2020-01-01'"),
     ]
 
-    for column_type, default_expression, expected_type in forms:
-        with Example(f"{column_type} DEFAULT {default_expression}", flags=TE):
+    for column_type, default_expression, expected_type, expected_default in forms:
+        with Example(
+            f"{column_type} DEFAULT {default_expression}",
+            flags=TE,
+        ):
             default_form(
                 column_type=column_type,
                 default_expression=default_expression,
                 expected_type=expected_type,
+                expected_default=expected_default,
             )
 
 
@@ -409,11 +584,18 @@ def modify_column_default_is_dropped(self):
         )
 
     with Then("I check the ClickHouse column was retyped and the stream is alive"):
-        retry(clickhouse.query, timeout=120, delay=5)(
-            f"SELECT type FROM system.columns WHERE database = 'test' "
-            f"AND table = '{table_name}' AND name = 'c' FORMAT TabSeparated",
-            message="Nullable(DateTime64(0, 0))",
-        )
+        # Compared for equality after stripping, so a type that merely CONTAINS
+        # the expected text (or an error message that does) cannot pass.
+        for attempt in retries(timeout=120, delay=5):
+            with attempt:
+                column_type = clickhouse.query(
+                    f"SELECT type FROM system.columns WHERE database = 'test' "
+                    f"AND table = '{table_name}' AND name = 'c' FORMAT TabSeparated"
+                ).output.strip()
+                assert column_type == "Nullable(DateTime64(0))", (
+                    f"column c is {column_type!r}, expected "
+                    f"'Nullable(DateTime64(0))'"
+                )
 
     live_row(table_name=table_name, value=1)
 
@@ -447,11 +629,17 @@ def rename_columns_sequentially(self):
             )
 
         with Then(f"I check ClickHouse has {new_name}"):
-            retry(clickhouse.query, timeout=120, delay=5)(
-                f"SELECT name FROM system.columns WHERE database = 'test' "
-                f"AND table = '{table_name}' AND name = '{new_name}' FORMAT TabSeparated",
-                message=new_name,
-            )
+            # Counted, not matched as text: `message="a2"` is a SUBSTRING test
+            # and would also pass on a column still named "xa2".
+            for attempt in retries(timeout=120, delay=5):
+                with attempt:
+                    present = int(clickhouse.query(
+                        f"SELECT count() FROM system.columns WHERE database = 'test' "
+                        f"AND table = '{table_name}' AND name = '{new_name}'"
+                    ).output.strip())
+                    assert present == 1, (
+                        f"column {new_name} is missing from test.`{table_name}`"
+                    )
 
     live_row(table_name=table_name, value=2)
 
@@ -532,9 +720,18 @@ def drop_table_statement(self):
         drop_table(table_name=table_name)
 
     with Then("I check the ClickHouse table is gone"):
-        retry(clickhouse.query, timeout=120, delay=5)(
-            f"EXISTS test.`{table_name}`", message="0"
-        )
+        # Compared as a count, never through `message=`: that is a SUBSTRING
+        # test, so an expected "0" also matches a stray "0" in an error text
+        # (Code 60, a path containing 0) and the check would pass vacuously.
+        for attempt in retries(timeout=120, delay=5):
+            with attempt:
+                present = int(clickhouse.query(
+                    "SELECT count() FROM system.tables "
+                    f"WHERE database = 'test' AND name = '{table_name}'"
+                ).output.strip())
+                assert present == 0, (
+                    f"test.`{table_name}` still exists in ClickHouse after DROP"
+                )
 
     with And("I check replication still works on a fresh table"):
         other = f"drp_other_{getuid()}"
@@ -571,11 +768,15 @@ def create_table_like_statement(self):
         retry(clickhouse.query, timeout=120, delay=5)(
             f"EXISTS test.`{copy}`", message="1"
         )
-        retry(clickhouse.query, timeout=120, delay=5)(
-            f"SELECT name FROM system.columns WHERE database = 'test' "
-            f"AND table = '{copy}' AND name = 'c' FORMAT TabSeparated",
-            message="c",
-        )
+        # Counted, not matched as text: `message="c"` is a SUBSTRING test and
+        # "c" occurs in any column name that contains it.
+        for attempt in retries(timeout=120, delay=5):
+            with attempt:
+                present = int(clickhouse.query(
+                    f"SELECT count() FROM system.columns WHERE database = 'test' "
+                    f"AND table = '{copy}' AND name = 'c'"
+                ).output.strip())
+                assert present == 1, f"column c is missing from test.`{copy}`"
 
     with And("I write through the copy and require the row"):
         live_row(table_name=copy, value=2)
@@ -661,7 +862,8 @@ def module(self):
     tells them apart.
 
     The companion unit matrix `AlterTableDdlVariationMatrixTest` classifies
-    every metric alternative in the Debezium MySQL grammar by reflection, so a
+    every alternative of the Debezium MySQL grammar's `alterSpecification`
+    rule by reflection, so a
     grammar bump that adds an alternative without a handler fails the build
     instead of arriving as an untested path.
     """
