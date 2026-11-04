@@ -345,6 +345,60 @@ public class DmlStatementSurfaceCoverageTest {
 
         shapes.put("handler.read", "HANDLER t READ FIRST");
         shapes.put("handler.close", "HANDLER t CLOSE");
+
+        // Producer-specific shapes. The rows above are grammar shapes; these are
+        // what a driver, an ORM or a bulk loader actually puts on the wire, and
+        // they combine clauses the grammar-shaped rows keep apart. A statement
+        // MySQL accepted is a statement the binlog can carry to the connector,
+        // so each of these must survive the same way.
+        shapes.put("insert.jdbcBatchPlaceholders",
+                "INSERT INTO t (a, b) VALUES (?, ?), (?, ?), (?, ?)");
+        shapes.put("insert.namedColumnsBackticked",
+                "INSERT INTO `db`.`t` (`a`, `b`) VALUES (1, 2)");
+        shapes.put("insert.onDuplicateMixedAssignments",
+                "INSERT INTO t (a, b) VALUES (1, 2) ON DUPLICATE KEY UPDATE "
+                        + "b = VALUES(b), a = a + 1");
+        shapes.put("insert.largeMultiRow",
+                "INSERT INTO t (a) VALUES (1), (2), (3), (4), (5), (6), (7), (8)");
+        shapes.put("insert.selectNested",
+                "INSERT INTO t (a) SELECT x.a FROM (SELECT a FROM s) x");
+        shapes.put("insert.selectWithCte",
+                "INSERT INTO t (a) WITH c AS (SELECT 1 AS a) SELECT a FROM c");
+        shapes.put("insert.setExpression",
+                "INSERT INTO t SET a = 1 + 1, b = CONCAT('x', 'y')");
+        shapes.put("insert.jsonDefaultAlias",
+                "INSERT INTO t (a, b) VALUES (1, DEFAULT) AS new "
+                        + "ON DUPLICATE KEY UPDATE b = new.b");
+        shapes.put("insert.bulkLoaderAllDefaults",
+                "INSERT INTO t VALUES (DEFAULT, DEFAULT, DEFAULT)");
+        shapes.put("insert.unhex",
+                "INSERT INTO t (a) VALUES (UNHEX('1f'))");
+        shapes.put("insert.negativeAndFloat",
+                "INSERT INTO t (a, b) VALUES (-1, 1.5e10), (0, -0.0)");
+        shapes.put("insert.stringEscapes",
+                "INSERT INTO t (a) VALUES ('it''s'), ('a\\\\b'), ('tab\\there')");
+        shapes.put("insert.nullExplicit",
+                "INSERT INTO t (a, b) VALUES (NULL, NULL)");
+
+        shapes.put("update.batchStyle", "UPDATE t SET a = 1, b = 2, c = 3 WHERE id IN (1, 2, 3)");
+        shapes.put("update.whereStatic", "UPDATE t SET a = 1 WHERE 1 = 1");
+        shapes.put("update.optimisticLock", "UPDATE t SET a = 1, version = version + 1 WHERE id = 1");
+        shapes.put("update.leftJoinThree",
+                "UPDATE t LEFT JOIN u ON t.id = u.id LEFT JOIN w ON u.id = w.id "
+                        + "SET t.a = w.b");
+        // DESTRUCTIVE: fixture text only. The cascading DELETE spelling is parsed
+        // and classified; nothing is executed, so no row is deleted.
+        shapes.put("delete.inList", "DELETE FROM t WHERE id IN (1, 2, 3)");
+        shapes.put("delete.range", "DELETE FROM t WHERE created < '2020-01-01'");
+        shapes.put("delete.andOr", "DELETE FROM t WHERE a = 1 AND b = 2 OR c = 3");
+
+        shapes.put("replace.selectColumns", "REPLACE INTO t (a, b) SELECT a, b FROM s");
+        shapes.put("replace.ignore", "REPLACE LOW_PRIORITY INTO t (a) VALUES (1)");
+
+        shapes.put("call.withArgs", "CALL p(1, 'x', NULL)");
+        shapes.put("do.multiple", "DO 1, 2, SLEEP(0)");
+        shapes.put("handler.readNext", "HANDLER t READ NEXT");
+        shapes.put("handler.readIndex", "HANDLER t READ `idx` FIRST");
         return shapes;
     }
 

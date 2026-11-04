@@ -276,55 +276,174 @@ public class StatementSurfaceCoverageTest {
      * Every alternative of the five non-DDL, non-DML statement groups parses
      * silently.
      *
-     * <p>{@code sqlStatement} has seven alternatives. Two are covered by these
-     * tests ({@code ddlStatement} here, {@code dmlStatement} in {@link
-     * DmlStatementSurfaceCoverageTest}); the other five -- transaction,
-     * replication, prepared, administration, utility -- are probed here, one
-     * representative statement each. Without them "we cover the statement
-     * surface" would be true of a quarter of it.</p>
+     * <p>One valid MySQL 8 statement per alternative of the five statement
+     * groups that are neither DDL nor DML, keyed by the alternative's accessor
+     * name on the group context. {@code sqlStatement} has seven alternatives:
+     * {@code ddlStatement} is covered here, {@code dmlStatement} in {@link
+     * DmlStatementSurfaceCoverageTest}, and the other five -- transaction,
+     * replication, prepared, administration, utility -- are probed below.
+     * Without them "we cover the statement surface" would be true of a quarter
+     * of it.</p>
      *
-     * <p>The reason it matters is uniform across the groups: {@code
-     * ErrorListenerImpl.syntaxError} throws {@code RuntimeException} out of
-     * {@code parseSql}, and the caller wraps that into a terminal
-     * replication failure. Whether a group's statements can reach the parser
-     * depends on binlog format and on what Debezium forwards; the parser's
-     * strictness does not.</p>
+     * <p>Measured, not guessed: the shipped parser declares 25 {@code
+     * administrationStatement} alternatives, 15 {@code replicationStatement},
+     * 9 {@code transactionStatement}, 7 {@code utilityStatement} and 3 {@code
+     * preparedStatement} -- 59 in all. The earlier version of this test probed
+     * five, one per group, which is why the sweep below is keyed on the
+     * alternative rather than on the group: a group-level probe says the group
+     * is reachable, never that each of its statements survives.</p>
+     *
+     * <p>Each statement is real MySQL syntax, and each was run through the
+     * shipped parser and the production translation path: all 59 parse and
+     * emit nothing. Emitting nothing is correct -- none of these statements
+     * carries row data, so ClickHouse needs nothing from them. Parsing is the
+     * requirement, because {@code ErrorListenerImpl.syntaxError} throws and one
+     * unparseable statement halts replication for every table on the host.</p>
+     *
+     * <p>The administration rows are fixture TEXT only: the statement is
+     * classified by the parser and never executed, so no user, grant, table or
+     * server state is touched.</p>
+     */
+    private static Map<String, String> otherGroupProbes() {
+        Map<String, String> probes = new LinkedHashMap<>();
+
+        // transactionStatement (9)
+        probes.put("startTransaction", "START TRANSACTION");
+        probes.put("beginWork", "BEGIN");
+        probes.put("commitWork", "COMMIT");
+        probes.put("rollbackWork", "ROLLBACK");
+        probes.put("savepointStatement", "SAVEPOINT sp1");
+        probes.put("rollbackStatement", "ROLLBACK TO SAVEPOINT sp1");
+        probes.put("releaseStatement", "RELEASE SAVEPOINT sp1");
+        probes.put("lockTables", "LOCK TABLES t WRITE");
+        probes.put("unlockTables", "UNLOCK TABLES");
+
+        // replicationStatement (15)
+        probes.put("changeMaster", "CHANGE MASTER TO MASTER_HOST = 'h'");
+        probes.put("changeReplicationFilter",
+                "CHANGE REPLICATION FILTER REPLICATE_DO_DB = (db)");
+        probes.put("purgeBinaryLogs", "PURGE BINARY LOGS TO 'binlog.000001'");
+        probes.put("resetMaster", "RESET MASTER");
+        probes.put("resetSlave", "RESET SLAVE");
+        probes.put("startSlave", "START SLAVE");
+        probes.put("stopSlave", "STOP SLAVE");
+        probes.put("startGroupReplication", "START GROUP_REPLICATION");
+        probes.put("stopGroupReplication", "STOP GROUP_REPLICATION");
+        probes.put("xaStartTransaction", "XA START 'x1'");
+        probes.put("xaEndTransaction", "XA END 'x1'");
+        probes.put("xaPrepareStatement", "XA PREPARE 'x1'");
+        probes.put("xaCommitWork", "XA COMMIT 'x1'");
+        probes.put("xaRollbackWork", "XA ROLLBACK 'x1'");
+        probes.put("xaRecoverWork", "XA RECOVER");
+
+        // preparedStatement (3)
+        probes.put("prepareStatement", "PREPARE stmt1 FROM 'SELECT 1'");
+        probes.put("executeStatement", "EXECUTE stmt1");
+        probes.put("deallocatePrepare", "DEALLOCATE PREPARE stmt1");
+
+        // administrationStatement (25)
+        probes.put("alterUser", "ALTER USER 'u'@'%' ACCOUNT LOCK");
+        probes.put("createUser", "CREATE USER 'u'@'%'");
+        probes.put("dropUser", "DROP USER 'u'@'%'");
+        probes.put("grantStatement", "GRANT SELECT ON db.* TO 'u'@'%'");
+        probes.put("grantProxy", "GRANT PROXY ON 'u'@'%' TO 'v'@'%'");
+        probes.put("renameUser", "RENAME USER 'u'@'%' TO 'w'@'%'");
+        probes.put("revokeStatement", "REVOKE SELECT ON db.* FROM 'u'@'%'");
+        probes.put("revokeProxy", "REVOKE PROXY ON 'u'@'%' FROM 'v'@'%'");
+        probes.put("analyzeTable", "ANALYZE TABLE t");
+        probes.put("checkTable", "CHECK TABLE t");
+        probes.put("checksumTable", "CHECKSUM TABLE t");
+        probes.put("optimizeTable", "OPTIMIZE TABLE t");
+        probes.put("repairTable", "REPAIR TABLE t");
+        probes.put("createUdfunction", "CREATE FUNCTION f RETURNS STRING SONAME 'f.so'");
+        probes.put("installPlugin", "INSTALL PLUGIN p SONAME 'p.so'");
+        probes.put("uninstallPlugin", "UNINSTALL PLUGIN p");
+        probes.put("setStatement", "SET @x = 1");
+        probes.put("showStatement", "SHOW TABLES");
+        probes.put("binlogStatement", "BINLOG 'x'");
+        probes.put("cacheIndexStatement", "CACHE INDEX t IN k");
+        probes.put("flushStatement", "FLUSH TABLES");
+        probes.put("killStatement", "KILL 1");
+        probes.put("loadIndexIntoCache", "LOAD INDEX INTO CACHE t");
+        probes.put("resetStatement", "RESET QUERY CACHE");
+        probes.put("shutdownStatement", "SHUTDOWN");
+
+        // utilityStatement (7)
+        probes.put("simpleDescribeStatement", "DESCRIBE t");
+        probes.put("fullDescribeStatement", "EXPLAIN SELECT 1");
+        probes.put("helpStatement", "HELP 'SELECT'");
+        probes.put("useStatement", "USE db");
+        probes.put("signalStatement", "SIGNAL SQLSTATE '45000'");
+        probes.put("resignalStatement", "RESIGNAL");
+        probes.put("diagnosticsStatement", "GET DIAGNOSTICS @c = NUMBER");
+        return probes;
+    }
+
+    /** The accessor names a statement-group context exposes, i.e. its alternatives. */
+    private static Set<String> alternativesOf(Class<?> groupContext) {
+        Set<String> names = new TreeSet<>();
+        for (Method method : groupContext.getDeclaredMethods()) {
+            if (method.getParameterCount() == 0
+                    && !method.getName().startsWith("get")
+                    && method.getReturnType().getSimpleName().endsWith("Context")) {
+                names.add(method.getName());
+            }
+        }
+        return names;
+    }
+
+    /**
+     * Every alternative of the five non-DDL/DML statement groups is probed, and
+     * no probe names an alternative the shipped parser does not define.
+     *
+     * <p>The groups are enumerated from {@code SqlStatementContext} itself, so a
+     * parser upgrade that adds a whole group fails here rather than going
+     * silently unprobed.</p>
      */
     @Test
     public void everyOtherStatementGroupParsesSilently() {
-        Map<String, String> probes = new LinkedHashMap<>();
-        probes.put("transactionStatement", "BEGIN");
-        probes.put("replicationStatement", "START SLAVE");
-        probes.put("preparedStatement", "PREPARE s FROM 'SELECT 1'");
-        probes.put("administrationStatement", "ANALYZE TABLE t");
-        probes.put("utilityStatement", "USE db");
+        Map<String, Class<?>> groups = new LinkedHashMap<>();
+        groups.put("transactionStatement", MySqlParser.TransactionStatementContext.class);
+        groups.put("replicationStatement", MySqlParser.ReplicationStatementContext.class);
+        groups.put("preparedStatement", MySqlParser.PreparedStatementContext.class);
+        groups.put("administrationStatement", MySqlParser.AdministrationStatementContext.class);
+        groups.put("utilityStatement", MySqlParser.UtilityStatementContext.class);
 
-        Set<String> shipped = new TreeSet<>();
+        Set<String> shippedGroups = new TreeSet<>();
         for (Method method : MySqlParser.SqlStatementContext.class.getDeclaredMethods()) {
             if (method.getParameterCount() == 0
                     && !method.getName().startsWith("get")
                     && method.getReturnType().getSimpleName().endsWith("Context")) {
-                shipped.add(method.getName());
+                shippedGroups.add(method.getName());
             }
         }
-        assertFalse(shipped.isEmpty(), "reflection found no sqlStatement alternatives");
+        assertFalse(shippedGroups.isEmpty(), "reflection found no sqlStatement alternatives");
+        Set<String> ungrouped = new TreeSet<>(shippedGroups);
+        ungrouped.removeAll(groups.keySet());
+        ungrouped.remove("ddlStatement");
+        ungrouped.remove("dmlStatement");
+        assertTrue(ungrouped.isEmpty(), "sqlStatement alternatives in no probed group:\n  "
+                + String.join("\n  ", ungrouped));
 
-        Set<String> covered = new TreeSet<>(probes.keySet());
-        covered.add("ddlStatement");
-        covered.add("dmlStatement");
+        Set<String> shipped = new TreeSet<>();
+        for (Class<?> groupContext : groups.values()) {
+            shipped.addAll(alternativesOf(groupContext));
+        }
+        Set<String> probed = new TreeSet<>(otherGroupProbes().keySet());
 
         Set<String> unprobed = new TreeSet<>(shipped);
-        unprobed.removeAll(covered);
-        Set<String> stale = new TreeSet<>(covered);
+        unprobed.removeAll(probed);
+        Set<String> stale = new TreeSet<>(probed);
         stale.removeAll(shipped);
 
-        assertTrue(unprobed.isEmpty(), "sqlStatement alternatives with no probe:\n  "
+        assertTrue(unprobed.isEmpty(), "statement alternatives with no probe:\n  "
                 + String.join("\n  ", unprobed));
         assertTrue(stale.isEmpty(), "probes for alternatives the shipped grammar no longer defines:\n  "
                 + String.join("\n  ", stale));
+        assertEquals(shipped, probed, "the shipped statement surface and the probe set disagree");
 
         List<String> failures = new ArrayList<>();
-        for (Map.Entry<String, String> probe : probes.entrySet()) {
+        for (Map.Entry<String, String> probe : otherGroupProbes().entrySet()) {
             String sql = probe.getValue();
             try {
                 service.setDdlEventTimestampMs(1700000000123L);

@@ -494,6 +494,16 @@ public class MySqlDdlNormalizerTest {
                 "ALTER TABLE t AUTOEXTEND_SIZE 4M",
                 "ALTER TABLE t AUTOEXTEND_SIZE = 8G",
                 "ALTER TABLE test.t AUTOEXTEND_SIZE = 16M",
+                // The quoted spellings. The manual writes the option unquoted,
+                // but a quoted value is accepted by the server and appears in
+                // dumps and hand-written scripts; measured against the shipped
+                // parser, every one of these is "no viable alternative" unless
+                // the bridge recognises it, which halts replication of every
+                // table on the host.
+                "ALTER TABLE t AUTOEXTEND_SIZE = '4M'",
+                "ALTER TABLE t AUTOEXTEND_SIZE='4M'",
+                "ALTER TABLE t AUTOEXTEND_SIZE = '4194304'",
+                "ALTER TABLE test.t AUTOEXTEND_SIZE = '16M'",
         };
         for (String sql : statements) {
             String normalised = MySqlDdlNormalizer.normalize(sql);
@@ -568,16 +578,46 @@ public class MySqlDdlNormalizerTest {
      */
     @Test
     public void createTableAutoextendSizeOptionIsDropped() {
-        String normalised = MySqlDdlNormalizer.normalize(
-                "CREATE TABLE t (a INT, b VARCHAR(10)) ENGINE=InnoDB AUTOEXTEND_SIZE = 4M");
-        assertFalse(normalised.toUpperCase().contains("AUTOEXTEND_SIZE"),
-                "the table option must be gone: " + normalised);
-        assertTrue(normalised.contains("ENGINE=InnoDB"),
-                "the neighbouring option must survive: " + normalised);
-        assertTrue(normalised.contains("b VARCHAR(10)"),
-                "the column definitions must be untouched: " + normalised);
-        assertTrue(translate("CREATE TABLE t (a INT, b VARCHAR(10)) ENGINE=InnoDB "
-                + "AUTOEXTEND_SIZE = 4M").startsWith("CREATE TABLE"));
+        // The unquoted form first, then the quoted spellings: same bridge, same
+        // requirement, and a CREATE TABLE the parser rejects is a table that
+        // never gets created on the replica.
+        for (String sql : new String[]{
+                "CREATE TABLE t (a INT, b VARCHAR(10)) ENGINE=InnoDB AUTOEXTEND_SIZE = 4M",
+                "CREATE TABLE t (a INT, b VARCHAR(10)) ENGINE=InnoDB AUTOEXTEND_SIZE = '4M'",
+                "CREATE TABLE t (a INT, b VARCHAR(10)) ENGINE=InnoDB AUTOEXTEND_SIZE='4M'",
+                "CREATE TABLE t (a INT, b VARCHAR(10)) AUTOEXTEND_SIZE = '4194304'"}) {
+            String normalised = MySqlDdlNormalizer.normalize(sql);
+            assertFalse(normalised.toUpperCase().contains("AUTOEXTEND_SIZE"),
+                    "the table option must be gone: " + normalised);
+            assertTrue(normalised.contains("ENGINE=InnoDB") || normalised.contains("(a INT"),
+                    "the neighbouring option and the body must survive: " + normalised);
+            assertTrue(normalised.contains("b VARCHAR(10)"),
+                    "the column definitions must be untouched: " + normalised);
+            assertTrue(translate(sql).startsWith("CREATE TABLE"),
+                    "the statement must still translate: " + sql);
+        }
+    }
+
+    /**
+     * A quoted value that is NOT a size is left alone.
+     *
+     * <p>The bridge drops the option only when the value it carries looks like
+     * one, so widening the pattern to accept quotes must not turn it into a
+     * blanket "delete everything after the keyword". An expression or an
+     * identifier is not a size, and dropping an option with an unparsed value
+     * would be guessing at what the source said.</p>
+     */
+    @Test
+    public void autoextendSizeWithANonSizeQuotedValueIsNotDropped() {
+        String[] statements = {
+                "ALTER TABLE t AUTOEXTEND_SIZE = 'large'",
+                "CREATE TABLE t (a INT) AUTOEXTEND_SIZE = 'huge'",
+                "ALTER TABLE t AUTOEXTEND_SIZE = CONCAT('4', 'M')",
+        };
+        for (String sql : statements) {
+            assertEquals(sql, MySqlDdlNormalizer.normalize(sql),
+                    "a value that is not a size must not be dropped: " + sql);
+        }
     }
 
     /**
@@ -643,6 +683,129 @@ public class MySqlDdlNormalizerTest {
                 "both neighbours must survive: " + between);
         assertFalse(between.toUpperCase().contains("SECONDARY_LOAD"),
                 "the clause must be gone: " + between);
+    }
+
+    /**
+     * Two or more droppable clauses IN A ROW at the head of the list, followed
+     * by a clause that must survive.
+     *
+     * <p>This is the shape that broke: cutting each clause with the comma on
+     * its own side left the comma between the last two droppables behind, so
+     * the statement became {@code ALTER TABLE t , ADD COLUMN c INT}. The
+     * grammar rejects a leading comma, {@link ErrorListenerImpl} turns that
+     * into "Error parsing DDL", and the exception escapes to the CDC caller,
+     * which halts replication for every table on the host.</p>
+     *
+     * <p>The separator must therefore belong to the SURVIVING list, not to the
+     * removed clause, and the test is written so that a single-clause fix (the
+     * shape that already worked) cannot pass it: every case has a RUN of
+     * droppables, and the run length varies so a fix tuned to exactly two
+     * cannot pass either.</p>
+     */
+    @Test
+    public void aRunOfDroppableClausesLeavesNoCommaBehind() {
+        String[][] cases = {
+                // {statement, the clause that must survive}
+                {"ALTER TABLE t SECONDARY_LOAD, SECONDARY_ENGINE = NULL, ADD COLUMN c INT",
+                        "ADD COLUMN c INT"},
+                {"ALTER TABLE t AUTOEXTEND_SIZE = 4M, SECONDARY_LOAD, ADD COLUMN c INT",
+                        "ADD COLUMN c INT"},
+                {"ALTER TABLE t SECONDARY_LOAD, SECONDARY_UNLOAD, AUTOEXTEND_SIZE = 4M,"
+                        + " ADD COLUMN c INT", "ADD COLUMN c INT"},
+                {"ALTER TABLE t SECONDARY_LOAD, SECONDARY_ENGINE = RAPID, MODIFY COLUMN c BIGINT",
+                        "MODIFY COLUMN c BIGINT"},
+                // A run in the middle, between two survivors: both must remain
+                // and the comma between them must be exactly one.
+                {"ALTER TABLE t ADD COLUMN a INT, SECONDARY_LOAD, SECONDARY_UNLOAD,"
+                        + " ADD COLUMN b INT", "ADD COLUMN a INT"},
+                // The same with a terminating semicolon, which the binlog
+                // statement carries and which must not be swallowed.
+                {"ALTER TABLE t SECONDARY_LOAD, SECONDARY_UNLOAD, ADD COLUMN c INT;",
+                        "ADD COLUMN c INT; REFUSE"},
+        };
+        for (String[] testCase : cases) {
+            String sql = testCase[0];
+            String must = testCase[1];
+            String normalised = MySqlDdlNormalizer.normalize(sql);
+
+            assertFalse(normalised.contains(",,"),
+                    "an empty specification is left behind: " + normalised);
+            int clauseStart = normalised.toUpperCase().indexOf("TABLE ") + "TABLE ".length();
+            int specStart = clauseStart;
+            while (specStart < normalised.length()
+                    && Character.isWhitespace(normalised.charAt(specStart))) {
+                specStart++;
+            }
+            assertFalse(specStart < normalised.length() && normalised.charAt(specStart) == ',',
+                    "the specification list begins with a comma the grammar rejects,"
+                            + " which throws and halts replication: " + normalised);
+
+            if (must.endsWith("REFUSE")) {
+                String wanted = must.substring(0, must.length() - " REFUSE".length());
+                assertTrue(normalised.contains(wanted),
+                        "the surviving clause and its semicolon must be kept: " + normalised);
+            } else {
+                assertTrue(normalised.contains(must),
+                        "the clause that has a ClickHouse effect must survive: " + normalised);
+            }
+
+            // The assertion that matters: parseSql throws "Error parsing DDL"
+            // when the grammar rejects the statement. Before the fix every case
+            // above threw here.
+            String translated = translate(sql);
+            assertFalse(translated.trim().isEmpty(),
+                    "the surviving clause must reach the translator, not vanish: " + sql);
+        }
+    }
+
+    /**
+     * A droppable clause at the END of the list, where the terminator is.
+     *
+     * <p>Every other case in this file puts the droppable clause in the middle,
+     * and most omit the semicolon, so none of them could see this: the
+     * specification list runs to the end of the statement, so the LAST
+     * specification carries the {@code ;}. The clause patterns are anchored at
+     * {@code $}, so {@code AUTOEXTEND_SIZE = 4M;} did not match, the clause
+     * survived, and the grammar rejected the whole statement -- the same fatal
+     * outcome as the leading-comma bug, from the opposite end of the list. The
+     * test that found it was the matrix corpus, which carries the semicolons a
+     * real binlog statement has.</p>
+     */
+    @Test
+    public void aTrailingDroppableClauseIsDroppedWithItsTerminator() {
+        String[] statements = {
+                "ALTER TABLE test.t AUTOEXTEND_SIZE = 4M;",
+                "ALTER TABLE test.t MODIFY COLUMN c_mod BIGINT, AUTOEXTEND_SIZE = 8M;",
+                "ALTER TABLE test.t SECONDARY_LOAD;",
+                "ALTER TABLE test.t ADD COLUMN a INT, SECONDARY_UNLOAD;",
+        };
+        for (String sql : statements) {
+            String normalised = MySqlDdlNormalizer.normalize(sql);
+
+            assertFalse(normalised.contains("AUTOEXTEND_SIZE"),
+                    "the clause with no ClickHouse effect must be dropped: " + normalised);
+            assertFalse(normalised.contains("SECONDARY_LOAD"),
+                    "the clause with no ClickHouse effect must be dropped: " + normalised);
+            assertFalse(normalised.contains("SECONDARY_UNLOAD"),
+                    "the clause with no ClickHouse effect must be dropped: " + normalised);
+            assertFalse(normalised.contains(",,"),
+                    "an empty specification is left behind: " + normalised);
+
+            // The terminating semicolon belongs to the statement, never to the
+            // clause being removed.
+            assertTrue(normalised.trim().endsWith(";"),
+                    "the statement terminator must survive the drop: " + normalised);
+
+            // The assertion that matters: this throws "Error parsing DDL" if the
+            // clause is left in, which halts replication for the whole host.
+            translate(sql);
+        }
+
+        // The surviving clause must still reach the translator beside it.
+        String translated = translate(
+                "ALTER TABLE test.t MODIFY COLUMN c_mod BIGINT, AUTOEXTEND_SIZE = 8M;");
+        assertTrue(translated.contains("MODIFY COLUMN"),
+                "the clause that has a ClickHouse effect must survive: " + translated);
     }
 
     /**

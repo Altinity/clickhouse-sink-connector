@@ -260,7 +260,7 @@ final class MySqlDdlNormalizer {
      *
      * <p>This mirrors that class's {@code enter*} overrides exactly -- create and
      * drop database/schema, the three create-table forms, alter table, drop
-     * table, rename table(s) and truncate table -- and nothing else. It is the
+     * table, rename table and truncate table -- and nothing else. It is the
      * definition of "this statement can produce ClickHouse DDL", which is what
      * decides whether a parse failure is recoverable: inside this set a failure
      * is silent divergence and must be loud, outside it no handler can run at
@@ -280,7 +280,6 @@ final class MySqlDdlNormalizer {
             {"DROP", "TABLE"},
             {"DROP", "TEMPORARY", "TABLE"},
             {"RENAME", "TABLE"},
-            {"RENAME", "TABLES"},
             {"TRUNCATE", "TABLE"},
             {"TRUNCATE"},
     };
@@ -305,6 +304,29 @@ final class MySqlDdlNormalizer {
             Pattern.compile("(?i)(?<![\\w])DISCARD\\s+OLD\\s+PASSWORD(?![\\w])");
 
     /**
+     * The value of an {@code AUTOEXTEND_SIZE} option: a number with an optional
+     * {@code K}/{@code M}/{@code G} suffix, and the same written as a string
+     * literal.
+     *
+     * <p>The manual writes the option unquoted ("must be a multiple of 4M",
+     * examples {@code AUTOEXTEND_SIZE = 4M}), but a quoted value is not
+     * rejected by the server and does appear in dumps and hand-written
+     * migration scripts. The two spellings are treated as one here because the
+     * bridge's job is identical for both: the option has no ClickHouse meaning
+     * either way, so recognising the quoted form costs one alternation and
+     * removes a whole class of replication halt. This matcher only decides
+     * whether the clause is droppable -- it never validates a size, and MySQL
+     * has already accepted the statement by the time the connector sees it.</p>
+     *
+     * <p>Shared by {@link #DROPPABLE_TABLE_CLAUSE} and {@link
+     * #AUTOEXTEND_SIZE_OPTION} so the ALTER and CREATE paths cannot drift: a
+     * spelling bridged in one has to be bridged in the other, because both end
+     * at the same parser.</p>
+     */
+    private static final String SIZE_VALUE =
+            "(?:(?:\\d+(?:\\.\\d+)?\\s*[KMG]?)|(?:'\\d+(?:\\.\\d+)?\\s*[KMG]?'))";
+
+    /**
      * One whole {@code ALTER TABLE} specification that carries no ClickHouse
      * effect, anchored so it can only match a clause in its entirety.
      *
@@ -325,7 +347,7 @@ final class MySqlDdlNormalizer {
     private static final Pattern DROPPABLE_TABLE_CLAUSE = Pattern.compile(
             "(?is)^(?:(?:SECONDARY_LOAD|SECONDARY_UNLOAD)"
                     + "|SECONDARY_ENGINE\\s*=\\s*\\S+"
-                    + "|AUTOEXTEND_SIZE\\s*=?\\s*\\d+(?:\\.\\d+)?\\s*[KMG]?)$");
+                    + "|AUTOEXTEND_SIZE\\s*=?\\s*" + SIZE_VALUE + ")$");
 
     /**
      * The {@code AUTOEXTEND_SIZE} table option of a {@code CREATE TABLE},
@@ -339,7 +361,7 @@ final class MySqlDdlNormalizer {
      * the mask keeps a {@code COMMENT} that quotes the option out of reach.</p>
      */
     private static final Pattern AUTOEXTEND_SIZE_OPTION = Pattern.compile(
-            "(?i)(?<![\\w])AUTOEXTEND_SIZE\\s*=?\\s*\\d+(?:\\.\\d+)?\\s*[KMG]?(?![\\w.])");
+            "(?i)(?<![\\w])AUTOEXTEND_SIZE\\s*=?\\s*" + SIZE_VALUE + "(?![\\w.])");
 
     private MySqlDdlNormalizer() {
     }
@@ -365,26 +387,6 @@ final class MySqlDdlNormalizer {
     }
 
     /**
-     * Blanks a statement whose family the translator has no handler for at all.
-     *
-     * <p>This is the loss-free half of the grammar-gap problem, and the reason
-     * it is loss-free is structural rather than a judgement about the statement:
-     * {@link MySqlDDLParserListenerImpl} overrides {@code enter*} for eight
-     * statement kinds only -- create/drop database, create/alter/drop/rename/
-     * truncate table -- so a statement outside those kinds cannot reach any
-     * handler, cannot produce parse-tree state the translator reads, and cannot
-     * emit ClickHouse DDL however well it parses. Parsing it is therefore not a
-     * requirement; only not being fatal is.</p>
-     *
-     * <p>A statement in one of the {@code HANDLED} families is never blanked,
-     * because losing it would be silent divergence rather than a no-op:
-     * {@code ALTER TABLE t FROBNICATE COLUMN c} must keep throwing.</p>
-     *
-     * @return the empty string when the statement's family has no handler, so
-     *         the caller parses an empty stream and emits nothing; otherwise
-     *         {@code sql} itself.
-     */
-    /**
      * Whether any parse of {@code sql}, however successful, could produce
      * ClickHouse DDL.
      *
@@ -404,6 +406,26 @@ final class MySqlDdlNormalizer {
         return startsWithWords(leadingWords(sql, 3), HANDLED_STATEMENT_HEADS);
     }
 
+    /**
+     * Blanks a statement whose family the translator has no handler for at all.
+     *
+     * <p>This is the loss-free half of the grammar-gap problem, and the reason
+     * it is loss-free is structural rather than a judgement about the statement:
+     * {@link MySqlDDLParserListenerImpl} overrides {@code enter*} for eight
+     * statement kinds only -- create/drop database, create/alter/drop/rename/
+     * truncate table -- so a statement outside those kinds cannot reach any
+     * handler, cannot produce parse-tree state the translator reads, and cannot
+     * emit ClickHouse DDL however well it parses. Parsing it is therefore not a
+     * requirement; only not being fatal is.</p>
+     *
+     * <p>A statement in one of the {@code HANDLED} families is never blanked,
+     * because losing it would be silent divergence rather than a no-op:
+     * {@code ALTER TABLE t FROBNICATE COLUMN c} must keep throwing.</p>
+     *
+     * @return the empty string when the statement's family has no handler, so
+     *         the caller parses an empty stream and emits nothing; otherwise
+     *         {@code sql} itself.
+     */
     private static String blankUntranslatableStatement(String sql) {
         List<String> head = leadingWords(sql, 4);
         if (head.isEmpty()) {
@@ -557,37 +579,66 @@ final class MySqlDdlNormalizer {
      * becomes {@code a, b}. A clause that IS first takes the comma after it, so
      * {@code t X, b} becomes {@code t b} -- no leading comma, which the grammar
      * would not read.</p>
+     *
+     * <p>The list is REBUILT from the specifications that survive, never cut
+     * pairwise out of the original text. Cutting each clause with the comma on
+     * its own side and then merging the ranges gets a chain of two or more
+     * droppables wrong: {@code t X, Y, ADD COLUMN c INT} produced a cut that
+     * stopped at the second comma, leaving {@code ALTER TABLE t , ADD COLUMN c
+     * INT} -- a leading comma the grammar rejects, which throws "Error parsing
+     * DDL" and stops replication for every table on the host. Rebuilding makes
+     * the separator a property of the SURVIVING list, so no run of droppables
+     * can leave a comma behind whatever its length.</p>
      */
     private static String dropDroppableAlterClauses(String sql, BitSet quoted) {
         int clauseStart = alterTableClauseStart(sql, quoted);
         if (clauseStart < 0) {
             return sql;
         }
+        // The terminator is the STATEMENT's, not the last specification's. The
+        // specification list runs to the end of the text, so without splitting
+        // the tail off, the final clause swallows the semicolon: the clause
+        // patterns are anchored at `$`, so `AUTOEXTEND_SIZE = 4M;` did not
+        // match, the clause survived, and the grammar rejected the statement
+        // -- and when it did match, the dropped clause took the semicolon with
+        // it. Splitting the tail out fixes both halves at once.
+        int tailStart = sql.length();
+        while (tailStart > clauseStart) {
+            char trailing = sql.charAt(tailStart - 1);
+            if (trailing == ';' || Character.isWhitespace(trailing)) {
+                tailStart--;
+            } else {
+                break;
+            }
+        }
         List<int[]> specifications = alterSpecifications(sql, quoted, clauseStart);
-        List<int[]> cuts = new ArrayList<>();
-        for (int i = 0; i < specifications.size(); i++) {
-            int[] specification = specifications.get(i);
+        int[] lastSpecification = specifications.get(specifications.size() - 1);
+        if (lastSpecification[1] > tailStart) {
+            lastSpecification[1] = tailStart;
+        }
+        List<int[]> kept = new ArrayList<>();
+        for (int[] specification : specifications) {
             String text = sql.substring(specification[0], specification[1]).trim();
             if (!DROPPABLE_TABLE_CLAUSE.matcher(text).matches()) {
-                continue;
-            }
-            if (specification[2] >= 0) {
-                // Not the first specification: the comma in front of it goes too.
-                cuts.add(new int[]{specification[2], specification[1]});
-            } else if (i + 1 < specifications.size()) {
-                // First of several: it takes the comma after it instead, so no
-                // leading comma is left behind for the grammar to choke on.
-                cuts.add(new int[]{specification[0], specifications.get(i + 1)[2] + 1});
-            } else {
-                // The whole specification list: only the header is left, which
-                // enterAlterTable already clears.
-                cuts.add(new int[]{specification[0], sql.length()});
+                kept.add(specification);
             }
         }
-        if (cuts.isEmpty()) {
+        if (kept.size() == specifications.size()) {
             return sql;
         }
-        return removeRanges(sql, mergeOverlapping(cuts));
+        StringBuilder rebuilt = new StringBuilder(sql.length());
+        rebuilt.append(sql, 0, clauseStart);
+        for (int i = 0; i < kept.size(); i++) {
+            if (i > 0) {
+                rebuilt.append(',');
+            }
+            rebuilt.append(sql, kept.get(i)[0], kept.get(i)[1]);
+        }
+        // The last specification normally ends at the terminating semicolon, so
+        // the remainder carries it and anything after it. A statement with no
+        // semicolon keeps an empty tail, which is what the input had.
+        rebuilt.append(sql, specifications.get(specifications.size() - 1)[1], sql.length());
+        return rebuilt.toString();
     }
 
     /**
@@ -676,32 +727,6 @@ final class MySqlDdlNormalizer {
         }
         specifications.add(new int[]{start, sql.length(), precedingComma});
         return specifications;
-    }
-
-    /** Sorts the ranges and merges any that touch, so their offsets stay valid. */
-    private static List<int[]> mergeOverlapping(List<int[]> ranges) {
-        List<int[]> sorted = new ArrayList<>(ranges);
-        sorted.sort((a, b) -> Integer.compare(a[0], b[0]));
-        List<int[]> merged = new ArrayList<>();
-        for (int[] range : sorted) {
-            int[] last = merged.isEmpty() ? null : merged.get(merged.size() - 1);
-            if (last != null && range[0] <= last[1]) {
-                last[1] = Math.max(last[1], range[1]);
-            } else {
-                merged.add(new int[]{range[0], range[1]});
-            }
-        }
-        return merged;
-    }
-
-    /** Deletes the merged ranges, right to left so no offset moves. */
-    private static String removeRanges(String sql, List<int[]> ranges) {
-        String result = sql;
-        for (int i = ranges.size() - 1; i >= 0; i--) {
-            int[] range = ranges.get(i);
-            result = result.substring(0, range[0]) + result.substring(range[1]);
-        }
-        return result;
     }
 
     /**
