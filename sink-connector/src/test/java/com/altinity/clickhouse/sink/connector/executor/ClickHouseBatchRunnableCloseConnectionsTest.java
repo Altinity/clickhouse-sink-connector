@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.DbWriter;
@@ -11,6 +12,7 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -89,11 +91,31 @@ public class ClickHouseBatchRunnableCloseConnectionsTest {
                     return System.identityHashCode(proxy);
                 case "equals":
                     return proxy == args[0];
+                case "executeQuery":
+                    // An empty result, not null: the column-list read fails loudly on a missing result set.
+                    return emptyResultSet();
                 default:
                     return defaultValue(method.getReturnType());
             }
         };
         return Proxy.newProxyInstance(type.getClassLoader(), new Class<?>[]{type}, handler);
+    }
+
+    private static ResultSet emptyResultSet() {
+        InvocationHandler handler = (proxy, method, args) -> {
+            switch (method.getName()) {
+                case "toString":
+                    return "empty-result-set";
+                case "hashCode":
+                    return System.identityHashCode(proxy);
+                case "equals":
+                    return proxy == args[0];
+                default:
+                    return defaultValue(method.getReturnType());
+            }
+        };
+        return (ResultSet) Proxy.newProxyInstance(ResultSet.class.getClassLoader(),
+                new Class<?>[]{ResultSet.class}, handler);
     }
 
     private static Object defaultValue(Class<?> type) {
@@ -134,7 +156,7 @@ public class ClickHouseBatchRunnableCloseConnectionsTest {
     private static ClickHouseSinkConnectorConfig config() {
         Map<String, String> props = new HashMap<>();
         ClickHouseSinkConnectorConfig.setDefaultValues(props);
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static String uniqueDb(String prefix) {

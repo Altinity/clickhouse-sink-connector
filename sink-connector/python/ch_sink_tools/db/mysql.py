@@ -141,7 +141,7 @@ def resolve_credentials_from_config(config_file):
 
 
 def estimate_table_count(conn, mysql_table, where, pk, min_pk, max_pk):
-    sql = f"explain select * from `{mysql_table}` where {where} and {pk} between {min_pk} and {max_pk}"
+    sql = f"explain select * from `{mysql_table}` where ({where}) and {pk} between {min_pk} and {max_pk}"
     df = mysql_execute_df(conn, sql)
     head = df.head(1)
     count = int(head['rows'].iloc[0])
@@ -230,7 +230,7 @@ def divide_table_into_even_chunks(conn, mysql_table, chunk_size, pk, where):
 
         # we need to make sure there is data in the chunk, as CH wants data on insert in a pipe
         # we can use that to find a better minimum
-        sql = f"select {pk} from `{mysql_table}` where {where} and {pk} between {lower_bound} and {upper_bound}  order by {pk} limit 1"
+        sql = f"select {pk} from `{mysql_table}` where ({where}) and {pk} between {lower_bound} and {upper_bound}  order by {pk} limit 1"
         df = mysql_execute_df(conn, sql)
         index = df.index
         number_of_rows = len(index)

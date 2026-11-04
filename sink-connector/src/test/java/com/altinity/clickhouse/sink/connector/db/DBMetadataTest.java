@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.clickhouse.jdbc.ClickHouseConnection;
 import org.junit.Assert;
 import org.junit.jupiter.api.AfterAll;
@@ -39,7 +40,7 @@ public class DBMetadataTest {
     @Test
     public void testGetSignColumnForCollapsingMergeTree() {
 
-        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         String createTableDML = "CollapsingMergeTree(signNumberCol) PRIMARY KEY productCode ORDER BY productCode SETTINGS index_granularity = 8192";
         String signColumn = metadata.getSignColumnForCollapsingMergeTree(createTableDML);
@@ -50,7 +51,7 @@ public class DBMetadataTest {
     @Test
     public void testDefaultGetSignColumnForCollapsingMergeTree() {
 
-        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         String createTableDML = "ReplacingMergeTree() PRIMARY KEY productCode ORDER BY productCode SETTINGS index_granularity = 8192";
         String signColumn = metadata.getSignColumnForCollapsingMergeTree(createTableDML);
@@ -60,7 +61,7 @@ public class DBMetadataTest {
 
     @Test
     public void testGetVersionColumnForReplacingMergeTree() {
-        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        DBMetadata metadata = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         String createTableDML = "ReplacingMergeTree(versionNo) PRIMARY KEY productCode ORDER BY productCode SETTINGS index_granularity = 8192";
         String signColumn = metadata.getVersionColumnForReplacingMergeTree(createTableDML);
@@ -82,19 +83,19 @@ public class DBMetadataTest {
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                "newdb", new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                "newdb", new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         DbWriter writer = new DbWriter(dbHostName, port, database, tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), null, conn);
 
         // Default database exists.
-        boolean result = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).checkIfDatabaseExists(writer.getConnection(), "system");
+        boolean result = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))).checkIfDatabaseExists(writer.getConnection(), "system");
         Assert.assertTrue(result);
 
-        boolean result2 = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).checkIfDatabaseExists(writer.getConnection(), "newdb");
+        boolean result2 = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))).checkIfDatabaseExists(writer.getConnection(), "newdb");
         Assert.assertFalse(result2);
 
-        Map<String, Boolean> isNullableList = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getColumnsIsNullableForTable(tableName, writer.getConnection(), "default");
+        Map<String, Boolean> isNullableList = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))).getColumnsIsNullableForTable(tableName, writer.getConnection(), "default");
        isNullableList.get("_offset").equals(true);
        isNullableList.get("hire_date").equals(false);
 
@@ -104,27 +105,27 @@ public class DBMetadataTest {
     public void testGetEngineFromResponse() {
 
         String replacingMergeTree = "ReplacingMergeTree(ver) PRIMARY KEY dept_no ORDER BY dept_no SETTINGS index_granularity = 8192";
-        MutablePair<DBMetadata.TABLE_ENGINE, String> replacingMergeTreeResult = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getEngineFromResponse(replacingMergeTree);
+        MutablePair<DBMetadata.TABLE_ENGINE, String> replacingMergeTreeResult = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))).getEngineFromResponse(replacingMergeTree);
 
         Assert.assertTrue(replacingMergeTreeResult.getRight().equalsIgnoreCase("ver"));
         Assert.assertTrue(replacingMergeTreeResult.getLeft().getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine()));
 
         String replacingMergeTreeWIsDeletedColumn = "ReplacingMergeTree(ver, is_deleted) PRIMARY KEY dept_no ORDER BY dept_no SETTINGS index_granularity = 8192";
-        MutablePair<DBMetadata.TABLE_ENGINE, String> replacingMergeTreeWIsDeletedColumnResult = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getEngineFromResponse(replacingMergeTreeWIsDeletedColumn);
+        MutablePair<DBMetadata.TABLE_ENGINE, String> replacingMergeTreeWIsDeletedColumnResult = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))).getEngineFromResponse(replacingMergeTreeWIsDeletedColumn);
 
         Assert.assertTrue(replacingMergeTreeWIsDeletedColumnResult.getRight().equalsIgnoreCase("ver, is_deleted"));
         Assert.assertTrue(replacingMergeTreeWIsDeletedColumnResult.getLeft().getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE.getEngine()));
 
         String replicatedReplacingMergeTree = "ReplicatedReplacingMergeTree('/clickhouse/{cluster}/tables/dashboard_mysql_replication/favourite_products', '{replica}', ver) ORDER BY id SETTINGS allow_nullable_key = 1, index_granularity = 8192";
 
-        MutablePair<DBMetadata.TABLE_ENGINE, String> replicatedReplacingMergeTreeResult = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getEngineFromResponse(replicatedReplacingMergeTree);
+        MutablePair<DBMetadata.TABLE_ENGINE, String> replicatedReplacingMergeTreeResult = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))).getEngineFromResponse(replicatedReplacingMergeTree);
 
         Assert.assertTrue(replicatedReplacingMergeTreeResult.getRight().equalsIgnoreCase("ver"));
         Assert.assertTrue(replicatedReplacingMergeTreeResult.getLeft().getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine()));
 
 
         String replicatedReplacingMergeTreeWIsDeletedColumn = "ReplicatedReplacingMergeTree('/clickhouse/tables/{shard}/temporal_types_DATETIME4', '{replica}', _version, is_deleted) ORDER BY tuple()";
-        MutablePair<DBMetadata.TABLE_ENGINE, String> replicatedReplacingMergeTreeWIsDeletedColumnResult = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getEngineFromResponse(replicatedReplacingMergeTreeWIsDeletedColumn);
+        MutablePair<DBMetadata.TABLE_ENGINE, String> replicatedReplacingMergeTreeWIsDeletedColumnResult = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))).getEngineFromResponse(replicatedReplacingMergeTreeWIsDeletedColumn);
 
         Assert.assertTrue(replicatedReplacingMergeTreeWIsDeletedColumnResult.getRight().equalsIgnoreCase("_version,is_deleted"));
         Assert.assertTrue(replicatedReplacingMergeTreeWIsDeletedColumnResult.getLeft().getEngine().equalsIgnoreCase(DBMetadata.TABLE_ENGINE.REPLICATED_REPLACING_MERGE_TREE.getEngine()));
@@ -144,7 +145,7 @@ public class DBMetadataTest {
             "23.9.2.47442, true"
     })
     public void testIsRMTVersionSupported(String clickhouseVersion, boolean result) throws SQLException {
-        Assert.assertTrue(new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).checkIfNewReplacingMergeTree(clickhouseVersion) == result);
+        Assert.assertTrue(new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))).checkIfNewReplacingMergeTree(clickhouseVersion) == result);
     }
 
     @Test
@@ -158,10 +159,10 @@ public class DBMetadataTest {
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                BaseDbWriter.SYSTEM_DB,new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                BaseDbWriter.SYSTEM_DB,new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
         DbWriter writer = new DbWriter(dbHostName, port, "employees", tableName, userName, password,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), null, conn);
-        ZoneId serverTimeZone = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getServerTimeZone(writer.getConnection());
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), null, conn);
+        ZoneId serverTimeZone = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))).getServerTimeZone(writer.getConnection());
 
         Assert.assertTrue(serverTimeZone.toString().equalsIgnoreCase("America/Chicago"));
 
@@ -178,17 +179,17 @@ public class DBMetadataTest {
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, database);
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
-                "employees", new ClickHouseSinkConnectorConfig(new HashMap<>()));
-        Set<String> aliasColumns = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getAliasAndMaterializedColumnsForTableAndDatabase("people", "employees2", conn);
+                "employees", new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
+        Set<String> aliasColumns = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))).getAliasAndMaterializedColumnsForTableAndDatabase("people", "employees2", conn);
 
         Assert.assertTrue(aliasColumns.size() == 2);
 
 
         // Check for a table with no alias columns.
-        Set<String> tmAliasColumns = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getAliasAndMaterializedColumnsForTableAndDatabase("tm", "public", conn);
+        Set<String> tmAliasColumns = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))).getAliasAndMaterializedColumnsForTableAndDatabase("tm", "public", conn);
         Assert.assertTrue(tmAliasColumns.size() == 0);
         // Check for a table with no alias columns.
-        Set<String> employeeMaterializedColumns = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>())).getAliasAndMaterializedColumnsForTableAndDatabase("employee_materialized", "employees2", conn);
+        Set<String> employeeMaterializedColumns = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))).getAliasAndMaterializedColumnsForTableAndDatabase("employee_materialized", "employees2", conn);
         Assert.assertTrue(employeeMaterializedColumns.size() == 1);
     }
 
@@ -222,7 +223,7 @@ public class DBMetadataTest {
         // pools shared by the other tests in this class.
         Map<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString(), "true");
-        ClickHouseSinkConnectorConfig unpooled = new ClickHouseSinkConnectorConfig(props);
+        ClickHouseSinkConnectorConfig unpooled = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
 
         String jdbcUrl = BaseDbWriter.getConnectionString(dbHostName, port, "system");
         Connection conn = DbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME,

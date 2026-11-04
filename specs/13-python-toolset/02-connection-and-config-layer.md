@@ -943,7 +943,7 @@ Acceptance criteria for a fixed layer. Each one is a GAP test today:
     In a DST fall-back hour, two instants render the same.
   - **Blast radius**: false mismatches on correct replicas. Results depend on
     the server configuration.
-  - **Recovery**: run the legacy checksum, which pins UTC and resolves
+  - **Recovery**: run the legacy checksum, which pins UTC and requires
     `--source_timezone` (11.02 section 3.4).
   - **RTO**: unmeasured.
   - **Test**: `GAP: packaged session statements must include time_zone`

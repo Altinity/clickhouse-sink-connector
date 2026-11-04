@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.PrimaryKeyRebuildPlan;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.PrimaryKeyRebuildPlan.Provenance;
@@ -450,7 +451,7 @@ public class PrimaryKeyRebuildTest {
     }
 
     private static ClickHouseSinkConnectorConfig config() {
-        return new ClickHouseSinkConnectorConfig(new HashMap<>());
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()));
     }
 
     // ------------------------------------------------------------------
@@ -1831,7 +1832,7 @@ public class PrimaryKeyRebuildTest {
         FakeDb ch = clickHouse(ENGINE_FULL, SHOW_CREATE, false, false);
         DDLReplicationException loud = assertThrows(DDLReplicationException.class,
                 () -> PrimaryKeyRebuild.swap(existingKeyPlan(), ch.connection(), new Properties(),
-                        new ClickHouseSinkConnectorConfig(history), "hr", EPOCH));
+                        new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(history)), "hr", EPOCH));
         assertTrue(loud.getMessage().contains("replication.history.enable"), loud.getMessage());
         assertTrue(ch.executed.isEmpty(), ch.executed.toString());
     }
@@ -1852,7 +1853,7 @@ public class PrimaryKeyRebuildTest {
     private static ClickHouseSinkConnectorConfig replicatedConfig() {
         Map<String, String> settings = new HashMap<>();
         settings.put(REPLICATED_SWITCH, "true");
-        return new ClickHouseSinkConnectorConfig(settings);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(settings));
     }
 
     private static Properties replicatedProps() {

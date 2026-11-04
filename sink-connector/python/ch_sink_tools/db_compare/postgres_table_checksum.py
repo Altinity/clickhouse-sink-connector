@@ -216,7 +216,7 @@ def build_tier1_chunk_query(table_name, pg_schema, columns_meta,
     # WHERE clause assembly
     where_parts = ["1=1"]
     if where:
-        where_parts.append(where)
+        where_parts.append(f"({where})")
     if pk_col and min_pk is not None and max_pk is not None:
         where_parts.append(f'"{pk_col}" BETWEEN {min_pk} AND {max_pk}')
     where_sql = " AND ".join(where_parts)
@@ -259,7 +259,7 @@ def build_tier2_chunk_query(table_name, pg_schema, pk_col,
     """
     where_parts = ["1=1"]
     if where:
-        where_parts.append(where)
+        where_parts.append(f"({where})")
     if pk_col and min_pk is not None and max_pk is not None:
         where_parts.append(f'"{pk_col}" BETWEEN {min_pk} AND {max_pk}')
     where_sql = " AND ".join(where_parts)

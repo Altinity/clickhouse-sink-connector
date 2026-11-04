@@ -91,12 +91,12 @@ created the table with the **legacy** `ReplacingMergeTree(_version)` +
 Known residual differences, owned by the DDL translator (not changed here):
 `BOOL`/`BOOLEAN` keywords are declared `Bool` by the DDL path while the
 record path (Debezium delivers `INT16`, type `TINYINT`) declares `Int8`; the
-DDL path declares DATETIME columns in the configured `clickhouse.datetime.timezone`
-(and a bare `DateTime64`, i.e. precision 3, for `DATETIME` when no zone is
-configured) whereas this path always declares `'UTC'` (Spec 07.03 §3.1.3).
-`DateTime64(p, 0)` as emitted by the DDL path without a zone is accepted by
-ClickHouse as `DateTime64(p)` (`clickhouse local` 24.8.14: the non-string
-optional timezone argument is ignored), so it is compared as such.
+DDL path declares DATETIME columns in the configured `clickhouse.datetime.timezone`,
+which is mandatory (Spec 07.03 §3.1.2), whereas this path always declares `'UTC'`
+(Spec 07.03 §3.1.3). A `DateTime64(p, 0)` placeholder, which the translator writes
+for a declared scale of 0 and which names no zone, is accepted by ClickHouse as
+`DateTime64(p)` (`clickhouse local` 24.8.14: the non-string optional timezone
+argument is ignored), so it is compared as such.
 
 ### 3.2 Sorting key selection
 `ReplacingMergeTree` deduplicates on the sorting key. With `ORDER BY tuple()`

@@ -15,9 +15,9 @@ re-run of the earlier modules against the same stack is unaffected.
 import pytest
 
 from mysql_e2e_support import (CH_HOST, DB2, DB2_CH, JOB_LOG_NON_PARTITIONED, JOB_NON_PARTITIONED, MYSQL_HOST,
-                               REPLICATION_TIMEOUT, _wait_for, ch_mutate, ch_query, checksummed_tables, mysql_query,
-                               parse_checksum_lines, parse_side_results, parse_verdicts, planted, wait_for_replication,
-                               warning_lines)
+                               REPLICATION_TIMEOUT, SOURCE_TIMEZONE, _wait_for, ch_mutate, ch_query,
+                               checksummed_tables, mysql_query, parse_checksum_lines, parse_side_results,
+                               parse_verdicts, planted, wait_for_replication, warning_lines)
 
 TABLE = "position_flags"
 NON_NULLABLE_TWINS = {"label": "String", "is_valid": "Int8"}
@@ -77,13 +77,14 @@ def test_job_matches_a_replica_with_non_nullable_twins(ws, job_config, non_nulla
 
 def clickhouse_recipe(ws):
     return ws.py("db_compare/clickhouse_table_checksum.py", "--clickhouse_host", CH_HOST, "--clickhouse_database", DB2_CH,
-                 "--tables_regex", TABLE, "--no_wc", "--clickhouse_config_file", "clickhouse-client.xml",
+                 "--tables_regex", TABLE, "--no_wc", "--source_timezone", SOURCE_TIMEZONE,
+                 "--clickhouse_config_file", "clickhouse-client.xml",
                  "--sign_column", "", "--exclude_columns", *CH_EXCLUDE, "--debug_output")
 
 
 def mysql_recipe(ws):
     return ws.py("db_compare/mysql_table_checksum.py", "--mysql_host", MYSQL_HOST, "--mysql_database", DB2,
-                 "--tables_regex", TABLE, "--no_wc", "--defaults_file", ".my.cnf",
+                 "--tables_regex", TABLE, "--no_wc", "--defaults_file", ".my.cnf", "--source_timezone", SOURCE_TIMEZONE,
                  "--exclude_columns", *MYSQL_EXCLUDE, "--debug_output")
 
 

@@ -76,7 +76,5 @@ metrics.enable: "true"
 metrics.port: 8083
 connection.pool.disable: "true"
 use.nongraceful.disconnect: "true"
-database.keep.alive.interval.ms: "30000"
-database.connection.reconnect.backoff.ms: "1000"
-database.connection.reconnect.backoff.max.ms: "10000"
+connect.keep.alive.interval.ms: "60000"
 replication.history.enable: "false"

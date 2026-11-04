@@ -5,6 +5,7 @@ import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumJdbcStorageOperations;
 import com.altinity.clickhouse.debezium.embedded.cdc.ReplicationStatusSingleton;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
+import com.altinity.clickhouse.debezium.embedded.config.ConfigKeyCheck;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigurationService;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
@@ -230,6 +231,7 @@ public class ClickHouseDebeziumEmbeddedApplication {
                 PropertiesHelper.getProperties("config.properties");
         props.putAll(defaultProperties);
         Properties fileProps = new ConfigLoader().loadFromFile(filePath);
+        ConfigKeyCheck.check(fileProps);
         props.putAll(fileProps);
     }
 

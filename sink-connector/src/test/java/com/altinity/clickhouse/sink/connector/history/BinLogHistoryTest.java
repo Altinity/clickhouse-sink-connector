@@ -84,7 +84,8 @@ public class BinLogHistoryTest {
         java.util.Map<String, String> props = new java.util.HashMap<>();
         com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig.setDefaultValues(props);
         com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig config =
-                new com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig(props);
+                new com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig(
+                        com.altinity.clickhouse.sink.connector.ZoneFixtures.withZones(props));
 
         com.altinity.clickhouse.sink.connector.model.ClickHouseStruct kafkaRow =
                 new com.altinity.clickhouse.sink.connector.model.ClickHouseStruct();
@@ -106,5 +107,86 @@ public class BinLogHistoryTest {
                 3L, batches.get(0).get(sequenceIndex));
         assertEquals("a row with a sequence number binds it unchanged",
                 777L, batches.get(1).get(sequenceIndex));
+    }
+
+    /** Binds one row through {@code executeInsertWithStructs} and returns its {@code _time} parameter. */
+    private Object boundTime(long tsMs, String sourceTimeZone, String serverTimeZone) throws Exception {
+        java.util.Map<Integer, Object> params = new java.util.HashMap<>();
+        java.sql.PreparedStatement ps = (java.sql.PreparedStatement) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[] {java.sql.PreparedStatement.class},
+                (proxy, method, args) -> {
+                    if (method.getName().startsWith("set") && args != null && args.length == 2) {
+                        params.put((Integer) args[0], args[1]);
+                    }
+                    return method.getName().equals("executeBatch") ? new int[1] : null;
+                });
+        java.sql.Connection conn = (java.sql.Connection) java.lang.reflect.Proxy.newProxyInstance(
+                getClass().getClassLoader(), new Class<?>[] {java.sql.Connection.class},
+                (proxy, method, args) -> method.getName().equals("prepareStatement") ? ps : null);
+        java.util.Map<String, String> props = new java.util.HashMap<>();
+        com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig.setDefaultValues(props);
+        com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig config =
+                new com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig(
+                        com.altinity.clickhouse.sink.connector.ZoneFixtures.withZones(props));
+        com.altinity.clickhouse.sink.connector.model.ClickHouseStruct row =
+                new com.altinity.clickhouse.sink.connector.model.ClickHouseStruct();
+        row.setTs_ms(tsMs);
+        binLogHistory.executeInsertWithStructs(config, conn, "INSERT INTO h.history", "",
+                java.util.Collections.singletonList(row), sourceTimeZone, serverTimeZone);
+        int timeIndex = new java.util.ArrayList<>(BinLogHistory.HISTORY_COLUMNS.keySet())
+                .indexOf(BinLogHistory.TIME_COLUMN) + 1;
+        return params.get(timeIndex);
+    }
+
+    /**
+     * Spec 12.04 section 3.3: {@code _time} is the instant of {@code source.ts_ms}, bound as
+     * epoch text, for every combination of source and server zone. Equal zones used to
+     * bind the instant's UTC digits, which a non-UTC {@code DateTime64} column then read as
+     * local time (shifted by the zone offset); different zones used to shift the instant by
+     * the source zone's offset.
+     */
+    @Test
+    public void timeColumnBindsTheInstantAsEpochTextForEveryZoneCombination() throws Exception {
+        long tsMs = 1709290200123L;
+        String[][] zones = {
+                {"UTC", "UTC"},
+                {"America/Chicago", "America/Chicago"},
+                {"UTC", "America/Chicago"},
+                {"America/Chicago", "UTC"},
+                {"Asia/Kolkata", "America/Chicago"},
+        };
+        for (String[] z : zones) {
+            assertEquals("source=" + z[0] + " server=" + z[1],
+                    "1709290200.123000", boundTime(tsMs, z[0], z[1]));
+        }
+    }
+
+    /** The second 01:30 of a fall-back day exists only as an instant; digits could not store it. */
+    @Test
+    public void timeColumnKeepsTheSecondOccurrenceOfAnOverlapHour() throws Exception {
+        long secondOneThirty = java.time.Instant.parse("2026-11-01T07:30:00Z").toEpochMilli();
+        assertEquals("1793518200.000000",
+                boundTime(secondOneThirty, "America/Chicago", "America/Chicago"));
+    }
+
+    /** The second before the epoch cannot be epoch text; it is bound as digits in the server zone. */
+    @Test
+    public void timeColumnBindsDigitsInTheSecondBeforeTheEpoch() throws Exception {
+        assertEquals("1969-12-31 17:59:59.500", boundTime(-500L, "UTC", "America/Chicago"));
+        assertEquals("1969-12-31 23:59:59.999", boundTime(-1L, "UTC", "UTC"));
+    }
+
+    /**
+     * An empty source zone does not change the bound instant (the source zone is not used for
+     * binding). An empty or null SERVER zone is refused: it used to default silently to UTC
+     * (spec 07.03 section 3.1.6, B3); the caller now resolves the effective server zone.
+     */
+    @Test
+    public void timeColumnIgnoresEmptySourceZoneAndRefusesEmptyServerZone() throws Exception {
+        assertEquals("1709290200.123000", boundTime(1709290200123L, "", "UTC"));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> boundTime(1709290200123L, "", null));
+        org.junit.jupiter.api.Assertions.assertThrows(IllegalArgumentException.class,
+                () -> boundTime(1709290200123L, "UTC", ""));
     }
 }

@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseTableOperationsBase;
@@ -152,7 +153,7 @@ public class RecordSchemaVsDdlTypeAgreementTest {
     @Test
     @DisplayName("Record-schema path and DDL path declare the same ClickHouse type for each MySQL type")
     public void bothPathsDeclareTheSameType() {
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()));
         ZoneId zone = ZoneId.of("UTC");
         List<String> disagreements = new ArrayList<>();
 

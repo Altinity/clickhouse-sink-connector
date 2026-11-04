@@ -122,6 +122,11 @@ clickhouseSinkConnector:
       database: default
       port: 8123
 
+  # Both zones are required, with no default.
+  timezone:
+    connectionTimeZone: UTC
+    clickhouseDatetime: UTC
+
 ## List of clusters -> kafkaconnect
 cluster:
   - name: mysql-cluster-1

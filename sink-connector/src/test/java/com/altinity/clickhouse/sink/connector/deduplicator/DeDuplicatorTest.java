@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.deduplicator;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkTaskTest;
@@ -37,7 +38,7 @@ public class DeDuplicatorTest {
         if (bufferCount != null) {
             properties.put(ClickHouseSinkConnectorConfigVariables.BUFFER_COUNT.toString(), bufferCount);
         }
-        return new ClickHouseSinkConnectorConfig(properties);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(properties));
     }
 
     /** A record for row {@code productId} at an explicit stream position. */
@@ -110,7 +111,7 @@ public class DeDuplicatorTest {
         Map<String, String> properties = new HashMap<String, String>();
         properties.put(ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY.toString(), "new");
 
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(properties);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(properties));
         DeDuplicator dedupe = new DeDuplicator(config);
 
         String topic = "products";

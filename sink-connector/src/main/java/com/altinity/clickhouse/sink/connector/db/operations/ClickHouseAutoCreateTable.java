@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.KeylessTableWarning;
@@ -432,23 +433,22 @@ public class ClickHouseAutoCreateTable
      * {@code DataTypeConverter.addTimeZoneToDateTimeType} -- which lives in
      * the lightweight module and is not reachable from here -- so a table
      * gets the same column type whichever path created it (Spec 08.05
-     * section 3.1.1). An unparseable timezone is logged and ignored, as the
-     * translator does.</p>
+     * section 3.1.1). An unresolvable configured timezone throws (spec 07.03 section 3.1.6, B3):
+     * it is not logged and dropped, which would create the history column without its zone.</p>
      */
     @VisibleForTesting
     static String historyDateTimeColumnType(ClickHouseSinkConnectorConfig config) {
-        String type = "DateTime";
+        // Spec 07.03 section 3.1.6: unset is the default zone, so the type always names a zone. Only tables
+        // created after this change get it; existing history tables keep their declared type.
         String userProvidedTimeZone = config.getString(
                 ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        if (userProvidedTimeZone != null && !userProvidedTimeZone.trim().isEmpty()) {
-            try {
-                type = type + "('" + ZoneId.of(userProvidedTimeZone.trim()) + "')";
-            } catch (Exception e) {
-                log.error("Error parsing user provided timezone: " + userProvidedTimeZone, e);
-            }
-        }
-        return type + " DEFAULT '"
-                + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL) + "'";
+        // Unset is the default zone, so the type always names a zone (Spec 07.03 section 3.1.6). An
+        // unresolvable configured zone throws rather than dropping the zone from the column type.
+        String type = "DateTime('" + TimeZoneResolver.clickHouseZone(userProvidedTimeZone) + "')";
+        // Epoch-exact default (Spec 07.03 section 3.1.12): a quoted string is parsed in the
+        // column's zone, so '2099-12-31 18:00:00' under America/Chicago is the sentinel only in
+        // Chicago. The numeric epoch is the same instant in every zone.
+        return type + " DEFAULT " + DataTypeRange.DATETIME32_MAX_TTL;
     }
 
     /**
@@ -527,8 +527,9 @@ public class ClickHouseAutoCreateTable
                                    Connection connection,
                                    ClickHouseSinkConnectorConfig config)
             throws SQLException {
-        // Get server timezone
-        ZoneId serverTimeZone = getServerTimeZone(config, connection);
+        // The effective ClickHouse zone: configured, else the default (spec 07.03 section 3.1.6).
+        ZoneId serverTimeZone = TimeZoneResolver.clickHouseZone(
+                config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString()));
         
         String sql = new BinLogHistory().createHistoryTableSyntax(
                  historyTableName,
@@ -542,33 +543,6 @@ public class ClickHouseAutoCreateTable
         metadata.executeSystemQuery(connection, sql);
     }
     
-    /**
-     * Gets the server timezone, first checking if user has provided one,
-     * otherwise querying the ClickHouse server.
-     *
-     * @param config the connector configuration
-     * @param connection the database connection
-     * @return a ZoneId representing the server timezone
-     */
-    private ZoneId getServerTimeZone(ClickHouseSinkConnectorConfig config, Connection connection) {
-        String userProvidedTimeZone = config.getString(
-                ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        
-        ZoneId userProvidedTimeZoneId = null;
-        if (userProvidedTimeZone != null && !userProvidedTimeZone.isEmpty()) {
-            try {
-                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-            } catch (Exception e) {
-                log.error("Error parsing user provided timezone", e);
-            }
-        }
-        
-        if (userProvidedTimeZoneId != null) {
-            return userProvidedTimeZoneId;
-        }
-        return new DBMetadata(config).getServerTimeZone(connection);
-    }
-
     public void createHistoryDatabase(String databaseName, Connection connection, ClickHouseSinkConnectorConfig config) throws SQLException {
         String sql = "CREATE DATABASE IF NOT EXISTS " + databaseName;
         log.info(String.format(

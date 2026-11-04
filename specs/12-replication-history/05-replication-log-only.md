@@ -202,7 +202,7 @@ In mode 3 the audit table is the replica. Every audit-table failure mode of 12.0
 - **FM-12.05-5 DDL that is ignored is also not recorded**
   - **Trigger**: `disable.drop.truncate=true`, or DDL filtered by `checkIfDDLNeedsToBeIgnored` (not captured, snapshot DDL without `enable.snapshot.ddl`), on a recorder.
   - **Behaviour**: `performDDLOperation` returns before the audit insert (12.04 §3.4). The recording has no row for the statement.
-  - **Detection**: WARN `Ignoring DROP/TRUNCATE statement because disable.drop.truncate=true; ...`, or INFO `Ignored Source DB DDL: ...`, per statement.
+  - **Detection**: ERROR `Ignoring TRUNCATE of table <t> because disable.drop.truncate=true; ...` for a skipped TRUNCATE (spec 06.08 §3.3 item 5), WARN `DROP of [<tables>] kept because disable.drop.truncate=true: ...` for a skipped DROP TABLE or DROP DATABASE, or INFO `Ignored Source DB DDL: ...`, per statement.
   - **Blast radius**: the recording silently lacks those statements, although in this mode nothing would have been executed anyway.
   - **Recovery**: do not set `disable.drop.truncate` on a mode-3 connector. Statements already missed can be re-read from the source binlog while it is retained.
   - **RTO**: a restart (about 20 s) for the configuration. Missed statements are manual.

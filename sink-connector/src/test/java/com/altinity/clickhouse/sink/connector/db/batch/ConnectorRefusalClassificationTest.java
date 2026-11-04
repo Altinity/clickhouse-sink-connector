@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
@@ -30,7 +31,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 public class ConnectorRefusalClassificationTest {
 
     private static ClickHouseSinkConnectorConfig config() {
-        return new ClickHouseSinkConnectorConfig(new HashMap<>());
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()));
     }
 
     @Test

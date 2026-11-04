@@ -12,10 +12,13 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.common.StartupZonePolicy;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
+import com.altinity.clickhouse.sink.connector.db.ClickHouseZoneCrossCheck;
 import com.altinity.clickhouse.sink.connector.db.DDLSchemaChangeWaiter;
 import com.altinity.clickhouse.sink.connector.db.DBMetadata;
 import com.altinity.clickhouse.sink.connector.db.ErrorLogger;
@@ -45,10 +48,14 @@ import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.json.simple.JSONObject;
+import org.json.simple.parser.JSONParser;
+import org.json.simple.parser.ParseException;
 
 import javax.xml.transform.Source;
 import java.io.IOException;
 import java.sql.Connection;
+import java.util.function.Supplier;
 import java.sql.SQLException;
 import java.time.ZoneId;
 import java.util.*;
@@ -369,6 +376,13 @@ public class DebeziumChangeEventCapture {
         // store. See ensureHeartbeatInterval for why this is not optional.
         ensureHeartbeatInterval(props);
 
+        // Best effort, never throws and never refuses the start: when the offset table has (or can get) an
+        // extra_info column, the offset insert statement is extended to write the connector's static facts
+        // there (spec 09.05). It runs after the JDBC URL rewrites above, so it reads the offset table
+        // through the endpoint Debezium will use, and before the engine is built, so the statement
+        // Debezium reads is final.
+        OffsetExtraInfo.prepare(props, systemDbConnection, config);
+
         try {
             DebeziumEngine.Builder<ChangeEvent<SourceRecord, SourceRecord>> changeEventBuilder =
                     DebeziumEngine.create(Connect.class);
@@ -384,6 +398,9 @@ public class DebeziumChangeEventCapture {
             // Debezium's default remaps years below 100 (0001-01-01 arrives as
             // 2001-01-01). Off unless the user set it (spec 07.03 section 3.4).
             ensureTimeAdjusterDisabled(props);
+            // latin1 text: Debezium decodes the five bytes MySQL keeps as C1 controls into U+FFFD.
+            // Spec 07.08 section 3.3.
+            com.altinity.clickhouse.debezium.embedded.converters.Latin1TextConverter.ensureRegistered(props);
 
             changeEventBuilder.using(props);
             changeEventBuilder.notifying(new DebeziumEngine.ChangeConsumer<ChangeEvent<SourceRecord, SourceRecord>>() {
@@ -619,6 +636,15 @@ public class DebeziumChangeEventCapture {
         // so no worker that finishes one of its batches in the meantime calls
         // a committer whose store is closed (spec 09.01 section 3.8 item 5).
         retireHandoffsOfStoppedEngine("engine completion");
+        Throwable stop = BinlogEventAudit.unreplicable();
+        if (stop != null) {
+            // A partial update event stopped the engine (spec 01.10 section 3.1). A recreated engine
+            // would read the same event and stop at it again, so the stop is terminal, not retried.
+            log.error("Engine stopped at a binlog event the connector cannot replicate; not retrying: a "
+                    + "recreated engine would read the same event and stop at it again.");
+            onTerminalFailure(stop, props);
+            return;
+        }
         if (success) {
             log.debug("Completion callback");
             return;
@@ -629,6 +655,11 @@ public class DebeziumChangeEventCapture {
             log.error("Engine stopped with an error: cause: "
                     + throwable.getCause().getLocalizedMessage());
         }
+        // A purged binlog (error 1236, "Could not find first log file name ..."): one ERROR per attempt naming
+        // the stored file, the lost range and the resync (spec 01.07 FM-01.07-5). The retry decision is unchanged.
+        noteBinlogPurge(throwable, props);
+        // Error 1236 (same server_uuid/server_id): one ERROR naming the key to change; the lines above stay.
+        BinlogServerIdPolicy.noteCollision(throwable);
         if (isDeterministicFailure(throwable)) {
             // A FATAL failure (spec 10.01 section 3.1) is the same on every
             // attempt: the value, the column type, the table, the privilege
@@ -686,6 +717,21 @@ public class DebeziumChangeEventCapture {
             } catch (InterruptedException e) {
                 log.error("Error sleeping", e);
                 throw new RuntimeException(e);
+            }
+            try {
+                // The source's row format is checked again before the engine is recreated (spec 01.10 section
+                // 3.1, spec 10.04 section 3.6): a source changed since start must not be replicated from.
+                BinlogRowImagePreflight.check(props);
+            } catch (BinlogRowImagePreflight.Unreadable unreadable) {
+                // Could not be asked: a failed attempt, which draws on the budget like any other.
+                handleEngineCompletion(false, "binlog_row_image could not be read before the restart",
+                        unreadable, props, restartEngine);
+                return;
+            } catch (IllegalStateException refused) {
+                // Refused: the same verdict on every attempt, so terminal.
+                log.error("Engine not restarted: the source's row format is refused: {}", refused.getMessage());
+                onTerminalFailure(refused, props);
+                return;
             }
             restartEngine.run();
             return;
@@ -801,6 +847,11 @@ public class DebeziumChangeEventCapture {
         // and Debezium's MySQL connector itself need it: refuse once, naming
         // how to supply it, instead of failing inside the retry loop.
         MySqlJdbcDriver.check(props);
+        // The source may still be coming up (the container's MySQL runs its init script with the network
+        // off; a host restarted with its replica). Wait for it within the retry budget the engine itself
+        // gets, so the refusals below do not end a start the old retry loop used to ride out. When the
+        // budget is spent this returns and the preflights read the source and decide (spec 01.01 3.2).
+        MySqlSourceWait.await(props, MAX_RETRIES, SLEEP_TIME);
         // A source table with no PRIMARY KEY and no non-null UNIQUE key has no
         // row identity in the binlog, so nothing downstream can keep its
         // ClickHouse copy correct. Name every such table here, with the ALTER
@@ -809,6 +860,10 @@ public class DebeziumChangeEventCapture {
         // would take every correctly-keyed table on the same source down with
         // it. This call never throws.
         KeylessTablePreflight.check(props);
+        // A cascading foreign key on a captured child table is not binlogged by MySQL before 9.6, so
+        // that child table diverges silently. This call names those tables and carries on: it never throws
+        // (spec 01.10 section 3.4).
+        ForeignKeyCascadePreflight.check(props);
         // binlog_row_image, by contrast, is all-or-nothing: anything but FULL
         // makes EVERY update of EVERY table diverge (untouched columns arrive
         // as NULL), and nothing downstream can recover what the source never
@@ -820,13 +875,17 @@ public class DebeziumChangeEventCapture {
         // synthetic payload and read the source's setting. Refuse only when the
         // source is ON and the decoder does not work -- every transaction would
         // then fail to deserialize; warn on what cannot be verified (spec 01.08).
+        // database.server.id must be a MySQL server_id (1..4294967295) before the binlog client presents it,
+        // and its effective value is logged once at start (BinlogServerIdPolicy).
+        BinlogServerIdPolicy.check(props);
+        // ignore.ddl.regex must compile and must not hold a blank rule (a blank rule matches every DDL).
+        // Checked here so a typo refuses the start, instead of halting at the first DDL the rule is
+        // evaluated against (spec 01.03 section 7, spec 06.08 section 3.3). Refuses the start on a bad entry.
+        IgnoreDdlRegexPreflight.check(props);
         BinlogTransactionCompressionPreflight.check(props);
-        // With database.connectionTimeZone unset the JDBC driver derives the
-        // session zone from the source's time_zone/system_time_zone; a DST host
-        // reports an abbreviation such as CDT, which the driver cannot map to
-        // one zone, so every connection fails and the engine is retried
-        // errors.max.retries times. Resolve it here with the driver's own
-        // resolver and refuse once, naming the fix (spec 07.03 section 3.1.5).
+        // Both zone settings are mandatory (spec 07.03 section 3.1.2). An unset, blank or SERVER value
+        // refuses the start here, before any connection to the source or to ClickHouse: there is no default
+        // zone and no session zone is read.
         ConnectionTimeZonePreflight.check(props);
         // The binlog client's keep-alive auto-reconnect resumes from its own
         // last-read byte offset -- inside a transaction, past the statement's
@@ -859,12 +918,17 @@ public class DebeziumChangeEventCapture {
         ResumeReplayLogSummary.install();
 
         ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props));
+        logEffectiveTimeZones(config);
 
         // snowflake.id=false versions GTID rows with the raw transaction number,
         // which ranks below every snapshot row; say so loudly before the engine
         // starts (spec 02.06 section 3.2.1). Not refused: an existing config must
         // keep starting after an upgrade (Invariant I11).
         warnIfRawGtidVersioningWithDataSnapshot(props, config);
+
+        // The configured ClickHouse zone against the server's timezone() and the zones of existing
+        // DateTime columns (spec 07.03 section 3.1.6). One WARN per mismatched column; never refuses.
+        checkClickHouseZonesAtStartup(config);
 
         // Initialize PostgreSQL-specific configuration from properties.
         this.pgConfig = new PostgresConnectorConfig(props);
@@ -908,6 +972,15 @@ public class DebeziumChangeEventCapture {
     static volatile long stopDrainTimeoutMs = 60_000;
 
     /**
+     * Longest time {@link #stop()} waits for the batch worker pool to terminate
+     * after shutting it down. Only a terminated pool may have its connections
+     * closed and its FIFO units reset, so a pool still running after this bound
+     * keeps both. Package-private and mutable so tests do not wait a minute;
+     * production keeps the default.
+     */
+    static volatile long stopPoolTerminationTimeoutMs = 60_000;
+
+    /**
      * Wait between two attempts of a failed DDL when {@code ddl.retry=true}
      * (Spec 06.08 section 3.2 item 3). Package-private and mutable so tests do
      * not wait out the real back-off; production keeps the default.
@@ -935,15 +1008,23 @@ public class DebeziumChangeEventCapture {
      *   <li>stop the Debezium event thread;</li>
      *   <li>let the pool, still running, drain what is queued or in flight,
      *       bounded by {@link #stopDrainTimeoutMs};</li>
-     *   <li>shut the pool down and await termination;</li>
-     *   <li>reset the FIFO: whatever is still outstanding is abandoned. It was
-     *       never acknowledged, so the next engine redelivers it from the last
+     *   <li>shut the pool down and await its termination, bounded by
+     *       {@link #stopPoolTerminationTimeoutMs}. The result decides the rest:</li>
+     *   <li>if the pool terminated, close the workers' connections and reset
+     *       the FIFO: whatever is still outstanding is abandoned. It was never
+     *       acknowledged, so the next engine redelivers it from the last
      *       committed offset -- redelivery, never loss or a rolled-back offset
-     *       ({@code Replication.OffsetFifo.acked_never_rolled_back}).</li>
+     *       ({@code Replication.OffsetFifo.acked_never_rolled_back}). The active
+     *       engine is then cleared;</li>
+     *   <li>if the pool did not terminate, a worker is still inside a write, a
+     *       retry or a backoff. Its connections and the FIFO are left as they
+     *       are, the active engine is kept, the stop is logged at ERROR, and a
+     *       daemon thread closes the connections once the pool terminates. The
+     *       next engine's {@code setup()} abandons the pending units.</li>
      * </ol>
      *
-     * @return the number of handed-off units abandoned (0 when the drain
-     *         completed).
+     * @return the number of handed-off units abandoned by this call: the FIFO
+     *         reset count when the pool terminated, 0 when it did not.
      * @throws IOException If an I/O error occurs during shutdown.
      */
     public int stop() throws IOException {
@@ -958,41 +1039,59 @@ public class DebeziumChangeEventCapture {
         }
 
         // 2. The event thread returns from engine.run() once the engine is closed.
+        //    A thread still running after the bound is logged, and the stop goes
+        //    on: the batch pool must be shut down either way.
+        boolean eventThreadStopped = true;
         try {
             if (this.singleThreadDebeziumEventExecutor != null) {
                 this.singleThreadDebeziumEventExecutor.shutdown();
-                this.singleThreadDebeziumEventExecutor.awaitTermination(60, TimeUnit.SECONDS);
+                eventThreadStopped = this.singleThreadDebeziumEventExecutor.awaitTermination(60, TimeUnit.SECONDS);
             }
         } catch (Exception e) {
             log.error("Error stopping debezium event executor", e);
+        }
+        if (!eventThreadStopped) {
+            log.error("stop(): the Debezium event thread did not terminate within 60 s; "
+                    + "continuing the stop so that the batch pool is still shut down.");
         }
 
         // 3. Drain through the still-running pool; nothing new can arrive now.
         drainBeforeStop();
 
-        // 4. Only now stop the workers.
+        // 4. Only now stop the workers. The result of the await decides whether
+        //    the steps that touch worker-owned state (4a, 5, 6) may run.
+        ClickHouseBatchExecutor pool = this.executor;
+        boolean poolTerminated = true;
         try {
-            if (this.executor != null) {
-                this.executor.shutdown();
-                this.executor.awaitTermination(60, TimeUnit.SECONDS);
+            if (pool != null) {
+                pool.shutdown();
+                poolTerminated = pool.awaitTermination(stopPoolTerminationTimeoutMs, TimeUnit.MILLISECONDS);
             }
         } catch (Exception e) {
             log.error("Error stopping executor", e);
+            poolTerminated = false;
         }
 
         // 4a. The pool has terminated: no worker can touch its connections
         //     again, so close them now (spec 01.01 §3.3 step 4a). Every engine
         //     restart discards this pool and builds a new one; without this
         //     the discarded workers' per-database connections were never
-        //     closed, thread.pool.size x databases of them per restart.
-        for (ClickHouseBatchRunnable worker : this.workerRunnables) {
-            try {
-                worker.closeConnections();
-            } catch (Exception e) {
-                log.error("Error closing a worker's connections", e);
-            }
-        }
+        //     closed, thread.pool.size x databases of them per restart. If the
+        //     pool did not terminate, its workers still use the connections:
+        //     they stay open and a daemon thread closes them once the pool
+        //     does terminate.
+        List<ClickHouseBatchRunnable> workers = new ArrayList<>(this.workerRunnables);
         this.workerRunnables.clear();
+        if (poolTerminated) {
+            closeWorkerConnections(workers);
+        } else {
+            log.error("stop(): the batch worker pool did not terminate within {} ms; {} worker thread(s) "
+                    + "still running. Their pending batches are abandoned and redelivered from the last "
+                    + "committed offset on the next start. Their connections stay open until the pool "
+                    + "terminates, and the offset FIFO and the active engine are left unchanged.",
+                    stopPoolTerminationTimeoutMs, pool.getActiveCount());
+            deferWorkerConnectionClose(pool, workers);
+        }
 
         // 4b. The online primary-key backfill thread: interrupted and waited
         //     for a few seconds at most; an interrupted copy re-runs at the
@@ -1015,22 +1114,69 @@ public class DebeziumChangeEventCapture {
 
         // 5. Nobody can write or acknowledge anything registered so far: abandon
         //    it so the next engine in this process starts from a quiescent FIFO.
-        int abandoned = DebeziumOffsetManagement.reset();
-        if (abandoned > 0) {
-            log.warn("stop(): {} handed-off batch(es) were still unacknowledged when the worker "
-                    + "pool terminated and have been abandoned. Their offsets were never "
-                    + "committed, so the next start redelivers them from the last committed "
-                    + "position.", abandoned);
-        }
-        // 6. This engine no longer owns anything in the FIFO. Only its own
-        //    registration is released: a late stop() of an older instance must
-        //    not un-register the engine that replaced it.
-        if (activeEngine == this) {
-            activeEngine = null;
+        //    Only once the pool has terminated: reset() requires that no worker
+        //    can still report a write. Otherwise the FIFO keeps its units, and
+        //    the next setup() abandons them (step 4).
+        int abandoned = 0;
+        if (poolTerminated) {
+            abandoned = DebeziumOffsetManagement.reset();
+            if (abandoned > 0) {
+                log.warn("stop(): {} handed-off batch(es) were still unacknowledged when the worker "
+                        + "pool terminated and have been abandoned. Their offsets were never "
+                        + "committed, so the next start redelivers them from the last committed "
+                        + "position.", abandoned);
+            }
+            // 6. This engine no longer owns anything in the FIFO. Only its own
+            //    registration is released: a late stop() of an older instance must
+            //    not un-register the engine that replaced it.
+            if (activeEngine == this) {
+                activeEngine = null;
+            }
         }
 
         Metrics.stop();
         return abandoned;
+    }
+
+    /**
+     * Closes the connections of every worker runnable. A failure on one is
+     * logged and the rest are still closed. Call only once the worker's pool
+     * has terminated.
+     */
+    private static void closeWorkerConnections(List<ClickHouseBatchRunnable> workers) {
+        for (ClickHouseBatchRunnable worker : workers) {
+            try {
+                worker.closeConnections();
+            } catch (Exception e) {
+                log.error("Error closing a worker's connections", e);
+            }
+        }
+    }
+
+    /**
+     * Closes the connections of workers that were still running when
+     * {@link #stop()} gave up on their pool. A daemon thread waits for the pool
+     * to terminate and then closes them, so the timed-out stop does not leak
+     * them. The thread waits as long as the pool needs: a worker stuck forever
+     * keeps the daemon waiting, and the JVM does not wait for it.
+     */
+    private static void deferWorkerConnectionClose(ClickHouseBatchExecutor pool,
+                                                   List<ClickHouseBatchRunnable> workers) {
+        Thread closer = new Thread(() -> {
+            try {
+                while (!pool.awaitTermination(1, TimeUnit.MINUTES)) {
+                    // Still draining; keep waiting for termination.
+                }
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                log.warn("stop(): interrupted while waiting to close the connections of {} worker(s); "
+                        + "they stay open.", workers.size());
+                return;
+            }
+            closeWorkerConnections(workers);
+        }, "debezium-stop-connection-close");
+        closer.setDaemon(true);
+        closer.start();
     }
 
     /**
@@ -1561,13 +1707,11 @@ public class DebeziumChangeEventCapture {
         String databaseName = getDatabaseName(sr);
         // Get source timezone from config
         String sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-        // Get server timezone from config
-        String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
-
-        // if serverTimezone is empty default to UTC.
-//        if(serverTimeZone.isEmpty()) {
-//            serverTimeZone = "UTC";
-//        }
+        // The ClickHouse zone for history statements (spec 07.03 section 3.1.2): the configured zone, which is
+        // mandatory. Resolved lazily so that only the history-table paths below pay for it; it throws when unresolvable.
+        final String configuredServerTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
+        java.util.function.Supplier<String> serverTimeZone =
+                () -> resolveHistoryServerTimeZone(config, configuredServerTimeZone).getId();
         // If replication histry is enabled, set database name to the replication history database name
         if(config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())){
             databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
@@ -1606,9 +1750,16 @@ public class DebeziumChangeEventCapture {
         if (isDropOrTruncateDisabled(props) && isDropOrTruncate.get() && !isSnapshotDDL(sr)) {
             lastIgnoredDDL = DDL;
             // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
-            log.warn("Ignoring DROP/TRUNCATE statement because {}=true; ClickHouse keeps the rows the "
-                    + "source removed (a deliberate, operator-chosen divergence). DDL: {}",
-                    SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, DDL);
+            if (TRUNCATE_KEYWORD.matcher(DDL).find()) {
+                logIgnoredTruncate(DDL, sr);
+            } else {
+                // Same wording as the other disable.drop.truncate WARNs (PrimaryKeyRebuild, PrimaryKeyBackfill): what is
+                // kept, and the setting that keeps it. The targets name the table(s) the statement drops.
+                // DESTRUCTIVE: a WARN log line only; the statement stays ignored and nothing is dropped here.
+                log.warn("DROP of {} kept because {}=true: ClickHouse keeps the rows the source removed "
+                        + "(a deliberate, operator-chosen divergence). DDL: {}",
+                        DdlTableNames.affected(sr, DDL), SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, DDL);
+            }
             // The suppressed statement still supersedes a pending primary-key
             // backfill of the table: the operator keeps the rows already in
             // the table, not the retired pre-DDL ones (Spec 06.09 §3.3.2 step 7).
@@ -1679,7 +1830,7 @@ public class DebeziumChangeEventCapture {
                             log.info("History mode: snapshot-phase {} closes no rows (Spec 12.03 section 3.4): {}",
                                     historyBulkCloses.get(0).op(), DDL);
                         } else {
-                            executeHistoryBulkCloses(historyBulkCloses, chStruct, config, serverTimeZone, DDL);
+                            executeHistoryBulkCloses(historyBulkCloses, chStruct, config, serverTimeZone.get(), DDL);
                         }
                     }
 
@@ -1832,7 +1983,7 @@ public class DebeziumChangeEventCapture {
                     List<ClickHouseStruct> currentBatch = new ArrayList<>();
                     currentBatch.add(chStruct);
                     binLogHistory.addRecordsToHistoryTable(config, historyTableName, replicationHistoryDbConnection, DDL,
-                            currentBatch, sourceTimeZone, serverTimeZone);
+                            currentBatch, sourceTimeZone, serverTimeZone.get());
                 }
 
                 DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, cdcRecord, lastRecordInBatch);
@@ -1922,6 +2073,35 @@ public class DebeziumChangeEventCapture {
         return conn;
     }
 
+
+    /**
+     * Logs the effective zones once per JVM (spec 07.03 section 3.1.2). Both are explicit: the config
+     * constructor has already refused an unset value.
+     */
+    private static void logEffectiveTimeZones(ClickHouseSinkConnectorConfig config) {
+        String clickHouseZone = TimeZoneResolver.clickHouseZone(
+                config.getString(TimeZoneResolver.CLICKHOUSE_DATETIME_TIMEZONE)).getId();
+        String sourceZone = TimeZoneResolver.resolve(TimeZoneResolver.SOURCE_CONNECTION_TIMEZONE,
+                config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString()),
+                TimeZoneResolver.Kind.SOURCE).getId();
+        StartupZonePolicy.logEffective(clickHouseZone, sourceZone);
+    }
+
+    /**
+     * Runs the zone cross-check on a short-lived ClickHouse connection. A mismatch is a WARN per column; any failure
+     * to run the check (no connection, query error, unreadable server zone) is also a WARN. Startup continues.
+     */
+    private void checkClickHouseZonesAtStartup(ClickHouseSinkConnectorConfig config) {
+        DBCredentials dbCredentials = parseDBConfiguration(config);
+        String jdbcUrl = BaseDbWriter.getConnectionString(dbCredentials.getHostName(),
+                dbCredentials.getPort(), BaseDbWriter.SYSTEM_DB);
+        // The resolved zone, not the raw value. The config constructor has already refused an unset value.
+        String zone = TimeZoneResolver.clickHouseZone(config.getString(TimeZoneResolver.CLICKHOUSE_DATETIME_TIMEZONE)).getId();
+        Supplier<Connection> connections = () -> BaseDbWriter.createConnection(jdbcUrl,
+                BaseDbWriter.DATABASE_CLIENT_NAME, dbCredentials.getUserName(), dbCredentials.getPassword(),
+                BaseDbWriter.SYSTEM_DB, config);
+        ClickHouseZoneCrossCheck.checkAtStartup(zone, connections);
+    }
 
     /**
      * Sets up the replication history database connection using the provided database
@@ -2256,21 +2436,14 @@ public class DebeziumChangeEventCapture {
 
     /**
      * The timezone the history statements render their {@code DateTime}
-     * literals in: {@code clickhouse.datetime.timezone} when configured, else
-     * the server's own -- the same resolution the record path applies
-     * ({@code ClickHouseBatchRunnable.getServerTimeZone}), so both paths write
-     * one SCD2 table with one statement timezone (Spec 12.03 section 3.6,
-     * Gap G-12.02-1).
+     * literals in: {@code clickhouse.datetime.timezone}, which is mandatory
+     * (Spec 07.03 section 3.1.2). The record path resolves the same
+     * key ({@code ClickHouseBatchRunnable.getServerTimeZone}), so both paths write
+     * one SCD2 table with one statement timezone (Spec 12.03 section 3.6).
+     * An unset value is refused at construction, never defaulted.
      */
     private ZoneId resolveHistoryServerTimeZone(ClickHouseSinkConnectorConfig config, String configuredServerTimeZone) {
-        if (configuredServerTimeZone != null && !configuredServerTimeZone.isEmpty()) {
-            try {
-                return ZoneId.of(configuredServerTimeZone);
-            } catch (Exception e) {
-                log.error("**** Error parsing user provided timezone:" + configuredServerTimeZone + e.toString());
-            }
-        }
-        return new DBMetadata(config).getServerTimeZone(writer.getConnection());
+        return TimeZoneResolver.clickHouseZone(configuredServerTimeZone);
     }
 
 
@@ -3103,6 +3276,37 @@ public class DebeziumChangeEventCapture {
         return snapshotDDL;
     }
 
+    // DESTRUCTIVE: javadoc of a partition DROP or TRUNCATE that stays ignored; this code executes no SQL.
+    /** A partition-level drop or truncation: the table and the partition as written. */
+    static final Pattern PARTITION_DATA_OPERATION = Pattern.compile(
+            "(?i)^\\s*ALTER\\s+TABLE\\s+(\\S+)\\s+(DROP|TRUNCATE)\\s+PARTITION\\s+([^\\s,;]+)");
+
+    /**
+     * Partition DROP and TRUNCATE are ignored by the bundled rules (spec 06.08 section 3.3): the source removes
+     * the rows, and ClickHouse keeps them. That divergence is deliberate, so for a captured table it is logged at
+     * WARN naming the table and the partition. A partition operation on an uncaptured table is silent, as every
+     * other uncaptured DDL is.
+     *
+     * @return true when the statement is a partition DROP/TRUNCATE on a captured table and the WARN was logged
+     */
+    private boolean warnIfPartitionDataIgnored(String DDL, SourceRecord sr, Properties props) {
+        Matcher m = PARTITION_DATA_OPERATION.matcher(DDL);
+        if (!m.find()) {
+            return false;
+        }
+        String sourceDb = sourceDatabaseName(sr);
+        List<String> tables = DdlTableNames.affected(sr, DDL);
+        boolean captured = tables.isEmpty()
+                ? DdlCaptureFilter.isCaptured(sourceDb, null, props)
+                : tables.stream().anyMatch(t -> DdlCaptureFilter.isCaptured(sourceDb, t, props));
+        if (!captured) {
+            return false;
+        }
+        log.warn("Ignoring {} PARTITION {} of table {}: the rows the source removed stay in ClickHouse (a deliberate, "
+                + "operator-visible divergence; spec 06.08 section 3.3). DDL: {}", m.group(2), m.group(3), m.group(1), DDL);
+        return true;
+    }
+
     public boolean checkDDLAgainstRegexPatterns(String DDL) {
         IgnoreDDLRegexLoader ignoreDDLRegexLoader = new IgnoreDDLRegexLoader();
         List<String> ignoreDDLRegexList = ignoreDDLRegexLoader.loadRegexPatterns();
@@ -3133,13 +3337,14 @@ public class DebeziumChangeEventCapture {
 
         // Also if the DDL matches the regex, then ignore it.
         String ignoreDDLRegexProperty = props.getProperty(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX);
-        // The IGNORE_DDL_REGEX will be a list of regex separated by 2 pipe(##).
-        // Example: ^ALTER TABLE .* ADD COLUMN .*##^ALTER TABLE .* DROP COLUMN .*##^ALTER TABLE .* MODIFY COLUMN .*
-        // Separate the list.
+        // The IGNORE_DDL_REGEX will be a list of regex separated by 2 pipes (||).
+        // Example: ^ALTER TABLE .* ADD COLUMN .*||^ALTER TABLE .* DROP COLUMN .*||^ALTER TABLE .* MODIFY COLUMN .*
+        // Separate the list. Each entry was validated at start (IgnoreDdlRegexPreflight.check); an entry that
+        // still does not compile throws DDLReplicationException and halts the engine (spec 01.03 section 7).
         if (ignoreDDLRegexProperty != null && !ignoreDDLRegexProperty.isEmpty()) {
-            String[] separatedIgnoreDDLRegexList = ignoreDDLRegexProperty.split("\\|\\|");
+            String[] separatedIgnoreDDLRegexList = ignoreDDLRegexProperty.split(IgnoreDdlRegexPreflight.SEPARATOR_REGEX);
             for (String regex : separatedIgnoreDDLRegexList) {
-                Pattern p = Pattern.compile(regex);
+                Pattern p = IgnoreDdlRegexPreflight.compile(regex);
                 Matcher m = p.matcher(DDL);
                 if (m.find()) {
                     lastIgnoredDDL = DDL;
@@ -3155,7 +3360,9 @@ public class DebeziumChangeEventCapture {
         // nothing above DEBUG.
         if (checkDDLAgainstRegexPatterns(DDL)) {
             lastIgnoredDDL = DDL;
-            log.info("Ignoring DDL: " + DDL + " as it matches a bundled ignore pattern");
+            if (!warnIfPartitionDataIgnored(DDL, sr, props)) {
+                log.info("Ignoring DDL: " + DDL + " as it matches a bundled ignore pattern");
+            }
             return true;
         }
 
@@ -3181,6 +3388,102 @@ public class DebeziumChangeEventCapture {
         } else {
             return false;
         }
+    }
+
+    /** The text MySQL reports (error 1236) when the binlog a dump starts from has been purged. */
+    static final String BINLOG_PURGED_TEXT = "Could not find first log file name in binary log index file";
+
+    /** True when the failure or any cause reports a purged binlog. */
+    static boolean isBinlogPurged(Throwable failure) {
+        for (Throwable t = failure; t != null; t = t.getCause()) {
+            String message = t.getMessage();
+            if (message != null && message.contains(BINLOG_PURGED_TEXT)) {
+                return true;
+            }
+            if (t.getCause() == t) {
+                break;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Logs the purged-binlog notice (spec 01.07 FM-01.07-5) for a failure that reports a purged binlog. The
+     * file and position come from the stored offset in the ClickHouse offset store; when that read fails the
+     * file is reported as unknown, with the reason. The retry decision is not changed here.
+     */
+    private void noteBinlogPurge(Throwable failure, Properties props) {
+        if (!isBinlogPurged(failure)) {
+            return;
+        }
+        String stored;
+        try {
+            stored = storedBinlogFile(readStoredOffsetJson(props));
+        } catch (Exception e) {
+            stored = "unknown (the stored offset could not be read: " + e + ")";
+        }
+        log.error("Binlog purged on the source: the stored offset names binlog file {}, and the source no longer "
+                + "has it (MySQL error 1236: {}). Data from the stored position up to the source's current position "
+                + "is lost and cannot be replayed from the binlog. A resync of every replicated table is required "
+                + "(ch-mysql-resync, spec 11.04). The engine is retried, but a retry cannot succeed while the stored "
+                + "offset points into the purged binlog.", stored, BINLOG_PURGED_TEXT);
+    }
+
+    /** The stored offset's binlog file and position, read from the ClickHouse offset store (spec 09.03). */
+    private String readStoredOffsetJson(Properties props) throws SQLException {
+        Connection ch = systemConnection();
+        if (ch == null) {
+            throw new SQLException("no ClickHouse connection to read the offset store");
+        }
+        return new DebeziumOffsetStorage().getDebeziumStorageStatusQuery(props, ch);
+    }
+
+    /** {@code 'mysql-bin.000123' at position 4567} from the stored offset's top-level file and pos keys. */
+    private static String storedBinlogFile(String offsetJson) throws ParseException {
+        if (offsetJson == null) {
+            throw new IllegalStateException("no stored offset row");
+        }
+        JSONObject offset = (JSONObject) new JSONParser().parse(offsetJson);
+        Object file = offset.get("file");
+        if (file == null) {
+            throw new IllegalStateException("the stored offset has no binlog file");
+        }
+        Object pos = offset.get("pos");
+        return "'" + file + "'" + (pos == null ? "" : " at position " + pos);
+    }
+
+    /** A statement that starts with TRUNCATE. */
+    private static final Pattern TRUNCATE_KEYWORD = Pattern.compile("^\\s*TRUNCATE\\b", Pattern.CASE_INSENSITIVE);
+
+    // DESTRUCTIVE: nothing is destroyed; this helper only reads the table name out of a TRUNCATE statement text.
+/** The table a table-level truncation statement names, optionally schema-qualified. */
+    private static final Pattern TRUNCATE_TARGET = Pattern.compile(
+            "^\\s*TRUNCATE\\s+(?:TABLE\\s+)?((?:`[^`]+`|[\\w$]+)(?:\\s*\\.\\s*(?:`[^`]+`|[\\w$]+))?)",
+            Pattern.CASE_INSENSITIVE);
+
+    /**
+     * The ERROR for a TRUNCATE skipped under {@code disable.drop.truncate} (spec 06.08 section 3.3 item 5):
+     * the table, the binlog position of the event, and the consequence. Nothing is executed here.
+     */
+    // DESTRUCTIVE: nothing is destroyed; this method reads the table name and logs an ERROR for a skipped TRUNCATE.
+    private void logIgnoredTruncate(String ddl, SourceRecord sr) {
+        String table = "unknown table";
+        Matcher target = TRUNCATE_TARGET.matcher(ddl);
+        if (target.find()) {
+            String name = target.group(1);
+            String database = getDatabaseName(sr);
+            table = name.contains(".") || database == null ? name : database + "." + name;
+        }
+        String position = "not available in the event";
+        Map<String, ?> offset = sr.sourceOffset();
+        if (offset != null && offset.get("file") != null && offset.get("pos") != null) {
+            position = offset.get("file") + ":" + offset.get("pos");
+        }
+        // DESTRUCTIVE: the message quotes the statement; nothing is executed against any database.
+        log.error("Ignoring TRUNCATE of table {} because {}=true; ClickHouse keeps the rows the source truncated, "
+                + "so the table no longer matches MySQL until it is resynced (ch-mysql-resync). "
+                + "Binlog position: {}. DDL: {}",
+                table, SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, position, ddl);
     }
 
     /** Whether {@code disable.drop.truncate} is set. */

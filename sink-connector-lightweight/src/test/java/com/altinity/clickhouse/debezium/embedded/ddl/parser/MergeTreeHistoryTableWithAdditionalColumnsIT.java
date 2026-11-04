@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.ITCommon;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
@@ -113,7 +114,7 @@ public class MergeTreeHistoryTableWithAdditionalColumnsIT {
         Thread.sleep(20000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        DBMetadata dbMetadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        DBMetadata dbMetadata = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
         Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "contacts_history", "employees");
 
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));
@@ -220,7 +221,7 @@ public class MergeTreeHistoryTableWithAdditionalColumnsIT {
         Thread.sleep(20000);
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);
-        DBMetadata dbMetadata = new DBMetadata(new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        DBMetadata dbMetadata = new DBMetadata(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
         Map<String, String> columnsToDataTypeMap = dbMetadata.getColumnsDataTypesForTable(writer.getConnection(), "contacts_history", "employees");
 
         Assert.assertTrue(columnsToDataTypeMap.get("id").equalsIgnoreCase("Int32"));

@@ -247,7 +247,7 @@ class TestCanaryGate(unittest.TestCase):
     def _args(self, **over):
         from types import SimpleNamespace
         # The connector-position gate (D-13.08-5) has its own tests; these cases are about the canary.
-        base = dict(ch_config=os.path.join(self.d, "client.xml"), dump_base=self.d, stamp="20260928", schemas=["s"],
+        base = dict(ch_config=os.path.join(self.d, "client.xml"), dump_base=self.d, stamp="20260928", schemas=["s"], source_timezone="America/Chicago",
                     restore_suffix="_restore", ch_host="ch.example", ch_port=9000, apply=True, canary_list=os.path.join(self.d, "canary.txt"),
                     tables=".*", skip_load=True, drop_ch_only=False, load_parallel=1, load_threads=1, loader_cmd=None, loader_cwd=None,
                     canary_threshold=0.99, force=False, offset_table=None, offset_key=None, skip_connector_position_check=True)

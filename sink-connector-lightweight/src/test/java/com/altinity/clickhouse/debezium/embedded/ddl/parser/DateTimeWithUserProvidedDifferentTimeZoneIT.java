@@ -111,6 +111,8 @@ public class DateTimeWithUserProvidedDifferentTimeZoneIT {
 
         String DATETIME6_MIN = "1900-01-01 00:00:00.0";
         String DATETIME6_MID = "2022-09-29 01:50:56.123456";
+        // A source value above the column's range is stored as the largest value of that scale (Spec 07.03 section 3.1.8):
+        // 2299-12-31 23:59:59 followed by one nine per fractional digit.
         String DATETIME6_MAX = "2299-12-31 23:59:59.0";
 
         BaseDbWriter writer = ITCommon.getDBWriter(clickHouseContainer);

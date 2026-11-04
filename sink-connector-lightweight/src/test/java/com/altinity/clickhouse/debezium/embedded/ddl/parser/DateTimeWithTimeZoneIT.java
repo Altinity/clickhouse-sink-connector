@@ -77,10 +77,13 @@ public class DateTimeWithTimeZoneIT {
             try {
 
                 Properties props = ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer);
-                props.setProperty("database.include.list", "datatypes");
+                // Both zones are explicit: the MySQL rows are America/Chicago wall time (database.connectionTimeZone in
+                // src/test/resources/config.yml) and the ClickHouse columns carry America/Chicago too, so the DST rows below exercise the
+                // same-zone path (a wall time in a gap or an overlap, Spec 07.03 section 3.1.1).
+                props.setProperty("clickhouse.datetime.timezone", "America/Chicago");
 
                 engine.set(new DebeziumChangeEventCapture());
-                engine.get().setup(ITCommon.getDebeziumProperties(mySqlContainer, clickHouseContainer), new SourceRecordParserService(),  false);
+                engine.get().setup(props, new SourceRecordParserService(),  false);
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -115,6 +118,11 @@ public class DateTimeWithTimeZoneIT {
 
             Assert.assertTrue(dateTimeResult1.getTimestamp("Minimum_Value").toString().equalsIgnoreCase("1900-01-01 00:00:00.0"));
             Assert.assertTrue(dateTimeResult1.getTimestamp("Mid_Value").toString().equalsIgnoreCase("2022-09-29 01:48:25.1"));
+            // A source value above the column's range is stored as the fixed historical value
+            // (Spec 07.03 section 3.1.8): 2299-12-31 23:59:59 with no fraction, at every scale. That one value is what
+            // keeps the column a stable ReplacingMergeTree sorting key across releases. The column here is
+            // DateTime64(n, 'America/Chicago') and the source zone is the same zone, so the value applies to the wall
+            // time the driver returns.
             Assert.assertTrue(dateTimeResult1.getTimestamp("Maximum_Value").toString().equalsIgnoreCase("2299-12-31 23:59:59.0"));
         }
 

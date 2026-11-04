@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.junit.Assert;
 import org.junit.jupiter.api.BeforeAll;
@@ -44,7 +45,7 @@ public class DdlReplayIdempotencyTest {
     @BeforeAll
     static void init() {
         parser = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "employees");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "employees");
     }
 
     private static String parse(String mysqlDdl, String table) {

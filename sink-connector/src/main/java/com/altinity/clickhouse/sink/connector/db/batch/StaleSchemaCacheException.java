@@ -13,18 +13,9 @@ package com.altinity.clickhouse.sink.connector.db.batch;
  * value, row counts stay identical on both sides, and no batch fails. Nothing
  * in the pipeline notices.</p>
  *
- * <p>Measured in production on a UAT sink instance over roughly 48 hours after
- * a connector upgrade, where this was logged at ERROR and execution
- * continued:</p>
- * <pre>
- *   59,929  txnrepo_uat.event                kafka_offset
- *    3,264  aerion_uat.aerion_break_detail   break_original_date, estimate_resolution_date
- *    1,951  aerion_uat.aerion_rec            jump_count, clearing_count, rec_end_datetime, fail_reason
- *      433  trade_uat.enriched_trade         capped_by
- * </pre>
- *
- * <p>All 65,577 writes succeeded. The divergence was found by a daily
- * value-level checksum job, not by the connector.</p>
+ * <p>When the condition was only logged, every affected write still succeeded,
+ * so row counts could not reveal the divergence. A value-level comparison
+ * against the source was the only check that found it.</p>
  *
  * <p>Throwing instead routes the batch into the existing retry path, which
  * rebuilds the writer against freshly read metadata. A retry that reads the
@@ -47,5 +38,15 @@ public class StaleSchemaCacheException extends RuntimeException {
      */
     public StaleSchemaCacheException(String message) {
         super(message);
+    }
+
+    /**
+     * @param message description naming the column, database and table.
+     * @param cause   the metadata read or classification failure that prevented
+     *                the staleness from being resolved. Its ClickHouse error code
+     *                decides whether the batch is retried or stopped.
+     */
+    public StaleSchemaCacheException(String message, Throwable cause) {
+        super(message, cause);
     }
 }

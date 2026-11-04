@@ -171,6 +171,12 @@ public class DbWriter extends BaseDbWriter {
             // the reason.
             log.error("***** DBWriter refused table {}.{} ****", database, tableName, e);
             throw e;
+        } catch (ColumnMetadataUnavailableException e) {
+            // The column list could not be read (Spec 08.06 section 3.5). A writer
+            // built without it has no column map, no engine-specific columns and
+            // no sorting key; returning it would let the caller cache it. Let the
+            // batch fail, so the next lookup builds the writer again.
+            throw e;
         } catch (Exception e) {
             log.error("***** DBWriter error initializing ****", e);
         }
@@ -391,13 +397,23 @@ public class DbWriter extends BaseDbWriter {
                             + "columns present. Refusing to write to it.",
                     database, tableName, versionColumn, columns == null ? null : columns.keySet()));
         }
-        if (!ignoreDelete && (deleteColumn == null || deleteColumn.isEmpty()
-                || !hasColumn(columns, deleteColumn))) {
+        if (!ignoreDelete && (deleteColumn == null || deleteColumn.isEmpty())) {
+            // A bare ReplacingMergeTree(ver) names no delete column, so the
+            // engine never removes a row for a delete. No flag is written:
+            // live rows keep the column DEFAULT, and the first DELETE is
+            // refused with the rebuild (PreparedStatementFieldMapper.requireDeleteColumn).
+            log.warn("ReplacingMergeTree table {}.{} has no delete argument in its engine clause "
+                            + "(ENGINE = ReplacingMergeTree(<version column>)). replacingmergetree.delete.column "
+                            + "is not consulted for it and no flag is written. INSERT and UPDATE replicate as "
+                            + "plain rows; a DELETE fails its batch and is refused with the rebuild DDL, because "
+                            + "ALTER cannot change the engine (table columns: {}). Set ignore_delete=true if "
+                            + "deletes must not be replicated.",
+                    database, tableName, columns == null ? null : columns.keySet());
+        } else if (!ignoreDelete && !hasColumn(columns, deleteColumn)) {
             // Not a refusal: INSERTs and UPDATEs to such a table replicate
-            // correctly, and old-style ReplacingMergeTree(ver) tables without
-            // a delete column are common in the field. Only a delete-marker row
-            // cannot be applied, and that is where the connector stops -- loudly,
-            // at the row that would otherwise resurrect the key
+            // correctly. Only a delete-marker row cannot be applied, and that is
+            // where the connector stops -- loudly, at the row that would
+            // otherwise resurrect the key
             // (PreparedStatementFieldMapper.requireDeleteColumn, Spec 08.01
             // section 3.2).
             log.warn("ReplacingMergeTree table {}.{} has no delete column '{}' (table columns: {}). "
@@ -441,22 +457,43 @@ public class DbWriter extends BaseDbWriter {
     }
 
     /**
+     * Resolves the delete column of a ReplacingMergeTree from its engine clause
+     * alone. Writing a sign-style value into a column the engine does not read
+     * as a delete marker corrupts the table silently.
+     *
+     * <p>The second engine argument, {@code ReplacingMergeTree(ver, del)} (23.2+),
+     * is the only delete column the engine reads. A bare
+     * {@code ReplacingMergeTree(ver)} has none: the engine never reads
+     * {@code is_deleted} or {@code _sign}, so naming one here would make the
+     * connector write a flag the engine ignores. The configured
+     * {@code replacingmergetree.delete.column} is a default for tables the
+     * connector creates, so it is deliberately not an input.</p>
+     *
+     * @param rmtColumns the engine's column specification, e.g. {@code "_version, is_deleted"}
+     *                   or {@code "_version"}.
+     * @return the delete column, or null when the engine clause names none.
+     */
+    static String resolveReplacingMergeTreeDeleteColumn(String rmtColumns) {
+        if (rmtColumns != null && rmtColumns.contains(",")) {
+            String[] parts = rmtColumns.split(",");
+            if (parts.length >= 2 && !parts[1].trim().isEmpty()) {
+                return parts[1].trim();
+            }
+        }
+        return null;
+    }
+
+    /**
      * Configures the version and delete columns for ReplacingMergeTree engines.
      *
      * @param rmtColumns The column specification from table engine response.
      */
     private void configureReplacingMergeTreeColumns(String rmtColumns) {
-        if (rmtColumns != null && rmtColumns.contains(",")) {
-            // The table uses the new RMT with version and deleted column
-            String[] parts = rmtColumns.split(",");
-            this.versionColumn = parts[0].trim();
-            this.replacingMergeTreeDeleteColumn = parts[1].trim();
-            this.replacingMergeTreeWithIsDeletedColumn = true;
-        } else {
-            this.versionColumn = rmtColumns;
-            this.replacingMergeTreeDeleteColumn = this.config.getString(
-                    ClickHouseSinkConnectorConfigVariables.REPLACING_MERGE_TREE_DELETE_COLUMN.toString());
-        }
+        this.versionColumn = rmtColumns != null && rmtColumns.contains(",")
+                ? rmtColumns.split(",")[0].trim()
+                : rmtColumns;
+        this.replacingMergeTreeDeleteColumn = resolveReplacingMergeTreeDeleteColumn(rmtColumns);
+        this.replacingMergeTreeWithIsDeletedColumn = this.replacingMergeTreeDeleteColumn != null;
     }
 
     /**

@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
@@ -66,7 +67,7 @@ public class RejectUnderivableVersionTest {
     private static ClickHouseSinkConnectorConfig rawGtidConfig() {
         Map<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.SNOWFLAKE_ID.toString(), "false");
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static ClickHouseStruct insertWithGtid(long gtid) {

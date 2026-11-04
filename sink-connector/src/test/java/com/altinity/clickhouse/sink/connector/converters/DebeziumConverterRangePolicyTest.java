@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.metadata.DataTypeRange;
 import com.clickhouse.data.ClickHouseDataType;
 import com.clickhouse.data.format.BinaryStreamUtils;
 import io.debezium.time.Date;
@@ -11,7 +13,6 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.core.LogEvent;
 import org.apache.logging.log4j.core.Logger;
 import org.apache.logging.log4j.core.appender.AbstractAppender;
-import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.logging.log4j.core.config.Property;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,17 +21,21 @@ import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.TimeZone;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -57,16 +62,43 @@ public class DebeziumConverterRangePolicyTest {
         return digits.toInstant(ZoneOffset.UTC).toEpochMilli();
     }
 
+    /** The same encoding at the microsecond precision a MySQL {@code DATETIME(6)} carries. */
+    private static long datetimeMicros(LocalDateTime digits) {
+        Instant instant = digits.toInstant(ZoneOffset.UTC);
+        return instant.getEpochSecond() * 1_000_000L + instant.getNano() / 1_000L;
+    }
+
+    /** The DateTime64 digits a {@code MicroTimestamp} conversion binds: 8 fraction digits. */
+    private static final DateTimeFormatter EIGHT_DIGITS =
+            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSSSS");
+
+    /**
+     * The instant an epoch-text bind names, {@code <seconds>.<6 fraction digits>}.
+     * Seconds and fraction are taken apart before scaling: the 2299 boundary is
+     * 1.04e10 seconds, and multiplying that by 1e9 overflows a {@code long}.
+     */
+    private static Instant epochTextInstant(String bound) {
+        BigDecimal[] parts = new BigDecimal(bound).divideAndRemainder(BigDecimal.ONE);
+        return Instant.ofEpochSecond(parts[0].longValueExact(),
+                parts[1].movePointRight(9).longValueExact());
+    }
+
     /** A configuration that sets {@code clamp.out.of.range} explicitly. */
+    // database.connectionTimeZone is pinned to UTC so these tests exercise the range rule alone. An unset
+    // value now means the default zone America/Chicago (spec 07.03 section 3.1.6), which shifts the
+    // 9999-12-31 23:59:59 sentinel to year 10000 UTC and changes the instant the messages name.
     private static ClickHouseSinkConnectorConfig config(boolean clamp) {
         Map<String, String> props = new HashMap<>();
         props.put("clamp.out.of.range", Boolean.toString(clamp));
-        return new ClickHouseSinkConnectorConfig(props);
+        props.put("database.connectionTimeZone", "UTC");
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     /** A configuration that leaves {@code clamp.out.of.range} to its default. */
     private static ClickHouseSinkConnectorConfig defaultConfig() {
-        return new ClickHouseSinkConnectorConfig(new HashMap<>());
+        Map<String, String> props = new HashMap<>();
+        props.put("database.connectionTimeZone", "UTC");
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     /** Records whatever the mapper binds (setString / setDate / setObject). */
@@ -118,9 +150,10 @@ public class DebeziumConverterRangePolicyTest {
      * An absent configuration means the default too.
      */
     @Test
-    @DisplayName("Default: an out-of-range DATETIME is saturated at the mapper without a WARN")
+    @DisplayName("Default: an out-of-range DATETIME is saturated at the mapper, with one WARN")
     public void defaultPolicySaturatesOutOfRangeDatetimeAtTheMapper() throws Exception {
-        CapturingAppender appender = capture();
+        LossyConversionReporter.resetForTests();
+        CapturingAppender appender = captureReporter();
         try {
             LocalDateTime sentinel = LocalDateTime.of(9999, 12, 31, 23, 59, 59);
             assertTrue(DebeziumConverter.RangePolicy.of(defaultConfig(), "db.orders.expires_at").clamps(),
@@ -130,28 +163,30 @@ public class DebeziumConverterRangePolicyTest {
 
             assertEquals("2299-12-31 23:59:59.000",
                     bindDatetime(defaultConfig(), sentinel, ClickHouseDataType.DateTime64),
-                    "the default stores the DateTime64 bound");
+                    "the default stores the fixed saturation value the loader and pre-2.11.1 store");
             List<String> warnings = appender.warnings();
-            assertEquals(0, warnings.size(), "a saturation under the default is not a WARN: " + warnings);
+            assertEquals(1, warnings.size(), "a saturation under the default is one WARN per column: " + warnings);
+            assertTrue(warnings.get(0).contains("9999-12-31T23:59:59Z"), warnings.get(0));
 
-            // In range: unchanged.
+            // In range: unchanged, and no further WARN.
             assertEquals("2024-05-06 07:08:09.000",
                     bindDatetime(defaultConfig(), LocalDateTime.of(2024, 5, 6, 7, 8, 9), ClickHouseDataType.DateTime64));
+            assertEquals(1, appender.warnings().size(), "an in-range value is not reported");
         } finally {
-            release(appender);
+            releaseReporter(appender);
         }
     }
 
     @Test
     @DisplayName("Default: an out-of-range DATE is saturated at the mapper")
     public void defaultPolicySaturatesOutOfRangeDateAtTheMapper() throws Exception {
-        assertEquals(java.sql.Date.valueOf("2149-06-06"),
+        assertEquals("2149-06-06",
                 bindDate(defaultConfig(), LocalDate.of(9999, 12, 31), ClickHouseDataType.Date),
                 "9999-12-31 exceeds Date (max 2149-06-06) and is stored as the bound");
-        assertEquals(java.sql.Date.valueOf("1900-01-01"),
+        assertEquals("1900-01-01",
                 bindDate(defaultConfig(), LocalDate.of(1000, 1, 1), ClickHouseDataType.Date32),
                 "1000-01-01 precedes Date32 (min 1900-01-01) and is stored as the bound");
-        assertEquals(java.sql.Date.valueOf("2024-05-06"),
+        assertEquals("2024-05-06",
                 bindDate(defaultConfig(), LocalDate.of(2024, 5, 6), ClickHouseDataType.Date));
     }
 
@@ -190,7 +225,7 @@ public class DebeziumConverterRangePolicyTest {
                 () -> bindDate(config(false), LocalDate.of(1000, 1, 1), ClickHouseDataType.Date32),
                 "1000-01-01 precedes Date32 (min 1900-01-01)");
 
-        assertEquals(java.sql.Date.valueOf("2024-05-06"),
+        assertEquals("2024-05-06",
                 bindDate(config(false), LocalDate.of(2024, 5, 6), ClickHouseDataType.Date));
     }
 
@@ -234,21 +269,32 @@ public class DebeziumConverterRangePolicyTest {
         appender.stop();
     }
 
+    /** Collects what the lossy-conversion reporter logs during one call. */
+    private static CapturingAppender captureReporter() {
+        CapturingAppender appender = new CapturingAppender();
+        appender.start();
+        ((Logger) LogManager.getLogger(LossyConversionReporter.class)).addAppender(appender);
+        return appender;
+    }
+
+    private static void releaseReporter(CapturingAppender appender) {
+        ((Logger) LogManager.getLogger(LossyConversionReporter.class)).removeAppender(appender);
+        appender.stop();
+    }
+
     /**
-     * Rule 2: saturation is the documented mapping, not an event. A column
-     * whose every row carries the open-ended sentinel (1,000 saturations
-     * here), plus a second column, write ZERO WARN lines; with the logger
-     * opened to DEBUG each saturation is one DEBUG line naming the column and
-     * both values. The rate-limited revision wrote a WARN per column per
-     * minute here and still flooded production logs.
+     * Rule 2 (spec 07.03 section 3.1.14): a saturation is stored as the bound and
+     * is loud, not silent. A column whose every row carries the open-ended
+     * sentinel (1,000 saturations here), plus a second column, write exactly one
+     * WARN each, naming the column and both values; every saturation is counted
+     * under kind range_clamp. The earlier revision (WARN silent, detail at DEBUG)
+     * hid a lossy conversion from production logs.
      */
     @Test
-    @DisplayName("clamp.out.of.range=true saturates with no WARN; the detail is available at DEBUG")
-    public void clampSettingSaturatesSilently() throws Exception {
-        Logger logger = (Logger) LogManager.getLogger(DebeziumConverter.class);
-        Level before = logger.getLevel();
-        Configurator.setLevel(DebeziumConverter.class.getName(), Level.DEBUG);
-        CapturingAppender appender = capture();
+    @DisplayName("clamp.out.of.range=true saturates loudly: one WARN per column, every saturation counted")
+    public void clampSettingSaturatesLoudlyOncePerColumn() throws Exception {
+        LossyConversionReporter.resetForTests();
+        CapturingAppender appender = captureReporter();
         try {
             DebeziumConverter.RangePolicy policy = DebeziumConverter.RangePolicy.of(config(true), "db.trades.valid_to");
             assertTrue(policy.clamps());
@@ -258,24 +304,24 @@ public class DebeziumConverterRangePolicyTest {
                         sentinel, ClickHouseDataType.DateTime64, UTC, UTC, null, policy));
             }
             DebeziumConverter.RangePolicy other = DebeziumConverter.RangePolicy.of(config(true), "db.orders.expires_at");
-            java.sql.Date date = DebeziumConverter.DateConverter.convert(
+            LocalDate date = DebeziumConverter.DateConverter.convert(
                     (int) LocalDate.of(9999, 12, 31).toEpochDay(), ClickHouseDataType.Date32, other);
-            assertEquals(java.sql.Date.valueOf("2299-12-31"), date);
+            assertEquals(LocalDate.parse("2299-12-31"), date);
 
-            assertEquals(0, appender.warnings().size(), "no WARN for a saturation: " + appender.warnings());
-            List<String> debug = appender.atLevel(Level.DEBUG);
-            assertEquals(1001, debug.size(), "one DEBUG line per saturation: " + debug.size());
-            assertTrue(debug.get(0).contains("db.trades.valid_to"), debug.get(0));
-            assertTrue(debug.get(0).contains("9999-12-31T23:59:59Z"), debug.get(0));
-            assertTrue(debug.get(0).contains("2299-12-31 23:59:59"), debug.get(0));
-            assertTrue(debug.get(1000).contains("db.orders.expires_at"), debug.get(1000));
+            assertEquals(1001L, LossyConversionReporter.count(LossyConversionReporter.Kind.RANGE_CLAMP),
+                    "every saturation is counted");
+            List<String> warns = appender.warnings();
+            assertEquals(2, warns.size(), "one WARN per column: " + warns);
+            assertTrue(warns.get(0).contains("db.trades.valid_to"), warns.get(0));
+            assertTrue(warns.get(0).contains("9999-12-31T23:59:59Z"), warns.get(0));
+            assertTrue(warns.get(0).contains("2299-12-31 23:59:59"), warns.get(0));
+            assertTrue(warns.get(1).contains("db.orders.expires_at"), warns.get(1));
 
             // The mapper honours the setting too.
             assertEquals("2299-12-31 23:59:59.000",
                     bindDatetime(config(true), LocalDateTime.of(9999, 12, 31, 23, 59, 59), ClickHouseDataType.DateTime64));
         } finally {
-            release(appender);
-            Configurator.setLevel(DebeziumConverter.class.getName(), before);
+            releaseReporter(appender);
         }
     }
 
@@ -291,7 +337,7 @@ public class DebeziumConverterRangePolicyTest {
                 () -> DebeziumConverter.TimestampConverter.convert(farFuture, ClickHouseDataType.DateTime64, UTC, UTC, null, strict));
         assertTrue(dt64.getMessage().contains("db.t.c"), dt64.getMessage());
         assertTrue(dt64.getMessage().contains("DateTime64"), dt64.getMessage());
-        assertTrue(dt64.getMessage().contains("1900-01-01 00:00:00 .. 2299-12-31 23:59:59"), dt64.getMessage());
+        assertTrue(dt64.getMessage().contains("1900-01-01 00:00:00.000000 .. 2299-12-31 23:59:59.999999"), dt64.getMessage());
 
         long before1970 = datetimeMillis(LocalDateTime.of(1960, 1, 1, 0, 0, 0));
         DebeziumConverter.ValueOutOfRangeException dt32 = assertThrows(DebeziumConverter.ValueOutOfRangeException.class,
@@ -325,7 +371,7 @@ public class DebeziumConverterRangePolicyTest {
         DebeziumConverter.ValueOutOfRangeException decimal = assertThrows(DebeziumConverter.ValueOutOfRangeException.class,
                 () -> new DebeziumConverter.BigDecimalConverter().truncate(
                         BinaryStreamUtils.DECIMAL128_MAX.add(BigDecimal.ONE), strict));
-        assertTrue(decimal.getMessage().contains("Decimal128"), decimal.getMessage());
+        assertTrue(decimal.getMessage().contains("Decimal(38, 0)"), decimal.getMessage());
 
         // In-range values pass through every bounded converter untouched.
         assertEquals("2021-12-31 19:01:00.000000",
@@ -333,25 +379,34 @@ public class DebeziumConverterRangePolicyTest {
         assertEquals(BigDecimal.TEN, new DebeziumConverter.BigDecimalConverter().truncate(BigDecimal.TEN, strict));
     }
 
-    /** Rule 3: the policy-less overloads still saturate, and write no WARN either. */
+    /**
+     * Rule 3 (spec 07.03 section 3.1.14): the policy-less overloads still saturate, and they
+     * report like every other saturation, against the column "(unknown column)".
+     * The four conversions below share that label, so one WARN is written.
+     */
     @Test
-    @DisplayName("Legacy overloads saturate with no WARN")
-    public void legacyOverloadsSaturateSilently() {
-        CapturingAppender appender = capture();
+    @DisplayName("Legacy overloads saturate and report as unknown-column saturations: one WARN, all counted")
+    public void legacyOverloadsSaturateLoudly() {
+        LossyConversionReporter.resetForTests();
+        CapturingAppender appender = captureReporter();
         try {
             long farFuture = datetimeMillis(LocalDateTime.of(9999, 12, 31, 23, 59, 59));
             assertEquals("2299-12-31 23:59:59.000",
                     DebeziumConverter.TimestampConverter.convert(farFuture, ClickHouseDataType.DateTime64, UTC, UTC));
-            assertEquals(java.sql.Date.valueOf("2149-06-06"),
+            assertEquals(LocalDate.parse("2149-06-06"),
                     DebeziumConverter.DateConverter.convert((int) LocalDate.of(2200, 1, 1).toEpochDay(), ClickHouseDataType.Date));
             assertEquals("2299-12-31 23:59:59.000000",
                     DebeziumConverter.ZonedTimestampConverter.convert("2338-01-19T03:14:07.99Z", UTC));
-            assertEquals(BinaryStreamUtils.DECIMAL128_MAX,
+            assertEquals(DataTypeRange.decimalMax(DataTypeRange.DECIMAL128_MAX_PRECISION, 0),
                     new DebeziumConverter.BigDecimalConverter().truncate(BinaryStreamUtils.DECIMAL128_MAX.add(BigDecimal.ONE)));
 
-            assertEquals(0, appender.warnings().size(), "no WARN for a saturation: " + appender.warnings());
+            List<String> warnings = appender.warnings();
+            assertEquals(1, warnings.size(), "one WARN for the unknown-column saturations: " + warnings);
+            assertTrue(warnings.get(0).contains("(unknown column)"), warnings.get(0));
+            assertEquals(4L, LossyConversionReporter.count(LossyConversionReporter.Kind.RANGE_CLAMP),
+                    "each of the four saturations is counted");
         } finally {
-            release(appender);
+            releaseReporter(appender);
         }
     }
 
@@ -360,9 +415,267 @@ public class DebeziumConverterRangePolicyTest {
     @DisplayName("PostgreSQL infinity literals keep their documented saturation under the strict policy")
     public void infinityKeepsItsSaturation() {
         DebeziumConverter.RangePolicy strict = DebeziumConverter.RangePolicy.STRICT;
+        // PostgreSQL infinity is an out-of-range value, so it saturates to the SAME fixed
+        // historical value every other out-of-range value stores (Spec 07.03 section 3.1.8),
+        // which is what keeps it one sorting key. It still sorts after every real instant.
         assertEquals("2299-12-31 23:59:59.000000",
                 DebeziumConverter.ZonedTimestampConverter.convert("infinity", UTC, strict));
         assertEquals("1900-01-01 00:00:00.000000",
                 DebeziumConverter.ZonedTimestampConverter.convert("-infinity", UTC, strict));
+    }
+
+    @Test
+    @DisplayName("A DATE survives a JVM zone whose midnight does not exist: Pacific/Apia skipped 2011-12-30 (Spec 07.03 section 3.1.7)")
+    public void dateSurvivesAJvmZoneThatSkipsItsDay() {
+        TimeZone original = TimeZone.getDefault();
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("Pacific/Apia"));
+            int day = Math.toIntExact(LocalDate.of(2011, 12, 30).toEpochDay());
+            assertEquals(LocalDate.of(2011, 12, 30),
+                    DebeziumConverter.DateConverter.convert(day, ClickHouseDataType.Date32));
+            assertEquals("2011-12-30",
+                    DebeziumConverter.DateConverter.convert(day, ClickHouseDataType.Date).toString());
+        } finally {
+            TimeZone.setDefault(original);
+        }
+    }
+
+    @Test
+    @DisplayName("The DateTime64 upper bound is the measured bound of each scale (Spec 07.03 section 3.1.8)")
+    public void dateTime64MaxIsTheMeasuredBoundOfEachScale() {
+        assertEquals(Instant.ofEpochSecond(DataTypeRange.DATETIME64_MAX, 0), DataTypeRange.dateTime64Max(0));
+        assertEquals(Instant.ofEpochSecond(DataTypeRange.DATETIME64_MAX, 999_000_000), DataTypeRange.dateTime64Max(3));
+        assertEquals(Instant.ofEpochSecond(DataTypeRange.DATETIME64_MAX, 999_999_000), DataTypeRange.dateTime64Max(6));
+        assertEquals(Instant.ofEpochSecond(DataTypeRange.DATETIME64_MAX, 999_999_990), DataTypeRange.dateTime64Max(8));
+        // Scale 9 is capped by the Int64 nanosecond count: 2262-04-11 23:47:16.854775807
+        assertEquals(Instant.ofEpochSecond(9_223_372_036L, 854_775_807L), DataTypeRange.dateTime64Max(9));
+        assertEquals(Long.MAX_VALUE,
+                Math.addExact(Math.multiplyExact(9_223_372_036L, 1_000_000_000L), 854_775_807L));
+        assertEquals(DataTypeRange.dateTime64Max(6), DataTypeRange.clickHouseMaxSupportedDateTime64());
+        assertThrows(IllegalArgumentException.class, () -> DataTypeRange.dateTime64Max(10));
+        assertThrows(IllegalArgumentException.class, () -> DataTypeRange.dateTime64Max(-1));
+    }
+
+    @Test
+    @DisplayName("The DateTime64 saturation strings the integration tests compare against are one value at every scale")
+    public void dateTime64SaturationStringConstantsAreTheSameAtEveryScale() {
+        // A saturated value is stored as the fixed historical value whatever the column's scale, so the strings the
+        // integration tests compare against are identical for scales 0..6 -- the per-scale acceptance bound in
+        // dateTime64Max(int) is a different rule and must not leak into them.
+        String[] constants = {DataTypeRange.DATETIME_MAX, DataTypeRange.DATETIME_1_MAX, DataTypeRange.DATETIME_2_MAX,
+                DataTypeRange.DATETIME_3_MAX, DataTypeRange.DATETIME_4_MAX, DataTypeRange.DATETIME_5_MAX,
+                DataTypeRange.DATETIME_6_MAX};
+        for (int scale = 0; scale < constants.length; scale++) {
+            // Timestamp.valueOf(LocalDateTime) and Timestamp#toString do not read the JVM default zone.
+            String rendered = java.sql.Timestamp.valueOf(
+                    LocalDateTime.ofInstant(DataTypeRange.DATETIME64_SATURATION_MAX, ZoneOffset.UTC)).toString();
+            assertEquals(rendered, constants[scale], "scale " + scale);
+        }
+        assertEquals(DataTypeRange.DATETIME_6_MAX, DataTypeRange.DATETIME64_6_MAX);
+        assertEquals(0, DataTypeRange.DATETIME64_SATURATION_MAX.getNano(),
+                "the saturation value has no fraction, so no scale truncates it");
+    }
+
+    @Test
+    @DisplayName("Acceptance is per scale, saturation is the fixed historical value (Spec 07.03 section 3.1.8)")
+    public void dateTime64AcceptsPerScaleAndSaturatesToTheFixedValue() throws Exception {
+        long sentinel = datetimeMillis(LocalDateTime.of(9999, 12, 31, 23, 59, 59));
+        // A value above every scale's range saturates to the same stored value at scales 0, 3 and 6:
+        // one source value, one sorting key, so a later tombstone still replaces the row it deletes.
+        for (int scale : new int[] {0, 3, 6}) {
+            assertEquals("2299-12-31 23:59:59.000", DebeziumConverter.TimestampConverter.convert(sentinel,
+                    ClickHouseDataType.DateTime64, UTC, UTC, null,
+                    DebeziumConverter.RangePolicy.of(config(true), "db.t.c", scale)), "scale " + scale);
+        }
+
+        // Scale 9: the bound is 2262-04-11 23:47:16.854775807. The millisecond rendering
+        // truncates it to .854, which is below the bound, so ClickHouse accepts it.
+        AtomicReference<Object> bound = new AtomicReference<>();
+        ClickHouseDataTypeMapper.convert(Schema.Type.INT64, Timestamp.SCHEMA_NAME, sentinel, 1,
+                recording(bound), config(true), ClickHouseDataType.DateTime64, UTC, null,
+                DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 9));
+        assertEquals("2262-04-11 23:47:16.854", bound.get(),
+                "DateTime64(9) must not receive 2299-12-31, which raises DECIMAL_OVERFLOW (code 407)");
+    }
+
+    @Test
+    @DisplayName("A value inside its scale's range is stored exactly and is not saturated (Spec 07.03 section 3.1.8)")
+    public void dateTime64KeepsAValueInsideItsScaleRange() throws Exception {
+        // The half of the rule the fixed saturation value must not lose: 2299-12-31 23:59:59.999
+        // is representable in DateTime64(3) and must be stored as itself, not pulled to .000.
+        long inRange = datetimeMillis(LocalDateTime.of(2299, 12, 31, 23, 59, 59, 999_000_000));
+        assertEquals("2299-12-31 23:59:59.999", DebeziumConverter.TimestampConverter.convert(inRange,
+                ClickHouseDataType.DateTime64, UTC, UTC, null,
+                DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 3)),
+                "in range at its own scale, so untouched");
+
+        // And a scale-3 value that IS out of range at scale 3 still saturates to the fixed value.
+        assertEquals("2299-12-31 23:59:59.000", DebeziumConverter.TimestampConverter.convert(
+                datetimeMillis(LocalDateTime.of(2400, 6, 15, 12, 34, 56)), ClickHouseDataType.DateTime64,
+                UTC, UTC, null, DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 3)));
+    }
+
+    @Test
+    @DisplayName("A DateTime64 instant in the last second of 2299 keeps its fraction; the bound used to zero it (Spec 07.03 section 3.1.8)")
+    public void dateTime64BoundIsNotZeroedFraction() {
+        // In range at the default scale: kept exactly. The millisecond test with a
+        // seconds-only bound stored 23:59:59.000 for every fraction above zero.
+        assertEquals("2299-12-31 23:59:59.500000",
+                DebeziumConverter.ZonedTimestampConverter.convert("2299-12-31T23:59:59.5Z", UTC));
+        assertEquals("2299-12-31 23:59:59.999999",
+                DebeziumConverter.ZonedTimestampConverter.convert("2299-12-31T23:59:59.999999Z", UTC));
+        // Above the bound: saturated to the fixed historical value, the same one every earlier
+        // release and the bulk loader store, so the row stays replaceable across an upgrade.
+        assertEquals("2299-12-31 23:59:59.000000",
+                DebeziumConverter.ZonedTimestampConverter.convert("2338-01-19T03:14:07.99Z", UTC));
+    }
+
+    /**
+     * The production shape of the defect this fix removes: a MySQL
+     * {@code DATETIME(6)} open-ended sentinel in a
+     * {@code DateTime64(6, 'America/Chicago')} column that is part of the
+     * table's sorting key.
+     *
+     * <p>Every release before 2.11.1, and a bulk load that clamps with the same
+     * constant, store {@code 2299-12-31 23:59:59} for any out-of-range value.
+     * 2.11.1 stored the
+     * per-scale bound instead, {@code 2299-12-31 23:59:59.999999}, so one source
+     * value had two stored values. Because the column is in the sorting key, a
+     * tombstone written after the upgrade no longer replaces the row it deletes
+     * and {@code FINAL} returns both -- the extra rows the cross-check reports.</p>
+     */
+    @Test
+    @DisplayName("An out-of-range DateTime64 saturates to the value the loader and every release before 2.11.1 store (Spec 07.03 section 3.1.8)")
+    public void outOfRangeSentinelIsTheFixedHistoricalValueAtEveryScale() {
+        ZoneId chicago = ZoneId.of("America/Chicago");
+        long sentinelMicros = datetimeMicros(LocalDateTime.of(9999, 12, 31, 23, 59, 59));
+
+        // The exact digits the historical clamp substitutes: 2299-12-31 23:59:59, no fraction.
+        for (int scale : new int[] {0, 3, 6}) {
+            DebeziumConverter.RangePolicy policy =
+                    DebeziumConverter.RangePolicy.of(config(true), "db.t.c", scale);
+            String digits = DebeziumConverter.MicroTimestampConverter.convert(sentinelMicros, chicago, chicago,
+                    ClickHouseDataType.DateTime64, chicago, policy);
+            assertTrue(digits.startsWith("2299-12-31 23:59:59.000000"), "scale " + scale + ": " + digits);
+        }
+
+        // The value both carriers must agree on, and the value the pre-upgrade rows hold:
+        // 10413813599000000 microseconds in an America/Chicago column.
+        DebeziumConverter.RangePolicy policy =
+                DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 6);
+        String digits = DebeziumConverter.MicroTimestampConverter.convert(sentinelMicros, chicago, chicago,
+                ClickHouseDataType.DateTime64, chicago, policy);
+        // The converter emits six fraction digits; parse exactly what it emitted, so this check fails if the
+        // emitted text ever gains a fraction instead of tolerating it.
+        Instant stored = LocalDateTime.parse(digits.substring(0, 19) + ".000000",
+                DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSSSSS")).atZone(chicago).toInstant();
+        assertEquals(10_413_813_599_000_000L,
+                Math.addExact(Math.multiplyExact(stored.getEpochSecond(), 1_000_000L),
+                        stored.getNano() / 1_000L),
+                "the pre-upgrade and bulk-loaded microsecond value in the column's zone");
+    }
+
+    /**
+     * The digits carrier and the epoch-text carrier must name the same instant,
+     * because a column can receive both for the same out-of-range source value
+     * (a MySQL {@code DATETIME(6)} arrives as digits, a {@code TIMESTAMP} as a
+     * {@code ZonedTimestamp}) and the value is part of the sorting key. They
+     * agree only if the saturation instant itself is the fixed constant, not the
+     * column's per-scale bound.
+     */
+    @Test
+    @DisplayName("Both carriers of one out-of-range instant saturate to the same instant (Spec 07.03 section 3.1.8)")
+    public void bothCarriersSaturateToTheSameInstant() {
+        DebeziumConverter.RangePolicy policy =
+                DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 6);
+
+        // Digits carrier: the digits 9999-12-31 23:59:59, read in UTC.
+        String digits = DebeziumConverter.MicroTimestampConverter.convert(
+                datetimeMicros(LocalDateTime.of(9999, 12, 31, 23, 59, 59)), UTC, UTC,
+                ClickHouseDataType.DateTime64, UTC, policy);
+        // Epoch-text carrier: the same instant, named as ISO-8601 text.
+        String epoch = DebeziumConverter.ZonedTimestampConverter.convert(
+                "9999-12-31T23:59:59Z", UTC, ClickHouseDataType.DateTime64, policy);
+
+        assertEquals("2299-12-31 23:59:59.00000000", digits, "digits carrier");
+        assertEquals("10413791999.000000", epoch, "epoch-text carrier");
+        assertEquals(LocalDateTime.parse(digits, EIGHT_DIGITS).toInstant(ZoneOffset.UTC),
+                epochTextInstant(epoch), "one source instant, one stored instant");
+    }
+
+    @Test
+    @DisplayName("A column's declared DateTime64 scale is read from its type; the default is 6 (Spec 07.03 section 3.1.8)")
+    public void dateTime64ScaleIsReadFromTheDeclaredType() {
+        assertEquals(3, ClickHouseDataTypeMapper.dateTime64Scale("DateTime64(3)"));
+        assertEquals(9, ClickHouseDataTypeMapper.dateTime64Scale("Nullable(DateTime64(9, 'UTC'))"));
+        assertEquals(0, ClickHouseDataTypeMapper.dateTime64Scale("DateTime64(0)"));
+        assertEquals(6, ClickHouseDataTypeMapper.dateTime64Scale("DateTime64(6)"));
+        assertEquals(6, ClickHouseDataTypeMapper.dateTime64Scale("DateTime"));
+        assertEquals(6, ClickHouseDataTypeMapper.dateTime64Scale(null));
+        assertThrows(IllegalArgumentException.class, () -> ClickHouseDataTypeMapper.dateTime64Scale("DateTime64(10)"));
+        assertThrows(IllegalArgumentException.class,
+                () -> DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 10));
+        assertEquals(9, DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 9).scale());
+    }
+
+    @Test
+    @DisplayName("A saturated decimal lands on the bound of its own column, which the column can hold (Spec 07.02 section 3.2.1)")
+    public void decimalSaturatesToTheBoundOfItsOwnColumn() {
+        // ClickHouse accepts at most 38 significant digits for a Decimal128 and rejects the
+        // 39-digit Int128 constant in clickhouse-data, so a value saturated to that constant
+        // is one the server refuses to store. Measured on 24.8.14:
+        //   toDecimal128OrNull('170141183460469231731687303715884105727', 0) -> NULL
+        //   toDecimal128OrNull('99999999999999999999999999999999999999',    0) -> the value
+        BigDecimal tooWide = new BigDecimal("100000000000000000000000000000000000000");
+        assertEquals(new BigDecimal("99999999999999999999999999999999999999"),
+                DataTypeRange.decimalMax(38, 0), "38 nines is the largest storable Decimal128");
+        assertEquals(DataTypeRange.decimalMax(38, 0),
+                new DebeziumConverter.BigDecimalConverter().truncate(tooWide),
+                "an unknown column falls back to the widest Decimal128 bound, not the Int128 one");
+
+        // A declared column bounds to ITS precision and scale: Decimal(18, 6) holds
+        // 999999999999.999999, twelve integer digits and six fractional ones.
+        DebeziumConverter.RangePolicy d18s6 = DebeziumConverter.RangePolicy.of(config(true), "db.t.c", 6, 18, 6);
+        assertEquals(new BigDecimal("999999999999.999999"), DataTypeRange.decimalMax(18, 6));
+        assertEquals(new BigDecimal("999999999999.999999"),
+                new DebeziumConverter.BigDecimalConverter().truncate(new BigDecimal("1234567890123456.5"), d18s6));
+        assertEquals(new BigDecimal("-999999999999.999999"),
+                new DebeziumConverter.BigDecimalConverter().truncate(new BigDecimal("-1234567890123456.5"), d18s6),
+                "the low side is the negation of the same bound");
+
+        // A value the column CAN hold passes through untouched, however many digits it has.
+        assertEquals(new BigDecimal("999999999999.999998"),
+                new DebeziumConverter.BigDecimalConverter()
+                        .truncate(new BigDecimal("999999999999.999998"), d18s6));
+        assertEquals(BigDecimal.TEN, new DebeziumConverter.BigDecimalConverter().truncate(BigDecimal.TEN, d18s6));
+
+        // Scale 0 is the whole-number bound, and the fixed-width spellings are the
+        // same bounds under another name (measured: Decimal32(2) IS Decimal(9, 2)).
+        assertEquals(new BigDecimal("999999999"), DataTypeRange.decimalMax(9, 0));
+        assertEquals(new BigDecimal("999999999999999999"), DataTypeRange.decimalMax(18, 0));
+        assertThrows(IllegalArgumentException.class, () -> DataTypeRange.decimalMax(0, 0));
+        assertThrows(IllegalArgumentException.class, () -> DataTypeRange.decimalMax(77, 0));
+        assertThrows(IllegalArgumentException.class, () -> DataTypeRange.decimalMax(10, 11));
+        assertThrows(IllegalArgumentException.class, () -> DataTypeRange.decimalMax(10, -1));
+    }
+
+    @Test
+    @DisplayName("A column's declared Decimal(p, s) is read from its type, so the column decides the bound")
+    public void decimalPrecisionScaleIsReadFromTheDeclaredType() {
+        assertArrayEquals(new int[]{18, 6}, ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal(18, 6)"));
+        assertArrayEquals(new int[]{18, 6}, ClickHouseDataTypeMapper.decimalPrecisionScale("Nullable(Decimal(18, 6))"));
+        assertArrayEquals(new int[]{38, 9}, ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal( 38 , 9 )"));
+        // The fixed-width spellings carry the same bound: Decimal128(s) is Decimal(38, s).
+        assertArrayEquals(new int[]{9, 2}, ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal32(2)"));
+        assertArrayEquals(new int[]{18, 3}, ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal64(3)"));
+        assertArrayEquals(new int[]{38, 6}, ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal128(6)"));
+        assertArrayEquals(new int[]{76, 4}, ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal256(4)"));
+        // Not a decimal, or a declaration this reader cannot trust: the caller keeps its default.
+        assertNull(ClickHouseDataTypeMapper.decimalPrecisionScale("DateTime64(6, 'UTC')"));
+        assertNull(ClickHouseDataTypeMapper.decimalPrecisionScale("String"));
+        assertNull(ClickHouseDataTypeMapper.decimalPrecisionScale(null));
+        assertNull(ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal(10, 11)"), "scale > precision");
+        assertNull(ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal(0, 0)"), "precision 0");
+        assertNull(ClickHouseDataTypeMapper.decimalPrecisionScale("Decimal(77, 0)"), "past Decimal256");
     }
 }

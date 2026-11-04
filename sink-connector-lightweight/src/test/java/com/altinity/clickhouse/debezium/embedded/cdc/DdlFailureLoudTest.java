@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -274,7 +275,7 @@ public class DdlFailureLoudTest {
     private static ClickHouseSinkConnectorConfig config() {
         Map<String, String> props = new HashMap<>();
         ClickHouseSinkConnectorConfig.setDefaultValues(props);
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     /**

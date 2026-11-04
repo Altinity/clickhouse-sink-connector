@@ -44,6 +44,41 @@ Consequences: comparisons must render MySQL `TIME` as `TIME(6)`, compare
 `Bool` columns as `0`/`1` (`toUInt8(col)`), and treat JSON as semantically —
 not textually — equal unless both sides are normalised identically.
 
+### 3.2 ENUM labels that contain a comma, a backslash or an apostrophe pair
+MySQL allows a comma, a backslash and an apostrophe inside an ENUM label
+(`ENUM('b,c')`, `ENUM('x\\y')`, `ENUM('it''''s')`). Debezium's MySQL converter
+(`MySqlValueConverters.extractEnumAndSetOptions`, which calls
+`MySqlAntlrDdlParser.extractEnumAndSetOptions` and its `escapeOption`) takes the
+option text in the MySQL literal body form (each backslash and each apostrophe
+doubled, as `SHOW CREATE TABLE` prints it) and then runs `escapeOption` on it, in
+this order: (1) each comma becomes a backslash followed by a comma; (2) each
+backslash followed by an apostrophe becomes an apostrophe; (3) each two
+apostrophes become one. `escapeOption` does not decode doubled backslashes. The
+result is the `io.debezium.data.Enum` STRING value.
+
+| MySQL label | Debezium delivery | Stored ClickHouse text |
+|---|---|---|
+| `b,c` | `b\,c` | `b,c` |
+| `a\,b` (literal backslash before the comma) | `a\\\,b` | `a\,b` |
+| `x\y` (backslash, no comma) | `x\\y` | `x\y` |
+| `it''s` (two apostrophes) | `it''s` | `it''s` (unchanged) |
+| `p\,q` in `VARCHAR`/`TEXT` (not an ENUM) | `p\,q` | `p\,q` (verbatim) |
+
+For `io.debezium.data.Enum` fields only, the writer decodes in two steps: each
+backslash-comma pair becomes a comma (scanning left to right), then each pair of
+backslashes becomes one backslash (scanning left to right). A backslash left
+unpaired by that scan is kept as it is. This is the exact inverse of the Debezium
+text for every label: step (1) is undone by the comma step, the doubled
+backslashes of the literal body are undone by the backslash step, and steps (2)
+and (3) are lossless, because step (2) removes only the second backslash of a
+pair that is directly followed by an apostrophe, and step (3) halves apostrophe
+runs, which step (2) never lengthens. The apostrophe steps were also run end to
+end on base-2.11.1, and the stored text matched the label.
+
+`EnumSet` (`SET`) text is not decoded: a MySQL SET member cannot contain a comma,
+and a SET member that contains a backslash is not covered by this section. Whether
+Debezium doubles such a backslash has not been verified end to end (open).
+
 ---
 
 ## 4. Invariants Preserved
@@ -54,6 +89,7 @@ not textually — equal unless both sides are normalised identically.
 ## 5. Verification Criteria
 - `MySQLJsonIT` — JSON columns replicated end to end.
 - `ClickHouseDataTypeMapperTest.getClickHouseDataType()` — the type-name mapping table.
+- `ClickHouseDataTypeMapperPoisonValueTest.enumLabelCommaEscapeIsUndone()` — section 3.2: the ENUM label comma and doubled-backslash escapes are undone; a VARCHAR with the same text stays verbatim, and a SET with a comma-backslash stays verbatim.
 - Verification: unit coverage of string/ENUM/SET value binding and UTF-8 round-trip is not yet covered by an automated test (gap). The TestFlows suite lists `types/enum` and `types/json` as expected failures (spec 11.03 §6).
 
 ---
@@ -74,8 +110,8 @@ Recovery posture: text, ENUM, SET and JSON values are bound verbatim (`setString
 
 - **FM-07.04-2 A narrow ClickHouse type refuses the value**
   - **Trigger**: a hand-created or overridden column narrower than `String`: an `Enum8/16` lacking a label added on MySQL by an `ALTER ... MODIFY ENUM(...)` that was not translated, a `FixedString(N)` shorter than the value, `UUID` for a `CHAR(36)` holding a non-UUID, `Bool` for a text flag, a native `JSON`/`Object` column refusing a document.
-  - **Behaviour**: the value is bound as text; ClickHouse refuses it — measured with `clickhouse local` 24.8.14: `Code: 691` (unknown enum element), `Code: 131` (string too long for `FixedString`), `Code: 376` (cannot parse UUID), `Code: 41` (cannot parse DateTime), `Code: 467` (cannot parse boolean). None of these codes is in `FATAL_ERROR_CODES`, so the worker retries the batch forever. (A value shorter than `FixedString(N)` is zero-padded silently instead: `'ab'` into `FixedString(4)` stores `61620000`, measured.) Error codes for the native `JSON` type were not measured.
-  - **Detection**: ERROR `******* ERROR inserting Batch Database(<db>), Table(<t>)` with the ClickHouse message, ERROR `ClickHouseBatchRunnable exception - Task(<id>)`, WARN `Retriable ClickHouse error (Code: 691, Category: RETRIABLE)` every ≤ 30 s; metric `clickhouse.sink.topics.error.records`; no exit. Zero-padding: none.
+  - **Behaviour**: the value is bound as text; ClickHouse refuses it — measured with `clickhouse local` 24.8.14: `Code: 691` (unknown enum element), `Code: 131` (string too long for `FixedString`), `Code: 376` (cannot parse UUID), `Code: 41` (cannot parse DateTime), `Code: 467` (cannot parse boolean). None of these codes is in `FATAL_ERROR_CODES`, so the worker retries the batch forever. (A value shorter than `FixedString(N)` is zero-padded instead: `'ab'` into `FixedString(4)` stores `61620000`, measured. Padding alone is the `FixedString` contract and reads back as the value. A value whose last byte is NUL cannot be told apart from the padding, so it is reported, spec 07.12.) Error codes for the native `JSON` type were not measured.
+  - **Detection**: ERROR `******* ERROR inserting Batch Database(<db>), Table(<t>)` with the ClickHouse message, ERROR `ClickHouseBatchRunnable exception - Task(<id>)`, WARN `Retriable ClickHouse error (Code: 691, Category: RETRIABLE)` every ≤ 30 s; metric `clickhouse.sink.topics.error.records`; no exit. Zero-padding: none for a value without a trailing NUL; a value that ends in NUL is counted and logged as `LOSSY_CONVERSION kind=fixedstring_nul` (spec 07.12).
   - **Blast radius**: every table hashed to that worker stops; offsets freeze; the next DDL drain waits forever. No loss (nothing of the batch is written).
   - **Recovery**: P-FIX-TYPE to `String` (or add the enum value: `MODIFY COLUMN e Enum8(..., 'c' = 3)`), restart; the batch is redelivered and written.
   - **RTO**: never self-heals; after P-FIX-TYPE ≈ 1–2 min + re-apply of the in-flight transaction; unmeasured.
@@ -92,4 +128,12 @@ Recovery posture: text, ENUM, SET and JSON values are bound verbatim (`setString
   - **Test**: `BatchChunkerTest.oversizedRowIsItsOwnChunk()` pins that a huge row is written alone; `SpillingInsertStatementTest.largeStringMatchesTheDriver()` the streamed escaping; `large_row_spill.sh` with `BINARY_MODE=base64` (the value reaches the writer as a string) the end-to-end bound at a fixed heap.
   - **DEFECT** (residual, reader side): the largest replicable value is bounded by what the decoded row images need in the heap (and by the 2^31-byte Java string limit), not by the source; there is no loud, row-naming refusal above it.
 
-Summary: 3 failure modes, 3 DEFECT, 2 GAP.
+- **FM-07.04-4 ENUM label with a comma or a backslash (fixed by section 3.2)**
+  - **Trigger**: an ENUM label that contains a comma (`b,c`) or a backslash (`x\y`, `a\,b`).
+  - **Behaviour** (before section 3.2): Debezium writes each comma as a backslash and a comma and doubles each backslash of the label. The connector stored the delivered text, so `b,c` was stored as `b\,c`, `x\y` as `x\\y` and `a\,b` as `a\\\,b`. Reproduced end to end on base-2.11.1 and on the candidate.
+  - **DEFECT, FIXED** by the two-step decode in section 3.2 (the Enum branch of the mapper). Labels with an apostrophe pair are not affected: the apostrophe steps are lossless (checked end to end on base-2.11.1).
+  - **Detection**: none; the mismatch is silent.
+  - **Blast radius**: the stored ENUM text differs from the MySQL label; row counts are intact.
+  - **Test**: `enumLabelCommaEscapeIsUndone()` (section 5).
+
+Summary: 4 failure modes: 3 DEFECT (FM-07.04-1 to -3, open), 1 fixed (FM-07.04-4). One GAP is recorded in FM-07.04-1 (test at the Debezium boundary).
