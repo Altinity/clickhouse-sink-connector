@@ -303,9 +303,14 @@ export TZ=UTC; zstd -d --stdout /backups/dump/mydb@t1@@1.tsv.zst  | clickhouse-c
 The packaged copy emits `--password 'pa'ss word'`. The quote is unbalanced, so the shell command breaks.
 Different password text can inject shell syntax (D-13.04-11).
 
+A `TIMESTAMP` field of that table declares its zone in the structure, e.g.
+`\`ts\`  Nullable( DateTime64(0, 'UTC'))` for a `tzUtc` dump (§3.9, D-13.04-37).
+
 Every value except `TIMESTAMP` columns is parsed as `String` and converted by ClickHouse during the
 `INSERT ... SELECT` to the column type (integers, `Decimal`, `Date32`, `DateTime64`, `Enum`).
-`TIMESTAMP` columns are parsed as `DateTime64(p)`, in the client zone given by `TZ` (§3.9).
+`TIMESTAMP` columns are declared as `DateTime64(p, '<resolved zone>')`, the zone the loader resolved from the
+dump metadata or `--source_timezone` pinned in the declared type, so the parsed instant does not follow the
+ambient zone of the load (`TZ`, `use_client_time_zone`) — §3.9.
 
 #### 3.7.1 Column list (`get_column_list`, `is_loaded_column`, `mysqlshell_column_expression`)
 
@@ -494,11 +499,17 @@ of 100 applies).
   - `UTC` is returned only when the dump records `+00:00` or the flag names `UTC`.
   - Tests: `db_load/tests/test_loader_dump_zone_refusal.py` (real loader functions; refusal before any DDL in both
     layouts).
-- **Application.** Only the resolved zone is exported as `TZ` in the shell command, and clickhouse-client runs with
-  `--use_client_time_zone 1`. TIMESTAMP text (UTC in MySQL Shell dumps) is meant to be interpreted in that
-  zone. Whether `input()` parsing honours the client zone was not verified offline (GAP in §5.2). DATETIME
-  values travel as `String` and are converted by the server into a zone-less `DateTime64(p)` column (server
-  zone), or into the `--clickhouse_datetime_timezone` zone when one is set.
+- **Application.** The resolved zone is exported as `TZ` in the shell command and clickhouse-client runs with
+  `--use_client_time_zone 1`, but the parse no longer depends on either: the `input()` declaration of a `TIMESTAMP`
+  field carries the zone itself. `timestamp_input_datatype(datatype, timezone)` (`clickhouse_loader.py`, both
+  copies) turns the translator's zone-less `DateTime64(p)` into `DateTime64(p, '<timezone>')` — the zone resolved
+  from the dump or `--source_timezone`. A declaration that already names a zone is kept unchanged, so
+  `--clickhouse_datetime_timezone` still decides that one. Measured: a zone-less declaration parses the same
+  UTC text as UTC+0 under `TZ=UTC`, one hour earlier under `TZ=Europe/London` in summer and one hour later under
+  `TZ=America/Chicago`, while the pinned declaration parses it identically under all three (D-13.04-37). This
+  closes the §5.2 item 11 gap for `input()` parsing. DATETIME values travel as `String` and are converted by the
+  server into a zone-less `DateTime64(p)` column (server zone), or into the
+  `--clickhouse_datetime_timezone` zone when one is set.
 - **Column zone.** Only with `--clickhouse_datetime_timezone` (ANTLR `add_timezone`, LS28-31) does
   `DateTime64(p)` become `DateTime64(p,'<tz>')`. The regexp translator never adds a zone.
 
@@ -1119,7 +1130,11 @@ writes `DEFAULT NULL` in upper case, so a lower-case `null` never reaches the lo
 10. The packaged loader redacts credentials in logs and exceptions, and quotes them with `shlex.quote`.
 11. A server-backed integration test confirms the ClickHouse acceptance of every emitted type spelling in
     §3.15, and the zone used to parse `TIMESTAMP` text in `input()` under `--use_client_time_zone 1`. Both
-    are unverified here because no database may be contacted.
+    are unverified here because no database may be contacted. **Partially covered offline**: the `input()`
+    half is now measured with `clickhouse local` — the emitted declaration parses the same UTC text to the same
+    instant under `TZ=UTC`, `America/Chicago` and `Europe/London`, and a zone-less declaration does not —
+    `db_load/tests/test_loader_timestamp_input_zone.py::TestParsedInstant` (D-13.04-37). The type-spelling
+    acceptance half stays a GAP.
 12. Overrides: the CLI string accepts commas inside parentheses. Singular and plural lookups agree. The
     reconciler compares normalised types and expressions case-insensitively.
 
@@ -1432,7 +1447,28 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
     updated `TestDumpTimezoneMapping`, `TestMysqlShellDumpTimezone`.
   - **FIXED**: D-13.04-36 (this change).
 
-Summary: 27 failure modes, 16 DEFECT, 16 GAP (FM-13.04-9 fixed by D-13.04-33; FM-13.04-27 fixed by D-13.04-36).
+- **FM-13.04-41 `TIMESTAMP` text parsed in the ambient zone of the load**
+  - **Trigger**: a MySQL Shell dump (`tzUtc: true`, so the `TIMESTAMP` text is UTC) loaded while the ambient zone of
+    the load is not UTC — a `clickhouse-client` whose client zone is the host's, a loader invoked outside the
+    generated shell command, any future change to how `TZ` reaches the client.
+  - **Behaviour**: the `input()` structure declared a `TIMESTAMP` field as a zone-less `DateTime64(p)`, and such a
+    declaration parses the text in the ambient zone of the process that reads it. Under a DST zone every value in
+    that zone's summer months moves by the offset difference: a dump of one table loaded with `Europe/London`
+    ambient stored its whole summer half one hour early and its winter half correctly, with row counts and row-level
+    hashes both matching.
+  - **Detection**: a value-level comparison against the MySQL source (row counts and `FINAL` hashes both pass); the
+    per-row instant differs by a whole number of hours, in a pattern that follows the ambient zone's DST calendar.
+  - **Blast radius**: every non-NULL `TIMESTAMP` column of every table loaded by that run. `DATETIME` columns are
+    unaffected (they travel as `String`).
+  - **Recovery**: reload the affected tables with this fix, from a dump whose zone is known, and compare against the
+    source at value level (a per-row column comparison, not row counts).
+  - **RTO**: one reload per table.
+  - **Test**: `db_load/tests/test_loader_timestamp_input_zone.py` — the emitted structure names the resolved zone,
+    and `clickhouse local` stores the same instant under `TZ=UTC`, `America/Chicago` and `Europe/London`, while a
+    zone-less declaration does not.
+  - **FIXED**: D-13.04-37 (this change).
+
+Summary: 28 failure modes, 16 DEFECT, 17 GAP (FM-13.04-9 fixed by D-13.04-33; FM-13.04-27 fixed by D-13.04-36; FM-13.04-41 fixed by D-13.04-37).
 
 ---
 
@@ -1476,3 +1512,4 @@ Summary: 27 failure modes, 16 DEFECT, 16 GAP (FM-13.04-9 fixed by D-13.04-33; FM
 | D-13.04-34 | S1 | both | `db_load/clickhouse_loader.py` (`mysqlshell_column_expression`, `datetime_clamp_expression`); same in `ch_sink_tools/db_load/clickhouse_loader.py` | reproduced end to end (a snapshot verified by the checksum driver: two tables differed only in a DATETIME(6) column holding `9999-12-31 23:59:59` style open-ended values, loaded as `2299-12-31 00:00:00.000000` and, with a zone shift, `2299-12-31 05:59:00.000000`, while the connector's replicas of the same tables matched); offline `clickhouse local` 24.8 keeps `2299-12-31 23:59:59.999999` and moves below-range values parsed in America/Chicago to `1900-01-01 06:00:00` UTC | FIXED: a DATETIME field of the dump is saturated as the connector saturates it: at or above `2299-12-31 23:59:59` the instant `2299-12-31 23:59:59` UTC, below `1900-01-01 00:00:00.000001` the instant `1900-01-01 00:00:00` UTC (the connector's `DataTypeRange.DATETIME64_MIN/MAX`, the checksum tools' `DATETIME_MIN/DATETIME_MAX`), cast to the target table's own column type (read from `system.columns`) so neither `--clickhouse_datetime_timezone` nor the server zone moves the instant; in-range values are cast as before (§3.7.1). (The first version cast to the loader's own translation; for a `--data_only` load into a table created elsewhere, such as the resync scratch table, that moved in-range values by the server zone, caught end to end by `tests_e2e/mysql/test_mysql_04_resync.py::test_unlogged_change_is_reported_then_repaired_by_resync`.) Test: `test_loader_datetime_clamp.py` (both copies; the loader's own INSERT executed in `clickhouse local` under UTC and America/Chicago, with and without a column zone). Was: the text went to ClickHouse, which saturated to another value, so a loaded table could never verify equal to MySQL for such rows and differed from what streaming writes. |
 | D-13.04-35 | S1 | both | `db_load/clickhouse_loader.py` (`mysqlshell_column_expression`, `time_text_expression`); same in `ch_sink_tools/db_load/clickhouse_loader.py` | observed on a real replica: one TIME column held 2.69 M rows `01:15:00` from the initial load and 97 K rows `01:15:00.000000` streamed afterwards, and the snapshot verified by the job driver reported every row of such a table DIFFERENT; offline the loader stored the MySQL Shell text unchanged | FIXED: a TIME field of the dump is written into its String column as the connector's `MicroTimeConverter.convert` formats it (`[-]HH:MM:SS.ffffff`, six fraction digits, sign kept, hours unbounded): the fraction is padded to six digits, NULL stays NULL, a non-String target is left alone (§3.7.1). The checksum tools and the connector are unchanged. Tests: `test_loader_time_text.py` (both copies, the loader's INSERT in `clickhouse local`); e2e `tests_e2e/mysql/test_mysql_03_snapshot.py::test_loaded_values_equal_the_streamed_values[ledger]`, `::test_production_job_matches_the_loaded_snapshot`. Was: the dump text (`01:15:00`, `12:00:00.500`) was stored as is. |
 | D-13.04-36 | S3 | both | `ch_sink_tools/db/checksum_common.py` (`get_unix_timezone_from_mysql_timezone`); `db_load/clickhouse_loader.py` (`load_schema`, `load_schema_mysqlshell`, `main`); same in `ch_sink_tools/db_load/clickhouse_loader.py` | code-read: the undeterminable branch logged a WARNING and returned `UTC`, so a dump with no recorded zone loaded `TIMESTAMP` as UTC whatever the source server stored | FIXED: no implicit zone. A recorded zone is used and must match `--source_timezone` when one is given; an undeterminable zone is refused before any DDL unless `--source_timezone` names it (FM-13.04-27, §3.9). Tests: `test_loader_dump_zone_refusal.py`, `test_loader_s1_fixes.py::TestDumpTimezoneMapping`, `::TestMysqlShellDumpTimezone`. Was: `UTC` fallback. |
+| D-13.04-37 | S1 | both | `db_load/clickhouse_loader.py` (`load_data_mysqlshell` structure build, `timestamp_input_datatype`); same in `ch_sink_tools/db_load/clickhouse_loader.py` | reproduced with `clickhouse local` on the UTC text `2018-04-05 20:44:35.772929` (April) and `2018-12-01 00:18:03.545683` (December): the zone-less declaration `\`ts\`  Nullable( DateTime64(6))` stores `1522961075772929`/`1543623483545683` under `TZ=UTC`, `1522957475772929`/`1543623483545683` under `TZ=Europe/London` (April one hour early, December exact) and `1522979075772929`/`1543645083545683` under `TZ=America/Chicago` (five and six hours late); the pinned `DateTime64(6, 'UTC')` stores `1522961075772929`/`1543623483545683` under all three | FIXED: a `TIMESTAMP` field is declared with the zone the loader resolved from the dump or `--source_timezone` (`DateTime64(p, '<zone>')`), so the parsed instant no longer follows the ambient zone of the load; a declaration that already names a zone (`--clickhouse_datetime_timezone`) is kept. Test `test_loader_timestamp_input_zone.py` (structure + `clickhouse local` values under three ambient zones; mutation-checked — the fix reverted makes 5 of its 17 tests fail). Was: zone-less `DateTime64(p)`, so every `TIMESTAMP` of a load followed the load's ambient zone (FM-13.04-41). |

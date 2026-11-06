@@ -690,6 +690,29 @@ def execute_load(cmd):
         raise AssertionError("command " + redact_password(cmd) + " failed")
 
 
+DATETIME_WITH_ZONE = re.compile(r"DateTime64\s*\([^()]*,\s*'[^']*'\s*\)|DateTime\s*\(\s*'[^']*'\s*\)", re.IGNORECASE)
+
+
+def timestamp_input_datatype(datatype, timezone):
+    """The input() declaration of a MySQL TIMESTAMP field, with the zone of the dump's text pinned in the type.
+
+    A zone-less ``DateTime64(p)`` parses the dump's text in the ambient zone of the load -- the client zone
+    (``use_client_time_zone``) or the server's when it is not set -- so the instant it stores moves when that zone
+    changes, and a dump whose TIMESTAMP text is in one zone loads hours off in another. Declaring
+    ``DateTime64(p, '<zone>')`` parses the text in ``<zone>``, the zone the loader resolved from the dump or from
+    ``--source_timezone``, whatever the ambient zone is; the INSERT then converts that instant to the target
+    column's own type, which keeps it (Spec 13.04 section 3.9). A datatype that already names a zone keeps it:
+    ``--clickhouse_datetime_timezone`` decides that one.
+    """
+    text = (datatype or '').strip()
+    if timezone is None or DATETIME_WITH_ZONE.search(text):
+        return text
+    if text.endswith(')'):
+        return text[:-1] + f", '{timezone}')"
+    # the translator emits DateTime64(p) for TIMESTAMP; anything else zone-less is parsed at whole seconds
+    return f"DateTime64(0, '{timezone}')"
+
+
 def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, clickhouse_password=None, dry_run=False):
 
     clickhouse_host = args.clickhouse_host
@@ -752,7 +775,9 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
                     datatype = column['datatype']
                     mysql_datetype = column['mysql_datatype']
                     if 'timestamp' in mysql_datetype.lower():
-                        escaped_datatype = f" {datatype}".replace("'","\\'")
+                        # the zone of the dump's TIMESTAMP text is pinned in the declared type, so the parsed instant
+                        # does not depend on the ambient zone of the load (Spec 13.04 section 3.9)
+                        escaped_datatype = f" {timestamp_input_datatype(datatype, timezone)}".replace("'","\\'")
                         if column['nullable'] == True:
                             structure += f" Nullable({escaped_datatype})"
                         else:
