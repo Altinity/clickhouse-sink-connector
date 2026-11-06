@@ -42,6 +42,90 @@ Rules that follow from the table:
 - **Skipping a clause never drops its neighbours.** `ALTER TABLE t DROP PRIMARY KEY, MODIFY COLUMN id SMALLINT UNSIGNED NOT NULL, ADD COLUMN ref_id INT UNSIGNED NOT NULL AUTO_INCREMENT FIRST, ADD PRIMARY KEY (ref_id)` translates to `ALTER TABLE \`db\`.t ADD COLUMN IF NOT EXISTS ref_id UInt32 FIRST` (the MODIFY of the key column is suppressed per Spec 06.05 §3.4 because `UInt16` fits in the existing `Int32`). Formalised as `add_columns_preserved`.
 - **Multi-clause statements are ONE ClickHouse `ALTER`** (plus separate `"\n"`-delimited statements for `RENAME TO` and for the rename half of `CHANGE COLUMN`). A failure of any emitted clause therefore fails the whole statement, which is why an unrepresentable clause must be suppressed or made loud *before* emission rather than sent and retried.
 
+### 3.2a Grammar coverage and known parse gaps (normative)
+
+The coverage table in §3.2 classifies the `alterSpecification` alternatives this
+spec's listener dispatches on. It does not answer the question underneath it:
+*is every statement shape in the shipped grammar exercised at all?* That is what
+the coverage corpus and the sweep tests answer, and the answer is a claim this
+spec makes.
+
+**Which grammar is the subject.** The runtime parser is
+`io.debezium.ddl.parser.mysql.generated.MySqlParser` from the
+`debezium-ddl-parser` jar on the classpath (3.1.3.Final on 2.11.1): 362 rules,
+44 labelled rules, 306 labelled alternatives. The repository's own
+`src/main/antlr4/mysql/MySqlParser.g4` (358 rules) *is* compiled by
+`antlr4-maven-plugin` into package `mysql`, and nothing imports it — no source
+file references `mysql.MySqlParser`. It is not the grammar the connector runs,
+so a change there fixes nothing at runtime, and this spec's claims are measured
+against the jar. The two rule sets differ on 24 names — 10 rules exist only in
+the repository grammar (`lockOption`, `waitNowaitClause`, `alterSequence`,
+`createSequence`, `dropSequence`, `sequenceSpec`, `encryptedLiteral`, `https`,
+`mathOperator`, `emptyStatement`) and 14 only in the jar (`addOperator`,
+`multOperator`, `joinSpec`, `alterPartitionSpecification`, `tableStatement`,
+`valuesStatement`, `withStatement`, `authOptionClause`, `engineNameBase`,
+`hostName`, `simpleUserName`, `sequenceFunctionName`, `currentUserExpression`,
+`emptyStatement_`) — so the two do not accept the same language: the jar has no
+`lockOption`, and therefore rejects the `FOR UPDATE SKIP LOCKED` the repository
+grammar defines. Any statement admitted as a corpus line must be proven against
+the jar, never against the `.g4`.
+
+**The corpus.** `src/test/resources/ddl-surface-corpus.txt` holds the statement
+surface, one statement per line (245 statements when the sweep was pinned).
+Beside it sit the three matrices already used by earlier specs —
+`ddl-matrix-corpus.txt`, `ddl-grammar-corpus.txt`, `ddl-realworld-corpus.txt` —
+which feed the clause-family, producer-family and expression-surface checks.
+Every line must parse; a line that does not parse is a defect in the corpus,
+not tolerance, because a failing line still walks the tree far enough to
+register alternatives and would fake coverage.
+
+**The two directions.** Coverage is only complete when both hold, and each has
+its own test:
+
+1. **Every alternative is reached, or measured unreachable.** The sweep
+   enumerates every labelled alternative from the generated parser and requires
+   each one to be entered by some corpus statement. The exceptions are the 13
+   alternatives in the test's `UNREACHABLE` map, each recorded with the
+   measurement that proves no real statement reaches it (an earlier alternative
+   wins, or the rule is unreachable from `root`). Adding an entry requires that
+   measurement; an entry is not a place to park an unmetered gap. The same test
+   pins the enumeration itself (`EXPECTED_LABELLED_RULES = 44`,
+   `EXPECTED_ALTERNATIVES = 306`), so a parser upgrade that renames, splits or
+   collapses alternatives fails loudly instead of silently redefining what
+   "everything is covered" means.
+2. **What the parser rejects is recorded.** A statement that never parses never
+   reaches an alternative, so it is invisible to (1) — the corpus simply has no
+   line for it and nothing fails. `KnownParserGapsTest` is the complement: it
+   lists real MySQL the shipped parser rejects today, and asserts per row that
+   the statement is *outside* `MySqlDdlNormalizer.handlesStatementKind`, which
+   is what makes the failure contained (warn and drop) instead of fatal (§6
+   FM-06.03-1). The four recorded gaps are `EXPLAIN FOR CONNECTION <numeric
+   connection id>`, `EXPLAIN ANALYZE`, and the `FOR UPDATE` modifiers
+   `SKIP LOCKED` and `NOWAIT`. The test fails when a row starts parsing, so a
+   parser upgrade or a normaliser rewrite cannot widen what the connector reads
+   without a statement proving it: the row then moves to the corpus and is
+   deleted from the map.
+
+**The severity boundary the gaps sit on.** `MySqlDdlNormalizer.handlesStatementKind`
+(§6 FM-06.03-1) decides whether a parse failure is a dropped statement or a
+halted pipeline: inside the handled set the parser's `root()` call is unguarded,
+so a syntax error throws and stops replication for every table on the host;
+outside it the call is wrapped and costs one statement. Every recorded gap is
+outside the set. The converse is asserted too: `ALTER TABLE t ADD COLUMN IF NOT
+EXISTS x INT` is MariaDB-only (the MySQL 8.0 `ALTER TABLE` grammar has no
+`IF NOT EXISTS`, and the repository grammar's own shorthand carries the comment
+"ifNotExists is MariaDB-specific only"), it must stay unreadable on a MySQL
+source, and because it *is* a handled kind it is pinned as the one row whose
+rejection would be fatal.
+
+**Harness trust.** A probe that installs a swallowing error listener and still
+walks the tree registers alternatives from a line that did not parse, and a
+normaliser that blanks a statement makes "fails to parse" meaningless. Both
+tests therefore measure strictly: the sweep treats an unparseable corpus line
+as a corpus defect, and the gap test returns "harness failure" — not "rejected"
+— when the normaliser blanks a statement, so a blanked row can never pass as
+evidence that the grammar rejects it.
+
 ### 3.3 Identifier normalisation (target-schema lookups)
 All lookups against ClickHouse `system.columns` (nullability fallback, sorting-key detection, column-name case resolution) use **clean identifiers**: backticks stripped, database prefix removed from the table name, and the connector's destination database name (after `clickhouse.database.override.map`). `cleanTableName` is recomputed in `enterAlterTable` from the table name found in the statement, never from the (empty) name passed by the caller. MySQL column names are case-insensitive while ClickHouse names are case-sensitive, so for `MODIFY`/`CHANGE`/`DROP`/`RENAME COLUMN` the source column name is resolved case-insensitively against the target table's actual column names and the ClickHouse spelling is emitted.
 
@@ -53,13 +137,21 @@ All lookups against ClickHouse `system.columns` (nullability fallback, sorting-k
 ## 4. Invariants Preserved
 - **Invariant I9 (Loud Failure)**: an ALTER that cannot be represented in a loss-free way stops the pipeline with `DDLReplicationException` instead of emitting a statement that will be retried and fail.
 - **Invariant I5 (DDL Barrier)**: every representable clause is emitted exactly once; skipping is per clause, never per statement.
-- **Grammar conformity**: identifiers may be backtick-quoted, database-qualified, and any case; multi-clause statements are supported subject to the coverage table in §3.2. This spec no longer claims support for "all MySQL 8.0 DDL syntax variations" — the coverage table is the claim.
+- **Grammar conformity**: identifiers may be backtick-quoted, database-qualified, and any case; multi-clause statements are supported subject to the coverage table in §3.2. This spec no longer claims support for "all MySQL 8.0 DDL syntax variations" — the coverage table is the claim, and §3.2a states what "measured against the shipped grammar" means: every labelled alternative reached or measured unreachable, and every rejected form recorded with its severity.
 
 ---
 
 ## 5. Verification Criteria
 - `MySqlDDLParserListenerImplTest` (the full class; the tests named in Specs 06.04, 06.05, 06.07 are the regression pins for the rules above).
 - `DdlReplayIdempotencyTest` (replay safety of every emitted statement shape).
+- `GrammarAlternativeSweepTest.theCorpusReachesEveryReachableAlternative` (§3.2a direction 1: every labelled alternative of the shipped parser reached by a corpus statement or in the measured `UNREACHABLE` map).
+- `GrammarAlternativeSweepTest.theEnumerationMatchesTheShippedParser` (§3.2a direction 1: the enumeration the sweep measures is pinned, so a parser upgrade cannot shrink it silently).
+- `KnownParserGapsTest.everyKnownGapIsStillUnparseable` (§3.2a direction 2 and the severity boundary: each recorded gap is rejected *and* outside the handled set).
+- `KnownParserGapsTest.mariaDbOnlySpellingsStayRejected` (§3.2a: `ADD COLUMN IF NOT EXISTS` stays unreadable and stays a handled kind).
+- `StatementSurfaceCoverageTest.everyDdlAlternativeIsEitherHandledOrDocumented`, `StatementSurfaceCoverageTest.everyHandledStatementHasAHandler` (the DDL statement surface is classified with no silent third bucket).
+- `DmlStatementSurfaceCoverageTest.everyDmlAlternativeIsProbed`, `DmlStatementSurfaceCoverageTest.everyDmlStatementParsesAndEmitsNothing` (the DML surface parses and emits nothing, so a DML statement never becomes DDL).
+- `GrammarCorpusParseTest.everyGrammarStatementParsesOrIsADeclaredBlank`, `GrammarCorpusParseTest.everyRealWorldStatementParsesOrIsADeclaredBlank` (the clause and producer corpora are parseable; a corpus line is proven, never assumed).
+- `E2eMatrixCorpusParseTest.everyMatrixStatementParsesOrIsADeclaredBlank` (the end-to-end matrix corpus, the same rule).
 - `formal_specs/lean/Replication/DdlTranslation.lean`: `no_bare_alter`, `wider_key_change_rebuilds`, `primary_key_change_rebuilds`, `add_columns_preserved` (zero `sorry`, standard axioms only).
 
 ---

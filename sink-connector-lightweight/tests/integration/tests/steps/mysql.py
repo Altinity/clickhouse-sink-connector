@@ -156,7 +156,10 @@ def create_mysql_table(
                 query += f" ENGINE = InnoDB"
 
             if partition_by_mysql:
-                query += f", PARTITION BY {partition_by_mysql}"
+                # No comma: PARTITION BY is a clause that follows the table
+                # options, not a table option itself, so the comma form
+                # ("ENGINE = InnoDB, PARTITION BY ...") is not valid MySQL.
+                query += f" PARTITION BY {partition_by_mysql}"
 
             query += ";"
 
@@ -214,7 +217,10 @@ def create_mysql_to_clickhouse_replicated_table(
                 query += f" ENGINE = InnoDB"
 
             if partition_by_mysql:
-                query += f", PARTITION BY {partition_by_mysql}"
+                # No comma: PARTITION BY is a clause that follows the table
+                # options, not a table option itself, so the comma form
+                # ("ENGINE = InnoDB, PARTITION BY ...") is not valid MySQL.
+                query += f" PARTITION BY {partition_by_mysql}"
 
             query += ";"
 
