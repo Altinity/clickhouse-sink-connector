@@ -100,7 +100,8 @@ public class ClickHouseDbConstants {
     /**
      * The data type of the deleted time column, typically a date time.
      */
-    public static final String DELETED_TIME_COLUMN_DATA_TYPE = "DateTime DEFAULT '" + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL) + "'";
+    // Epoch-exact DEFAULT (Spec 07.03 section 3.1.12): a quoted string would be read in the column zone.
+    public static final String DELETED_TIME_COLUMN_DATA_TYPE = "DateTime DEFAULT " + DataTypeRange.DATETIME32_MAX_TTL;
     
     /**
      * The name of the column indicating whether a record

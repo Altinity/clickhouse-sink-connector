@@ -310,10 +310,29 @@ parked units' record lists leak.
 Contract:
 1. `DebeziumChangeEventCapture.stop()` closes the engine (no more handoffs),
    drains through the still-running pool (bounded), shuts the pool down, and
-   THEN calls `reset()` (spec 01.01 §3.3). `reset()` clears
-   `outstandingSequences`, `unwrittenGroups` and `completedUnits`, logs the
-   number of abandoned units at WARN, and returns it. `handoffCounter` is NOT
-   reset: sequences stay unique for the life of the JVM.
+   calls `reset()` only once the pool has terminated (spec 01.01 §3.3).
+   `reset()` requires that no worker can still report a write, so it runs
+   after the pool's await returns true, never after a timed-out await. If the
+   pool does not terminate within its bound, `stop()` logs at ERROR, does not
+   call `reset()`, and leaves the FIFO as it is: the still-running workers keep
+   reporting into it, and the next engine's `setup()` abandons the outstanding
+   units (item 3). When `reset()` runs, it clears `outstandingSequences`,
+   `unwrittenGroups` and `completedUnits`, logs the number of abandoned units at
+   WARN, and returns it. `handoffCounter` is NOT reset: sequences stay unique
+   for the life of the JVM.
+2. Everything abandoned was never acknowledged (a unit leaves the outstanding
+   set only through acknowledgement), so no committed offset is rolled back and
+   the next engine redelivers the abandoned rows from the last committed
+   offset — at-least-once, never loss (`Replication.OffsetFifo.acked_never_rolled_back`).
+   A unit that was written but parked is abandoned too: its rows are in
+   ClickHouse and will be redelivered; the redelivery-stable versioning (spec
+   02.04) makes the second write idempotent.
+3. On the timeout path `stop()` itself commits no offset: it calls neither
+   `markProcessed` nor `markBatchFinished`. An acknowledgement comes only from a
+   unit whose every group was written (the writer's `result` gate, then the
+   FIFO drain), so a batch that a still-running worker has not finished is never
+   acknowledged, and the next engine's `setup()` abandons it and it is
+   redelivered from the last committed offset.
 2. Everything abandoned was never acknowledged (a unit leaves the outstanding
    set only through acknowledgement), so no committed offset is rolled back and
    the next engine redelivers the abandoned rows from the last committed

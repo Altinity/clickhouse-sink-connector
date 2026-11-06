@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.clickhouse.data.ClickHouseDataType;
 import org.apache.kafka.connect.data.Schema;
@@ -57,7 +58,7 @@ public class ClickHouseDataTypeMapperUInt64Test {
     private static Object bind(Object value, ClickHouseDataType target) throws Exception {
         AtomicReference<Object> bound = new AtomicReference<>();
         boolean handled = ClickHouseDataTypeMapper.convert(Schema.Type.INT64, null, value, 1,
-                recordingStatement(bound), new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                recordingStatement(bound), new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                 target, ZoneId.of("UTC"));
         assertTrue(handled, "INT64 must be a handled type");
         return bound.get();

@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.cdc.DDLReplicationException;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
@@ -42,7 +43,7 @@ public class DdlTranslationFailureModesTest {
     }
 
     private static MySQLDDLParserService plainService() {
-        return new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(new HashMap<>()), "db");
+        return new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "db");
     }
 
     private static Object defaultValue(Class<?> type) {
@@ -88,7 +89,7 @@ public class DdlTranslationFailureModesTest {
         Map<String, String> props = new HashMap<>();
         ClickHouseSinkConnectorConfig.setDefaultValues(props);
         props.put(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString(), "true");
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
         BaseDbWriter writer = new BaseDbWriter("localhost", 8123, "system", "default", "", config,
                 failingConnection());
         return new MySQLDDLParserService(writer, config, "db");
@@ -144,27 +145,26 @@ public class DdlTranslationFailureModesTest {
     }
 
     /**
-     * FM-06.03-2 (DEFECT). {@code DROP PARTITION}, {@code TRUNCATE PARTITION},
-     * {@code EXCHANGE PARTITION ... WITH TABLE} and {@code IMPORT TABLESPACE}
-     * remove or replace ROWS on the source, and the binlog carries only the
-     * statement, never a row event. Classified "not representable,
-     * loss-free" by {@code isNoOpSpecification}, they are skipped at INFO and
-     * acknowledged: the replica keeps rows the source no longer has, or
-     * misses rows it received, count-clean and permanently. The correct
-     * outcome is a loud refusal naming the re-synchronisation of the table
-     * (Spec 11.04).
+     * FM-06.03-2 (fixed). {@code EXCHANGE PARTITION ... WITH TABLE},
+     * {@code IMPORT / DISCARD TABLESPACE} and {@code CONVERT TO CHARACTER SET}
+     * change the stored values of rows, and the binlog carries no row event for
+     * them (CONVERT re-encodes every string column in place). Skipped as a
+     * no-op, the replica keeps the old values count-clean and permanently. They
+     * are now refused loudly (Spec 06.03 section 3.2, Spec 06.08 section 3.1).
+     * {@code DROP PARTITION} and {@code TRUNCATE PARTITION} are deliberately NOT
+     * here: they are kept ignored under disable.drop.truncate (spec 06.08
+     * section 3.3), which logs a WARN naming the table and partition.
      */
     @Test
-    @Disabled("DEFECT FM-06.03-2: data-changing partition/tablespace operations are skipped as if loss-free")
-    @DisplayName("FM-06.03-2: data-changing partition operations are refused loudly, not skipped")
+    @DisplayName("FM-06.03-2: data-changing partition and tablespace operations are refused loudly, not skipped")
     public void dataChangingPartitionOperationIsLoud() {
         MySQLDDLParserService service = plainService();
         for (String ddl : new String[]{
                 // DESTRUCTIVE: statement text only -- parsed and translated in memory; nothing is executed against any database.
-                "ALTER TABLE t DROP PARTITION p0",
-                "ALTER TABLE t TRUNCATE PARTITION p0",
                 "ALTER TABLE t EXCHANGE PARTITION p0 WITH TABLE t_archive",
-                "ALTER TABLE t IMPORT TABLESPACE"}) {
+                "ALTER TABLE t IMPORT TABLESPACE",
+                "ALTER TABLE t DISCARD TABLESPACE",
+                "ALTER TABLE t CONVERT TO CHARACTER SET utf8mb4"}) {
             assertThrows(DDLReplicationException.class, () -> translate(service, ddl),
                     "[" + ddl + "] changes rows that no row event will ever carry; skipping it diverges silently");
         }
@@ -272,7 +272,7 @@ public class DdlTranslationFailureModesTest {
     public void replicatedModeTableStatementsRunOnCluster() {
         Map<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
-        MySQLDDLParserService service = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "db");
+        MySQLDDLParserService service = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), "db");
         for (String ddl : new String[]{
                 "RENAME TABLE t TO t_old, t_new TO t",
                 // DESTRUCTIVE: statement text only -- parsed and translated in memory; nothing is executed against any database.
@@ -293,7 +293,7 @@ public class DdlTranslationFailureModesTest {
     public void replicatedModeOnlyCreateCarriesOnClusterToday() {
         Map<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.AUTO_CREATE_TABLES_REPLICATED.toString(), "true");
-        MySQLDDLParserService service = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "db");
+        MySQLDDLParserService service = new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), "db");
         assertTrue(translate(service, "CREATE TABLE t (id INT NOT NULL PRIMARY KEY)").contains("ON CLUSTER"));
         assertTrue(!translate(service, "RENAME TABLE t TO t_old").contains("ON CLUSTER"));
         // DESTRUCTIVE: statement text only -- parsed and translated in memory; nothing is executed against any database.

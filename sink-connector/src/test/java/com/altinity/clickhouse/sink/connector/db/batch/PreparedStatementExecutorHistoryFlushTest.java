@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
@@ -70,7 +71,7 @@ public class PreparedStatementExecutorHistoryFlushTest {
         Map<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString(), "true");
         props.put(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString(), "true");
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static Struct row(int id, String name) {
@@ -162,7 +163,7 @@ public class PreparedStatementExecutorHistoryFlushTest {
         RecordingJdbc.Event history = jdbc.events.get(indexOf(jdbc, RecordingJdbc.PREPARE, false, 0));
         assertEquals(1, history.sql.split("UNION ALL").length - 1,
                 "same-key UPDATE: close row + after row only (Spec 12.03 section 3.2): " + history.sql);
-        assertTrue(history.sql.contains("WHERE `id`=1 AND `_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC') AND `is_deleted` = 0"),
+        assertTrue(history.sql.contains("WHERE `id`=1 AND `_valid_to` = toDateTime(4102444800) AND `is_deleted` = 0"),
                 "the close row selects the before key's open row: " + history.sql);
 
         RecordingJdbc.Event bound = jdbc.events.get(indexOf(jdbc, RecordingJdbc.ADD_BATCH, false, 0));

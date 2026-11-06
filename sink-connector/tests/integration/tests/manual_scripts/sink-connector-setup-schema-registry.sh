@@ -36,6 +36,8 @@ cat <<EOF | curl --request POST --url "${CONNECTORS_MANAGEMENT_URL}" --header 'C
     "clickhouse.server.user": "${CLICKHOUSE_USER}",
     "clickhouse.server.password": "${CLICKHOUSE_PASSWORD}",
     "clickhouse.server.port": ${CLICKHOUSE_PORT},
+    "database.connectionTimeZone": "UTC",
+    "clickhouse.datetime.timezone": "UTC",
     "clickhouse.table.name": "${CLICKHOUSE_TABLE}",
     "key.converter": "io.apicurio.registry.utils.converter.AvroConverter",
     "value.converter": "io.apicurio.registry.utils.converter.AvroConverter",

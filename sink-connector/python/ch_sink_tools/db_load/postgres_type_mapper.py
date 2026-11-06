@@ -27,7 +27,7 @@ import re
 import logging
 
 from ch_sink_tools.db.checksum_common import (
-    DATETIME64_MIN_UTC, DATETIME64_MAX_UTC, DATE32_MIN, DATE32_MAX,
+    DATETIME64_MIN_UTC, DATE32_MIN, DATE32_MAX, datetime64_max_text,
 )
 
 # ---------------------------------------------------------------------------
@@ -548,10 +548,12 @@ def build_select_columns(columns) -> str:
 # 23:59:59 UTC; Date32 1900-01-01 .. 2299-12-31). The bound strings themselves
 # are the single definition in checksum_common (review MAJOR-3); only the
 # year cutoffs used for the BC/overflow checks below are local to this file.
+# DateTime64(9) is the exception: its Int64 nanosecond representation ends at
+# 2262-04-11 23:47:16.854775807, so _datetime64_expr takes the bound text and
+# the year cutoff from datetime64_max_text(precision) instead of these.
 _TEMPORAL_MIN_YEAR = 1900
 _TEMPORAL_MAX_YEAR = 2299
 _DATETIME64_MIN_UTC = DATETIME64_MIN_UTC
-_DATETIME64_MAX_UTC = DATETIME64_MAX_UTC
 _DATE32_MIN = DATE32_MIN
 _DATE32_MAX = DATE32_MAX
 
@@ -590,9 +592,16 @@ def _guarded(name: str, idx: int, value_expr: str, extra_refusal: str = None) ->
 def _datetime64_expr(name: str, idx: int, precision: int, zone, refuse_bc: bool) -> str:
     c = f'"{name}"'
     tz = zone or 'UTC'
+    # The bound TEXT a DateTime64(precision) parse can hold: 2299-12-31 23:59:59
+    # for scales 0..8, 2262-04-11 23:47:16.854775807 for scale 9 (whose Int64
+    # nanosecond representation ends there). Using the range text at scale 9 is
+    # a hard failure, not a saturation: toDateTime64(..., 9) raises Code 407 and
+    # parseDateTime64BestEffortOrNull(..., 9) returns NULL, which _guarded below
+    # turns into a refusal of an insert the connector itself accepts.
+    max_text = datetime64_max_text(precision)
     # Bounds are the connector's UTC instants, expressed in the column zone.
     lo = f"toTimeZone(toDateTime64('{_DATETIME64_MIN_UTC}', {precision}, 'UTC'), '{tz}')"
-    hi = f"toTimeZone(toDateTime64('{_DATETIME64_MAX_UTC}', {precision}, 'UTC'), '{tz}')"
+    hi = f"toTimeZone(toDateTime64('{max_text}', {precision}, 'UTC'), '{tz}')"
     year = _year_expr(c)
     branches = [
         f"isNull({c}), NULL",
@@ -604,8 +613,15 @@ def _datetime64_expr(name: str, idx: int, precision: int, zone, refuse_bc: bool)
     branches += [
         f"{year} < {_TEMPORAL_MIN_YEAR}, {lo}",
         f"{year} > {_TEMPORAL_MAX_YEAR}, {hi}",
-        f"parseDateTime64BestEffortOrNull({c}, {precision}, '{tz}')",
     ]
+    if int(precision) == 9:
+        # Scale 9 stops inside 2262, so the year test above (2299) cannot catch
+        # everything the column cannot hold: a 2263-06-01 value would reach the
+        # parse, come back NULL and be refused. The dump writes zero-padded ISO
+        # text, so text order is time order and this one comparison saturates
+        # every instant at or past the representable maximum.
+        branches.append(f"{c} >= '{max_text}', {hi}")
+    branches.append(f"parseDateTime64BestEffortOrNull({c}, {precision}, '{tz}')")
     value = "multiIf(" + ", ".join(branches) + ")"
     return _guarded(name, idx, value,
                     extra_refusal=f"endsWith({c}, ' BC')" if refuse_bc else None)

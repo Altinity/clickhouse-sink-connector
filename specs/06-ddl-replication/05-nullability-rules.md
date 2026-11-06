@@ -51,8 +51,8 @@ Normalisation (`KeyColumnTypeChange.normalise`) strips whitespace, the
 `Nullable`/`LowCardinality` wrappers, and the **timezone argument** of
 `DateTime`/`DateTime64` together with the translator's `, 0` placeholder:
 `DateTime64(6, 'UTC')` (how an auto-created or `clickhouse.datetime.timezone`
-column renders in `system.columns`), `DateTime64(6, 0)` (what the translator
-emits without a configured zone) and `DateTime64(6)` are one type. The zone
+column renders in `system.columns`), `DateTime64(6, 0)` (the placeholder the
+DDL translator writes when the declared scale is 0; it names no zone, and the zone itself is mandatory under Spec 07.03 §3.1.2) and `DateTime64(6)` are one type. The zone
 is display metadata — the stored instant, the width and the scale are the
 same — so a `MODIFY` of a `DateTime64(6, 'UTC')` key column to `DATETIME(6)`
 is a restatement and must be suppressed, not refused as "not comparable"

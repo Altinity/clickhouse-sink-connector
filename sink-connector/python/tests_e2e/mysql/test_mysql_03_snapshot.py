@@ -108,7 +108,7 @@ def flags_load(ws):
     argv = loader + ["--clickhouse_host", CH_HOST, "--clickhouse_config_file", "clickhouse-client.xml",
                      "--clickhouse_database", FLAGS_SNAPSHOT_DB, "--mysql_source_database", FLAGS_DB,
                      "--dump_dir", dump_dir, "--threads", "2", "--mysqlshell", "--rmt_delete_support",
-                     "--clickhouse_datetime_timezone", SOURCE_TIMEZONE]
+                     "--clickhouse_datetime_timezone", SOURCE_TIMEZONE, "--source_timezone", SOURCE_TIMEZONE]
     if ws.supports("--binary_handling_mode", *loader):
         argv += ["--binary_handling_mode", BINARY_ENCODING]
     return ws.py(*argv)
@@ -176,7 +176,8 @@ def test_loader_fails_loudly_on_a_corrupt_dump_chunk(ws, mysql_snapshot, tmp_pat
     ch_query(f"DROP DATABASE IF EXISTS `{database}`")
     argv = ["db_load/clickhouse_loader.py", "--clickhouse_host", CH_HOST, "--clickhouse_config_file",
             "clickhouse-client.xml", "--clickhouse_database", database, "--mysql_source_database", DB,
-            "--dump_dir", broken, "--threads", "4", "--mysqlshell", "--rmt_delete_support"]
+            "--dump_dir", broken, "--threads", "4", "--mysqlshell", "--rmt_delete_support",
+            "--source_timezone", SOURCE_TIMEZONE]
     result = ws.py(*argv)
     try:
         assert result.returncode != 0, result

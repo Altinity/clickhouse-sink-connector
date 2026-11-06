@@ -4,6 +4,7 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.*;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
@@ -1062,29 +1063,18 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
-     * Returns the ClickHouse server timezone.
+     * Returns the ClickHouse-side zone the sink writes DateTime values in: the configured
+     * {@code clickhouse.datetime.timezone}, which is mandatory (Spec 07.03 section 3.1.2). The config
+     * constructor refuses an unset value, and an unresolvable one throws here. The server's zone is never read.
      *
      * @param config the connector configuration
-     * @return a ZoneId representing the server timezone
+     * @return the configured ClickHouse zone
      */
     public ZoneId getServerTimeZone(ClickHouseSinkConnectorConfig config) {
         String userProvidedTimeZone = config.getString(
                 ClickHouseSinkConnectorConfigVariables.
                         CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        // Validate if timezone string is valid.
-        ZoneId userProvidedTimeZoneId = null;
-        try {
-            if (!userProvidedTimeZone.isEmpty()) {
-                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-            }
-        } catch (Exception e) {
-            log.error("**** Error parsing user provided timezone:" +
-                    userProvidedTimeZone + e.toString());
-        }
-        if (userProvidedTimeZoneId != null) {
-            return userProvidedTimeZoneId;
-        }
-        return new DBMetadata(config).getServerTimeZone(systemConnection());
+        return TimeZoneResolver.clickHouseZone(userProvidedTimeZone);
     }
 
     /**

@@ -1,8 +1,13 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -133,18 +138,49 @@ class PostgreSQLDDLParserServiceTest {
     @Test
     @DisplayName("CREATE TABLE - temporal types map correctly")
     void testCreateTableWithTemporalTypes() {
-        PostgreSQLDDLParserService svc = parser("db");
+        Map<String, String> props = new HashMap<>();
+        props.put("clickhouse.datetime.timezone", "America/Chicago");
+        PostgreSQLDDLParserService svc = new PostgreSQLDDLParserService(null,
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), "db");
         String pg = "CREATE TABLE times ("
                 + "a TIMESTAMP, b TIMESTAMPTZ, "
                 + "c TIMESTAMP WITHOUT TIME ZONE, d TIMESTAMP WITH TIME ZONE, "
                 + "e DATE, f TIME, g INTERVAL)";
         String ch = translate(svc, pg);
 
-        assertTrue(ch.contains("DateTime64(6)"), "TIMESTAMP should map to DateTime64(6)");
+        assertTrue(ch.contains("DateTime64(6, 'America/Chicago')"),
+                "a configured clickhouse.datetime.timezone names a zone-less TIMESTAMP: DateTime64(6, 'America/Chicago')");
         assertTrue(ch.contains("DateTime64(6, 'UTC')"), "TIMESTAMPTZ should map to DateTime64(6, 'UTC')");
         assertTrue(ch.contains("Date32"), "DATE should map to Date32");
         // TIME and INTERVAL map to String
         assertTrue(ch.contains("String"), "TIME/INTERVAL should map to String");
+    }
+
+    @Test
+    @DisplayName("A zone-less TIMESTAMP is named with the configured zone, as the MySQL DDL path names DATETIME (Spec 07.03 section 3.1.6)")
+    void testZonelessTimestampIsNamedWithConfiguredZone() {
+        Map<String, String> props = new HashMap<>();
+        props.put("clickhouse.datetime.timezone", "UTC");
+        PostgreSQLDDLParserService svc =
+                new PostgreSQLDDLParserService(null, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), "db");
+        String scaled = translate(svc, "CREATE TABLE t (a TIMESTAMP(3))");
+        assertTrue(scaled.contains("DateTime64(3, 'UTC')"), scaled);
+        assertFalse(scaled.contains("DateTime64(3)"), "a bare zone-less DateTime64 must not reach the DDL: " + scaled);
+
+        String tz = translate(svc, "CREATE TABLE t (a TIMESTAMP WITH TIME ZONE)");
+        assertTrue(tz.contains("DateTime64(6, 'UTC')"), tz);
+        assertEquals("DateTime64(6, 'UTC')", PostgreSQLDDLParserService.mapPostgresTypeToClickHouse(
+                "TIMESTAMP", "db", "t", "a", new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props))));
+        // The one-argument mapper keeps its zone-less form: it has no configuration to name a zone from.
+        assertEquals("DateTime64(6)", PostgreSQLDDLParserService.mapPostgresTypeToClickHouse("TIMESTAMP"));
+    }
+
+    @Test
+    @DisplayName("A zone-less TIMESTAMP with no configuration is refused, not named with a default zone (Spec 07.03 section 3.1.2)")
+    void testZonelessTimestampWithoutConfiguredZoneIsRefused() {
+        PostgreSQLDDLParserService svc = parser("db");
+        assertThrows(TimeZoneResolver.InvalidTimeZoneException.class,
+                () -> translate(svc, "CREATE TABLE t (a TIMESTAMP)"));
     }
 
     @Test

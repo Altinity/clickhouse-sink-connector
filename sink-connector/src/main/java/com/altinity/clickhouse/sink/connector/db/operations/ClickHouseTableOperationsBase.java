@@ -1,6 +1,7 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.clickhouse.data.ClickHouseDataType;
@@ -50,13 +51,14 @@ public class ClickHouseTableOperationsBase {
     private static final String DECIMAL_64_18 = "Decimal(64,18)";
 
     /**
-     * The zone every auto-created DateTime64 column declares. A zone-less
-     * DATETIME's digits survive only in a zone without DST transitions (a
-     * spring-forward gap wall time cannot be stored in a DST zone), and the
-     * writer renders instants in the column's declared zone (Spec 07.03
-     * section 3.1.3).
+     * The zone an auto-created DateTime64 column declares: the configured clickhouse.datetime.timezone, which is
+     * mandatory and has no default. The connector writes instants, so the declared zone sets how the column
+     * displays them. Existing columns keep the zone they declare; the startup cross-check logs a WARN for each one
+     * that differs from the configured zone and never refuses startup for them.
      */
-    private static final String DATETIME64_ZONE = "'UTC'";
+    static String declaredDateTime64Zone(ClickHouseSinkConnectorConfig config) {
+        return TimeZoneResolver.clickHouseZone(config.getString(TimeZoneResolver.CLICKHOUSE_DATETIME_TIMEZONE)).getId();
+    }
 
     /** DateTime64 precision declared for io.debezium.time.Timestamp without a propagated source type. */
     private static final int TIMESTAMP_DEFAULT_PRECISION = 3;
@@ -242,7 +244,7 @@ public class ClickHouseTableOperationsBase {
                     } else {
                         int precision = ClickHouseDataTypeMapper.temporalPrecision(
                                 f.schema().parameters(), defaultPrecision);
-                        chType = "DateTime64(" + precision + ", " + DATETIME64_ZONE + ")";
+                        chType = "DateTime64(" + precision + ", '" + declaredDateTime64Zone(config) + "')";
                     }
                 } else {
                     chType = dataType.name();

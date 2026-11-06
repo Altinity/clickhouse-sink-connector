@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.parser.SourceRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
@@ -201,7 +202,7 @@ public class EngineRestartFifoResetTest {
     private static ClickHouseSinkConnectorConfig config() {
         Map<String, String> props = new HashMap<>();
         ClickHouseSinkConnectorConfig.setDefaultValues(props);
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static void setField(Object target, String name, Object value) throws Exception {
@@ -256,7 +257,8 @@ public class EngineRestartFifoResetTest {
     private static Properties skipReplicaStart() {
         Properties props = new Properties();
         props.setProperty(ClickHouseSinkConnectorConfigVariables.SKIP_REPLICA_START.toString(), "true");
-        return props;
+        // setup() runs ConnectionTimeZonePreflight before anything else, and both zone keys are mandatory.
+        return ZoneFixtures.withZones(props);
     }
 
     private static void clearFifo() throws Exception {

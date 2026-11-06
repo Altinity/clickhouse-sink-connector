@@ -277,8 +277,20 @@ public final class BinlogConnectionGuard {
             this.timeoutMs = timeoutMs;
         }
 
+        /**
+         * Refuses the read while a partial update event has stopped the engine (spec 01.10 section 3.1): the
+         * connector must not read on past an event it cannot replicate. Nothing is consumed from the socket.
+         */
+        private static void refuseWhenUnreplicable() throws IOException {
+            Throwable stop = BinlogEventAudit.unreplicable();
+            if (stop != null) {
+                throw new IOException(stop.getMessage(), stop);
+            }
+        }
+
         @Override
         public int read() throws IOException {
+            refuseWhenUnreplicable();
             int b;
             try {
                 b = super.read();
@@ -296,6 +308,7 @@ public final class BinlogConnectionGuard {
             if (len == 0) {
                 return 0;
             }
+            refuseWhenUnreplicable();
             int n;
             try {
                 n = super.read(b, off, len);

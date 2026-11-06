@@ -138,12 +138,12 @@ class TestNoWc(unittest.TestCase):
         self.assertEqual([call.args[0] for call in calculate.call_args_list], ["orders"])
 
     def test_legacy_mysql_side(self):
-        self.check_side(lm, ["--mysql_host", "h", "--mysql_database", "shop", "--tables_regex", "orders", "--no_wc"],
-                        "calculate_checksum")
+        self.check_side(lm, ["--mysql_host", "h", "--mysql_database", "shop", "--tables_regex", "orders", "--no_wc",
+                             "--source_timezone", "UTC"], "calculate_checksum")
 
     def test_packaged_mysql_side(self):
-        self.check_side(pm, ["--mysql_host", "h", "--mysql_database", "shop", "--tables_regex", "orders", "--no_wc"],
-                        "calculate_checksum")
+        self.check_side(pm, ["--mysql_host", "h", "--mysql_database", "shop", "--tables_regex", "orders", "--no_wc",
+                             "--source_timezone", "UTC"], "calculate_checksum")
 
     def test_legacy_mysql_count(self):
         self.check_side(lmc, ["--mysql_host", "h", "--mysql_database", "shop", "--include_tables_regex", "orders",
@@ -261,7 +261,7 @@ class TestClickHouseCount(unittest.TestCase):
         self.assertFalse(any("'None'" in sql for sql in executed), executed)
         logs, executed = self.count(module, "toYYYYMM(dt)", include_partitions_regex="p.*", where="x > 0")
         self.assertIn("INFO:root:Count for table shop.orders = 30", logs)
-        self.assertTrue(any("toYYYYMM(dt) = '202609'" in sql and "and x > 0" in sql for sql in executed), executed)
+        self.assertTrue(any("toYYYYMM(dt) = '202609'" in sql and "and (x > 0)" in sql for sql in executed), executed)
         # --no_wc passes no partition key; it is read when a partition regex needs it
         logs, executed = self.count(module, None, include_partitions_regex="p.*")
         self.assertIn("INFO:root:Count for table shop.orders = 30", logs)

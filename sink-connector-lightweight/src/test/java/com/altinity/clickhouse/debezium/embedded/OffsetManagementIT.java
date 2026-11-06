@@ -105,7 +105,7 @@
 //        Thread.sleep(10000);
 //
 //        DebeziumChangeEventCapture dec = engine.get();
-//        long getStoredRecordTs = dec.getLatestRecordTimestamp(new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)), props);
+//        long getStoredRecordTs = dec.getLatestRecordTimestamp(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(PropertiesHelper.toMap(props))), props);
 //
 //        Assert.assertTrue(getStoredRecordTs > 0);
 //

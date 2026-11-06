@@ -99,7 +99,7 @@ class TestInterruptedPatch(unittest.TestCase):
         shutil.rmtree(self.d)
 
     def _args(self, **over):
-        base = dict(ch_config=os.path.join(self.d, "client.xml"), dump_base=self.d, stamp="20260928", schemas=["s"],
+        base = dict(ch_config=os.path.join(self.d, "client.xml"), dump_base=self.d, stamp="20260928", schemas=["s"], source_timezone="America/Chicago",
                     restore_suffix="_restore", ch_host="ch.example", ch_port=9000, apply=True, canary_list=None,
                     tables=".*", skip_load=False, drop_ch_only=False, load_parallel=1, load_threads=1, loader_cmd=None,
                     loader_cwd=None, canary_threshold=0.99, force=False, offset_table=None, offset_key=None,
@@ -310,7 +310,7 @@ class GuardCase(unittest.TestCase):
                    f"CREATE TABLE `{name}` (\n  `id` int NOT NULL,\n  `v` int NOT NULL\n) ENGINE=InnoDB;\n")
 
     def args(self, **over):
-        base = dict(ch_config=os.path.join(self.d, "client.xml"), dump_base=self.d, stamp="20260928", schemas=["s"],
+        base = dict(ch_config=os.path.join(self.d, "client.xml"), dump_base=self.d, stamp="20260928", schemas=["s"], source_timezone="America/Chicago",
                     restore_suffix="_restore", ch_host="ch.example", ch_port=9000, apply=True, canary_list=None,
                     tables=".*", skip_load=False, drop_ch_only=False, load_parallel=1, load_threads=1, loader_cmd=None,
                     loader_cwd=None, canary_threshold=0.99, force=False, offset_table="db.replica_source_info",

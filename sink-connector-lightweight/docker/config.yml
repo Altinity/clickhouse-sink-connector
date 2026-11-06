@@ -237,9 +237,9 @@ connection.pool.disable: "true"
 
 # Required for fixing bug with freeze in debezium loop.
 use.nongraceful.disconnect: "true"
-database.keep.alive.interval.ms: "30000"  #Send keepalive every 30 seconds
-database.connection.reconnect.backoff.ms: "1000"
-database.connection.reconnect.backoff.max.ms: "10000"
+# Read by the binlog connection guard (binlog.read.timeout.ms defaults to twice this value) and by
+# Debezium only when connect.keep.alive=true; keep-alive is off by default (spec 01.07 section 3.4).
+connect.keep.alive.interval.ms: "60000"
 database.ssl.mode: "disabled"
 # If set, a non-default value will be set, for example if NULL is passed from source, the value will be NULL.
 non.default.value: "true"

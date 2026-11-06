@@ -16,6 +16,8 @@ spec:
     clickhouse.server.user: {{ $.Values.clickhouseSinkConnector.clickhouse.server.user }}
     clickhouse.server.password: {{ $.Values.clickhouseSinkConnector.clickhouse.server.password }}
     clickhouse.server.port: {{ $.Values.clickhouseSinkConnector.clickhouse.server.port }}
+    database.connectionTimeZone: {{ required "clickhouseSinkConnector.timezone.connectionTimeZone is required: the time zone of the source database" $.Values.clickhouseSinkConnector.timezone.connectionTimeZone | quote }}
+    clickhouse.datetime.timezone: {{ required "clickhouseSinkConnector.timezone.clickhouseDatetime is required: the time zone of the ClickHouse DateTime columns" $.Values.clickhouseSinkConnector.timezone.clickhouseDatetime | quote }}
     clickhouse.topic2table.map: "employees:employee"
     store.kafka.metadata: "false"
     topic.creation.default.partitions: "6"

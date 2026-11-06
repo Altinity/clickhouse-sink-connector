@@ -72,7 +72,7 @@ Changed:
 | aopalliance:aopalliance:1.0 | Public Domain | http://aopalliance.sourceforge.net/ |
 | at.yawk.lz4:lz4-java:1.10.4 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |
 | ch.qos.reload4j:reload4j:1.2.25 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |
-| com.alibaba:fastjson:1.2.83 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |
+| com.alibaba:fastjson:1.2.84 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |
 | com.clickhouse:clickhouse-client:0.9.8 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |
 | com.clickhouse:clickhouse-data:0.9.8 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |
 | com.clickhouse:clickhouse-http-client:0.9.8 | Apache-2.0 | https://www.apache.org/licenses/LICENSE-2.0.txt |

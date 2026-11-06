@@ -214,7 +214,7 @@ class TestArgumentsReachTheSideUnchanged(unittest.TestCase):
 
     def test_mysql_side_receives_table_and_where_byte_for_byte(self):
         argv = self.received(tl.get_mysql_checksum_command(MYSQL_HOST, "shop", self.TABLE, "id", 10, where=self.WHERE))
-        self.assertEqual(argv[argv.index("--where") + 1], f" 1=1  and {self.WHERE}  and {{partition_expression}}=20260928")
+        self.assertEqual(argv[argv.index("--where") + 1], f" 1=1  and ({self.WHERE})  and {{partition_expression}}=20260928")
         regex = argv[argv.index("--tables_regex") + 1]
         self.assertTrue(re.fullmatch(regex, self.TABLE), regex)
         self.assertFalse(re.fullmatch(regex, "orders"), regex)
@@ -223,7 +223,7 @@ class TestArgumentsReachTheSideUnchanged(unittest.TestCase):
         argv = self.received(tl.get_clickhouse_checksum_command(CH_HOST, "shop", self.TABLE, "id", 10, where=self.WHERE,
                                                                  partition_key="to_days(`created`)"))
         self.assertEqual(argv[argv.index("--where") + 1],
-                         f" 1=1  and {self.WHERE}  and {{partition_expression}}=toDate('2026-09-28') ")
+                         f" 1=1  and ({self.WHERE})  and {{partition_expression}}=toDate('2026-09-28') ")
         self.assertEqual(argv[argv.index("--partition_key") + 1], "to_days(created)")
         regex = argv[argv.index("--tables_regex") + 1]
         self.assertTrue(re.fullmatch(regex, self.TABLE), regex)
@@ -279,7 +279,8 @@ class TestEmptyOnBothSides(unittest.TestCase):
         self.assertTrue(any(line.startswith("ERROR:") and "EMPTY on both sides: 1 table(s)" in line for line in logs), logs)
 
     def test_fail_on_empty_flag_exists(self):
-        with patch.object(sys, "argv", ["x", "--config_file", "/nonexistent.yaml", "--fail_on_empty"]), \
+        with patch.object(sys, "argv", ["x", "--config_file", "/nonexistent.yaml", "--fail_on_empty",
+                                        "--source_timezone", "America/Chicago"]), \
                 patch.object(tl, "parse_config", side_effect=SystemExit(7)):
             with self.assertRaises(SystemExit) as raised:
                 tl.main()
@@ -294,20 +295,142 @@ class TestEmptyOnBothSides(unittest.TestCase):
 
 
 class TestSideWarningsReachTheDriverLog(unittest.TestCase):
-    """FM-13.06-8: coverage and clamp WARNINGs of the sides are relayed, at INFO
-    as side notes without the word WARNING (spec 13.06 section 3.17)."""
+    """FM-13.06-8: coverage WARNINGs of the sides are relayed, at INFO as side
+    notes without the word WARNING (spec 13.06 section 3.17). A clamp WARNING
+    also makes the table DIFFERENT (TestClampedValuesMakeTheVerdictDifferent)."""
 
     def test_side_warnings_are_logged_by_the_driver(self):
         coverage = "Not compared in table shop.orders: floating point columns ['ratio'] (pass --include_floating_point_columns ...)"
-        clamp = "3 out-of-range datetime values clamped in table shop.orders"
+        clamp = "3 out-of-range datetime values clamped to [1900-01-01 00:00:00, 2299-12-31 23:59:59] in table shop.orders"
         def outputs(cmd):
             return "0", side_output("shop.orders", MD5_A, 2, (side_line("WARNING", coverage), side_line("WARNING", clamp)))
         code, logs = run_driver(outputs)
         self.assertEqual(code, 0)
         self.assertTrue(any(line.startswith("INFO:") and "side note" in line and coverage in line for line in logs), logs)
         self.assertTrue(any(line.startswith("INFO:") and "side note" in line and clamp in line for line in logs), logs)
+        # Both sides carry the same clamp here, so each side's notice is one WARNING; the coverage note adds none.
+        # The run summary's mixed-zone limit is one further line a DIFFERENT table gets, at INFO.
+        warnings = [line for line in logs if line.startswith("WARNING:")]
+        self.assertEqual(len(warnings), 2, logs)
+        self.assertTrue(all("Clamped values on" in line for line in warnings), logs)
+        self.assertEqual(len([line for line in logs if line.startswith("INFO:") and "Mixed-zone limit for shop.orders:" in line]), 1, logs)
+        self.assertFalse(any("No difference for shop.orders" in line for line in logs), logs)
+        self.assertTrue(any("1 table(s) DIFFERENT" in line for line in logs), logs)
+
+    def test_a_skipped_floating_point_column_is_a_side_note_at_info_never_a_warning(self):
+        """The line a side really prints carries the count. The scheduled job fails on any WARNING line (spec 13.06
+        section 3.17), so a table whose values match must pass; the hole is named at INFO, per side and in the run
+        summary (spec 11.02 section 3.9)."""
+        coverage = ("Not compared in table shop.orders: 1 floating point column ['ratio'] "
+                    "(pass --include_floating_point_columns to compare their text renderings)")
+        def outputs(cmd):
+            return "0", side_output("shop.orders", MD5_A, 2, (side_line("WARNING", coverage),))
+        with patch.dict(tl.not_compared_findings, clear=True):
+            code, logs = run_driver(outputs)
+        self.assertEqual(code, 0)
+        self.assertEqual([line for line in logs if line.startswith("WARNING:")], [], logs)
+        self.assertEqual(len([line for line in logs if line.startswith("INFO:") and "side note" in line
+                              and "1 floating point column ['ratio']" in line]), 2, logs)
+        self.assertTrue(any(line.startswith("INFO:") and "NOT COMPARED (named" in line
+                            and "shop.orders: floating point columns ['ratio']" in line for line in logs), logs)
         self.assertTrue(any("No difference for shop.orders" in line for line in logs), logs)
-        self.assertFalse(any("WARNING" in line for line in logs), logs)
+
+
+MYSQL_CLAMP_NOTICE =("3 out-of-range date/datetime values clamped (datetime to [1900-01-01 00:00:00, 2299-12-31 23:59:59], "
+                      "date to [1000-01-01, 9999-12-31]) in table shop.orders")
+CH_CLAMP_NOTICE = "2 out-of-range datetime values clamped to [1900-01-01 00:00:00, 2299-12-31 23:59:59] in table shop.orders"
+
+
+class TestClampedValuesMakeTheVerdictDifferent(unittest.TestCase):
+    """A clamped value compares as the bound on both sides, so equal checksums
+    do not prove equal rows: any clamp on any side makes the table DIFFERENT,
+    never MATCH with an INFO count (spec 11.02 section 3.4, MySQL is the source
+    of truth)."""
+
+    def side_outputs(self, mysql_notice=None, ch_notice=None):
+        def outputs(cmd):
+            notice = mysql_notice if is_mysql_side(cmd) else ch_notice
+            extra = (side_line("WARNING", notice),) if notice else ()
+            return "0", side_output("shop.orders", MD5_A, 5, extra)
+        return outputs
+
+    def test_mysql_clamp_with_equal_checksums_is_different(self):
+        code, logs = run_driver(self.side_outputs(mysql_notice=MYSQL_CLAMP_NOTICE))
+        self.assertEqual(code, 0)
+        self.assertFalse(any("No difference for shop.orders" in line for line in logs), logs)
+        self.assertTrue(any("1 table(s) DIFFERENT" in line for line in logs), logs)
+        self.assertTrue(any(line.startswith("WARNING:") and "Clamped values on db1 for shop.orders: 3 out-of-range" in line
+                            for line in logs), logs)
+
+    def test_clickhouse_clamp_on_a_replica_is_different(self):
+        code, logs = run_driver(self.side_outputs(ch_notice=CH_CLAMP_NOTICE))
+        self.assertFalse(any("No difference for shop.orders" in line for line in logs), logs)
+        self.assertTrue(any("Clamped values on ch-host for shop.orders: 2 out-of-range" in line for line in logs), logs)
+        self.assertTrue(any("1 table(s) DIFFERENT" in line for line in logs), logs)
+
+    def test_a_single_clamped_value_is_different(self):
+        one = "1 out-of-range datetime values clamped to [1900-01-01 00:00:00, 2299-12-31 23:59:59] in table shop.orders"
+        code, logs = run_driver(self.side_outputs(ch_notice=one))
+        self.assertFalse(any("No difference for shop.orders" in line for line in logs), logs)
+        self.assertTrue(any("1 table(s) DIFFERENT" in line for line in logs), logs)
+
+    def test_clamp_on_both_sides_is_different(self):
+        _code, logs = run_driver(self.side_outputs(mysql_notice=MYSQL_CLAMP_NOTICE, ch_notice=CH_CLAMP_NOTICE))
+        self.assertFalse(any("No difference for shop.orders" in line for line in logs), logs)
+        self.assertEqual(sum(line.startswith("WARNING:") and "Clamped values on" in line for line in logs), 2, logs)
+
+    def test_clamp_fails_the_run_with_fail_on_different(self):
+        code, _logs = run_driver(self.side_outputs(mysql_notice=MYSQL_CLAMP_NOTICE), fail_on_different=True)
+        self.assertEqual(code, 1)
+
+    def test_no_clamp_still_matches(self):
+        code, logs = run_driver(self.side_outputs())
+        self.assertEqual(code, 0)
+        self.assertTrue(any("No difference for shop.orders" in line for line in logs), logs)
+        self.assertFalse(any("1 table(s) DIFFERENT" in line for line in logs), logs)
+        self.assertFalse(any("Clamped values" in line for line in logs), logs)
+
+    def test_both_side_texts_are_read_back_by_the_driver(self):
+        self.assertEqual(tl.clamped_side_count(side_output("shop.orders", MD5_A, 1, (side_line("WARNING", MYSQL_CLAMP_NOTICE),))), 3)
+        self.assertEqual(tl.clamped_side_count(side_output("shop.orders", MD5_A, 1, (side_line("WARNING", CH_CLAMP_NOTICE),))), 2)
+        self.assertEqual(tl.clamped_side_count(side_output("shop.orders", MD5_A, 1, (side_line("INFO", CH_CLAMP_NOTICE),))), 0)
+        self.assertEqual(tl.clamped_side_count(side_output("shop.orders", MD5_A, 1)), 0)
+
+    def test_side_result_carries_the_clamp_count(self):
+        output = side_output("shop.orders", MD5_A, 5, (side_line("WARNING", MYSQL_CLAMP_NOTICE),))
+        result = tl.side_result(["x", "--mysql_database", "shop"], MYSQL_HOST, "orders", "0", output, 0.1)
+        self.assertEqual(result, (MYSQL_HOST, "shop.orders", MD5_A, 5))
+        self.assertEqual(result.clamped, 3)
+
+    def test_analyze_differences_clamp_is_different(self):
+        clamped = [tl.SideResult(MYSQL_HOST, "shop.orders", MD5_A, 5, 1), tl.SideResult(CH_HOST, "shop.orders", MD5_A, 5)]
+        self.assertEqual(tl.analyze_differences(clamped, MYSQL_HOST, [CH_HOST], "shop.orders"), tl.VERDICT_DIFFERENT)
+        clean = [tl.SideResult(MYSQL_HOST, "shop.orders", MD5_A, 5), tl.SideResult(CH_HOST, "shop.orders", MD5_A, 5)]
+        self.assertEqual(tl.analyze_differences(clean, MYSQL_HOST, [CH_HOST], "shop.orders"), tl.VERDICT_MATCH)
+
+    def test_plain_four_field_results_clamp_none(self):
+        four = [(MYSQL_HOST, "shop.orders", MD5_A, 5), (CH_HOST, "shop.orders", MD5_A, 5)]
+        self.assertEqual(tl.analyze_differences(four, MYSQL_HOST, [CH_HOST], "shop.orders"), tl.VERDICT_MATCH)
+
+    def test_slice_clamp_is_different(self):
+        condition = "`id` >= 1"
+        clamped = [tl.SideResult(MYSQL_HOST, "shop.orders", MD5_A, 5, 1), tl.SideResult(CH_HOST, "shop.orders", MD5_A, 5)]
+        self.assertEqual(tl.compare_slice(clamped, MYSQL_HOST, [CH_HOST], "shop.orders", condition), tl.VERDICT_DIFFERENT)
+        clean = [tl.SideResult(MYSQL_HOST, "shop.orders", MD5_A, 5), tl.SideResult(CH_HOST, "shop.orders", MD5_A, 5)]
+        self.assertEqual(tl.compare_slice(clean, MYSQL_HOST, [CH_HOST], "shop.orders", condition), tl.VERDICT_MATCH)
+
+    def test_recheck_pass_logs_the_clamp_at_info_and_the_last_pass_at_warning(self):
+        clamped = [tl.SideResult(MYSQL_HOST, "shop.orders", MD5_A, 5, 1), tl.SideResult(CH_HOST, "shop.orders", MD5_A, 5)]
+        calls = []
+        def checksum():
+            calls.append(1)
+            return clamped
+        with unittest.TestCase().assertLogs(level="INFO") as logs:
+            verdict = tl.verify_table(checksum, MYSQL_HOST, [CH_HOST], "shop.orders", 1, 0)
+        self.assertEqual(verdict, tl.VERDICT_DIFFERENT)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(sum(line.startswith("WARNING:") for line in logs.output), 1, logs.output)
+        self.assertTrue(any(line.startswith("INFO:") and "Clamped values on db1" in line for line in logs.output), logs.output)
 
     def test_side_error_line_fails_the_table_even_with_exit_zero(self):
         def outputs(cmd):
@@ -318,6 +441,60 @@ class TestSideWarningsReachTheDriverLog(unittest.TestCase):
         self.assertTrue(any(line.startswith("ERROR:") and "Exception in table orders" in line for line in logs), logs)
         self.assertTrue(any("Checksum ERROR for shop.orders" in line for line in logs), logs)
         self.assertFalse(any("No difference" in line for line in logs), logs)
+
+
+def mixed_side_outputs(cmd):
+    """The MySQL side reads MD5_A and the replica side MD5_B, so the table is DIFFERENT with no clamp."""
+    return "0", side_output("shop.orders", MD5_A if is_mysql_side(cmd) else MD5_B, 3)
+
+
+class TestMixedZoneLimitIsNamed(unittest.TestCase):
+    """A table the connector wrote in another zone is DIFFERENT, and no checksum can tell that from drift.
+    Each DIFFERENT table gets one INFO line that names it and the run's zone (spec 11.02 section 3.2 step 1),
+    never a WARNING: the job log keeps WARNING for the difference itself, one line per table (spec 13.06
+    section 3.17); a clean run gets none."""
+
+    def mixed_zone_notes(self, verdicts, **kwargs):
+        with patch.object(tl.logging, "info") as info, patch.object(tl.logging, "warning") as warn:
+            code = tl.report_run_summary(verdicts, False, **kwargs)
+        self.assertEqual([call for call in warn.call_args_list if "Mixed-zone limit" in call.args[0]], [])
+        return code, [call.args[0] for call in info.call_args_list if "Mixed-zone limit" in call.args[0]]
+
+    def test_a_different_table_gets_a_mixed_zone_note(self):
+        code, lines = self.mixed_zone_notes({"orders": tl.VERDICT_DIFFERENT, "users": tl.VERDICT_MATCH})
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("Mixed-zone limit for orders:", lines[0])
+        self.assertNotIn("users", lines[0])
+        self.assertEqual(code, 0)
+
+    def test_the_note_names_the_run_zone(self):
+        code, lines = self.mixed_zone_notes({"orders": tl.VERDICT_DIFFERENT}, source_zone="America/Chicago")
+        self.assertEqual(len(lines), 1, lines)
+        self.assertIn("America/Chicago (--source_timezone)", lines[0])
+        self.assertNotIn("not given", lines[0])
+
+    def test_each_different_table_gets_its_own_note(self):
+        code, lines = self.mixed_zone_notes(
+            {"a_tbl": tl.VERDICT_DIFFERENT, "b_tbl": tl.VERDICT_DIFFERENT, "c_tbl": tl.VERDICT_MATCH}, source_zone="UTC")
+        self.assertEqual(len(lines), 2, lines)
+        self.assertTrue(any("for a_tbl:" in line for line in lines), lines)
+        self.assertTrue(any("for b_tbl:" in line for line in lines), lines)
+        self.assertFalse(any("for c_tbl:" in line for line in lines), lines)
+
+    def test_a_clean_run_gets_no_mixed_zone_note(self):
+        code, lines = self.mixed_zone_notes({"users": tl.VERDICT_MATCH, "empty_t": tl.VERDICT_EMPTY})
+        self.assertEqual(lines, [])
+        self.assertEqual(code, 0)
+
+    def test_the_driver_names_the_run_zone_in_the_note_at_info(self):
+        code, logs = run_driver(mixed_side_outputs)
+        self.assertEqual(code, 0)
+        notices = [line for line in logs if "Mixed-zone limit for shop.orders:" in line]
+        self.assertEqual(len(notices), 1, logs)
+        self.assertTrue(notices[0].startswith("INFO:"), notices)
+        self.assertIn("in UTC (--source_timezone)", notices[0])
+        # The difference itself is the only WARNING of the table: one line, which fails the job scan.
+        self.assertEqual(len([line for line in logs if line.startswith("WARNING:")]), 1, logs)
 
 
 class TestSourceColumnSetReachesTheReplicaSide(unittest.TestCase):

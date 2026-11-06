@@ -30,23 +30,27 @@ database).
 
 ### 3.1 The sentinel
 The open (current) version of a row carries `_valid_to` equal to the
-sentinel **`2100-01-01 00:00:00`** (`DataTypeRange.DATETIME32_MAX_TTL`,
-rendered by `epochSecondsToDateString` in UTC). It is not the `DateTime`
+sentinel **the instant `2100-01-01T00:00:00Z`, epoch `4102444800`**
+(`DataTypeRange.DATETIME32_MAX_TTL`). It is written everywhere as the epoch
+number, never as wall-clock text (Spec 07.03 section 3.1.12; Spec 12.04
+section 3.5): a quoted default or literal is read in the column's zone, so
+`'2100-01-01 00:00:00'` under `America/Chicago` is `4102466400`, six hours
+after the sentinel. It is not the `DateTime`
 maximum (2106-02-07); it is a fixed instant chosen so that
 `toDate(_valid_to)` of every open row is the single partition `2100-01-01`.
 All closed versions have `_valid_to` < sentinel and fall into the partition
 of the day they were superseded. Formal: `Replication.History.openEnd`.
 
-Because the sentinel is written both as a DDL `DEFAULT` literal and as a
-statement literal (12.03), and both are rendered "without timezone
-adjustment" from the same epoch value, the open-row predicate
-`` `_valid_to` = toDateTime('2100-01-01 00:00:00', '<server tz>') `` used by
-12.03 matches the value the DDL default and the field mapper store **as long
-as the server timezone used in the statement equals the column's timezone**.
-Both come from `clickhouse.datetime.timezone` when set, else the server's
-`timezone()`. A table whose `_valid_to` column carries a different explicit
-timezone than the one the connector resolves at runtime would never match
-its own open rows (**Gap G-12.02-1**: unverified by any test).
+The sentinel is the same epoch in the DDL `DEFAULT` and in every statement
+literal (12.03), so the open-row predicate
+`` `_valid_to` = toDateTime(4102444800) `` matches the value the DDL default and
+the field mapper store **whatever timezone the column or the server carries**.
+Before this revision the DEFAULT and the literal were quoted wall-clock text
+read in the column's zone; a column zone other than the one used for the
+literal (for example `DateTime('America/Chicago')` in a UTC server) stored the
+sentinel six hours later and never matched its own open rows (Gap G-12.02-1,
+closed by Spec 07.03 section 3.1.12; tables created earlier keep their DEFAULT,
+see that section's recovery note).
 
 ### 3.2 Columns appended in history mode
 Appended after the source columns, in this order, **identically on both
@@ -54,8 +58,8 @@ paths**:
 
 | Column | Type (record path `ClickHouseAutoCreateTable` = DDL path `MySqlDDLParserListenerImpl`) |
 |---|---|
-| `_valid_from` | `DateTime[('<tz>')] DEFAULT '2100-01-01 00:00:00'` |
-| `_valid_to` | `DateTime[('<tz>')] DEFAULT '2100-01-01 00:00:00'` |
+| `_valid_from` | `DateTime[('<tz>')] DEFAULT 4102444800` |
+| `_valid_to` | `DateTime[('<tz>')] DEFAULT 4102444800` |
 | `_operation` | `LowCardinality(String)` |
 | `is_deleted` | `UInt8` (record path: emitted here, then **not** repeated with the engine columns; DDL path: emitted with the engine columns, as in standard mode) |
 | `_version` | `UInt64` — every row of the table, whichever statement or release wrote it, carries the **history version domain** of 12.03 §3.5.1: the snowflake encoding of the event's ordering key (`ReplicationHistoryHandler.historyVersion`) |
@@ -69,12 +73,11 @@ Rules:
    connector always binds `_valid_from` explicitly (12.03 §3.1), so the
    default is only observable for rows inserted by something other than the
    connector.
-3. Both paths add the `DateTime` timezone suffix when
-   `clickhouse.datetime.timezone` is configured (DDL path:
-   `DataTypeConverter.addTimeZoneToDateTimeType`; record path: the same rule
-   in `historyDateTimeColumnType`, an unparseable timezone logged and
-   ignored on both) — resolved difference D-2; a table gets the same column
-   type whichever path created it (08.05 §3.1.1).
+3. Both paths add the `DateTime` timezone suffix from `clickhouse.datetime.timezone`,
+   which is mandatory (Spec 07.03 §3.1.2), so both use the configured zone (DDL path:
+   `DataTypeConverter.addTimeZoneToDateTimeType`; record path: `historyDateTimeColumnType`).
+   A value that does not resolve is refused at start, not ignored on either path. A table
+   gets the same column type whichever path created it (08.05 §3.1.1).
 4. `ALIAS` columns from `column_type_override.alias.*` are appended after the
    history columns (record path: before; DDL path: after — cosmetic).
 5. The comment in the DDL path (`deleted_time DateTime DEFAULT '2149-06-06'`)
@@ -111,8 +114,8 @@ Golden DDL-path output (from
 ```
 CREATE TABLE if not exists `employees`.`test_table`(
   `id` Int32 NOT NULL, `name` String NOT NULL, `created_at` DateTime64(0,'America/Chicago') NOT NULL,
-  `_valid_from` DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',
-  `_valid_to`   DateTime('America/Chicago') DEFAULT '2100-01-01 00:00:00',
+  `_valid_from` DateTime('America/Chicago') DEFAULT 4102444800,
+  `_valid_to`   DateTime('America/Chicago') DEFAULT 4102444800,
   `_operation` LowCardinality(String), `_version` UInt64, `is_deleted` UInt8)
 Engine=ReplacingMergeTree(_version,is_deleted)
 PARTITION BY toDate(`_valid_to`) ORDER BY (`id`,`_valid_to`) TTL `_valid_to` + toIntervalDay(30)
@@ -183,7 +186,7 @@ Both paths emit `CREATE TABLE IF NOT EXISTS` in history mode
 - `MySqlDDLParserListenerImplTest.testReplicationHistoryEnabledDDLTranslation()` — §3.2/§3.4 DDL path golden output (timezone suffix, defaults, engine, partition, sorting key with `_valid_to`, TTL from `replication.history.ttl`).
 - `MySqlDDLParserListenerImplTest.testReplicationHistoryAppendsValidToWithPrimaryKeyOverride()` — §3.4: `_valid_to` is appended on the schema-override `primary_key` branch.
 - `MySqlDDLParserListenerImplTest.testReplicationHistoryCompositeKeyIsAFlatTuple()` — §3.4: a composite key renders `ORDER BY (a,b,`_valid_to`)`, not a nested tuple.
-- `ClickHouseAutoCreateTableHistoryDdlTest.historyModeEmitsDefaultsTimezoneAndConfiguredTtl()` — §3.2/§3.4 record path: both validity columns carry `DateTime('<tz>') DEFAULT '2100-01-01 00:00:00'`, and the TTL uses the configured `replication.history.ttl`.
+- `ClickHouseAutoCreateTableHistoryDdlTest.historyModeEmitsDefaultsTimezoneAndConfiguredTtl()` — §3.2/§3.4 record path: both validity columns carry `DateTime('<tz>') DEFAULT 4102444800`, and the TTL uses the configured `replication.history.ttl`.
 - `ClickHouseAutoCreateTableHistoryDdlTest.standardModeEmitsNoHistoryColumns()` — the history columns, partition and TTL appear only when `replication.history.enable=true`.
 - `CreateTableIdempotentTest.testHistoryModeCreateTableIsGuarded()` — §3.7.
 - `DBMetadataRetryClassificationTest.testTableAlreadyExistsIsNotRetryable()` — §3.7.
@@ -200,7 +203,7 @@ Both paths emit `CREATE TABLE IF NOT EXISTS` in history mode
 | Id | Status | Old behaviour | New behaviour | Witness |
 |---|---|---|---|---|
 | D-1 | **Resolved** | record path `_valid_from DateTime` without default | both paths `_valid_from ... DEFAULT '<sentinel>'` (§3.2 rule 2) | `ClickHouseAutoCreateTableHistoryDdlTest.historyModeEmitsDefaultsTimezoneAndConfiguredTtl()` |
-| D-2 | **Resolved** | record path bare `DateTime`; DDL path `DateTime('<tz>')` | both paths add the configured timezone (§3.2 rule 3) | same test |
+| Timezone suffix | **Resolved** | record path bare `DateTime`; DDL path `DateTime('<tz>')` | both paths add the configured timezone (§3.2 rule 3) | same test |
 | D-3 | **Resolved** | record path `TTL ... toIntervalDay(30)` hardcoded | both paths `toIntervalDay(replication.history.ttl)` (§3.4) | same test |
 | G-12.02-1 | Open | both paths: the open-row predicate depends on the statement timezone equalling the column timezone | unchanged; untested | — |
 | G-12.02-2 | Open | legacy sign engine + history columns on the record path | unchanged; untested | — |
@@ -213,7 +216,7 @@ Both paths emit `CREATE TABLE IF NOT EXISTS` in history mode
 The shape is fixed once, at `CREATE TABLE IF NOT EXISTS`, and never checked again. An SCD2 table whose shape drifted from §3.2–§3.4 is used as it is, whether it was created by an older release, under a different timezone, with a different TTL, or altered by hand. Every failure below therefore persists across restarts until an operator repairs the table. None of them is healed by redelivery. The repair of the rows themselves is the procedure of 12.03 §7 FM-12.03-8.
 
 - **FM-12.02-1 The statement timezone differs from the `_valid_to` column timezone (Gap G-12.02-1)**
-  - **Trigger**: `clickhouse.datetime.timezone` is changed or removed after the SCD2 tables were created, the ClickHouse server's `timezone()` changes while the setting is unset, or a table was created elsewhere with another explicit zone.
+  - **Trigger**: `clickhouse.datetime.timezone` is changed after the SCD2 tables were created, or a table was created elsewhere with another explicit zone. Removing the setting refuses the start (Spec 07.03 §3.1.2); the server's `timezone()` is not read.
   - **Behaviour**: `ReplicationHistoryHandler` renders the open-row predicate as `` `_valid_to` = toDateTime('2100-01-01 00:00:00', '<runtime tz>') `` (`openRowSentinel`, `serverTimeZone`). The stored sentinel is the same wall clock in the column's zone, so it is a different instant and nothing matches. An UPDATE still writes its after row at the same `(k, S)` and supersedes the open row, so the current state stays right, but no close row is written. A DELETE writes nothing (12.03 §7 FM-12.03-4).
   - **Detection**: none. The statements succeed with zero rows selected.
   - **Blast radius**: every source DELETE after the change is silently lost from the current-state view. History loses every closed version from then on.

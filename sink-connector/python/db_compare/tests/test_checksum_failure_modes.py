@@ -30,13 +30,13 @@ def driver_args(**overrides):
         fail_on_lock_timeout=False, no_wc=False, include_partitions_regex=None,
         exclude_tables_regex=None, non_partitioned_tables_only=False,
         include_floating_point_columns=False, include_json_columns=False, partition_date=None,
-        threads_per_table=1, fail_on_empty=False,
+        threads_per_table=1, fail_on_empty=False, allow_coverage_gap=False, fail_on_different=False,
     )
     values.update(overrides)
     return argparse.Namespace(**values)
 
 
-def run_driver(compute_checksum, tables=("orders",), **arg_overrides):
+def run_driver(compute_checksum, tables=("orders",), config=None, **arg_overrides):
     """Run run_config() over stubbed catalog helpers; return (exit code, log lines)."""
     table_rows = MagicMock()
     table_rows.mappings.return_value.fetchall.return_value = [{"table_name": t} for t in tables]
@@ -58,7 +58,7 @@ def run_driver(compute_checksum, tables=("orders",), **arg_overrides):
     try:
         with unittest.TestCase().assertLogs(level="INFO") as logs:
             try:
-                tl.run_config(CONFIG)
+                tl.run_config(CONFIG if config is None else config)
                 code = None
             except SystemExit as exit_:
                 code = exit_.code
@@ -116,15 +116,40 @@ class TestRunExitCode(unittest.TestCase):
         self.assertTrue(any("1 table(s) have NO verdict" in line and "shop.orders" in line for line in logs), logs)
 
     def test_lock_timeout_skips_the_table_and_names_it_in_the_summary(self):
+        # The skip still checksums the other tables, but the uncompared table is a coverage gap and
+        # the run exits 1 unless --allow_coverage_gap accepts it.
         def compute(database, dom, tom, table, *a, **k):
             if table == "hot":
                 raise tl.LockAcquisitionError("Could not acquire READ lock on hot within 30s")
             return results("abc", "abc", table=table)
         code, logs = run_driver(compute, tables=("hot", "orders"))
-        self.assertEqual(code, 0, "skip-and-warn is the documented default")
+        self.assertEqual(code, 1, "a coverage gap fails the run by default")
         self.assertTrue(any("COVERAGE GAP -- skipping checksum for shop.hot" in line for line in logs), logs)
         self.assertTrue(any("1 table(s) were NOT compared" in line and "shop.hot" in line for line in logs), logs)
         self.assertTrue(any("No difference for orders" in line for line in logs), logs)
+
+    def test_lock_timeout_gap_is_accepted_with_allow_coverage_gap(self):
+        def compute(database, dom, tom, table, *a, **k):
+            if table == "hot":
+                raise tl.LockAcquisitionError("Could not acquire READ lock on hot within 30s")
+            return results("abc", "abc", table=table)
+        code, logs = run_driver(compute, tables=("hot", "orders"), allow_coverage_gap=True)
+        self.assertEqual(code, 0)
+        self.assertTrue(any("COVERAGE GAP accepted (--allow_coverage_gap)" in line and "shop.hot" in line
+                            for line in logs), logs)
+
+    def test_lock_timeout_gap_in_an_earlier_database_still_fails_the_run(self):
+        # The skipped list spans every database of the run, not only the last one.
+        config = {"source": {"mysql": {"host": MYSQL_HOST, "databases": ["shop", "crm"]}},
+                  "replicas": [{"clickhouse": {"host": CH_HOST}}]}
+
+        def compute(database, dom, tom, table, *a, **k):
+            if database == "shop" and table == "orders":
+                raise tl.LockAcquisitionError("Could not acquire READ lock on orders within 30s")
+            return results("abc", "abc", table=database + "." + table)
+        code, logs = run_driver(compute, tables=("orders",), config=config, mysql_database=None)
+        self.assertEqual(code, 1, logs)
+        self.assertTrue(any("1 table(s) were NOT compared" in line and "shop.orders" in line for line in logs), logs)
 
     def test_lock_timeout_fails_the_run_when_asked(self):
         def compute(*a, **k):
@@ -132,8 +157,21 @@ class TestRunExitCode(unittest.TestCase):
         code, _ = run_driver(compute, tables=("hot",), fail_on_lock_timeout=True)
         self.assertEqual(code, 1)
 
-    @unittest.skip("DEFECT FM-11.02-1: a checksum DIFFERENCE is only a WARNING line; run_config() "
-                   "ends with sys.exit(0), so a scheduler sees a green run")
+    def test_a_difference_is_exit_zero_by_default(self):
+        # FM-11.02-1 keeps the documented default; --fail_on_different is the opt-in flag below.
+        code, logs = run_driver(lambda *a, **k: results("abc", "def"))
+        self.assertTrue(any("Checksum difference" in line for line in logs), logs)
+        self.assertEqual(code, 0)
+
+    def test_a_difference_fails_the_run_when_asked(self):
+        code, logs = run_driver(lambda *a, **k: results("abc", "def"), fail_on_different=True)
+        self.assertTrue(any("Checksum difference" in line for line in logs), logs)
+        self.assertEqual(code, 1)
+        self.assertTrue(any("DIFFERENT (failing the run: --fail_on_different)" in line and "shop.orders" in line
+                            for line in logs), logs)
+
+    @unittest.skip("FM-11.02-1 (not a defect any more): a difference keeps exit 0 unless the opt-in "
+                   "--fail_on_different is given; see test_a_difference_fails_the_run_when_asked")
     def test_a_difference_makes_the_run_exit_non_zero(self):
         code, logs = run_driver(lambda *a, **k: results("abc", "def"))
         self.assertTrue(any("Checksum difference" in line for line in logs), logs)

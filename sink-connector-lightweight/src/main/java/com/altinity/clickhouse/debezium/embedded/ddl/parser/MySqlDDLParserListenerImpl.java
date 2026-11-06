@@ -11,6 +11,7 @@ import static org.apache.commons.lang3.StringUtils.containsIgnoreCase;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
@@ -456,20 +457,17 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     /**
      * Parse the user-provided time zone string and return a ZoneId object.
      *
+     * <p>Spec 07.03 section 3.1.6 (B3): a configured value that {@link TimeZoneResolver} refuses throws
+     * rather than being logged and dropped (which silently changed the DDL column type).</p>
+     *
      * @return The ZoneId object representing the user-provided time zone, or null if not provided.
+     * @throws IllegalArgumentException when the configured zone is set but not accepted.
      */
     public ZoneId parseTimeZone() {
         String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
                 .CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        ZoneId userProvidedTimeZoneId = null;
-        try {
-            if(userProvidedTimeZone != null && !userProvidedTimeZone.isEmpty()) {
-                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-            }
-        } catch (Exception e){
-            log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
-        }
-        return userProvidedTimeZoneId;
+        return TimeZoneResolver.resolve(TimeZoneResolver.CLICKHOUSE_DATETIME_TIMEZONE, userProvidedTimeZone,
+                TimeZoneResolver.Kind.CLICKHOUSE);
     }
 
 
@@ -644,7 +642,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         String chDataTypeWithTimeZone = DataTypeConverter.addTimeZoneToDateTimeType(ClickHouseDataType.DateTime, 0, userProvidedTimeZone);
         // append this to the chDataTypeWithTimeZone
-        chDataTypeWithTimeZone = chDataTypeWithTimeZone + " DEFAULT " + "'" + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL) + "'";
+        // Epoch-exact DEFAULT (Spec 07.03 section 3.1.12): a quoted string is read in the column zone.
+        chDataTypeWithTimeZone = chDataTypeWithTimeZone + " DEFAULT " + DataTypeRange.DATETIME32_MAX_TTL;
         // If Replication history is enabled, add the
         // deleted_time DateTime DEFAULT '2149-06-06',
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
@@ -2247,6 +2246,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 log.info("ALTER TABLE clause [{}] drops the primary key; nothing is emitted for it, the "
                         + "identity is checked against the target sorting key", tree.getText());
                 removeTrailingComma();
+            } else if (isDataChangingSpecification(tree)) {
+                // A clause that rewrites the stored values of rows MySQL already holds
+                // (CONVERT TO CHARACTER SET re-encodes every string column with no row
+                // events; EXCHANGE/IMPORT/DISCARD TABLESPACE move whole partitions in or
+                // out) cannot be skipped: ClickHouse would keep the old values and the
+                // count-clean compare would not show it. Refuse loudly instead (Spec 06.03
+                // section 3.2 and Spec 06.08 section 3.1).
+                throw new DDLReplicationException("ALTER TABLE clause [" + tree.getText()
+                        + "] rewrites the stored values of existing rows and cannot be replicated; refusing to "
+                        + "skip it silently. DDL: [" + this.originalSql + "]", null);
             } else if (isNoOpSpecification(tree)) {
                 // Indexes, keys, foreign keys, DROP PRIMARY KEY, column
                 // DEFAULT changes, charset/collation, table options,
@@ -2554,14 +2563,40 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     /**
+     * The clauses that change the stored values of rows MySQL already holds:
+     * CONVERT TO CHARACTER SET, DISCARD and IMPORT TABLESPACE, and the
+     * partition operations that move rows in or out (EXCHANGE, DISCARD and
+     * IMPORT PARTITION). Every other no-op clause, including DROP and TRUNCATE
+     * PARTITION (ignored under disable.drop.truncate, Spec 06.08 §3.3), leaves
+     * the rows as they are. Spec 06.03 §3.2.
+     */
+    private static boolean isDataChangingSpecification(ParseTree tree) {
+        if (tree instanceof MySqlParser.AlterByConvertCharsetContext
+                || tree instanceof MySqlParser.AlterByDiscardTablespaceContext
+                || tree instanceof MySqlParser.AlterByImportTablespaceContext) {
+            return true;
+        }
+        if (tree instanceof MySqlParser.AlterPartitionContext) {
+            // getText() concatenates the tokens, so the keywords are adjacent.
+            String text = tree.getText().toUpperCase(Locale.ROOT);
+            return text.startsWith("EXCHANGEPARTITION")
+                    || text.startsWith("DISCARDPARTITION")
+                    || text.startsWith("IMPORTPARTITION");
+        }
+        return false;
+    }
+
+    /**
      * Returns true for an ALTER specification this translator deliberately
      * drops because ClickHouse has no equivalent and nothing is lost by
      * skipping it (Spec 06.03 §3.2): indexes and keys of every kind
      * ({@code ADD}/{@code DROP PRIMARY KEY} are recorded first and judged by
      * {@link #enforcePrimaryKeyPolicy}), foreign keys, column DEFAULT changes,
-     * CHECK constraints, charset and collation, table options,
+     * CHECK constraints, DEFAULT CHARACTER SET, table options,
      * {@code ALGORITHM}/{@code LOCK} hints, key enable/disable, physical
-     * ORDER BY, tablespace and every partition operation.
+     * ORDER BY, and every partition operation that moves no rows. The
+     * data-changing clauses are checked first and refused by
+     * {@link #isDataChangingSpecification}.
      *
      * <p>CHECK constraints (Spec 06.04 §3.1): a CHECK holds no data and MySQL
      * has already validated every replicated row against it. Echoed, an
@@ -2877,15 +2912,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if (renameTableContextChildren.size() >= 3) {
                     originalTableName = renameTableContextChildren.get(0).getText();
                     newTableName = renameTableContextChildren.get(2).getText();
-                    // If the table name already includes the database name don't include it in the query.
+                    // A qualified side keeps its own database: RENAME TABLE a.t TO b.t moves the
+                    // table across databases, so each side is mapped through the override map, not
+                    // both rewritten to the listener's database. An unqualified side is in the DDL's
+                    // database. Spec 06.04 section 3.4.
                     if (originalTableName.contains(".") || newTableName.contains(".")) {
-                        // Split database and table name.
-                        String origTable = originalTableName.contains(".")
-                                ? originalTableName.split("\\.")[1] : originalTableName;
-                        String newTable = newTableName.contains(".")
-                                ? newTableName.split("\\.")[1] : newTableName;
-                        this.query.append(this.databaseName).append(".").append(origTable).append(" to ").append(this.databaseName)
-                                .append(".").append(newTable);
+                        this.query.append(renameSideQualifiedName(originalTableName)).append(" to ")
+                                .append(renameSideQualifiedName(newTableName));
                     } else {
                         this.query.append(databaseName).append(".").append(originalTableName).append(" to ").append(databaseName)
                                 .append(".").append(newTableName);
@@ -2897,6 +2930,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
+    }
+
+    /**
+     * One side of a RENAME TABLE, qualified for ClickHouse. A qualified side ({@code db.t}) names its own
+     * database, mapped through the override map as the DDL's database is; an unqualified side ({@code t}) is in
+     * the DDL's database. The table part is kept as written.
+     *
+     * @param sourceName the side as written in the statement, e.g. {@code `src`.t} or {@code t}
+     * @return the ClickHouse name, e.g. {@code src.t} or {@code dst.t}
+     */
+    private String renameSideQualifiedName(String sourceName) {
+        int dot = sourceName.lastIndexOf('.');
+        if (dot < 0) {
+            return this.databaseName + "." + sourceName;
+        }
+        return overrideDatabaseName(sourceName.substring(0, dot)) + "." + sourceName.substring(dot + 1);
     }
 
     /**

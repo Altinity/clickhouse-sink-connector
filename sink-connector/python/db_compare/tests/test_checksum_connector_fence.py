@@ -396,7 +396,7 @@ class TestSlices(unittest.TestCase):
     def test_partition_placeholder_is_resolved_for_slicing(self):
         with patch.object(tl, "args", argparse.Namespace(partition_date=None), create=True):
             self.assertEqual(tl.mysql_where_for_slicing("{partition_expression} >= 3", "to_days(`d`)"),
-                             " 1=1  and to_days(`d`) >= 3 ")
+                             " 1=1  and (to_days(`d`) >= 3) ")
             self.assertIsNone(tl.mysql_where_for_slicing("{partition_expression} >= 3", None))
 
 
