@@ -75,6 +75,8 @@ there; the DateTime zone argument) are listed in Spec 08.05 §3.1.1.
 ### 3.5 DEFAULT clauses
 Literal defaults are carried to ClickHouse in ClickHouse literal syntax; on `ADD COLUMN` a `CURRENT_TIMESTAMP` default becomes the DDL event's instant and an `ENUM ... NOT NULL` without a default gets its first member, while any other non-literal default is refused loudly; on `MODIFY`/`CHANGE` a non-literal default is dropped (Spec 06.04 §3.2). A `DEFAULT` never changes a replicated value: the row image carries the source value, and ClickHouse binds it explicitly (Spec 04.03); it only decides the back-fill of rows that pre-date an added column.
 
+One literal is the exception: `DEFAULT NULL` on a column emitted as `Nullable(T)` is implied by the type and is **not** emitted (Spec 06.04 §3.2.3). It changes no stored value but ClickHouse validates the default expression on every later `ALTER`, so a carried `DEFAULT NULL` turns an ordinary `MODIFY COLUMN c String` into `Code: 70 CANNOT_CONVERT_TYPE`; MySQL's `SHOW CREATE TABLE` renders every nullable column without an explicit default that way, so the shape is ubiquitous. A `NOT NULL` column keeps its `DEFAULT NULL` as declared.
+
 ### 3.6 CREATE TABLE without a declared identity: the all-columns sorting key
 A source table may declare neither a `PRIMARY KEY` nor a `UNIQUE` key whose
 every column is `NOT NULL` (a nullable `UNIQUE` key is not a row identity: MySQL

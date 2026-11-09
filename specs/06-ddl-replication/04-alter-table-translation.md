@@ -45,7 +45,9 @@ the rules below prevent. A `MODIFY`/`CHANGE` back-fills nothing, so its
 `DEFAULT` is carried only when it is a literal and dropped (INFO) otherwise.
 
 #### 3.2.1 Literal defaults — carried, normalised to ClickHouse syntax
-`NULL` and `unaryOperator? constant` are carried on ADD, MODIFY and CHANGE,
+`NULL` and `unaryOperator? constant` are carried on ADD, MODIFY and CHANGE
+(with the single exception of §3.2.3: a `NULL` literal on a nullable column
+is implied by the type and is not emitted),
 rewritten from MySQL to ClickHouse literal syntax where the two differ
 (copied verbatim, each of these is rejected by ClickHouse and, being retried,
 stalls the stream):
@@ -130,6 +132,41 @@ Pinned by `testAddColumnCurrentTimestampBackfillsLiteral`,
 `testAddEnumNotNullDefaultsToFirstMember`, `testAddColumnExpressionDefaultIsLoud`
 and, for the MODIFY/CHANGE drop, `testModifyColumnDefaultCurrentTimestampIsDropped`.
 
+#### 3.2.3 `DEFAULT NULL` on a nullable column is implied and is NOT emitted
+A `DEFAULT NULL` on a column the translator emits as `Nullable(T)` adds
+nothing: an insert that omits the column stores NULL with or without it, so
+the value of every replicated row and every back-filled row is identical
+either way (measured: Spec 06.04 §5 `testExplicitNullDefaultOnANullableColumnIsNotEmitted`).
+It is not inert, though — ClickHouse validates a column's `DEFAULT`
+expression on **every later `ALTER`**, and the expression `NULL` is cast to
+the new type as part of that validation. When the statement has no `DEFAULT`
+of its own, the carried one is what breaks it:
+
+```
+ALTER TABLE `db`.`t` MODIFY COLUMN `label` String
+  Code: 70. DB::Exception: Cannot convert NULL to a non-nullable type:
+  While processing _CAST(NULL AS label_tmp_alter<N>, 'String') AS label:
+  default expression and column type are incompatible.
+```
+
+with the bare `Nullable(String)` (no `DEFAULT`) the same statement succeeds.
+MySQL renders a nullable column that was declared **without** any default as
+`DEFAULT NULL` in `SHOW CREATE TABLE` — the form the connector parses — so
+this shape arrives for essentially every nullable source column and turns an
+ordinary `MODIFY` into a permanently failing DDL. The translator therefore
+drops the `NULL` literal when the column is nullable, and keeps it in the two
+cases where it is not implied:
+
+- a **`NOT NULL`** column: MySQL accepts `DEFAULT NULL` there only for a
+  nullable-typed column, and ClickHouse needs the clause to reproduce it —
+  `Int32 NOT NULL DEFAULT NULL` is emitted as declared;
+- every **non-NULL** literal default, unchanged (§3.2.1).
+
+Pinned by `CreateTableDefaultEmissionTest.testExplicitNullDefaultOnANullableColumnIsNotEmitted`,
+`CreateTableDefaultEmissionTest.testNullDefaultOnANotNullColumnIsStillCarried`,
+`MySqlDDLParserListenerImplTest.testAddColumnLiteralDefaultIsKept` and
+`AlterTableDdlVariationMatrixTest.parenthesisedLiteralDefaultsSurvive`.
+
 ### 3.3 Skipped clauses and the no-bare-ALTER rule
 Clauses in the skip class of Spec 06.03 §3.2 (indexes, keys, foreign keys, `ADD`/`DROP PRIMARY KEY` when the target key is unknown or restated — loud otherwise, Spec 06.07 §3.1 —, `ALTER COLUMN SET/DROP DEFAULT`, CHECK constraints — `ADD [CONSTRAINT] CHECK` and `DROP CONSTRAINT|CHECK` —, `DEFAULT CHARACTER SET` and table options, `ALGORITHM`/`LOCK`, and the partition operations that move no rows: `ADD`, `DROP`, `TRUNCATE`, `COALESCE`, `REORGANIZE`, `ANALYZE`, `CHECK`, `OPTIMIZE`, `REBUILD`, `REPAIR` PARTITION) emit nothing and drop the separator that preceded them. A statement whose clauses are all skipped translates to `""`. Pinned by `testAlterAddIndexOnlyIsSkipped`, `testAlterDropPrimaryKeyOnlyIsSkipped`, `testAddConstraints`, `testAddCheckConstraintIsSkipped`, `testAlterDropPrimaryKeyModifyKeyAddColumnAddPrimaryKey`, `testAlterDefaultCharsetStaysANoOp`. Formal: `no_bare_alter`, `add_columns_preserved`.
 
@@ -161,6 +198,7 @@ Clauses in the skip class of Spec 06.03 §3.2 (indexes, keys, foreign keys, `ADD
 ---
 
 ## 5. Verification Criteria
+- `CreateTableDefaultEmissionTest`: `everyLiteralDefaultIsCarried`, `explicitNullDefaultOnANullableColumnIsNotEmitted` (the `DEFAULT NULL` of a nullable column is implied and dropped, §3.2.3), `nullDefaultOnANotNullColumnIsStillCarried`, `notNullColumnKeepsItsDefault`, `parenthesizedLiteralIsUnwrapped`, `currentTimestampDefaultIsCarried`, `currentTimestampDefaultFollowsTheColumnScale`, `enumNotNullWithoutDefaultGetsTheFirstMember`, `nullableEnumGetsNoImplicitDefault`, `expressionDefaultsAreDroppedNotGuessed`, `unparenthesizedExpressionDefaultsStayRejected`, `generatedColumnIsUnaffected`, `plainColumnGainsNothing`, `defaultIsInsideTheColumnDeclaration`.
 - `MySqlDDLParserListenerImplTest`: `testAlterDatabaseAddColumn`, `testDropColumn`, `testAlterAddColumnsParenthesisedList`, `testAlterAddDefinitionsSkipsEmbeddedIndex`, `testChangeColumn`, `testChangeColumnSameNameEmitsNoRename`, `testAlterAddColumnThenRenameToKeepsBothStatements`, `testAlterRenameToQualifiedTarget`, `testCreateTableLike`, `testCreateTableLikeQualifiedSource`, `dropTable`, `renameTable`, `testCreateTablePrimaryKeyWithSortOrder`, `testDecimalPrecisionWithoutScale`, `testAddColumnLiteralDefaultIsKept`, `testBitStringAndHexDefaultsAreTranslated`, `testAddColumnCurrentTimestampBackfillsLiteral`, `testAddEnumNotNullDefaultsToFirstMember`, `testAlterDatabaseAddColumnEnum` (flipped: `ENUM NOT NULL` now gets `DEFAULT '<first member>'`), `testAddColumnExpressionDefaultIsLoud`, `testModifyColumnDefaultCurrentTimestampIsDropped` (the former `testAddColumnDefaultCurrentTimestampIsDropped`, which pinned the dropped back-fill, is split into these), `testAddCheckConstraintIsSkipped` (`ADD CHECK`, `ADD CONSTRAINT ... CHECK ... NOT ENFORCED`, `DROP CONSTRAINT`, `DROP CHECK` emit nothing alone and never drop a neighbouring `ADD COLUMN`; pre-fix code echoed them), `testDropContraints`, `testAddConstraintsWithAnd`, `testAlterTableAddConstraint` (flipped from echo to skip).
 - `DdlReplayIdempotencyTest`: `testChangeColumnModifyHalfIsGuarded`, `testCreateTableLikeIsGuarded`, `testRenameTableIsGuarded`, `testDropTableIsAlwaysGuarded`, `testModifyColumnIsDeliberatelyNotGuarded`.
 - `AlterTableDdlVariationMatrixTest`: `everyGrammarAlternativeHasAMatrixRow` (every `alterSpecification` alternative the Debezium grammar defines is classified; a grammar bump that adds one fails until it is classified), `unreachableAlternativeStaysUnreachable` (`AlterByDefaultCharset` is declared unreachable because `tableOption`, alternative 1, matches `DEFAULT? charSet '='? (charsetName | DEFAULT)` first and every charset form lands on `AlterByTableOption`; a reorder that makes it reachable fails here), `eachClauseEntersItsDeclaredAlternative` (the matrix is keyed on the alternative the parser actually enters, not on how the clause reads: `ALTER COLUMN ... SET VISIBLE` reaches `AlterByAlterColumnDefault`, and every `ALTER COLUMN ... SET DEFAULT` / `DROP DEFAULT` reaches `AlterByChangeDefault`), `noClauseThrowsDuringTranslation`, `translatedClausesEmitAndSkippedClausesDoNot` (a column clause that silently joins the skip list fails here), `parenthesisedLiteralDefaultsSurvive` (17 literal forms across `INT`, `TINYINT(1)`, `BIGINT`, `DECIMAL`, `DOUBLE`, `VARCHAR`, `CHAR`, `DATE`, each with and without parentheses and `NULL`), `modifyDropsNonConstantDefaultButKeepsType`, `alterOptionsCombineWithRealClause`.

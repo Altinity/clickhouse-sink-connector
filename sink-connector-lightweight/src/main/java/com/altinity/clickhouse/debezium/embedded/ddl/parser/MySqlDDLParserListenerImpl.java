@@ -2153,6 +2153,19 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 && this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString());
         String literal = DefaultLiteralTranslator.literalDefault(defaultValue, columnType, persistRawBytes);
         if (literal != null) {
+            // `DEFAULT NULL` on a Nullable column is implied by the type, so it
+            // is not emitted (Spec 06.04 §3.2.3). It changes no stored value --
+            // an insert that omits the column stores NULL with or without it --
+            // but ClickHouse validates a default expression on every later
+            // ALTER, so keeping it turns an ordinary `MODIFY COLUMN c String`
+            // into Code: 70 CANNOT_CONVERT_TYPE ("Cannot convert NULL to a
+            // non-nullable type ... default expression and column type are
+            // incompatible"). MySQL renders a nullable column without a
+            // default as `DEFAULT NULL` in SHOW CREATE TABLE, so this shape
+            // reaches the parser constantly.
+            if (isNullColumn && "NULL".equals(literal)) {
+                return null;
+            }
             return "DEFAULT " + literal;
         }
         if (clause == ColumnClause.CREATE) {

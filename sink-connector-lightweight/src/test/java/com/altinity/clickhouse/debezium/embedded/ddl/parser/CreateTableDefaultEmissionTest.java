@@ -136,11 +136,30 @@ public class CreateTableDefaultEmissionTest {
         }
     }
 
-    /** {@code DEFAULT NULL} is a real default and is carried verbatim. */
+    /**
+     * {@code DEFAULT NULL} on a nullable column is implied by the type and is
+     * NOT emitted (Spec 06.04 §3.2.3).
+     *
+     * <p>It changes no stored value -- an insert that omits the column stores
+     * NULL either way -- but ClickHouse validates the default expression on
+     * every later ALTER, so carrying it turns an ordinary
+     * {@code MODIFY COLUMN a String} into Code: 70 CANNOT_CONVERT_TYPE
+     * ("Cannot convert NULL to a non-nullable type ... default expression and
+     * column type are incompatible"). MySQL renders a nullable column with no
+     * default as {@code DEFAULT NULL} in SHOW CREATE TABLE, so the shape
+     * arrives constantly.</p>
+     */
     @Test
-    public void explicitNullDefaultIsCarried() {
-        assertEquals("a Nullable(Int32) DEFAULT NULL",
+    public void explicitNullDefaultOnANullableColumnIsNotEmitted() {
+        assertEquals("a Nullable(Int32)",
                 columnDeclaration(translate("CREATE TABLE t (id INT PRIMARY KEY, a INT DEFAULT NULL)"), "a"));
+    }
+
+    /** A NOT NULL column's {@code DEFAULT NULL} is not implied by anything, so it is kept. */
+    @Test
+    public void nullDefaultOnANotNullColumnIsStillCarried() {
+        assertEquals("a Int32 NOT NULL DEFAULT NULL",
+                columnDeclaration(translate("CREATE TABLE t (id INT PRIMARY KEY, a INT NOT NULL DEFAULT NULL)"), "a"));
     }
 
     /** A NOT NULL column keeps its DEFAULT; the two clauses coexist. */
