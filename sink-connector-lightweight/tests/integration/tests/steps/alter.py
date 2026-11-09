@@ -203,3 +203,88 @@ def drop_primary_key(self, table_name, node=None, database=None):
         node = self.context.cluster.node("mysql-master")
 
     node.query(rf"ALTER TABLE {database}.\`{table_name}\` DROP PRIMARY KEY;")
+
+
+@TestStep(When)
+def alter_table(self, table_name, clause, node=None, database=None):
+    """Apply one raw ALTER TABLE clause list.
+
+    The MySQL grammar has 48 `alterSpecification` alternatives and the
+    connector translates some while deliberately skipping others, so the
+    exhaustive-coverage suite states each clause as data and applies it
+    through this one step. A clause that is skipped must still leave the
+    replication stream alive, which the caller asserts separately.
+    """
+    if database is None:
+        database = "test"
+
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    node.query(rf"ALTER TABLE {database}.\`{table_name}\` {clause};")
+
+
+@TestStep(When)
+def drop_table(self, table_name, node=None, database=None):
+    """DROP TABLE."""
+    if database is None:
+        database = "test"
+
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    node.query(rf"DROP TABLE {database}.\`{table_name}\`;")
+
+
+@TestStep(When)
+def rename_table(self, table_name, new_table_name, node=None, database=None):
+    """RENAME TABLE (the standalone statement, not ALTER TABLE ... RENAME TO)."""
+    if database is None:
+        database = "test"
+
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    node.query(
+        rf"RENAME TABLE {database}.\`{table_name}\` TO {database}.\`{new_table_name}\`;"
+    )
+
+
+@TestStep(When)
+def create_index(self, table_name, index_name, columns, node=None, database=None):
+    """CREATE INDEX (the standalone statement)."""
+    if database is None:
+        database = "test"
+
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    node.query(
+        rf"CREATE INDEX {index_name} ON {database}.\`{table_name}\` ({columns});"
+    )
+
+
+@TestStep(When)
+def create_view(self, table_name, view_name, select, node=None, database=None):
+    """CREATE VIEW."""
+    if database is None:
+        database = "test"
+
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    node.query(rf"CREATE VIEW {database}.{view_name} AS {select};")
+
+
+@TestStep(When)
+def create_table_like(self, table_name, new_table_name, node=None, database=None):
+    """CREATE TABLE ... LIKE (the connector maps it to CREATE TABLE ... AS)."""
+    if database is None:
+        database = "test"
+
+    if node is None:
+        node = self.context.cluster.node("mysql-master")
+
+    node.query(
+        rf"CREATE TABLE {database}.{new_table_name} LIKE {database}.\`{table_name}\`;"
+    )

@@ -69,9 +69,24 @@ stalls the stream):
   or `BIT(n>1)` data.
 - Integer, decimal, real and boolean literals are copied as written; a
   leading unary `-`/`+` is kept.
-Pinned by `testAddColumnLiteralDefaultIsKept` and
-`testBitStringAndHexDefaultsAreTranslated`. The `TINYINT(1) NOT NULL DEFAULT
-0` → `coins Int8 DEFAULT 0` mapping is unchanged.
+- **An enclosing parenthesis around a single literal is transparent**
+  (`DEFAULT (0)`, `DEFAULT ((0))`, `DEFAULT (-1)`, `DEFAULT ('x')`,
+  `DEFAULT (NULL)`): the default is the literal it wraps and is translated
+  exactly as the unparenthesised form would be. MySQL 8.0 writes a default
+  supplied in parentheses as the `'(' expression ')'` alternative of its
+  grammar, so this shape is common even for a plain constant — a
+  `TINYINT(1) NOT NULL DEFAULT (0)` column back-filled every pre-existing
+  row with `0`, and `DEFAULT 0` reproduces it exactly. It must be carried:
+  the ClickHouse `DEFAULT` is re-evaluated at read time for every part that
+  lacks the column, so a value that does not vary with time is the only
+  faithful back-fill, and a literal qualifies by construction. A
+  parenthesised *expression* (`(1 + 2)`, `(UUID())`, `(CURRENT_DATE)`) is
+  not a single literal and stays in rule 3 of §3.2.2.
+Pinned by `testAddColumnLiteralDefaultIsKept`,
+`testBitStringAndHexDefaultsAreTranslated` and
+`testParenthesizedLiteralDefaultIsTranslated`. The `TINYINT(1) NOT NULL DEFAULT
+0` → `coins Int8 DEFAULT 0` mapping is unchanged, with or without the
+parentheses.
 
 #### 3.2.2 `ADD COLUMN` back-fill of a non-literal default
 1. **`DEFAULT CURRENT_TIMESTAMP[(n)]` / `NOW()` / `LOCALTIME[STAMP]`** (with or
@@ -100,8 +115,9 @@ Pinned by `testAddColumnLiteralDefaultIsKept` and
    (`NO_ZERO_DATE`), and under a permissive mode its `'0000-00-00'` back-fill is
    a documented gap.
 3. **Any other non-literal default** — `CAST(...)`, a parenthesised
-   expression (`DEFAULT (UUID())`, `DEFAULT (CURRENT_DATE)`, `DEFAULT (1 + 2)`),
-   sequence and vendor forms — is a value MySQL computed per row (or once) on
+   expression that is not a single literal (`DEFAULT (UUID())`,
+   `DEFAULT (CURRENT_DATE)`, `DEFAULT (1 + 2)`), sequence and vendor forms —
+   is a value MySQL computed per row (or once) on
    the source that the replica cannot reproduce for the rows that already
    exist. Dropping it silently (the previous behaviour) left those rows
    holding the type's zero value. The translator now raises
@@ -147,6 +163,8 @@ Clauses in the skip class of Spec 06.03 §3.2 (indexes, keys, foreign keys, `ADD
 ## 5. Verification Criteria
 - `MySqlDDLParserListenerImplTest`: `testAlterDatabaseAddColumn`, `testDropColumn`, `testAlterAddColumnsParenthesisedList`, `testAlterAddDefinitionsSkipsEmbeddedIndex`, `testChangeColumn`, `testChangeColumnSameNameEmitsNoRename`, `testAlterAddColumnThenRenameToKeepsBothStatements`, `testAlterRenameToQualifiedTarget`, `testCreateTableLike`, `testCreateTableLikeQualifiedSource`, `dropTable`, `renameTable`, `testCreateTablePrimaryKeyWithSortOrder`, `testDecimalPrecisionWithoutScale`, `testAddColumnLiteralDefaultIsKept`, `testBitStringAndHexDefaultsAreTranslated`, `testAddColumnCurrentTimestampBackfillsLiteral`, `testAddEnumNotNullDefaultsToFirstMember`, `testAlterDatabaseAddColumnEnum` (flipped: `ENUM NOT NULL` now gets `DEFAULT '<first member>'`), `testAddColumnExpressionDefaultIsLoud`, `testModifyColumnDefaultCurrentTimestampIsDropped` (the former `testAddColumnDefaultCurrentTimestampIsDropped`, which pinned the dropped back-fill, is split into these), `testAddCheckConstraintIsSkipped` (`ADD CHECK`, `ADD CONSTRAINT ... CHECK ... NOT ENFORCED`, `DROP CONSTRAINT`, `DROP CHECK` emit nothing alone and never drop a neighbouring `ADD COLUMN`; pre-fix code echoed them), `testDropContraints`, `testAddConstraintsWithAnd`, `testAlterTableAddConstraint` (flipped from echo to skip).
 - `DdlReplayIdempotencyTest`: `testChangeColumnModifyHalfIsGuarded`, `testCreateTableLikeIsGuarded`, `testRenameTableIsGuarded`, `testDropTableIsAlwaysGuarded`, `testModifyColumnIsDeliberatelyNotGuarded`.
+- `AlterTableDdlVariationMatrixTest`: `everyGrammarAlternativeHasAMatrixRow` (every `alterSpecification` alternative the Debezium grammar defines is classified; a grammar bump that adds one fails until it is classified), `unreachableAlternativeStaysUnreachable` (`AlterByDefaultCharset` is declared unreachable because `tableOption`, alternative 1, matches `DEFAULT? charSet '='? (charsetName | DEFAULT)` first and every charset form lands on `AlterByTableOption`; a reorder that makes it reachable fails here), `eachClauseEntersItsDeclaredAlternative` (the matrix is keyed on the alternative the parser actually enters, not on how the clause reads: `ALTER COLUMN ... SET VISIBLE` reaches `AlterByAlterColumnDefault`, and every `ALTER COLUMN ... SET DEFAULT` / `DROP DEFAULT` reaches `AlterByChangeDefault`), `noClauseThrowsDuringTranslation`, `translatedClausesEmitAndSkippedClausesDoNot` (a column clause that silently joins the skip list fails here), `parenthesisedLiteralDefaultsSurvive` (17 literal forms across `INT`, `TINYINT(1)`, `BIGINT`, `DECIMAL`, `DOUBLE`, `VARCHAR`, `CHAR`, `DATE`, each with and without parentheses and `NULL`), `modifyDropsNonConstantDefaultButKeepsType`, `alterOptionsCombineWithRealClause`.
+- End-to-end: `tests/alter_ddl_matrix.py` applies the same clause set to a live MySQL and requires a row written after each DDL to reach ClickHouse, so a clause that stalls the stream or emits a statement ClickHouse rejects forever fails the run. Registered in `regression_auto.py` and `regression_auto_replicated.py`.
 - Formal: `no_bare_alter`, `add_columns_preserved` in `DdlTranslation.lean`.
 
 ---
