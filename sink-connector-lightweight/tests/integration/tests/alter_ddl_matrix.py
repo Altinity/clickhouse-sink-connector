@@ -29,17 +29,21 @@ PARENT_DDL = "CREATE TABLE IF NOT EXISTS test.ddl_matrix_parent (id INT NOT NULL
 
 
 @TestStep(Given)
-def live_row(table_name, value, context=None):
+def live_row(self, table_name, value, context=None):
     """Insert one row through MySQL and require it in ClickHouse.
 
     A clause the translator mishandles rarely fails at DDL time: it stalls the
     stream, emits a statement ClickHouse rejects forever, or takes the table out
     of the captured set. Only a row written afterwards exposes all three.
 
-    A module-level step rather than a method: every caller passes
-    ``table_name=`` and ``value=`` by keyword, so a plain function leaves those
-    call sites untouched and the step stays usable from more than one test.
+    ``self`` is not optional here: the framework runs a step as
+    ``self.func(current(), **args)``, so the current test object is the FIRST
+    POSITIONAL argument. Without it the test lands in ``table_name`` and every
+    call site that passes ``table_name=`` by keyword raises
+    ``TypeError: got multiple values for argument 'table_name'``.
     """
+    if context is None:
+        context = self.context
     mysql = context.cluster.node("mysql-master")
     clickhouse = context.cluster.node("clickhouse")
 
@@ -68,7 +72,7 @@ def row(name, clause, **kwargs):
     return entry
 
 @TestStep(Then)
-def column_arrived(table_name, column_name, context=None):
+def column_arrived(self, table_name, column_name, context=None):
     """Require a named column to exist on the replicated ClickHouse table.
 
     Some rows exist to prove a bridge did NOT fire: a clause that must be
@@ -80,6 +84,8 @@ def column_arrived(table_name, column_name, context=None):
     Fenced with pipes and read as TSVRaw because ``message=`` is a SUBSTRING
     test; a bare name match would also accept a prefix of a different column.
     """
+    if context is None:
+        context = self.context
     clickhouse = context.cluster.node("clickhouse")
 
     with Then(f"I check the column {column_name} reached ClickHouse"):

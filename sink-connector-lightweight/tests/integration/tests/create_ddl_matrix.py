@@ -54,7 +54,7 @@ from integration.tests.steps.clickhouse import *
 
 
 @TestStep(Then)
-def column_matches(table_name, column_name, expected_type, context=None,
+def column_matches(self, table_name, column_name, expected_type, context=None,
                    expected_kind=None, expected_default=None):
     """One replicated column's type and DEFAULT clause, read from the server.
 
@@ -63,7 +63,13 @@ def column_matches(table_name, column_name, expected_type, context=None,
     was carried, and both are empty when it was dropped. A DEFAULT the
     translator drops leaves the type untouched, so a type-only assertion
     cannot see the defect this module exists to catch.
+
+    ``self`` is required: the framework runs a step as
+    ``self.func(current(), **args)``, so the current test object is the FIRST
+    POSITIONAL argument and has to be named before the real parameters.
     """
+    if context is None:
+        context = self.context
     clickhouse = context.cluster.node("clickhouse")
 
     with Then(f"I check ClickHouse column {column_name} is {expected_type}"):
@@ -89,8 +95,10 @@ def column_matches(table_name, column_name, expected_type, context=None,
 
 
 @TestStep(Then)
-def column_default_was_dropped(table_name, column_name, context=None):
+def column_default_was_dropped(self, table_name, column_name, context=None):
     """The column exists but carries no DEFAULT -- the deliberate omission."""
+    if context is None:
+        context = self.context
     clickhouse = context.cluster.node("clickhouse")
 
     with Then(f"I check column {column_name} carries NO DEFAULT"):
@@ -104,13 +112,15 @@ def column_default_was_dropped(table_name, column_name, context=None):
 
 
 @TestStep(Then)
-def source_value_wins(table_name, column_name, context=None):
+def source_value_wins(self, table_name, column_name, context=None):
     """A row written by MySQL arrives with the value MySQL holds.
 
     The decisive check for a DEFAULT: ClickHouse may hold the same DEFAULT
     expression and still disagree, so the comparison is against the source
     row's value, read from MySQL and required in ClickHouse.
     """
+    if context is None:
+        context = self.context
     mysql = context.cluster.node("mysql-master")
     clickhouse = context.cluster.node("clickhouse")
 

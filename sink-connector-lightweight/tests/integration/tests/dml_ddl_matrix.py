@@ -68,9 +68,18 @@ SEED_ROWS = "(1, 10, 'one', 7), (2, 20, 'two', 7)"
 
 
 @TestStep(Given)
-def replicated_table(table_name, context=None, columns=BASE_COLUMNS,
+def replicated_table(self, table_name, context=None, columns=BASE_COLUMNS,
                      partition_by_mysql=False, key="id"):
-    """A replicated MySQL table in `test`, empty, with the ClickHouse twin up."""
+    """A replicated MySQL table in `test`, empty, with the ClickHouse twin up.
+
+    ``self`` is required: the framework runs a step as
+    ``self.func(current(), **args)``, so the current test object is the FIRST
+    POSITIONAL argument. Without it the test lands in ``table_name`` and the
+    call site's ``table_name=`` keyword raises
+    ``TypeError: got multiple values for argument 'table_name'``.
+    """
+    if context is None:
+        context = self.context
     clickhouse = context.cluster.node("clickhouse")
     mysql = context.cluster.node("mysql-master")
 
@@ -90,8 +99,10 @@ def replicated_table(table_name, context=None, columns=BASE_COLUMNS,
 
 
 @TestStep(Then)
-def row_count_matches(table_name, context=None):
+def row_count_matches(self, table_name, context=None):
     """The ClickHouse row count equals MySQL's, after RMT collapse."""
+    if context is None:
+        context = self.context
     clickhouse = context.cluster.node("clickhouse")
     mysql = context.cluster.node("mysql-master")
 
@@ -112,8 +123,10 @@ def row_count_matches(table_name, context=None):
 
 
 @TestStep(Then)
-def cell_matches(statement, context=None):
+def cell_matches(self, statement, context=None):
     """One expression is evaluated on both engines and must agree."""
+    if context is None:
+        context = self.context
     clickhouse = context.cluster.node("clickhouse")
     mysql = context.cluster.node("mysql-master")
 
