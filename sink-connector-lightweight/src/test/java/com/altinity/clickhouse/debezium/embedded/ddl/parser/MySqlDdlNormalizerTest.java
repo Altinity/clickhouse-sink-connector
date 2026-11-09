@@ -857,11 +857,15 @@ public class MySqlDdlNormalizerTest {
                 "lowercase nodegroup value must be quoted so the statement parses");
 
         // The lowercase spellings must also survive the translator, which is the
-        // assertion that would have caught the miss.
-        assertTrue(translate("CREATE TABLE t (a INT, b INT AS (a + 1) persistent)")
-                        .contains("DEFAULT a + 1"),
-                "the lowercase statement must reach the translator");
-        translate("CREATE TABLE t (a INT) ENGINE=InnoDB, autoextend_size = 4M, COMMENT='c'");
+        // assertion that would have caught the miss. Both are compared against
+        // their uppercase twin rather than against a guess at the emitted text:
+        // the two must translate identically, expression and all.
+        assertEquals(translate("CREATE TABLE t (a INT, b INT AS (a + 1) STORED)"),
+                translate("CREATE TABLE t (a INT, b INT AS (a + 1) persistent)"),
+                "the lowercase generated column must translate like its uppercase twin");
+        assertEquals(translate("CREATE TABLE t (a INT) ENGINE=InnoDB AUTOEXTEND_SIZE = 4M COMMENT='c'"),
+                translate("CREATE TABLE t (a INT) ENGINE=InnoDB, autoextend_size = 4M, COMMENT='c'"),
+                "the lowercase table option must be dropped like its uppercase twin");
     }
 
     /**
