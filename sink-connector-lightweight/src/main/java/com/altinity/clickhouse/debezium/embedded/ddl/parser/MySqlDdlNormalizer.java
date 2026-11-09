@@ -528,14 +528,32 @@ final class MySqlDdlNormalizer {
                 continue;
             }
             int start = matcher.start();
+            int end = matcher.end();
             while (start > bodyClose && Character.isWhitespace(sql.charAt(start - 1))) {
                 start--;
+            }
+            // The option takes ONE of its separators with it. The grammar reads
+            // a table-option list as `tableOption (','? tableOption)*`, so a
+            // comma with no option after it -- or one before the first option
+            // -- is a syntax error. The comma in FRONT is preferred (it is the
+            // one that belongs to this option whenever another option precedes
+            // it); with no option in front, the comma AFTER goes instead.
+            if (start > bodyClose && sql.charAt(start - 1) == ',') {
+                start--;
+            } else {
+                int after = end;
+                while (after < sql.length() && Character.isWhitespace(sql.charAt(after))) {
+                    after++;
+                }
+                if (after < sql.length() && sql.charAt(after) == ',') {
+                    end = after + 1;
+                }
             }
             if (out == null) {
                 out = new StringBuilder(sql.length());
             }
             out.append(sql, last, start);
-            last = matcher.end();
+            last = end;
         }
         if (out == null) {
             return sql;
@@ -1078,6 +1096,20 @@ final class MySqlDdlNormalizer {
         int last = 0;
         while (matcher.find()) {
             if (quoted.get(matcher.start())) {
+                continue;
+            }
+            // Only the generated-column attribute is a keyword here: the word
+            // directly after the expression's closing parenthesis. Anywhere
+            // else it is an identifier -- `PERSISTENT` is in the shipped
+            // grammar's keywordsCanBeId, so it is a legal column name, while
+            // `STORED` is not. Rewriting a column named PERSISTENT to STORED
+            // therefore turns a statement the parser accepts into one it
+            // rejects, which halts replication for the whole host.
+            int before = matcher.start() - 1;
+            while (before >= 0 && Character.isWhitespace(sql.charAt(before))) {
+                before--;
+            }
+            if (before < 0 || sql.charAt(before) != ')') {
                 continue;
             }
             if (out == null) {
