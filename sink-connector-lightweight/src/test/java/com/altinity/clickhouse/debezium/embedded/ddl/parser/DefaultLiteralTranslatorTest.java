@@ -17,6 +17,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.cdc.DDLReplicationException;
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.junit.jupiter.api.BeforeAll;
@@ -53,7 +54,7 @@ public class DefaultLiteralTranslatorTest {
     @BeforeAll
     public static void setUp() {
         service = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "db");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "db");
         DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine = true;
     }
 
@@ -215,7 +216,7 @@ public class DefaultLiteralTranslatorTest {
     @Test
     public void currentTimestampBecomesTheEventInstant() {
         MySQLDDLParserService stamped = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "t");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "t");
         stamped.setDdlEventTimestampMs(1700000000123L); // 2023-11-14 22:13:20.123 UTC
         for (String sql : new String[]{
                 "ALTER TABLE t ADD COLUMN c DATETIME DEFAULT CURRENT_TIMESTAMP",

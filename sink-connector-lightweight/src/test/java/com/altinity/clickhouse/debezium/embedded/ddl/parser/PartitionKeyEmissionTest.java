@@ -16,6 +16,7 @@
 
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.junit.jupiter.api.BeforeAll;
@@ -69,7 +70,7 @@ public class PartitionKeyEmissionTest {
     @BeforeAll
     public static void setUp() {
         service = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "db");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "db");
         DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine = true;
     }
 
@@ -204,7 +205,7 @@ public class PartitionKeyEmissionTest {
         java.util.Map<String, String> props = new java.util.HashMap<>();
         props.put("databases.db.tables.t.settings", "allow_nullable_key=0");
         MySQLDDLParserService overridden =
-                new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(props), "db");
+                new MySQLDDLParserService(new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)), "db");
 
         StringBuffer output = new StringBuffer();
         overridden.parseSql("CREATE TABLE t (id INT PRIMARY KEY, d DATE) "

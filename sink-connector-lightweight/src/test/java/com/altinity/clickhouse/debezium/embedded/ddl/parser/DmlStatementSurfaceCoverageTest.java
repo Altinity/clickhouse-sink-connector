@@ -16,6 +16,7 @@
 
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
@@ -63,7 +64,7 @@ public class DmlStatementSurfaceCoverageTest {
     @BeforeAll
     public static void setUp() {
         service = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "db");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "db");
         DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine = true;
     }
 
