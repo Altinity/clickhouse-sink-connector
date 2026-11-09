@@ -425,16 +425,10 @@ def year(self, mysql_type, ch_type, values, ch_values, nullable):
 
 
 @TestOutline(Feature)
-@Examples(
-    "clickhouse_table_engine",
-    [
-        TE,
-    ],
-)
 @Requirements(
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_DataTypes_IntegerTypes("1.0")
 )
-def serial(self, clickhouse_table_engine):
+def serial(self):
     """Check replication of the MySQL 'SERIAL' pseudo-type.
 
     ``SERIAL`` expands to ``BIGINT UNSIGNED NOT NULL AUTO_INCREMENT UNIQUE``,
