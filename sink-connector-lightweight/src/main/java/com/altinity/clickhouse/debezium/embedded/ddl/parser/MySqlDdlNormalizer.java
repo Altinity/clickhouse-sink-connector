@@ -1005,7 +1005,7 @@ final class MySqlDdlNormalizer {
      * identity.</p>
      */
     private static String quoteNodeGroupValue(String sql) {
-        if (sql.indexOf("ODEGROUP") < 0) {
+        if (!containsIgnoreCase(sql, "ODEGROUP")) {
             return sql;
         }
         BitSet quoted = quotedOrComment(sql);
@@ -1086,7 +1086,7 @@ final class MySqlDdlNormalizer {
      * present.</p>
      */
     private static String substitutePersistent(String sql) {
-        if (sql.indexOf("ERSISTENT") < 0) {
+        if (!containsIgnoreCase(sql, "ERSISTENT")) {
             // No PERSISTENT in any casing: skip both the mask and the regex.
             return sql;
         }
@@ -1140,7 +1140,7 @@ final class MySqlDdlNormalizer {
      * parser still reports it instead of the text being silently rearranged.</p>
      */
     private static String relocateSrid(String sql) {
-        if (sql.indexOf("RID") < 0) {
+        if (!containsIgnoreCase(sql, "RID")) {
             return sql;
         }
         BitSet quoted = quotedOrComment(sql);
@@ -1254,5 +1254,26 @@ final class MySqlDdlNormalizer {
             inside.set(start, Math.min(i, n));
         }
         return inside;
+    }
+
+    /**
+     * Whether {@code sql} contains {@code needle} in any casing.
+     *
+     * <p>Every rewrite below is preceded by a cheap containment test so a
+     * statement that cannot need it skips the mask and the regex. MySQL keyword
+     * casing is not significant, and the patterns those tests front are all
+     * case-insensitive, so the test has to be too: a case-sensitive test here
+     * silently disables the rewrite for the lowercase and mixed-case spellings
+     * MySQL accepts, which is the failure this class exists to prevent.</p>
+     */
+    private static boolean containsIgnoreCase(String sql, String needle) {
+        int n = sql.length();
+        int m = needle.length();
+        for (int i = 0; i + m <= n; i++) {
+            if (sql.regionMatches(true, i, needle, 0, m)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -826,4 +826,106 @@ public class MySqlDdlNormalizerTest {
         assertTrue(translated.contains("secondary_load"),
                 "the column must reach the translator: " + translated);
     }
+
+    /**
+     * Keyword casing is not significant in MySQL, and every bridge pattern in
+     * the normalizer is case-insensitive, so the cheap containment test in
+     * front of each one has to be too. A case-sensitive test there disables the
+     * bridge for the lowercase spelling WITHOUT ANY ERROR: the statement misses
+     * the rewrite, reaches the grammar unchanged, and fails the parse, which
+     * halts replication for every table on the host.
+     *
+     * <p>Each case below is the lowercase twin of a case that already passed in
+     * uppercase. The generated-column case is the one that was broken; the
+     * other two are here because they share the shape and the consequence.</p>
+     */
+    @Test
+    public void bridgesApplyToLowercaseKeywordsToo() {
+        assertEquals("CREATE TABLE t (a INT, b INT AS (a + 1) stored)",
+                MySqlDdlNormalizer.normalize("CREATE TABLE t (a INT, b INT AS (a + 1) persistent)"),
+                "lowercase persistent must be bridged: the grammar has no such terminal");
+
+        assertEquals("CREATE TABLE t (a INT) ENGINE=InnoDB, COMMENT='c'",
+                MySqlDdlNormalizer.normalize(
+                        "CREATE TABLE t (a INT) ENGINE=InnoDB, autoextend_size = 4M, COMMENT='c'"),
+                "lowercase autoextend_size must be dropped with one separator");
+
+        assertEquals("CREATE TABLE t (id INT) PARTITION BY RANGE(id) "
+                        + "(PARTITION p0 VALUES LESS THAN (10) nodegroup = `2`)",
+                MySqlDdlNormalizer.normalize("CREATE TABLE t (id INT) PARTITION BY RANGE(id) "
+                        + "(PARTITION p0 VALUES LESS THAN (10) nodegroup = 2)"),
+                "lowercase nodegroup value must be quoted so the statement parses");
+
+        // The lowercase spellings must also survive the translator, which is the
+        // assertion that would have caught the miss.
+        assertTrue(translate("CREATE TABLE t (a INT, b INT AS (a + 1) persistent)")
+                        .contains("DEFAULT a + 1"),
+                "the lowercase statement must reach the translator");
+        translate("CREATE TABLE t (a INT) ENGINE=InnoDB, autoextend_size = 4M, COMMENT='c'");
+    }
+
+    /**
+     * A column NAMED {@code persistent} keeps its name: the bridge rewrites a
+     * generated-column attribute, which is the word directly after the
+     * expression's closing parenthesis. Anywhere else the word is an
+     * identifier, and {@code PERSISTENT} is in the shipped grammar's
+     * {@code keywordsCanBeId}, so rewriting it to {@code STORED} -- which is
+     * not -- turned a statement the parser accepts into one it rejects.
+     */
+    @Test
+    public void persistentAsAColumnNameIsNotRewritten() {
+        String[] statements = {
+                "CREATE TABLE t (persistent INT)",
+                "CREATE TABLE t (a INT, PERSISTENT BIGINT, KEY k (a))",
+                "ALTER TABLE t ADD COLUMN persistent INT",
+        };
+        for (String sql : statements) {
+            assertEquals(sql, MySqlDdlNormalizer.normalize(sql),
+                    "a column named persistent must be left alone: " + sql);
+        }
+
+        String translated = translate("CREATE TABLE t (persistent INT)");
+        assertTrue(translated.contains("persistent"),
+                "the column must reach the translator: " + translated);
+    }
+
+    /**
+     * A {@code CREATE TABLE} option removed from the MIDDLE of the option list
+     * takes exactly one separator with it.
+     *
+     * <p>The grammar reads a table-option list as {@code tableOption (','?
+     * tableOption)*}, so a comma with no option after it -- or one before the
+     * first option -- is a syntax error. Every CREATE case in this suite before
+     * this one put the option LAST, or separated the options with whitespace
+     * only, so neither leftover-comma shape was covered.</p>
+     */
+    @Test
+    public void createTableOptionRemovedFromTheMiddleTakesItsSeparator() {
+        String[] statements = {
+                "CREATE TABLE t (a INT) AUTOEXTEND_SIZE = 4M ENGINE=InnoDB",
+                "CREATE TABLE t (a INT) ENGINE=InnoDB AUTOEXTEND_SIZE = 4M DEFAULT CHARSET=utf8mb4",
+                "CREATE TABLE t (a INT) ENGINE=InnoDB, AUTOEXTEND_SIZE = '4M', COMMENT='c'",
+                "CREATE TABLE t (a INT) AUTOEXTEND_SIZE = 4M, COMMENT='c'",
+        };
+        for (String sql : statements) {
+            String normalised = MySqlDdlNormalizer.normalize(sql);
+            assertFalse(normalised.toUpperCase().contains("AUTOEXTEND_SIZE"),
+                    "the option must be gone: " + normalised);
+            assertFalse(normalised.contains(",,") || normalised.trim().endsWith(","),
+                    "no dangling comma may be left behind: " + normalised);
+            assertTrue(normalised.contains("(a INT)"),
+                    "the column definitions must be untouched: " + normalised);
+            // Parsing without throwing is the assertion: a dangling comma is
+            // "Error parsing DDL", which halts replication for the whole host.
+            translate(sql);
+        }
+
+        // The statement must still translate, with its body and its neighbour.
+        String translated = translate(
+                "CREATE TABLE t (a INT) ENGINE=InnoDB, AUTOEXTEND_SIZE = '4M', COMMENT='c'");
+        assertTrue(translated.startsWith("CREATE TABLE"),
+                "the statement must still translate: " + translated);
+        assertTrue(translated.contains("a Nullable(Int32)"),
+                "the column must reach the translator: " + translated);
+    }
 }
