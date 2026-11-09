@@ -2153,17 +2153,24 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 && this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString());
         String literal = DefaultLiteralTranslator.literalDefault(defaultValue, columnType, persistRawBytes);
         if (literal != null) {
-            // `DEFAULT NULL` on a Nullable column is implied by the type, so it
-            // is not emitted (Spec 06.04 §3.2.3). It changes no stored value --
-            // an insert that omits the column stores NULL with or without it --
-            // but ClickHouse validates a default expression on every later
-            // ALTER, so keeping it turns an ordinary `MODIFY COLUMN c String`
-            // into Code: 70 CANNOT_CONVERT_TYPE ("Cannot convert NULL to a
-            // non-nullable type ... default expression and column type are
-            // incompatible"). MySQL renders a nullable column without a
-            // default as `DEFAULT NULL` in SHOW CREATE TABLE, so this shape
-            // reaches the parser constantly.
-            if (isNullColumn && "NULL".equals(literal)) {
+            // A `NULL` literal default is never emitted (Spec 06.04 §3.2.3).
+            //
+            // On a Nullable column it is implied by the type and changes no
+            // stored value -- an insert that omits the column stores NULL with
+            // or without it -- but ClickHouse validates a default expression on
+            // every later ALTER, so keeping it turns an ordinary `MODIFY COLUMN
+            // c String` into Code: 70 CANNOT_CONVERT_TYPE. MySQL renders a
+            // nullable column without a default as `DEFAULT NULL` in SHOW
+            // CREATE TABLE, so this shape reaches the parser constantly.
+            //
+            // On a non-Nullable (NOT NULL) column ClickHouse cannot represent
+            // it at all: `DEFAULT NULL` there is rejected outright with Code:
+            // 70 CANNOT_CONVERT_TYPE ("Cannot convert NULL to a non-nullable
+            // type"), measured on 24.8.8.17 for both the CREATE and the ADD
+            // COLUMN form, so emitting it produced a statement that fails on
+            // every retry and stalls the stream. A NOT NULL column can hold no
+            // NULL either way, so dropping it loses nothing.
+            if ("NULL".equals(literal)) {
                 return null;
             }
             return "DEFAULT " + literal;
@@ -2864,7 +2871,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 || tree instanceof MySqlParser.AlterByChangeDefaultContext
                 || tree instanceof MySqlParser.AlterByAlterColumnDefaultContext
                 || tree instanceof MySqlParser.AlterByAlterCheckTableConstraintContext
-                || tree instanceof MySqlParser.AlterByConvertCharsetContext
                 || tree instanceof MySqlParser.AlterByDefaultCharsetContext
                 || tree instanceof MySqlParser.AlterByTableOptionContext
                 || tree instanceof MySqlParser.AlterBySetAlgorithmContext
@@ -2874,8 +2880,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 || tree instanceof MySqlParser.AlterByOrderContext
                 || tree instanceof MySqlParser.AlterByForceContext
                 || tree instanceof MySqlParser.AlterByValidateContext
-                || tree instanceof MySqlParser.AlterByDiscardTablespaceContext
-                || tree instanceof MySqlParser.AlterByImportTablespaceContext
                 // Every partition operation (ADD/DROP/DISCARD/IMPORT/TRUNCATE/
                 // COALESCE/REORGANIZE/EXCHANGE/ANALYZE/CHECK/OPTIMIZE/REBUILD/
                 // REPAIR PARTITION, REMOVE/UPGRADE PARTITIONING) arrives wrapped

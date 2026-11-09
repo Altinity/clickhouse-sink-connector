@@ -17,6 +17,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
+import com.altinity.clickhouse.debezium.embedded.cdc.DDLReplicationException;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import io.debezium.ddl.parser.mysql.generated.MySqlParser;
@@ -268,7 +269,27 @@ public class AlterTableGrammarDerivedCoverageTest {
     }
 
     /**
-     * Every ALTER TABLE form parses through the production path.
+     * The forms that rewrite the stored values of rows MySQL already holds.
+     *
+     * <p>These cannot be skipped: ClickHouse would keep the old values, no row
+     * event would ever correct them, and a count-clean compare would show
+     * nothing (Spec 06.08 §3.1). The translator therefore refuses them with a
+     * {@link DDLReplicationException} that names the clause, and the engine
+     * halts at the DDL barrier. Every other form must translate without
+     * throwing, because a throw stops replication for every table on the host.
+     * </p>
+     */
+    private static final Set<String> REFUSED_FORMS = new TreeSet<>(java.util.Arrays.asList(
+            "ConvertCharset",
+            "DiscardPartition",
+            "DiscardTablespace",
+            "ExchangePartition",
+            "ImportPartition",
+            "ImportTablespace"));
+
+    /**
+     * Every ALTER TABLE form reaches the production path: it parses, and it
+     * either translates or is refused loudly by design.
      *
      * <p>Parsing is the whole requirement for the forms that carry no schema
      * change the connector can express (partition maintenance, key enablement,
@@ -279,15 +300,25 @@ public class AlterTableGrammarDerivedCoverageTest {
     public void everyAlterFormParses() {
         List<String> failures = new ArrayList<>();
         for (Map.Entry<String, String> form : alterForms().entrySet()) {
+            boolean mustRefuse = REFUSED_FORMS.contains(form.getKey());
             try {
-                translate(form.getValue());
+                String emitted = translate(form.getValue());
+                if (mustRefuse) {
+                    failures.add(form.getKey() + " [" + form.getValue()
+                            + "] must be refused loudly but emitted [" + emitted.trim() + "]");
+                }
+            } catch (DDLReplicationException refused) {
+                if (!mustRefuse) {
+                    failures.add(form.getKey() + " [" + form.getValue()
+                            + "] must translate but was refused: " + refused.getMessage());
+                }
             } catch (RuntimeException e) {
                 failures.add(form.getKey() + " [" + form.getValue() + "] -> "
                         + e.getClass().getSimpleName() + ": " + e.getMessage());
             }
         }
-        assertTrue(failures.isEmpty(), "every ALTER TABLE form must parse:\n  "
-                + String.join("\n  ", failures));
+        assertTrue(failures.isEmpty(), "every ALTER TABLE form must parse and take its "
+                + "declared outcome:\n  " + String.join("\n  ", failures));
     }
 
     /**

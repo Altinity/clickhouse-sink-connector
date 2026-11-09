@@ -156,11 +156,22 @@ public class CreateTableDefaultEmissionTest {
                 columnDeclaration(translate("CREATE TABLE t (id INT PRIMARY KEY, a INT DEFAULT NULL)"), "a"));
     }
 
-    /** A NOT NULL column's {@code DEFAULT NULL} is not implied by anything, so it is kept. */
+    /**
+     * A {@code NOT NULL} column's {@code DEFAULT NULL} is not emitted either,
+     * because ClickHouse cannot represent it: {@code Int32 NOT NULL DEFAULT
+     * NULL} is rejected with Code: 70 CANNOT_CONVERT_TYPE ("Cannot convert NULL
+     * to a non-nullable type") on both the CREATE and the ADD COLUMN form
+     * (measured on 24.8.8.17). Emitting it produced a statement that failed on
+     * every retry and stalled the stream. A {@code NOT NULL} column holds no
+     * NULL either way, so the zero value it takes is the only possible result
+     * and nothing is lost by dropping the clause.
+     */
     @Test
-    public void nullDefaultOnANotNullColumnIsStillCarried() {
-        assertEquals("a Int32 NOT NULL DEFAULT NULL",
-                columnDeclaration(translate("CREATE TABLE t (id INT PRIMARY KEY, a INT NOT NULL DEFAULT NULL)"), "a"));
+    public void nullDefaultOnANotNullColumnIsDropped() {
+        String column = columnDeclaration(
+                translate("CREATE TABLE t (id INT PRIMARY KEY, a INT NOT NULL DEFAULT NULL)"), "a");
+        assertEquals("a Int32 NOT NULL", column.replaceAll("\\s+", " ").trim(),
+                "DEFAULT NULL is unrepresentable on a NOT NULL column, got: " + column);
     }
 
     /** A NOT NULL column keeps its DEFAULT; the two clauses coexist. */
@@ -197,15 +208,17 @@ public class CreateTableDefaultEmissionTest {
     /**
      * {@code CURRENT_TIMESTAMP} is the grammar's one unparenthesised
      * non-literal, and ClickHouse derives the same value itself. A MySQL
-     * {@code DATETIME} replicates as {@code DateTime64}, whose scale is 3, so
-     * the derive is {@code now64(3)} and not the bare {@code now()}.
+     * {@code DATETIME} with no declared precision replicates as {@code
+     * DateTime64(0)}, so the derive is {@code now64(0)} and not the bare
+     * {@code now()}.
      */
     @Test
     public void currentTimestampDefaultIsCarried() {
         assertTrue(columnDeclaration(
                         translate("CREATE TABLE t (id INT PRIMARY KEY, a DATETIME DEFAULT CURRENT_TIMESTAMP)"), "a")
-                        .contains("DEFAULT now64(3)"),
-                "CURRENT_TIMESTAMP must become ClickHouse's own derive-on-insert expression");
+                        .contains("DEFAULT now64(0)"),
+                "CURRENT_TIMESTAMP must become ClickHouse's own derive-on-insert expression "
+                        + "at the column's own scale");
     }
 
     /** The fractional scale is carried so the column's precision is preserved. */

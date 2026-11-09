@@ -17,6 +17,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
 import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
+import com.altinity.clickhouse.debezium.embedded.cdc.DDLReplicationException;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import io.debezium.ddl.parser.mysql.generated.MySqlLexer;
@@ -65,9 +66,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  *       The expectation table states, per clause, whether it must translate to
  *       a non-empty statement or be skipped; a clause that silently changes
  *       from one to the other fails here rather than in production.</li>
- *   <li><b>No clause throws.</b> A DDL statement the grammar accepts must not
- *       fail translation: throwing stalls the replication stream for every
- *       later event on every table, not only this one.</li>
+ *   <li><b>No other clause throws.</b> A DDL statement the grammar accepts must
+ *       normally not fail translation: throwing stalls the replication stream
+ *       for every later event on every table, not only this one. The one
+ *       deliberate exception is a clause that rewrites the stored values of
+ *       rows MySQL already holds (CONVERT TO CHARACTER SET, DISCARD/IMPORT
+ *       TABLESPACE, DISCARD/IMPORT/EXCHANGE PARTITION): those cannot be
+ *       skipped without the replica keeping the old values where a count-clean
+ *       compare shows nothing, so the translator refuses them loudly with a
+ *       {@link com.altinity.clickhouse.debezium.embedded.cdc.DDLReplicationException}
+ *       and the engine halts (Spec 06.03 §3.2, Spec 06.08 §3.1). Each is
+ *       asserted to throw by name below, so a refusal cannot be downgraded to a
+ *       silent skip, and no other clause can start throwing.</li>
  * </ol>
  *
  * <p>The companion end-to-end matrix in
@@ -248,16 +258,20 @@ public class AlterTableDdlVariationMatrixTest {
         clauses.add(new Clause("AlterByValidate", "WITH VALIDATION", false));
         clauses.add(new Clause("AlterByValidate", "WITHOUT VALIDATION", false));
         clauses.add(new Clause("AlterByOrder", "ORDER BY c", false));
+        // --- clauses that rewrite rows already stored: refused loudly --------
+        // ClickHouse would keep the old values where a count-clean compare shows
+        // nothing, so these must stop the stream rather than be skipped
+        // (Spec 06.03 §3.2, Spec 06.08 §3.1).
         clauses.add(new Clause("AlterByConvertCharset",
-                "CONVERT TO CHARACTER SET utf8mb4", false));
+                "CONVERT TO CHARACTER SET utf8mb4", Outcome.REFUSED));
+        clauses.add(new Clause("AlterByDiscardTablespace", "DISCARD TABLESPACE", Outcome.REFUSED));
+        clauses.add(new Clause("AlterByImportTablespace", "IMPORT TABLESPACE", Outcome.REFUSED));
         clauses.add(new Clause("AlterByTableOption",
                 "DEFAULT CHARACTER SET = utf8mb4", false));
         clauses.add(new Clause("AlterByTableOption",
                 "CHARACTER SET = utf8mb4", false));
         clauses.add(new Clause("AlterByTableOption", "COMMENT = 'x'", false));
         clauses.add(new Clause("AlterByTableOption", "ENGINE = InnoDB", false));
-        clauses.add(new Clause("AlterByDiscardTablespace", "DISCARD TABLESPACE", false));
-        clauses.add(new Clause("AlterByImportTablespace", "IMPORT TABLESPACE", false));
 
         // --- partition clauses: no ClickHouse equivalent --------------------
         clauses.add(new Clause("AlterByAddPartition",
@@ -266,9 +280,9 @@ public class AlterTableDdlVariationMatrixTest {
         // the partition clauses are skipped; no server is contacted.
         clauses.add(new Clause("AlterByDropPartition", "DROP PARTITION p2", false));
         clauses.add(new Clause("AlterByDiscardPartition",
-                "DISCARD PARTITION p2 TABLESPACE", false));
+                "DISCARD PARTITION p2 TABLESPACE", Outcome.REFUSED));
         clauses.add(new Clause("AlterByImportPartition",
-                "IMPORT PARTITION p2 TABLESPACE", false));
+                "IMPORT PARTITION p2 TABLESPACE", Outcome.REFUSED));
         // DESTRUCTIVE: parser input only. "TRUNCATE PARTITION p2" exercises the
         // skip path of the translator; it is never sent anywhere.
         clauses.add(new Clause("AlterByTruncatePartition", "TRUNCATE PARTITION p2", false));
@@ -277,7 +291,7 @@ public class AlterTableDdlVariationMatrixTest {
                 "REORGANIZE PARTITION p2 INTO (PARTITION p2 VALUES LESS THAN (2000))",
                 false));
         clauses.add(new Clause("AlterByExchangePartition",
-                "EXCHANGE PARTITION p2 WITH TABLE cm_x", false));
+                "EXCHANGE PARTITION p2 WITH TABLE cm_x", Outcome.REFUSED));
         clauses.add(new Clause("AlterByAnalyzePartition", "ANALYZE PARTITION p2", false));
         clauses.add(new Clause("AlterByCheckPartition", "CHECK PARTITION p2", false));
         clauses.add(new Clause("AlterByOptimizePartition", "OPTIMIZE PARTITION p2", false));
@@ -364,13 +378,23 @@ public class AlterTableDdlVariationMatrixTest {
     }
 
     /**
-     * A grammar-accepted clause never throws during translation. Throwing here
-     * stops the replication stream for every later event on every table.
+     * A grammar-accepted clause never throws during translation, EXCEPT the
+     * clauses that rewrite rows already stored, which must throw.
+     *
+     * <p>Throwing stops the replication stream for every later event on every
+     * table, so it is reserved for the one case where the alternative is worse:
+     * silently keeping the source's old values on the replica, where a
+     * count-clean row compare shows nothing (Spec 06.08 §3.1). Every such
+     * clause is listed with {@link Outcome#REFUSED} and asserted by name in
+     * {@link #dataChangingClausesAreRefusedLoudly()}.</p>
      */
     @Test
-    public void noClauseThrowsDuringTranslation() {
+    public void noOtherClauseThrowsDuringTranslation() {
         List<String> threw = new ArrayList<>();
         for (Clause clause : clauses()) {
+            if (clause.outcome() == Outcome.REFUSED) {
+                continue;
+            }
             try {
                 translate("ALTER TABLE `employees`.cm " + clause.sql());
             } catch (Throwable error) {
@@ -379,7 +403,48 @@ public class AlterTableDdlVariationMatrixTest {
             }
         }
         assertEquals(new ArrayList<String>(), threw,
-                "Clauses the MySQL grammar accepts must not fail translation: " + threw);
+                "Only the data-changing clauses may throw; these failed translation: " + threw);
+    }
+
+    /**
+     * The clauses that rewrite the stored values of rows MySQL already holds are
+     * refused loudly, by name, and the refusal reaches the engine as a
+     * {@code DDLReplicationException} -- not the generic parse abort, so the
+     * operator learns which clause failed and why.
+     *
+     * <p>Silently skipping them would leave ClickHouse holding the old values
+     * with no row events to correct them, and a count-clean compare would not
+     * show the divergence (Spec 06.08 §3.1). The refusal is what makes that
+     * divergence impossible: the engine halts at the DDL barrier and a human
+     * decides.</p>
+     */
+    @Test
+    public void dataChangingClausesAreRefusedLoudly() {
+        List<String> notRefused = new ArrayList<>();
+        int refused = 0;
+        for (Clause clause : clauses()) {
+            if (clause.outcome() != Outcome.REFUSED) {
+                continue;
+            }
+            refused++;
+            try {
+                String emitted = translate("ALTER TABLE `employees`.cm " + clause.sql());
+                notRefused.add(clause.sql() + " -> emitted [" + emitted.trim() + "]");
+            } catch (DDLReplicationException expected) {
+                String message = String.valueOf(expected.getMessage());
+                if (message.isEmpty()) {
+                    notRefused.add(clause.sql() + " -> refused with an empty message");
+                }
+            } catch (RuntimeException wrongKind) {
+                notRefused.add(clause.sql() + " -> " + wrongKind.getClass().getSimpleName()
+                        + " instead of DDLReplicationException: "
+                        + String.valueOf(wrongKind.getMessage()).split("\n")[0]);
+            }
+        }
+        assertTrue(refused > 0, "The matrix lost every data-changing clause.");
+        assertEquals(new ArrayList<String>(), notRefused,
+                "A clause that rewrites stored rows must throw DDLReplicationException, never "
+                        + "translate and never be skipped: " + notRefused);
     }
 
     /**
@@ -387,6 +452,9 @@ public class AlterTableDdlVariationMatrixTest {
      * replica schema, and emits nothing for the clauses ClickHouse has no
      * equivalent for. This is the assertion that catches a column clause
      * silently joining the skip list.
+     *
+     * <p>The refused clauses are excluded here; {@link
+     * #dataChangingClausesAreRefusedLoudly()} owns them.</p>
      */
     @Test
     public void translatedClausesEmitAndSkippedClausesDoNot() {
@@ -395,11 +463,14 @@ public class AlterTableDdlVariationMatrixTest {
         List<String> emitted = new ArrayList<>();
 
         for (Clause clause : clauses()) {
+            if (clause.outcome() == Outcome.REFUSED) {
+                continue;
+            }
             String sql = translate("ALTER TABLE `employees`.cm " + clause.sql());
             boolean emits = !sql.trim().isEmpty();
-            if (clause.translated() && !emits) {
+            if (clause.outcome() == Outcome.TRANSLATED && !emits) {
                 unexpectedSkip.add(clause.sql());
-            } else if (!clause.translated() && emits) {
+            } else if (clause.outcome() == Outcome.SKIPPED && emits) {
                 unexpectedEmit.add(clause.sql() + " -> " + sql.trim());
             }
             if (emits) {
@@ -432,8 +503,6 @@ public class AlterTableDdlVariationMatrixTest {
                 {"INT DEFAULT ((0))", "Nullable(Int32) DEFAULT 0"},
                 {"INT DEFAULT (((0)))", "Nullable(Int32) DEFAULT 0"},
                 {"INT DEFAULT (-1)", "Nullable(Int32) DEFAULT -1"},
-                {"INT DEFAULT (NULL)", "Nullable(Int32)"},
-                {"INT NOT NULL DEFAULT (NULL)", "Int32 NOT NULL DEFAULT NULL"},
                 {"INT NOT NULL DEFAULT (7)", "Int32 DEFAULT 7"},
                 {"TINYINT(1) DEFAULT (0)", "Nullable(Int8) DEFAULT 0"},
                 {"BIGINT DEFAULT (1)", "Nullable(Int64) DEFAULT 1"},
@@ -461,6 +530,27 @@ public class AlterTableDdlVariationMatrixTest {
         }
         assertEquals(new ArrayList<String>(), wrong,
                 "A literal DEFAULT must reach ClickHouse with its value: " + wrong);
+
+        // A NULL literal default is the one exception: it is never emitted
+        // (Spec 06.04 §3.2.3). On a nullable column it is implied by the type,
+        // and carrying it would make a later MODIFY COLUMN fail with Code: 70.
+        // On a NOT NULL column ClickHouse rejects it outright -- `ADD COLUMN c
+        // Int32 DEFAULT NULL` is Code: 70 CANNOT_CONVERT_TYPE (measured on
+        // 24.8.8.17) -- so emitting it produced a statement that failed on
+        // every retry and stalled the stream.
+        List<String> carriedNull = new ArrayList<>();
+        for (String declaration : new String[]{
+                "INT DEFAULT (NULL)",
+                "INT DEFAULT NULL",
+                "INT NOT NULL DEFAULT (NULL)",
+                "INT NOT NULL DEFAULT NULL"}) {
+            String sql = translate("ALTER TABLE `employees`.cm ADD COLUMN c " + declaration);
+            if (sql.toUpperCase().contains("DEFAULT")) {
+                carriedNull.add(declaration + " -> " + sql.trim());
+            }
+        }
+        assertEquals(new ArrayList<String>(), carriedNull,
+                "A NULL DEFAULT must be dropped, never emitted: " + carriedNull);
     }
 
     /**
@@ -544,15 +634,33 @@ public class AlterTableDdlVariationMatrixTest {
         return names;
     }
 
+    /**
+     * What the translator must do with one clause: reproduce it, drop it, or
+     * refuse it loudly.
+     */
+    private enum Outcome {
+        /** Changes the replica schema, so it must reach ClickHouse. */
+        TRANSLATED,
+        /** No ClickHouse equivalent and no row changes, so it is dropped. */
+        SKIPPED,
+        /** Rewrites rows already stored, so translation must throw. */
+        REFUSED
+    }
+
     private static final class Clause {
         private final String context;
         private final String sql;
-        private final boolean translated;
+        private final Outcome outcome;
 
-        private Clause(String context, String sql, boolean translated) {
+        private Clause(String context, String sql, Outcome outcome) {
             this.context = context;
             this.sql = sql;
-            this.translated = translated;
+            this.outcome = outcome;
+        }
+
+        /** Convenience for the two ordinary outcomes. */
+        private Clause(String context, String sql, boolean translated) {
+            this(context, sql, translated ? Outcome.TRANSLATED : Outcome.SKIPPED);
         }
 
         String context() {
@@ -563,8 +671,8 @@ public class AlterTableDdlVariationMatrixTest {
             return sql;
         }
 
-        boolean translated() {
-            return translated;
+        Outcome outcome() {
+            return outcome;
         }
     }
 }

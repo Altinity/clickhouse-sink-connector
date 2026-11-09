@@ -72,13 +72,31 @@ public class DefaultLiteralTranslatorTest {
     }
 
     /**
-     * Alternative 1, {@code NULL_LITERAL}. On a nullable column it is written
-     * as NULL, which is the value MySQL back-filled.
+     * Alternative 1, {@code NULL_LITERAL}, is deliberately NOT emitted
+     * (Spec 06.04 §3.2.3).
+     *
+     * <p>On a nullable column the clause is implied by the type and changes no
+     * stored value -- an insert that omits the column stores NULL either way --
+     * but ClickHouse validates the default expression on every later ALTER, so
+     * carrying it turns an ordinary {@code MODIFY COLUMN c String} into
+     * Code: 70 CANNOT_CONVERT_TYPE ("Cannot convert NULL to a non-nullable
+     * type ... default expression and column type are incompatible"). On a
+     * non-Nullable column it is unrepresentable outright: {@code ADD COLUMN c
+     * Int32 DEFAULT NULL} is Code: 70 as well (measured on 24.8.8.17). MySQL
+     * renders a nullable column with no default as {@code DEFAULT NULL} in
+     * {@code SHOW CREATE TABLE}, so the shape arrives constantly.</p>
      */
     @Test
-    public void nullLiteralIsCarried() {
-        assertEquals("NULL", defaultOf("ALTER TABLE t ADD COLUMN c INT DEFAULT NULL"));
-        assertEquals("NULL", defaultOf("ALTER TABLE t ADD COLUMN c INT DEFAULT \\N"));
+    public void nullLiteralIsNotEmitted() {
+        for (String sql : new String[]{
+                "ALTER TABLE t ADD COLUMN c INT DEFAULT NULL",
+                "ALTER TABLE t ADD COLUMN c INT DEFAULT \\N"}) {
+            String emitted = translate(sql);
+            assertFalse(emitted.contains("DEFAULT"),
+                    "an explicit NULL default must be dropped, not carried: " + emitted);
+            assertTrue(emitted.contains("c Nullable(Int32)"),
+                    "the column itself must still be added: " + emitted);
+        }
     }
 
     /**
@@ -230,12 +248,31 @@ public class DefaultLiteralTranslatorTest {
             String emitted = output.toString();
             assertFalse(emitted.contains("CURRENT_TIMESTAMP"),
                     "CURRENT_TIMESTAMP is not a ClickHouse value expression: " + emitted);
-            assertTrue(emitted.contains("DEFAULT toDateTime64('2023-11-14 22:13:20.123', 3, 'UTC')"),
-                    "expected the DDL event instant for [" + sql + "] but got: " + emitted);
+            assertTrue(emitted.contains("DEFAULT toDateTime64('2023-11-14 22:13:20', 0, 'UTC')"),
+                    "a bare DATETIME/TIMESTAMP replicates as DateTime64(0), so the instant carries "
+                            + "no fraction; expected the DDL event instant for [" + sql + "] but got: " + emitted);
         }
         // Without the event instant the back-fill cannot be computed: loud.
         assertThrows(DDLReplicationException.class,
                 () -> translate("ALTER TABLE t ADD COLUMN c DATETIME DEFAULT CURRENT_TIMESTAMP"));
+    }
+
+    /**
+     * The instant is cut to the column's DECLARED precision. A bare
+     * {@code DATETIME} is whole seconds (covered above); {@code DATETIME(3)}
+     * keeps the milliseconds the DDL event carries, so the back-filled value is
+     * the one MySQL actually stored.
+     */
+    @Test
+    public void currentTimestampFractionFollowsTheColumnPrecision() {
+        MySQLDDLParserService stamped = new MySQLDDLParserService(
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "t");
+        stamped.setDdlEventTimestampMs(1700000000123L);
+        StringBuffer output = new StringBuffer();
+        stamped.parseSql("ALTER TABLE t ADD COLUMN c DATETIME(3) DEFAULT CURRENT_TIMESTAMP(3)", "t", output);
+        assertTrue(output.toString().contains(
+                        "DEFAULT toDateTime64('2023-11-14 22:13:20.123', 3, 'UTC')"),
+                "a scale-3 column keeps the milliseconds: " + output);
     }
 
     /**
