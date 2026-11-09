@@ -412,6 +412,12 @@ def default_form(self, column_type, default_expression, expected_type, expected_
     `0.`, and a boolean becomes lower case). Each expectation here was read
     from a ClickHouse server of the version this suite runs, not derived from
     the input.
+
+    `None` means the DEFAULT is deliberately NOT emitted, and the column must
+    carry none: `DEFAULT NULL` on a nullable column is implied by the type
+    (Spec 06.04 section 3.2.3). ClickHouse validates the expression on every
+    later ALTER, so carrying it turns an ordinary `MODIFY COLUMN c String`
+    into Code: 70 CANNOT_CONVERT_TYPE.
     """
     table_name = f"d_{getuid()}"
     clickhouse = self.context.cluster.node("clickhouse")
@@ -433,27 +439,37 @@ def default_form(self, column_type, default_expression, expected_type, expected_
             message=f"|{expected_type}|",
         )
 
-    with And("I check a DEFAULT was carried at all, not only the type"):
-        retry(clickhouse.query, timeout=120, delay=5)(
-            f"SELECT concat('|', default_kind = 'DEFAULT', '|', "
-            f"default_expression != '', '|') FROM system.columns "
-            f"WHERE database = 'test' AND table = '{table_name}' "
-            f"AND name = 'd' FORMAT TSVRaw",
-            message="|1|1|",
-        )
+    if expected_default is None:
+        with And("I check the DEFAULT was dropped, not invented"):
+            retry(clickhouse.query, timeout=120, delay=5)(
+                f"SELECT concat('|', default_kind = '', '|', "
+                f"default_expression = '', '|') FROM system.columns "
+                f"WHERE database = 'test' AND table = '{table_name}' "
+                f"AND name = 'd' FORMAT TSVRaw",
+                message="|1|1|",
+            )
+    else:
+        with And("I check a DEFAULT was carried at all, not only the type"):
+            retry(clickhouse.query, timeout=120, delay=5)(
+                f"SELECT concat('|', default_kind = 'DEFAULT', '|', "
+                f"default_expression != '', '|') FROM system.columns "
+                f"WHERE database = 'test' AND table = '{table_name}' "
+                f"AND name = 'd' FORMAT TSVRaw",
+                message="|1|1|",
+            )
 
-    with And("I check ClickHouse holds that DEFAULT and not a different one"):
-        # The framework asserts `message in output`, a SUBSTRING test, so the
-        # value is fenced between pipes: unfenced, an expected `''` matches
-        # every output and an expected `1` would also match `10`. TSVRaw is
-        # used because TabSeparated escapes quotes and a string literal would
-        # then never match the expression the server stored.
-        retry(clickhouse.query, timeout=120, delay=5)(
-            f"SELECT concat('|', lower(default_expression), '|') "
-            f"FROM system.columns WHERE database = 'test' "
-            f"AND table = '{table_name}' AND name = 'd' FORMAT TSVRaw",
-            message=f"|{expected_default.lower()}|",
-        )
+        with And("I check ClickHouse holds that DEFAULT and not a different one"):
+            # The framework asserts `message in output`, a SUBSTRING test, so the
+            # value is fenced between pipes: unfenced, an expected `''` matches
+            # every output and an expected `1` would also match `10`. TSVRaw is
+            # used because TabSeparated escapes quotes and a string literal would
+            # then never match the expression the server stored.
+            retry(clickhouse.query, timeout=120, delay=5)(
+                f"SELECT concat('|', lower(default_expression), '|') "
+                f"FROM system.columns WHERE database = 'test' "
+                f"AND table = '{table_name}' AND name = 'd' FORMAT TSVRaw",
+                message=f"|{expected_default.lower()}|",
+            )
 
     with And("I write a row after the DDL and require it in ClickHouse"):
         live_row(table_name=table_name, value=1)
@@ -528,9 +544,13 @@ def default_literal_forms(self):
         ("BIT(4)", "b'1010'", "Nullable(String)", "'0a'"),
         ("VARCHAR(8)", "b'1010'", "Nullable(String)", "'0a'"),
         # --- grammar `constant`: NOT? nullLiteral ----------------------------
-        ("INT", "NULL", "Nullable(Int32)", "null"),
-        ("INT", "(NULL)", "Nullable(Int32)", "null"),
-        ("VARCHAR(10)", "NULL", "Nullable(String)", "null"),
+        # The column is nullable, so `DEFAULT NULL` is implied by its type and
+        # is deliberately not emitted (Spec 06.04 section 3.2.3): the expected
+        # default is None, and the column must therefore carry none. Emitting
+        # it makes a later `MODIFY COLUMN d Int32` fail with Code: 70.
+        ("INT", "NULL", "Nullable(Int32)", None),
+        ("INT", "(NULL)", "Nullable(Int32)", None),
+        ("VARCHAR(10)", "NULL", "Nullable(String)", None),
         # --- grammar `constant`: REAL_LITERAL exponent form ------------------
         # ClickHouse evaluates the exponent, so the stored expression is the
         # plain value rather than the spelling the translator emitted.

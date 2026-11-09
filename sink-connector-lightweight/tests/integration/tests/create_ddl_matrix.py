@@ -148,7 +148,9 @@ def create_default_form(self, column_type, default_expression, expected_type,
     An expression default (a parenthesised non-constant, `CURRENT_TIMESTAMP`
     aside) is NOT carried: a CREATE back-fills no row, so the omission
     diverges nothing, and guessing a constant would be worse than omitting it.
-    Those cases assert the drop.
+    A `DEFAULT NULL` on a nullable column is not carried either, because the
+    type already implies it. Those cases assert the drop rather than skipping
+    the DEFAULT check.
     """
     table_name = f"cd_{getuid()}"
 
@@ -167,6 +169,10 @@ def create_default_form(self, column_type, default_expression, expected_type,
             expected_kind=expected_kind,
             expected_default=expected_default,
         )
+
+    if expected_kind is None:
+        with And("I check the DEFAULT was dropped, not invented"):
+            column_default_was_dropped(table_name=table_name, column_name="c")
 
     if value_column:
         with And("I check a source row's own value reaches ClickHouse"):
@@ -221,7 +227,10 @@ def create_default_forms(self):
         # --- grammar `constant`: booleanLiteral ------------------------------
         ("BOOLEAN", "TRUE", "Nullable(Bool)", "DEFAULT", "TRUE"),
         # --- grammar `defaultValue`: NULL_LITERAL ---------------------------
-        ("INT", "NULL", "Nullable(Int32)", "DEFAULT", "NULL"),
+        # The column is nullable, so `DEFAULT NULL` is implied by its type and
+        # is deliberately not emitted (Spec 06.04 section 3.2.3). Emitting it
+        # makes a later `MODIFY COLUMN c Int32` fail with Code: 70.
+        ("INT", "NULL", "Nullable(Int32)", None, None),
         # --- a DATE literal, whose ClickHouse type is Date32 ------------------
         ("DATE", "'2020-01-01'", "Nullable(Date32)", "DEFAULT", "'2020-01-01'"),
     ]
