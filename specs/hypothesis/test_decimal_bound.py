@@ -41,10 +41,28 @@ Run: `pytest specs/hypothesis/test_decimal_bound.py`
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 PROFILE = settings(derandomize=True, database=None, deadline=None, max_examples=500)
+
+# The Java this model mirrors. The binding check blanks comments and docstrings,
+# so the paths must appear in code; naming them here also fails loudly if one of
+# these sources is renamed or deleted out from under the model.
+JAVA_SOURCES = (
+    "sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/metadata/DataTypeRange.java",
+    "sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/converters/DebeziumConverter.java",
+    "sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/converters/ClickHouseDataTypeMapper.java",
+)
+
+
+def test_the_modelled_java_sources_still_exist() -> None:
+    """The model's subject: a rename here owes this spec an update."""
+    root = Path(__file__).resolve().parents[2]
+    missing = [p for p in JAVA_SOURCES if not (root / p).is_file()]
+    assert not missing, f"modelled Java source(s) missing: {missing}"
 
 # The literals DataTypeRange declares, restated so the model is not derived from
 # the code under test.

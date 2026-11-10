@@ -102,9 +102,13 @@ public class ClickHouseErrorClassifier {
      */
     // Spec 08.06 section 6.5: a bare-engine DELETE refusal can never succeed, so it is terminal
     // like a value out of range. Without this it was classified UNKNOWN and retried forever.
+    // Spec 08.07 section 3.6: so is a proven-missing target table. Its error code is absent
+    // (the throw carries none), so without this entry it classified UNKNOWN and the engine
+    // restarted into the same wall until the handoff hard cap stopped it.
     static final Set<Class<? extends Throwable>> TERMINAL_EXCEPTION_TYPES = Set.of(
             DebeziumConverter.ValueOutOfRangeException.class,
-            BareReplacingMergeTreeDeleteRefusedException.class);
+            BareReplacingMergeTreeDeleteRefusedException.class,
+            MissingTargetTableException.class);
 
     public enum ErrorCategory {
         /** Error is transient — retry may succeed (network, timeout, etc.) */

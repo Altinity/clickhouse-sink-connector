@@ -598,6 +598,24 @@ public class DbWriter extends BaseDbWriter {
     }
 
     /**
+     * Whether this writer's target table is positively absent from ClickHouse.
+     *
+     * <p>Answers the question {@link #wasTableMetaDataRetrieved()} cannot. An
+     * unresolved writer is produced by three different states -- the table does
+     * not exist, the connection was never established, and the catalog read
+     * threw -- and they need opposite responses: only the first is permanent.
+     * Neither the empty column map nor a {@code null} engine separates them
+     * (spec 08.07 section 3.3), so this asks the catalog directly through
+     * {@link DBMetadata#isTableAbsent}.</p>
+     *
+     * @return true only when the catalog positively reported the table missing;
+     *         false when it exists or the probe could not answer.
+     */
+    public boolean isTargetTableAbsent() {
+        return Boolean.TRUE.equals(dbMetadata.isTableAbsent(this.conn, database, tableName));
+    }
+
+    /**
      * Returns the map of column names to their data types.
      *
      * @return A map of column name to data type.
