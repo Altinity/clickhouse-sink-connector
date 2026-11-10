@@ -45,6 +45,11 @@ def mysql_command_line(*args, **kwargs):
     return " ".join(tl.get_mysql_checksum_command(*args, **kwargs))
 
 
+REQUIRED_MYSQL_ARGV = ["--mysql_host", "mysql-host", "--mysql_database", "db1", "--tables_regex", "."]
+REQUIRED_CLICKHOUSE_ARGV = ["--clickhouse_host", "clickhouse-host",
+                            "--clickhouse_database", "db1", "--tables_regex", "."]
+
+
 def clickhouse_command_line(*args, **kwargs):
     """The driver's ClickHouse side command (an argv list) as one line of text."""
     return " ".join(tl.get_clickhouse_checksum_command(*args, **kwargs))
@@ -78,11 +83,11 @@ def clickhouse_args(**overrides):
         clickhouse_port=9000, secure=False, sign_column="", tables_regex=".",
         where=None, order_by=None, partition_key=None, ignore_tables_regex=None,
         no_wc=False, debug_output=False, debug_limit=None, hex_columns=[],
-        debug=False, exclude_columns=["_sign,_version,is_deleted,_is_deleted"],
+        debug=False, exclude_columns=["_sign,_version,is_deleted,_is_deleted,__is_deleted"],
         threads=1, min_datetime_value=DATETIME_MIN,
         max_datetime_value=DATETIME_MAX, max_memory_usage=None,
         include_floating_point_columns=False, include_json_columns=False,
-        source_timezone="UTC", timestamp_columns="", binary_encoding="hex", json_columns="",
+        source_timezone="UTC", timestamp_columns="", binary_encoding="base64", json_columns="",
         source_columns="",
     )
     values.update(overrides)
@@ -95,7 +100,7 @@ def mysql_args(**overrides):
         mysql_host="mysql-host", mysql_user="u", mysql_password="p",
         defaults_file=None, mysql_database="db1", mysql_port=3306,
         tables_regex=".", where=None, order_by=None, ignore_tables_regex=None,
-        no_wc=False, debug_output=False, debug_limit=None, binary_encoding="hex",
+        no_wc=False, debug_output=False, debug_limit=None, binary_encoding="base64",
         min_date_value="1900-01-01", max_date_value="2299-12-31",
         min_datetime_value=DATETIME_MIN,
         max_datetime_value=DATETIME_MAX, debug=False,
@@ -460,9 +465,13 @@ class TestMySQLColumnClassification(unittest.TestCase):
         ]
         select = build_mysql_select(columns, include_json_columns=True)
         self.assertNotIn("`f`", select, "floating point stays skipped")
-        self.assertIn("lower(hex(cast(`b` as binary)))", select)
+        self.assertIn("replace(to_base64(cast(`b` as binary)),'\\n','')", select,
+                      "a blob renders as base64 under the default encoding")
         self.assertIn("json_pretty(`j`)", select)
         self.assertIn("cast(`t` as time(6))", select)
+        select_hex = build_mysql_select(columns, binary_encoding="hex", include_json_columns=True)
+        self.assertIn("lower(hex(cast(`b` as binary)))", select_hex,
+                      "and as lower-case hex when the connector runs binary.handling.mode=bytes")
 
 
 class TestMySQLTemporalRendering(unittest.TestCase):
@@ -983,6 +992,29 @@ class TestRemovedDeadPaths(unittest.TestCase):
         self.assertEqual(nargs(ch.build_argument_parser()), "+")
         self.assertEqual(nargs(my.build_argument_parser()), "+")
 
+    def test_replica_default_excludes_the_full_sink_metadata_set(self):
+        """A standalone replica run must exclude what the driver excludes.
+
+        The driver forwards its own exclude list (top_level_table_checksum),
+        so a leaf that defaults to a shorter list hashes a column the driver
+        leaves out and reports a false DIFFERENT for every table carrying it.
+        """
+        default = ch.build_argument_parser().get_default("exclude_columns")
+        self.assertEqual(set(ch.parse_exclude_columns(default)), set(ch.SINK_METADATA_COLUMNS))
+
+    def test_replica_default_matches_the_list_the_driver_forwards(self):
+        tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="UTC",
+                                     binary_encoding="hex", include_floating_point_columns=False,
+                                     include_json_columns=False)
+        cmd = tl.get_clickhouse_checksum_command("clickhouse-host", "db1", "t1", "id", 10)
+        # The driver emits the list as one comma-joined argv word and the leaf
+        # takes nargs='+', so the token list reaching the leaf is a one-item
+        # list. parse_exclude_columns takes that list and splits each token.
+        self.assertIsInstance(cmd[cmd.index("--exclude_columns") + 1], str)
+        forwarded = ch.parse_exclude_columns([cmd[cmd.index("--exclude_columns") + 1]])
+        default = ch.parse_exclude_columns(ch.build_argument_parser().get_default("exclude_columns"))
+        self.assertEqual(set(forwarded) - set(default), set())
+
 
 class TestSignColumn(unittest.TestCase):
     """--sign_column defaults to '' and the engine decides the row filter
@@ -1075,13 +1107,22 @@ class TestFinalAcrossPartitions(unittest.TestCase):
 class TestBinaryEncoding(unittest.TestCase):
     """One --binary_encoding on both sides (spec 11.02 section 3.6)."""
 
-    def test_mysql_renders_hex_by_default_base64_on_request_and_hex_in_raw_mode(self):
+    def test_mysql_renders_base64_by_default_hex_on_request_and_hex_in_raw_mode(self):
         column = [mysql_column("b", "varbinary", "varbinary(16)")]
-        self.assertEqual(build_mysql_select(column), my_piece("lower(hex(cast(`b` as binary)))") + mysql_flags("b"))
+        self.assertEqual(build_mysql_select(column),
+                         my_piece("replace(to_base64(cast(`b` as binary)),'\\n','')") + mysql_flags("b"))
         self.assertEqual(build_mysql_select(column, binary_encoding="raw"),
+                         my_piece("lower(hex(cast(`b` as binary)))") + mysql_flags("b"))
+        self.assertEqual(build_mysql_select(column, binary_encoding="hex"),
                          my_piece("lower(hex(cast(`b` as binary)))") + mysql_flags("b"))
         self.assertEqual(build_mysql_select(column, binary_encoding="base64"),
                          my_piece("replace(to_base64(cast(`b` as binary)),'\\n','')") + mysql_flags("b"))
+
+    def test_default_matches_the_connector_default(self):
+        """The default is base64 in both parsers, the connector's own default
+        (binary.handling.mode=base64, spec 07.05 section 3.2)."""
+        self.assertEqual(my.build_argument_parser().parse_args(REQUIRED_MYSQL_ARGV).binary_encoding, "base64")
+        self.assertEqual(ch.build_argument_parser().parse_args(REQUIRED_CLICKHOUSE_ARGV).binary_encoding, "base64")
 
     def test_clickhouse_hexes_listed_string_columns_only_in_raw_mode(self):
         build = TestClickHouseRowExpression().build
@@ -1113,6 +1154,28 @@ class TestBinaryEncoding(unittest.TestCase):
         clickhouse_cmd = clickhouse_command_line("clickhouse-host", "db1", "t1", "id", 10, binary_columns=["b1", "b2"])
         self.assertIn("--binary_encoding raw --hex_columns b1,b2", clickhouse_cmd)
         self.assertIn("--binary_encoding raw", mysql_command_line("mysql-host", "db1", "t1", "id", 10, None))
+
+    def test_driver_default_is_base64_on_both_sides(self):
+        """With no --binary_encoding given, both side commands carry base64:
+        the connector's own default, so a default run needs no flag."""
+        parser = argparse.ArgumentParser(add_help=False)
+        parser.add_argument('--binary_encoding', choices=['hex', 'base64', 'raw'], default='base64')
+        # Every driver flag that the command builders read, as main() supplies them.
+        tl.args = argparse.Namespace(
+            partition_date=None, threads_per_table=1, threads=1, source_timezone="UTC",
+            include_floating_point_columns=False, include_json_columns=False,
+            **vars(parser.parse_args([])))
+        self.assertEqual(tl.args.binary_encoding, "base64")
+        self.assertIn("--binary_encoding base64", mysql_command_line("mysql-host", "db1", "t1", "id", 10, None))
+        self.assertIn("--binary_encoding base64",
+                      clickhouse_command_line("clickhouse-host", "db1", "t1", "id", 10, binary_columns=["b1", "b2"]))
+        # A namespace that never carries the attribute (an older caller) also
+        # falls back to base64 rather than to hex.
+        tl.args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="UTC",
+                                     include_floating_point_columns=False, include_json_columns=False)
+        self.assertIn("--binary_encoding base64", mysql_command_line("mysql-host", "db1", "t1", "id", 10, None))
+        self.assertIn("--binary_encoding base64",
+                      clickhouse_command_line("clickhouse-host", "db1", "t1", "id", 10, binary_columns=["b1", "b2"]))
 
 
 class TestBooleanAndBit(unittest.TestCase):

@@ -201,7 +201,7 @@ from `sink-connector/python` with that directory on `PYTHONPATH` (§3.1). A miss
 | `--lock_tables_on_source` | flag | §3.7 | yes |
 | `--sleep_after_lock` | int, 3 | Seconds slept after the lock, before the sides start | yes |
 | `--source_timezone` | str, required (no default, no server query) | 11.02 §3.2 step 1. Forwarded to both sides | yes |
-| `--binary_encoding` | `hex`/`base64`/`raw`, `hex` | Forwarded to both sides. With `raw`, `--hex_columns` is derived per table | yes |
+| `--binary_encoding` | `hex`/`base64`/`raw`, `base64` | Forwarded to both sides. The default is the connector's own default (`binary.handling.mode=base64`, 07.05 §3.2) and the loader's default (`--binary_handling_mode base64`, 13.04 §3.2), so a default connector, a default load and a default compare agree with no flags; a connector on `binary.handling.mode=bytes` needs `--binary_encoding hex` (11.02 §3.6). With `raw`, `--hex_columns` is derived per table | yes |
 | `--min_datetime_value`, `--max_datetime_value` | str (UTC instant `YYYY-MM-DD[ HH:MM:SS[.ffffff]]`), none | Not passed by default, so each side clamps to the full DateTime64 range. When given: canonicalised and confined by `canonical_datetime_bound` in `main` (`resolve_datetime_bounds`; a non-datetime value or min >= max is a `parser.error`, exit 2) and forwarded as identical text to both sides (11.02 §3.4). `--max_datetime_value 2299-12-31` clamps every value on 2299-12-31 and so makes its table DIFFERENT, as any clamped value does (11.02 §3.4); the saturated last day (11.02 §3.4) does the same with the default range | yes |
 | `--include_floating_point_columns`, `--include_json_columns` | flag | Forwarded to both sides | yes |
 | `--lock_wait_timeout` | int, 30 | `SET SESSION lock_wait_timeout` before `LOCK TABLES` | yes |
@@ -710,7 +710,7 @@ Unit D adds one run-level INFO line after the per-table lines, `NOT COMPARED (na
 | `--no_wc` | flag | `--tables_regex` is the table name, no catalog query. Before the fix `.mappings()` on the `[[regex]]` list raised AttributeError, exit 1 (D-13.06-26, fixed) | yes |
 | `--debug_output` | flag | Also writes the per-row strings to `out.<table>.mysql.txt` (truncated per run, appended per chunk; `--debug_limit` applies to this query only). The checksum line is still printed. Before the fix it printed **no** checksum (D-13.06-27, fixed) | yes |
 | `--debug_limit` | none | `limit N` on the debug query only | yes |
-| `--binary_encoding` | `hex` (choices) | §3.11 | yes |
+| `--binary_encoding` | `base64` (choices `hex`/`base64`/`raw`) | §3.11. The default is the connector's own (`binary.handling.mode=base64`, 07.05 §3.2) and the loader's (`--binary_handling_mode base64`, 13.04 §3.2) | yes |
 | `--min_date_value` / `--max_date_value` | `1900-01-01` / `2299-12-31` | DATE clamp: counted and warned like the DATETIME clamp, so a clamped DATE makes its table DIFFERENT (11.02 §3.4; supersedes D-13.06-34's "not counted") | yes |
 | `--source_timezone` | none: required, refused without it | DATETIME clamp bounds shifted into the zone. The zone is trusted, not validated, for checksum runs (11.02 §3.4); each DIFFERENT table's run-summary WARNING names it | yes |
 | `--min_datetime_value` / `--max_datetime_value` | `DATETIME_MIN` / `DATETIME_MAX` | canonicalised and confined (11.02 §3.4) | yes |
@@ -776,9 +776,9 @@ argparse errors. A credential `assert` failure exits 1 with a raw traceback, out
 | `--ignore_tables_regex` | none | `re.match` IGNORECASE → table skipped silently | yes |
 | `--no_wc` | flag | `--tables_regex` is used as the table name | yes |
 | `--debug_output` / `--debug_limit` | flag / none | Per-row strings to `out.<table>.ch.txt` (`--debug_limit` applies to that query only), and the checksum line is still printed. Before the fix there was **no** checksum line (D-13.06-27, fixed) | yes |
-| `--binary_encoding` | `hex` (choices) | §3.11 | yes |
+| `--binary_encoding` | `base64` (choices `hex`/`base64`/`raw`) | §3.11. The default is the connector's own (`binary.handling.mode=base64`, 07.05 §3.2) and the loader's (`--binary_handling_mode base64`, 13.04 §3.2) | yes |
 | `--hex_columns` | `nargs='+'`, `[]` | Joined with `,` and split again. Requires `raw`, else ValueError (exit 1) | yes |
-| `--exclude_columns` | `nargs='+'`, `['_sign,_version,is_deleted,_is_deleted']` | `parse_exclude_columns`: space-separated words and comma-separated lists alike, as on the MySQL side. Before the fix it was `"','".join(tokens).split(',')`, so several tokens got stray quotes and nothing was excluded (D-13.06-17, fixed) | yes |
+| `--exclude_columns` | `nargs='+'`, `['_sign,_version,is_deleted,_is_deleted,__is_deleted']` | `parse_exclude_columns`: space-separated words and comma-separated lists alike, as on the MySQL side. Before the fix it was `"','".join(tokens).split(',')`, so several tokens got stray quotes and nothing was excluded (D-13.06-17, fixed). The default is the full `SINK_METADATA_COLUMNS` set, the same list the driver forwards (13.06 §3.5), so a standalone run and a driver run exclude the same columns | yes |
 | `--threads` | 1 | tables in parallel | yes |
 | `--source_timezone`, `--timestamp_columns` | none (`--source_timezone` required), `''` | 11.02 §3.4 | yes |
 | `--min_datetime_value` / `--max_datetime_value` | `DATETIME_MIN` / `DATETIME_MAX` | 11.02 §3.4 | yes |

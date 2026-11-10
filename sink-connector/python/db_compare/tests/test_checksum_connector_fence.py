@@ -628,7 +628,7 @@ class TestLockAndWait(unittest.TestCase):
         order = []
         lock_conn = MagicMock(name="lock_conn")
         args = argparse.Namespace(partition_date=None, threads_per_table=1, threads=1, source_timezone="UTC",
-                                  binary_encoding="hex", include_floating_point_columns=False,
+                                  binary_encoding="base64", include_floating_point_columns=False,
                                   include_json_columns=False)
         with patch.object(tl, "args", args, create=True), \
                 patch.object(tl, "get_mysql_connection", return_value=lock_conn), \

@@ -6,7 +6,7 @@ import argparse
 import logging
 from ch_sink_tools.db.mysql import *
 from ch_sink_tools.db.checksum_common import (validate_timezone, resolve_source_zone, check_source_timezone_flag, JSON_COLUMNS_HINT_RE,
-                                 DATETIME_MIN, DATETIME_MAX, DATETIME64_MIN_UTC, DATETIME64_MAX_UTC, canonical_datetime_bound)
+                                 DATETIME_MIN, DATETIME_MAX, DATETIME64_MIN_UTC, DATETIME64_MAX_UTC, DATE32_MIN, canonical_datetime_bound)
 import ast
 import concurrent.futures
 import functools
@@ -681,9 +681,9 @@ def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, i
     # grep|awk, so its WARNING lines are kept (spec 13.06 FM-13.06-3, -8).
     cmd = side_command(MYSQL_SIDE_MODULE) + [
            "--threads_per_table", str(args.threads_per_table if threads_per_table is None else threads_per_table), f"--threads={args.threads}",
-           "--min_date_value", "1900-01-01", "--mysql_host", str(mysql_host), "--mysql_database", str(database),
+           "--min_date_value", DATE32_MIN, "--mysql_host", str(mysql_host), "--mysql_database", str(database),
            "--tables_regex", exact_table_regex(table), "--where", where_value,
-           "--source_timezone", str(getattr(args, "source_timezone", None)), "--binary_encoding", str(getattr(args, "binary_encoding", "hex"))]
+           "--source_timezone", str(getattr(args, "source_timezone", None)), "--binary_encoding", str(getattr(args, "binary_encoding", "base64"))]
     cmd += include_flags() + datetime_bound_flags() + ignored_columns_clause + debug_output_clause + defaults_file_clause
     logging.debug(f"MySQL command: {command_text(cmd)}")
     return cmd
@@ -726,8 +726,8 @@ def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, w
 
     # Only raw bytes need hexing on the replica; hex and base64 are compared
     # as the text the connector stored (spec 11.02 section 3.6).
-    binary_encoding_clause = ["--binary_encoding", str(getattr(args, "binary_encoding", "hex"))]
-    if getattr(args, "binary_encoding", "hex") == 'raw' and binary_columns:
+    binary_encoding_clause = ["--binary_encoding", str(getattr(args, "binary_encoding", "base64"))]
+    if getattr(args, "binary_encoding", "base64") == 'raw' and binary_columns:
         binary_encoding_clause += ["--hex_columns", ",".join(binary_columns)]
 
     # String columns that replicate MySQL JSON (spec 11.02 section 3.9).
@@ -1700,7 +1700,7 @@ def run_config(config):
                     partition_key = get_table_partition_key(conn, database, table)
                     timestamp_columns = mysql_columns_by_data_type(conn, database, table, ('timestamp',))
                     binary_columns = []
-                    if getattr(args, "binary_encoding", "hex") == 'raw':
+                    if getattr(args, "binary_encoding", "base64") == 'raw':
                         binary_columns = mysql_columns_by_data_type(conn, database, table, binary_datatypes)
                     json_columns = mysql_json_columns(conn, database, table)
                     char_columns = mysql_char_columns(conn, database, table)
@@ -1881,8 +1881,8 @@ def main():
                         help='Lock the table on the source so that source and target are in sync ...', required=False)
     parser.add_argument('--sleep_after_lock', type=int, help='When locking, sleeping n seconds', default=3)
     parser.add_argument('--source_timezone', help='IANA region name the connector interprets MySQL DATETIME values in (its database.connectionTimeZone), for example America/Chicago. REQUIRED: there is no default and the MySQL server zone is not read; pass UTC explicitly when the connector used UTC. One zone per run: a mixed-zone set needs one run per zone with --tables_regex', required=False, default=None)
-    parser.add_argument('--binary_encoding', choices=['hex', 'base64', 'raw'], default='hex', required=False,
-                        help='how the connector wrote binary values: hex text (default), base64 text (binary.handling.mode=base64) or raw bytes (persist.raw.bytes=true); passed to both sides')
+    parser.add_argument('--binary_encoding', choices=['hex', 'base64', 'raw'], default='base64', required=False,
+                        help='how the connector wrote binary values: base64 text (the connector default), hex text (binary.handling.mode=bytes or hex) or raw bytes (persist.raw.bytes=true); passed to both sides')
     parser.add_argument('--min_datetime_value', required=False, default=None,
                         help='Lower clamp bound for DATETIME/TIMESTAMP values, a UTC instant YYYY-MM-DD[ HH:MM:SS[.ffffff]]; passed to both sides only when given. Every value earlier than it is clamped to it on the side that holds it, and a table with any clamped value is DIFFERENT (a clamped value cannot be compared exactly). Default: not passed, each side uses the ClickHouse DateTime64 minimum (1900-01-01 00:00:00)')
     parser.add_argument('--max_datetime_value', required=False, default=None,

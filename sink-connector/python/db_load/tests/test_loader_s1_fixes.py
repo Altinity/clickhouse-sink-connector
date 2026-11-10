@@ -242,9 +242,32 @@ class TestBinaryRepresentation:
         listed = loader.get_column_list({"db1.t": cols}, "db1", "t", [], transform=True, mysqlshell=True, **kw)
         return split_top_level(listed)
 
-    def test_default_is_lower_hex_of_the_decoded_base64(self, loader):
+    def test_default_is_the_connector_default_base64(self, loader):
+        # The loader default is the connector's own default (binary.handling.mode=base64, spec 07.05 section 3.2),
+        # so a default dump load and a default connector store the same base64 text.
         b64 = "base64Decode(replaceAll(\\`{0}\\`, char(10), ''))"
         assert self.columns(loader) == [
+            "\\`id\\`",
+            "base64Encode(" + b64.format("vb") + ")",
+            "base64Encode(" + b64.format("bl") + ")",
+            "lower(hex(" + b64.format("b8") + "))",
+            "lower(hex(substring(" + b64.format("p") + ", 5)))",
+            "\\`s\\`"]
+
+    def test_the_cli_default_is_base64(self, loader):
+        # The parser is built inside main() and cannot be reached without running a load: read the
+        # add_argument('--binary_handling_mode', ..., default=...) call out of the module source instead.
+        import ast
+        tree = ast.parse(open(loader.__file__).read())
+        defaults = [kw.value.value
+                    for node in ast.walk(tree) if isinstance(node, ast.Call)
+                    for arg in node.args if isinstance(arg, ast.Constant) and arg.value == "--binary_handling_mode"
+                    for kw in node.keywords if kw.arg == "default"]
+        assert defaults == ["base64"]
+
+    def test_bytes_mode_is_lower_hex_of_the_decoded_base64(self, loader):
+        b64 = "base64Decode(replaceAll(\\`{0}\\`, char(10), ''))"
+        assert self.columns(loader, binary_handling_mode="bytes") == [
             "\\`id\\`",
             "lower(hex(" + b64.format("vb") + "))",
             "lower(hex(" + b64.format("bl") + "))",
@@ -253,8 +276,10 @@ class TestBinaryRepresentation:
             "\\`s\\`"]
 
     def test_dump_metadata_decides_the_decoding(self, loader):
-        cols = self.columns(loader, decode_columns={"vb": "UNHEX", "bl": "FROM_BASE64", "b8": "FROM_BASE64",
-                                                    "p": "FROM_BASE64"})
+        # bytes mode, so the only variable left in the expression is the dump's decode function.
+        cols = self.columns(loader, binary_handling_mode="bytes",
+                            decode_columns={"vb": "UNHEX", "bl": "FROM_BASE64", "b8": "FROM_BASE64",
+                                            "p": "FROM_BASE64"})
         assert cols[1] == "lower(hex(unhex(\\`vb\\`)))"
 
     def test_base64_mode_keeps_bit_and_spatial_hex(self, loader):
@@ -266,7 +291,9 @@ class TestBinaryRepresentation:
         assert self.columns(loader, binary_handling_mode="hex")[1].startswith("hex(base64Decode(")
 
     def test_persist_raw_bytes_loads_the_bytes(self, loader):
-        cols = self.columns(loader, persist_raw_bytes=True)
+        # persist.raw.bytes is the bytes-mode writer's parameter: base64 already carries the text, so under
+        # binary.handling.mode=base64 it has no effect (spec 07.05 section 3.2) and the loader keeps base64.
+        cols = self.columns(loader, binary_handling_mode="bytes", persist_raw_bytes=True)
         assert cols[1].startswith("base64Decode(") and cols[4].startswith("substring(base64Decode(")
 
     def test_plain_column_list_is_unchanged(self, loader):
@@ -284,15 +311,26 @@ class TestBinaryRepresentation:
         b64_blob = b64_blob[:76] + "\\n" + b64_blob[76:]
         tsv = "1\t3q2+7w==\t%s\tAQI=\tAAAAAAEBAAAAAAAAAAAA8D8AAAAAAAAAQA==\tx\n2\t\\N\t\\N\t\\N\t\\N\t\\N\n" % b64_blob
         (tmp_path / "in.tsv").write_text(tsv)
-        exprs = [c.replace("\\`", "`") for c in self.columns(loader)]
         structure = ("`id` String, `vb` Nullable(String), `bl` Nullable(String), `b8` Nullable(String), "
                      "`p` Nullable(String), `s` Nullable(String)")
-        query = "SELECT %s FROM file('%s', TSV, '%s') ORDER BY id FORMAT TSV" % (
-            ", ".join(exprs), tmp_path / "in.tsv", structure)
-        out = subprocess.run(["clickhouse", "local", "-q", query], capture_output=True, text=True, check=True).stdout
-        rows = [line.split("\t") for line in out.splitlines()]
-        assert rows[0] == ["1", "deadbeef", blob.hex(), "0102", "0101000000000000000000f03f0000000000000040", "x"]
-        assert rows[1] == ["2", "\\N", "\\N", "\\N", "\\N", "\\N"]
+
+        def rows(**mode):
+            exprs = [c.replace("\\`", "`") for c in self.columns(loader, **mode)]
+            query = "SELECT %s FROM file('%s', TSV, '%s') ORDER BY id FORMAT TSV" % (
+                ", ".join(exprs), tmp_path / "in.tsv", structure)
+            out = subprocess.run(["clickhouse", "local", "-q", query], capture_output=True, text=True,
+                                 check=True).stdout
+            return [line.split("\t") for line in out.splitlines()]
+
+        # The default is the connector's default (binary.handling.mode=base64): the same base64 text it stores.
+        assert rows() == [
+            ["1", "3q2+7w==", base64.b64encode(blob).decode(), "0102",
+             "0101000000000000000000f03f0000000000000040", "x"],
+            ["2", "\\N", "\\N", "\\N", "\\N", "\\N"]]
+        # --binary_handling_mode bytes (binary.handling.mode=bytes, persist.raw.bytes=false) is lower-case hex.
+        assert rows(binary_handling_mode="bytes") == [
+            ["1", "deadbeef", blob.hex(), "0102", "0101000000000000000000f03f0000000000000040", "x"],
+            ["2", "\\N", "\\N", "\\N", "\\N", "\\N"]]
 
 
 # --------------------------------------------------------------------------------------------- D-13.04-4 pipefail

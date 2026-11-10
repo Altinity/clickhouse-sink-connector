@@ -571,14 +571,23 @@ both sides** (argparse rejects anything but `hex`, `base64`, `raw`):
 
 | connector configuration | ClickHouse holds | `--binary_encoding` | MySQL expression | ClickHouse expression |
 |---|---|---|---|---|
-| default (`persist.raw.bytes=false`, `binary.handling.mode=bytes`) | lowercase hex **text** (`BaseEncoding.base16().lowerCase()` in `ClickHouseDataTypeMapper`) | `hex` (default) | `lower(hex(cast(col as binary)))` | `toString(col)` |
-| `binary.handling.mode=base64` | the base64 text Debezium delivers | `base64` | `replace(to_base64(cast(col as binary)),'\n','')` | `toString(col)` |
+| default (`persist.raw.bytes=false`, `binary.handling.mode` absent or blank: the connector sets `base64`, `DebeziumChangeEventCapture.ensureBinaryHandlingMode`, spec 07.05 §3.2) | the base64 text Debezium delivers | `base64` (default) | `replace(to_base64(cast(col as binary)),'\n','')` | `toString(col)` |
+| `binary.handling.mode=bytes`, `persist.raw.bytes=false` | lowercase hex **text** (`BaseEncoding.base16().lowerCase()` in `ClickHouseDataTypeMapper`) | `hex` | `lower(hex(cast(col as binary)))` | `toString(col)` |
+| `binary.handling.mode=hex` | Debezium's **upper-case** hex text | `hex` (differs in case: the MySQL side is lowered, so an upper-case replica is reported DIFFERENT — a limitation, not a pass) | `lower(hex(cast(col as binary)))` | `toString(col)` |
 | `persist.raw.bytes=true` | the raw bytes | `raw` | `lower(hex(cast(col as binary)))` | `lower(hex(col))` for the `String` columns named in `--hex_columns`, `toString(col)` otherwise |
 
-- The driver's `--binary_encoding` (default `hex`) is passed to both scripts.
-  It used to hard-code `base64` — as did the two integration test drivers —
-  while a default connector stores hex text, so every table with a binary
-  column reported DIFFERENT under the default configuration.
+- The driver's `--binary_encoding` defaults to `base64`, the same default the
+  connector applies and the Python loader uses (`--binary_handling_mode`,
+  spec 13.04 §3.7.1), so a default-configured connector, a default loader run
+  and a default checksum compare the same text without a flag anywhere. It is
+  passed to both scripts.
+- A connector that runs `binary.handling.mode=bytes` must be compared with
+  `--binary_encoding hex`; that is the shape a 2.11.0 default deployment
+  produced before the default moved to base64 (spec 07.05 §3.2).
+- It once hard-coded `base64` — as did the two integration test drivers —
+  while a default connector then stored hex text, so every table with a binary
+  column reported DIFFERENT under the default configuration; the default moved
+  to base64 on both sides rather than the flag becoming mandatory.
 - In `raw` mode the driver derives `--hex_columns` per table from
   `information_schema` (`db.mysql.binary_datatypes`); a standalone replica
   run must pass the list itself. `--hex_columns` applies to `String` columns
@@ -913,7 +922,7 @@ connect to a database.
     `db_compare/tests/test_explicit_source_zone.py`).
   - `TestBooleanAndBit` — §3.3: `Bool` and `Nullable(Bool)` render through
     `toUInt8`; MySQL `bit(1)` renders as `col+0` while `bit(8)` stays hex.
-  - `TestBinaryEncoding` — §3.6: MySQL renders hex by default, base64 on
+  - `TestBinaryEncoding` — §3.6: MySQL renders base64 by default, hex on
     request and hex in `raw` mode; ClickHouse hexes the listed `String`
     columns only in `raw` mode, leaves `Bool` alone and refuses
     `--hex_columns` with `hex`/`base64`; the driver passes the encoding to

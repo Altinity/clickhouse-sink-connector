@@ -127,7 +127,7 @@ def main():
                         help='ClickHouse port', default=9000, required=False)
     parser.add_argument('--secure',
                         help='True or False', default=False, required=False)
-    parser.add_argument('--tables_regex', help='table regexp', required=True, default='.')
+    parser.add_argument('--tables_regex', help='table regexp', required=True)
     parser.add_argument('--include_partitions_regex', help='partitions regex', required=False, default=None)
     parser.add_argument('--where', help='where clause', required=False)
     parser.add_argument('--ignore_tables_regex',

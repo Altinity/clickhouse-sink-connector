@@ -33,8 +33,9 @@ connector. It records 32 defects (§7), of which D-13.08-1 to D-13.08-11 and D-1
 (§3 describes the fixed behaviour). Fixed in the loader (Spec 13.04), which resync runs:
 
 - binary columns were loaded in a different text form from the one the connector
-  writes in its default mode (D-13.08-1, fixed with D-13.04-3; a connector in
-  `base64` mode needs `--binary_handling_mode base64` through `--loader-cmd`);
+  writes in its default mode (D-13.08-1, fixed with D-13.04-3; base64 is now the
+  default on both sides, and a connector set explicitly to `bytes` needs
+  `--binary_handling_mode bytes` through `--loader-cmd`);
 - the packaged loader picked the time zone for `TIMESTAMP` parsing at random from
   the zones whose offset is `+00:00` on the day of the run, which could be a DST
   zone (D-13.08-2, fixed with D-13.04-2).
@@ -427,11 +428,11 @@ export TZ=Etc/UCT; zstd -d --stdout <dump>/_bytable/t/mydb@t@@0.tsv.zst | clickh
 #### 3.9.2 Binary columns (D-13.08-1, S1, fixed)
 **Since the fix** (Spec 13.04 §3.7.1, D-13.04-3) the loader classifies binary, BIT and spatial columns by
 their MySQL type, decodes them as the table's `<schema>@<t>.json` (`decodeColumns`, already hard-linked by
-`isolate_table_dir`) says, and renders them as the connector stores them: by default lower-case hex
-(`binary.handling.mode=bytes`, `persist.raw.bytes=false`). `run_loader` passes no rendering flag, so for a
-connector running `binary.handling.mode=base64` (the shipped templates' setting) or `persist.raw.bytes=true`
-the operator passes `--loader-cmd "python -m ch_sink_tools.db_load.clickhouse_loader --binary_handling_mode base64"`
-(or `--persist_raw_bytes`). The rest of this section records the 2.11.0 behaviour.
+`isolate_table_dir`) says, and renders them as the connector stores them: by default base64 text
+(`binary.handling.mode=base64`), which is also the loader's default. `run_loader` passes no rendering flag, so
+a connector that runs `binary.handling.mode=bytes` (lower-case hex) or `persist.raw.bytes=true` needs
+`--loader-cmd "python -m ch_sink_tools.db_load.clickhouse_loader --binary_handling_mode bytes"` (or
+`--persist_raw_bytes`). The rest of this section records the 2.11.0 behaviour.
 
 `get_column_list(..., transform=True, mysqlshell=True)` would render binary columns as
 `if(col='\N', null, lower(hex(base64Decode(col))))` (`clickhouse_loader.py:399-401`). The branch is guarded by
@@ -826,8 +827,8 @@ dumps), ClickHouse and connector (`binary.handling.mode: base64`, offsets in
 - `sink-connector/python/tests_e2e/mysql/test_mysql_04_resync.py::test_z_patch_refuses_an_empty_restore_suffix` (D-13.08-11)
 
 Acceptance criteria: binary and `TIMESTAMP` values reloaded by `patch` hash-equal the connector's for the
-configured `binary.handling.mode` (met end to end for `base64` with `--loader-cmd`, test above; the default
-loader command renders `bytes` mode). Met by the S1 fixes: the legacy-engine
+configured `binary.handling.mode` (met end to end for `base64`, the default on both sides; the test above
+passes `--loader-cmd` explicitly, which the default no longer needs). Met by the S1 fixes: the legacy-engine
 `_sign` equals 1; every canary table must pass on its own; `rewind-sql` refuses a forward move and a key it
 cannot see; `patch` refuses a suffix that names a selected schema and never recreates an unmarked table under
 the scratch name.
@@ -860,7 +861,8 @@ the scratch name.
 
 - **FM-13.08-3 Binary columns installed in a different representation**
   - **Trigger**: a repaired table has a BLOB, BINARY, VARBINARY or BIT column, and the connector runs with
-    `binary.handling.mode=bytes` (the default; lower-case hex) or `base64` with line-wrapped dump text.
+    `binary.handling.mode=bytes` (lower-case hex; Debezium's own default, which the connector overrides) or
+    `base64` with line-wrapped dump text.
   - **Behaviour**: the binary transform is unreachable because `is_binary_datatype` receives the ClickHouse
     type `String` (`clickhouse_loader.py:399`, both loaders). The dump text is inserted verbatim, count
     reconciliation passes, and `REPLACE` installs it.
@@ -872,7 +874,7 @@ the scratch name.
     `patch --apply` from the same dump. Until then, exclude binary-column tables with `--tables`.
   - **RTO**: one reload of the affected tables (unmeasured).
   - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestBinaryRepresentation::test_base64_mode_keeps_bit_and_spatial_hex`
-  - **FIXED**: D-13.08-1 (= D-13.04-3). The loader renders binary, BIT and spatial values as the connector does; resync gets the default (`bytes`, lower-case hex), and a connector running `binary.handling.mode=base64` needs `--loader-cmd "python -m ch_sink_tools.db_load.clickhouse_loader --binary_handling_mode base64"`.
+  - **FIXED**: D-13.08-1 (= D-13.04-3). The loader renders binary, BIT and spatial values as the connector does; resync gets the default (`base64`, as the connector's default) with no flag, and a connector set explicitly to `binary.handling.mode=bytes` needs `--loader-cmd "python -m ch_sink_tools.db_load.clickhouse_loader --binary_handling_mode bytes"`.
 
 - **FM-13.08-4 TIMESTAMP values shifted by a randomly chosen DST zone**
   - **Trigger**: the packaged loader runs on a date when DST zones are at `+00:00` (northern winter), and the
@@ -1126,7 +1128,7 @@ Summary: 22 failure modes, 8 DEFECT, 9 GAP.
 ## 7. Defect Register
 | ID | Severity | Copy (legacy/packaged/both) | Location | Evidence | Summary |
 |---|---|---|---|---|---|
-| D-13.08-1 | S1 | both (loader) | `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py:399` (legacy same branch), reached from `mysql_resync.py:353` | reproduced (loader `main()` with resync's argv: `` `b` ``,`` `vb` ``,`` `bt` `` selected verbatim) | FIXED (with D-13.04-3): rendered as the connector stores them; default `bytes` (lower-case hex), other modes via `--loader-cmd ... --binary_handling_mode`. Test `test_loader_s1_fixes.py::TestBinaryRepresentation`. Was: binary columns loaded as the dump's base64 text |
+| D-13.08-1 | S1 | both (loader) | `sink-connector/python/ch_sink_tools/db_load/clickhouse_loader.py:399` (legacy same branch), reached from `mysql_resync.py:353` | reproduced (loader `main()` with resync's argv: `` `b` ``,`` `vb` ``,`` `bt` `` selected verbatim) | FIXED (with D-13.04-3): rendered as the connector stores them; default `base64` (as the connector's default), other modes via `--loader-cmd ... --binary_handling_mode`. Test `test_loader_s1_fixes.py::TestBinaryRepresentation`. Was: binary columns loaded as the dump's base64 text |
 | D-13.08-2 | S1 | packaged (loader) | `ch_sink_tools/db_load/clickhouse_loader.py:268-285,347,517` | reproduced (9/30 hash seeds pick a DST zone in January) | FIXED (with D-13.04-2): deterministic `UTC` for a `tzUtc` dump; `@.json` linked into the per-table directory. Test `test_loader_s1_fixes.py::TestDumpTimezoneMapping`. Was: the first `+00:00` zone in set hash order, shifting summer values 1–2 h when a DST zone was picked |
 | D-13.08-3 | S1 | both | `mysql_resync.py:353` (loader skips `_sign`) + connector DDL `_sign Int8` with no default | code-read | FIXED: the scratch copy gets `MODIFY COLUMN _sign DEFAULT 1` before the load (the connector's live-row value, `PreparedStatementFieldMapper.handleReplacingMergeTreeDeleteColumn`) and any `_sign != 1` blocks the `REPLACE` (`SIGN_MISMATCH`); test `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestLegacySignTable`. Was: legacy-engine reloaded rows got `_sign = 0` and vanished from `_sign > 0` readers while the tool reported `REPLACED_OK` |
 | D-13.08-4 | S1 | packaged (tool) | `mysql_resync.py:507,519` | reproduced (1000/1000 plus 0/5 → all `REPLACED_OK`, exit 0) | FIXED: each canary table's own ratio is compared with the threshold; test `sink-connector/python/db_load/tests/test_resync_failure_modes.py::TestPerTableCanary::test_each_canary_table_must_pass_on_its_own`. Was: the threshold applied to the pooled ratio, so a table whose rows all differ passed |

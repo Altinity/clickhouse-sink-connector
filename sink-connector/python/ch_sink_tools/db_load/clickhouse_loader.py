@@ -517,15 +517,15 @@ def read_mysqlshell_decode_columns(table_metadata_path):
     return dict(metadata.get('options', {}).get('decodeColumns', {}))
 
 
-def mysqlshell_column_expression(column, column_name, decode_columns, binary_handling_mode='bytes',
+def mysqlshell_column_expression(column, column_name, decode_columns, binary_handling_mode='base64',
                                  persist_raw_bytes=False, target_types=None):
     """SELECT expression that turns a MySQL Shell TSV field into the text the streaming connector stores.
 
     Spec 07.05 section 3.2 and Spec 07.06 section 3.2. MySQL Shell writes binary, BIT and spatial columns as
     TO_BASE64 text (default useBase64: true; MySQL inserts a newline every 76 characters) or HEX text. The connector
-    stores binary/varbinary/blob as lower-case hex (binary.handling.mode=bytes, persist.raw.bytes=false: the
-    defaults), the raw bytes (persist.raw.bytes=true), base64 text (binary.handling.mode=base64) or upper-case hex
-    (binary.handling.mode=hex). BIT(n) and spatial values reach the connector as bytes under every
+    stores binary/varbinary/blob as base64 text (binary.handling.mode=base64: the default since 2.11.1), lower-case
+    hex (binary.handling.mode=bytes, persist.raw.bytes=false), the raw bytes (persist.raw.bytes=true) or upper-case
+    hex (binary.handling.mode=hex). BIT(n) and spatial values reach the connector as bytes under every
     binary.handling.mode, so they are lower-case hex, or raw with persist.raw.bytes. A spatial value is MySQL's
     internal format (4-byte SRID, then WKB); the connector stores the WKB only, so the SRID prefix is dropped.
     NULL needs no special case: the input() structure declares a nullable column Nullable(String)."""
@@ -571,7 +571,7 @@ def mysqlshell_column_expression(column, column_name, decode_columns, binary_han
 
 
 def get_column_list(schema_map, schema, table, virtual_columns, transform=False, mysqlshell=False,
-                    decode_columns=None, binary_handling_mode='bytes', persist_raw_bytes=False, target_types=None):
+                    decode_columns=None, binary_handling_mode='base64', persist_raw_bytes=False, target_types=None):
     key = f"{schema}.{table}"
     column_list = "*"
     if key in schema_map:
@@ -753,7 +753,7 @@ def load_data_mysqlshell(args, timezone, schema_map, clickhouse_user=None, click
             transformed_columns = get_column_list(
                 schema_map, schema, table_name, args.virtual_columns, transform=True, mysqlshell=args.mysqlshell,
                 decode_columns=decode_columns,
-                binary_handling_mode=getattr(args, 'binary_handling_mode', 'bytes'),
+                binary_handling_mode=getattr(args, 'binary_handling_mode', 'base64'),
                 persist_raw_bytes=getattr(args, 'persist_raw_bytes', False), target_types=target_types)
             
             if args.truncate_tables:
@@ -838,7 +838,7 @@ def main():
     parser.add_argument(
         '--dump_dir', help='Location of dump files', required=True)
     parser.add_argument('--threads', type=int, default=8,
-                        help='Number of threads', required=True)
+                        help='Number of threads')
     parser.add_argument('--debug', dest='debug',
                         action='store_true', default=False)
     parser.add_argument('--schema_only', dest='schema_only',
@@ -865,11 +865,11 @@ def main():
                              "the zone the source MySQL server stored the dump's TIMESTAMP text in: the connector's "
                              "database.connectionTimeZone. There is no default and no server-zone read. When the dump "
                              "records a zone, the flag must name the same zone or the load is refused.")
-    parser.add_argument('--binary_handling_mode', choices=['bytes', 'base64', 'hex'], default='bytes',
+    parser.add_argument('--binary_handling_mode', choices=['bytes', 'base64', 'hex'], default='base64',
                         help='Set to the binary.handling.mode of the connector that streams into these tables, so '
-                             'binary/varbinary/blob values are loaded in the text it stores: bytes = lower-case hex '
-                             '(Debezium default), base64 = base64 text, hex = upper-case hex. BIT and spatial values '
-                             'are hex under every mode.')
+                             'binary/varbinary/blob values are loaded in the text it stores: base64 = base64 text '
+                             '(the connector default), bytes = lower-case hex, hex = upper-case hex. BIT and spatial '
+                             'values are hex under every mode.')
     parser.add_argument('--persist_raw_bytes', action='store_true', default=False,
                         help='Set when the connector runs with persist.raw.bytes=true: binary/BIT/spatial values are '
                              'loaded as raw bytes instead of hex (for binary types only with --binary_handling_mode bytes)')

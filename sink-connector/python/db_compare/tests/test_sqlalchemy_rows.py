@@ -55,7 +55,7 @@ def run_driver(module, table_rows, extra_patches=(), **arg_values):
     """Run a driver's run_config over ``table_rows`` with only the catalog helpers and
     the side processes stubbed; return (exit code, log lines)."""
     values = dict(mysql_user=None, defaults_file="~/.my.cnf", mysql_database="shop", mysql_port=3306,
-                  source_timezone="UTC", tables_regex=".", threads=1, binary_encoding="hex", where=None,
+                  source_timezone="UTC", tables_regex=".", threads=1, binary_encoding="base64", where=None,
                   debug_output=False, lock_tables_on_source=False, sleep_after_lock=0, lock_wait_timeout=30,
                   fail_on_lock_timeout=False, no_wc=False, include_partitions_regex=None,
                   exclude_tables_regex=None, non_partitioned_tables_only=False,

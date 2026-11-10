@@ -532,12 +532,13 @@ def build_argument_parser():
     parser.add_argument('--no_wc', action='store_true', default=False, help='Runs wc first to determine the table names from the regex', required=False)
     parser.add_argument('--debug_output', action='store_true', default=False, help='Output the raw format to a file called out.txt', required=False)
     parser.add_argument('--debug_limit', help='Limit the debug output in lines', required=False)
-    parser.add_argument('--binary_encoding', choices=['hex', 'base64', 'raw'], default='hex', required=False,
-                        help='how the connector wrote binary values: hex text (default), base64 text (binary.handling.mode=base64) or raw bytes (persist.raw.bytes=true); pass the same value to the MySQL side')
+    parser.add_argument('--binary_encoding', choices=['hex', 'base64', 'raw'], default='base64', required=False,
+                        help='how the connector wrote binary values: base64 text (the connector default), hex text (binary.handling.mode=bytes or hex) or raw bytes (persist.raw.bytes=true); pass the same value to the MySQL side')
     parser.add_argument('--hex_columns', help='with --binary_encoding raw: the String columns holding raw bytes, rendered as lower(hex(col)); comma or space separated', nargs='+', default=[])
     parser.add_argument('--debug', dest='debug', action='store_true', default=False)
     # TODO change this to standard MaterializedMySQL columns https://github.com/Altinity/clickhouse-sink-connector/issues/78
-    parser.add_argument('--exclude_columns', help='columns to exclude (comma or space separated)', nargs='+', default=['_sign,_version,is_deleted,_is_deleted'])
+    parser.add_argument('--exclude_columns', help='columns to exclude (comma or space separated)', nargs='+',
+                        default=['_sign,_version,is_deleted,_is_deleted,__is_deleted'])
     parser.add_argument('--threads', type=int, help='number of parallel threads', default=1)
     parser.add_argument('--source_timezone', help='IANA region name the connector interprets MySQL DATETIME values in (its database.connectionTimeZone), for example America/Chicago; DateTime columns not listed in --timestamp_columns are rendered in it. REQUIRED: no default and no server query; pass UTC explicitly when the connector used UTC', default=None, required=False)
     parser.add_argument('--timestamp_columns', help='comma separated names of the columns that replicate a MySQL TIMESTAMP; they are compared as UTC instants', default='', required=False)

@@ -94,7 +94,7 @@ class TestForwarding(unittest.TestCase):
 
     def test_a_namespace_without_the_options_passes_no_bounds(self):
         tl.args = argparse.Namespace(partition_date=None, threads=1, threads_per_table=1, source_timezone="UTC",
-                                     binary_encoding="hex", include_floating_point_columns=False,
+                                     binary_encoding="base64", include_floating_point_columns=False,
                                      include_json_columns=False)
         for cmd in side_commands():
             self.assertNotIn("--max_datetime_value", cmd)

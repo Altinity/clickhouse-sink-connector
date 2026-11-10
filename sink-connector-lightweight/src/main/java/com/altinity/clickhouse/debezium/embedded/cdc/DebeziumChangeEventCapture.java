@@ -398,6 +398,9 @@ public class DebeziumChangeEventCapture {
             // Debezium's default remaps years below 100 (0001-01-01 arrives as
             // 2001-01-01). Off unless the user set it (spec 07.03 section 3.4).
             ensureTimeAdjusterDisabled(props);
+            // One binary text across the connector, the loader and the checksum tools:
+            // base64 unless the user chose a mode (spec 07.05 section 3.2).
+            ensureBinaryHandlingMode(props);
             // latin1 text: Debezium decodes the five bytes MySQL keeps as C1 controls into U+FFFD.
             // Spec 07.08 section 3.3.
             com.altinity.clickhouse.debezium.embedded.converters.Latin1TextConverter.ensureRegistered(props);
@@ -1329,6 +1332,55 @@ public class DebeziumChangeEventCapture {
                         + "leaving them disabled would make the initial snapshot re-run on "
                         + "every restart (issue #1379).",
                 HEARTBEAT_INTERVAL_MS, DEFAULT_HEARTBEAT_INTERVAL_MS);
+    }
+
+    /** Debezium's binary handling mode property. Debezium's own default is {@code bytes}. */
+    static final String BINARY_HANDLING_MODE = "binary.handling.mode";
+
+    /**
+     * The binary handling mode applied when the user has not set one.
+     *
+     * <p>Base64 is the mode the shipped deployment templates, the sample
+     * configurations, the Python loader, the checksum tools and the e2e
+     * suite all use, so it is the connector's default too: one mode across
+     * every component means a snapshot and the streamed rows it is joined by
+     * carry the same text, and a checksum compares like with like without
+     * being told which mode each side ran.</p>
+     */
+    static final String DEFAULT_BINARY_HANDLING_MODE = "base64";
+
+    /**
+     * Ensures {@code binary.handling.mode} is set, defaulting it to
+     * {@code base64} when the user has not chosen a mode.
+     *
+     * <p>The mode decides what lands in a {@code String} column that holds a
+     * binary value: Debezium's default {@code bytes} delivers a BYTES value
+     * that this connector renders as lower-case hex, {@code base64} delivers
+     * the base64 text, and {@code hex} delivers upper-case hex (spec 07.05
+     * section 3.2). The default has to match the other components that read
+     * or write the same tables — a loader that renders base64 text into a
+     * column the stream fills with hex text makes every binary column differ
+     * with the row counts intact.</p>
+     *
+     * <p>A user-supplied value always wins: this only fills in a default when
+     * the property is absent or blank, which is what an existing deployment
+     * that relies on Debezium's default looks like on the wire.</p>
+     *
+     * @param props the Debezium properties, mutated in place.
+     */
+    static void ensureBinaryHandlingMode(Properties props) {
+        if (props == null) {
+            return;
+        }
+        String configured = props.getProperty(BINARY_HANDLING_MODE);
+        if (configured != null && !configured.trim().isEmpty()) {
+            log.info("{}={} by configuration; leaving it unchanged.", BINARY_HANDLING_MODE, configured.trim());
+            return;
+        }
+        props.setProperty(BINARY_HANDLING_MODE, DEFAULT_BINARY_HANDLING_MODE);
+        log.info("No {} configured; defaulting to {} so binary values are stored in the same text the "
+                        + "loader and the checksum tools use (spec 07.05 section 3.2).",
+                BINARY_HANDLING_MODE, DEFAULT_BINARY_HANDLING_MODE);
     }
 
     /**

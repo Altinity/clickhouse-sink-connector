@@ -501,8 +501,8 @@ def build_argument_parser():
     parser.add_argument(
         '--debug_limit', help='Limit the debug output in lines', required=False)
     parser.add_argument(
-        '--binary_encoding', choices=['hex', 'base64', 'raw'], default='hex', required=False,
-        help='how the connector wrote binary values: hex text (default), base64 text (binary.handling.mode=base64) or raw bytes (persist.raw.bytes=true, compared as hex); pass the same value to the ClickHouse side')
+        '--binary_encoding', choices=['hex', 'base64', 'raw'], default='base64', required=False,
+        help='how the connector wrote binary values: base64 text (the connector default), hex text (binary.handling.mode=bytes or hex) or raw bytes (persist.raw.bytes=true, compared as hex); pass the same value to the ClickHouse side')
     parser.add_argument(
         '--min_date_value', help='Minimum Date32/DateTime64 date', default='1900-01-01', required=False)
     parser.add_argument(

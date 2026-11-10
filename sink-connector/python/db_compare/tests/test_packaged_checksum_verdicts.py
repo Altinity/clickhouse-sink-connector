@@ -61,7 +61,7 @@ def driver_args(**overrides):
         tables_regex=".", threads=1, where=None, debug_output=False, lock_tables_on_source=False,
         sleep_after_lock=0, no_wc=False, include_partitions_regex=None, exclude_tables_regex=None,
         non_partitioned_tables_only=False, partition_date=None, threads_per_table=1, fail_on_empty=False,
-        source_timezone="UTC", binary_encoding="hex", lock_wait_timeout=30, fail_on_lock_timeout=False,
+        source_timezone="UTC", binary_encoding="base64", lock_wait_timeout=30, fail_on_lock_timeout=False,
         include_floating_point_columns=False, include_json_columns=False,
     )
     values.update(overrides)
