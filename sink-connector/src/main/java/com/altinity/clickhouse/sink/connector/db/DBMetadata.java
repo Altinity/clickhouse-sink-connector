@@ -566,6 +566,36 @@ public class DBMetadata {
     }
 
     /**
+     * Whether the target table is positively absent, as a tri-state answer.
+     *
+     * <p>{@link #getColumnsDataTypesForTable} answers an absent table with an
+     * empty map, and so it also answers a read whose rows were hidden. The
+     * write path needs to tell those apart to decide between retrying and
+     * failing, and an empty map alone cannot do it (spec 08.07 section 3.2).
+     * This probe asks the catalog directly.</p>
+     *
+     * @return {@link Boolean#TRUE} when the catalog answered that the table does
+     *         not exist, {@link Boolean#FALSE} when it answered that it does, and
+     *         {@code null} when the probe could not answer -- no connection or a
+     *         failed query. A caller must treat {@code null} as unresolved and
+     *         retry, never as absence: reporting an unreachable server as a
+     *         dropped table would name the wrong cause and the wrong remedy.
+     */
+    public Boolean isTableAbsent(Connection conn, String databaseName, String tableName) {
+        if (conn == null) {
+            log.error("Cannot determine whether {}.{} exists: no database connection",
+                    databaseName, tableName);
+            return null;
+        }
+        try {
+            return !tableExists(conn, databaseName, tableName);
+        } catch (Exception e) {
+            log.error(String.format("Could not determine whether %s.%s exists", databaseName, tableName), e);
+            return null;
+        }
+    }
+
+    /**
      * Returns true when system.tables lists the table. Called only after system.columns returned no rows, to tell
      * a table that does not exist (an empty column map is correct) from a column list that could not be read.
      */

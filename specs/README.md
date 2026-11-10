@@ -96,6 +96,7 @@ To facilitate fine-grained feature development and rigorous agentic engineering,
 - **[08.03: Metadata Query Storm Prevention & Proven-Absent Tracking](08-schema-catalog/03-query-storm-prevention.md)**: Proven-absent column set cache.
 - **[08.04: Column Writability Enforcement & MATERIALIZED to DEFAULT Alteration](08-schema-catalog/04-column-writability-enforcement.md)**: Automatic ALTER to `DEFAULT`.
 - **[08.05: Automatic Target Table Creation & Engine Selection](08-schema-catalog/05-auto-table-creation.md)**: Auto-table synthesis and engine resolution.
+- **[08.07: A Positively Missing Target Table Fails the Batch](08-schema-catalog/07-missing-target-table-failure.md)**: Tri-state catalog probe; an absent table stops instead of retrying forever.
 
 ---
 
