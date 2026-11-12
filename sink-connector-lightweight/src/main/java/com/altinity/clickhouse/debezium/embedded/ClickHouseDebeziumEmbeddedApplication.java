@@ -13,6 +13,9 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVaria
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.stream.Collectors;
 import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -180,6 +183,8 @@ public class ClickHouseDebeziumEmbeddedApplication {
                     ConfigurationService.class).parse();
         }
 
+        embeddedApplication.loadEnvs();
+
         setupMonitoringThread(
                 new ClickHouseSinkConnectorConfig(
                         PropertiesHelper.toMap(props)
@@ -231,6 +236,15 @@ public class ClickHouseDebeziumEmbeddedApplication {
         props.putAll(defaultProperties);
         Properties fileProps = new ConfigLoader().loadFromFile(filePath);
         props.putAll(fileProps);
+    }
+
+    private static void loadEnvs() {
+        Map<String, String> propsFromEnvs = System.getenv().entrySet().stream()
+                                                  .filter(entry -> entry.getKey().startsWith("lightweight."))
+                                                  .collect(Collectors.toMap(entry -> entry.getKey().replaceFirst("lightweight.", ""),
+                                                                            Entry::getValue));
+
+        props.putAll(propsFromEnvs);
     }
 
     /**
