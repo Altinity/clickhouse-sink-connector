@@ -31,6 +31,7 @@ lean_lib «Replication» where
              `Replication.KeyRouting,
              `Replication.PayloadStream,
              `Replication.StopDrain,
+             `Replication.AbandonLatch,
              `Replication.BinlogGuards,
              -- DESTRUCTIVE: nothing is destroyed; this root only builds the model of TRUNCATE and DROP classification.
              `Replication.TruncatePurge,

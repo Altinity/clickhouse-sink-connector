@@ -26,6 +26,7 @@ For each partition:
 - rows are bound by `PreparedStatementFieldMapper.insertPreparedStatement` (before/after image per operation), a sorting-key relocation additionally binds a tombstone (`insertTombstonePreparedStatement`, spec 05.02), each followed by `ps.addBatch()` **and then `ps.clearParameters()`** — the V2 driver's `addBatch()` does not clear its bound values, so without the clear a parameter one row failed to bind silently carried the previous row's value (Spec 07.07 §3.2.2);
 - a replicated TRUNCATE never appears inside a template's record list: it is a segment of its own, executed between the segments around it (spec 04.05 §3), so every partition of an earlier segment has been sent before it runs;
 - `int[] batchResult = ps.executeBatch()` sends the partition.
+- **a `batchResult` entry equal to `Statement.EXECUTE_FAILED` sends nothing further and fails the partition.** The driver reporting a failed statement is a write that did not happen, and the JDBC contract allows it to arrive in the returned array instead of as a throw. Before any row of the chunk is marked applied (`appliedToClickHouse`, §3.5), every entry is checked; the first `EXECUTE_FAILED` fails the chunk with `SQLException` naming the count and the table, so the batch is retried under spec 03.03 §6 and its offset is never acknowledged (§4 I9). The same check guards `flushStagedRows()`: a flush that answers with an `EXECUTE_FAILED` entry throws, so the inline replication-history statement that was about to depend on those rows does not run. `EXECUTE_FAILED` is never counted into the INFO progress line as progress: the line is written only after the check passes, and `describeBatchResult` is left as the formatter of a successful answer.
 A failure inside the partition is rethrown as `RuntimeException` from `executePreparedStatement`; the caller (`ClickHouseBatchRunnable`) classifies it via `ClickHouseErrorClassifier` (spec 10.01) — the executor itself does not classify or retry.
 
 ### 3.3 Per-batch progress lines are INFO, by design
@@ -109,6 +110,7 @@ Residual, stated precisely: the one unit in flight when the failure happened —
 - `AllAppliedTopicWatermarkTest.anAllAppliedTopicAdvancesTheDurableWatermark()`, `AllAppliedTopicWatermarkTest.anAllAppliedTopicNeverMovesTheWatermarkBackwards()` — §3.5: the all-applied short-circuit in `ClickHouseBatchRunnable.processRecordsByTopic` returns success without a connection and advances `durablyInsertedOffsets` to the highest offset per TopicPartition, never lowering it.
 - `PreparedStatementExecutorBatchLogLevelTest.successfulBatchLogsItsProgressAtInfo()` — §3.3 lines 2 and 3: a successful two-row batch through `addToPreparedStatementBatch` with a recording connection, logger at the default INFO level, writes the INSERT-template line and the EXECUTED-BATCH line at INFO and nothing at WARN or above (the DEBUG revision writes neither at INFO, so the test fails on it); the EXECUTED-BATCH line carries `Result: 2 statements acknowledged` and no `[I@` identity (the `toString()` revision fails here).
 - `PreparedStatementExecutorBatchLogLevelTest.batchResultDescriptionCountsAcknowledgedAndFailedStatements()` — §3.3 line 3 `Result` field: the count of acknowledged statements, the `, <f> marked EXECUTE_FAILED` suffix only when the driver flagged an entry, and `no result` for a null array.
+- `PreparedStatementExecutorFailureModesTest.anExecuteFailedEntryFailsTheBatch()` — §3.2: an `executeBatch()` answer holding `Statement.EXECUTE_FAILED` fails the chunk instead of reporting it written; the rows of that chunk are not marked applied, so the retry resends them (fails on 2.11.0, where the entry was only counted into the INFO line).
 - `DebeziumOffsetManagementTest.acknowledgementIsLoggedAtInfo()` — §3.3 line 4: acknowledging a unit through `acknowledgeRecords`, logger at INFO, writes the "BATCH marked as processed" line at INFO and nothing at WARN or above (fails on the DEBUG revision).
 - §3.3 line 1 (`ClickHouseBatchRunnable.processBatch`, `ClickHouseBatchWriter.persistRecords`) has no unit harness that reaches the pick-up line without a live ClickHouse (both paths resolve the destination through `DBMetadata` on a real connection); covered by review of the two call sites.
 - `BatchChunkerTest` — §3.1 item 2: the row limit alone splits like a partition, order and identity preserved (`rowLimitAlone`); the byte limit closes a chunk before the row limit when the rows are wide (`byteLimitClosesEarly`); a single row wider than the byte limit is its own chunk, never dropped or split (`oversizedRowIsItsOwnChunk`); unstamped rows obey the row limit and both limits disabled yield one chunk (`unstampedRowsAndDisabledLimits`); empty input yields no chunks and a null row counts as zero bytes (`emptyAndNull`).
@@ -151,15 +153,15 @@ The executor sends and does not retry: every failure of `executeBatch()` is reth
   - **RTO**: self-healing codes: cause + ≤ 30 s backoff; the others: operator-bound (spec 03.03 §6) — unmeasured.
   - **Test**: `ClickHouseErrorClassifierTest.testClassifyRetriable()`, `ClickHouseErrorClassifierTest.testClassifyFatal()`, `WorkerFailureModesTest.backpressureCodesAreRetriedWithTheBatchKeptUntilTheyClear()`; GAP: a classifier assertion for 242 and 164.
 
-- **FM-03.06-4 A statement the driver marks `EXECUTE_FAILED` is treated as written**
+- **FM-03.06-4 A statement the driver marks `EXECUTE_FAILED` is treated as written** — CLOSED by §3.2
   - **Trigger**: `executeBatch()` returns an `int[]` containing `Statement.EXECUTE_FAILED` without throwing. Whether `jdbc-v2` 0.9.8 ever does so is not verified; the JDBC contract allows it.
-  - **Behaviour**: `executePreparedStatement` only counts the entry into the INFO line (`describeBatchResult`) and sets the result true; the worker reports the batch written and its offset is acknowledged.
-  - **Detection**: only the suffix `, <f> marked EXECUTE_FAILED` on the INFO line `*************** EXECUTED BATCH Successfully Records: <n> ...`.
-  - **Blast radius**: the flagged rows may be missing in ClickHouse while the offset moves past them — silent loss.
-  - **Recovery**: value-level checksum (spec 11.02) to find the tables, `ch-mysql-resync` (spec 11.04).
-  - **RTO**: resync time — unmeasured.
-  - **Test**: `PreparedStatementExecutorFailureModesTest.anExecuteFailedEntryFailsTheBatch()` (disabled, fails on 2.11.0).
-  - **DEFECT**: a driver-reported statement failure must fail the batch, not be logged at INFO and acknowledged.
+  - **Behaviour**: before §3.2's check, `executePreparedStatement` only counted the entry into the INFO line (`describeBatchResult`), set the result true, and the worker reported the batch written so its offset was acknowledged. A chunk's answer carrying `EXECUTE_FAILED` now fails the chunk before any row is marked applied (§3.2), so the batch is retried and stays unacknowledged until it is genuinely written; the same check makes a `flushStagedRows()` that answers `EXECUTE_FAILED` throw instead of letting the inline replication-history statement read rows that are not there.
+  - **Detection**: the retriable WARN and the ERROR `******* ERROR inserting Batch Database(<db>), Table(<t>)` of the failed chunk (spec 03.03 §6), naming the `EXECUTE_FAILED` count.
+  - **Blast radius**: with the check, a rejected statement stops its own chunk only; the worker retries from the retained record list (§3.5), and the offset cannot pass the chunk. Without it (before this change) the flagged rows were missing in ClickHouse while the offset moved past them — silent loss.
+  - **Recovery**: §3.5's retry, or the underlying rejection's cause (spec 10.01 classification); value-level checksum (spec 11.02) only for data written by a build that predates this check.
+  - **RTO**: one retry backoff (≤ 30 s, spec 03.03 §6) when the cause clears; unmeasured.
+  - **Test**: `PreparedStatementExecutorFailureModesTest.anExecuteFailedEntryFailsTheBatch()` — fails on 2.11.0 (where the entry was only counted), passes with the §3.2 check.
+  - **CLOSED**: a driver-reported statement failure now fails the batch; it is never logged as progress and never acknowledged.
 
 - **FM-03.06-5 A row or chunk larger than the heap can render**
   - **Trigger**: multi-megabyte BLOB/TEXT rows, or many rows whose chunk renders to tens of megabytes or more; `BatchChunker` writes a row wider than `buffer.max.bytes` alone (§3.1 item 2).
@@ -188,4 +190,4 @@ The executor sends and does not retry: every failure of `executeBatch()` is reth
   - **RTO**: a release; meanwhile the heap must cover FM-03.06-5 as before §3.4.
   - **Test**: `SpillingInsertStatementTest.driverIsSupported()`.
 
-Summary: 7 failure modes, 2 DEFECT, 3 GAP.
+Summary: 7 failure modes, 1 DEFECT, 3 GAP.

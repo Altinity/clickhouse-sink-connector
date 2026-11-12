@@ -108,7 +108,7 @@ with margin.
 - `FlushTargetsLiveEngineTest.handlersFallBackToTheStartupInstance` — §3.4 item 1: no application engine → the startup instance; neither → `IllegalStateException`.
 - `FlushTargetsLiveEngineTest.flushOfAStoppedEngineIsRefused` — §3.4 item 2: a shut-down pool → `flushAndPause()` and `resumeAfterFlush()` throw (pre-fix: returned normally).
 - `FlushTargetsLiveEngineTest.flushOfARunningEnginePausesItsPool` — §3.4 item 2: a running pool is paused and released.
-- `EngineRestartFifoResetTest.stopThenStartNewInstanceIsNotPoisoned` — a unit handed off and never written; `stop()`; a NEW capture's heartbeat is committed and its first written unit is acknowledged with nothing parked (fails on the old `stop()`: the ghost stays outstanding).
+- `EngineRestartFifoResetTest.stopThenStartNewInstanceIsNotPoisoned` — a unit handed off and never written; `stop()`; a NEW capture's heartbeat is WITHHELD while the abandonment is unproven, its first written unit is acknowledged with nothing parked, and the next heartbeat then commits (fails on the old `stop()`: the ghost stays outstanding; fails without the latch: the heartbeat commits past the ghost's rows).
 - `EngineRestartFifoResetTest.stopLeavesNothingOutstanding` — after `stop()` the outstanding set, the unwritten-group map and the parked-unit map are empty and the pool is shut down.
 - `EngineRestartFifoResetTest.stopClosesEngineBeforeShuttingThePool` — the engine's `close()` observes a still-running pool; the pool is shut down afterwards.
 - `EngineRestartFifoResetTest.stopDrainsInFlightWorkBeforeShuttingThePool` — a unit a live worker finishes 300 ms later is acknowledged by the drain, `stop()` returns 0 abandoned.

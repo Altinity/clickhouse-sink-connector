@@ -10,7 +10,6 @@ import org.apache.commons.lang3.tuple.MutablePair;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -232,8 +231,6 @@ public class PreparedStatementExecutorFailureModesTest {
     }
 
     @Test
-    @Disabled("DEFECT FM-03.06-4: an int[] entry of Statement.EXECUTE_FAILED is only counted in the INFO line; "
-            + "the batch is reported written and its offset acknowledged although the driver says a statement failed")
     @DisplayName("A driver result that marks a statement EXECUTE_FAILED fails the batch")
     public void anExecuteFailedEntryFailsTheBatch() {
         List<Integer> executed = new ArrayList<>();
