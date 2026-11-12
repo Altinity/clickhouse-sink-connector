@@ -70,7 +70,7 @@ Jinja2 template (`templates/config.yml.j2`). This gives you:
   template picks the right ones based on the declared connector version)
 - safe defaults for the dangerous knobs
   (`snapshot.mode: schema_only`,
-  `schema.history.internal.skip.unparseable.ddl: true`)
+  `schema.history.internal.skip.unparseable.ddl: false`)
 
 ### Example inventory
 
@@ -131,6 +131,13 @@ sink_connector_deployments:
       max_batch_size: 10000
 ```
 
+The two zone values are required for every source: `mysql.source_mysql_timezone`
+(rendered as `database.connectionTimeZone`) and `clickhouse.timezone` (rendered as
+`clickhouse.datetime.timezone`). The template has no default for either. Rendering
+fails when one is undefined, and the connector refuses to start when one is empty.
+See `doc/timezone.md` for the accepted values. The `timezone` key under `systemd` is
+the JVM zone for the service, not a connector setting.
+
 When running more than one connector on the same ClickHouse host, give
 each deployment its own suffixed tables
 (`replica_source_info_<name>`, `replicate_schema_history_<name>`) and
@@ -151,8 +158,12 @@ Where `deploy.yml` simply applies this role for the target host group.
 1. **Never set `snapshot.mode: initial` on an existing target** — it
    drops and recreates all replicated tables. `schema_only` is the safe
    default and is what this template defaults to.
-2. **Keep `skip.unparseable.ddl: true`** — otherwise vendor-specific
-   DDL (e.g. MySQL 8 functional indexes) crashes the connector.
+2. **Leave `skip.unparseable.ddl` at its default of `false`.** With the
+   default, vendor-specific DDL that Debezium cannot parse (e.g. MySQL 8
+   functional indexes) stops the connector and nothing is skipped. Setting
+   it to `true` on a connector is a deliberate per-connector override: it
+   discards that DDL on the replica, so later rows may be decoded against a
+   stale schema. Enable it only as a reviewed workaround for that connector.
 3. **Log4j2 must be the sole owner of log rotation.** We originally ran
    logrotate alongside Log4j2 rolling files and got ghost files and
    triple logging. The unit file sends stdout/stderr to the journal and

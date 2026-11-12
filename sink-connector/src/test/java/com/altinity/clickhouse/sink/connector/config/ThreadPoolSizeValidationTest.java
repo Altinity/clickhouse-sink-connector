@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.config;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.apache.kafka.common.config.ConfigException;
 import org.junit.jupiter.api.Disabled;
@@ -30,7 +31,7 @@ public class ThreadPoolSizeValidationTest {
     public void threadPoolSizeBelowOneIsRejected() {
         Map<String, String> props = new HashMap<>();
         props.put("thread.pool.size", "0");
-        assertThrows(ConfigException.class, () -> new ClickHouseSinkConnectorConfig(props),
+        assertThrows(ConfigException.class, () -> new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)),
                 "a pool of zero writers can never write or acknowledge a batch");
     }
 }

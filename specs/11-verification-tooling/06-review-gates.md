@@ -33,6 +33,14 @@ methodology in `.claude/skills/` (judgement) and the spec validator
   the script is reported as a notice and nothing runs. A PR's own copy of
   the self-tests runs in `.github/workflows/spec-governance.yml` through
   `unittest discover -s scripts/tests`.
+  There is one exception, the release pull request. A release line is a
+  branch of this repository (not a fork) named like a version, for example
+  `2.11.1`. When the line already contains its base branch, the workflow
+  takes the script and its self-tests from the line's head instead. A fix to
+  the checks that landed on the line cannot reach the base before the
+  release merges, and the base's older copy would re-judge commits the line
+  has already published. A fork, a feature branch, and a release line that
+  has not merged its base keep the base's copy.
 - **Documentation**: `doc/review_gates.md` (usage, rules, calibration),
   `doc/licensing.md` (the license policy the license gate mirrors).
 - **Review methodology**: `.claude/skills/README.md` (index of the review

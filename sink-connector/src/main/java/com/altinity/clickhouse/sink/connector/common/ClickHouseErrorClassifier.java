@@ -4,7 +4,6 @@ import com.altinity.clickhouse.sink.connector.converters.DebeziumConverter;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -101,8 +100,15 @@ public class ClickHouseErrorClassifier {
      * <p>Matched against the exception and every {@code getCause()} down to
      * the root, BEFORE any error code is extracted (spec 10.01 section 3.1).</p>
      */
-    static final Set<Class<? extends Throwable>> TERMINAL_EXCEPTION_TYPES = Collections.singleton(
-            DebeziumConverter.ValueOutOfRangeException.class);
+    // Spec 08.06 section 6.5: a bare-engine DELETE refusal can never succeed, so it is terminal
+    // like a value out of range. Without this it was classified UNKNOWN and retried forever.
+    // Spec 08.07 section 3.6: so is a proven-missing target table. Its error code is absent
+    // (the throw carries none), so without this entry it classified UNKNOWN and the engine
+    // restarted into the same wall until the handoff hard cap stopped it.
+    static final Set<Class<? extends Throwable>> TERMINAL_EXCEPTION_TYPES = Set.of(
+            DebeziumConverter.ValueOutOfRangeException.class,
+            BareReplacingMergeTreeDeleteRefusedException.class,
+            MissingTargetTableException.class);
 
     public enum ErrorCategory {
         /** Error is transient — retry may succeed (network, timeout, etc.) */

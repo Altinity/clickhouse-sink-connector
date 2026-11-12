@@ -22,7 +22,6 @@ import org.json.simple.parser.JSONParser;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.HashMap;
 import java.sql.Connection;
 import java.util.Properties;
 import java.util.concurrent.CompletableFuture;
@@ -103,10 +102,12 @@ public class DebeziumEmbeddedRestApi {
                                     Properties userProperties) {
         String cliPort = props.getProperty(
                 SinkConnectorLightWeightConfig.CLI_PORT);
+        // The parser reads the configured zones, and both are mandatory: an empty map here refuses every start
+        // and the REST API never comes up, so the parser gets the running configuration.
         DDLParserService sqlddlParserService = DDLParserFactory.getParser(
                 props,
                 null,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                new ClickHouseSinkConnectorConfig(PropertiesHelper.toMap(props)),
                 "employees");
         if (cliPort == null || cliPort.isEmpty()) {
             cliPort = "7000";

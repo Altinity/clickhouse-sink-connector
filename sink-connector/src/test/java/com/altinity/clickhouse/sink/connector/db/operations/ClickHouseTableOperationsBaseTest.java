@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseDataTypeMapper;
 import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseTableOperationsBase;
 import io.debezium.time.MicroTimestamp;
@@ -37,7 +39,7 @@ public class ClickHouseTableOperationsBaseTest {
         fields[3] = (new Field("date_micro", 4, SchemaBuilder.type(Schema.Type.INT64).
                 name(MicroTimestamp.SCHEMA_NAME).build()));
 
-        Map<String, String> result = base.getColumnNameToCHDataTypeMapping(fields,new ClickHouseSinkConnectorConfig(new HashMap<>()));
+        Map<String, String> result = base.getColumnNameToCHDataTypeMapping(fields,new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         Assert.assertTrue(result.get("totalAmount").equalsIgnoreCase("Decimal(4,2)"));
         // A DECIMAL without dimensions is DECIMAL(10,0) in MySQL and Decimal(10, 0)
@@ -50,6 +52,62 @@ public class ClickHouseTableOperationsBaseTest {
         Assert.assertTrue(result.get("date_milli").equalsIgnoreCase("DateTime64(3, 'UTC')"));
         Assert.assertTrue(result.get("date_micro").equalsIgnoreCase("DateTime64(6, 'UTC')"));
 
+    }
+
+    /**
+     * An auto-created DateTime64 column declares the configured clickhouse.datetime.timezone, never a fixed UTC.
+     * A column that declares any other zone is the mismatch the startup check refuses.
+     */
+    @Test
+    public void getColumnNameToCHDataTypeMappingDeclaresConfiguredZoneTest() {
+        ClickHouseTableOperationsBase base = new ClickHouseTableOperationsBase();
+
+        Field[] fields = new Field[2];
+        fields[0] = new Field("date_milli", 1, SchemaBuilder.type(Schema.Type.INT64).
+                name(Timestamp.SCHEMA_NAME).build());
+        fields[1] = new Field("date_micro", 2, SchemaBuilder.type(Schema.Type.INT64).
+                name(MicroTimestamp.SCHEMA_NAME).build());
+
+        Map<String, String> props = new HashMap<>();
+        props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "America/Chicago");
+        props.put(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString(), "America/Chicago");
+        Map<String, String> result = base.getColumnNameToCHDataTypeMapping(fields,
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)));
+
+        Assert.assertEquals("DateTime64(3, 'America/Chicago')", result.get("date_milli"));
+        Assert.assertEquals("DateTime64(6, 'America/Chicago')", result.get("date_micro"));
+    }
+
+    /**
+     * Invariant: every temporal column the connector creates declares the configured zone. With a non-UTC zone
+     * configured, no auto-created DateTime or DateTime64 type may contain a UTC literal, on any source type path.
+     */
+    @Test
+    public void autoCreatedTemporalColumnsNeverDeclareUtcWhenAnotherZoneIsConfiguredTest() {
+        Field[] fields = new Field[]{
+                sourceTyped("dt0", 0, SchemaBuilder.int64().name(Timestamp.SCHEMA_NAME), "DATETIME", null),
+                sourceTyped("dt2", 1, SchemaBuilder.int64().name(Timestamp.SCHEMA_NAME), "DATETIME", 2),
+                sourceTyped("dt6", 2, SchemaBuilder.int64().name(MicroTimestamp.SCHEMA_NAME), "DATETIME", 6),
+                sourceTyped("ts0", 3, SchemaBuilder.string().name(ZonedTimestamp.SCHEMA_NAME), "TIMESTAMP", null),
+                sourceTyped("ts6", 4, SchemaBuilder.string().name(ZonedTimestamp.SCHEMA_NAME).optional(), "TIMESTAMP", 6),
+                new Field("plain_ms", 5, SchemaBuilder.type(Schema.Type.INT64).name(Timestamp.SCHEMA_NAME).build()),
+                new Field("plain_us", 6, SchemaBuilder.type(Schema.Type.INT64).name(MicroTimestamp.SCHEMA_NAME).build())
+        };
+
+        Map<String, String> props = new HashMap<>();
+        props.put(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(), "America/Chicago");
+        props.put(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString(), "America/Chicago");
+        Map<String, String> result = new ClickHouseTableOperationsBase().getColumnNameToCHDataTypeMapping(fields,
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)));
+
+        for (Field field : fields) {
+            String declared = result.get(field.name());
+            Assert.assertNotNull(field.name(), declared);
+            Assert.assertTrue(field.name() + " must declare the configured zone, got " + declared,
+                    declared.contains("'America/Chicago'"));
+            Assert.assertFalse(field.name() + " must not declare a UTC literal, got " + declared,
+                    declared.contains("UTC"));
+        }
     }
 
     private static Field sourceTyped(String name, int index, SchemaBuilder builder,
@@ -80,7 +138,7 @@ public class ClickHouseTableOperationsBaseTest {
         };
 
         Map<String, String> result = new ClickHouseTableOperationsBase()
-                .getColumnNameToCHDataTypeMapping(fields, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                .getColumnNameToCHDataTypeMapping(fields, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         Assert.assertEquals("a signed TINYINT is Int8 on the DDL path; Int16 loses that agreement",
                 "Int8", result.get("tiny"));
@@ -112,7 +170,7 @@ public class ClickHouseTableOperationsBaseTest {
         fields[5] = new Field("signed_int_col", 6, SchemaBuilder.type(Schema.Type.INT32).build());
 
         Map<String, String> result = base.getColumnNameToCHDataTypeMapping(
-                fields, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                fields, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         Assert.assertEquals("UInt8", result.get("tiny_col"));
         Assert.assertEquals("UInt16", result.get("small_col"));
@@ -132,7 +190,7 @@ public class ClickHouseTableOperationsBaseTest {
         fields[0] = new Field("small_col", 1, SchemaBuilder.type(Schema.Type.INT32).build());
 
         Map<String, String> result = base.getColumnNameToCHDataTypeMapping(
-                fields, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                fields, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         Assert.assertEquals("Int32", result.get("small_col"));
     }

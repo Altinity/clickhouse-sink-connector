@@ -204,6 +204,32 @@ class DestructiveGateTest(GateTestCase):
         findings = self.run_gate("destructive", f"purge\n\n{TRAILER_KEY}: sites=2; result=pass")
         self.assertEqual(len(findings), 1)
 
+    # A commit published before 642b448058 refined the counter attested the count
+    # that counter produced. A ConfigMap line whose only destructive word sits in
+    # the embedded file's comment was a site then and is not one now, so the
+    # refinement must not invalidate the commit: the release PR of a published
+    # line must not be blocked by a rule that improved after the fact.
+    CONFIGMAP = ('  config.yml: "# connector settings\\nname: \\"company-1\\"\\n'
+                 '# the connector ignores drop and truncate events\\n"\n')
+
+    def test_configmap_comment_was_a_site_to_the_old_counter_only(self):
+        added = {"k8s/connector-configmap.yaml": [(1, self.CONFIGMAP.rstrip("\n"))]}
+        self.assertEqual(len(rg.destructive_sites(added)), 0)
+        self.assertEqual(len(rg.destructive_sites(added, legacy=True)), 1)
+
+    def test_commit_may_attest_the_count_its_own_counter_produced(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        self.repo.write("k8s/connector-configmap.yaml", self.CONFIGMAP)
+        findings = self.run_gate("destructive", f"embed config\n\n{TRAILER_KEY}: sites=2; result=pass")
+        self.assertEqual(findings, [])
+
+    def test_a_count_neither_counter_produces_is_still_reported(self):
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        self.repo.write("k8s/connector-configmap.yaml", self.CONFIGMAP)
+        findings = self.run_gate("destructive", f"embed config\n\n{TRAILER_KEY}: sites=7; result=pass")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("sites=7", findings[0].message)
+
     def test_e2e_test_data_is_exempt(self):
         self.repo.write("tool/python/tests_e2e/mysql/seed.sql", "DROP TABLE IF EXISTS t;\n")
         self.assertEqual(self.run_gate("destructive"), [])

@@ -59,6 +59,18 @@ public final class RecordingJdbc {
     /** How many times {@code prepareStatement} was refused. */
     public int prepareFailures = 0;
 
+    /**
+     * When non-null, the n-th {@code executeBatch()} of THIS connection
+     * (1-based, across every statement) answers with
+     * {@code executeBatchAnswer.apply(n)} instead of an empty array, so a
+     * driver answer -- including {@link java.sql.Statement#EXECUTE_FAILED} --
+     * can be scripted without a server.
+     */
+    public java.util.function.IntFunction<int[]> executeBatchAnswer = null;
+
+    /** How many {@code executeBatch()} calls the connection has seen. */
+    public int executeBatchCalls = 0;
+
     public List<Event> ofKind(String kind) {
         List<Event> out = new ArrayList<>();
         for (Event e : events) {
@@ -96,7 +108,9 @@ public final class RecordingJdbc {
                     return null;
                 case "executeBatch":
                     events.add(new Event(EXECUTE_BATCH, sql, new LinkedHashMap<>()));
-                    return new int[0];
+                    executeBatchCalls++;
+                    return executeBatchAnswer == null
+                            ? new int[0] : executeBatchAnswer.apply(executeBatchCalls);
                 case "execute":
                     events.add(new Event(EXECUTE, sql, new LinkedHashMap<>()));
                     return false;

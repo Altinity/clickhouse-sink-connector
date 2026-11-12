@@ -84,7 +84,7 @@ def calculate_table_count(table, partition_key, clickhouse_user, clickhouse_pass
       if partition_value is not None and partition_key != '':
           sql += f" and {partition_key} = '{partition_value}' "
       if args.where:
-          sql = sql + " and " + args.where
+          sql = sql + " and (" + args.where + ")"
       sql += " settings do_not_merge_across_partitions_select_final=1"
       # unsafe due to https://github.com/ClickHouse/ClickHouse/issues/49685
       #sql += " settings do_not_merge_across_partitions_select_final=1" 
@@ -127,7 +127,7 @@ def main():
                         help='ClickHouse port', default=9000, required=False)
     parser.add_argument('--secure',
                         help='True or False', default=False, required=False)
-    parser.add_argument('--tables_regex', help='table regexp', required=True, default='.')
+    parser.add_argument('--tables_regex', help='table regexp', required=True)
     parser.add_argument('--include_partitions_regex', help='partitions regex', required=False, default=None)
     parser.add_argument('--where', help='where clause', required=False)
     parser.add_argument('--ignore_tables_regex',

@@ -3,6 +3,8 @@ package com.altinity.clickhouse.sink.connector.executor;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.common.MissingTargetTableException;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.altinity.clickhouse.sink.connector.db.CacheInvalidationManager;
@@ -207,8 +209,7 @@ public class ClickHouseBatchWriter {
         try {
             // If replication history is enabled, add the records to the history table.
             String sourceTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString());
-            String serverTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString());
-            addRecordsToHistoryTable(records, sourceTimeZone, serverTimeZone);
+            addRecordsToHistoryTable(records, sourceTimeZone);
 
             Map<String, List<ClickHouseStruct>> topicToRecordsMap =
                     new ConcurrentHashMap<>();
@@ -351,8 +352,30 @@ public class ClickHouseBatchWriter {
             throw e instanceof BatchPersistenceException
                     ? (BatchPersistenceException) e
                     : new BatchPersistenceException(
-                            "Failed to persist a batch of records to ClickHouse", e);
+                            "Failed to persist a batch of records to ClickHouse" + topicsSuffix(records), e);
         }
+    }
+
+    /**
+     * Names the distinct source topics of a batch, so a batch failure says which topics it could
+     * not persist. At most 10 names are listed; the rest are counted.
+     */
+    static String topicsSuffix(List<ClickHouseStruct> records) {
+        java.util.Set<String> topics = new java.util.LinkedHashSet<>();
+        if (records != null) {
+            for (ClickHouseStruct record : records) {
+                if (record != null && record.getTopic() != null) {
+                    topics.add(record.getTopic());
+                }
+            }
+        }
+        if (topics.isEmpty()) {
+            return "";
+        }
+        java.util.List<String> names = new ArrayList<>(topics);
+        String listed = String.join(", ", names.subList(0, Math.min(10, names.size())));
+        int more = names.size() - Math.min(10, names.size());
+        return " (topics: " + listed + (more > 0 ? ", and " + more + " more" : "") + ")";
     }
 
     /**
@@ -430,12 +453,13 @@ public class ClickHouseBatchWriter {
 
     /**
      * Function to persist records to binlog history table when replication history mode is enabled.
+     * The ClickHouse zone is resolved only when replication history is enabled (spec 07.03 section 3.1.2):
+     * the configured {@code clickhouse.datetime.timezone}, which is mandatory; an unresolvable one throws.
      * @param records
      * @param sourceTimeZone
-     * @param serverTimeZone
      * @throws SQLException
      */
-    private void addRecordsToHistoryTable(List<ClickHouseStruct> records, String sourceTimeZone, String serverTimeZone) throws SQLException {
+    private void addRecordsToHistoryTable(List<ClickHouseStruct> records, String sourceTimeZone) throws SQLException {
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString()) && records != null && !records.isEmpty()) {
             String databaseName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_DATABASE_NAME.toString());
             String tableName = config.getString(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_TABLE_NAME.toString());
@@ -443,6 +467,7 @@ public class ClickHouseBatchWriter {
             DbWriter writer = getDbWriterForTable(databaseName + "." + tableName, tableName, databaseName,
                     records.get(0), databaseConn);
 
+            String serverTimeZone = getServerTimeZone(config).getId();
             BinLogHistory binLogHistory = new BinLogHistory();
             binLogHistory.addRecordsToHistoryTable(config, tableName, writer.getConnection(), "", records, sourceTimeZone, serverTimeZone);
         }
@@ -539,30 +564,19 @@ public class ClickHouseBatchWriter {
     }
 
     /**
-     * Returns the ClickHouse server timezone.
+     * Returns the ClickHouse-side zone the sink writes DateTime values in: the configured
+     * {@code clickhouse.datetime.timezone}, which is mandatory (Spec 07.03 section 3.1.2). The config
+     * constructor refuses an unset value, and an unresolvable one throws here. The server's zone is never read.
      *
      * @param config the connector configuration
-     * @return a ZoneId representing the server timezone
+     * @return the configured ClickHouse zone
      */
     public ZoneId getServerTimeZone(
             ClickHouseSinkConnectorConfig config) {
         String userProvidedTimeZone = config.getString(
                 ClickHouseSinkConnectorConfigVariables.
                         CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        // Validate if timezone string is valid.
-        ZoneId userProvidedTimeZoneId = null;
-        try {
-            if (!userProvidedTimeZone.isEmpty()) {
-                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-            }
-        } catch (Exception e) {
-            log.error("**** Error parsing user provided timezone:" +
-                    userProvidedTimeZone + e.toString());
-        }
-        if (userProvidedTimeZoneId != null) {
-            return userProvidedTimeZoneId;
-        }
-        return new DBMetadata(config).getServerTimeZone(systemConnection());
+        return TimeZoneResolver.clickHouseZone(userProvidedTimeZone);
     }
 
     /**
@@ -711,6 +725,20 @@ public class ClickHouseBatchWriter {
                 writer.updateColumnNameToDataTypeMap();
             if (writer == null ||
                     writer.wasTableMetaDataRetrieved() == false) {
+                // A table the catalog positively reports missing can never
+                // settle by retrying. Left as a retry it fills the handoff FIFO
+                // and trips the hard cap, which reads as a performance problem
+                // and names neither the table nor the cause (spec 08.07
+                // section 3.1). Fail the batch so its offset is not committed
+                // and the records replay once the table exists.
+                if (writer != null && writer.isTargetTableAbsent()) {
+                    throw new MissingTargetTableException(String.format(
+                            "Target table %s.%s does not exist in ClickHouse. Create the table, "
+                                    + "or enable auto.create.tables, to resume replication. Failed the "
+                                    + "batch so its offset is not committed; the records replay from "
+                                    + "the last committed offset.",
+                            writer.getDatabaseName(), writer.getTableName()));
+                }
                 log.error(String.format(
                         "*** TABLE METADATA not retrieved for " +
                                 "Database(%s), table(%s), retrying on next " +

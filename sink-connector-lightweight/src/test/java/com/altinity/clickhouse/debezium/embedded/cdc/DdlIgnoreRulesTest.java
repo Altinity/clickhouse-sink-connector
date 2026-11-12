@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySQLDDLParserService;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.PostgreSQLDDLParserService;
@@ -67,12 +68,12 @@ public class DdlIgnoreRulesTest {
     private static ClickHouseSinkConnectorConfig config() {
         Map<String, String> props = new HashMap<>();
         ClickHouseSinkConnectorConfig.setDefaultValues(props);
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static boolean mysqlFlag(String sql) {
         MySQLDDLParserService service = new MySQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "db1");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "db1");
         AtomicBoolean flag = new AtomicBoolean(false);
         service.parseSql(sql, "", new StringBuffer(), flag);
         return flag.get();
@@ -80,7 +81,7 @@ public class DdlIgnoreRulesTest {
 
     private static boolean postgresFlag(String sql) {
         PostgreSQLDDLParserService service = new PostgreSQLDDLParserService(
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), "db1");
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "db1");
         AtomicBoolean flag = new AtomicBoolean(false);
         service.parseSql(sql, "", new StringBuffer(), flag);
         return flag.get();
@@ -303,6 +304,107 @@ public class DdlIgnoreRulesTest {
                 () -> invokeProcess(capture(), ddlRecord("db1", "DROP TABLE t", "db1.t"), mysqlProps()));
     }
 
+    // ------------------------------------------------------------ 06.08 §3.3 item 5: a skipped TRUNCATE is an ERROR
+
+    /** A MySQL schema-change record whose event carries a binlog position, as a streaming DDL event does. */
+    private static SourceRecord ddlRecordAt(String file, long pos, String database, String ddl, String... tableIds) {
+        SourceRecord streaming = ddlRecord(database, ddl, tableIds);
+        Map<String, Object> sourceOffset = new HashMap<>();
+        sourceOffset.put("file", file);
+        sourceOffset.put("pos", pos);
+        return new SourceRecord(null, sourceOffset, "db1", 0,
+                streaming.keySchema(), streaming.key(), streaming.valueSchema(), streaming.value());
+    }
+
+    private static List<LogEvent> eventsAt(CapturingAppender appender, Level level) {
+        List<LogEvent> out = new ArrayList<>();
+        synchronized (appender.events) {
+            for (LogEvent e : appender.events) {
+                if (e.getLevel() == level) {
+                    out.add(e);
+                }
+            }
+        }
+        return out;
+    }
+
+    @Test
+    @DisplayName("a TRUNCATE skipped under disable.drop.truncate=true is logged at ERROR with the table, the binlog position and the resync requirement")
+    public void skippedTruncateLogsAtErrorNamingTableAndPosition() throws Exception {
+        Properties disabled = mysqlProps(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, "true");
+        CapturingAppender appender = captureLog();
+        try {
+            // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+            assertNull(invokeProcess(capture(),
+                    ddlRecordAt("mysql-bin.000007", 1234L, "db1", "TRUNCATE TABLE orders", "db1.orders"), disabled));
+
+            List<LogEvent> errors = eventsAt(appender, Level.ERROR);
+            assertEquals(1, errors.size(), "one ERROR per skipped TRUNCATE");
+            String msg = errors.get(0).getMessage().getFormattedMessage();
+            assertTrue(msg.contains("db1.orders"), "the ERROR names the table: " + msg);
+            assertTrue(msg.contains("mysql-bin.000007:1234"), "the ERROR names the binlog position: " + msg);
+            assertTrue(msg.contains("resync"), "the ERROR names the resync requirement: " + msg);
+        } finally {
+            releaseLog(appender);
+        }
+    }
+
+    @Test
+    @DisplayName("a skipped TRUNCATE whose event carries no binlog position says the position is not available")
+    public void skippedTruncateWithoutPositionSaysSo() throws Exception {
+        Properties disabled = mysqlProps(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, "true");
+        CapturingAppender appender = captureLog();
+        try {
+            // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+            assertNull(invokeProcess(capture(), ddlRecord("db1", "TRUNCATE TABLE t", "db1.t"), disabled));
+
+            List<LogEvent> errors = eventsAt(appender, Level.ERROR);
+            assertEquals(1, errors.size(), "one ERROR per skipped TRUNCATE");
+            String msg = errors.get(0).getMessage().getFormattedMessage();
+            assertTrue(msg.contains("db1.t"), msg);
+            assertTrue(msg.contains("not available"), "a missing position is said, not guessed: " + msg);
+        } finally {
+            releaseLog(appender);
+        }
+    }
+
+    @Test
+    @DisplayName("a skipped DROP TABLE stays at WARN: only a skipped TRUNCATE is raised to ERROR")
+    public void skippedDropTableStaysAtWarn() throws Exception {
+        Properties disabled = mysqlProps(SinkConnectorLightWeightConfig.DISABLE_DROP_TRUNCATE, "true");
+        CapturingAppender appender = captureLog();
+        try {
+            // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+            assertNull(invokeProcess(capture(),
+                    ddlRecordAt("mysql-bin.000007", 1234L, "db1", "DROP TABLE t", "db1.t"), disabled));
+
+            assertTrue(eventsAt(appender, Level.ERROR).isEmpty(), "a skipped DROP is not an ERROR");
+            List<LogEvent> warns = eventsAt(appender, Level.WARN);
+            assertEquals(1, warns.size(), "one WARN per skipped DROP");
+            assertTrue(warns.get(0).getMessage().getFormattedMessage().contains("DROP TABLE t"));
+        // DESTRUCTIVE: nothing is destroyed; this assertion reads the logged DROP text, and the test runs no DROP.
+        } finally {
+            releaseLog(appender);
+        }
+    }
+
+    @Test
+    @DisplayName("without disable.drop.truncate a TRUNCATE is executed, and logs no skip notice")
+    public void truncateWithDropTruncateOffIsNotSkippedNorLogged() throws Exception {
+        CapturingAppender appender = captureLog();
+        try {
+            // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
+            assertThrows(DDLReplicationException.class,
+                    () -> invokeProcess(capture(),
+                            ddlRecordAt("mysql-bin.000007", 1234L, "db1", "TRUNCATE TABLE t", "db1.t"), mysqlProps()),
+                    "with the flag off the TRUNCATE reaches execution (which fails loudly here: no ClickHouse)");
+            assertTrue(eventsAt(appender, Level.ERROR).stream()
+                    .noneMatch(e -> e.getMessage().getFormattedMessage().contains("Ignoring TRUNCATE")));
+        } finally {
+            releaseLog(appender);
+        }
+    }
+
     @Test
     // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.
     @DisplayName("disable.drop.truncate exempts snapshot-phase DDL: the snapshot DROP TABLE still executes")
@@ -500,7 +602,7 @@ public class DdlIgnoreRulesTest {
     }
 
     @Test
-    @DisplayName("a DDL matched by a bundled ignore pattern is logged once at INFO and recorded in lastIgnoredDDL")
+    @DisplayName("a DDL matched by a bundled ignore pattern is logged once and recorded in lastIgnoredDDL")
     public void bundledPatternMatchIsLoggedOnceAndRecorded() throws Exception {
         CapturingAppender log = captureLog();
         try {
@@ -513,10 +615,13 @@ public class DdlIgnoreRulesTest {
             assertEquals(partition, capture.getLastIgnoredDDL(),
                     "pre-fix the bundled-pattern rule returned without recording the statement");
 
+            // A partition DROP is the one bundled rule that logs at WARN: the rows stay in ClickHouse, a deliberate
+            // divergence, so the one line names the table and the partition (spec 06.08 section 3.3).
             List<String> lines = log.infoLinesQuoting(partition);
             assertEquals(1, lines.size(), "logged once, by the rule: " + lines);
-            assertTrue(lines.get(0).contains("bundled ignore pattern"),
-                    "the one line names the rule: " + lines.get(0));
+            assertTrue(lines.get(0).startsWith("WARN ") && lines.get(0).contains("p2024")
+                            && lines.get(0).contains("of table orders"),
+                    "the one line is a WARN naming the table and the partition: " + lines.get(0));
         } finally {
             releaseLog(log);
         }

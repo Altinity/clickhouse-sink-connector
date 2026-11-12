@@ -17,9 +17,9 @@ import json
 import pytest
 
 from mysql_e2e_support import (BINARY_ENCODING, CH_HOST, DB, JOB_LOG_NON_PARTITIONED, MYSQL_HOST, MYSQL_PASSWORD,
-                               MYSQL_PORT, MYSQL_USER, OFFSET_TABLE, ch_insert, ch_query, connector_offset_rows,
-                               mysql_query,
-                               parse_verdicts, planted, wait_for_connector_offset_at_or_past, warning_lines)
+                               MYSQL_PORT, MYSQL_USER, OFFSET_TABLE, SOURCE_TIMEZONE, ch_insert, ch_query,
+                               connector_offset_rows, mysql_query, parse_verdicts, planted,
+                               wait_for_connector_offset_at_or_past, warning_lines)
 
 RESYNC = ["-m", "ch_sink_tools.db_load.mysql_resync"]
 LOADER = ["-m", "ch_sink_tools.db_load.clickhouse_loader"]
@@ -40,7 +40,7 @@ def offset_key():
 
 def patch_argv(ws, dump_base, tables, offset_table=OFFSET_TABLE, extra=()):
     argv = ["patch", "--dump-base", dump_base, "--stamp", STAMP, "--schemas", DB, "--tables", tables,
-            "--ch-host", CH_HOST, "--ch-config", ws.ch_config, "--apply"]
+            "--ch-host", CH_HOST, "--ch-config", ws.ch_config, "--apply", "--source_timezone", SOURCE_TIMEZONE]
     loader = f"{ws.python} {' '.join(LOADER)}"
     if ws.supports("--binary_handling_mode", *LOADER):
         loader += f" --binary_handling_mode {BINARY_ENCODING}"

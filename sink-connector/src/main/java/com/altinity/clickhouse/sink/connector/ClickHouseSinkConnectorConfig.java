@@ -4,7 +4,10 @@ package com.altinity.clickhouse.sink.connector;
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicationPolicy;
 import com.altinity.clickhouse.sink.connector.deduplicator.DeDuplicationPolicyValidator;
 import com.altinity.clickhouse.sink.connector.validators.DatabaseOverrideValidator;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
+import com.altinity.clickhouse.sink.connector.validators.JdbcV1DriverValidator;
 import com.altinity.clickhouse.sink.connector.validators.KafkaProviderValidator;
+import com.altinity.clickhouse.sink.connector.validators.TimeZoneValidator;
 import com.altinity.clickhouse.sink.connector.validators.TopicToTableValidator;
 import org.apache.kafka.common.config.AbstractConfig;
 import org.apache.kafka.common.config.ConfigDef;
@@ -14,6 +17,7 @@ import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import java.util.Map;
+import java.util.Set;
 
 import static com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables.ERROR_TABLE_NAME;
 
@@ -236,9 +240,18 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
      */
     public ClickHouseSinkConnectorConfig(ConfigDef config,
                                          Map<String, String> properties) {
-        super(config, properties, false);
+        super(config, checkedProperties(properties), false);
         warnIfNonDefaultValueDisabled(properties);
         warnIfIgnoreDelete(properties);
+    }
+
+    /**
+     * Refuses an unset, misspelled or untrimmed zone key before Kafka parses the map, so the refusal names the key and
+     * a suggested value (spec 07.03 section 3.1.2). Returns the map unchanged.
+     */
+    private static Map<String, String> checkedProperties(Map<String, String> properties) {
+        TimeZoneValidator.validateRawProperties(properties);
+        return properties;
     }
 
     /** Emitted at most once per JVM. */
@@ -342,6 +355,16 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
         } else {
             return null;
         }
+    }
+
+    /**
+     * The names defined by the connector configuration, from the same {@link ConfigDef} that the
+     * connector parses (spec 10.07 section 3.1).
+     *
+     * @return the defined configuration key names
+     */
+    public static Set<String> definedKeys() {
+        return newConfigDef().names();
     }
 
     /**
@@ -711,11 +734,14 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         Type.BOOLEAN,
                         true,
                         Importance.HIGH,
-                        "If true (default), a DATE/DATETIME/TIMESTAMP or decimal value outside the "
-                                + "range of the ClickHouse column type is saturated to the ClickHouse "
-                                + "bound (logged at DEBUG only). If false, such a value fails the batch "
-                                + "with an error naming the column and the value; that failure is "
-                                + "terminal for the batch.",
+                        "If true (default), a value stored as something other than the source held "
+                                + "(a DATE/DATETIME/TIMESTAMP or decimal value outside the ClickHouse column "
+                                + "range, a DATETIME in a DST gap or overlap, a Bool value other than 0 or 1, "
+                                + "an integer that wraps into a narrower column) is stored as described, "
+                                + "counted in clickhouse_sink_lossy_conversions_total{kind}, and logged at "
+                                + "WARN once per column with a summary at most every 5 minutes. If false, "
+                                + "such a value fails the batch with an error naming the column and the "
+                                + "value; that failure is terminal for the batch.",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         3,
                         ConfigDef.Width.NONE,
@@ -723,9 +749,12 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.CLICKHOUSE_DATETIME_TIMEZONE.toString(),
                         Type.STRING,
-                        "",
+                        // No default: Kafka validates a default at define() time, and both zone keys are mandatory
+                        // (spec 07.03 section 3.1.2). The constructor refuses an unset key with a suggested value.
+                        ConfigDef.NO_DEFAULT_VALUE,
+                        new TimeZoneValidator(TimeZoneResolver.Kind.CLICKHOUSE),
                         Importance.HIGH,
-                        "Override timezone for DateTime columns in ClickHouse server",
+                        "Mandatory IANA region id for DateTime columns in ClickHouse (for example UTC or America/Chicago)",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         3,
                         ConfigDef.Width.NONE,
@@ -733,9 +762,10 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                 .define(
                         ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString(),
                         Type.STRING,
-                        "",
+                        ConfigDef.NO_DEFAULT_VALUE,
+                        new TimeZoneValidator(TimeZoneResolver.Kind.SOURCE),
                         Importance.HIGH,
-                        "Override timezone for DateTime columns in Source(MySQL/Postgres) server",
+                        "Mandatory timezone of the source (MySQL/Postgres) DATETIME values: an IANA region id or [+-]HH:MM",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         3,
                         ConfigDef.Width.NONE,
@@ -794,12 +824,11 @@ public class ClickHouseSinkConnectorConfig extends AbstractConfig {
                         ClickHouseSinkConnectorConfigVariables.JDBC_V1_DRIVER.toString(),
                         Type.BOOLEAN,
                         false,
+                        new JdbcV1DriverValidator(),
                         Importance.HIGH,
-                        "When true, use the legacy ClickHouse JDBC V1 driver implementation "
-                                + "(clickhouse-jdbc <= 0.6.x behavior, bundled as DriverV1/DataSourceV1 "
-                                + "in clickhouse-jdbc 0.7+). When false (default), the new JDBC V2 "
-                                + "driver is used. Both drivers ship in the same jar; this toggle "
-                                + "selects the implementation at runtime without a rebuild.",
+                        "Must be false (default). The legacy ClickHouse JDBC V1 driver cannot bind "
+                                + "the datetime values the connector writes, so true is refused at "
+                                + "start with a ConfigException (spec 03.08). The V2 driver is used.",
                         CONFIG_GROUP_CONNECTOR_CONFIG,
                         6,
                         ConfigDef.Width.NONE,

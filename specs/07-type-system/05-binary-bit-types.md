@@ -34,10 +34,19 @@ settings, and a value-level comparison must know which one applies:
 
 | Debezium `binary.handling.mode` | Connector `persist.raw.bytes` | Delivered as | Stored as |
 |---|---|---|---|
-| `bytes` (Debezium default) | `false` (default) | `BYTES` (`byte[]` / `ByteBuffer`) | **lower-case hex text** of the bytes (`BaseEncoding.base16().lowerCase()`), e.g. `deadbeef` — equals `LOWER(HEX(col))` on MySQL |
+| `base64` (the **default**: the connector sets it when the key is absent or blank, `DebeziumChangeEventCapture.ensureBinaryHandlingMode`) | any | `STRING` (Debezium already base64-encoded it) | the **base64 text** verbatim, e.g. `3q2+7w==` — equals `TO_BASE64(col)` on MySQL; `persist.raw.bytes` has no effect because the value is no longer `BYTES` |
+| `bytes` (Debezium's own default, used when the operator sets it explicitly) | `false` | `BYTES` (`byte[]` / `ByteBuffer`) | **lower-case hex text** of the bytes (`BaseEncoding.base16().lowerCase()`), e.g. `deadbeef` — equals `LOWER(HEX(col))` on MySQL |
 | `bytes` | `true` | `BYTES` | the raw bytes (`ps.setBytes`); the `String` column holds the bytes verbatim — equals the MySQL bytes |
-| `base64` (set by the shipped deployment templates) | any | `STRING` (Debezium already base64-encoded it) | the **base64 text** verbatim, e.g. `3q2+7w==` — equals `TO_BASE64(col)` on MySQL; `persist.raw.bytes` has no effect because the value is no longer `BYTES` |
 | `hex` | any | `STRING` | Debezium's hex text verbatim (`DEADBEEF`, upper case — note the case difference from the connector's own hex) |
+
+The default is base64 in **every** component, so a snapshot and the streamed
+rows it is joined by carry the same text and a checksum compares like with
+like: the connector sets it (`ensureBinaryHandlingMode`), the Python loader's
+`--binary_handling_mode` defaults to `base64` (Spec 13.04 §3.7.1), and the
+checksum tools' `--binary_encoding` defaults to `base64` (Spec 11.02 §3.6). An
+existing deployment that relied on Debezium's `bytes` default must set
+`binary.handling.mode: "bytes"` explicitly and pass `--binary_handling_mode
+bytes` / `--binary_encoding hex` to the tools.
 
 `BIT(n>1)` is delivered as `BYTES` (`io.debezium.data.Bits`) under every
 `binary.handling.mode` and follows the first two rows after the §3.1
@@ -54,12 +63,15 @@ bound for a `String` column follow the first two rows as well (Spec 07.06 §3.2)
 ## 5. Verification Criteria
 - `ClickHouseDataTypeMapperBitEndianTest.testBit64AsymmetricValueIsBigEndian()`, `ClickHouseDataTypeMapperBitEndianTest.testBit24AsymmetricValueIsBigEndian()`, `ClickHouseDataTypeMapperBitEndianTest.testBit16HighByteIsBigEndian()`, `ClickHouseDataTypeMapperBitEndianTest.testSingleHighByteUnchanged()`, `ClickHouseDataTypeMapperBitEndianTest.testPalindromicValuesUnchanged()`, `ClickHouseDataTypeMapperBitEndianTest.testBlobByteBufferNotReversed()`.
 - `ClickHouseDataTypeMapperBitBytesTest` — bit / bytes binding.
+- `BinaryHandlingModeDefaultTest` — the connector sets `binary.handling.mode`
+  to `base64` when it is absent or blank, and leaves an explicit value alone
+  (§3.2).
 
 ---
 
 ## 6. Failure Modes & Recovery
 
-Recovery posture: a `BYTES` value is written as text — lower-case hex by default, `unhex('<hex>')` from the V2 driver under `persist.raw.bytes=true` (`JdbcUtils.convertToUnhexExpression`, jdbc-v2 0.9.8 bytecode). Since spec 03.06 §3.4 a value of 64 KiB or more in a chunk at or above `insert.spill.threshold.bytes` is streamed from its array into a spill file as that same text, so it no longer costs its hex text in the heap. Procedures P-FIX-TYPE / P-SKIP / P-RESYNC and the retry-vs-stop rule are defined in spec 07.01 §6.
+Recovery posture: a `BYTES` value only arises when the operator sets `binary.handling.mode=bytes` explicitly (base64 is the default, §3.2); it is written as text — lower-case hex, or `unhex('<hex>')` from the V2 driver under `persist.raw.bytes=true` (`JdbcUtils.convertToUnhexExpression`, jdbc-v2 0.9.8 bytecode). Since spec 03.06 §3.4 a value of 64 KiB or more in a chunk at or above `insert.spill.threshold.bytes` is streamed from its array into a spill file as that same text, so it no longer costs its hex text in the heap. Procedures P-FIX-TYPE / P-SKIP / P-RESYNC and the retry-vs-stop rule are defined in spec 07.01 §6.
 
 - **FM-07.05-1 BLOB near or above 1 GiB (hex rendering limit)**
   - **Trigger**: a `LONGBLOB`/`VARBINARY` value of hundreds of MB up to `max_allowed_packet` (1 GiB).

@@ -142,8 +142,8 @@ public class QueryFormatterTest {
         String tableName = "test_history.employees";
         String primaryKeyColumnName = "employeeNumber";
         Object primaryKeyValue = 1001;
-        String validToMax = "2100-01-01 00:00:00";
-        String binlogRecordTimestamp = "2025-03-01 10:30:00";
+        String validToMax = "4102444800";
+        String binlogRecordTimestamp = "1740825000";
         long version = 1234567890;
         ClickHouseConverter.CDC_OPERATION cdcOperation = ClickHouseConverter.CDC_OPERATION.UPDATE;
         MutablePair<String, Map<String, Integer>> result = qf.getInsertQueryForUpdate(
@@ -176,13 +176,13 @@ public class QueryFormatterTest {
         Assert.assertEquals("the before key is selected once: by the close row only", 1,
                 occurrences(query, "WHERE `employeeNumber`=1001 AND `_valid_to`"));
         Assert.assertTrue("Query should contain valid_to condition with toDateTime", 
-                query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC')"));
+                query.contains("`_valid_to` = toDateTime(4102444800)"));
         Assert.assertTrue("Query should contain is_deleted condition", 
                 query.contains("`is_deleted` = 0"));
         
         // First SELECT should CLOSE the record using binlog timestamp for _valid_to
         Assert.assertTrue("First SELECT should close record with binlog timestamp",
-                query.contains("toDateTime('2025-03-01 10:30:00', 'UTC')"));
+                query.contains("toDateTime(1740825000)"));
         
         // Verify that second SELECT uses placeholders for columns
         Assert.assertTrue("Second SELECT should contain ? as columnName for regular columns",
@@ -228,8 +228,8 @@ public class QueryFormatterTest {
         String tableName = "test_history.offices";
         String primaryKeyColumnName = "officeCode";
         Object primaryKeyValue = "NYC01";  // String primary key
-        String validToMax = "2100-01-01 00:00:00";
-        String binlogRecordTimestamp = "2025-03-01 10:30:00";
+        String validToMax = "4102444800";
+        String binlogRecordTimestamp = "1740825000";
         long version = 1234567890;
         ClickHouseConverter.CDC_OPERATION cdcOperation = ClickHouseConverter.CDC_OPERATION.UPDATE;
         
@@ -260,11 +260,11 @@ public class QueryFormatterTest {
 
         // Verify basic query structure
         Assert.assertTrue("Query should contain valid_to condition with toDateTime", 
-                query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC')"));
+                query.contains("`_valid_to` = toDateTime(4102444800)"));
         
         // First SELECT should close the record using binlog timestamp
         Assert.assertTrue("First SELECT should close record with binlog timestamp",
-                query.contains("toDateTime('2025-03-01 10:30:00', 'UTC')"));
+                query.contains("toDateTime(1740825000)"));
         
         // Verify column index map has after image columns (third SELECT has no parameter binding)
         Assert.assertTrue("After image column should be in index map",
@@ -295,8 +295,8 @@ public class QueryFormatterTest {
         String tableName = "test_history.employees";
         String primaryKeyColumnName = "employeeNumber";
         Object primaryKeyValue = 1001;
-        String validToMax = "2100-01-01 00:00:00";
-        String binlogRecordTimestamp = "2025-03-01 10:30:00";
+        String validToMax = "4102444800";
+        String binlogRecordTimestamp = "1740825000";
         long version = 1234567890;
 
         MutablePair<String, Map<String, Integer>> result = qf.getInsertQueryForDelete(
@@ -323,7 +323,7 @@ public class QueryFormatterTest {
         Assert.assertTrue("Query should contain WHERE with primary key",
                 query.contains("WHERE `employeeNumber`=1001"));
         Assert.assertTrue("Query should contain valid_to condition",
-                query.contains("`_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC')"));
+                query.contains("`_valid_to` = toDateTime(4102444800)"));
         Assert.assertTrue("Query should contain is_deleted condition",
                 query.contains("`is_deleted` = 0"));
 
@@ -331,7 +331,7 @@ public class QueryFormatterTest {
         Assert.assertTrue("First SELECT should have unaliased 0 for is_deleted",
                 query.contains(", 0") || query.contains(",0"));
         Assert.assertTrue("First SELECT should set _valid_to to binlog timestamp (expression only, no AS)",
-                query.contains("toDateTime('2025-03-01 10:30:00', 'UTC')"));
+                query.contains("toDateTime(1740825000)"));
 
         // Second SELECT: delete marker - unaliased 1, 'D', _valid_from/_valid_to as expressions only
         Assert.assertTrue("Second SELECT should have unaliased 1 for is_deleted",
@@ -339,7 +339,7 @@ public class QueryFormatterTest {
         Assert.assertTrue("Second SELECT should have 'D' for _operation (no AS)",
                 query.contains("'D'"));
         Assert.assertTrue("Second SELECT should set _valid_to to open_end (expression only)",
-                query.contains("toDateTime('2100-01-01 00:00:00', 'UTC')"));
+                query.contains("toDateTime(4102444800)"));
 
         Assert.assertTrue("Column index map should be empty (no parameter binding)",
                 columnIndexMap.isEmpty());
@@ -362,8 +362,8 @@ public class QueryFormatterTest {
         String tableName = "test_history.offices";
         String primaryKeyColumnName = "officeCode";
         Object primaryKeyValue = "NYC01";
-        String validToMax = "2100-01-01 00:00:00";
-        String binlogRecordTimestamp = "2025-03-01 10:30:00";
+        String validToMax = "4102444800";
+        String binlogRecordTimestamp = "1740825000";
         long version = 1234567890;
 
         MutablePair<String, Map<String, Integer>> result = qf.getInsertQueryForDelete(
@@ -409,10 +409,10 @@ public class QueryFormatterTest {
         primaryKey.put("tenant", "acme");
         primaryKey.put("item_id", 99);
 
-        String update = qf.getInsertQueryForUpdate("h.items", columns, primaryKey, "2100-01-01 00:00:00",
-                "2025-03-01 10:30:00", 5L, ClickHouseConverter.CDC_OPERATION.UPDATE, "UTC", false).left;
-        String delete = qf.getInsertQueryForDelete("h.items", columns, primaryKey, "2100-01-01 00:00:00",
-                "2025-03-01 10:30:00", 5L, "UTC").left;
+        String update = qf.getInsertQueryForUpdate("h.items", columns, primaryKey, "4102444800",
+                "1740825000", 5L, ClickHouseConverter.CDC_OPERATION.UPDATE, "UTC", false).left;
+        String delete = qf.getInsertQueryForDelete("h.items", columns, primaryKey, "4102444800",
+                "1740825000", 5L, "UTC").left;
 
         String predicate = "WHERE `tenant`='acme' AND `item_id`=99 AND `_valid_to`";
         // Same-key UPDATE: only the close row reads the table (Spec 12.03 section 3.2);
@@ -420,11 +420,11 @@ public class QueryFormatterTest {
         Assert.assertEquals(1, occurrences(update, predicate));
         Assert.assertEquals(2, occurrences(delete, predicate));
         Assert.assertEquals("the single-column form is the one-entry case of the same predicate",
-                qf.getInsertQueryForDelete("h.items", columns, "item_id", 99, "2100-01-01 00:00:00",
-                        "2025-03-01 10:30:00", 5L, "UTC").left,
+                qf.getInsertQueryForDelete("h.items", columns, "item_id", 99, "4102444800",
+                        "1740825000", 5L, "UTC").left,
                 qf.getInsertQueryForDelete("h.items", columns, new java.util.LinkedHashMap<>(
-                        java.util.Collections.singletonMap("item_id", (Object) 99)), "2100-01-01 00:00:00",
-                        "2025-03-01 10:30:00", 5L, "UTC").left);
+                        java.util.Collections.singletonMap("item_id", (Object) 99)), "4102444800",
+                        "1740825000", 5L, "UTC").left);
     }
 
     /**
@@ -475,10 +475,10 @@ public class QueryFormatterTest {
 
     // ---- Spec 12.03 sections 3.2-3.5: the corrected SCD2 statement shapes ----
 
-    private static final String SENTINEL = "2100-01-01 00:00:00";
-    private static final String EVENT_TIME = "2025-03-01 10:30:00";
+    private static final String SENTINEL = "4102444800";
+    private static final String EVENT_TIME = "1740825000";
     private static final String BEFORE_KEY_OPEN_ROW =
-            "WHERE `employeeNumber`=1001 AND `_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC') AND `is_deleted` = 0";
+            "WHERE `employeeNumber`=1001 AND `_valid_to` = toDateTime(4102444800) AND `is_deleted` = 0";
 
     private static int occurrences(String haystack, String needle) {
         int count = 0;
@@ -524,7 +524,7 @@ public class QueryFormatterTest {
         Assert.assertEquals("only the close row reads the table: " + update, 1,
                 occurrences(update, "FROM `h.employees` FINAL"));
         Assert.assertTrue("the close row ends at the event time",
-                update.contains("toDateTime('2025-03-01 10:30:00', 'UTC')"));
+                update.contains("toDateTime(1740825000)"));
     }
 
     /**
@@ -545,9 +545,9 @@ public class QueryFormatterTest {
         Assert.assertTrue("the marker is deleted: " + marker, marker.contains("1 as `is_deleted`"));
         Assert.assertTrue("the marker records the UPDATE: " + marker, marker.contains("'U' as `_operation`"));
         Assert.assertTrue("the marker sits at the open sorting key: " + marker,
-                marker.contains("toDateTime('2100-01-01 00:00:00', 'UTC') as `_valid_to`"));
+                marker.contains("toDateTime(4102444800) as `_valid_to`"));
         Assert.assertTrue("the marker starts where the closed version ends: " + marker,
-                marker.contains("toDateTime('2025-03-01 10:30:00', 'UTC') as `_valid_from`"));
+                marker.contains("toDateTime(1740825000) as `_valid_from`"));
         Assert.assertTrue("the marker copies the open row at the BEFORE key: " + marker,
                 marker.contains(BEFORE_KEY_OPEN_ROW));
         Assert.assertEquals("close row and marker both select the before key's open row: " + moved,
@@ -596,13 +596,13 @@ public class QueryFormatterTest {
         Assert.assertEquals("close rows + markers: one UNION ALL: " + bulk, 1, occurrences(bulk, "UNION ALL"));
         Assert.assertEquals("both SELECTs are column-list agnostic: " + bulk, 2, occurrences(bulk, "SELECT * REPLACE"));
         Assert.assertEquals("both SELECTs read every open row under FINAL: " + bulk, 2, occurrences(bulk,
-                "FROM `h`.`employees` FINAL WHERE `_valid_to` = toDateTime('2100-01-01 00:00:00', 'UTC') AND `is_deleted` = 0"));
+                "FROM `h`.`employees` FINAL WHERE `_valid_to` = toDateTime(4102444800) AND `is_deleted` = 0"));
         Assert.assertFalse("no primary-key predicate: every open row is closed: " + bulk,
                 bulk.contains("`employeeNumber`"));
         Assert.assertTrue("close rows end at the event time: " + bulk,
-                bulk.contains("toDateTime('2025-03-01 10:30:00', 'UTC') AS `_valid_to`"));
+                bulk.contains("toDateTime(1740825000) AS `_valid_to`"));
         Assert.assertTrue("markers start at the event time: " + bulk,
-                bulk.contains("toDateTime('2025-03-01 10:30:00', 'UTC') AS `_valid_from`"));
+                bulk.contains("toDateTime(1740825000) AS `_valid_from`"));
         Assert.assertTrue("markers are deleted: " + bulk, bulk.contains("1 AS `is_deleted`"));
         Assert.assertTrue("markers record the TRUNCATE: " + bulk, bulk.contains("'T' AS `_operation`"));
         Assert.assertEquals("every row carries the event's version: " + bulk, 2, occurrences(bulk, "4242 AS `_version`"));

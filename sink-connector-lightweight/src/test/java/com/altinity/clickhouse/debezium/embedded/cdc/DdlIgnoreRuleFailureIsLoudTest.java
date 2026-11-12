@@ -9,7 +9,6 @@ import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
 import org.apache.kafka.connect.source.SourceRecord;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -96,17 +95,15 @@ public class DdlIgnoreRuleFailureIsLoudTest {
     }
 
     @Test
-    @Disabled("DEFECT FM-01.03-2: an exception while evaluating the DDL ignore rules (e.g. an "
-            + "ignore.ddl.regex that does not compile) is swallowed by processEveryChangeRecord's "
-            + "catch-all; the DDL is dropped and later row acknowledgements move the offset past it")
     @DisplayName("A DDL whose ignore rules cannot be evaluated halts the pipeline instead of being skipped")
     public void invalidIgnoreRegexDoesNotSilentlySkipTheDdl() {
         Properties props = new Properties();
         // One unbalanced parenthesis: Pattern.compile throws PatternSyntaxException
-        // for every DDL the process receives.
+        // for every DDL the process receives. Startup refuses such a config
+        // (IgnoreDdlRegexPreflight.check); this drives the runtime path directly.
         props.setProperty(SinkConnectorLightWeightConfig.IGNORE_DDL_REGEX, "(?i)^CREATE\\s+VIEW(");
 
-        assertThrows(RuntimeException.class,
+        assertThrows(DDLReplicationException.class,
                 () -> invokeProcess(new DebeziumChangeEventCapture(),
                         ddlEvent("ALTER TABLE db.orders ADD COLUMN note VARCHAR(64)"), props),
                 "a DDL that could not even be classified must stop the engine (offset stays behind it, "

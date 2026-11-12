@@ -32,3 +32,6 @@ enable.snapshot.ddl: "true"
 auto.create.tables: "true"
 metrics.enable: "false"
 database.dbname: "public"
+# Both zone keys are required, with no default.
+database.connectionTimeZone: "UTC"
+clickhouse.datetime.timezone: "UTC"

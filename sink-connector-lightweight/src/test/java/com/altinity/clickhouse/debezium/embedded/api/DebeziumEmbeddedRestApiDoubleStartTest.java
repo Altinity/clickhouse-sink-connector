@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.api;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import io.javalin.Javalin;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Assertions;
@@ -42,7 +43,8 @@ public class DebeziumEmbeddedRestApiDoubleStartTest {
     private static Properties propsOn(String port) {
         Properties props = new Properties();
         props.setProperty("cli.port", port);
-        return props;
+        // startRestApi() builds the connector config from these props; both zone keys are mandatory.
+        return ZoneFixtures.withZones(props);
     }
 
     /**

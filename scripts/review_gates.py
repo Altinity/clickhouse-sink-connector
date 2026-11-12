@@ -255,10 +255,18 @@ def is_rm_recursive_force(line: str) -> bool:
     return any(RM_RECURSIVE_RE.match(t) for t in tokens) and any(RM_FORCE_RE.match(t) for t in tokens)
 
 
-def is_destructive_line(line: str) -> bool:
+def is_destructive_line(line: str, legacy: bool = False) -> bool:
+    """Whether a line is a destructive site.
+
+    ``legacy`` classifies the physical line the way this gate did before commit
+    642b448058 gave it the embedded-config rule (``code_text``). A commit made
+    under that rule attested the count it could see, so it is scored under that
+    rule too: refining the counter must not retroactively invalidate an attested,
+    published commit.
+    """
     if is_comment_only(line):
         return False
-    code = code_text(line)
+    code = line if legacy else code_text(line)
     if not code:
         return False
     candidates = [code]
@@ -323,10 +331,11 @@ def parse_trailers(message: str) -> List[Dict[str, str]]:
     return result
 
 
-def destructive_sites(added: Dict[str, List[Tuple[int, str]]]) -> List[Tuple[str, int]]:
+def destructive_sites(added: Dict[str, List[Tuple[int, str]]],
+                      legacy: bool = False) -> List[Tuple[str, int]]:
     return [(path, lineno)
             for path, lines in sorted(added.items()) if not exempt_from_code_gates(path)
-            for lineno, text in lines if is_destructive_line(text)]
+            for lineno, text in lines if is_destructive_line(text, legacy)]
 
 
 def check_commit_attestation(sha: str, message: str,
@@ -335,9 +344,18 @@ def check_commit_attestation(sha: str, message: str,
     sites = destructive_sites(added)
     if not sites:
         return []
+    # The count a commit can honestly attest is the one the counter of its own
+    # time produced. ``legacy_sites`` is that count for a commit made before the
+    # counter was refined (642b448058 stopped counting a ConfigMap's embedded
+    # configuration file as one site), so attesting it is correct, not stale.
+    # Only a positive count is an answer: a commit here adds at least one site.
+    legacy_sites = destructive_sites(added, legacy=True)
+    allowed = {len(sites)}
+    if legacy_sites and len(legacy_sites) != len(sites):
+        allowed.add(len(legacy_sites))
     path, line = sites[0]
     short = sha[:10]
-    expected = f"Destructive-Op-Check: sites={len(sites)}; result=pass"
+    expected = " or ".join(f"Destructive-Op-Check: sites={n}; result=pass" for n in sorted(allowed))
     trailers = parse_trailers(message)
     if not trailers:
         return [Finding(path, line, "destructive",
@@ -357,7 +375,7 @@ def check_commit_attestation(sha: str, message: str,
     # line, never fall short of it.
     squashed = bool(SQUASH_SUBJECT_RE.search(message.strip().splitlines()[0] if message.strip() else ""))
     total = sum(int(v) for v in values) if all(v.isdigit() for v in values) else None
-    if total is None or (total < len(sites) if squashed else total != len(sites)):
+    if total is None or (total < len(sites) if squashed else total not in allowed):
         findings.append(Finding(path, line, "destructive",
                                 f"commit {short}: Destructive-Op-Check trailer(s) attest sites="
                                 f"{'+'.join(v or '<missing>' for v in values)} but the commit adds "

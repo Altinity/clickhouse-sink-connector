@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.data.Enum;
@@ -79,7 +80,7 @@ public class ClickHouseDataTypeMapperPoisonValueTest {
     }
 
     private static ClickHouseSinkConnectorConfig config() {
-        return new ClickHouseSinkConnectorConfig(new HashMap<>());
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()));
     }
 
     private static List<Bind> bind(Schema.Type type, String schemaName, Object value, ClickHouseDataType target)
@@ -214,6 +215,47 @@ public class ClickHouseDataTypeMapperPoisonValueTest {
         List<Bind> j = bind(Schema.Type.STRING, Json.LOGICAL_NAME, json, ClickHouseDataType.String);
         assertEquals("setObject", j.get(0).method);
         assertSame(json, j.get(0).value);
+    }
+
+    /**
+     * Spec 07.04 section 3.2: the ENUM option text Debezium delivers is the MySQL
+     * literal body, so each backslash of a label arrives doubled, and each comma
+     * is additionally written as a backslash and a comma (escapeOption). The
+     * writer undoes the comma escape, then collapses each doubled backslash, for
+     * io.debezium.data.Enum fields only. The VARCHAR and SET controls carry the
+     * same text and must stay verbatim.
+     */
+    @Test
+    @DisplayName("Spec 07.04 section 3.2: an ENUM label with commas or backslashes is bound as the MySQL label")
+    public void enumLabelCommaEscapeIsUndone() throws Exception {
+        // label b,c: delivered as b\,c
+        List<Bind> comma = bind(Schema.Type.STRING, Enum.LOGICAL_NAME, "b\\,c", ClickHouseDataType.String);
+        assertEquals("setString", comma.get(0).method);
+        assertEquals("b,c", comma.get(0).value);
+
+        // label a\,b (backslash then comma): delivered as a\\\,b
+        List<Bind> backslashComma = bind(Schema.Type.STRING, Enum.LOGICAL_NAME, "a\\\\\\,b", ClickHouseDataType.String);
+        assertEquals("a\\,b", backslashComma.get(0).value);
+
+        // label x\y (one backslash): delivered as x\\y
+        List<Bind> backslash = bind(Schema.Type.STRING, Enum.LOGICAL_NAME, "x\\\\y", ClickHouseDataType.String);
+        assertEquals("x\\y", backslash.get(0).value);
+
+        // label \, (backslash then comma): delivered as \\\,
+        List<Bind> leadingBackslashComma = bind(Schema.Type.STRING, Enum.LOGICAL_NAME, "\\\\\\,", ClickHouseDataType.String);
+        assertEquals("\\,", leadingBackslashComma.get(0).value);
+
+        // an unpaired backslash has no doubled partner to collapse, so it is kept as is
+        List<Bind> loneBackslash = bind(Schema.Type.STRING, Enum.LOGICAL_NAME, "x\\y", ClickHouseDataType.String);
+        assertEquals("x\\y", loneBackslash.get(0).value);
+
+        // controls: VARCHAR text and SET text are not ENUM labels and stay verbatim
+        List<Bind> varchar = bind(Schema.Type.STRING, null, "p\\,q", ClickHouseDataType.String);
+        assertEquals("p\\,q", varchar.get(0).value);
+        List<Bind> varcharBackslashes = bind(Schema.Type.STRING, null, "x\\\\y", ClickHouseDataType.String);
+        assertEquals("x\\\\y", varcharBackslashes.get(0).value);
+        List<Bind> set = bind(Schema.Type.STRING, EnumSet.LOGICAL_NAME, "p\\,q", ClickHouseDataType.String);
+        assertEquals("p\\,q", set.get(0).value);
     }
 
     // ------------------------------------------------------------------

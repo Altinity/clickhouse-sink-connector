@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.common;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier.ErrorCategory;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
@@ -133,7 +134,7 @@ public class PoisonValueClassificationTest {
         Exception refusal = null;
         try {
             ClickHouseDataTypeMapper.convert(Schema.Type.STRUCT, Geometry.LOGICAL_NAME, value, 1,
-                    noOpStatement(), new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                    noOpStatement(), new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                     ClickHouseDataType.Polygon, UTC);
         } catch (Exception e) {
             refusal = e;
@@ -170,7 +171,7 @@ public class PoisonValueClassificationTest {
         try {
             new PreparedStatementFieldMapper("is_deleted", true, null, "_version", "db", UTC)
                     .insertPreparedStatement(indexMap, noOpStatement(), after.schema().fields(), record, after,
-                            false, new ClickHouseSinkConnectorConfig(new HashMap<>()), columns,
+                            false, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), columns,
                             DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE, "orders");
         } catch (Exception e) {
             refusal = e;
@@ -201,7 +202,7 @@ public class PoisonValueClassificationTest {
         try {
             new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
                     new ArrayList<>(Collections.singletonList(delete)), segments, new HashMap<>(),
-                    new ClickHouseSinkConnectorConfig(new HashMap<>()), "t", "db", null, columns);
+                    new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), "t", "db", null, columns);
         } catch (Exception e) {
             refusal = e;
         }

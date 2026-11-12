@@ -122,6 +122,15 @@ Reusing that predicate for the DDL barrier means the two safety properties
 rows) cannot drift apart when a fourth handoff path is added: whoever extends
 `isPipelineQuiescent()` extends both.
 
+The abandonment latch (spec 09.01 §3.6) is deliberately NOT part of this
+predicate, and therefore not part of this barrier either. It guards the
+control-record COMMIT only, at the gate in `commitControlRecordOffset` (spec
+09.04 §3): an abandoned FIFO is genuinely EMPTY of in-flight rows, so it
+satisfies this barrier correctly, and a latch folded in here would make the
+drain below wait on a condition that only a write can release — the barrier
+would abort (`DDL drain:`) with every worker healthy. `DdlDrainDeadlockTest`
+pins both directions.
+
 ### 3.4 Formal model (`Replication.DdlBarrier`)
 The barrier is modelled abstractly as a state with a legacy queue, N routed
 queues and an `outstanding` counter of dequeued-but-unacknowledged batches:

@@ -104,7 +104,7 @@ def run_driver_config(driver, args):
 def driver_namespace(**overrides):
     values = dict(
         mysql_user=None, defaults_file="~/.my.cnf", mysql_database="shop", mysql_port=3306,
-        source_timezone="UTC", tables_regex="orders", threads=1, binary_encoding="hex", where=None,
+        source_timezone="UTC", tables_regex="orders", threads=1, binary_encoding="base64", where=None,
         debug_output=False, lock_tables_on_source=False, sleep_after_lock=0, lock_wait_timeout=30,
         fail_on_lock_timeout=False, no_wc=True, include_partitions_regex=None,
         exclude_tables_regex=None, non_partitioned_tables_only=False,
@@ -138,12 +138,12 @@ class TestNoWc(unittest.TestCase):
         self.assertEqual([call.args[0] for call in calculate.call_args_list], ["orders"])
 
     def test_legacy_mysql_side(self):
-        self.check_side(lm, ["--mysql_host", "h", "--mysql_database", "shop", "--tables_regex", "orders", "--no_wc"],
-                        "calculate_checksum")
+        self.check_side(lm, ["--mysql_host", "h", "--mysql_database", "shop", "--tables_regex", "orders", "--no_wc",
+                             "--source_timezone", "UTC"], "calculate_checksum")
 
     def test_packaged_mysql_side(self):
-        self.check_side(pm, ["--mysql_host", "h", "--mysql_database", "shop", "--tables_regex", "orders", "--no_wc"],
-                        "calculate_checksum")
+        self.check_side(pm, ["--mysql_host", "h", "--mysql_database", "shop", "--tables_regex", "orders", "--no_wc",
+                             "--source_timezone", "UTC"], "calculate_checksum")
 
     def test_legacy_mysql_count(self):
         self.check_side(lmc, ["--mysql_host", "h", "--mysql_database", "shop", "--include_tables_regex", "orders",
@@ -175,7 +175,7 @@ def clickhouse_select(module, exclude_tokens):
     columns = [("id", "Int32", 0, None, 0, 1), ("name", "String", 0, None, 0, 0),
                ("_version", "UInt64", 0, None, 0, 0), ("is_deleted", "UInt8", 0, None, 0, 0)]
     module.args = argparse.Namespace(
-        clickhouse_database="shop", exclude_columns=exclude_tokens, hex_columns=[], binary_encoding="hex",
+        clickhouse_database="shop", exclude_columns=exclude_tokens, hex_columns=[], binary_encoding="base64",
         include_floating_point_columns=False, include_json_columns=False, json_columns="", timestamp_columns="",
         source_timezone="UTC", min_datetime_value=DATETIME_MIN, max_datetime_value=DATETIME_MAX)
 
@@ -261,7 +261,7 @@ class TestClickHouseCount(unittest.TestCase):
         self.assertFalse(any("'None'" in sql for sql in executed), executed)
         logs, executed = self.count(module, "toYYYYMM(dt)", include_partitions_regex="p.*", where="x > 0")
         self.assertIn("INFO:root:Count for table shop.orders = 30", logs)
-        self.assertTrue(any("toYYYYMM(dt) = '202609'" in sql and "and x > 0" in sql for sql in executed), executed)
+        self.assertTrue(any("toYYYYMM(dt) = '202609'" in sql and "and (x > 0)" in sql for sql in executed), executed)
         # --no_wc passes no partition key; it is read when a partition regex needs it
         logs, executed = self.count(module, None, include_partitions_regex="p.*")
         self.assertIn("INFO:root:Count for table shop.orders = 30", logs)
@@ -341,7 +341,7 @@ class TestDebugOutput(InTemporaryDirectory):
     def test_legacy_mysql_side(self):
         lm.args = argparse.Namespace(
             mysql_host="h", mysql_port=3306, mysql_database="shop", where="id > 0", ignore_tables_regex=None,
-            threads_per_table=1, chunk_size=10000, debug_output=True, debug_limit=None, binary_encoding="hex",
+            threads_per_table=1, chunk_size=10000, debug_output=True, debug_limit=None, binary_encoding="base64",
             min_date_value="1900-01-01", max_date_value="2299-12-31", min_datetime_value=DATETIME_MIN,
             max_datetime_value=DATETIME_MAX, source_timezone="UTC")
         with patch.object(lm, "get_mysql_connection", return_value=MagicMock()), \

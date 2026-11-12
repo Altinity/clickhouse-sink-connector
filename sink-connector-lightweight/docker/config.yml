@@ -139,13 +139,14 @@ enable.snapshot.ddl: "true"
 # persist.raw.bytes: how BLOB/BINARY/VARBINARY/BIT values are written. Both
 # modes target a String column; they differ in what that column contains.
 #
-#   false (default) -- the bytes are HEX-ENCODED and the hex TEXT is stored.
-#                      MySQL x'0102030405' becomes the 10-character string
+#   false (default) -- with binary.handling.mode=bytes the bytes are
+#                      HEX-ENCODED and the hex TEXT is stored. MySQL
+#                      x'0102030405' becomes the 10-character string
 #                      "0102030405", so hex(col) in ClickHouse returns
 #                      30313032303330343035 (the hex OF THAT TEXT), not
 #                      0102030405; the column takes twice the space and the
 #                      value is recoverable with unhex(col). The db_compare
-#                      checksum tools compare this shape with their default
+#                      checksum tools compare this shape with
 #                      --binary_encoding hex (the MySQL side renders
 #                      lower(hex(col)), the ClickHouse side the stored text).
 #   true            -- the raw bytes are stored unchanged, so the column is
@@ -183,8 +184,8 @@ clickhouse.datetime.timezone: "America/Chicago"
 # skip_replica_start: If set to true, the connector will skip replication on startup. sink-connector-client start_replica will start replication.
 #skip_replica_start: "false"
 
-# binary.handling.mode: The mode for handling binary values. Possible values are bytes, base64, and decode. The default is bytes.
-#binary.handling.mode: "base64"
+# binary.handling.mode: The mode for handling binary values. Possible values are bytes, base64, and decode. The default is base64, the same default the loader and the checksum tools use.
+#binary.handling.mode: "bytes"
 
 # ignore_delete: If set to true, the connector will ignore delete events. The default is false.
 #ignore_delete: "true"
@@ -237,9 +238,9 @@ connection.pool.disable: "true"
 
 # Required for fixing bug with freeze in debezium loop.
 use.nongraceful.disconnect: "true"
-database.keep.alive.interval.ms: "30000"  #Send keepalive every 30 seconds
-database.connection.reconnect.backoff.ms: "1000"
-database.connection.reconnect.backoff.max.ms: "10000"
+# Read by the binlog connection guard (binlog.read.timeout.ms defaults to twice this value) and by
+# Debezium only when connect.keep.alive=true; keep-alive is off by default (spec 01.07 section 3.4).
+connect.keep.alive.interval.ms: "60000"
 database.ssl.mode: "disabled"
 # If set, a non-default value will be set, for example if NULL is passed from source, the value will be NULL.
 non.default.value: "true"

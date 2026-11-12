@@ -124,14 +124,21 @@ public class SinkConnectorLightWeightConfig {
         configVariables.put(DISABLE_DDL,
                 "This configuration will disable execution of DDL that are read from binlog (Applies only to MySQL).");
         configVariables.put(DISABLE_DROP_TRUNCATE,
-                "Disable drop and truncate DDL Statements (Only applies to MySQL).");
+                // DESTRUCTIVE: config description text only; the connector ignores these statements and does not run them.
+                "Do not apply DROP TABLE, TRUNCATE TABLE and DROP DATABASE from the source, so ClickHouse keeps the rows "
+                        + "the source removed; each suppressed statement is logged at WARN naming the table(s). "
+                        // DESTRUCTIVE: config description text only; the partition statements are ignored, never executed.
+                        + "ALTER TABLE ... DROP PARTITION and TRUNCATE PARTITION are always ignored, with a WARN naming the "
+                        + "table and partition, whatever this is set to (spec 06.08 section 3.3). Only applies to MySQL.");
         configVariables.put(ENABLE_SNAPSHOT_DDL,
                 "Enable snapshot DDL (Enables execution of DDL received during snapshot) (Applies only to MySQL).");
         configVariables.put(CLI_PORT, "Sink connector Client CLI port.");
         configVariables.put(DDL_RETRY,
                 "If set to true, the sink connector will retry executing DDL after a failure.");
         configVariables.put(IGNORE_DDL_REGEX,
-                "If set, the sink connector will ignore DDL statements matching the regex.");
+                "If set, the sink connector will ignore DDL statements matching the regex. Several rules are separated by "
+                        + "'||'. Each rule must compile and must not be blank: an invalid rule refuses the start, and a "
+                        + "rule that fails at run time halts the pipeline rather than skipping the DDL (spec 01.03 section 7).");
         configVariables.put(REST_API_AUTH_ENABLED,
                 "If set to true, REST API endpoints require HTTP Basic Auth. Defaults to false.");
         configVariables.put(REST_API_AUTH_USERNAME,
