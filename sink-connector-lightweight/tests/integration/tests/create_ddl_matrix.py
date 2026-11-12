@@ -472,6 +472,17 @@ def create_table_forms(self):
             source_value_wins(table_name=table_name, column_name="c")
 
     with Example("#copyCreateTable, CREATE ... LIKE", flags=TE):
+        # Expected to fail on a replicated target: the statement is not issued
+        # ON CLUSTER there, and ClickHouse refuses the AS form of a table whose
+        # engine path uses {uuid} outside ON CLUSTER (Code: 36), so the copy is
+        # never created (Spec 06.04 FM-06.04-4, an open defect).
+        if self.context.clickhouse_table_engine == "ReplicatedReplacingMergeTree":
+            xfail(
+                "CREATE TABLE ... LIKE is not issued ON CLUSTER on a replicated "
+                "target and ClickHouse refuses it with Code: 36 "
+                "(Spec 06.04 FM-06.04-4)"
+            )
+
         source_table = f"cf_src_{getuid()}"
         copy_table = f"cf_copy_{getuid()}"
         mysql = self.context.cluster.node("mysql-master")

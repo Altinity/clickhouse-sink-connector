@@ -12,9 +12,15 @@ def check_datatype_replication(
     ch_values,
     clickhouse_table_engine,
     nullable=False,
-    hex_type=False,
+    binary_type=False,
 ):
-    """Check replication of a given MySQL data type."""
+    """Check replication of a given MySQL data type.
+
+    ``binary_type`` marks a column of raw bytes (BINARY, VARBINARY, the BLOB
+    family). The connector writes those base64-encoded, the default of
+    ``binary.handling.mode`` (Spec 07.05), so the value is decoded before it is
+    compared with the bytes MySQL was given.
+    """
     table_name = f"types_{getuid()}"
 
     clickhouse = self.context.cluster.node("clickhouse")
@@ -36,7 +42,7 @@ def check_datatype_replication(
             mysql.query(f"INSERT INTO {table_name} VALUES ({i}, {value})")
             with Then(f"I make check that ClickHouse table has same dataset"):
                 retry(clickhouse.query, timeout=50, delay=1)(
-                    f"SELECT id,{'unhex(MyData)' if hex_type else 'MyData'} FROM test.{table_name} FINAL FORMAT CSV",
+                    f"SELECT id,{'base64Decode(MyData)' if binary_type else 'MyData'} FROM test.{table_name} FINAL FORMAT CSV",
                     message=f"{ch_values[i - 1]}",
                 )
 
@@ -273,7 +279,7 @@ def blob(self, mysql_type, ch_type, values, ch_values, nullable):
                 ch_values=ch_values,
                 nullable=nullable,
                 clickhouse_table_engine=clickhouse_table_engine,
-                hex_type=True,
+                binary_type=True,
             )
 
 
@@ -301,7 +307,7 @@ def binary(self, mysql_type, ch_type, values, ch_values, nullable):
                 ch_values=ch_values,
                 nullable=nullable,
                 clickhouse_table_engine=clickhouse_table_engine,
-                hex_type=True,
+                binary_type=True,
             )
 
 
@@ -339,13 +345,16 @@ def enum(self, mysql_type, ch_type, values, ch_values, nullable):
         # bit string and maps to String. TINYINT(1) is NOT BOOL in the MySQL
         # grammar -- it is a one-byte integer with a display width -- so it
         # stays Int8 and appears in the integer matrix, not here.
-        ("BIT(1)", "Bool", ["b'1'"], ["1"], False),
-        ("BIT", "Bool", ["b'0'"], ["0"], False),
+        # A ClickHouse Bool prints as true / false. The expectation names the
+        # word, not 1 / 0: the check is a substring test over `id,value`, and
+        # the id of the one row is 1, so "1" passed whatever the value was.
+        ("BIT(1)", "Bool", ["b'1'"], ["true"], False),
+        ("BIT", "Bool", ["b'0'"], ["false"], False),
         ("BIT(1)", "Bool", ["NULL"], ["\\N"], True),
         # BOOL / BOOLEAN are both declared as TINYINT(1) by MySQL and mapped
         # to Bool by the connector, unlike TINYINT(1) itself.
-        ("BOOL", "Bool", ["TRUE"], ["1"], False),
-        ("BOOLEAN", "Bool", ["FALSE"], ["0"], False),
+        ("BOOL", "Bool", ["TRUE"], ["true"], False),
+        ("BOOLEAN", "Bool", ["FALSE"], ["false"], False),
         ("BOOL", "Bool", ["NULL"], ["\\N"], True),
     ],
 )
@@ -373,10 +382,11 @@ def bit_and_boolean(self, mysql_type, ch_type, values, ch_values, nullable):
         # A BIT(m) column for m > 1 is a bit STRING, not a number: the
         # requirement (12.14.1) maps BIT(m), m = 2..64, to String. Its
         # on-the-wire form is a raw byte string, so the row asserts the
-        # declared type rather than comparing a rendering.
-        ("BIT(8)", "Nullable(String)", "b'01000001'", False),
-        ("BIT(64)", "Nullable(String)", "b'1111111111111111111111111111111111111111111111111111111111111111'", False),
-        ("BIT(2)", "Nullable(String)", "b'01'", False),
+        # declared type rather than comparing a rendering. The columns are
+        # declared NOT NULL (nullable=False), so the type is a plain String.
+        ("BIT(8)", "String", "b'01000001'", False),
+        ("BIT(64)", "String", "b'1111111111111111111111111111111111111111111111111111111111111111'", False),
+        ("BIT(2)", "String", "b'01'", False),
     ],
 )
 @Requirements(
@@ -474,8 +484,11 @@ def serial(self):
     [
         # JSON and SET carry a MySQL-specific textual representation with no
         # ClickHouse counterpart, so both replicate verbatim as String. SET is
-        # a comma-joined list of its declared members.
-        ("JSON", "String", ["""'{"a": 1}'"""], ['"{""a"": 1}"'], False),
+        # a comma-joined list of its declared members. MySQL stores JSON in a
+        # binary form, not as the text it was given, so the document arrives
+        # re-serialised without the space after the colon: the same document,
+        # a different spelling.
+        ("JSON", "String", ["""'{"a": 1}'"""], ['"{""a"":1}"'], False),
         ("SET('a','b')", "String", ["'a,b'"], ['"a,b"'], False),
         ("JSON", "String", ["NULL"], ["\\N"], True),
         ("SET('a','b')", "String", ["NULL"], ["\\N"], True),
@@ -569,6 +582,8 @@ def national_and_long(self, mysql_type, ch_type, values, ch_values, nullable):
                 ch_values=ch_values,
                 nullable=nullable,
                 clickhouse_table_engine=clickhouse_table_engine,
+                # LONG VARBINARY is MEDIUMBLOB: raw bytes, like the BLOB family.
+                binary_type=(mysql_type == "LONG VARBINARY"),
             )
 
 

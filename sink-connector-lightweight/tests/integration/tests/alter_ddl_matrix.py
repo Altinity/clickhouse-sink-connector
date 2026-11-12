@@ -811,7 +811,19 @@ def create_table_like_statement(self):
     The connector maps it to CREATE TABLE ... AS, copying the source column
     definitions. Rows written through the new table must replicate, which is
     what proves the column set is complete.
+
+    Expected to fail on a replicated target: the statement is not issued
+    ON CLUSTER there, and ClickHouse refuses the AS form of a table whose
+    engine path uses {uuid} outside ON CLUSTER (Code: 36), so the copy is
+    never created (Spec 06.04 FM-06.04-4, an open defect).
     """
+    if self.context.clickhouse_table_engine == "ReplicatedReplacingMergeTree":
+        xfail(
+            "CREATE TABLE ... LIKE is not issued ON CLUSTER on a replicated "
+            "target and ClickHouse refuses it with Code: 36 "
+            "(Spec 06.04 FM-06.04-4)"
+        )
+
     source = f"likesrc_{getuid()}"
     copy = f"likecp_{getuid()}"
     mysql = self.context.cluster.node("mysql-master")

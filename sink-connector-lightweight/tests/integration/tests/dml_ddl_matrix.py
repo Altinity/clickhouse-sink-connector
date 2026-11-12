@@ -68,6 +68,9 @@ BASE_COLUMNS = "c_int INT, c_str VARCHAR(20), c_def INT DEFAULT 7"
 # existing row has one to affect.
 SEED_ROWS = "(1, 10, 'one', 7), (2, 20, 'two', 7)"
 
+# The id of the row written after a matrix row's statements (see the driver).
+LAST_ROW_ID = 4999
+
 
 @TestStep(Given)
 def replicated_table(self, table_name, context=None, columns=BASE_COLUMNS,
@@ -626,9 +629,13 @@ def matrix_rows():
             "UPDATE test.`{table}` SET c_str = 'a''b' WHERE id = 1;"],
             ["SELECT c_str FROM test.`{table}` WHERE id = 1"]),
         # A multi-byte string, so a byte/character mix-up in the writer shows.
+        # Compared as bytes, HEX() on both engines: the MySQL client prints a
+        # value in its session character set, and when that is not the
+        # column's (the suite's client session is latin1) the printed text is
+        # not what the column holds. ClickHouse must hold the column's bytes.
         row(f"d72_{s}", [seeded,
             "UPDATE test.`{table}` SET c_str = 'éàü' WHERE id = 1;"],
-            ["SELECT c_str FROM test.`{table}` WHERE id = 1"]),
+            ["SELECT HEX(c_str) FROM test.`{table}` WHERE id = 1"]),
 
         # --- priority modifiers the grammar allows on INSERT and REPLACE -----
         # `priority=(LOW_PRIORITY | DELAYED | HIGH_PRIORITY)` on insertStatement
@@ -713,6 +720,7 @@ def dml_shape_matrix(self):
     """
     for clickhouse_table_engine in self.context.clickhouse_table_engines:
         mysql = self.context.cluster.node("mysql-master")
+        clickhouse = self.context.cluster.node("clickhouse")
 
         for entry in matrix_rows():
             with Example(f"{entry['name']} {clickhouse_table_engine}", flags=TE):
@@ -726,6 +734,27 @@ def dml_shape_matrix(self):
                     with When("I run the MySQL statement",
                               description=statement.format(table=entry["name"])):
                         mysql.query(statement.format(table=entry["name"]))
+
+                with And("I write a last row and wait for it in ClickHouse"):
+                    # The table's events arrive in order, so once this row is
+                    # there every statement above has been applied. Without it
+                    # a statement that leaves the count as it was (an INSERT
+                    # and a DELETE of the same row) passes every check before
+                    # its events arrive, and the table is then dropped under
+                    # the rows still in flight: ClickHouse answers Code: 60 and
+                    # the connector stops for every test that follows. 4999 is
+                    # inside the last partition of every partitioned row here.
+                    mysql.query(
+                        f"INSERT INTO test.`{entry['name']}` (id) VALUES ({LAST_ROW_ID});")
+                    for attempt in retries(timeout=120, delay=5):
+                        with attempt:
+                            found = int(clickhouse.query(
+                                f"SELECT count() FROM test.`{entry['name']}` FINAL "
+                                f"WHERE id = {LAST_ROW_ID}").output.strip())
+                            assert found == 1, (
+                                f"row {LAST_ROW_ID} has not reached "
+                                f"test.`{entry['name']}`"
+                            )
 
                 with Then("I wait for the pipeline to carry the change"):
                     row_count_matches(table_name=entry["name"])
