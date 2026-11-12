@@ -272,6 +272,16 @@ public class EngineRestartFifoResetTest {
                 ((java.util.Collection<?>) c).clear();
             }
         }
+        // The latch outlives a bare reset() by design (spec 09.01 section 3.6),
+        // so a test that armed it must clear it explicitly rather than leak the
+        // armed state -- and the commit gate it shuts -- into the next test.
+        Field armed = DebeziumOffsetManagement.class.getDeclaredField("unprovenAbandonment");
+        armed.setAccessible(true);
+        armed.set(null, false);
+        Field below = DebeziumOffsetManagement.class
+                .getDeclaredField("unprovenAbandonmentBelowSequence");
+        below.setAccessible(true);
+        below.set(null, Long.MAX_VALUE);
     }
 
     /**

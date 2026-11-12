@@ -2824,6 +2824,14 @@ public class DebeziumChangeEventCapture {
      * busy pipeline commits its offsets through the rows themselves. It is
      * precisely the idle case, where no row is coming, that needed this.</p>
      *
+     * <p><b>An abandoned unit withholds the commit too</b> (spec 09.01 section
+     * 3.6, spec 09.04 FM-09.04-4). A {@code reset()} that abandoned units left
+     * rows unwritten, so the FIFO's emptiness is not proof that this position
+     * is safe: the latch stays armed until a unit assigned after the reset is
+     * acknowledged. The latch is read HERE and nowhere else -- the drains and
+     * {@code setup()} must keep treating an abandoned FIFO as empty, or the
+     * recovery from the abandonment would be the thing that hangs.</p>
+     *
      * @param controlRecord   The newest record that produced no row; may be null.
      * @param recordCommitter The record committer for offset management.
      * @param handedOffRows   True if any row from this batch was handed to the writers.
@@ -2838,7 +2846,9 @@ public class DebeziumChangeEventCapture {
         if (controlRecord == null || recordCommitter == null) {
             return false;
         }
-        if (handedOffRows || !isPipelineQuiescent()) {
+        if (handedOffRows
+                || DebeziumOffsetManagement.hasUnprovenAbandonment()
+                || !isPipelineQuiescent()) {
             return false;
         }
         DebeziumOffsetManagement.acknowledgeRecords(recordCommitter, controlRecord, true);
@@ -2859,6 +2869,19 @@ public class DebeziumChangeEventCapture {
      * because by then the rows are already written.
      * </p>
      *
+     * <p><b>The abandonment latch is deliberately NOT a term here</b> (spec
+     * 09.01 section 3.6). An abandoned unit leaves the FIFO without ever being
+     * acknowledged, so an armed latch says "the current position is not proven
+     * safe to claim" -- a rule about the CONTROL-RECORD COMMIT only
+     * ({@link #commitControlRecordOffset}) -- not "rows are still on their way".
+     * Folding it in here made every drain treat the abandonment as live work:
+     * {@code drainBeforeStop()} burned its whole {@link #stopDrainTimeoutMs}
+     * and {@link #awaitPipelineQuiescent()} -- hence {@code drainBeforeDDL()}
+     * and the truncation barrier -- never returned while the writers were alive,
+     * aborting DDL with "DDL drain". None of those consumers can release a
+     * latch: only an acknowledged post-reset unit can, and that is a write.
+     * </p>
+     *
      * @return true if no record is awaiting persistence.
      */
     private boolean isPipelineQuiescent() {
@@ -2871,9 +2894,6 @@ public class DebeziumChangeEventCapture {
                     return false;
                 }
             }
-        }
-        if (DebeziumOffsetManagement.hasUnprovenAbandonment()) {
-            return false;
         }
         return !DebeziumOffsetManagement.hasUnwrittenBatches();
     }
