@@ -60,6 +60,10 @@ class GateTestCase(unittest.TestCase):
         findings, _ = rg.run_gates(self.repo.root, self.base, head, [gate])
         return findings
 
+    def run_gate_with_notices(self, gate, message="change"):
+        head = self.repo.snapshot(message)
+        return rg.run_gates(self.repo.root, self.base, head, [gate])
+
 
 class DestructiveGateTest(GateTestCase):
     def test_unwarned_site_without_trailer_is_reported_twice(self):
@@ -199,10 +203,46 @@ class DestructiveGateTest(GateTestCase):
         self.assertEqual(len(findings), 1)
         self.assertIn("adds 2", findings[0].message)
 
-    def test_non_squash_commit_must_attest_exactly(self):
-        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
-        findings = self.run_gate("destructive", f"purge\n\n{TRAILER_KEY}: sites=2; result=pass")
+    def test_non_squash_commit_attesting_fewer_sites_than_it_adds_is_reported(self):
+        # Under-attestation is the direction in which an unreviewed site
+        # hides, so it stays a finding for every commit, squash or not.
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n'
+                        + self.WARN + 'cur.execute("DROP TABLE b_tmp")\n')
+        findings = self.run_gate("destructive", f"purge\n\n{TRAILER_KEY}: sites=1; result=pass")
         self.assertEqual(len(findings), 1)
+        self.assertIn("adds 2", findings[0].message)
+
+    def test_non_squash_commit_may_attest_more_than_the_gate_classifies(self):
+        # The regression this rule exists for: commit 642b4480 on the 2.11.1
+        # release branch attests sites=4, because a line that the gate used to
+        # count was a false positive and a later refinement stopped counting
+        # it. The review it attests did happen; only the gate's classification
+        # changed afterwards, so the over-count is a notice, never a finding.
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        findings, notices = self.run_gate_with_notices(
+            "destructive", f"purge\n\n{TRAILER_KEY}: sites=4; result=pass")
+        self.assertEqual(findings, [])
+        self.assertEqual(len(notices), 1)
+        self.assertIn("sites=4", notices[0])
+        self.assertIn("1 destructive site(s) are classified", notices[0])
+
+    def test_stale_over_attestation_is_visible_as_a_notice(self):
+        # A copied trailer is still surfaced, so the reviewer sees it, but a
+        # count above the classified sites attests a review that did happen.
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        findings, notices = rg.run_gates(self.repo.root, self.base,
+                                         self.repo.snapshot(f"purge\n\n{TRAILER_KEY}: sites=2; result=pass"),
+                                         ["destructive"])
+        self.assertEqual(findings, [])
+        self.assertEqual(len(notices), 1)
+
+    def test_failed_result_is_rejected_even_when_the_commit_over_attests(self):
+        # result=pass is the attestation itself; a count tolerance must never
+        # swallow a trailer that declares the review failed.
+        self.repo.write("tool/a.py", self.WARN + 'cur.execute("DROP TABLE a_tmp")\n')
+        findings = self.run_gate("destructive", f"purge\n\n{TRAILER_KEY}: sites=4; result=fail")
+        self.assertEqual(len(findings), 1)
+        self.assertIn("result=fail", findings[0].message)
 
     def test_e2e_test_data_is_exempt(self):
         self.repo.write("tool/python/tests_e2e/mysql/seed.sql", "DROP TABLE IF EXISTS t;\n")

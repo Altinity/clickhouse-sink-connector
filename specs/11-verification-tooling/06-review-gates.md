@@ -66,7 +66,13 @@ An added line is a site when, outside a comment-only line, it matches:
 * a recursive and forced `rm` in any flag order
 
 The match also applies after stripping inline block comments, quotes,
-backslashes and `+` concatenation.
+backslashes and `+` concatenation. A single added line can carry many logical
+lines: a Kubernetes ConfigMap embeds a whole configuration file as one YAML
+scalar with every break written as a literal `\n` escape. Each logical line is
+classified on its own, the scalar's own opener is stripped from the first, and
+a comment-only logical line is dropped, so documentation inside an embedded
+file is not a statement. A real statement inside the scalar is still a site. A
+line with no escaped break is classified unchanged.
 
 Each site needs a `DESTRUCTIVE:` marker in a comment (not a string literal),
 followed by at least 20 characters, within 5 lines of the site in the head
@@ -74,16 +80,25 @@ version of the file.
 
 Attestation is per commit: every commit that adds sites (counted from that
 commit's own diff) must carry `Destructive-Op-Check: sites=<N>; result=pass`
-in its own message, where N equals its own site count. Several such lines in
-one message are summed, which is what a squash merge of a multi-commit PR
-produces. For a squash-merge commit (subject ending in `(#N)`) the sum may
-exceed the commit's net site count but never fall short of it: its trailers
-are the PR's per-commit attestations, each checked exactly in that PR, and a
-PR that reworked a destructive line attested it more than once. Every other
-commit must attest exactly. A commit that adds no site needs no trailer. A missing trailer, a
-count mismatch or a non-pass result is a finding that names the commit. A
-single cumulative trailer for the whole range cannot work for a release
-branch, whose range holds many already-attested commits.
+in its own message, where N is at least its own site count. Several such lines
+in one message are summed, which is what a squash merge of a multi-commit PR
+produces.
+
+The sum is a lower bound, because it records a review rather than the gate's
+current classification, and two things can make it exceed the count the gate
+derives today. A squash-merge commit (subject ending in `(#N)`) sums the PR's
+per-commit attestations, and a PR that reworked a destructive line attested it
+more than once. And the classifier can be refined after a commit was written:
+a line it counted then became a false positive, so the commit is judged by a
+rule that did not exist when it was authored. An over-count is reported as a
+notice, never as a finding.
+
+Under-attestation stays a finding for every commit, squash or not, and so does
+any trailer whose `result` is not `pass`: a count that falls short of the sites
+the commit adds is the direction in which an unreviewed site hides. A missing
+trailer is a finding that names the commit. A single cumulative trailer for the
+whole range cannot work for a release branch, whose range holds many
+already-attested commits.
 
 ### 3.3 merge-stop
 An added line, or a run of up to four consecutive added lines, is a finding
@@ -163,6 +178,9 @@ error is never reported as a clean result.
 All tests are offline and run by `python3 -m unittest discover -s scripts/tests`:
 
 - §3.2: `test_unwarned_site_without_trailer_is_reported_twice`,
+  `test_embedded_config_prose_is_not_a_site`,
+  `test_embedded_config_real_statement_is_still_a_site`,
+  `test_code_text_leaves_ordinary_lines_unchanged`,
   `test_warned_site_with_matching_trailer_passes`,
   `test_trailer_count_must_match`, `test_short_warning_is_not_enough`,
   `test_marker_inside_string_literal_is_not_a_warning`,
@@ -172,7 +190,11 @@ All tests are offline and run by `python3 -m unittest discover -s scripts/tests`
   `test_squash_message_with_several_trailers_is_summed`,
   `test_squash_merge_may_attest_more_than_its_net_sites_never_fewer`,
   `test_squash_merge_attesting_too_few_sites_is_reported`,
-  `test_non_squash_commit_must_attest_exactly`, `test_e2e_test_data_is_exempt`.
+  `test_non_squash_commit_attesting_fewer_sites_than_it_adds_is_reported`,
+  `test_non_squash_commit_may_attest_more_than_the_gate_classifies`,
+  `test_stale_over_attestation_is_visible_as_a_notice`,
+  `test_failed_result_is_rejected_even_when_the_commit_over_attests`,
+  `test_e2e_test_data_is_exempt`.
 - §3.1: `test_changes_older_than_the_gate_are_not_checked`,
   `test_changes_from_the_gate_commit_onward_are_checked`.
 - §3.3: `test_literal_stop_is_reported`,

@@ -15,7 +15,10 @@ destructive  Every added line that irreversibly removes data or objects
              least 20 characters within 5 lines, and every commit that adds
              sites must attest them in its own message with
              ``Destructive-Op-Check: sites=<N>; result=pass`` (several such
-             lines, as a squash merge collects them, are summed).
+             lines, as a squash merge collects them, are summed). The count
+             is a lower bound: a commit may attest more than the gate
+             classifies today, which is reported as a notice, never as a
+             finding.
 merge-stop   No added code may stop or pause ClickHouse merges: the SYSTEM
              statement that stops (TTL) merges, a statement template whose
              verb is interpolated, or a helper named after pausing merges
@@ -229,7 +232,6 @@ MIN_WARNING_TEXT = 20
 COMMENT_PREFIXES = ("#", "//", "<!--", "*", "/*", ";", "rem ")
 COMMENT_STARTERS = ("#", "//", "--", "/*", "<!--", ";", "*")
 TRAILER_RE = re.compile(r"^Destructive-Op-Check:\s*(.+)$", re.IGNORECASE | re.MULTILINE)
-SQUASH_SUBJECT_RE = re.compile(r"\(#\d+\)\s*$")
 RM_WORD_RE = re.compile(r"\brm\b")
 RM_RECURSIVE_RE = re.compile(r"^-\w*r\w*$|^--recursive$", re.IGNORECASE)
 RM_FORCE_RE = re.compile(r"^-\w*f\w*$|^--force$", re.IGNORECASE)
@@ -330,11 +332,11 @@ def destructive_sites(added: Dict[str, List[Tuple[int, str]]]) -> List[Tuple[str
 
 
 def check_commit_attestation(sha: str, message: str,
-                             added: Dict[str, List[Tuple[int, str]]]) -> List[Finding]:
+                             added: Dict[str, List[Tuple[int, str]]]) -> Tuple[List[Finding], List[str]]:
     """One commit's own sites must be attested by that commit's own message."""
     sites = destructive_sites(added)
     if not sites:
-        return []
+        return [], []
     path, line = sites[0]
     short = sha[:10]
     expected = f"Destructive-Op-Check: sites={len(sites)}; result=pass"
@@ -342,8 +344,9 @@ def check_commit_attestation(sha: str, message: str,
     if not trailers:
         return [Finding(path, line, "destructive",
                         f"commit {short} adds {len(sites)} destructive site(s) but its message has no "
-                        f"'{expected}' trailer")]
+                        f"'{expected}' trailer")], []
     findings: List[Finding] = []
+    notices: List[str] = []
     bad_results = [t.get("result", "") for t in trailers if t.get("result", "").lower() not in ("pass", "passed")]
     if bad_results:
         findings.append(Finding(path, line, "destructive",
@@ -351,26 +354,39 @@ def check_commit_attestation(sha: str, message: str,
                                 f"{bad_results[0] or '<missing>'}; every site must be reviewed and warned "
                                 "(result=pass)"))
     values = [t.get("sites", "") for t in trailers]
-    # A squash merge ("subject (#N)") concatenates the trailers of the PR's
-    # commits, each of which was checked exactly in that PR. Their sum can
-    # exceed the squashed diff's net count when the PR reworked a destructive
-    # line, never fall short of it.
-    squashed = bool(SQUASH_SUBJECT_RE.search(message.strip().splitlines()[0] if message.strip() else ""))
+    # The count is a LOWER bound: it attests that at least that many sites were
+    # reviewed. It can exceed what the gate classifies today without a site
+    # having gone unreviewed, for two reasons. A squash merge ("subject (#N)")
+    # sums the trailers of the PR's commits, which a rework of a destructive
+    # line lowers. And a refinement of the classifier itself can stop counting
+    # a line that was a false positive when the commit was written; the commit
+    # is then judged by a rule that did not exist for it. Neither is a missing
+    # review, so an over-count is reported as a notice and never fails. A count
+    # that falls short of the sites the commit adds still fails: that is the
+    # direction in which an unreviewed site hides.
     total = sum(int(v) for v in values) if all(v.isdigit() for v in values) else None
-    if total is None or (total < len(sites) if squashed else total != len(sites)):
+    if total is None or total < len(sites):
         findings.append(Finding(path, line, "destructive",
                                 f"commit {short}: Destructive-Op-Check trailer(s) attest sites="
                                 f"{'+'.join(v or '<missing>' for v in values)} but the commit adds "
                                 f"{len(sites)} destructive site(s); expected '{expected}'"))
-    return findings
+    elif total > len(sites):
+        notices.append(
+            f"commit {short}: Destructive-Op-Check trailer(s) attest sites="
+            f"{'+'.join(values)} but {len(sites)} destructive site(s) are classified; the count is a "
+            f"lower bound, so this is not a finding (a squash merge sums the PR's trailers and a "
+            f"refinement of the classifier can retire a site)")
+    return findings, notices
 
 
 def check_destructive(added: Dict[str, List[Tuple[int, str]]], head_text,
-                      commits: Sequence[Tuple[str, str, Dict[str, List[Tuple[int, str]]]]]) -> List[Finding]:
+                      commits: Sequence[Tuple[str, str, Dict[str, List[Tuple[int, str]]]]]
+                      ) -> Tuple[List[Finding], List[str]]:
     """Warning comments are checked on the head version of every line the
     change adds; attestation is checked per commit (``commits`` holds
     ``(sha, message, lines that commit adds)`` for each non-merge commit)."""
     findings: List[Finding] = []
+    notices: List[str] = []
     for path, lines in sorted(added.items()):
         if exempt_from_code_gates(path):
             continue
@@ -390,8 +406,10 @@ def check_destructive(added: Dict[str, List[Tuple[int, str]]], head_text,
                     f"blast radius is bounded) within {WARNING_WINDOW} lines",
                 ))
     for sha, message, commit_added in commits:
-        findings += check_commit_attestation(sha, message, commit_added)
-    return findings
+        commit_findings, commit_notices = check_commit_attestation(sha, message, commit_added)
+        findings += commit_findings
+        notices += commit_notices
+    return findings, notices
 
 
 # --------------------------------------------------------------------------
@@ -703,7 +721,9 @@ def run_gates(repo: str, base: str, head: str, gates: Iterable[str]) -> Tuple[Li
     findings: List[Finding] = []
     notices: List[str] = []
     if "destructive" in gates:
-        findings += check_destructive(added, head_text, range_commits(repo, mb, head))
+        dest, notes = check_destructive(added, head_text, range_commits(repo, mb, head))
+        findings += dest
+        notices += notes
     if "merge-stop" in gates:
         findings += check_merge_stop(added)
     if "license" in gates:

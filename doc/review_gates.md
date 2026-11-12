@@ -62,7 +62,7 @@ count. For example:
 statement.execute("DROP TABLE IF EXISTS " + scratchTable);
 ```
 
-In addition, every commit that adds sites must attest exactly the number of
+In addition, every commit that adds sites must attest at least the number of
 sites it adds, in its own message:
 
 ```
@@ -71,10 +71,23 @@ Destructive-Op-Check: sites=<N>; result=pass
 
 A commit that adds no site needs no trailer. Several trailer lines in one
 message are summed, which is what a squash merge of a multi-commit PR
-produces. A stale or copied trailer with a different count fails, and the
-finding names the commit. The one allowance is a squash merge (subject ending
-in `(#N)`): its trailers were each checked in the PR, so their sum may exceed
-the net count when the PR reworked a destructive line, but never fall short. The trailer is an
+produces. The count is a lower bound on the number of sites the commit adds,
+because it records a review, and a commit can honestly attest more sites than
+the gate classifies today:
+
+* a squash merge (subject ending in `(#N)`) sums the trailers of the PR's
+  commits, and a PR that reworked a destructive line attested it more than
+  once;
+* a refinement of the classifier can stop counting a line that was a false
+  positive when the commit was written, so the commit is judged by a rule
+  that did not exist for it. Commit `642b4480` on the 2.11.1 line is the
+  reference case: its `sites=4` was exact under the classifier of the day,
+  and the embedded-config fix retired the fourth site.
+
+An over-count is therefore printed as a `notice:` line, never as a finding.
+A count that falls short of the sites the commit adds still fails, as does any
+trailer whose `result` is not `pass`, and the finding names the commit: that
+is the direction in which an unreviewed site hides. The trailer is an
 attestation that each site was reviewed, that its semantics were checked
 against the code that actually executes it (not a parameter description), and
 that a dry-run path exists where a tool can run against live data. The
