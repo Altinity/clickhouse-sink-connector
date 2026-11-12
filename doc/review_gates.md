@@ -72,9 +72,14 @@ Destructive-Op-Check: sites=<N>; result=pass
 A commit that adds no site needs no trailer. Several trailer lines in one
 message are summed, which is what a squash merge of a multi-commit PR
 produces. A stale or copied trailer with a different count fails, and the
-finding names the commit. The one allowance is a squash merge (subject ending
-in `(#N)`): its trailers were each checked in the PR, so their sum may exceed
-the net count when the PR reworked a destructive line, but never fall short. The trailer is an
+finding names the commit. There are two allowances. A squash merge (subject
+ending in `(#N)`) has trailers that were each checked in the PR, so their sum
+may exceed the net count when the PR reworked a destructive line, but never
+fall short. A non-squash commit may also attest the count the counter of its
+own time produced: refining what counts as a site never invalidates a commit
+that was already published under the earlier rule. Commit 642b448058 stopped
+counting a Kubernetes ConfigMap's embedded configuration file as one site, so a
+commit that attested that older count keeps passing. The trailer is an
 attestation that each site was reviewed, that its semantics were checked
 against the code that actually executes it (not a parameter description), and
 that a dry-run path exists where a tool can run against live data. The
