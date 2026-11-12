@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ddl.DdlColumnFilter;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
 import com.google.inject.Inject;
@@ -68,6 +69,18 @@ public class MySQLDDLParserService implements DDLParserService {
     private long ddlEventTimestampMs;
 
     /**
+     * The column filter every listener this service creates applies to a
+     * CREATE/ALTER it translates, and the SOURCE database the filter is
+     * matched against (Spec 06.04 §3.6). {@link DdlColumnFilter#NONE} until
+     * the caller supplies one, which keeps every column of every statement
+     * when no column list is configured.
+     */
+    private DdlColumnFilter columnFilter = DdlColumnFilter.NONE;
+
+    /** Source database of the statement; null when the record carries none. */
+    private String columnFilterDatabase;
+
+    /**
      * The rebuild plan of the last {@code parseSql} (Spec 06.09 §3.1); null
      * when that statement changed no row identity.
      */
@@ -102,6 +115,12 @@ public class MySQLDDLParserService implements DDLParserService {
     @Override
     public void setDdlEventTimestampMs(long ddlEventTimestampMs) {
         this.ddlEventTimestampMs = ddlEventTimestampMs;
+    }
+
+    @Override
+    public void setColumnFilter(DdlColumnFilter columnFilter, String sourceDatabase) {
+        this.columnFilter = columnFilter == null ? DdlColumnFilter.NONE : columnFilter;
+        this.columnFilterDatabase = sourceDatabase;
     }
 
     @Override
@@ -168,6 +187,7 @@ public class MySQLDDLParserService implements DDLParserService {
         MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, config, sql);
         listener.setTargetSchemaLookup(targetSchemaLookup);
         listener.setDdlEventTimestampMs(ddlEventTimestampMs);
+        listener.setColumnFilter(columnFilter, columnFilterDatabase);
         this.primaryKeyRebuildPlan = null;
         this.historyBulkCloses = Collections.emptyList();
         ParseTreeWalker walker = new ParseTreeWalker();
@@ -255,6 +275,7 @@ public class MySQLDDLParserService implements DDLParserService {
         MySqlDDLParserListenerImpl listener = new MySqlDDLParserListenerImpl(writer, parsedQuery, tableName, databaseName, this.config, sql);
         listener.setTargetSchemaLookup(targetSchemaLookup);
         listener.setDdlEventTimestampMs(ddlEventTimestampMs);
+        listener.setColumnFilter(columnFilter, columnFilterDatabase);
         this.primaryKeyRebuildPlan = null;
         this.historyBulkCloses = Collections.emptyList();
         ParseTreeWalker walker = new ParseTreeWalker();

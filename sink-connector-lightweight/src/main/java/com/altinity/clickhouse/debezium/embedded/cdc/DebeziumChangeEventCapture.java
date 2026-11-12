@@ -3,6 +3,7 @@ package com.altinity.clickhouse.debezium.embedded.cdc;
 import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
 import com.altinity.clickhouse.debezium.embedded.ddl.DdlCaptureFilter;
+import com.altinity.clickhouse.debezium.embedded.ddl.DdlColumnFilter;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserFactory;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.DDLParserService;
 import com.altinity.clickhouse.debezium.embedded.ddl.parser.MySqlDDLParserListenerImpl;
@@ -1782,6 +1783,13 @@ public class DebeziumChangeEventCapture {
         // CURRENT_TIMESTAMP is back-filled on the source with this instant,
         // so the translator needs it to emit the same value (Spec 06.04 §3.2.2).
         ddlParserService.setDdlEventTimestampMs(chStruct.getTs_ms());
+        // The columns this statement may translate are the ones the record path
+        // itself replicates: an excluded column must not be created either, or
+        // the two paths disagree about the same table and a column the lists
+        // keep out of the analytics database shows up empty (Spec 06.04 §3.6).
+        // The lists name SOURCE tables, so the filter is matched against the
+        // source database, not the destination one above.
+        ddlParserService.setColumnFilter(DdlColumnFilter.from(props), sourceDatabaseName(sr));
         ddlParserService.parseSql(DDL, "", clickHouseQuery, isDropOrTruncate);
 
         // DESTRUCTIVE: statement text is only parsed/classified/logged here; nothing is executed against any database.

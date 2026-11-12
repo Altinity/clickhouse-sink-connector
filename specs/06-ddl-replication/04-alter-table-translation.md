@@ -10,6 +10,7 @@ Specifies the translation mapping from MySQL `ALTER TABLE` clauses (and the tabl
 - **DEFAULT-literal translation**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/parser/DefaultLiteralTranslator.java` (`literalDefault`, `isCurrentTimestampDefault`, `firstEnumMember`; §3.2.1 and the literal parts of §3.2.2 rules 1-2). `resolveDefault` calls into it for the literal rewrite and the two literal implicit-default rules, and keeps the non-literal back-fill decision (§3.2.2 rule 3) and the DDL-event-timestamp-dependent `eventInstantLiteral`/`backfillNotReproducible` helpers, which need the engine's own state.
 - **Templates**: `com.altinity.clickhouse.debezium.embedded.ddl.parser.Constants`
 - **Type mapping**: `com.altinity.clickhouse.debezium.embedded.parser.DataTypeConverter`
+- **Column lists**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/ddl/DdlColumnFilter.java` (`from`, `keeps`, `NONE`; the list property names are its `COLUMN_INCLUDE_LIST` / `COLUMN_EXCLUDE_LIST` constants, read from Debezium's `RelationalDatabaseConnectorConfig`). Supplied per statement through `DDLParserService.setColumnFilter` and applied by `MySqlDDLParserListenerImpl.keepsCreateColumn` / `keepsAlterColumn` / `keepsColumn` (§3.6)
 - **Formal model**: `formal_specs/lean/Replication/DdlTranslation.lean`
 
 ---
@@ -193,12 +194,71 @@ Clauses in the skip class of Spec 06.03 §3.2 (indexes, keys, foreign keys, `ADD
 - **DECIMAL/DEC/NUMERIC/FIXED with a precision but no scale** (`DECIMAL(20)`, `DECIMAL(18) UNSIGNED`) maps to `Decimal(20, 0)` / `Decimal(18, 0)`. A bare `Decimal` is `Decimal(10, 0)` in ClickHouse and rejects values with more than ten digits (`Code: 69`). Types without any dimension are unchanged.
 - **Identifiers** used in `system.columns` lookups are cleaned as in Spec 06.03 §3.3.
 
+### 3.6 `column.include.list` / `column.exclude.list` decide which columns are CREATED
+Debezium already applies the two column lists to the **record** schema: an
+excluded column's value is never sent. The translator used to ignore them and
+translate every column of the source `CREATE TABLE` / `ALTER TABLE`, so the
+excluded column was still CREATED on ClickHouse — empty, but present. The lists
+exist to keep a column (a password, a token, a large blob) out of the
+analytics database, and an empty column defeats that; worse, the two creation
+paths disagreed about the same table, because the record-schema path (spec
+08.05) creates only the replicated columns.
+
+The DDL path therefore applies the **same** filter, through Debezium's own
+matcher, so both paths and the record path cannot disagree:
+
+1. **One filter, Debezium's semantics.** `DdlColumnFilter` reads
+   `column.include.list` / `column.exclude.list` through
+   `RelationalDatabaseConnectorConfig`'s own field names (never restated
+   literals), splits on commas and matches each entry as a **full,
+   case-insensitive regular expression** against `catalog.table.column`.
+   An **include** list, when set, is the whole rule and the exclude list is
+   ignored; both blank means no filtering. MySQL matches in `CATALOG` mode,
+   where the database is the catalog.
+2. **The match uses the SOURCE database.** The lists are written against
+   source names, so the filter is given the statement's source database
+   (`sourceDatabaseName`, spec 06.08 §3.3) — never the destination name,
+   which may be prefixed, suffixed or overridden. An **unknown database or
+   column is never filtered out**: Debezium's matcher answers "no" for a null
+   catalog, and treating that as a rejection would drop an entire table.
+3. **CREATE TABLE** emits only the kept columns (`keepsCreateColumn`); an
+   `ALTER TABLE ... ADD/ADD (…)` emits a clause only for a kept column
+   (`keepsAlterColumn`). A dropped, modified or renamed excluded column emits
+   nothing: the ClickHouse table never had it, so there is nothing to drop or
+   modify and no rebuild-plan entry to record.
+4. **A key column is never filtered out.** The columns collected for
+   `ORDER BY` — the table-level `PRIMARY KEY`, the first table-level
+   `UNIQUE KEY`, and a **column-level** `c INT PRIMARY KEY` / `UNIQUE` /
+   `SERIAL` — are always created, with a WARN naming the column and the list.
+   Filtering one out would leave the CREATE referring to a column it never
+   declares (`Code: 47`), or let the keyless fallback silently re-key the
+   table and change which source rows ClickHouse collapses into one. The
+   lists are a projection, never a re-keying.
+5. **An ALTER that targets the sorting key is left to the key policy**
+   (spec 06.05/06.09), which owns those clauses.
+6. **A CREATE whose every column the list excludes is created unfiltered**,
+   with a WARN. An empty column set cannot be translated at all — the
+   sorting-key policy refuses it and a DDL failure is terminal for every
+   table on the host (spec 06.08 §3.1) — and the same include list governs
+   capture, so Debezium replicates no row of such a table either. Keeping the
+   source schema there cannot hide a table that is replicating.
+7. **The record path is unchanged.** The filter only stops a column being
+   CREATED; the values that arrive are the ones Debezium already sends.
+
+Pinned by `DdlColumnFilterTest` (the matcher: include/exclude, include wins,
+full case-insensitive match, unknown identifiers kept, property names from
+Debezium, blank list) and `DdlColumnFilterEmissionTest` (the translator: the
+reported list `app.users.(id|name),app.orders.(id|user_id)`, the CREATE and
+every ALTER clause form, the key column, the no-match CREATE, and the source
+vs destination database).
+
 ---
 
 ## 4. Invariants Preserved
 - **Idempotency (I5/I9)**: every emitted statement whose replay could fail carries a guard (`IF NOT EXISTS` on ADD/CREATE, `IF EXISTS` on DROP/RENAME/the MODIFY half of CHANGE); a plain user `MODIFY` stays unguarded on purpose.
-- **Column authority (I6)**: an ADD COLUMN is never lost because a neighbouring clause was unrepresentable.
-- **Loud failure (I9)**: unrepresentable *changes* (as opposed to unrepresentable *constraints*) raise `DDLReplicationException` (Spec 06.05 §3.4).
+- **Column authority (I6)**: an ADD COLUMN is never lost because a neighbouring clause was unrepresentable. The column lists decide which columns exist (a projection of the source), but never which column the table's identity is built from: a key column is always created (§3.6 rule 4).
+- **Creation-path parity (Prime Directive)**: the schema-DDL path creates exactly the columns the record path replicates, so a column the lists exclude is absent from ClickHouse whichever path created the table (§3.6).
+- **Loud failure (I9)**: unrepresentable *changes* (as opposed to unrepresentable *constraints*) raise `DDLReplicationException` (Spec 06.05 §3.4). A column the list filters is not a failure: it is a documented skip, logged at INFO.
 
 ---
 
@@ -206,6 +266,8 @@ Clauses in the skip class of Spec 06.03 §3.2 (indexes, keys, foreign keys, `ADD
 - `CreateTableDefaultEmissionTest`: `everyLiteralDefaultIsCarried`, `explicitNullDefaultOnANullableColumnIsNotEmitted` (the `DEFAULT NULL` of a nullable column is implied and dropped, §3.2.3), `nullDefaultOnANotNullColumnIsDropped` (the `DEFAULT NULL` of a `NOT NULL` column is unrepresentable in ClickHouse and is dropped too, §3.2.3), `notNullColumnKeepsItsDefault`, `parenthesizedLiteralIsUnwrapped`, `currentTimestampDefaultIsCarried`, `currentTimestampDefaultFollowsTheColumnScale`, `enumNotNullWithoutDefaultGetsTheFirstMember`, `nullableEnumGetsNoImplicitDefault`, `expressionDefaultsAreDroppedNotGuessed`, `unparenthesizedExpressionDefaultsStayRejected`, `generatedColumnIsUnaffected`, `plainColumnGainsNothing`, `defaultIsInsideTheColumnDeclaration`.
 - `MySqlDDLParserListenerImplTest`: `testAlterDatabaseAddColumn`, `testDropColumn`, `testAlterAddColumnsParenthesisedList`, `testAlterAddDefinitionsSkipsEmbeddedIndex`, `testChangeColumn`, `testChangeColumnSameNameEmitsNoRename`, `testAlterAddColumnThenRenameToKeepsBothStatements`, `testAlterRenameToQualifiedTarget`, `testCreateTableLike`, `testCreateTableLikeQualifiedSource`, `dropTable`, `renameTable`, `testCreateTablePrimaryKeyWithSortOrder`, `testDecimalPrecisionWithoutScale`, `testAddColumnLiteralDefaultIsKept`, `testBitStringAndHexDefaultsAreTranslated`, `testAddColumnCurrentTimestampBackfillsLiteral`, `testAddEnumNotNullDefaultsToFirstMember`, `testAlterDatabaseAddColumnEnum` (flipped: `ENUM NOT NULL` now gets `DEFAULT '<first member>'`), `testAddColumnExpressionDefaultIsLoud`, `testModifyColumnDefaultCurrentTimestampIsDropped` (the former `testAddColumnDefaultCurrentTimestampIsDropped`, which pinned the dropped back-fill, is split into these), `testAddCheckConstraintIsSkipped` (`ADD CHECK`, `ADD CONSTRAINT ... CHECK ... NOT ENFORCED`, `DROP CONSTRAINT`, `DROP CHECK` emit nothing alone and never drop a neighbouring `ADD COLUMN`; pre-fix code echoed them), `testDropContraints`, `testAddConstraintsWithAnd`, `testAlterTableAddConstraint` (flipped from echo to skip).
 - `DdlReplayIdempotencyTest`: `testChangeColumnModifyHalfIsGuarded`, `testCreateTableLikeIsGuarded`, `testRenameTableIsGuarded`, `testDropTableIsAlwaysGuarded`, `testModifyColumnIsDeliberatelyNotGuarded`.
+- `DdlColumnFilterTest` — §3.6 rule 1-2 (the matcher): `noListKeepsEverything`, `includeListKeepsOnlyListedColumns`, `excludeListDropsOnlyListedColumns`, `includeWinsOverExclude`, `fullMatchCaseInsensitive`, `unknownIdentifiersAreKept`, `propertyNamesComeFromDebezium`, `blankListKeepsEverything`.
+- `DdlColumnFilterEmissionTest` — §3.6 rule 3-6 (the translator, with the reported list `app.users.(id|name),app.orders.(id|user_id)`): `noListCreatesEveryColumn`, `includeListKeepsTheExcludedColumnOutOfTheCreate`, `includeListFiltersPerTable`, `keyColumnIsAlwaysCreated` (a column-level `PRIMARY KEY` the list excludes is still created and keeps `ORDER BY id`), `noMatchingColumnCreatesEveryColumn`, `excludeListKeepsTheNamedColumnOutOfTheCreate`, `destinationDatabaseDoesNotMatch` (the lists name the source database), `alterAddOfAnExcludedColumnEmitsNothing`, `alterAddOfAKeptColumnIsEmitted`, `alterAddListSkipsOnlyTheExcludedColumn`, `alterDropOfAnExcludedColumnEmitsNothing`, `alterDropOfAKeptColumnIsEmitted`, `alterRenameOfAnExcludedColumnEmitsNothing`, `alterRenameOfAKeptColumnIsUnaffected`, `alterModifyOfAnExcludedColumnEmitsNothing`, `alterModifyOfAKeptColumnIsUnaffected`, `skippedClauseLeavesItsNeighbourIntact`.
 - `AlterTableDdlVariationMatrixTest`: `everyGrammarAlternativeHasAMatrixRow` (every `alterSpecification` alternative the Debezium grammar defines is classified; a grammar bump that adds one fails until it is classified), `unreachableAlternativeStaysUnreachable` (`AlterByDefaultCharset` is declared unreachable because `tableOption`, alternative 1, matches `DEFAULT? charSet '='? (charsetName | DEFAULT)` first and every charset form lands on `AlterByTableOption`; a reorder that makes it reachable fails here), `eachClauseEntersItsDeclaredAlternative` (the matrix is keyed on the alternative the parser actually enters, not on how the clause reads: `ALTER COLUMN ... SET VISIBLE` reaches `AlterByAlterColumnDefault`, and every `ALTER COLUMN ... SET DEFAULT` / `DROP DEFAULT` reaches `AlterByChangeDefault`), `noOtherClauseThrowsDuringTranslation` (every clause outside the refused class translates without throwing), `dataChangingClausesAreRefusedLoudly` (the six data-changing clauses each throw `DDLReplicationException`, and never emit or skip), `translatedClausesEmitAndSkippedClausesDoNot` (a column clause that silently joins the skip list fails here), `parenthesisedLiteralDefaultsSurvive` (literal forms across `INT`, `TINYINT(1)`, `BIGINT`, `DECIMAL`, `DOUBLE`, `VARCHAR`, `CHAR`, `DATE`, each with and without parentheses, plus the `NULL` default that must be dropped), `modifyDropsNonConstantDefaultButKeepsType`, `alterOptionsCombineWithRealClause`.
 - End-to-end: `tests/alter_ddl_matrix.py` applies the same clause set to a live MySQL and requires a row written after each DDL to reach ClickHouse, so a clause that stalls the stream or emits a statement ClickHouse rejects forever fails the run. Registered in `regression_auto.py` and `regression_auto_replicated.py`.
 - Formal: `no_bare_alter`, `add_columns_preserved` in `DdlTranslation.lean`.
@@ -263,4 +325,14 @@ The translation is designed so that the ONE DDL that can be in flight at a crash
   - **Test**: GAP: a unit test with a target-schema lookup reporting an existing column of another type, asserting that `ADD COLUMN` of it is refused loudly rather than emitted with `IF NOT EXISTS`.
   - **DEFECT**: `IF NOT EXISTS`/`IF EXISTS` turn a type or name conflict with the existing replica column into a silent no-op.
 
-Summary: 5 failure modes, 3 DEFECT, 2 GAP.
+- **FM-06.04-6 A column the lists exclude is created anyway, empty**
+  - **Trigger**: any `column.include.list` / `column.exclude.list` together with a translated `CREATE TABLE` or `ALTER TABLE` (before this revision the translator never consulted the lists).
+  - **Behaviour**: the excluded column's value is never replicated (Debezium drops it from the record schema) but the ClickHouse table still carried it, because the DDL was translated from the raw source text. The column stayed empty for the life of the table, so a column that exists to be kept out of the analytics database was present in it, and a user could not tell an intentionally-excluded column from one that had simply lost its values. With `enable.snapshot.ddl=true` — the only path that creates a source table holding no rows — a filtered empty table arrived with every excluded column. After this revision that column is not created at all (§3.6); a key column the list names stays created, with a WARN.
+  - **Detection**: none from the connector (the replica is internally consistent); `SHOW CREATE TABLE` on ClickHouse and on MySQL side by side, or `DESCRIBE TABLE` versus the configured list. The connector's INFO line `Not replicating column <db>.<t>.<c>: excluded by column.include.list` names each skipped column as its DDL is translated.
+  - **Blast radius**: that table's column set, on ClickHouse only; the record path and other tables are unaffected. Values are never wrong, only absent.
+  - **Recovery**: `ALTER TABLE <db>.<t> DROP COLUMN <c>` by hand on ClickHouse, or re-synchronise the table with `ch-mysql-resync` (spec 11.04) so the schema and the rows both come from the source; restart nothing.
+  - **RTO**: operator time + one manual ALTER; unmeasured.
+  - **Test**: `DdlColumnFilterEmissionTest.includeListKeepsTheExcludedColumnOutOfTheCreate()`, `DdlColumnFilterEmissionTest.keyColumnIsAlwaysCreated()`, `DdlColumnFilterTest.includeListKeepsOnlyListedColumns()`.
+  - **FIXED** in this revision (§3.6).
+
+Summary: 6 failure modes, 3 DEFECT, 2 GAP.

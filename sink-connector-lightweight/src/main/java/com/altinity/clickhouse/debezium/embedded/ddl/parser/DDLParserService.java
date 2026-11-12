@@ -1,5 +1,7 @@
 package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 
+import com.altinity.clickhouse.debezium.embedded.ddl.DdlColumnFilter;
+
 import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -48,6 +50,28 @@ public interface DDLParserService {
      * @param ddlEventTimestampMs epoch milliseconds; {@code 0} when unknown.
      */
     default void setDdlEventTimestampMs(long ddlEventTimestampMs) {
+    }
+
+    /**
+     * Supplies the column filter built from {@code column.include.list} /
+     * {@code column.exclude.list} together with the SOURCE database of the
+     * statement, so a CREATE/ALTER translates only the columns the record path
+     * itself replicates (Spec 06.04 §3.6).
+     *
+     * <p>The source database is required because the lists are written against
+     * source names, while the translator's own {@code databaseName} is the
+     * DESTINATION name (prefix/suffix/override applied, or the history
+     * database). The filter is matched in {@code CATALOG} mode, where the
+     * database is the catalog and a {@code null} catalog matches nothing, so a
+     * database that is not supplied here would drop every column of the table.
+     * Parsers that do not need it ignore it.</p>
+     *
+     * @param columnFilter   the filter; {@link DdlColumnFilter#NONE} to keep
+     *                       every column.
+     * @param sourceDatabase the source database of the statement, or
+     *                       {@code null} when the record carries none.
+     */
+    default void setColumnFilter(DdlColumnFilter columnFilter, String sourceDatabase) {
     }
 
     /**
