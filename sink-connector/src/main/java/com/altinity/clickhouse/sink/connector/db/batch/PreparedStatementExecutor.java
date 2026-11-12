@@ -549,6 +549,11 @@ public class PreparedStatementExecutor {
                 }
 
                 int[] batchResult = ps.executeBatch();
+                // A statement the driver flags EXECUTE_FAILED did NOT happen
+                // (spec 03.06 FM-03.06-4): fail the chunk before any row is
+                // marked applied, so the batch is retried and its offset is
+                // never acknowledged past the missing row.
+                failOnExecuteFailed(batchResult, databaseName, tableName);
                 // executeBatch() above returned without throwing: every row
                 // staged since the chunk started, or since its last flush, is
                 // now durable in ClickHouse. A retry of this batch (spec 09.01
@@ -593,11 +598,46 @@ public class PreparedStatementExecutor {
      */
     private static void flushStagedRows(PreparedStatement ps, String databaseName, String tableName, String why) {
         try {
-            ps.executeBatch();
+            failOnExecuteFailed(ps.executeBatch(), databaseName, tableName);
         } catch (SQLException e) {
             throw new RuntimeException(String.format(
                     "Failed to flush records staged before a replication-history %s for %s.%s",
                     why, databaseName, tableName), e);
+        }
+    }
+
+    /**
+     * Fails the chunk when any entry of the driver's {@code executeBatch()}
+     * answer is {@link Statement#EXECUTE_FAILED} (spec 03.06 §3.2, FM-03.06-4).
+     * <p>
+     * The JDBC contract lets the driver report a failed statement in the
+     * returned array instead of throwing. Such an entry is a row that is NOT in
+     * ClickHouse, so treating the answer as success would let the worker report
+     * the batch written and its offset be acknowledged past the missing row.
+     * Checked before any row is marked applied, so the retry resends the chunk
+     * (spec 03.06 §3.5).
+     * </p>
+     *
+     * @param batchResult the driver's answer; may be null (nothing to check).
+     * @throws SQLException naming the count when the driver flagged a failure.
+     */
+    private static void failOnExecuteFailed(int[] batchResult, String databaseName, String tableName)
+            throws SQLException {
+        if (batchResult == null) {
+            return;
+        }
+        int failed = 0;
+        for (int updateCount : batchResult) {
+            if (updateCount == Statement.EXECUTE_FAILED) {
+                failed++;
+            }
+        }
+        if (failed > 0) {
+            throw new SQLException(String.format(
+                    "The driver marked %d of %d statement(s) EXECUTE_FAILED for %s.%s; those rows are "
+                            + "not in ClickHouse, so the batch is not reported written and its offset "
+                            + "stays unacknowledged (spec 03.06 FM-03.06-4)",
+                    failed, batchResult.length, databaseName, tableName));
         }
     }
 

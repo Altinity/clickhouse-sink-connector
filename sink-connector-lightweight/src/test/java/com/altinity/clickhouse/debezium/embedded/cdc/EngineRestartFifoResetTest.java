@@ -276,14 +276,19 @@ public class EngineRestartFifoResetTest {
 
     /**
      * The regression. A unit handed off by the old engine and never written
-     * (its worker was gone) must not block the new engine.
+     * (its worker was gone) must not block the new engine -- and must not let
+     * the new engine commit an offset past its rows either.
      *
      * <p>Against the old {@code stop()} this fails at the first assertion:
-     * the unit stays outstanding, so the new engine's heartbeat is never
-     * committed and its own unit is parked behind the ghost.</p>
+     * the unit stays outstanding, so the next engine's unit is parked behind
+     * the ghost forever. Against a {@code stop()} that abandons the ghost but
+     * leaves the commit gate reading FIFO emptiness alone (spec 09.04
+     * FM-09.04-4, the 2026-11-10 loss), the heartbeat assertion below fails
+     * instead: the current position commits over rows that never reached
+     * ClickHouse.</p>
      */
     @Test
-    @DisplayName("A handoff never written is abandoned by stop(); the next engine's heartbeat commits and its first unit is acknowledged")
+    @DisplayName("A handoff never written is abandoned by stop(); the next engine's unit is acknowledged at once and the heartbeat then commits")
     public void stopThenStartNewInstanceIsNotPoisoned() throws Exception {
         DebeziumChangeEventCapture.stopDrainTimeoutMs = 300;
         DebeziumChangeEventCapture old = new DebeziumChangeEventCapture();
@@ -300,15 +305,19 @@ public class EngineRestartFifoResetTest {
         assertFalse(DebeziumOffsetManagement.hasUnwrittenBatches(),
                 "stop() must abandon the unit its terminated pool can never write; leaving it "
                         + "outstanding parks every unit of the next engine behind it forever");
+        assertTrue(DebeziumOffsetManagement.hasUnprovenAbandonment(),
+                "the abandoned unit's rows are unaccounted for, so the latch is armed");
 
-        // The new engine, same JVM, same static FIFO.
+        // The new engine, same JVM, same static FIFO. Its heartbeat carries the
+        // connector's CURRENT position, which is past the abandoned rows.
         DebeziumChangeEventCapture fresh = new DebeziumChangeEventCapture();
-        RecordingCommitter heartbeatCommitter = new RecordingCommitter();
-        fresh.handleChangeEventBatch(Collections.singletonList(heartbeat()), heartbeatCommitter,
+        RecordingCommitter withheld = new RecordingCommitter();
+        fresh.handleChangeEventBatch(Collections.singletonList(heartbeat()), withheld,
                 new Properties(), new SourceRecordParserService(), config());
-        assertEquals(1, heartbeatCommitter.processed.size(),
-                "the new engine's first heartbeat must be committed (the pipeline IS quiescent)");
-        assertEquals(1, heartbeatCommitter.batchesFinished);
+        assertEquals(0, withheld.processed.size(),
+                "the heartbeat must not commit the current position while the abandonment is unproven: "
+                        + "a restart after that commit resumes past rows that never reached ClickHouse");
+        assertEquals(0, withheld.batchesFinished);
 
         RecordingCommitter committer = new RecordingCommitter();
         List<ClickHouseStruct> first = unit(committer);
@@ -320,6 +329,16 @@ public class EngineRestartFifoResetTest {
         assertEquals(1, committer.batchesFinished);
         assertEquals(0, sizeOf("completedUnits"), "nothing may stay parked");
         assertFalse(DebeziumOffsetManagement.hasUnwrittenBatches());
+
+        // The redelivered stream reached the FIFO's head, so the position is
+        // proven and the latch releases: the next heartbeat commits again.
+        RecordingCommitter heartbeatCommitter = new RecordingCommitter();
+        fresh.handleChangeEventBatch(Collections.singletonList(heartbeat()), heartbeatCommitter,
+                new Properties(), new SourceRecordParserService(), config());
+        assertEquals(1, heartbeatCommitter.processed.size(),
+                "with the abandonment proven the next heartbeat commits");
+        assertEquals(1, heartbeatCommitter.batchesFinished);
+        assertFalse(DebeziumOffsetManagement.hasUnprovenAbandonment());
     }
 
     @Test

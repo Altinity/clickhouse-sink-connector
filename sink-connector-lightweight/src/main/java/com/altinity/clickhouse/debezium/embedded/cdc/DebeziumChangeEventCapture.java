@@ -2864,6 +2864,9 @@ public class DebeziumChangeEventCapture {
                 }
             }
         }
+        if (DebeziumOffsetManagement.hasUnprovenAbandonment()) {
+            return false;
+        }
         return !DebeziumOffsetManagement.hasUnwrittenBatches();
     }
 
