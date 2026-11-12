@@ -111,6 +111,41 @@ class DestructiveGateTest(GateTestCase):
         self.assertFalse(rg.is_destructive_line("rm -f single_file"))
         self.assertFalse(rg.is_destructive_line("String DROP_TABLE = parser.token();"))
 
+    def test_embedded_config_prose_is_not_a_site(self):
+        # A Kubernetes ConfigMap embeds a whole config file as one YAML scalar
+        # with every break written as a literal \n escape. The documentation
+        # inside it says "truncate events"; that is prose, not a statement.
+        self.repo.write(
+            "k8s/configmap.yaml",
+            '  config.yml: "#disable.drop.truncate: If set to true, the connector will '
+            'ignore drop and truncate events. The default is false.\\n'
+            'name: \\"company-1\\"\\n'
+            'Table columns will be automatically created on first insert.\\n"\n',
+        )
+        self.assertEqual(self.run_gate("destructive"), [])
+
+    def test_embedded_config_real_statement_is_still_a_site(self):
+        # The exemption is for comment-only logical lines, not for the whole
+        # scalar: a real statement inside the embedded config stays a site.
+        self.repo.write(
+            "k8s/configmap.yaml",
+            '  config.yml: "# a comment about drop and truncate events\\n'
+            'TRUNCATE TABLE staging\\n"\n',
+        )
+        findings = self.run_gate("destructive")
+        messages = [f.message for f in findings]
+        self.assertEqual(len(findings), 2, messages)
+        self.assertTrue(any("without a 'DESTRUCTIVE:' comment" in m for m in messages))
+        self.assertTrue(any("its message has no" in m for m in messages))
+
+    def test_code_text_leaves_ordinary_lines_unchanged(self):
+        self.assertEqual(rg.code_text('cur.execute("DROP TABLE t")'),
+                         'cur.execute("DROP TABLE t")')
+        self.assertEqual(rg.code_text("-- a comment\n"), "-- a comment\n")
+        self.assertEqual(rg.code_text(r'a: "x\ny\n"'), "x y")
+        # The scalar's own opener is not code either.
+        self.assertEqual(rg.code_text(r'  config.yml: "# prose\ncode\n"'), "code")
+
     def test_tests_docs_and_specs_are_exempt(self):
         self.repo.write("module/src/test/java/PurgeTest.java", 'run("DROP TABLE t");\n')
         self.repo.write("doc/purge.md", "Run `DROP TABLE t`.\n")
