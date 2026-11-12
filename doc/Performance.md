@@ -59,3 +59,10 @@ Target:
 `show binary logs;`
 
 `show binlog events in `mysql-bin.000003`
+
+## PostgreSQL Load testing - PgBench
+https://www.cloudbees.com/blog/tuning-postgresql-with-pgbench
+
+
+```
+```
