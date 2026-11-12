@@ -1,8 +1,51 @@
 import random
+from decimal import Decimal, InvalidOperation
 
 from integration.helpers.common import *
 from datetime import datetime, timedelta
 from testflows.core import *
+
+
+def mysql_scalar(node, sql):
+    """The value of a one-row, one-column SELECT on MySQL, as the client prints it.
+
+    The node runs the batch client with the password on the command line and
+    stderr merged into stdout, so the output of a SELECT is three lines: the
+    client's password warning, the column header, and the value. Only the last
+    is the result; comparing the whole output with a ClickHouse value, or
+    passing it to ``int()``, can never succeed.
+
+    A SELECT that matches no row prints no header either and returns ``None``.
+    A header with nothing after it is a row whose value is the empty string.
+    """
+    lines = [
+        line
+        for line in node.query(sql).output.rstrip("\n").split("\n")
+        if not line.startswith("mysql: [Warning]")
+    ]
+    if not lines or lines == [""]:
+        return None
+    return lines[1] if len(lines) > 1 else ""
+
+
+def cells_agree(mysql_value, clickhouse_value):
+    """Whether one cell read from MySQL and from ClickHouse is the same value.
+
+    Both arrive as the text their client prints, and the two clients spell the
+    same value differently: NULL is ``NULL`` on MySQL and ``\\N`` in TSVRaw, a
+    DECIMAL(10,2) is ``1.50`` on MySQL and ``1.5`` on ClickHouse. Numbers are
+    therefore compared as numbers and NULL as NULL; everything else must match
+    as text. ``mysql_value`` is what `mysql_scalar` returned, so ``None`` means
+    MySQL has no such row and ClickHouse must print nothing either.
+    """
+    if mysql_value is None:
+        return clickhouse_value == ""
+    if mysql_value == "NULL" or clickhouse_value == "\\N":
+        return mysql_value == "NULL" and clickhouse_value == "\\N"
+    try:
+        return Decimal(mysql_value) == Decimal(clickhouse_value)
+    except InvalidOperation:
+        return mysql_value == clickhouse_value
 
 
 def generate_sample_mysql_value(data_type):

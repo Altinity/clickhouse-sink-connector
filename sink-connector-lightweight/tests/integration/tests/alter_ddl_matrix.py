@@ -29,12 +29,16 @@ PARENT_DDL = "CREATE TABLE IF NOT EXISTS test.ddl_matrix_parent (id INT NOT NULL
 
 
 @TestStep(Given)
-def live_row(self, table_name, value, context=None):
+def live_row(self, table_name, value, context=None, insert=None):
     """Insert one row through MySQL and require it in ClickHouse.
 
     A clause the translator mishandles rarely fails at DDL time: it stalls the
     stream, emits a statement ClickHouse rejects forever, or takes the table out
     of the captured set. Only a row written afterwards exposes all three.
+
+    ``insert`` replaces the default ``(id) VALUES (<value>)`` for a clause that
+    leaves a column MySQL will not fill by itself. It must still write ``id`` as
+    ``value``, which is the row the check looks for.
 
     ``self`` is not optional here: the framework runs a step as
     ``self.func(current(), **args)``, so the current test object is the FIRST
@@ -48,7 +52,9 @@ def live_row(self, table_name, value, context=None):
     clickhouse = context.cluster.node("clickhouse")
 
     with When(f"I write row {value} to MySQL after the DDL"):
-        mysql.query(f"INSERT INTO test.`{table_name}` (id) VALUES ({value});")
+        if insert is None:
+            insert = f"(id) VALUES ({value})"
+        mysql.query(f"INSERT INTO test.`{table_name}` {insert};")
 
     with Then(f"I check row {value} reached ClickHouse, so the stream is alive"):
         # Counted, not matched as text: `message=` is a SUBSTRING test, so a
@@ -118,6 +124,27 @@ def matrix_rows():
       * DISCARD / IMPORT TABLESPACE and DISCARD / IMPORT PARTITION -- the
         statement's whole purpose is to leave the table unreadable until the
         matching IMPORT, so a row write after it cannot succeed by design.
+      * CONVERT TO CHARACTER SET -- MySQL re-encodes every string column in
+        place and writes no row event, so the connector refuses the statement
+        and halts instead of acknowledging it (Spec 06.03 section 3.2,
+        Spec 06.04 section 3.3). A halted stream carries no row afterwards, by
+        design, and this suite shares one connector across every row: the
+        halt would fail every test that follows. The refusal is pinned by name
+        in `AlterTableDdlVariationMatrixTest.dataChangingClausesAreRefusedLoudly`
+        and `MySqlDDLParserListenerImplTest`.
+      * AUTOEXTEND_SIZE = <size>, alone or beside another clause -- the
+        bundled grammar has no terminal for it. `MySqlDdlNormalizer` drops the
+        specification before the connector's own parser sees the statement,
+        but Debezium parses the binlog statement first, with the same grammar
+        and without the normalizer, and stops the engine with
+        `ParsingException: DDL statement couldn't be parsed` under the default
+        `schema.history.internal.skip.unparseable.ddl=false` (Spec 06.03
+        FM-06.03-1). Measured end to end with MySQL 8.0 and this connector:
+        `ALTER TABLE t AUTOEXTEND_SIZE = 4M` halts the stream, and so do
+        `AUTOEXTEND_SIZE = 4M, MODIFY COLUMN c BIGINT` and its mirror. The
+        normalizer's bridge is pinned by `MySqlDdlNormalizerTest`; the stream
+        cannot survive the statement until the bridge also runs ahead of
+        Debezium's parser, so there is no live row to write.
       * DISABLE / ENABLE KEYS -- MyISAM-only.
       * UPGRADE PARTITIONING -- MySQL 5.7 only, removed in 8.0.
       * EXCHANGE PARTITION -- needs a structurally identical non-partitioned
@@ -152,10 +179,15 @@ def matrix_rows():
         row(f"m10_{s}", "ADD COLUMN c_defnull INT DEFAULT (NULL)"),
         # --- columns: MODIFY / CHANGE / RENAME / DROP --------------------
         row(f"m11_{s}", "MODIFY COLUMN c_mod BIGINT NULL"),
-        # DEFAULT 0 because c_mod is NULL in the row written before this clause
-        # and MySQL refuses NOT NULL on a column that already holds NULL
-        # (ERROR 1138); the clause under test is the widening, not the NULL.
-        row(f"m12_{s}", "MODIFY COLUMN c_mod INT NOT NULL DEFAULT 0"),
+        # The row written before this clause fills c_mod: MySQL refuses NOT NULL
+        # on a column that already holds NULL (ERROR 1138, strict mode), and a
+        # DEFAULT on the new definition does not change that. The clause under
+        # test is the NOT NULL DEFAULT form, not the NULL.
+        row(
+            f"m12_{s}",
+            "MODIFY COLUMN c_mod INT NOT NULL DEFAULT 0",
+            seed="(id, c_mod) VALUES (1, 0)",
+        ),
         row(f"m13_{s}", "MODIFY COLUMN c_mod BIGINT FIRST"),
         row(f"m14_{s}", "MODIFY COLUMN c_mod BIGINT AFTER id"),
         row(f"m15_{s}", "CHANGE COLUMN c_chg c_changed BIGINT"),
@@ -234,7 +266,14 @@ def matrix_rows():
         # --- column defaults ----------------------------------------------
         row(f"m36_{s}", "ALTER COLUMN c_base SET DEFAULT 'sd'"),
         row(f"m37_{s}", "ALTER COLUMN c_base SET DEFAULT (5)"),
-        row(f"m38_{s}", "ALTER COLUMN c_base DROP DEFAULT"),
+        # After DROP DEFAULT the column has no default at all, not even NULL, so
+        # MySQL refuses an INSERT that omits it (ERROR 1364, strict mode). The
+        # row written after the clause supplies it.
+        row(
+            f"m38_{s}",
+            "ALTER COLUMN c_base DROP DEFAULT",
+            live="(id, c_base) VALUES (2, 'v')",
+        ),
         # --- table options and alter options ------------------------------
         row(f"m39_{s}", "COMMENT = 'ddl_matrix'"),
         row(f"m40_{s}", "ENGINE = InnoDB"),
@@ -242,14 +281,21 @@ def matrix_rows():
         row(f"m42_{s}", "ALGORITHM = COPY"),
         row(f"m43_{s}", "ALGORITHM = INSTANT"),
         row(f"m44_{s}", "ALGORITHM = DEFAULT"),
-        row(f"m45_{s}", "LOCK = NONE"),
-        row(f"m46_{s}", "LOCK = SHARED"),
+        # LOCK = NONE and LOCK = SHARED ride on an ADD INDEX: MySQL refuses them
+        # on an ALTER that changes nothing (ERROR 1845, "LOCK=NONE/SHARED is not
+        # supported ... Try LOCK=EXCLUSIVE"), and a clause MySQL refuses proves
+        # nothing about the connector. The index is in the skip class, so the
+        # statement still emits nothing for ClickHouse. The standalone form of
+        # the alternative is covered by the two rows that follow.
+        row(f"m45_{s}", "LOCK = NONE, ADD INDEX idx_lock_none (c_base)"),
+        row(f"m46_{s}", "LOCK = SHARED, ADD INDEX idx_lock_shared (c_base)"),
         row(f"m47_{s}", "LOCK = EXCLUSIVE"),
         row(f"m48_{s}", "LOCK = DEFAULT"),
         row(f"m49_{s}", "ALGORITHM = INPLACE, LOCK = NONE, ADD COLUMN c_algo INT"),
         row(f"m50_{s}", "FORCE"),
         row(f"m51_{s}", "ORDER BY c_base"),
-        row(f"m52_{s}", "CONVERT TO CHARACTER SET utf8mb4"),
+        # m52 was CONVERT TO CHARACTER SET; the connector refuses it and halts
+        # (see the docstring above), so it is not a row of this matrix.
         row(f"m53_{s}", "DEFAULT CHARACTER SET = utf8mb4"),
         # --- partitions ---------------------------------------------------
         row(
@@ -279,22 +325,9 @@ def matrix_rows():
         row(f"m65_{s}", "ALTER COLUMN c_base SET INVISIBLE"),
         row(f"m66_{s}", "ALTER COLUMN c_base SET VISIBLE"),
         # --- AUTOEXTEND_SIZE (MySQL 8.0.23+) -------------------------------
-        # The bundled parser has no terminal for AUTOEXTEND_SIZE, so
-        # MySqlDdlNormalizer drops the specification before the parser sees it.
-        # These rows exist because a unit test proves only that the STATEMENT
-        # PARSES; it cannot prove the STREAM SURVIVES the statement. A clause
-        # bridged into the wrong text still parses and still stalls the table.
-        #
-        # AUTOEXTEND_SIZE sizes a tablespace's growth step, so it has no
-        # ClickHouse effect. The requirement is that the ALTER neither fails
-        # nor stalls. 4M is the documented multiple; InnoDB is asserted for
-        # every matrix table by create_mysql_table.
-        row(f"m67_{s}", "AUTOEXTEND_SIZE = 4M"),
-        # The same clause beside one that DOES translate, in both orders, so the
-        # bridge has to drop one specification without eating its neighbour's
-        # comma.
-        row(f"m68_{s}", "AUTOEXTEND_SIZE = 4M, MODIFY COLUMN c_mod BIGINT"),
-        row(f"m69_{s}", "MODIFY COLUMN c_mod BIGINT, AUTOEXTEND_SIZE = 8M"),
+        # m67 to m69 were the AUTOEXTEND_SIZE rows. They are not rows of this
+        # matrix: the engine stops on the statement before the connector's own
+        # parser sees it (see the docstring above).
         # A column NAMED after a bridged keyword must NOT be bridged away. The
         # clause here is an ordinary ADD COLUMN, and the column has to reach
         # ClickHouse: the keyword is matched where a specification starts, not
@@ -322,9 +355,6 @@ def matrix_rows():
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_DropDefault("1.0"),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Index("1.0"),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_CharacterSet("1.0"),
-    RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_ConvertToCharacterSet(
-        "1.0"
-    ),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Algorithm("1.0"),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Force("1.0"),
     RQ_SRS_030_ClickHouse_MySQLToClickHouseReplication_Alter_Lock("1.0"),
@@ -373,9 +403,8 @@ def alter_clause_matrix(self):
 
                     # One write forces the connector to create the ClickHouse
                     # table, so the translated ALTER has a target.
-                    mysql.query(
-                        f"INSERT INTO test.`{entry['name']}` (id) VALUES (1);"
-                    )
+                    seed = entry.get("seed", "(id) VALUES (1)")
+                    mysql.query(f"INSERT INTO test.`{entry['name']}` {seed};")
                     retry(clickhouse.query, timeout=120, delay=5)(
                         f"EXISTS test.`{entry['name']}`", message="1"
                     )
@@ -390,7 +419,9 @@ def alter_clause_matrix(self):
                 with When("I apply the MySQL clause", description=entry["clause"]):
                     alter_table(table_name=entry["name"], clause=entry["clause"])
 
-                live_row(table_name=entry["name"], value=2)
+                live_row(
+                    table_name=entry["name"], value=2, insert=entry.get("live")
+                )
 
                 if entry.get("check_column"):
                     column_arrived(
@@ -447,9 +478,11 @@ def default_form(self, column_type, default_expression, expected_type, expected_
 
     if expected_default is None:
         with And("I check the DEFAULT was dropped, not invented"):
+            # toString: concat() takes only strings on ClickHouse 23.8, the
+            # version this suite runs (a UInt8 argument is Code: 44 there).
             retry(clickhouse.query, timeout=120, delay=5)(
-                f"SELECT concat('|', default_kind = '', '|', "
-                f"default_expression = '', '|') FROM system.columns "
+                f"SELECT concat('|', toString(default_kind = ''), '|', "
+                f"toString(default_expression = ''), '|') FROM system.columns "
                 f"WHERE database = 'test' AND table = '{table_name}' "
                 f"AND name = 'd' FORMAT TSVRaw",
                 message="|1|1|",
@@ -457,8 +490,8 @@ def default_form(self, column_type, default_expression, expected_type, expected_
     else:
         with And("I check a DEFAULT was carried at all, not only the type"):
             retry(clickhouse.query, timeout=120, delay=5)(
-                f"SELECT concat('|', default_kind = 'DEFAULT', '|', "
-                f"default_expression != '', '|') FROM system.columns "
+                f"SELECT concat('|', toString(default_kind = 'DEFAULT'), '|', "
+                f"toString(default_expression != ''), '|') FROM system.columns "
                 f"WHERE database = 'test' AND table = '{table_name}' "
                 f"AND name = 'd' FORMAT TSVRaw",
                 message="|1|1|",
@@ -611,16 +644,19 @@ def modify_column_default_is_dropped(self):
 
     with Then("I check the ClickHouse column was retyped and the stream is alive"):
         # Compared for equality after stripping, so a type that merely CONTAINS
-        # the expected text (or an error message that does) cannot pass.
+        # the expected text (or an error message that does) cannot pass. The
+        # type names the zone the suite configures (clickhouse.datetime.timezone
+        # is UTC in helpers/default_config.py), and TSVRaw keeps its quotes
+        # unescaped.
+        expected_type = "Nullable(DateTime64(0, 'UTC'))"
         for attempt in retries(timeout=120, delay=5):
             with attempt:
                 column_type = clickhouse.query(
                     f"SELECT type FROM system.columns WHERE database = 'test' "
-                    f"AND table = '{table_name}' AND name = 'c' FORMAT TabSeparated"
+                    f"AND table = '{table_name}' AND name = 'c' FORMAT TSVRaw"
                 ).output.strip()
-                assert column_type == "Nullable(DateTime64(0))", (
-                    f"column c is {column_type!r}, expected "
-                    f"'Nullable(DateTime64(0))'"
+                assert column_type == expected_type, (
+                    f"column c is {column_type!r}, expected {expected_type!r}"
                 )
 
     live_row(table_name=table_name, value=1)

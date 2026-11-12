@@ -1,3 +1,5 @@
+import re
+
 from testflows.core import *
 
 from integration.tests.steps.mysql import *
@@ -113,8 +115,8 @@ def row_count_matches(self, table_name, context=None):
                 # Compared as integers, never as text: the framework's
                 # `message=` is a SUBSTRING test, so a count of 2 would also
                 # accept 12.
-                expected = int(mysql.query(
-                    f"SELECT count(*) FROM test.`{table_name}`").output.strip())
+                expected = int(mysql_scalar(
+                    mysql, f"SELECT count(*) FROM test.`{table_name}`"))
                 actual = int(clickhouse.query(
                     f"SELECT count() FROM test.`{table_name}` FINAL").output.strip())
                 assert actual == expected, (
@@ -124,18 +126,29 @@ def row_count_matches(self, table_name, context=None):
 
 @TestStep(Then)
 def cell_matches(self, statement, context=None):
-    """One expression is evaluated on both engines and must agree."""
+    """One expression is evaluated on both engines and must agree.
+
+    The statement is written for MySQL. On ClickHouse the table is a
+    ReplacingMergeTree, which keeps every version of a row and every deleted
+    row until a merge, so the same statement reads the table with FINAL: an
+    UPDATE would otherwise answer with both the old and the new value, and a
+    count would include rows MySQL no longer holds.
+    """
     if context is None:
         context = self.context
     clickhouse = context.cluster.node("clickhouse")
     mysql = context.cluster.node("mysql-master")
 
+    collapsed = re.sub(
+        r"(\bFROM\s+test\.(?:`[^`]+`|\w+))", r"\1 FINAL", statement, count=1)
+    assert collapsed != statement, f"no test.<table> to read with FINAL in: {statement}"
+
     with Then("I check the two engines agree on the value", description=statement):
         for attempt in retries(timeout=120, delay=5):
             with attempt:
-                expected = mysql.query(statement).output.strip()
-                actual = clickhouse.query(f"{statement} FORMAT TSVRaw").output.strip()
-                assert actual == expected, (
+                expected = mysql_scalar(mysql, statement)
+                actual = clickhouse.query(f"{collapsed} FORMAT TSVRaw").output.strip()
+                assert cells_agree(expected, actual), (
                     f"{statement} returned {actual!r} on ClickHouse and "
                     f"{expected!r} on MySQL"
                 )
@@ -556,7 +569,9 @@ def matrix_rows():
             ["SELECT c_int FROM test.`{table}` WHERE id = 1",
              "SELECT count(*) FROM test.`{table}`"]),
         row(f"d60_{s}", [seeded,
-            "INSERT INTO test.`{table}` SET id = 1, c_int = 223 AS new(m) "
+            # One alias per assigned column: MySQL refuses a column-alias
+            # list shorter than the SET list (ERROR 1353).
+            "INSERT INTO test.`{table}` SET id = 1, c_int = 223 AS new(n, m) "
             "ON DUPLICATE KEY UPDATE c_int = m"],
             ["SELECT c_int FROM test.`{table}` WHERE id = 1",
              "SELECT count(*) FROM test.`{table}`"]),

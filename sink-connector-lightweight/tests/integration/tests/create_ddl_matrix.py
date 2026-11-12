@@ -52,6 +52,19 @@ from integration.tests.steps.clickhouse import *
 #   3. a row written through MySQL arrives with the SOURCE's value -- never a
 #      value ClickHouse's own DEFAULT invented in its place.
 
+# The MySQL expression that renders column `c` as the text ClickHouse holds
+# for it, for the types whose replicated form is not the text the MySQL client
+# prints. The value is the same; only its spelling differs.
+MYSQL_TEXT = {
+    # ClickHouse Bool prints true/false; MySQL BOOLEAN is TINYINT(1), 1/0.
+    "BOOLEAN": "IF(c, 'true', 'false')",
+    # A BIT column is replicated as the hex digits of its bytes, two per byte;
+    # MySQL's HEX() of a BIT value drops the leading zero (b'1010' is `A`).
+    "BIT(4)": "LOWER(LPAD(HEX(c), 2, '0'))",
+    # Binary bytes are replicated base64-encoded (binary.handling.mode).
+    "VARBINARY(4)": "TO_BASE64(c)",
+}
+
 
 @TestStep(Then)
 def column_matches(self, table_name, column_name, expected_type, context=None,
@@ -102,9 +115,11 @@ def column_default_was_dropped(self, table_name, column_name, context=None):
     clickhouse = context.cluster.node("clickhouse")
 
     with Then(f"I check column {column_name} carries NO DEFAULT"):
+        # toString: concat() takes only strings on ClickHouse 23.8, the version
+        # this suite runs (a UInt8 argument is Code: 44 there).
         retry(clickhouse.query, timeout=120, delay=5)(
-            f"SELECT concat('|', default_kind = '', '|', "
-            f"default_expression = '', '|') FROM system.columns "
+            f"SELECT concat('|', toString(default_kind = ''), '|', "
+            f"toString(default_expression = ''), '|') FROM system.columns "
             f"WHERE database = 'test' AND table = '{table_name}' "
             f"AND name = '{column_name}' FORMAT TSVRaw",
             message="|1|1|",
@@ -112,33 +127,48 @@ def column_default_was_dropped(self, table_name, column_name, context=None):
 
 
 @TestStep(Then)
-def source_value_wins(self, table_name, column_name, context=None):
+def source_value_wins(self, table_name, column_name, context=None,
+                      insert="(id) VALUES (1)", mysql_text=None):
     """A row written by MySQL arrives with the value MySQL holds.
 
     The decisive check for a DEFAULT: ClickHouse may hold the same DEFAULT
     expression and still disagree, so the comparison is against the source
     row's value, read from MySQL and required in ClickHouse.
+
+    ``insert`` replaces the default row for a table whose columns MySQL will
+    not fill by itself (a NOT NULL column with no DEFAULT); it must write
+    ``id = 1``. ``mysql_text`` is the MySQL expression that renders the column
+    the way ClickHouse stores it, for the types the two engines print
+    differently (see `MYSQL_TEXT`); it defaults to the column itself.
     """
     if context is None:
         context = self.context
     mysql = context.cluster.node("mysql-master")
     clickhouse = context.cluster.node("clickhouse")
+    if mysql_text is None:
+        mysql_text = column_name
 
     with When("I write a row through MySQL"):
-        mysql.query(
-            f"INSERT INTO test.`{table_name}` (id) VALUES (1);"
-        )
+        mysql.query(f"INSERT INTO test.`{table_name}` {insert};")
 
     with Then(f"I check {column_name} holds the value MySQL stored"):
         for attempt in retries(timeout=120, delay=5):
             with attempt:
-                expected = mysql.query(
-                    f"SELECT {column_name} FROM test.`{table_name}` "
-                    f"WHERE id = 1").output.strip()
+                expected = mysql_scalar(
+                    mysql,
+                    f"SELECT {mysql_text} FROM test.`{table_name}` "
+                    f"WHERE id = 1")
+                # Fenced in brackets so a row that has not arrived (no output)
+                # cannot pass for a row holding the empty string. A NULL makes
+                # the whole concat NULL, which TSVRaw prints as \N.
                 actual = clickhouse.query(
-                    f"SELECT toString({column_name}) FROM test.`{table_name}` "
+                    f"SELECT concat('[', toString({column_name}), ']') "
+                    f"FROM test.`{table_name}` "
                     f"FINAL WHERE id = 1 FORMAT TSVRaw").output.strip()
-                assert actual == expected, (
+                assert actual != "", f"row 1 has not reached test.`{table_name}`"
+                if actual != "\\N":
+                    actual = actual[1:-1]
+                assert cells_agree(expected, actual), (
                     f"{column_name} is {actual!r} on ClickHouse and "
                     f"{expected!r} on MySQL"
                 )
@@ -186,7 +216,10 @@ def create_default_form(self, column_type, default_expression, expected_type,
 
     if value_column:
         with And("I check a source row's own value reaches ClickHouse"):
-            source_value_wins(table_name=table_name, column_name="c")
+            source_value_wins(
+                table_name=table_name, column_name="c",
+                mysql_text=MYSQL_TEXT.get(column_type),
+            )
 
 
 @TestFeature
@@ -227,15 +260,17 @@ def create_default_forms(self):
         ("VARBINARY(4)", "x'CAFE'", "Nullable(String)", "DEFAULT", "'cafe'"),
         # --- grammar `constant`: BIT_STRING ----------------------------------
         ("BIT(4)", "b'1010'", "Nullable(String)", "DEFAULT", "'0a'"),
-        # The NUMERIC bit literal, which is a different token from b'1010' and
-        # takes a different path: MySqlDdlNormalizer.quoteBitValueLiterals
-        # rewrites it to a decimal literal before the parser sees it. A row
-        # here is the only proof the rewrite survives the whole CREATE path --
-        # the unit test proves the rewrite, not that the table and its DEFAULT
-        # reach ClickHouse intact.
-        ("INT", "0b1010", "Nullable(Int32)", "DEFAULT", "10"),
+        # The NUMERIC bit literal `0b1010` is a different token from b'1010',
+        # and it has no row here. MySqlDdlNormalizer.quoteBitValueLiterals
+        # rewrites it for the connector's own parser, but Debezium parses the
+        # binlog statement first, with the same grammar and without the
+        # normalizer, and stops the engine on it (Spec 06.03 FM-06.03-1).
+        # Measured end to end: `CREATE TABLE t (c INT DEFAULT 0b1010)` halts
+        # the stream, and this suite shares one connector across every row.
+        # The rewrite itself is pinned by MySqlDdlNormalizerTest.
         # --- grammar `constant`: booleanLiteral ------------------------------
-        ("BOOLEAN", "TRUE", "Nullable(Bool)", "DEFAULT", "TRUE"),
+        # ClickHouse stores the literal in lower case.
+        ("BOOLEAN", "TRUE", "Nullable(Bool)", "DEFAULT", "true"),
         # --- grammar `defaultValue`: NULL_LITERAL ---------------------------
         # The column is nullable, so `DEFAULT NULL` is implied by its type and
         # is deliberately not emitted (Spec 06.04 section 3.2.3). Emitting it
@@ -272,8 +307,11 @@ def create_default_expression_forms(self):
     """
     cases = [
         # --- grammar `currentTimestamp`, the one carried non-literal ---------
-        ("DATETIME", "CURRENT_TIMESTAMP", "Nullable(DateTime64)", "DEFAULT", "now()"),
-        ("DATETIME(3)", "CURRENT_TIMESTAMP(3)", "Nullable(DateTime64(3, 0))",
+        # The type names the zone the suite configures
+        # (clickhouse.datetime.timezone is UTC in helpers/default_config.py).
+        ("DATETIME", "CURRENT_TIMESTAMP", "Nullable(DateTime64(0, 'UTC'))",
+         "DEFAULT", "now64(0)"),
+        ("DATETIME(3)", "CURRENT_TIMESTAMP(3)", "Nullable(DateTime64(3, 'UTC'))",
          "DEFAULT", "now64(3)"),
         # --- grammar `'(' expression ')'`: a per-row computation ------------
         ("INT", "(1 + 2)", "Nullable(Int32)", None, None),
@@ -334,31 +372,48 @@ def create_constraint_forms(self):
     alongside it, because they share one parser loop and a branch added for
     one must not disturb another.
     """
+    # Each case: the column definitions, the column under test, its ClickHouse
+    # type, whether it declares a DEFAULT, the key create_mysql_table adds as a
+    # table constraint (None when the definitions carry the key themselves),
+    # and the row written to prove replication.
+    key, plain_row = "id", "(id) VALUES (1)"
     cases = [
         # --- #nullColumnConstraint ------------------------------------------
-        ("pad INT, c INT NOT NULL", "c", "Int32", False),
-        ("pad INT, c INT NULL", "c", "Nullable(Int32)", False),
+        # A NOT NULL column with no DEFAULT has to be named by the row: MySQL
+        # refuses an INSERT that omits it (ERROR 1364, strict mode).
+        ("pad INT, c INT NOT NULL", "c", "Int32", False, key,
+         "(id, c) VALUES (1, 5)"),
+        ("pad INT, c INT NULL", "c", "Nullable(Int32)", False, key, plain_row),
         # --- #primaryKeyColumnConstraint ------------------------------------
-        ("pad INT, c INT NOT NULL PRIMARY KEY", "c", "Int32", False),
+        # The column-level PRIMARY KEY is the table's only key: a second one
+        # as a table constraint is ERROR 1068, so `id` carries it itself.
+        ("pad INT, id INT NOT NULL PRIMARY KEY", "id", "Int32", False, None,
+         plain_row),
         # --- #uniqueKeyColumnConstraint -------------------------------------
-        ("pad INT, c INT UNIQUE", "c", "Nullable(Int32)", False),
+        ("pad INT, c INT UNIQUE", "c", "Nullable(Int32)", False, key, plain_row),
         # --- #autoIncrementColumnConstraint ---------------------------------
-        ("pad INT, k INT NOT NULL AUTO_INCREMENT", "k", "Int32", False),
+        # MySQL allows AUTO_INCREMENT only on a key column (ERROR 1075), so
+        # the constraint sits on `id`, which create_mysql_table then keys.
+        ("pad INT, id INT NOT NULL AUTO_INCREMENT", "id", "Int32", False, key,
+         plain_row),
         # --- #defaultColumnConstraint ---------------------------------------
-        ("pad INT, c INT DEFAULT 7", "c", "Nullable(Int32)", True),
-        ("pad INT, c INT NOT NULL DEFAULT 7", "c", "Int32", True),
+        ("pad INT, c INT DEFAULT 7", "c", "Nullable(Int32)", True, key, plain_row),
+        ("pad INT, c INT NOT NULL DEFAULT 7", "c", "Int32", True, key, plain_row),
         # --- #generatedColumnConstraint -------------------------------------
         ("pad INT, c INT GENERATED ALWAYS AS (pad * 2) VIRTUAL", "c",
-         "Nullable(Int32)", True),
+         "Nullable(Int32)", True, key, plain_row),
         # --- #commentColumnConstraint ---------------------------------------
-        ("pad INT, c INT COMMENT 'note'", "c", "Nullable(Int32)", False),
+        ("pad INT, c INT COMMENT 'note'", "c", "Nullable(Int32)", False, key,
+         plain_row),
         # --- #checkColumnConstraint -----------------------------------------
-        ("pad INT, c INT CHECK (c > 0)", "c", "Nullable(Int32)", False),
+        ("pad INT, c INT CHECK (c > 0)", "c", "Nullable(Int32)", False, key,
+         plain_row),
         # --- several at once, DEFAULT among them ----------------------------
-        ("pad INT, c INT NOT NULL DEFAULT 3 COMMENT 'n' UNIQUE", "c", "Int32", True),
+        ("pad INT, c INT NOT NULL DEFAULT 3 COMMENT 'n' UNIQUE", "c", "Int32",
+         True, key, plain_row),
     ]
 
-    for definitions, column_name, expected_type, has_default in cases:
+    for definitions, column_name, expected_type, has_default, primary_key, source_row in cases:
         with Example(definitions, flags=TE):
             table_name = f"cc_{getuid()}"
 
@@ -366,7 +421,7 @@ def create_constraint_forms(self):
                 create_mysql_table(
                     table_name=table_name,
                     columns=definitions,
-                    primary_key="id",
+                    primary_key=primary_key,
                 )
 
             with Then("I check ClickHouse created the column with the source type"):
@@ -383,7 +438,8 @@ def create_constraint_forms(self):
 
             with And("I check a source row's own value reaches ClickHouse"):
                 source_value_wins(
-                    table_name=table_name, column_name=column_name)
+                    table_name=table_name, column_name=column_name,
+                    insert=source_row)
 
 
 @TestFeature
@@ -438,57 +494,14 @@ def create_table_forms(self):
         with And("I check a source row replicas"):
             source_value_wins(table_name=copy_table, column_name="c")
 
-    with Example("CREATE TABLE with an AUTOEXTEND_SIZE table option", flags=TE):
-        # MySQL 8.0.23+ accepts AUTOEXTEND_SIZE as a table option, sizing the
-        # growth step of an InnoDB tablespace. The bundled parser has no
-        # terminal for it, so MySqlDdlNormalizer drops the option before the
-        # parser sees the statement.
-        #
-        # This belongs here rather than only in the unit test because a parse
-        # proves the STATEMENT PARSES, not that the table REPLICATES: an option
-        # dropped in the wrong place still parses and still leaves the table
-        # missing on the replica. The column assertion is what proves it landed.
-        table_name = f"cf_autoext_{getuid()}"
-        mysql = self.context.cluster.node("mysql-master")
-
-        with When("I create a table carrying an AUTOEXTEND_SIZE option in MySQL"):
-            mysql.query(
-                f"CREATE TABLE test.`{table_name}` (id INT NOT NULL PRIMARY KEY, "
-                f"pad INT) ENGINE=InnoDB AUTOEXTEND_SIZE = 4M;")
-        with Then("I check the table and its columns replicate"):
-            column_matches(
-                table_name=table_name, column_name="pad",
-                expected_type="Nullable(Int32)",
-            )
-        with And("I check a source row replicas"):
-            source_value_wins(table_name=table_name, column_name="pad")
-
-    with Example("CREATE TABLE with a column SRID clause", flags=TE):
-        # MySQL accepts SRID anywhere in a column's attribute list. The bundled
-        # grammar only accepts it immediately after the type name, so
-        # MySqlDdlNormalizer.relocateSrid moves it there before parsing. The
-        # clause is meaningless in ClickHouse (a geometry column is a String),
-        # so what this row proves is that the MOVE does not corrupt the
-        # statement: the table still replicates with its columns intact.
-        table_name = f"cf_srid_{getuid()}"
-        mysql = self.context.cluster.node("mysql-master")
-
-        with When("I create a table with SRID after DEFAULT NULL in MySQL"):
-            # `g` stays nullable: the row written below names only `id`, and a
-            # NOT NULL geometry with no DEFAULT would reject it in MySQL, which
-            # would fail this row for a reason that has nothing to do with SRID.
-            mysql.query(
-                f"CREATE TABLE test.`{table_name}` ("
-                f"id INT NOT NULL PRIMARY KEY, "
-                f"g GEOMETRY DEFAULT NULL SRID 4326, "
-                f"pad INT) ENGINE=InnoDB;")
-        with Then("I check the table and its non-geometry columns replicate"):
-            column_matches(
-                table_name=table_name, column_name="pad",
-                expected_type="Nullable(Int32)",
-            )
-        with And("I check a source row replicas"):
-            source_value_wins(table_name=table_name, column_name="pad")
+    # Two forms have no example here: a CREATE TABLE carrying an AUTOEXTEND_SIZE
+    # table option, and a column whose SRID clause follows another attribute
+    # (`g GEOMETRY DEFAULT NULL SRID 4326`). MySqlDdlNormalizer rewrites both
+    # for the connector's own parser, but Debezium parses the binlog statement
+    # first, with the same grammar and without the normalizer, and stops the
+    # engine on it (Spec 06.03 FM-06.03-1). Measured end to end: each of the
+    # two statements halts the stream, and this suite shares one connector
+    # across every example. The rewrites are pinned by MySqlDdlNormalizerTest.
 
     with Example("#queryCreateTable, CREATE ... AS SELECT", flags=TE):
         query_table = f"cf_q_{getuid()}"
@@ -504,11 +517,13 @@ def create_table_forms(self):
         with And("I insert a row so the connector sees the table"):
             mysql.query(
                 f"INSERT INTO test.`{query_table}` VALUES (2, 'y');")
-        with Then("I check the table replicates"):
+        with Then("I check the table replicates with both rows"):
+            # Two rows, as on MySQL: the row the SELECT produced is written to
+            # the binlog as a row event like any other, so it replicates too.
             retry(clickhouse.query, timeout=120, delay=5)(
-                f"SELECT concat('|', count(), '|') FROM test.`{query_table}` "
+                f"SELECT concat('|', toString(count()), '|') FROM test.`{query_table}` "
                 f"FINAL FORMAT TSVRaw",
-                message="|1|",
+                message="|2|",
             )
         with And("I check the copied value reached ClickHouse"):
             retry(clickhouse.query, timeout=120, delay=5)(
