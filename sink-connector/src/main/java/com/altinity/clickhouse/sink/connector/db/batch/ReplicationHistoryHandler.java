@@ -465,6 +465,14 @@ public class ReplicationHistoryHandler {
 
             ps.addBatch();
             int[] batchResult = ps.executeBatch();
+            // A statement the driver reports as EXECUTE_FAILED did NOT happen
+            // (spec 03.06 FM-03.06-4). This statement IS the record's write --
+            // the SCD2 close row and the after image, or the delete marker --
+            // and the caller marks the record applied the moment this method
+            // returns, so an unchecked answer would acknowledge the offset past
+            // a version that was never written. There is no later
+            // flushStagedRows() for it to be caught by.
+            PreparedStatementExecutor.failOnExecuteFailed(batchResult, null, tableName);
 
             log.debug("Replication history {} executed successfully for table: {}", isDelete ? "delete" : "update", tableName);
             return batchResult.length > 0;

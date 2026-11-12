@@ -110,4 +110,38 @@ public class AbandonLatchTest {
                         + "armed until a unit assigned AFTER the reset is acknowledged");
     }
 
+    @Test
+    @DisplayName("The first unit assigned AFTER the reset clears the latch: the boundary is inclusive")
+    public void theFirstUnitAssignedAfterTheResetClearsTheLatch() throws InterruptedException {
+        // Two units are outstanding when the reset runs, so the retirement
+        // watermark is one past the second one -- and the FIRST unit of the new
+        // engine is stamped with exactly that value, not a greater one.
+        List<ClickHouseStruct> first = OffsetTestSupport.unit(
+                new OffsetTestSupport.RecordingCommitter(), 1L, "first");
+        DebeziumOffsetManagement.registerHandoff(first, Collections.singletonList(first));
+        List<ClickHouseStruct> second = OffsetTestSupport.unit(
+                new OffsetTestSupport.RecordingCommitter(), 2L, "second");
+        DebeziumOffsetManagement.registerHandoff(second, Collections.singletonList(second));
+
+        // The counter is process-wide and is never reset (sequences stay unique
+        // for the life of the JVM), so the assertion is relative.
+        long watermark = DebeziumOffsetManagement.handoffSequenceOf(second) + 1;
+        assertEquals(DebeziumOffsetManagement.handoffSequenceOf(first) + 1,
+                DebeziumOffsetManagement.handoffSequenceOf(second), "sequences are consecutive");
+
+        assertEquals(2, DebeziumOffsetManagement.reset());
+        assertTrue(DebeziumOffsetManagement.hasUnprovenAbandonment(), "both units were abandoned");
+
+        OffsetTestSupport.RecordingCommitter live = new OffsetTestSupport.RecordingCommitter();
+        List<ClickHouseStruct> boundary = OffsetTestSupport.unit(live, 3L, "boundary");
+        DebeziumOffsetManagement.registerHandoff(boundary, Collections.singletonList(boundary));
+        assertEquals(watermark, DebeziumOffsetManagement.handoffSequenceOf(boundary),
+                "the new engine's first unit carries the watermark's own value, not a greater one");
+
+        assertTrue(DebeziumOffsetManagement.checkIfBatchCanBeCommitted(boundary),
+                "a unit assigned at the watermark belongs to the new engine");
+        assertFalse(DebeziumOffsetManagement.hasUnprovenAbandonment(),
+                "the boundary comparison is inclusive (seq >= watermark), so this unit clears the "
+                        + "latch: a strict '>' would leave the connector unable to commit forever");
+    }
 }

@@ -621,7 +621,7 @@ public class PreparedStatementExecutor {
      * @param batchResult the driver's answer; may be null (nothing to check).
      * @throws SQLException naming the count when the driver flagged a failure.
      */
-    private static void failOnExecuteFailed(int[] batchResult, String databaseName, String tableName)
+    static void failOnExecuteFailed(int[] batchResult, String databaseName, String tableName)
             throws SQLException {
         if (batchResult == null) {
             return;
@@ -634,11 +634,21 @@ public class PreparedStatementExecutor {
         }
         if (failed > 0) {
             throw new SQLException(String.format(
-                    "The driver marked %d of %d statement(s) EXECUTE_FAILED for %s.%s; those rows are "
+                    "The driver marked %d of %d statement(s) EXECUTE_FAILED for %s; those rows are "
                             + "not in ClickHouse, so the batch is not reported written and its offset "
                             + "stays unacknowledged (spec 03.06 FM-03.06-4)",
-                    failed, batchResult.length, databaseName, tableName));
+                    failed, batchResult.length, describeTarget(databaseName, tableName)));
         }
+    }
+
+    /**
+     * Names the write target in a failure message: {@code database.table} when
+     * the database is known, the table alone when it is not (the
+     * replication-history statements are addressed by a table name that already
+     * carries its database).
+     */
+    private static String describeTarget(String databaseName, String tableName) {
+        return databaseName == null ? String.valueOf(tableName) : databaseName + "." + tableName;
     }
 
     /**
