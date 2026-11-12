@@ -234,6 +234,8 @@ RM_WORD_RE = re.compile(r"\brm\b")
 RM_RECURSIVE_RE = re.compile(r"^-\w*r\w*$|^--recursive$", re.IGNORECASE)
 RM_FORCE_RE = re.compile(r"^-\w*f\w*$|^--force$", re.IGNORECASE)
 STRING_LITERAL_RE = re.compile(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'")
+ESCAPED_BREAK_RE = re.compile(r"\\r\\n|\\n|\\r")
+SCALAR_OPENER_RE = re.compile(r"^\s*[A-Za-z0-9_./-]+:\s*[\"']")
 
 
 def is_comment_only(line: str) -> bool:
@@ -256,14 +258,42 @@ def is_rm_recursive_force(line: str) -> bool:
 def is_destructive_line(line: str) -> bool:
     if is_comment_only(line):
         return False
-    candidates = [line]
-    no_block = re.sub(r"/\*.*?\*/", " ", line)
-    unquoted = line.replace('"', "").replace("'", "").replace("\\", "")
+    code = code_text(line)
+    if not code:
+        return False
+    candidates = [code]
+    no_block = re.sub(r"/\*.*?\*/", " ", code)
+    unquoted = code.replace('"', "").replace("'", "").replace("\\", "")
     candidates += [no_block, unquoted, re.sub(r"\s*\+\s*", " ", unquoted)]
     for text in candidates:
         if is_rm_recursive_force(text) or any(p.search(text) for p in DESTRUCTIVE_PATTERNS):
             return True
     return False
+
+
+def code_text(line: str) -> str:
+    """The line with its comment-only logical lines removed.
+
+    A single added line can carry many logical lines: a Kubernetes ConfigMap
+    embeds a whole configuration file as one YAML scalar, where every newline
+    is written ``\\n``. Such a line has no comment prefix of its own, so
+    classifying the physical line as code makes the documentation inside the
+    embedded file read as statements -- the comment "the connector will ignore
+    drop and truncate events" is prose, not a TRUNCATE. Each logical line is
+    classified on its own instead, and only the non-comment ones are matched.
+    A line with no escaped break is returned unchanged, so ordinary source
+    keeps exactly the previous behaviour.
+    """
+    segments = ESCAPED_BREAK_RE.split(line)
+    if len(segments) == 1:
+        return line
+    # The scalar's own opener ("  config.yml: \"") prefixes the first logical
+    # line; strip it so that line is classified on its own content too.
+    first = SCALAR_OPENER_RE.sub("", segments[0], count=1)
+    last = re.sub(r"[\"']\s*$", "", segments[-1])
+    segments = [first] + segments[1:-1] + [last]
+    kept = [s for s in segments if s.strip() and not is_comment_only(s)]
+    return " ".join(kept)
 
 
 def window_has_warning(window: Sequence[str]) -> bool:
