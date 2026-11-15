@@ -103,9 +103,13 @@ restart/replay ordering. An untagged encoding switch is not a safe repair.
   `db_load/tests`, `db_dump/tests`, `tests`): 1029 passed, 2 skipped,
   93 subtests passed; exit 0. Local interpreter: Python 3.13.12; the workflow
   selects Python 3.12, so this is not a same-interpreter CI result.
-- The extended Lean model has not completed validation. No formal-verification
-  pass is claimed. Existing disabled ordering tests listed above remain known
-  failures, not evidence of correctness from their exclusion.
+- Local Lean validation did not finish. CI subsequently built
+  `Replication.VersionFloor` with Lean 4.11.0 and passed the spec validator
+  against code revision `49dd6d68` in
+  [run 43684769279](https://github.com/Altinity/clickhouse-sink-connector/actions/runs/43684769279).
+  This proves the model builds, not that all replication paths are modeled.
+  Existing disabled ordering tests listed above remain known failures, not
+  evidence of correctness from their exclusion.
 - All tests used isolated, bounded execution. No production checksum, physical
   large-binlog test, source failover or data repair was run.
 
