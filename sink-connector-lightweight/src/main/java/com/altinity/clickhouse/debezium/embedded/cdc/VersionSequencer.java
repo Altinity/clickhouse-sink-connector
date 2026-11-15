@@ -58,6 +58,14 @@ final class VersionSequencer {
     public static long sequenceNumber = SEQUENCE_START;
 
     /**
+     * Highest sequence-domain value assigned in this counter lifecycle. Guarded
+     * by the class monitor and cleared when an unset anchor initializes the
+     * counter. Retains carry that a reset would otherwise discard (spec 02.03
+     * section 3.2.1); this is not a new persisted version domain.
+     */
+    private static long sequenceMaxAssignedVersion = 0L;
+
+    /**
      * Source-timestamp anchor for the intra-second sequence counter.
      *
      * <p>The counter resets only when the SOURCE commit clock advances by more than one
@@ -207,6 +215,7 @@ final class VersionSequencer {
         if (sequenceAnchorTs == 0L) {
             sequenceAnchorTs = recordTs;
             sequenceNumber = SEQUENCE_START_INITIAL;
+            sequenceMaxAssignedVersion = 0L;
         }
         long effectiveTs = recordTs;
         // A position is comparable with the mark only inside one binary log. After
@@ -239,10 +248,11 @@ final class VersionSequencer {
         }
         boolean restOfMarkedEvent = position != null && sequenceHighWaterPosition != null
                 && position.sameLogPosition(sequenceHighWaterPosition);
-        if (position != null && !incompatibleCoordinates && !restOfMarkedEvent
+        boolean firstDelivery = position != null && !incompatibleCoordinates && !restOfMarkedEvent
                 && (sequenceHighWaterPosition == null
                         || !position.sameLog(sequenceHighWaterPosition)
-                        || position.compareTo(sequenceHighWaterPosition) > 0)) {
+                        || position.compareTo(sequenceHighWaterPosition) > 0);
+        if (firstDelivery) {
             if (sequenceHighWaterPosition != null && !position.sameLog(sequenceHighWaterPosition)) {
                 log.warn("Binary log identity changed: high-water position {} is replaced by {} from a "
                         + "differently named log; its first record is versioned as a first delivery",
@@ -286,7 +296,19 @@ final class VersionSequencer {
         } else {
             sequenceNumber++;
         }
-        return new VersionAssignment(effectiveTs * 1_000_000L + sequenceNumber, effectiveTs);
+        long timestampComponent = effectiveTs * 1_000_000L;
+        long version = timestampComponent + sequenceNumber;
+        if ((firstDelivery || restOfMarkedEvent) && version <= sequenceMaxAssignedVersion) {
+            // A large window carries its counter into the timestamp component.
+            // A reset (including one caused by a replay or positionless row)
+            // must not make a first delivery, including remaining statements of
+            // the marked event, tie or fall below it. Older-event replay remains
+            // unclamped. Keep the timestamp and formula; retain only needed carry.
+            version = Math.addExact(sequenceMaxAssignedVersion, 1L);
+            sequenceNumber = version - timestampComponent;
+        }
+        sequenceMaxAssignedVersion = Math.max(sequenceMaxAssignedVersion, version);
+        return new VersionAssignment(version, effectiveTs);
     }
 
     /**

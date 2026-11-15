@@ -332,6 +332,63 @@ public class SchemaCacheFailureModesTest {
     }
 
     @Test
+    @DisplayName("recovering the first unknown column must not hide a second missing source column")
+    public void everyUnknownColumnMustBeVerifiedBeforeGrouping() {
+        for (String firstKind : new String[]{"", "ALIAS"}) {
+            CacheInvalidationManager.getInstance().clearAll();
+            FakeCatalog catalog = new FakeCatalog();
+            catalog.columns.add(new String[]{"first", "String", firstKind});
+            Schema schema = SchemaBuilder.struct()
+                    .field("id", Schema.INT32_SCHEMA)
+                    .field("first", Schema.OPTIONAL_STRING_SCHEMA)
+                    .field("second", Schema.OPTIONAL_STRING_SCHEMA)
+                    .build();
+            Struct after = new Struct(schema).put("id", 1)
+                    .put("first", "first value").put("second", "must not disappear");
+            ClickHouseStruct record = new ClickHouseStruct(
+                    1, "topic", null, 0, System.currentTimeMillis(),
+                    null, after, null, ClickHouseConverter.CDC_OPERATION.CREATE);
+            record.setDatabase("db");
+
+            assertThrows(MissingTargetColumnException.class,
+                    () -> groupBatch(catalog, Collections.singletonList(record), cachedMap()),
+                    "first kind=" + firstKind + ": the second source value has no target column");
+        }
+    }
+
+    @Test
+    @DisplayName("every recovered source column is bound, including one after an ALIAS")
+    public void allRecoveredColumnsAreIncludedInTheFirstRecord() {
+        for (String firstKind : new String[]{"", "ALIAS"}) {
+            CacheInvalidationManager.getInstance().clearAll();
+            FakeCatalog catalog = new FakeCatalog();
+            catalog.columns.add(new String[]{"first", "String", firstKind});
+            catalog.columns.add(new String[]{"second", "String", ""});
+            Schema schema = SchemaBuilder.struct()
+                    .field("id", Schema.INT32_SCHEMA)
+                    .field("first", Schema.OPTIONAL_STRING_SCHEMA)
+                    .field("second", Schema.OPTIONAL_STRING_SCHEMA)
+                    .build();
+            Struct after = new Struct(schema).put("id", 1)
+                    .put("first", "first value").put("second", "second value");
+            ClickHouseStruct record = new ClickHouseStruct(
+                    1, "topic", null, 0, System.currentTimeMillis(),
+                    null, after, null, ClickHouseConverter.CDC_OPERATION.CREATE);
+            record.setDatabase("db");
+
+            List<Map<MutablePair<String, Map<String, Integer>>, List<ClickHouseStruct>>> segments =
+                    groupBatch(catalog, Collections.singletonList(record), cachedMap());
+            assertEquals(1, segments.size());
+            for (MutablePair<String, Map<String, Integer>> template : segments.get(0).keySet()) {
+                assertTrue(template.getRight().containsKey("second"), template.toString());
+                assertEquals(firstKind.isEmpty(), template.getRight().containsKey("first"));
+            }
+            assertTrue(catalog.queries.size() <= schema.fields().size() * 2,
+                    "metadata work is bounded by source columns, not rows: " + catalog.queries);
+        }
+    }
+
+    @Test
     @DisplayName("a failed stale-cache re-read never yields an INSERT that omits a column the record carries")
     public void failedReReadNeverDropsTheColumn() {
         FakeCatalog catalog = new FakeCatalog();

@@ -24,8 +24,8 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
-      - name: Run cursor and version regression tests
+      - name: Run cursor, version, schema, binary and durability regressions
         run: >-
           mvn --batch-mode -pl sink-connector-lightweight -am
-          -Dtest=SourcePositionTest,BinlogOffsetVersionTest
-          -DfailIfNoTests=true test
+          -Dtest=SourcePositionTest,BinlogOffsetVersionTest,CounterCarryResetInversionTest,SchemaCacheFailureModesTest,ClickHouseDataTypeMapperBitBytesTest,ClickHouseDataTypeMapperPoisonValueTest,MissingTargetTableEngineTest
+          -DfailIfNoTests=true -Dsurefire.failIfNoSpecifiedTests=false test

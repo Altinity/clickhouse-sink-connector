@@ -116,9 +116,12 @@ check or at a DDL barrier — and a DDL barrier drains the writers before any
 schema changes, spec 06.01, so it cannot move between two records of one
 batch). The grouper therefore runs it once per (schema identity, column map
 identity): a **consistent** verdict is recorded in `verifiedSchemas`; a
-refresh returns a new map instance, which is not recorded, so the next record
-of that schema is checked against the fresh map and recorded only if that
-check is clean. The guarantee of spec 08.03 — an INSERT is never built from a
+refresh returns a new map instance, which is rechecked for the SAME record
+until every source field is writable or explicitly exempt (ALIAS). Recovering
+one field must not allow a later missing field to be omitted from the first
+INSERT. Only the final consistent map is recorded. Verification is bounded by
+the schema's field count plus one final check; exhaustion fails the batch with
+`StaleSchemaCacheException` rather than using a partially verified map. The guarantee of spec 08.03 — an INSERT is never built from a
 column map provably behind the source — holds unchanged, because the first
 record of each schema was verified against the exact map every later record
 of that schema is grouped with.

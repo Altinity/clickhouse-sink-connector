@@ -270,18 +270,22 @@ def partition_key_within_sorting_key(columns_metadata):
     return len(partition_columns) > 0 and all(row[5] == 1 for row in partition_columns)
 
 
-def parse_source_columns(text):
+def parse_source_columns(text, ordered=False):
     """The names given to ``--source_columns``: a JSON list of strings (what the
     driver passes, so a name holding a comma or a space survives), or, typed by
-    hand, a comma separated list. Empty gives an empty set. A malformed JSON
-    list raises ValueError: guessing would compare the wrong columns."""
+    hand, a comma separated list. By default return a set for existing callers;
+    ``ordered=True`` returns the source's ordinal list. Empty gives an empty
+    collection. A malformed JSON list raises ValueError: guessing would compare
+    the wrong columns."""
     text = (text or "").strip()
     if not text.startswith("["):
+        if ordered:
+            return [name.strip() for name in text.split(",") if name.strip()]
         return parse_column_list(text)
     names = json.loads(text)
     if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
         raise ValueError(f"--source_columns must be a JSON list of column names, got {text!r}")
-    return set(names)
+    return names if ordered else set(names)
 
 
 def restrict_to_source_columns(database, table, columns_metadata, source_columns_text, excluded_columns, warned):
@@ -303,13 +307,17 @@ def restrict_to_source_columns(database, table, columns_metadata, source_columns
     section 3.9). A source column the replica lacks cannot be left out
     here (the source side hashes it), so the run still reports DIFFERENT; the
     WARNING names the missing column so the difference explains itself."""
-    source_columns = parse_source_columns(source_columns_text)
+    source_columns = parse_source_columns(source_columns_text, ordered=True)
     if not source_columns:
         return columns_metadata
-    source_lower = {name.lower() for name in source_columns}
+    source_order = {name.lower(): ordinal for ordinal, name in enumerate(source_columns)}
+    source_lower = set(source_order)
     replica_lower = {row[0].lower() for row in columns_metadata}
     excluded_lower = {name.lower() for name in excluded_columns} | SINK_METADATA_COLUMNS
-    kept = [row for row in columns_metadata if row[0].lower() in source_lower]
+    # Row text identifies columns by position, not by name. Match source order
+    # so swapped values cannot hide behind the replica's physical column order.
+    kept = sorted((row for row in columns_metadata if row[0].lower() in source_lower),
+                  key=lambda row: source_order[row[0].lower()])
     replica_only = [row[0] for row in columns_metadata if row[0].lower() not in source_lower]
     missing = sorted(name for name in source_columns
                      if name.lower() not in replica_lower and name.lower() not in excluded_lower)

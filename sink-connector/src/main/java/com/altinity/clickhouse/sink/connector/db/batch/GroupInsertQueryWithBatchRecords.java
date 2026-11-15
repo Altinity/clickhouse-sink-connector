@@ -342,17 +342,27 @@ public class GroupInsertQueryWithBatchRecords {
             Schema witnessSchema = witness == null ? null : witness.schema();
             VerifiedAgainst previously = witnessSchema == null ? null : verifiedSchemas.get(witnessSchema);
             if (previously == null || !previously.covers(columnNameToDataTypeMap)) {
-                Map<String, String> verified = refreshIfRecordHasUnknownColumn(
-                        record, columnNameToDataTypeMap, tableName, databaseName,
-                        connection, config);
-                // refresh either returns a fresh map, returns null because no
-                // unknown column exists, or throws StaleSchemaCacheException
-                // when no verdict could be reached. Only a reached verdict
-                // reaches the memo below (spec 04.06, failed staleness re-read).
-                if (verified != null) {
+                // Each refresh resolves one unknown field. Verify the SAME
+                // record again: recovering its first field says nothing about
+                // a second field still missing from the target (spec 04.06).
+                int checksRemaining = witnessSchema == null ? 1 : witnessSchema.fields().size() + 1;
+                while (true) {
+                    if (checksRemaining-- == 0) {
+                        throw new StaleSchemaCacheException(String.format(
+                                "Schema of %s.%s did not stabilize while verifying all source columns; "
+                                        + "refusing to build an INSERT from partially verified metadata.",
+                                databaseName, tableName));
+                    }
+                    Map<String, String> verified = refreshIfRecordHasUnknownColumn(
+                            record, columnNameToDataTypeMap, tableName, databaseName,
+                            connection, config);
+                    if (verified == null) {
+                        if (witnessSchema != null) {
+                            verifiedSchemas.put(witnessSchema, new VerifiedAgainst(columnNameToDataTypeMap));
+                        }
+                        break;
+                    }
                     columnNameToDataTypeMap = verified;
-                } else if (witnessSchema != null) {
-                    verifiedSchemas.put(witnessSchema, new VerifiedAgainst(columnNameToDataTypeMap));
                 }
             }
 
@@ -666,12 +676,12 @@ public class GroupInsertQueryWithBatchRecords {
      * are populated by the connector and never appear in the ClickHouse table
      * under a source-record name.</p>
      *
-     * <p>Returns {@code null} when the cache is already consistent (the common
-     * case, costing one set lookup per column) or when the re-read fails. A
-     * failed re-read is logged and the caller keeps the existing map: the
-     * bind-time check in {@code PreparedStatementFieldMapper} is the backstop
-     * and will fail the batch rather than write a dropped column, so a metadata
-     * outage degrades to a retry rather than to silent loss.</p>
+     * <p>Returns {@code null} when no unknown field remains (the common case,
+     * costing one set lookup per column). A fresh map resolves one field;
+     * the caller must recheck every remaining field before building an INSERT.
+     * An unreadable catalog throws {@code StaleSchemaCacheException}; a source
+     * column that cannot be stored throws {@code MissingTargetColumnException}.
+     * Neither failure may be memoised as a consistent schema.</p>
      *
      * @param record           the CDC record whose schema is the witness.
      * @param cached           the currently cached column-to-type map.

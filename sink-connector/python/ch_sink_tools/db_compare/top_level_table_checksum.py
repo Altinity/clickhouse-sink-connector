@@ -682,6 +682,7 @@ def get_mysql_checksum_command(mysql_host, database, table, pk, max_pk, where, i
     cmd = side_command(MYSQL_SIDE_MODULE) + [
            "--threads_per_table", str(args.threads_per_table if threads_per_table is None else threads_per_table), f"--threads={args.threads}",
            "--min_date_value", DATE32_MIN, "--mysql_host", str(mysql_host), "--mysql_database", str(database),
+           "--mysql_port", str(getattr(args, "mysql_port", 3306)),
            "--tables_regex", exact_table_regex(table), "--where", where_value,
            "--source_timezone", str(getattr(args, "source_timezone", None)), "--binary_encoding", str(getattr(args, "binary_encoding", "base64"))]
     cmd += include_flags() + datetime_bound_flags() + ignored_columns_clause + debug_output_clause + defaults_file_clause
@@ -748,8 +749,17 @@ def get_clickhouse_checksum_command(replica_host, database, table, pk, max_pk, w
     cmd = side_command(CLICKHOUSE_SIDE_MODULE) + [
            "--max_memory_usage", "80000000000", f"--threads={args.threads}",
            "--clickhouse_host", str(replica_host), "--clickhouse_database", str(database),
+           "--clickhouse_port", str(getattr(args, "clickhouse_port", 9000)),
            "--tables_regex", exact_table_regex(table), "--where", where_value,
            "--source_timezone", str(getattr(args, "source_timezone", None))]
+    # Read the same endpoint/configuration the driver fences, without putting
+    # credentials in argv. Existing side TLS parsing stays unchanged.
+    config_file = getattr(args, "clickhouse_config_file", None)
+    if config_file:
+        cmd += ["--clickhouse_config_file", str(config_file)]
+    secure = getattr(args, "secure", False)
+    if secure:
+        cmd += ["--secure", str(secure)]
     cmd += timestamp_columns_clause + json_columns_clause + char_columns_clause + source_columns_clause + binary_encoding_clause + include_flags()
     cmd += datetime_bound_flags()
     cmd += ["--exclude_columns", ignored_columns_value, "--sign_column", ""]

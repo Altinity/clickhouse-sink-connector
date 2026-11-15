@@ -26,7 +26,7 @@ for (int i = 0; i < sourceBytes.length; i++) {
 }
 // Bind reversed byte array into ClickHouse UInt64 or String
 ```
-Single-byte values and BLOB / `ByteBuffer` payloads (non-`Bits` schemas) are bound unchanged. Failure to reverse multi-byte values results in byte transposition (e.g. `BIT(16)` value `0x0001` stored as `0x0100`).
+Single-byte values and BLOB / `ByteBuffer` payloads (non-`Bits` schemas) are bound unchanged. For a `ByteBuffer`, the payload is exactly its remaining bytes (`position` inclusive through `limit` exclusive), including sliced, direct and read-only buffers. Read through a duplicate so binding and retries never change the original position or limit. Apply the same BIT reversal, raw/hex encoding and spill handling to those bytes as to a `byte[]`. Failure to reverse multi-byte values results in byte transposition (e.g. `BIT(16)` value `0x0001` stored as `0x0100`).
 
 ### 3.2 Canonical stored representation of binary values
 The text that lands in the (`String`) ClickHouse column depends on two
@@ -85,13 +85,12 @@ Recovery posture: a `BYTES` value only arises when the operator sets `binary.han
 
 - **FM-07.05-2 `ByteBuffer` carrier with an offset, a limit, or read-only**
   - **Trigger**: a `BYTES` value delivered as a `ByteBuffer` that is a slice, has a non-zero position, or is read-only/direct (possible with Kafka Connect converters; Debezium's MySQL converter delivers a fully wrapped array — not verified for every converter).
-  - **Behaviour**: `ClickHouseDataTypeMapper.convert` reads `((ByteBuffer) value).array()`, which returns the whole backing array regardless of position, limit and offset: a slice binds bytes that are not the value; a read-only buffer throws `ReadOnlyBufferException` and a direct buffer `UnsupportedOperationException` (both UNKNOWN, retried forever). The `Geometry` branch of the same method reads `remaining()` correctly.
-  - **Detection**: slice: none (DEFECT); read-only/direct: ERROR + WARN `Retriable ... Category: UNKNOWN` every ≤ 30 s, no exit.
-  - **Blast radius**: slice: silent value divergence; read-only/direct: the worker's tables stop.
-  - **Recovery**: none in configuration; for the Kafka path, change the value converter so it delivers `byte[]`, restart, P-RESYNC.
-  - **RTO**: unbounded detection for the silent case; unmeasured.
-  - **Test**: `ClickHouseDataTypeMapperPoisonValueTest.byteBufferSliceBindsOnlyItsRemainingBytes()` (disabled, fails on 2.11.0: binds `01020304` for the slice `0203`).
-  - **DEFECT**: the `BYTES` branch ignores the buffer's position/limit/offset; read `remaining()` bytes like the `Geometry` branch does.
+  - **Behaviour**: the mapper reads `remaining()` bytes through a duplicate, preserving position and limit for retries. Sliced, direct and read-only buffers follow the same raw/hex and BIT endian rules as `byte[]`. Previously `array()` bound the whole backing array or threw for direct/read-only buffers.
+  - **Detection**: regression tests assert the exact bound bytes and unchanged cursor on repeated calls.
+  - **Blast radius before the fix**: slices could silently diverge; direct/read-only buffers could stall the worker.
+  - **Recovery**: the corrected mapper prevents new corruption; previously corrupted values still require reconciliation against the source.
+  - **RTO**: historical reconciliation is outside this fix; unmeasured.
+  - **Test**: `ClickHouseDataTypeMapperPoisonValueTest.byteBufferSliceBindsOnlyItsRemainingBytes()` is enabled; `ClickHouseDataTypeMapperBitBytesTest.byteBufferBoundsAndReadOnlyCarriersSurviveRepeatedBinding()` covers sliced, positioned, direct, read-only and empty buffers, both raw/hex modes and BIT/non-BIT semantics.
 
 - **FM-07.05-3 `binary.handling.mode` changed on a running replica**
   - **Trigger**: an operator changes Debezium `binary.handling.mode` (e.g. `bytes` → `base64`) or the connector's `persist.raw.bytes` between runs.
@@ -103,4 +102,4 @@ Recovery posture: a `BYTES` value only arises when the operator sets `binary.han
   - **Test**: GAP: a start-up check that refuses a representation change against a replica written in another one (for example by recording the mode in the offset storage).
   - **DEFECT**: a configuration change silently changes the stored value format.
 
-Summary: 3 failure modes, 3 DEFECT, 2 GAP.
+Summary: 3 failure modes, 2 unresolved DEFECT, 2 GAP; FM-07.05-2 has permanent regression coverage.

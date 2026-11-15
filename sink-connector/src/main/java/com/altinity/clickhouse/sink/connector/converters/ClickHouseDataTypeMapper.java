@@ -802,8 +802,12 @@ public class ClickHouseDataTypeMapper {
             byte[] rawBytes = null;
             if (value instanceof byte[]) {
                 rawBytes = (byte[]) value;
-            } else if (value instanceof java.nio.ByteBuffer) {
-                rawBytes = ((ByteBuffer) value).array();
+            } else if (value instanceof ByteBuffer) {
+                // The value is position..limit, not the whole backing array.
+                // Read a duplicate so retries see the same bytes (spec 07.05).
+                ByteBuffer payload = ((ByteBuffer) value).duplicate();
+                rawBytes = new byte[payload.remaining()];
+                payload.get(rawBytes);
             }
             if (rawBytes != null) {
                 // Debezium delivers MySQL BIT(n) (io.debezium.data.Bits) as a

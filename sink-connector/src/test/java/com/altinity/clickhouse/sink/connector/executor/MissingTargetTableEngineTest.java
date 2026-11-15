@@ -40,6 +40,8 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -114,6 +116,9 @@ public class MissingTargetTableEngineTest {
         private final int countQueriesToAnswer;
         private final AtomicInteger countQueries = new AtomicInteger();
         private final List<String> queries = Collections.synchronizedList(new ArrayList<>());
+        // Non-null exposes a real writable catalog, then interrupts the JDBC INSERT.
+        private SQLException insertFailure;
+        private final AtomicInteger insertAttempts = new AtomicInteger();
 
         Catalog(String database, boolean tableListed, int countQueriesToAnswer) {
             this.database = database;
@@ -132,8 +137,8 @@ public class MissingTargetTableEngineTest {
                 return resultSet(true, this.database, 0L);
             }
             if (normalized.contains("engine_full")) {
-                // A table that does not exist has no row in system.tables at all.
-                return resultSet(false, null, 0L);
+                return resultSet(insertFailure != null,
+                        "ReplacingMergeTree(_version, is_deleted)", 0L);
             }
             if (normalized.contains("system.tables") && normalized.contains("count()")) {
                 if (this.countQueries.incrementAndGet() > this.countQueriesToAnswer) {
@@ -143,9 +148,34 @@ public class MissingTargetTableEngineTest {
                 return resultSet(true, null, this.tableListed ? 1L : 0L);
             }
             if (normalized.contains("system.columns")) {
+                if (insertFailure != null && normalized.startsWith("select name, type, default_kind")) {
+                    return writableColumns();
+                }
                 return resultSet(false, null, 0L);
             }
             throw new SQLException("The catalog fake has no answer for: " + sql);
+        }
+
+        private ResultSet writableColumns() {
+            String[][] rows = {{"id", "Int32"}, {"name", "String"},
+                    {"_version", "UInt64"}, {"is_deleted", "UInt8"}};
+            int[] cursor = {-1};
+            return (ResultSet) Proxy.newProxyInstance(ResultSet.class.getClassLoader(),
+                    new Class<?>[]{ResultSet.class}, (proxy, method, args) -> {
+                        if ("next".equals(method.getName())) {
+                            return ++cursor[0] < rows.length;
+                        }
+                        if ("getString".equals(method.getName())) {
+                            if ("name".equals(args[0])) {
+                                return rows[cursor[0]][0];
+                            }
+                            if ("type".equals(args[0])) {
+                                return rows[cursor[0]][1];
+                            }
+                            return "";
+                        }
+                        return defaultValue(method.getReturnType());
+                    });
         }
 
         Connection connection() {
@@ -193,6 +223,11 @@ public class MissingTargetTableEngineTest {
                             this.queries.add((String) args[0]);
                         }
                         return false;
+                    case "executeBatch":
+                        insertAttempts.incrementAndGet();
+                        // Same checked cause chain as SpillingInsertStatement's
+                        // interrupted Future.get(): the JDBC boundary fails before durability.
+                        throw insertFailure;
                     case "getResultSet":
                         return null;
                     case "close":
@@ -475,6 +510,88 @@ public class MissingTargetTableEngineTest {
                 "no record may be acknowledged when the batch was never written");
         assertEquals(0, committer.batchesFinished.get(),
                 "the batch must not be marked finished when it was never written");
+    }
+
+    @Test
+    @DisplayName("An interrupted JDBC INSERT fails the inline caller before a later offset can be acknowledged")
+    public void interruptedInsertStopsBeforeLaterAcknowledgement() throws Exception {
+        String database = uniqueDatabase("interrupt");
+        String topic = "SERVER5432." + database + ".orders";
+        Catalog catalog = new Catalog(database, true, Integer.MAX_VALUE);
+        InterruptedException interrupted = new InterruptedException("cancelled INSERT request");
+        catalog.insertFailure = new SQLException("Interrupted while sending the INSERT", interrupted);
+        ClickHouseBatchWriter writer = new ClickHouseBatchWriter(config(), new HashMap<>());
+        injectConnection(writer, database, catalog.connection());
+        CountingCommitter committer = new CountingCommitter();
+        List<ClickHouseStruct> failed = batchOf(topic, database, committer);
+        failed.forEach(r -> {
+            r.setSourceRecord(OffsetTestSupport.event("unwritten"));
+            r.setGtid(100L + r.getKafkaOffset());
+            r.setTs_ms(1767225600000L);
+        });
+        ClickHouseStruct later = record(topic, database, 3L, committer, true);
+        later.setSourceRecord(OffsetTestSupport.event("later"));
+        // The later row is already durable: if persistRecords returns normally,
+        // its acknowledgement can commit beyond the failed first INSERT.
+        later.setAppliedToClickHouse(true);
+        try {
+            ClickHouseBatchWriter.BatchPersistenceException failure = assertThrows(
+                    ClickHouseBatchWriter.BatchPersistenceException.class, () -> {
+                        writer.persistRecords(failed);
+                        writer.persistRecords(Collections.singletonList(later));
+                    });
+            assertSame(catalog.insertFailure, failure.getCause().getCause());
+            assertSame(interrupted, failure.getCause().getCause().getCause());
+            assertTrue(Thread.currentThread().isInterrupted(), "the cancellation flag must survive");
+            assertEquals(1, catalog.insertAttempts.get(), "the real JDBC executeBatch must be reached");
+            assertTrue(failed.stream().noneMatch(ClickHouseStruct::isAppliedToClickHouse));
+            assertEquals(0, committer.processed.get(), "not even the later record may be staged");
+            assertEquals(0, committer.batchesFinished.get(), "no offset flush may run past the failed INSERT");
+        } finally {
+            Thread.interrupted();
+        }
+    }
+
+    @Test
+    @DisplayName("An interrupted acknowledgement propagates rather than returning inline success")
+    public void interruptedAcknowledgementFailsTheCaller() {
+        ClickHouseBatchWriter writer = new ClickHouseBatchWriter(config(), new HashMap<>());
+        InterruptedException interrupted = new InterruptedException("cancelled offset staging");
+        AtomicInteger attempts = new AtomicInteger();
+        DebeziumEngine.RecordCommitter committer = new DebeziumEngine.RecordCommitter() {
+            @Override
+            public void markProcessed(Object record) throws InterruptedException {
+                attempts.incrementAndGet();
+                throw interrupted;
+            }
+            @Override
+            public void markProcessed(Object record, DebeziumEngine.Offsets offsets) throws InterruptedException {
+                markProcessed(record);
+            }
+            @Override
+            public void markBatchFinished() {
+                throw new AssertionError("the interrupted acknowledgement must not flush offsets");
+            }
+            @Override
+            public DebeziumEngine.Offsets buildOffsets() {
+                return null;
+            }
+        };
+        List<ClickHouseStruct> batch = batchOf("srv.testdb.orders", "testdb", new CountingCommitter());
+        batch.forEach(r -> {
+            r.setAppliedToClickHouse(true);
+            r.setCommitter(committer);
+            r.setSourceRecord(OffsetTestSupport.event("durable"));
+        });
+        try {
+            ClickHouseBatchWriter.BatchPersistenceException failure = assertThrows(
+                    ClickHouseBatchWriter.BatchPersistenceException.class, () -> writer.persistRecords(batch));
+            assertSame(interrupted, failure.getCause().getCause());
+            assertTrue(Thread.currentThread().isInterrupted());
+            assertEquals(1, attempts.get(), "the second record must not be acknowledged");
+        } finally {
+            Thread.interrupted();
+        }
     }
 
     /**

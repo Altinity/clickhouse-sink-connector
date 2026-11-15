@@ -330,15 +330,13 @@ public class ClickHouseBatchWriter {
                         e);
             }
             if (isInterrupt(e)) {
-                // The task is being shut down. Nothing was acknowledged, so
-                // this batch is replayed from the last committed offset on the
-                // next start; treating a shutdown as a persistence failure
-                // would turn a clean stop into a restart loop.
+                // A normal return lets the inline caller continue to later
+                // rows or DDL and commit past this unsuccessful batch. Preserve
+                // cancellation, but propagate failure so replay remains possible.
                 Thread.currentThread().interrupt();
-                log.warn("Interrupted while persisting records to ClickHouse. "
-                        + "The batch was not acknowledged and will be replayed "
-                        + "from the last committed offset.", e);
-                return;
+                throw new BatchPersistenceException(
+                        "Interrupted while persisting or acknowledging a batch of records to ClickHouse"
+                                + topicsSuffix(records), e);
             }
             // Anything else means the batch did not reach ClickHouse.
             // Swallowing it here has exactly the same effect as the break
@@ -409,11 +407,11 @@ public class ClickHouseBatchWriter {
     }
 
     /**
-     * Whether this failure is an interrupt, i.e. the task is shutting down
-     * rather than failing to write.
+     * Whether cancellation appears in this failure or the thread's state.
      *
      * @param e the exception to inspect
-     * @return true when an InterruptedException appears in the cause chain
+     * @return true when an InterruptedException appears in the cause chain or
+     *         the current thread is interrupted
      */
     private static boolean isInterrupt(Throwable e) {
         for (Throwable t = e; t != null; t = t.getCause()) {

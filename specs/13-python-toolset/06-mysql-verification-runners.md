@@ -185,12 +185,13 @@ from `sink-connector/python` with that directory on `PYTHONPATH` (§3.1). A miss
 | `--mysql_user` | str | Overwritten by `resolve_credentials_from_config(--defaults_file)` (LT450-452) | **ignored** |
 | `--defaults_file` | str, `~/.my.cnf` | `[client] user/password` for the driver's own connections. Also forwarded to the MySQL side as `--defaults_file=` | yes |
 | `--mysql_database` | str | Single database. Otherwise the config `source.mysql.databases` is used | yes |
-| `--mysql_port` | str, `3306` (no `type=int`) | The driver's own connections (`int()` in `get_mysql_connection`). **Not forwarded** to the MySQL side, which connects to 3306 (D-13.06-15) | partly |
+| `--mysql_port` | str, `3306` (no `type=int`) | Used by the driver's own connections and forwarded to the MySQL side, so discovery, locking and checksum read the same source endpoint (D-13.06-15, endpoint portion fixed) | yes |
 | `--tables_regex` | str, `.` | MySQL `rlike` on `information_schema.tables.table_name` | yes |
 | `--exclude_tables_regex` | str | `and table_name not rlike '<re>'` | yes |
 | `--include_partitions_regex` | str | Keeps only tables having a partition whose name matches. The **whole table** is still checksummed (D-13.06-37) | yes, table filter only |
 | `--non_partitioned_tables_only` | flag | Tables with exactly one `information_schema.partitions` row. A one-partition partitioned table counts as non-partitioned (D-13.03-14) | yes |
-| `--clickhouse_user`, `--clickhouse_config_file`, `--clickhouse_database`, `--clickhouse_port`, `--secure` | str | Parsed, then **never used or forwarded**. The ClickHouse side uses its own defaults (`./clickhouse-client.xml`, port 9000), and the database is the MySQL name or `database_override_map` | **ignored** |
+| `--clickhouse_config_file`, `--clickhouse_port`, `--secure` | str | Forwarded so the checksum endpoint agrees with the connector fence. Existing side TLS parsing stays unchanged. A false boolean retains the side's false default. Config paths are argv values, never password contents | yes |
+| `--clickhouse_user`, `--clickhouse_database` | str | Not forwarded. Credentials come from the config file; the database is the MySQL name or `database_override_map` | **ignored** |
 | `--threads_per_table` | int, 1 | Forwarded to the MySQL side (PK-range chunks, §3.9) | yes |
 | `--chunk_size` | int, 10000 | Not forwarded (the MySQL side uses its own default 10000) | **ignored** |
 | `--threads` | int, 1 | Size of the per-table pool, i.e. the number of tables, and therefore of **locks**, in flight. Also forwarded as `--threads=N` to both sides, where it sizes a per-table pool over the one matched table | yes |
@@ -311,7 +312,24 @@ Parsing rules as built:
 
 #### 3.6.1 Legacy (`get_mysql_checksum_command`, `get_clickhouse_checksum_command`)
 
-Both builders return an **argv list**; each element below is one argv word:
+Both builders return an **argv list**; each element below is one argv word.
+The source port is forwarded as `--mysql_port`; the replica port, config path and
+truthy TLS option are forwarded as `--clickhouse_port`, `--clickhouse_config_file`
+and `--secure`. Missing attributes in older programmatic Namespace callers retain
+the sides' existing defaults. No password is added to argv. Regression tests parse
+the generated argv with the real side parsers (`test_checksum_identity.py`).
+
+The driver's `--source_columns` JSON list carries source **ordinal order**, not
+just membership. Retained replica metadata follows that list before row text and
+NULL flags are built. Source `(a=1,b=2)` must differ from replica physical
+`(b=1,a=2)`, even though the unaligned builders both produced `1#2#00`.
+Equal named values must match despite reordered replica columns. JSON names with
+commas/spaces and case-insensitive membership are preserved. The public
+`parse_source_columns` helper still returns a set by default; its explicit ordered
+mode returns a list. Standalone comparisons without source metadata retain catalog
+order. Column exclusions and intentional bounded snapshot/history scope do not change.
+
+Command templates:
 
 ```
 python db_compare/mysql_table_checksum.py --threads_per_table <N> --threads=<T>
@@ -1697,7 +1715,7 @@ LCC/PCC the ClickHouse count runners.
 | D-13.06-12 | S3 | legacy | `db_compare/top_level_table_checksum.py:496-551` | reproduced (R12: tables b, c, d computed after the failure, no verdicts, exit 1) | A raise inside the executor block waits for every submitted table to finish (locks, load), then discards their results. FM-11.02-3 wrongly says they are skipped. |
 | D-13.06-13 | S3 | packaged | `ch_sink_tools/db_compare/top_level_table_checksum.py:205-208,319-353` | reproduced (R06: all locks taken before the first unlock) | `FLUSH TABLE ... WITH READ LOCK` on every table serially, held until each result is read after all are submitted. No timeout, no escaping, connections never closed. |
 | D-13.06-14 | S3 | packaged | `ch_sink_tools/db_compare/top_level_table_checksum.py:6-10,357,360` | reproduced (R06: `NameError name 'traceback' is not defined`) | FIXED: `os` and `traceback` are imported. Test: `test_packaged_checksum_verdicts.py::TestPackagedSidesAndFailures::test_unexpected_exception_is_logged_and_exits_one`. Was: not imported, so every error and interrupt path raised NameError instead of logging. |
-| D-13.06-15 | S2 | both | `db_compare/top_level_table_checksum.py:265,321,614-635`; `ch_sink_tools/db_compare/top_level_table_checksum.py:159,186,409-430` | code-read (templates omit `--mysql_port` and every `--clickhouse_*` flag) | The driver's `--mysql_port`, `--mysql_user`, `--clickhouse_user/config_file/database/port`, `--secure` and `--chunk_size` are not forwarded. The sides use defaults and may compare a different instance. |
+| D-13.06-15 | S2 | both | `db_compare/top_level_table_checksum.py:265,321,614-635`; `ch_sink_tools/db_compare/top_level_table_checksum.py:159,186,409-430` | code-read (templates omit `--mysql_port` and every `--clickhouse_*` flag) | Endpoint/configuration portion fixed: source port and replica port/config-file/truthy TLS option are forwarded, with generated argv tested through real side parsers. Remaining legacy options `--mysql_user`, `--clickhouse_user`, `--clickhouse_database` and `--chunk_size` are not forwarded; credentials remain config-driven and the replica database remains source-name/override-map driven. |
 | D-13.06-16 | S2 | both | `db_compare/top_level_table_checksum.py:148-156`; `ch_sink_tools/db_compare/top_level_table_checksum.py:108-116` | reproduced (R10: `db1:ch_db1, db2:ch_db2` → database `db2`) | `database_override_map` uses a substring test and exact unstripped pairs. A space or partial match silently falls back to the MySQL name. A pair without `:` aborts the run. |
 | D-13.06-17 | S2 | both | `db_compare/clickhouse_table_checksum.py:241-242`; `ch_sink_tools/db_compare/clickhouse_table_checksum.py:101-102` | reproduced (R05: `["_version'", "'is_deleted"]`, columns kept) | FIXED: both sides parse space-separated words and comma lists alike (`parse_exclude_columns`; inlined in the packaged sides). Test: `test_manual_runner_recipes.py::TestExcludeColumnsForms::test_legacy_clickhouse_side_space_separated_recipe`. Was: space-separated `--exclude_columns` (as the help text and the FM-11.02-9 recipe use) excluded nothing on the ClickHouse side, and `a, b` kept ` b` on the MySQL side. |
 | D-13.06-18 | S2 | both | `db_compare/clickhouse_table_count.py:60`; `ch_sink_tools/db_compare/clickhouse_table_count.py:64` | reproduced (R05: `match(partition,'None')` → `= 0`, both copies) | FIXED: without `--include_partitions_regex` the table is counted whole; `--no_wc` counts the named table (it raised IndexError). Test: `test_manual_runner_recipes.py::TestClickHouseCount::test_legacy`. Was: the ClickHouse count without `--include_partitions_regex` printed 0 for every table. No `--dr_host` (prod against DR) option exists in either copy. |

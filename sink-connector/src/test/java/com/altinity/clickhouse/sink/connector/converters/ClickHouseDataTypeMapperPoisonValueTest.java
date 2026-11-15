@@ -270,7 +270,6 @@ public class ClickHouseDataTypeMapperPoisonValueTest {
      * Geometry branch of the same method already reads {@code remaining()}.
      */
     @Test
-    @Disabled("DEFECT FM-07.05-2: a positioned/sliced ByteBuffer binds its whole backing array")
     @DisplayName("FM-07.05-2: a ByteBuffer binds exactly its remaining bytes")
     public void byteBufferSliceBindsOnlyItsRemainingBytes() throws Exception {
         ByteBuffer slice = ByteBuffer.wrap(new byte[]{0x01, 0x02, 0x03, 0x04}, 1, 2).slice();
