@@ -24,7 +24,7 @@ uploads both modules' Surefire reports even when assertions fail. GitHub must
 have the workflow on the default branch before it can be dispatched; adding the
 file on a feature branch alone does not register a runnable manual workflow.
 
-## Interpret the result
+## Interpret the JVM result
 
 `OrderingReproductionScenarios` contains eight correctness assertions and two
 positive controls. Every method has a 20-second deadline. The class is explicitly
@@ -141,7 +141,7 @@ DDL cache refresh without restart or historical backfill. GTID wrap, UUID
 failover, clock rollback and physical multi-GiB transactions remain outside this
 four-case E2E layer; the logic reproductions above remain necessary.
 
-## Scope
+## Scope of the JVM suite
 
 These are real-code **logic reproductions**, not a full MySQL/Kafka/ClickHouse
 cluster. The restart and failover fixtures reproduce retained state and changed
