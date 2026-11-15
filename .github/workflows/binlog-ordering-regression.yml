@@ -27,5 +27,5 @@ jobs:
       - name: Run cursor, version, schema, binary and durability regressions
         run: >-
           mvn --batch-mode -pl sink-connector-lightweight -am
-          -Dtest=SourcePositionTest,BinlogOffsetVersionTest,CounterCarryResetInversionTest,SchemaCacheFailureModesTest,ClickHouseDataTypeMapperBitBytesTest,ClickHouseDataTypeMapperPoisonValueTest,MissingTargetTableEngineTest
+          -Dtest=SourcePositionTest,BinlogOffsetVersionTest,CounterCarryResetInversionTest,EngineEpochVersionTest,InRunRedeliveryVersionTest,TerminalFailureExitTest,StopPoolTerminationTest,EngineRestartFifoResetTest,StoppedEngineRetiresHandoffsTest,SchemaCacheFailureModesTest,ClickHouseDataTypeMapperBitBytesTest,ClickHouseDataTypeMapperPoisonValueTest,MissingTargetTableEngineTest
           -DfailIfNoTests=true -Dsurefire.failIfNoSpecifiedTests=false test

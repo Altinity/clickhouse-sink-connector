@@ -1,6 +1,6 @@
 # Ordering reproduction sandbox
 
-This is an opt-in, deterministic JVM suite for the six unresolved ordering
+This is an opt-in, deterministic JVM suite for the six audited ordering
 families in [the correctness audit](replication-correctness-audit.md): GTID
 ordering, mixed version domains, restart identity, source-failover identity,
 durable restart floors and Kafka Connect timestamps. Eight cases cover those
@@ -32,6 +32,11 @@ selected above; its name intentionally does not match normal `*Test`/`*IT`
 discovery. Nothing is disabled inside this suite. The six existing disabled
 regressions are invoked directly, with a fresh sequence state for each scenario;
 their assertions propagate rather than becoming expected-failure passes.
+
+The engine-restart assertion is now also enabled in normal regression discovery
+and invokes the real startup seeding before replay. Its corrected result is green;
+the transparent in-run failover assertion remains a known failure. The baseline
+counts below are historical, not a statement that every case still fails.
 
 A reproduced defect is **RED**, not a successful replication test. Compilation,
 discovery, dependency and fixture errors are harness failures, not reproductions.

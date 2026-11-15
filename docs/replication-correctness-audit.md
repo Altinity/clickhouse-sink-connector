@@ -51,12 +51,14 @@ audit. Production data reconciliation is not part of these source changes.
   without changing the persisted numeric domain. Regressions:
   `CounterCarryResetInversionTest`, including older-event replay controls.
 
-## Unresolved ordering blockers
+## Ordering audit status
 
 These are reproduced failures, not assurances that production has encountered
-every case. Existing disabled tests were invoked directly against the actual
-compiled implementation; their failures must not be hidden by a green selected
-suite. They need a compatible version/replay design, not a multiplier change.
+every case. The engine-restart case below is corrected by a seeded engine epoch;
+the other listed families remain open. Existing disabled tests were invoked
+directly against the compiled implementation; their failures must not be hidden
+by a green selected suite. They need a compatible version/replay design, not a
+multiplier change.
 
 1. **GTID tie-field wrap and UUID transition.** `SnowFlakeId.generate` retains
    only 22 transaction bits. Under one effective millisecond, GTID 4194303 then
@@ -64,10 +66,15 @@ suite. They need a compatible version/replay design, not a multiplier change.
    update loses. Transaction numbers from different UUIDs are not comparable
    either. See `GtidVersionTieBreakTest` and
    `sink-connector/src/main/java/com/altinity/clickhouse/sink/connector/common/SnowFlakeId.java`.
-2. **In-process engine restart.** An old static position mark can classify
-   previously read but never persisted rows as replay. The reproduced late
-   commit pair becomes `1757900001110000003` then `1757900001100000004` after
-   engine recreation. See `InRunRedeliveryVersionTest.redeliveredLateCommitPairKeepsCommitOrderAfterAnInProcessEngineRestart`.
+2. **In-process engine restart — corrected.** An old static position mark
+   classified previously read but never persisted rows as replay. The baseline
+   late-commit pair became `1757900001110000003` then `1757900001100000004`.
+   Startup now establishes the version floor before clearing the position gate;
+   missing or unreadable seeding stops startup. Anchor, counter, assigned-version
+   maximum and persisted encoding are unchanged. The original restart regression
+   is enabled and calls the actual startup-seeding path. `EngineEpochVersionTest`
+   also covers partial writes, DELETE/re-INSERT and failed seeds. This does not
+   establish attribution to any historical data mismatch.
 3. **GTID/anonymous numeric domains.** An anonymous transaction a minute later
    produced `1757900061000000000`, below the preceding GTID version
    `1967401312056246772`. Simply switching to sequence versions would also lose

@@ -101,6 +101,25 @@ public class DebeziumChangeEventCapture {
      */
     private static volatile DebeziumChangeEventCapture activeEngine;
 
+    /** A failed producer stop must not permit a replacement version epoch. */
+    private volatile IOException producerStopFailure;
+
+    private void requireStoppedPredecessor() {
+        if (this.producerStopFailure != null) {
+            throw new IllegalStateException("Refusing to restart the engine after its producer stop failed",
+                    this.producerStopFailure);
+        }
+        DebeziumChangeEventCapture previous = activeEngine;
+        if (previous != null && previous != this
+                && (previous.producerStopFailure != null
+                    || (previous.engine != null
+                        && !previous.singleThreadDebeziumEventExecutor.isTerminated()))) {
+            throw new IllegalStateException("Refusing to start the engine: the previous Debezium "
+                    + "producer has not terminated; complete stop() before replacing its version epoch",
+                    previous.producerStopFailure);
+        }
+    }
+
     /**
      * Whether this engine can still write and acknowledge what it handed off:
      * its worker pool exists and has not terminated AND its Debezium event
@@ -737,7 +756,13 @@ public class DebeziumChangeEventCapture {
                 onTerminalFailure(refused, props);
                 return;
             }
-            restartEngine.run();
+            try {
+                restartEngine.run();
+            } catch (RuntimeException failure) {
+                // A refused seed is a stopped replica, not a successful retry.
+                log.error("Engine recreation failed before startup completed", failure);
+                onTerminalFailure(failure, props);
+            }
             return;
         }
         onTerminalFailure(throwable, props);
@@ -800,6 +825,7 @@ public class DebeziumChangeEventCapture {
                       boolean forceStart)
             throws IOException, ClassNotFoundException {
 
+        requireStoppedPredecessor();
         // A new engine on a FIFO that still holds unacknowledged units would park
         // every one of its own units behind them forever (spec 09.01 §3.8).
         // Whose units they are decides what to do. A LIVE previous engine's pool
@@ -984,6 +1010,9 @@ public class DebeziumChangeEventCapture {
      */
     static volatile long stopPoolTerminationTimeoutMs = 60_000;
 
+    /** Bound on producer termination; mutable only for isolated lifecycle tests. */
+    static volatile long stopEventTerminationTimeoutMs = 60_000;
+
     /**
      * Wait between two attempts of a failed DDL when {@code ddl.retry=true}
      * (Spec 06.08 section 3.2 item 3). Package-private and mutable so tests do
@@ -1014,8 +1043,9 @@ public class DebeziumChangeEventCapture {
      *       bounded by {@link #stopDrainTimeoutMs};</li>
      *   <li>shut the pool down and await its termination, bounded by
      *       {@link #stopPoolTerminationTimeoutMs}. The result decides the rest:</li>
-     *   <li>if the pool terminated, close the workers' connections and reset
-     *       the FIFO: whatever is still outstanding is abandoned. It was never
+     *   <li>if the pool terminated, close the workers' connections. Reset the
+     *       FIFO only after the producer stopped successfully and this instance
+     *       still owns it: whatever is still outstanding is abandoned. It was never
      *       acknowledged, so the next engine redelivers it from the last
      *       committed offset -- redelivery, never loss or a rolled-back offset
      *       ({@code Replication.OffsetFifo.acked_never_rolled_back}). The active
@@ -1029,34 +1059,41 @@ public class DebeziumChangeEventCapture {
      *
      * @return the number of handed-off units abandoned by this call: the FIFO
      *         reset count when the pool terminated, 0 when it did not.
-     * @throws IOException If an I/O error occurs during shutdown.
+     * @throws IOException if producer shutdown fails or does not complete in time.
      */
     public int stop() throws IOException {
         // 1. Producer first. While the pool is still alive, anything the
         //    closing engine has already handed off can still be written.
+        IOException producerFailure = null;
         try {
             if (this.engine != null) {
                 this.engine.close();
             }
         } catch (Exception e) {
+            producerFailure = new IOException("Could not close the Debezium producer", e);
             log.error("Error stopping debezium engine", e);
         }
 
-        // 2. The event thread returns from engine.run() once the engine is closed.
-        //    A thread still running after the bound is logged, and the stop goes
-        //    on: the batch pool must be shut down either way.
-        boolean eventThreadStopped = true;
+        // 2. Continue safe resource cleanup on timeout, but never declare this
+        //    producer quiescent or allow a replacement epoch to start.
+        boolean eventThreadStopped = false;
         try {
-            if (this.singleThreadDebeziumEventExecutor != null) {
-                this.singleThreadDebeziumEventExecutor.shutdown();
-                eventThreadStopped = this.singleThreadDebeziumEventExecutor.awaitTermination(60, TimeUnit.SECONDS);
-            }
+            this.singleThreadDebeziumEventExecutor.shutdown();
+            eventThreadStopped = this.singleThreadDebeziumEventExecutor.awaitTermination(
+                    stopEventTerminationTimeoutMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            producerFailure = new IOException("Interrupted while stopping the Debezium producer", e);
         } catch (Exception e) {
-            log.error("Error stopping debezium event executor", e);
+            producerFailure = new IOException("Could not stop the Debezium event executor", e);
         }
-        if (!eventThreadStopped) {
-            log.error("stop(): the Debezium event thread did not terminate within 60 s; "
-                    + "continuing the stop so that the batch pool is still shut down.");
+        if (!eventThreadStopped && producerFailure == null) {
+            producerFailure = new IOException("Debezium producer did not terminate within "
+                    + stopEventTerminationTimeoutMs + " ms; replacement startup is refused");
+        }
+        this.producerStopFailure = producerFailure;
+        if (producerFailure != null) {
+            log.error("Producer stop failed; retaining engine ownership while cleaning up workers", producerFailure);
         }
 
         // 3. Drain through the still-running pool; nothing new can arrive now.
@@ -1122,7 +1159,8 @@ public class DebeziumChangeEventCapture {
         //    can still report a write. Otherwise the FIFO keeps its units, and
         //    the next setup() abandons them (step 4).
         int abandoned = 0;
-        if (poolTerminated) {
+        if (poolTerminated && producerFailure == null
+                && (activeEngine == null || activeEngine == this)) {
             abandoned = DebeziumOffsetManagement.reset();
             if (abandoned > 0) {
                 log.warn("stop(): {} handed-off batch(es) were still unacknowledged when the worker "
@@ -1139,6 +1177,9 @@ public class DebeziumChangeEventCapture {
         }
 
         Metrics.stop();
+        if (producerFailure != null) {
+            throw producerFailure;
+        }
         return abandoned;
     }
 
@@ -3851,27 +3892,25 @@ public class DebeziumChangeEventCapture {
      * connector clock plus a few seconds of head-room (spec 02.02 section 3.5).
      * The seed reads the mark table only: it never scans a target table, and
      * a re-setup after an engine retry costs the same two statements again
-     * (Invariant I14, spec 10.06). Never throws: a mark that cannot be read leaves
-     * this start unseeded, logged at ERROR, and the mark still guards every
-     * handoff through {@link #coverAssignedVersion}.
+     * (Invariant I14, spec 10.06). Starts a new version epoch only after the seed
+     * succeeds; a failed seed refuses startup before any record is dispatched.
      *
      * @param props  the Debezium properties (offset table name)
      * @param config the connector configuration
      */
-    private void seedVersionFloorFromDurableMark(Properties props, ClickHouseSinkConnectorConfig config) {
+    void seedVersionFloorFromDurableMark(Properties props, ClickHouseSinkConnectorConfig config) {
+        requireStoppedPredecessor();
         String offsetTable = props.getProperty(
                 ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME.toString());
         if (offsetTable == null || offsetTable.isBlank()) {
-            log.error("{} is not set; the version floor cannot be persisted or seeded, so a restart "
-                    + "can invert versions across the boundary (spec 02.02 section 3.5)",
-                    ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME);
-            return;
+            throw new IllegalStateException(ClickHouseSinkConnectorConfigVariables.OFFSET_STORAGE_TABLE_NAME
+                    + " is required to seed the version floor; refusing to start an unseeded engine");
         }
         VersionHighWaterMark mark = VersionHighWaterMark.forOffsetTable(this::systemConnection, offsetTable);
         this.versionHighWaterMark = mark;
         try {
             VersionHighWaterMark.Seed seed = mark.seedFloor();
-            long floor = VersionSequencer.raiseVersionFloor(seed.floorMs);
+            long floor = VersionSequencer.beginEngineRun(seed.floorMs);
             if (seed.fromMark) {
                 log.info("Version floor seeded to {} ms from {}", floor, seed.source);
             } else {
@@ -3880,9 +3919,8 @@ public class DebeziumChangeEventCapture {
                         + "written from the first handoff on", floor, seed.source);
             }
         } catch (Exception e) {
-            log.error("Could not establish the version high-water mark in {}; this start is unseeded and "
-                    + "the first handoff will retry the mark before any row is written",
-                    mark.qualifiedTableName(), e);
+            throw new IllegalStateException("Could not establish the version high-water mark in "
+                    + mark.qualifiedTableName() + "; refusing to start an unseeded engine", e);
         }
     }
 

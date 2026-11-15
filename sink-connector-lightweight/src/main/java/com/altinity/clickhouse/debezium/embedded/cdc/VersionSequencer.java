@@ -15,8 +15,9 @@ import java.util.List;
  *
  * <p>Stateless logic over process-wide mutable state; extracted from
  * {@link DebeziumChangeEventCapture} so it is owned and tested on its own. The
- * statics are shared across engine restarts within one JVM -- deliberately: see
- * {@link #sequenceMaxSourceTs} and {@link #sequenceHighWaterPosition}. The formal
+ * floor, anchor, counter and assigned-version maximum survive engine restarts
+ * within one JVM. The position gate is cleared by {@link #beginEngineRun} only
+ * after successful seeding. The formal
  * model of the floor is {@code Replication.VersionFloor}
  * (formal_specs/lean/Replication/VersionFloor.lean).</p>
  */
@@ -98,7 +99,7 @@ final class VersionSequencer {
      * <p>The mark is comparable only within one binary log: a positioned record from a
      * differently named log ({@link SourcePosition#sameLog} false -- the basename
      * changed) is a first delivery and replaces the mark (spec 01.02 section 3.1.1).
-     * It is reset by a process restart; a new run starts with an empty mark and a
+     * It is reset by every successfully seeded engine start; a new run starts with an empty mark and a
      * floor seeded from the durable high-water mark (spec 02.02 section 3.5).</p>
      */
     public static SourcePosition sequenceHighWaterPosition = null;
@@ -329,6 +330,25 @@ final class VersionSequencer {
             return sequenceMaxSourceTs;
         }
         return raiseVersionFloor(VersionHighWaterMark.sequenceFloor(highWaterVersion));
+    }
+
+    /**
+     * Starts an engine epoch after its predecessor has stopped dispatching.
+     * The seed must already cover the previous epoch's handed-off versions.
+     * Replay from the durable offset is an ordered suffix, not an isolated in-run
+     * duplicate. Keep the counter, anchor and maximum assigned sequence value.
+     *
+     * @param floorMs the successfully established restart floor
+     * @return the floor in force
+     */
+    static synchronized long beginEngineRun(long floorMs) {
+        if (floorMs <= 0) {
+            throw new IllegalArgumentException("A positive version floor is required before an engine starts");
+        }
+        long floor = raiseVersionFloor(floorMs);
+        sequenceHighWaterPosition = null;
+        sequenceHighWaterEffectiveTs = 0L;
+        return floor;
     }
 
     /**

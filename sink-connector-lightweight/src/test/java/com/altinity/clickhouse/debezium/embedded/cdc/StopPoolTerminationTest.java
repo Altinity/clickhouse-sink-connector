@@ -32,6 +32,7 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 /**
  * Pins what {@code stop()} does with the batch worker pool's await result
@@ -162,6 +163,58 @@ public class StopPoolTerminationTest {
         assertFalse(DebeziumOffsetManagement.hasUnwrittenBatches(),
                 "the FIFO is reset once the pool has terminated");
         assertNull(activeEngine(), "the active engine is cleared once the pool has terminated");
+    }
+
+    @Test
+    public void timedOutProducerBlocksReplacementEvenWithNoOutstandingBatches() throws Exception {
+        long savedTimeout = DebeziumChangeEventCapture.stopEventTerminationTimeoutMs;
+        DebeziumChangeEventCapture.stopEventTerminationTimeoutMs = 50;
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        ClickHouseBatchExecutor pool = new ClickHouseBatchExecutor(1, FACTORY);
+        wire(capture, pool, 1);
+        setActiveEngine(capture);
+        CountDownLatch entered = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        capture.singleThreadDebeziumEventExecutor.submit(() -> {
+            entered.countDown();
+            try {
+                if (!release.await(10, TimeUnit.SECONDS)) {
+                    throw new AssertionError("test dispatcher was never released");
+                }
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError(interrupted);
+            }
+        });
+        try {
+            assertTrue(entered.await(5, TimeUnit.SECONDS));
+            assertFalse(DebeziumOffsetManagement.hasUnwrittenBatches());
+            assertThrows(java.io.IOException.class, capture::stop);
+            assertTrue(pool.isTerminated());
+            assertSame(capture, activeEngine());
+            IllegalStateException sameInstance = assertThrows(IllegalStateException.class,
+                    () -> capture.seedVersionFloorFromDurableMark(new java.util.Properties(), null));
+            assertTrue(sameInstance.getMessage().contains("producer stop failed"));
+            DebeziumChangeEventCapture replacement = new DebeziumChangeEventCapture();
+            try {
+                IllegalStateException failure = assertThrows(IllegalStateException.class,
+                        () -> replacement.setup(new java.util.Properties(), null, false));
+                assertTrue(failure.getMessage().contains("previous Debezium producer has not terminated"));
+                assertThrows(IllegalStateException.class,
+                        () -> replacement.seedVersionFloorFromDurableMark(new java.util.Properties(), null));
+            } finally {
+                replacement.singleThreadDebeziumEventExecutor.shutdownNow();
+            }
+        } finally {
+            release.countDown();
+            try {
+                capture.singleThreadDebeziumEventExecutor.shutdown();
+                assertTrue(capture.singleThreadDebeziumEventExecutor.awaitTermination(5, TimeUnit.SECONDS));
+                capture.stop();
+            } finally {
+                DebeziumChangeEventCapture.stopEventTerminationTimeoutMs = savedTimeout;
+            }
+        }
     }
 
     /** A worker whose connection close is counted. It owns no real connections. */
