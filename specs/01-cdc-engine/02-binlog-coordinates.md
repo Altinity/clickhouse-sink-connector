@@ -92,8 +92,14 @@ Verification: `SourcePositionTest` covers both extractors, absent/invalid
 offset fallback, ordering/equality/hash, event/row resets and rotation;
 `BinlogOffsetVersionTest` covers wrapped header positions, older statement
 timestamps, earlier-event replay, compressed-payload row resets and restart
-floor seeding with reconstructed cursors. These preserve I1, I2 and I11 within
-the stated boundary; no version encoding or persistence format changes.
+floor seeding with reconstructed cursors. Boundary matrices exercise both sides
+of 2 GiB, 4 GiB and 8 GiB through both extraction paths. A replay matrix asserts
+that an older NULL image cannot displace the corrected value selected by version;
+a fixed-seed sequence checks repeated header wraps with older statement times.
+The `Binlog ordering regression` CI job runs these tests and `SourcePositionTest`
+on every pull request and push to `2.11.1`, without depending on an image build.
+These preserve I1, I2 and I11 within the stated boundary; no version encoding or
+persistence format changes.
 
 ### 3.2 GTID Coordination
 When Global Transaction Identifiers (GTID) are enabled:

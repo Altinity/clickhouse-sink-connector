@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Test;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -103,6 +104,94 @@ public class BinlogOffsetVersionTest {
         assertEquals(cursor, position(700_000_000L, 900_000_000L, 500_004, 1));
         assertTrue(version(TS, cursor) > before);
         assertEquals(cursor, VersionSequencer.sequenceHighWaterPosition);
+    }
+
+    private static long assignedVersion(long ts, long physicalPosition, long ordinal, boolean parsedBatch) {
+        long header = physicalPosition & 0xffff_ffffL;
+        ChangeEvent<SourceRecord, SourceRecord> change = event(header, 1024L, ordinal, 1);
+        if (!parsedBatch) {
+            return version(ts, ClickHouseStruct.getSourcePositionFromChangeEvent(change));
+        }
+        ClickHouseStruct record = new ClickHouseStruct();
+        record.setFile("mysql-bin.000010");
+        record.setPos(header);
+        record.setRow(0);
+        record.setSourceRecord(change);
+        record.setTs_ms(ts);
+        VersionSequencer.addVersion(Collections.singletonList(record));
+        return record.getSequenceNumber();
+    }
+
+    @Test
+    public void signedAndUnsignedBoundariesKeepBothVersionPathsMonotonic() {
+        for (boolean parsedBatch : new boolean[] {false, true}) {
+            for (long boundary : new long[] {1L << 31, 1L << 32, 1L << 33}) {
+                resetSequenceState();
+                long before = assignedVersion(TS, boundary - 2, 1, parsedBatch);
+                long highTimestamp = assignedVersion(TS + 10_000, boundary - 1, 2, parsedBatch);
+                long atBoundary = assignedVersion(TS + 5_000, boundary, 3, parsedBatch);
+                long afterBoundary = assignedVersion(TS, boundary + 1, 4, parsedBatch);
+                String context = "boundary=" + boundary + ", parsedBatch=" + parsedBatch;
+                assertTrue(highTimestamp > before, context);
+                assertTrue(atBoundary > highTimestamp, context + ": exact boundary, including header zero");
+                assertTrue(afterBoundary > atBoundary, context + ": first byte after boundary");
+            }
+        }
+    }
+
+    @Test
+    public void olderNullImagesCannotDisplaceCorrectedValueAfterHeaderWrap() {
+        for (boolean parsedBatch : new boolean[] {false, true}) {
+            for (long boundary : new long[] {1L << 32, 1L << 33}) {
+                for (int replayIndex : new int[] {0, 1}) {
+                    resetSequenceState();
+                    long[] times = {TS, TS + 10_000};
+                    long[] physicalPositions = {boundary - 4, boundary - 3};
+                    long winnerVersion = Long.MIN_VALUE;
+                    String winnerValue = null;
+                    for (int i = 0; i < times.length; i++) {
+                        winnerVersion = Math.max(winnerVersion,
+                                assignedVersion(times[i], physicalPositions[i], i + 1, parsedBatch));
+                    }
+                    // A different key raises the shared floor before the late update of this key.
+                    assignedVersion(TS + 20_000, boundary - 2, 3, parsedBatch);
+                    long corrected = assignedVersion(TS + 5_000, boundary + 1, 4, parsedBatch);
+                    if (corrected > winnerVersion) {
+                        winnerVersion = corrected;
+                        winnerValue = "corrected";
+                    }
+                    long replayed = assignedVersion(times[replayIndex], physicalPositions[replayIndex],
+                            replayIndex + 1, parsedBatch);
+                    if (replayed > winnerVersion) {
+                        winnerVersion = replayed;
+                        winnerValue = null;
+                    }
+                    assertEquals(corrected, winnerVersion, "the corrected image must have the greatest version");
+                    assertEquals("corrected", winnerValue, "replaying an older NULL must not restore NULL");
+                }
+            }
+        }
+    }
+
+    @Test
+    public void fixedSeedSequenceSurvivesRepeatedHeaderWrapsAndOlderEventReplay() {
+        for (boolean parsedBatch : new boolean[] {false, true}) {
+            resetSequenceState();
+            Random random = new Random(0x5eedL);
+            long previous = assignedVersion(TS + 30_000, 1025, 1, parsedBatch);
+            for (int ordinal = 2; ordinal <= 256; ordinal++) {
+                long physicalPosition = 1024L + ((long) ordinal << 27);
+                long current = assignedVersion(TS + random.nextInt(30_000), physicalPosition, ordinal, parsedBatch);
+                assertTrue(current > previous, "ordinal=" + ordinal + ", parsedBatch=" + parsedBatch);
+                if (ordinal % 16 == 0) {
+                    int earlierOrdinal = ordinal / 2;
+                    long replay = assignedVersion(TS - 10_000,
+                            1024L + ((long) earlierOrdinal << 27), earlierOrdinal, parsedBatch);
+                    assertTrue(replay < current, "older event remains replay after repeated wraps");
+                }
+                previous = current;
+            }
+        }
     }
 
     @Test
