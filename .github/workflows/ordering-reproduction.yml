@@ -1,0 +1,37 @@
+name: Ordering defect reproductions
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ordering-reproduction-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Run real-code scenarios (known ordering defects currently fail)
+        run: >-
+          timeout 180s mvn --batch-mode -pl sink-connector-lightweight -am
+          -Dtest=SourcePositionTest,OrderingReproductionScenarios
+          -DfailIfNoTests=true -Dsurefire.failIfNoSpecifiedTests=false test
+      - name: Retain individual assertions and harness errors
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ordering-reproduction-reports
+          path: |
+            sink-connector/target/surefire-reports/
+            sink-connector-lightweight/target/surefire-reports/
+          if-no-files-found: error
