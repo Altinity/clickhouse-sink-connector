@@ -100,6 +100,47 @@ They do not generate broker traffic or test Kafka delivery itself.
 | `controlLightweightLateCommitKeepsOrder` | The existing lightweight floor correctly handles an ordinary late commit | `GtidLateCommitVersionTest` |
 | `controlDurableFloorWithinFutureWindow` | A persisted horizon inside 24 hours remains the seed | `VersionHighWaterMarkClockStepTest` |
 
+## Existing checksum E2E workflow
+
+The reusable `sink-connector-lightweight-checksum-tests.yml` workflow now runs
+`test_streaming_ordering.py` alongside the seeded snapshot checksum test, sharing
+its disposable Compose stack. The pull-request pipeline already calls this
+workflow after building the lightweight image. Sysbench retains its separate
+stack. Each phase has a 1,200-second command limit; the job has a 45-minute limit.
+JUnit artifacts preserve per-case results, including failures.
+
+Four streaming cases exercise actual source writes and replica readback:
+
+- A transaction commits after another transaction on a different key. Checkpoints
+  verify visibility before and after the late commit, then a newer same-key update.
+- An uncommitted update and insert are rolled back while committed rows advance.
+  A later marker must arrive without publishing either rolled-back value.
+- The connector stops while an update, delete and insert commit. After catch-up,
+  a second restart must deliver a new marker and retain the expected live rows.
+- An added binary column is followed by an explicit connector restart, then
+  updates/inserts containing binary payloads and NULL. Source values are compared
+  with the configured base64 representation, not with an invented encoding.
+
+Every checkpoint verifies explicit committed MySQL values, exact ClickHouse
+`FINAL` live-row values, and matching nonzero checksums for exactly the scenario's
+table. UUID table names keep these writes separate from the snapshot seed data.
+The tests require loopback endpoints and verify local Docker/Compose ownership,
+published ports, the connector configuration mount, and database/container
+identity before creating tables. They are not a runner for external databases.
+
+Pure helper tests run first, without starting Docker. They check rejected endpoint
+overrides, bounded subprocess failures, missing/empty checksum coverage, unequal
+hashes, stale values and wait deadlines. These helper checks and test collection
+can run without a container daemon; they do not constitute a completed E2E run.
+Read the workflow's per-case results before declaring replication verified.
+
+The late-commit case does not establish regressing `source.ts_ms` for competing
+versions of one key: its concurrent transactions use different keys to avoid row
+locks. Restart/catch-up does not force redelivery. The binary case does not prove
+DDL cache refresh without restart or historical backfill. GTID wrap, UUID
+failover, clock rollback and physical multi-GiB transactions remain outside this
+four-case E2E layer; the logic reproductions above remain necessary.
+
 ## Scope
 
 These are real-code **logic reproductions**, not a full MySQL/Kafka/ClickHouse
