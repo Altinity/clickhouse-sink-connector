@@ -31,7 +31,11 @@ nextSequenceNumber(recordTs, position):
   effectiveTs = recordTs
   restOfMarkedEvent = position != null and sequenceHighWaterPosition != null
                       and position.sameLogPosition(sequenceHighWaterPosition)   # same file + pos, ANY row (§3.1.2, spec 01.02 §3.3)
-  if position != null and not restOfMarkedEvent
+  incompatibleCoordinates = position != null and sequenceHighWaterPosition != null
+                            and position.sameLog(sequenceHighWaterPosition)
+                            and not position.sameCoordinateKind(sequenceHighWaterPosition)
+  if incompatibleCoordinates: warn and retain mark, using raw source time
+  if position != null and not incompatibleCoordinates and not restOfMarkedEvent
      and (sequenceHighWaterPosition == null
           or not position.sameLog(sequenceHighWaterPosition)   # log basename changed (spec 01.02 §3.1.1)
           or position > sequenceHighWaterPosition):
@@ -102,6 +106,21 @@ shows the inversion of the pre-rule classification. Pinned by
 `CommitOrderVersionClampTest.rowsOfOneTransactionShareTheFirstRowsFloor()`,
 `CommitOrderVersionClampTest.laterStatementsOfACompressedTransactionShareTheFirstStatementsFloor()`
 and `CommitOrderVersionClampTest.chunksOfOneLargeStatementShareTheFloor()`.
+
+#### 3.1.3 Restart-cursor event identity
+
+When binlog restart offsets are available, the position compared above is
+`(offset.file, offset.pos, offset.event, offset.row)`, not the wrapping
+`source.pos` (spec 01.02 §3.4). `sameLogPosition` requires equal event ordinals
+as well as file and anchor, so an earlier event in the same transaction is
+replay after a later event has advanced the mark. Rows inside one event still
+share its effective-time floor; every delivery still increments the counter,
+including compressed-payload statements whose offset row resets. No version
+is cached or reused by cursor equality. Cross-transaction order follows the
+next BEGIN anchor when that anchor has not itself wrapped. A process restart
+reconstructs the same cursor from the persisted raw Debezium offset, clears
+the in-memory mark and seeds the existing durable version floor (§3.5); no
+wrap counter or new persisted representation is introduced.
 
 ### 3.2 Who enters the sequence, and who raises the floor
 `handleChangeEventBatch` calls `nextSequenceNumber` for **row records and DDL records only**. A **control record** — a heartbeat or a transaction-metadata record, recognised by `isControlRecord` (spec 01.06 §3.1) — produces no ClickHouse row, needs no `_version`, and is **not** run through the sequence: it leaves `sequenceMaxSourceTs`, `sequenceHighWaterPosition`, `sequenceAnchorTs` and `sequenceNumber` exactly as they were.

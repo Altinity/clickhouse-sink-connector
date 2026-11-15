@@ -73,10 +73,11 @@ final class VersionSequencer {
      * High-water mark of the source-log position ({@link SourcePosition}) versioned in
      * this run.
      *
-     * <p>Debezium delivers events in log order, and log order IS commit order. The only
-     * time a lower position follows a higher one is a redelivery after an offset rewind.
-     * The mark therefore separates the two cases the version sequence has to treat
-     * differently:</p>
+     * <p>Debezium delivers events in log order, and log order IS commit order.
+     * MySQL positions prefer the restart anchor/event/row cursor, which survives
+     * header-position wrap inside a transaction (spec 01.02 section 3.4). An
+     * anchor that itself wraps is still ambiguous with replay; no wrap is inferred.
+     * Within comparable coordinates the mark separates the two cases:</p>
      * <ul>
      *   <li><b>first delivery</b> (position above the mark): the event committed after
      *   every event already versioned, so its {@code _version} must rank above all of
@@ -228,9 +229,17 @@ final class VersionSequencer {
         // through to the redelivery branch and kept their raw statement time
         // while the first statement's rows had been floored: an INSERT
         // out-ranked its own UPDATE and DELETE (spec 02.02 section 3.1.2).
+        boolean incompatibleCoordinates = position != null && sequenceHighWaterPosition != null
+                && position.sameLog(sequenceHighWaterPosition)
+                && !position.sameCoordinateKind(sequenceHighWaterPosition);
+        if (incompatibleCoordinates) {
+            log.warn("Source coordinate kind changed from {} to {}; keeping the high-water mark and "
+                    + "raw source timestamp because restart anchors and event-header positions are not comparable",
+                    sequenceHighWaterPosition, position);
+        }
         boolean restOfMarkedEvent = position != null && sequenceHighWaterPosition != null
                 && position.sameLogPosition(sequenceHighWaterPosition);
-        if (position != null && !restOfMarkedEvent
+        if (position != null && !incompatibleCoordinates && !restOfMarkedEvent
                 && (sequenceHighWaterPosition == null
                         || !position.sameLog(sequenceHighWaterPosition)
                         || position.compareTo(sequenceHighWaterPosition) > 0)) {

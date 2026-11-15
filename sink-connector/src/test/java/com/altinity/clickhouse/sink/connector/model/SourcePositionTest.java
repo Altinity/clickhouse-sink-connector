@@ -7,6 +7,11 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import io.debezium.engine.ChangeEvent;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Map;
+import org.apache.kafka.connect.source.SourceRecord;
 import org.apache.kafka.connect.data.Schema;
 import org.apache.kafka.connect.data.SchemaBuilder;
 import org.apache.kafka.connect.data.Struct;
@@ -195,6 +200,145 @@ public class SourcePositionTest {
         ClickHouseStruct pg = new ClickHouseStruct();
         pg.setLsn(99L);
         assertEquals(SourcePosition.ofLsn(99L), pg.getSourcePosition());
+    }
+
+    @Test
+    public void restartCursorOrdersEventsDespiteWrappedHeaderPositions() {
+        SourcePosition first = ClickHouseStruct.getSourcePositionFromChangeEvent(
+                binlogEvent(900_000_100L, 900_000_000L, 4L, 1L));
+        SourcePosition second = ClickHouseStruct.getSourcePositionFromChangeEvent(
+                binlogEvent(900_000_300L, 900_000_000L, 6L, 1L));
+        SourcePosition wrapped = ClickHouseStruct.getSourcePositionFromChangeEvent(
+                binlogEvent(700_000_000L, 900_000_000L, 500_004L, 1L));
+        assertTrue(first.compareTo(second) < 0);
+        assertTrue(second.compareTo(wrapped) < 0, "offset event ordinal survives header wrap");
+        assertFalse(first.sameLogPosition(second), "an anchor contains multiple events");
+        SourcePosition replay = ClickHouseStruct.getSourcePositionFromChangeEvent(
+                binlogEvent(700_000_000L, 900_000_000L, 500_004L, 1L));
+        assertEquals(wrapped, replay, "restart reconstruction needs no wrap state");
+        assertEquals(wrapped.hashCode(), replay.hashCode());
+        assertNotEquals(first, second);
+    }
+
+    @Test
+    public void instanceAndStaticExtractorsUseTheSameRestartCursor() {
+        ChangeEvent<SourceRecord, SourceRecord> event =
+                binlogEvent(700_000_000L, 900_000_000L, 500_004L, 1L);
+        ClickHouseStruct record = new ClickHouseStruct();
+        record.setFile("mysql-bin.000010");
+        record.setPos(700_000_000L);
+        record.setRow(0);
+        record.setSourceRecord(event);
+        assertEquals(ClickHouseStruct.getSourcePositionFromChangeEvent(event), record.getSourcePosition());
+        assertNotEquals(SourcePosition.ofBinlog("mysql-bin.000010", 700_000_000L, 0),
+                record.getSourcePosition(), "a restart anchor is not a header coordinate");
+    }
+
+    @Test
+    public void offsetRowsResetOnlyWithinAnOffsetEvent() {
+        SourcePosition row = ClickHouseStruct.getSourcePositionFromChangeEvent(
+                binlogEvent(1000L, 900L, 4L, 8L));
+        SourcePosition reset = ClickHouseStruct.getSourcePositionFromChangeEvent(
+                binlogEvent(1000L, 900L, 4L, 1L));
+        SourcePosition next = ClickHouseStruct.getSourcePositionFromChangeEvent(
+                binlogEvent(1000L, 900L, 6L, 1L));
+        assertTrue(row.sameLogPosition(reset), "compressed payload keeps the event ordinal");
+        assertFalse(row.sameLogPosition(next));
+        assertTrue(row.compareTo(next) < 0);
+    }
+
+    private static ChangeEvent<SourceRecord, SourceRecord> binlogEvent(
+            long headerPos, long anchor, long event, long row) {
+        return changeEvent(mysqlSource("mysql-bin.000010", headerPos, 0),
+                Map.of("file", "mysql-bin.000010", "pos", anchor, "event", event, "row", row));
+    }
+
+    private static ChangeEvent<SourceRecord, SourceRecord> changeEvent(Struct source, Map<String, ?> offset) {
+        Schema schema = SchemaBuilder.struct().field(SinkRecordColumns.SOURCE, source.schema()).build();
+        SourceRecord record = new SourceRecord(Collections.singletonMap("server", "example"), offset,
+                "example.events", schema, new Struct(schema).put(SinkRecordColumns.SOURCE, source));
+        return new ChangeEvent<SourceRecord, SourceRecord>() {
+            public SourceRecord key() { return null; }
+            public SourceRecord value() { return record; }
+            public String destination() { return record.topic(); }
+            public Integer partition() { return null; }
+        };
+    }
+
+    @Test
+    public void invalidOrAbsentOffsetsKeepTheExistingEnvelopeFallback() {
+        Struct source = mysqlSource("mysql-bin.000010", 1234L, 3);
+        SourcePosition expected = SourcePosition.ofBinlog("mysql-bin.000010", 1234L, 3);
+        assertFallback(source, null, expected);
+        assertFallback(source, Collections.emptyMap(), expected);
+        Map<String, Object> valid = Map.of("file", "mysql-bin.000010", "pos", 900L, "event", 4L, "row", 1L);
+        for (String key : valid.keySet()) {
+            Map<String, Object> missing = new HashMap<>(valid);
+            missing.remove(key);
+            if (key.equals("file") || key.equals("pos")) {
+                assertFallback(source, missing, expected);
+            }
+            for (Object invalid : new Object[] {key.equals("file") ? "" : "4", -1L, 1.5, null}) {
+                Map<String, Object> malformed = new HashMap<>(valid);
+                malformed.put(key, invalid);
+                assertFallback(source, malformed, expected);
+            }
+        }
+        assertFallback(source, Map.of("file", "", "pos", 900L), expected);
+        assertFallback(source, Map.of("file", "mysql-bin.000010", "pos", 0L), expected);
+    }
+
+    private static void assertFallback(Struct source, Map<String, ?> offset, SourcePosition expected) {
+        ChangeEvent<SourceRecord, SourceRecord> event = changeEvent(source, offset);
+        assertEquals(expected, ClickHouseStruct.getSourcePositionFromChangeEvent(event));
+        ClickHouseStruct record = new ClickHouseStruct();
+        record.setFile("mysql-bin.000010");
+        record.setPos(1234L);
+        record.setRow(3);
+        record.setSourceRecord(event);
+        assertEquals(expected, record.getSourcePosition());
+    }
+
+    @Test
+    public void omittedOffsetComponentsMeanZeroAndIntegralTypesAreAccepted() {
+        SourcePosition omitted = ClickHouseStruct.getSourcePositionFromChangeEvent(changeEvent(
+                mysqlSource("mysql-bin.000010", 1000L, 0), Map.of("file", "mysql-bin.000010", "pos", 900)));
+        SourcePosition zero = ClickHouseStruct.getSourcePositionFromChangeEvent(binlogEvent(1000, 900, 0, 0));
+        assertEquals(zero, omitted);
+        assertEquals(zero.hashCode(), omitted.hashCode());
+        SourcePosition later = ClickHouseStruct.getSourcePositionFromChangeEvent(changeEvent(
+                mysqlSource("mysql-bin.000010", 1000L, 0),
+                Map.of("file", "mysql-bin.000010", "pos", 900L, "event", 1, "row", 1)));
+        assertTrue(later.compareTo(zero) > 0);
+        assertFalse(later.sameLogPosition(zero));
+        assertFalse(later.sameCoordinateKind(SourcePosition.ofBinlog("mysql-bin.000010", 900L, 0)));
+    }
+
+    @Test
+    public void offsetMetadataDoesNotReplaceAPostgresLsn() {
+        Schema schema = SchemaBuilder.struct().field(SinkRecordColumns.LSN, Schema.INT64_SCHEMA).build();
+        ChangeEvent<SourceRecord, SourceRecord> event = changeEvent(
+                new Struct(schema).put(SinkRecordColumns.LSN, 42L),
+                Map.of("file", "unrelated.000001", "pos", 900L));
+        assertEquals(SourcePosition.ofLsn(42L), ClickHouseStruct.getSourcePositionFromChangeEvent(event));
+        ClickHouseStruct record = new ClickHouseStruct();
+        record.setLsn(42L);
+        record.setSourceRecord(event);
+        assertEquals(SourcePosition.ofLsn(42L), record.getSourcePosition());
+    }
+
+    @Test
+    public void mixedCoordinateKindsStillHaveATransitiveTotalOrder() {
+        SourcePosition low = ClickHouseStruct.getSourcePositionFromChangeEvent(binlogEvent(1000, 900, 4, 1));
+        SourcePosition high = ClickHouseStruct.getSourcePositionFromChangeEvent(binlogEvent(1100, 900, 6, 1));
+        SourcePosition legacy = SourcePosition.ofBinlog("mysql-bin.000010", 10_000L, 0);
+        assertTrue(legacy.compareTo(low) < 0);
+        assertTrue(low.compareTo(high) < 0);
+        assertTrue(legacy.compareTo(high) < 0);
+        SourcePosition rotated = ClickHouseStruct.getSourcePositionFromChangeEvent(changeEvent(
+                mysqlSource("mysql-bin.000011", 500L, 0),
+                Map.of("file", "mysql-bin.000011", "pos", 400L, "event", 1L, "row", 1L)));
+        assertTrue(rotated.compareTo(high) > 0);
     }
 
     /**
