@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.data.Bits;
@@ -87,7 +88,7 @@ public class ClickHouseDataTypeMapperBitEndianTest {
         Recorder rec = new Recorder();
         boolean handled = ClickHouseDataTypeMapper.convert(
                 Schema.Type.BYTES, Bits.LOGICAL_NAME, littleEndianFromDebezium, 1,
-                proxyFor(rec), new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                proxyFor(rec), new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                 ClickHouseDataType.String, ZoneId.of("UTC"));
         Assert.assertTrue("BYTES/Bits must be handled", handled);
         Assert.assertEquals("exactly one bind call", 1, rec.bindCalls);
@@ -150,7 +151,7 @@ public class ClickHouseDataTypeMapperBitEndianTest {
         byte[] payload = {0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08};
         boolean handled = ClickHouseDataTypeMapper.convert(
                 Schema.Type.BYTES, null, ByteBuffer.wrap(payload), 1,
-                proxyFor(rec), new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                proxyFor(rec), new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                 ClickHouseDataType.String, ZoneId.of("UTC"));
         Assert.assertTrue("BYTES/blob must be handled", handled);
         Assert.assertEquals("BLOB bytes must keep source order",

@@ -10,8 +10,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 /**
- * The high-water position of the version sequence is a process-wide static that
- * no engine start resets (spec 02.02 section 2). Two failure modes follow from it
+ * Regression for the seeded in-process restart boundary, plus the unresolved
+ * transparent in-run failover case. The baseline kept the position gate across
+ * engine recreation (spec 02.02 section 2). Two failure modes followed from it
  * (spec 02.02 section 7 FM-02.02-6, spec 02.04 section 7 FM-02.04-2):
  *
  * <ul>
@@ -46,8 +47,6 @@ public class InRunRedeliveryVersionTest {
     }
 
     @Test
-    @Disabled("DEFECT FM-02.04-2: an engine recreated in the same JVM keeps the high-water position, "
-            + "so a redelivered late commit that was never written is versioned below the commit it follows")
     @DisplayName("after an in-process engine restart, a redelivered late-commit pair keeps commit order")
     public void redeliveredLateCommitPairKeepsCommitOrderAfterAnInProcessEngineRestart() {
         version(TS - 10_000, "mysql-bin.000007", 50);
@@ -57,13 +56,13 @@ public class InRunRedeliveryVersionTest {
         long t1 = version(TS + 100, "mysql-bin.000007", 200);
         assertTrue(t1 > t2, "first delivery keeps commit order (spec 02.02 section 3.1)");
         // The engine read one more event before the failure: the mark is past both.
-        version(TS + 120, "mysql-bin.000007", 300);
+        long lastAssigned = version(TS + 120, "mysql-bin.000007", 300);
 
-        // The source connection drops before either unit is written; the stopped
-        // engine's units are retired (spec 09.01 section 3.8) and the completion
-        // callback recreates the engine in this JVM. The statics are NOT reset --
-        // that is the production path. Debezium redelivers both from the last
-        // committed offset.
+        // The source connection drops before either unit is written. Engine
+        // recreation must call the real startup seeding path before replay,
+        // preserving the counter/anchor while replacing the old position gate.
+        EngineEpochVersionTest.seedEngine(lastAssigned
+                + VersionHighWaterMark.HORIZON_HEADROOM_MS * VersionHighWaterMark.VERSION_MULTIPLIER);
         long t2Again = version(TS + 110, "mysql-bin.000007", 100);
         long t1Again = version(TS + 100, "mysql-bin.000007", 200);
 

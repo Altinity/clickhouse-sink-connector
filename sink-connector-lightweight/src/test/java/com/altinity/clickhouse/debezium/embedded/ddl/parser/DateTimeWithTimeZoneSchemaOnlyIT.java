@@ -268,6 +268,12 @@ public class DateTimeWithTimeZoneSchemaOnlyIT {
         defaultProps.setProperty("auto.create.tables", "false");
         defaultProps.setProperty("enable.snapshot.ddl", "false");
 
+        // The pre-created ClickHouse columns declare no zone, so ClickHouse reads and shows them in the server zone
+        // (America/Chicago, from config.xml). The connector formats values in clickhouse.datetime.timezone, so that key
+        // names the server zone explicitly. The MySQL rows are America/Chicago wall time (database.connectionTimeZone
+        // in config.yml).
+        defaultProps.setProperty("clickhouse.datetime.timezone", "America/Chicago");
+
         defaultProps.setProperty("database.hostname", mySqlContainer.getHost());
         defaultProps.setProperty("database.port", String.valueOf(mySqlContainer.getFirstMappedPort()));
         defaultProps.setProperty("database.user", "root");

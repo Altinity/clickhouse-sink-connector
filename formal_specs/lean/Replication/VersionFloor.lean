@@ -51,7 +51,7 @@ def seqStart : Nat := 1000000000
 /-- `SEQUENCE_START_INITIAL`: the counter seed for the first record after a start. -/
 def seqStartInitial : Nat := 500000000
 
-/-- The five statics of `nextSequenceNumber`. Log positions are abstracted to
+/-- The six statics of `nextSequenceNumber`. Log positions are abstracted to
     naturals ordered like `SourcePosition.compareTo` WITHOUT the row index: a
     position is the binlog EVENT's position, and every row of that event -- under
     `binlog_transaction_compression` every row of every statement of the whole
@@ -63,10 +63,11 @@ structure SeqState where
   counter : Nat        -- sequenceNumber
   mark    : Option Nat -- sequenceHighWaterPosition
   markEff : Nat        -- sequenceHighWaterEffectiveTs: what the mark's first row received
+  maxVersion : Nat     -- maximum assigned sequence-domain value in this counter lifecycle
 deriving Repr, DecidableEq
 
 /-- The state of a freshly started JVM. -/
-def initial : SeqState := ⟨0, 0, seqStart, none, 0⟩
+def initial : SeqState := ⟨0, 0, seqStart, none, 0, 0⟩
 
 /-- A record that reaches the sequence: its source timestamp (ms) and its log
     position, `none` for a row without coordinates. -/
@@ -123,8 +124,18 @@ def counter0 (s : SeqState) : Nat :=
 def resets (s : SeqState) (r : Rec) : Bool :=
   decide ((effTs s r - anchor0 s r) / 1000 > 1)
 
-def nextCounter (s : SeqState) (r : Rec) : Nat :=
+/-- An unset anchor also clears the assigned-version maximum, as Java initialization does. -/
+def maxVersion0 (s : SeqState) : Nat :=
+  if s.anchor = 0 then 0 else s.maxVersion
+
+/-- Preserve the existing reset proposal, retaining carry for timestamp-floor-eligible deliveries. -/
+def proposedCounter (s : SeqState) (r : Rec) : Nat :=
   if resets s r then seqStart else counter0 s + 1
+
+def nextCounter (s : SeqState) (r : Rec) : Nat :=
+  if isFirst s r || isSame s r then
+    max (proposedCounter s r) (maxVersion0 s + 1 - effTs s r * M)
+  else proposedCounter s r
 
 /-- The `_version` returned by `nextSequenceNumber`. -/
 def version (s : SeqState) (r : Rec) : Nat :=
@@ -136,7 +147,8 @@ def step (s : SeqState) (r : Rec) : SeqState :=
     anchor  := if resets s r then effTs s r else anchor0 s r,
     counter := nextCounter s r,
     mark    := if isFirst s r then r.pos else s.mark,
-    markEff := if isFirst s r then effTs s r else s.markEff }
+    markEff := if isFirst s r then effTs s r else s.markEff,
+    maxVersion := max (maxVersion0 s) (version s r) }
 
 /-! The pre-rule sequence, for the counterexample only: same formula, `oldEffTs`. -/
 def oldResets (s : SeqState) (r : Rec) : Bool :=
@@ -150,7 +162,8 @@ def oldStep (s : SeqState) (r : Rec) : SeqState :=
     anchor  := if oldResets s r then oldEffTs s r else anchor0 s r,
     counter := oldNextCounter s r,
     mark    := if isFirst s r then r.pos else s.mark,
-    markEff := if isFirst s r then oldEffTs s r else s.markEff }
+    markEff := if isFirst s r then oldEffTs s r else s.markEff,
+    maxVersion := max (maxVersion0 s) (oldVersion s r) }
 
 /-- `VersionSequencer.seedVersionFloor(v)`: raise the floor to
     `v / 1_000_000 + 1` (never lower it). -/
@@ -228,9 +241,41 @@ theorem compressed_transaction_inverts_without_same_event_rule :
     vUpd < vIns := by
   decide
 
-theorem nextCounter_pos (s : SeqState) (r : Rec) : 1 ≤ nextCounter s r := by
-  unfold nextCounter
+theorem proposedCounter_pos (s : SeqState) (r : Rec) : 1 ≤ proposedCounter s r := by
+  unfold proposedCounter
   split <;> simp [seqStart]
+
+theorem nextCounter_pos (s : SeqState) (r : Rec) : 1 ≤ nextCounter s r := by
+  have h := proposedCounter_pos s r
+  unfold nextCounter
+  split
+  · exact Nat.le_trans h (Nat.le_max_left _ _)
+  · exact h
+
+/-- Counter carry cannot make a proven first delivery tie or rank below the assigned maximum.
+    This holds without any bound on the preceding window's row count (spec 02.03 §3.2.1). -/
+theorem first_delivery_above_assigned_maximum (s : SeqState) (r : Rec)
+    (h : isFirst s r = true) : maxVersion0 s < version s r := by
+  have hc : maxVersion0 s + 1 - effTs s r * M ≤ nextCounter s r := by
+    simp only [nextCounter, h, Bool.true_or, if_true]
+    exact Nat.le_max_right _ _
+  unfold version
+  omega
+
+/-- The remaining rows/statements of a marked event also preserve counter carry. -/
+theorem same_event_above_assigned_maximum (s : SeqState) (r : Rec)
+    (h : isSame s r = true) : maxVersion0 s < version s r := by
+  have hc : maxVersion0 s + 1 - effTs s r * M ≤ nextCounter s r := by
+    simp only [nextCounter, h, Bool.or_true, if_true]
+    exact Nat.le_max_right _ _
+  unfold version
+  omega
+
+/-- Older-event replays and positionless rows keep their original counter proposal. -/
+theorem older_event_counter_unchanged (s : SeqState) (r : Rec)
+    (h : isFirst s r = false) (hs : isSame s r = false) :
+    nextCounter s r = proposedCounter s r := by
+  simp [nextCounter, h, hs]
 
 /-- A first delivery is versioned at least `floor * M + 1`. -/
 theorem version_ge_floor (s : SeqState) (r : Rec) (h : isFirst s r = true) :

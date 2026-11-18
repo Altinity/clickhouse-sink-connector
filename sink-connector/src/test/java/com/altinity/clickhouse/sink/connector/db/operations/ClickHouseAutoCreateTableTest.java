@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.clickhouse.data.ClickHouseDataType;
 
@@ -23,7 +24,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
     @BeforeEach
     public void setUp() {
         columnToDataTypesMap = getExpectedColumnToDataTypesMap();
-        config = new ClickHouseSinkConnectorConfig(new HashMap<>());
+        config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()));
     }
 
 
@@ -35,7 +36,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", "employees",
-                createFields(), this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                createFields(), this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
         System.out.println("QUERY" + query);
         Assert.assertTrue(query.equalsIgnoreCase("CREATE TABLE `employees`.`auto_create_table`(`customerName` String,`occupation` String,`quantity` Int32,`amount_1` Float32,`amount` Float64,`employed` Bool,`blob_storage` String,`blob_storage_scale` Decimal,`json_output` JSON,`max_amount` Float64,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) PRIMARY KEY(customerName) ORDER BY(customerName)"));
     }
@@ -51,7 +52,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
         String query = act.createTableSyntax(null, "auto_create_table", "employees", createFields(),
-                this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         String expectedQuery = "CREATE TABLE `employees`.`auto_create_table`(`customerName` String,`occupation` String,`quantity` Int32,`amount_1` Float32,`amount` Float64,`employed` Bool,`blob_storage` String,`blob_storage_scale` Decimal,`json_output` JSON,`max_amount` Float64,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) " + ALL_COLUMNS_ORDER_BY;
         Assert.assertTrue(query, query.equalsIgnoreCase(expectedQuery));
@@ -67,7 +68,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
         ClickHouseAutoCreateTable act = new ClickHouseAutoCreateTable();
 
         String query = act.createTableSyntax(primaryKeys, "auto_create_table", "customers", createFields(),
-                this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                this.columnToDataTypesMap, false, false, null,new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         String expectedQuery = "CREATE TABLE `customers`.`auto_create_table`(`customerName` String,`occupation` String,`quantity` Int32,`amount_1` Float32,`amount` Float64,`employed` Bool,`blob_storage` String,`blob_storage_scale` Decimal,`json_output` JSON,`max_amount` Float64,`_sign` Int8,`_version` UInt64) ENGINE = ReplacingMergeTree(_version) " + ALL_COLUMNS_ORDER_BY;
         Assert.assertTrue(query, query.equalsIgnoreCase(expectedQuery));
@@ -99,7 +100,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
     public void testKeylessTableOrdersByAllColumns() {
         String query = new ClickHouseAutoCreateTable().createTableSyntax(null, "audit", "db",
                 keylessFields(false), keylessColumns(), true, false, null,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         Assert.assertFalse(
                 "ORDER BY tuple() collapses every row of a ReplacingMergeTree into one: " + query,
@@ -119,7 +120,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
     public void testKeylessTableWithNullableColumnEnablesNullableKey() {
         String query = new ClickHouseAutoCreateTable().createTableSyntax(null, "audit", "db",
                 keylessFields(true), keylessColumns(), true, false, null,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         Assert.assertTrue(query, query.contains("`b` Nullable(Int32)"));
         Assert.assertTrue(query, query.contains("ORDER BY(`a`,`b`)"));
@@ -134,7 +135,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
         props.put("databases.db.tables.audit.settings", "index_granularity=4096");
         String query = new ClickHouseAutoCreateTable().createTableSyntax(null, "audit", "db",
                 keylessFields(true), keylessColumns(), true, false, null,
-                new ClickHouseSinkConnectorConfig(props));
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)));
 
         Assert.assertTrue(query, query.endsWith(" SETTINGS index_granularity=4096,allow_nullable_key=1"));
 
@@ -142,7 +143,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
         already.put("databases.db.tables.audit.settings", "allow_nullable_key=1");
         String query2 = new ClickHouseAutoCreateTable().createTableSyntax(null, "audit", "db",
                 keylessFields(true), keylessColumns(), true, false, null,
-                new ClickHouseSinkConnectorConfig(already));
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(already)));
         Assert.assertTrue(query2, query2.endsWith(" SETTINGS allow_nullable_key=1"));
         Assert.assertEquals("the setting must not be duplicated: " + query2,
                 query2.indexOf("allow_nullable_key"), query2.lastIndexOf("allow_nullable_key"));
@@ -155,7 +156,7 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
         primaryKeys.add("a");
         String query = new ClickHouseAutoCreateTable().createTableSyntax(primaryKeys, "audit", "db",
                 keylessFields(true), keylessColumns(), true, false, null,
-                new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         Assert.assertTrue(query, query.contains("PRIMARY KEY(a) ORDER BY(a)"));
         Assert.assertFalse(query, query.contains("allow_nullable_key"));
@@ -175,12 +176,12 @@ public class ClickHouseAutoCreateTableTest extends com.altinity.clickhouse.sink.
                 new Field("is_deleted", 1, Schema.OPTIONAL_INT16_SCHEMA),
         };
         Map<String, String> types = new ClickHouseTableOperationsBase()
-                .getColumnNameToCHDataTypeMapping(fields, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                .getColumnNameToCHDataTypeMapping(fields, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
         ArrayList<String> primaryKey = new ArrayList<>();
         primaryKey.add("id");
 
         String query = new ClickHouseAutoCreateTable().createTableSyntax(primaryKey, "flags", "db",
-                fields, types, true, false, null, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+                fields, types, true, false, null, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
 
         Assert.assertTrue("the source column keeps its name and nullability: " + query,
                 query.contains("`is_deleted` Nullable(Int16)"));

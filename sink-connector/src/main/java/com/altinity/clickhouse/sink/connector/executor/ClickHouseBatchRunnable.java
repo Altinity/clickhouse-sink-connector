@@ -4,6 +4,8 @@ import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.ClickHouseErrorClassifier;
 import com.altinity.clickhouse.sink.connector.common.Metrics;
+import com.altinity.clickhouse.sink.connector.common.MissingTargetTableException;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.db.*;
 import com.altinity.clickhouse.sink.connector.db.batch.GroupInsertQueryWithBatchRecords;
@@ -1062,29 +1064,18 @@ public class ClickHouseBatchRunnable implements Runnable {
     }
 
     /**
-     * Returns the ClickHouse server timezone.
+     * Returns the ClickHouse-side zone the sink writes DateTime values in: the configured
+     * {@code clickhouse.datetime.timezone}, which is mandatory (Spec 07.03 section 3.1.2). The config
+     * constructor refuses an unset value, and an unresolvable one throws here. The server's zone is never read.
      *
      * @param config the connector configuration
-     * @return a ZoneId representing the server timezone
+     * @return the configured ClickHouse zone
      */
     public ZoneId getServerTimeZone(ClickHouseSinkConnectorConfig config) {
         String userProvidedTimeZone = config.getString(
                 ClickHouseSinkConnectorConfigVariables.
                         CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        // Validate if timezone string is valid.
-        ZoneId userProvidedTimeZoneId = null;
-        try {
-            if (!userProvidedTimeZone.isEmpty()) {
-                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-            }
-        } catch (Exception e) {
-            log.error("**** Error parsing user provided timezone:" +
-                    userProvidedTimeZone + e.toString());
-        }
-        if (userProvidedTimeZoneId != null) {
-            return userProvidedTimeZoneId;
-        }
-        return new DBMetadata(config).getServerTimeZone(systemConnection());
+        return TimeZoneResolver.clickHouseZone(userProvidedTimeZone);
     }
 
     /**
@@ -1250,6 +1241,20 @@ public class ClickHouseBatchRunnable implements Runnable {
                 writer.updateColumnNameToDataTypeMap();
             if (writer == null ||
                     writer.wasTableMetaDataRetrieved() == false) {
+                // A table that the catalog positively reports missing can never
+                // settle by retrying. Left as a retry it fills the handoff FIFO
+                // and trips the hard cap, which reads as a performance problem
+                // and names neither the table nor the cause (spec 08.07
+                // section 3.1). Fail the batch so its offset is not committed
+                // and the records replay once the table exists.
+                if (writer != null && writer.isTargetTableAbsent()) {
+                    throw new MissingTargetTableException(String.format(
+                            "Target table %s.%s does not exist in ClickHouse. Create the table, "
+                                    + "or enable auto.create.tables, to resume replication. Failed the "
+                                    + "batch so its offset is not committed; the records replay from "
+                                    + "the last committed offset.",
+                            writer.getDatabaseName(), writer.getTableName()));
+                }
                 log.error(String.format("*** TABLE METADATA not retrieved for " +
                                 "Database(%s), table(%s), retrying on next attempt",
                         writer != null ? writer.getDatabaseName() : databaseName,

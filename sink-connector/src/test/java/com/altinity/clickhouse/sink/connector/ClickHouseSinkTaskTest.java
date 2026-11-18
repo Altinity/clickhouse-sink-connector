@@ -117,7 +117,7 @@ public class ClickHouseSinkTaskTest {
     private static ClickHouseSinkConnectorConfig config() {
         Map<String, String> props = new HashMap<>();
         ClickHouseSinkConnectorConfig.setDefaultValues(props);
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static ClickHouseSinkTask taskWith(ScheduledFuture<?> runnableFuture,

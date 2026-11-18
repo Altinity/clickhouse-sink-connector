@@ -213,6 +213,16 @@ Stdlib modules with a version floor:
 
 Unused or missing: no declared distribution is unused. Missing: `pandas` from `[mysql]`, and the test and build tools.
 
+Packaging floor and pinned runtime set (contract, this revision). `pyproject.toml` declares `requires-python = ">=3.9"`,
+the floor of the stdlib `zoneinfo` module that the checksum, loader and test modules import. `tzdata` is a declared runtime
+dependency, because slim Python images ship no zone data for `zoneinfo`. `requirements.txt` pins every runtime distribution
+with `==` to the versions the unit suites pass on under Python 3.9.2 (the floor). `install.sh` is unchanged. Measured on
+Python 3.8.20: installing the project refuses with `Package 'ch-sink-tools' requires a different Python: 3.8.20 not
+in '>=3.9'`, before any dependency is fetched; the pinned set has no 3.8 release of `clickhouse-driver==0.2.11`, so
+`pip install -r requirements.txt` fails at resolution and installs nothing. Before this revision the same interpreter was
+accepted and failed at `import zoneinfo`. The floor and the exact-pin rule are checked by `tests/test_packaging_floor.py`.
+pytest stays unpinned (test-only).
+
 ### 3.6 Import-time behaviour (measured)
 
 - **All modules, full venv** (Python 3.12.11; antlr4 4.11.1, PyMySQL 1.2.3, psycopg2-binary 2.9.13, SQLAlchemy 2.1.1, clickhouse-driver 0.2.11, PyYAML 6.0.3, pandas 2.3.3). All 53 non-test, non-generated modules of both trees import cleanly, each in a fresh subprocess with the root on `sys.path` (§5 R5). That is 35 packaged and 18 legacy, counting package `__init__`s.
@@ -664,7 +674,7 @@ Existing tests that pin parts of this contract:
 
 - `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestPackagedLoaderRedaction::test_logged_command_is_redacted` (skipped, DEFECT; packaged copy).
 - `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestLegacyLoaderFailurePath::test_logged_command_is_redacted` (legacy copy).
-- `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestUnixTimezoneFromMysqlTimezone::test_unknown_offset_falls_back_to_utc` pins the **legacy** fallback only.
+- `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestUnixTimezoneFromMysqlTimezone::test_unknown_offset_is_refused` pins the refusal of an unknown offset (it was the UTC fallback before FM-13.04-27).
 - `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestDdlConversionAntlr::test_returns_ddl_and_columns` (legacy translator).
 - `sink-connector/python/db_dump/tests/test_mysql_dumper_unit.py::TestRedactPassword::test_registered_secret_is_masked` (legacy only; the packaged dumper has no `redact_password`).
 - `sink-connector/python/db_compare/tests/test_checksum_failure_modes.py::TestVerdictOnUnparseableOutput::test_both_sides_unparseable_is_never_reported_equal` (passing since the verdict fix; legacy orchestrator; same verdict logic as packaged).
@@ -694,7 +704,7 @@ The component is the delivery layer: which code runs, under which interpreter an
   - **Recovery**: reload with the legacy loader (`--loader-cmd "python db_load/clickhouse_loader.py"` for resync), or with a dump taken under `SET TIME_ZONE='+00:00'`. Verify with the legacy checksum.
   - **RTO**: a reload of the affected tables (proportional to size; unmeasured).
   - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestDumpTimezoneMapping::test_deterministic_across_hash_seeds`
-  - **FIXED**: D-13.01-1 (= D-13.04-2). Both copies map the zone deterministically and fall back to UTC with a WARNING (Spec 13.04 §3.9).
+  - **FIXED**: D-13.01-1 (= D-13.04-2). Both copies map the zone deterministically; an undeterminable zone is refused unless `--source_timezone` names it (Spec 13.04 §3.9, FM-13.04-27).
 
 - **FM-13.01-2 An installed `ch-mysql-checksum` reports equality without comparing**
   - **Trigger**: `ch-mysql-checksum --config_file ...` from any directory that has no `db_compare/` with working side scripts. That is every use of the installed wheel, and every use from the Python root without `PYTHONPATH`.
@@ -898,6 +908,7 @@ Summary: 17 failure modes, 12 DEFECT, 12 GAP (FM-13.01-3 fixed by spec 13.04 D-1
 | D-13.01-22 | S4 | legacy | `sink-connector/python/install.sh:1-4` | code-read | No shebang, bash-only `source`, venv activation and `PYTHONPATH` lost when run as a script. |
 | D-13.01-23 | S4 | both | `sink-connector/python/db_load/mysql_parser/mysql_parser.py:17,26,48` (same in packaged) | reproduced (R8: duplicate `line 1:34 no viable alternative` on stderr; R4: `--help` → `FileNotFoundError`) | Default ANTLR console listener not removed, parser message dropped from the exception, debug `main` has no argument handling. |
 | D-13.01-24 | S4 | both | `.github/workflows/spec-governance.yml:84-88`, `.github/workflows/docker-build.yml` | code-read | No CI builds the wheel, imports the console scripts, checks the Python floor, regenerates grammars or builds the Python Dockerfiles (extends FM-11.05-3). |
+| D-13.01-25 | S3 | both | `sink-connector/python/pyproject.toml` (`requires-python`, `dependencies`); `sink-connector/python/requirements.txt`; `ch_sink_tools/db/checksum_common.py:11` | reproduced: Python 3.8.20 `import ch_sink_tools.db.checksum_common` fails with `ModuleNotFoundError: No module named 'zoneinfo'`; on 3.9.2 the import sweep, floor test and 940 neighbouring tests pass with the pins | Declared floor `>=3.6` while the stdlib `zoneinfo` import needs 3.9; `tzdata` not a declared dependency; runtime requirements unpinned. Fixed by the floor, `tzdata` and exact-pin change (§ Packaging floor above). |
 
 What could not be determined offline:
 

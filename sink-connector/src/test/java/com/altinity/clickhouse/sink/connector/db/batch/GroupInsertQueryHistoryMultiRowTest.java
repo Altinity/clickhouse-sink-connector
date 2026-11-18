@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
@@ -71,7 +72,7 @@ public class GroupInsertQueryHistoryMultiRowTest {
         Map<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString(),
                 "true");
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static int groupedRecordCount(
@@ -172,7 +173,7 @@ public class GroupInsertQueryHistoryMultiRowTest {
 
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
                 records, grouped, new HashMap<>(),
-                new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                 TABLE, DB, null, columns());
 
         Assert.assertEquals("standard mode must group each UPDATE exactly once; appending it "
@@ -191,7 +192,7 @@ public class GroupInsertQueryHistoryMultiRowTest {
 
         new GroupInsertQueryWithBatchRecords().groupQueryWithRecords(
                 new ArrayList<>(List.of(updateRecord(1, 1))), grouped, new HashMap<>(),
-                new ClickHouseSinkConnectorConfig(new HashMap<>()),
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())),
                 TABLE, DB, null, columns());
 
         Assert.assertEquals("one UPDATE is one segment", 1, grouped.size());

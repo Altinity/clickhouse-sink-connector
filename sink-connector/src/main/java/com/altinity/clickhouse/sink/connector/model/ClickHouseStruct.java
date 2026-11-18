@@ -711,7 +711,14 @@ public class ClickHouseStruct {
         if (!(sourceObj instanceof Struct)) {
             return null;
         }
-        return sourcePositionOf((Struct) sourceObj);
+        Struct source = (Struct) sourceObj;
+        if (source.schema().field(BINLOG_FILE) != null && source.schema().field(BINLOG_POS) != null) {
+            SourcePosition cursor = SourcePosition.ofBinlogOffset(srd.sourceOffset());
+            if (cursor != null) {
+                return cursor;
+            }
+        }
+        return sourcePositionOf(source);
     }
 
     /**
@@ -744,13 +751,20 @@ public class ClickHouseStruct {
     }
 
     /**
-     * The position of this record in the source transaction log, built from the
-     * {@code file}/{@code pos}/{@code row} (MySQL, MariaDB) or {@code lsn} (PostgreSQL)
-     * captured from the record's {@code source} struct.
+     * The position of this record in the source transaction log. MySQL/MariaDB
+     * prefer the original record's restart cursor (spec 01.02 section 3.4), then
+     * fall back to captured {@code file}/{@code pos}/{@code row}. PostgreSQL keeps
+     * its captured {@code lsn}.
      *
      * @return the position, or {@code null} when the record carries none
      */
     public SourcePosition getSourcePosition() {
+        if (file != null && !file.isEmpty() && sourceRecord != null && sourceRecord.value() != null) {
+            SourcePosition cursor = SourcePosition.ofBinlogOffset(sourceRecord.value().sourceOffset());
+            if (cursor != null) {
+                return cursor;
+            }
+        }
         SourcePosition binlogPosition = SourcePosition.ofBinlog(file, pos, row);
         if (binlogPosition != null) {
             return binlogPosition;

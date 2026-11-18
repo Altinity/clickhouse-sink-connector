@@ -6,7 +6,6 @@ import com.altinity.clickhouse.sink.connector.db.operations.ClickHouseCreateData
 
 import java.sql.Connection;
 import java.sql.SQLException;
-import java.time.ZoneId;
 import java.util.Arrays;
 import java.util.Properties;
 import com.zaxxer.hikari.HikariDataSource;
@@ -68,11 +67,6 @@ public class BaseDbWriter {
     private String password;
 
     /**
-     * The server time zone derived from the database.
-     */
-    private ZoneId serverTimeZone;
-
-    /**
      * The ClickHouse sink connector configuration.
      */
     private ClickHouseSinkConnectorConfig config;
@@ -105,8 +99,10 @@ public class BaseDbWriter {
         this.password = password;
         this.config = config;
         this.conn = conn;
-        // Initialize the server time zone from the database metadata.
-        this.serverTimeZone = new DBMetadata(config).getServerTimeZone(this.conn);
+        // No server time zone is read here. The value was write-only (never read by this class or
+        // its subclasses), and reading it eagerly made construction throw when no connection was
+        // available (B2: no silent UTC, so the throw is the loud answer). Consumers that need the
+        // zone call DBMetadata.getServerTimeZone at the point of use.
     }
 
     /**
@@ -233,25 +229,23 @@ public class BaseDbWriter {
     }
 
     /**
-     * Connection properties understood by the legacy V1 ClickHouse JDBC driver
-     * that the V2 driver rejects outright.
+     * Connection properties that the ClickHouse V2 driver (clickhouse-jdbc
+     * 0.9.8) does not map, and therefore rejects when they are present.
      * <p>
      * The V2 client validates the whole property set up front and throws
      * {@code ClientMisconfigurationException: Unknown and unmapped config
-     * properties: [...]} for anything it does not recognise, which
-     * {@code createConnection()} surfaces as "Failed to create connection".
-     * Because these values arrive from the user-facing
-     * {@code clickhouse.jdbc.params} setting, an existing deployment that
-     * upgrades to a build using the V2 driver would fail to connect at all
-     * until it edited its configuration.
+     * properties: [...]} for any key it does not map, unless
+     * {@code ignore_unknown_config_key} is set. {@code createConnection()}
+     * surfaces that as "Failed to create connection". These values arrive
+     * from the {@code clickhouse.jdbc.params} setting, so a deployment that
+     * carries them would fail to connect until it edited its configuration.
      * <p>
-     * Determined empirically against clickhouse-jdbc 0.9.8 by offering each
-     * property from the shipped docker configuration to the V2 driver
-     * individually: {@code socket_timeout}, {@code connection_timeout},
-     * {@code client_name}, {@code custom_settings},
-     * {@code http_connection_provider} and
-     * {@code jdbc_ignore_unsupported_values} are all accepted; only the two
-     * below are rejected.
+     * The driver bytecode was checked for both keys: neither name is a V2
+     * property, and no V2 property with the same meaning was verified. The
+     * connector therefore removes them. {@code socket_timeout},
+     * {@code connection_timeout} and {@code http_keep_alive_timeout} are V2
+     * properties and are passed through unchanged. The mapping, with the
+     * javap citations, is in {@code doc/jdbc-property-mapping.md}.
      */
     static final String[] V1_ONLY_PROPERTIES = {
             "keepalive.timeout",
@@ -274,8 +268,10 @@ public class BaseDbWriter {
      * of failing the connection outright. Each removal is logged: at WARN the
      * first time a key is seen in this process, at DEBUG afterwards.
      * <p>
-     * Nothing is dropped on the V1 path — the legacy driver still receives and
-     * honours these properties.
+     * The V1 branch in {@code createConnection()} is not reached from
+     * configuration: {@code clickhouse.jdbc.v1=true} is refused at parse time
+     * (spec 03.08), so this filter applies to every connection the connector
+     * opens.
      *
      * @param properties the connection properties, modified in place.
      * @return the number of properties removed.
@@ -286,10 +282,10 @@ public class BaseDbWriter {
             if (properties.remove(key) != null) {
                 removed++;
                 if (WARNED_V1_ONLY_PROPERTIES.add(key)) {
-                    log.warn("Ignoring JDBC property '{}': it is only supported by the legacy "
-                            + "ClickHouse JDBC V1 driver and the V2 driver rejects the "
-                            + "connection outright when it is present. Set "
-                            + "clickhouse.jdbc.v1=true to keep using the legacy driver.", key);
+                    log.warn("Ignoring JDBC property '{}': the ClickHouse V2 driver does not "
+                            + "recognise it and rejects the connection when it is present. "
+                            + "Remove it from clickhouse.jdbc.params "
+                            + "(see doc/jdbc-property-mapping.md).", key);
                 } else {
                     log.debug("Ignoring JDBC property '{}' (V1-only; already reported once "
                             + "for this process).", key);

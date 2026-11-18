@@ -31,7 +31,11 @@ nextSequenceNumber(recordTs, position):
   effectiveTs = recordTs
   restOfMarkedEvent = position != null and sequenceHighWaterPosition != null
                       and position.sameLogPosition(sequenceHighWaterPosition)   # same file + pos, ANY row (§3.1.2, spec 01.02 §3.3)
-  if position != null and not restOfMarkedEvent
+  incompatibleCoordinates = position != null and sequenceHighWaterPosition != null
+                            and position.sameLog(sequenceHighWaterPosition)
+                            and not position.sameCoordinateKind(sequenceHighWaterPosition)
+  if incompatibleCoordinates: warn and retain mark, using raw source time
+  if position != null and not incompatibleCoordinates and not restOfMarkedEvent
      and (sequenceHighWaterPosition == null
           or not position.sameLog(sequenceHighWaterPosition)   # log basename changed (spec 01.02 §3.1.1)
           or position > sequenceHighWaterPosition):
@@ -103,6 +107,21 @@ shows the inversion of the pre-rule classification. Pinned by
 `CommitOrderVersionClampTest.laterStatementsOfACompressedTransactionShareTheFirstStatementsFloor()`
 and `CommitOrderVersionClampTest.chunksOfOneLargeStatementShareTheFloor()`.
 
+#### 3.1.3 Restart-cursor event identity
+
+When binlog restart offsets are available, the position compared above is
+`(offset.file, offset.pos, offset.event, offset.row)`, not the wrapping
+`source.pos` (spec 01.02 §3.4). `sameLogPosition` requires equal event ordinals
+as well as file and anchor, so an earlier event in the same transaction is
+replay after a later event has advanced the mark. Rows inside one event still
+share its effective-time floor; every delivery still increments the counter,
+including compressed-payload statements whose offset row resets. No version
+is cached or reused by cursor equality. Cross-transaction order follows the
+next BEGIN anchor when that anchor has not itself wrapped. A process restart
+reconstructs the same cursor from the persisted raw Debezium offset, clears
+the in-memory mark and seeds the existing durable version floor (§3.5); no
+wrap counter or new persisted representation is introduced.
+
 ### 3.2 Who enters the sequence, and who raises the floor
 `handleChangeEventBatch` calls `nextSequenceNumber` for **row records and DDL records only**. A **control record** — a heartbeat or a transaction-metadata record, recognised by `isControlRecord` (spec 01.06 §3.1) — produces no ClickHouse row, needs no `_version`, and is **not** run through the sequence: it leaves `sequenceMaxSourceTs`, `sequenceHighWaterPosition`, `sequenceAnchorTs` and `sequenceNumber` exactly as they were.
 
@@ -126,7 +145,7 @@ The four statics are process-local, so without help a restart put the floor back
 2. **Seeding at engine start.** `setupDebeziumEventCapture` reads the mark ($V_{max}$) and calls `seedVersionFloor(V_max)`, which sets `sequenceMaxSourceTs = floorDiv(V_max, 10^6) + 1` (never lowering it). Because $V_{max} < (\lfloor V_{max}/10^6 \rfloor + 1) \cdot 10^6$ and every first delivery is versioned at least `floor * 1_000_000 + 1`, **every first delivery of the new run ranks strictly above every version the previous run assigned** — whatever the lag, the seeds, or the clock skew between MySQL and the connector host (spec 01.04 §3.2). The anchor and counter are left to their start-of-run rules (spec 02.04 §3.1); they are not needed for the bound.
    When no mark exists yet — the first start after an upgrade from 2.8.0 / 2.9.1 / 2.10.x, or a ClickHouse replica that never saw this connector's writes — the seed is the **connector clock plus `CLOCK_SEED_HEADROOM_MS` (5 000 ms)**: `sequenceMaxSourceTs = now + 5000`. Every version a previous run assigned decodes to an instant of the past: the timestamp field of `ts * 10^6 + counter` is a source statement time, an envelope (processing) time or a heartbeat-pinned connector clock — each a wall-clock instant at or before the restart — plus at most one second of counter carry (spec 02.01 §3.3); the snowflake domain likewise carries a past millisecond in its timestamp field. A floor five seconds past the present is therefore at or above all of them (`Replication.VersionFloor.below_clock_seed`, `clock_restart_boundary`), and the same theorem as for the mark applies. This is the one seed whose guarantee has a precondition: the connector host's clock must not be more than the head-room behind the clock that stamped the previous run's versions (the source host's, or the previous connector host's). NTP keeps that skew at milliseconds; a host that is seconds behind would let a pre-restart row stamped within the skew window keep winning under `FINAL` for the same key, so the seed is logged at WARN with the floor it chose and the operator can compare it with the source clock. The head-room is not a substitute for a mark: the mark is written from the first handoff on, so this precondition applies to one start per deployment. A too-high floor only delays the source clock catching up (the first rows are clamped to it), a too-low one is the defect, so the higher choice is the safe side. The seed is logged at WARN because it is the one start whose floor did not come from the mark.
    **The seed never reads a target table** (Invariant I14, spec 10.06). The previous design read `max(_version)` over every `ReplacingMergeTree` table with a `_version` column in the target databases, decoding each value in both version domains. On a production replica that was a full-column scan of every replicated table — tables of 30 billion rows took over 40 s each, past the JDBC read timeout, and the server finished them anyway — issued on the event thread ahead of the first delivery and **re-issued by every engine retry** (rule 3), so a single poison binlog event turned the seed into a permanent load of thousands of scans per hour on the ClickHouse side while replication stood still. A replication engine's bookkeeping must be bounded by the bookkeeping, never by the size of the data it replicates; MySQL replication seeds nothing from a scan of the replica's tables, and neither does this connector.
-3. **A re-setup in the same JVM** (the engine's completion-callback retry) seeds again; because seeding only raises the floor, the in-memory state is never rolled back.
+3. **A re-setup in the same JVM** (the engine's completion-callback retry) establishes the seed again, then `beginEngineRun` atomically raises the floor and clears `sequenceHighWaterPosition` plus `sequenceHighWaterEffectiveTs`. The counter, anchor and assigned-version maximum are retained. Keeping the old position gate would classify an ordered replay suffix as isolated redelivery and bypass the new floor. Missing offset-table configuration or a failed seed read refuses startup; the existing missing-row/implausible-mark clock fallback is unchanged.
 
 What seeding does to the domain: nothing. The emitted value is still `effectiveTs * 1_000_000 + counter` with the 2.8.0 seeds; only the floor's starting value differs, exactly as §5's constraint allows. The first rows after a restart are clamped to $\lfloor V_{max}/10^6 \rfloor + 1$ — about one second above the last pre-restart source second, plus up to five seconds when the horizon was recently moved — and track the source clock again as soon as it passes the floor. After a clock seed the clamp is to the connector clock plus five seconds: on a source lagging by $L$ seconds at that start, $L$ seconds' worth of rows are versioned in that one slot, ordered by the counter — which never resets while the clamp holds, because `diff` is measured on `effectiveTs` (§3) — so within-run monotonicity (§3.3) is unaffected, and the mark written from the first handoff on makes every later start a mark seed again.
 

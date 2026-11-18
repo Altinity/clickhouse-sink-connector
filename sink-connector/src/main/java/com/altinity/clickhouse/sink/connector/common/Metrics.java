@@ -129,6 +129,9 @@ public class Metrics {
     private static Gauge binlogTransactionCompressionLevelGauge;
     private static Gauge binlogPayloadDecoderOkGauge;
     private static Gauge binlogConnectionLostGauge;
+
+    /** Values stored as something other than the source held, by kind (spec 07.03 section 3.1.9). */
+    private static io.prometheus.client.Counter lossyConversionsCounter;
     private static Gauge binlogXaRollbackAfterPrepareGauge;
 
     /**
@@ -272,6 +275,12 @@ public class Metrics {
         binlogConnectionLostGauge = Gauge.build()
                 .name(MetricsConstants.CLICKHOUSE_SINK_BINLOG_CONNECTION_LOST)
                 .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_BINLOG_CONNECTION_LOST))
+                .register(collectorRegistry);
+
+        lossyConversionsCounter = io.prometheus.client.Counter.build()
+                .name(MetricsConstants.CLICKHOUSE_SINK_LOSSY_CONVERSIONS)
+                .help(metricsToHelp.get(MetricsConstants.CLICKHOUSE_SINK_LOSSY_CONVERSIONS))
+                .labelNames("kind")
                 .register(collectorRegistry);
 
         binlogXaRollbackAfterPrepareGauge = Gauge.build()
@@ -496,6 +505,19 @@ public class Metrics {
             return;
         }
         binlogConnectionLostGauge.inc();
+    }
+
+    /**
+     * One more value stored as something other than the source held, under
+     * {@code kind} (one of the lower-case names of
+     * {@code LossyConversionReporter.Kind}; spec 07.03 section 3.1.9). A no-op
+     * when metrics are off or the registry has been released.
+     */
+    public static void incrementLossyConversion(String kind) {
+        if (!enableMetrics || collectorRegistry == null || lossyConversionsCounter == null) {
+            return;
+        }
+        lossyConversionsCounter.labels(kind).inc();
     }
 
     /** One more XA transaction rolled back on the source after XA PREPARE (spec 01.10). */

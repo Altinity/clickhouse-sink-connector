@@ -24,6 +24,7 @@ env:
 jobs:
   checksum-lightweight:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - uses: actions/checkout@v4
@@ -49,10 +50,20 @@ jobs:
       - name: Install test dependencies
         run: pip3 install -r sink-connector-lightweight/tests/checksum/requirements.txt
 
+      - name: Verify streaming guards and checksum failure paths
+        run: >-
+          timeout 60s python -m pytest -q
+          sink-connector-lightweight/tests/checksum/test_streaming_helpers.py
+          --junitxml=checksum-streaming-helpers.xml
+
       # Each checksum suite owns its own compose stack (session fixture + KEEP_STACK=1),
       # so they must run as separate pytest invocations with a teardown between them.
-      - name: Run checksum integration test (init_mysql seed)
-        run: pytest -v -s sink-connector-lightweight/tests/checksum/test_checksum_replication.py
+      - name: Run snapshot and streaming ordering checksums (shared stack)
+        run: >-
+          timeout 1200s python -m pytest -v -s
+          sink-connector-lightweight/tests/checksum/test_checksum_replication.py
+          sink-connector-lightweight/tests/checksum/test_streaming_ordering.py
+          --junitxml=checksum-init-mysql.xml
 
       - name: Dump connector / compose logs on init_mysql failure
         if: failure()
@@ -65,7 +76,21 @@ jobs:
         run: docker compose -f docker-compose.yml down -v --remove-orphans || true
 
       - name: Run checksum integration test (sysbench seed)
-        run: pytest -v -s sink-connector-lightweight/tests/checksum/test_sysbench_checksum_replication.py
+        run: >-
+          timeout 1200s python -m pytest -v -s
+          sink-connector-lightweight/tests/checksum/test_sysbench_checksum_replication.py
+          --junitxml=checksum-sysbench.xml
+
+      - name: Upload per-case checksum and streaming results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checksum-lightweight-test-results
+          path: |
+            checksum-streaming-helpers.xml
+            checksum-init-mysql.xml
+            checksum-sysbench.xml
+          if-no-files-found: error
 
       - name: Dump connector / compose logs on sysbench failure
         if: failure()

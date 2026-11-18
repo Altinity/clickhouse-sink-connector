@@ -7,7 +7,7 @@ name = "ch-sink-tools"
 version = "0.3.0"
 description = "PostgreSQL/MySQL to ClickHouse CDC verification and snapshot tools"
 readme = "README.md"
-requires-python = ">=3.6"
+requires-python = ">=3.9"
 license = "Apache-2.0"
 authors = [
     {name = "Data Platform Team"},
@@ -17,6 +17,7 @@ dependencies = [
     "clickhouse-driver>=0.2.9",
     "pg8000>=1.31,<1.32",
     "pyyaml",
+    "tzdata",
 ]
 
 [project.optional-dependencies]

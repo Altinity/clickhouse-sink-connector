@@ -187,6 +187,36 @@ public class QueryFormatter {
             boolean includeRawData,
             String rawDataColumn, String dbName, String deleteColumn,
             List<Field> schemaFields, String versionColumn, String signColumn) {
+        // Callers that do not say otherwise keep the historical behaviour: the
+        // name-guessed flag columns are connector-managed.
+        return getInsertQueryUsingInputFunction(tableName, fields, columnNameToDataTypeMap,
+                includeKafkaMetaData, includeRawData, rawDataColumn, dbName, deleteColumn,
+                schemaFields, versionColumn, signColumn, true);
+    }
+
+    /**
+     * Field-based INSERT for a user table, with the name-guessed flag columns
+     * ({@code is_deleted}, {@code _sign}) connector-managed only when
+     * {@code nameGuessedFlagsManaged} is true.
+     *
+     * <p>A ReplacingMergeTree whose engine clause has no delete argument
+     * ({@code ReplacingMergeTree(_version)}) does not read {@code is_deleted}
+     * or {@code _sign}. For such a table the caller passes false: a column of
+     * that name that the record does not carry is left out of the INSERT, so
+     * ClickHouse applies its DEFAULT, and nothing is bound into it. The
+     * resolved version, sign and delete names are retained either way, because
+     * the engine does read them.</p>
+     *
+     * @param nameGuessedFlagsManaged true when {@code is_deleted} and {@code _sign} are read by the engine.
+     */
+    public MutablePair<String, Map<String, Integer>> getInsertQueryUsingInputFunction(
+            String tableName, List<Field> fields,
+            Map<String, String> columnNameToDataTypeMap,
+            boolean includeKafkaMetaData,
+            boolean includeRawData,
+            String rawDataColumn, String dbName, String deleteColumn,
+            List<Field> schemaFields, String versionColumn, String signColumn,
+            boolean nameGuessedFlagsManaged) {
 
         // Membership is decided by the record's SCHEMA, never by the
         // value-filtered modified-fields list -- see the javadoc above.
@@ -195,7 +225,7 @@ public class QueryFormatter {
         // Create column data structures
         ColumnData columnData = createColumns(tableName, membershipFields, columnNameToDataTypeMap,
                 includeKafkaMetaData, includeRawData, rawDataColumn, dbName, deleteColumn,
-                versionColumn, signColumn);
+                versionColumn, signColumn, nameGuessedFlagsManaged);
 
         if (columnData == null) {
             return null;
@@ -397,7 +427,7 @@ public class QueryFormatter {
     private ColumnData createColumns(String tableName, List<Field> fields, Map<String, String> columnNameToDataTypeMap,
                                      boolean includeKafkaMetaData, boolean includeRawData, String rawDataColumn, String dbName) {
         return createColumns(tableName, fields, columnNameToDataTypeMap, includeKafkaMetaData,
-                includeRawData, rawDataColumn, dbName, null, null, null);
+                includeRawData, rawDataColumn, dbName, null, null, null, true);
     }
 
     /**
@@ -413,13 +443,17 @@ public class QueryFormatter {
      * @param deleteColumn  the configured delete column name, may be null.
      * @param versionColumn the resolved version column name, may be null.
      * @param signColumn    the resolved sign column name, may be null.
+     * @param nameGuessedFlagsManaged true when the engine reads {@code is_deleted} and {@code _sign}
+     *                      by name; false for a bare ReplacingMergeTree, where those names are plain
+     *                      columns the engine never reads.
      * @return true if the connector populates this column itself.
      */
     private boolean isConnectorManagedColumn(String colName, String deleteColumn,
-                                             String versionColumn, String signColumn) {
+                                             String versionColumn, String signColumn,
+                                             boolean nameGuessedFlagsManaged) {
         return colName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)
-                || colName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)
-                || colName.equalsIgnoreCase(ClickHouseDbConstants.SIGN_COLUMN)
+                || (nameGuessedFlagsManaged && colName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN))
+                || (nameGuessedFlagsManaged && colName.equalsIgnoreCase(ClickHouseDbConstants.SIGN_COLUMN))
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)
                 || colName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)
                 // _operation is populated by the connector, never by the source
@@ -444,7 +478,8 @@ public class QueryFormatter {
 
     private ColumnData createColumns(String tableName, List<Field> fields, Map<String, String> columnNameToDataTypeMap,
                                      boolean includeKafkaMetaData, boolean includeRawData, String rawDataColumn,
-                                     String dbName, String deleteColumn, String versionColumn, String signColumn) {
+                                     String dbName, String deleteColumn, String versionColumn, String signColumn,
+                                     boolean nameGuessedFlagsManaged) {
 
         if (fields == null) {
             log.error("getInsertQueryUsingInputFunction, fields empty");
@@ -485,7 +520,8 @@ public class QueryFormatter {
             if (!recordFieldNames.contains(sourceColumnName.toLowerCase())
                     && !isKafkaMetaDataColumn(sourceColumnName)
                     && !sourceColumnName.equalsIgnoreCase(rawDataColumn)
-                    && !isConnectorManagedColumn(sourceColumnName, deleteColumn, versionColumn, signColumn)) {
+                    && !isConnectorManagedColumn(sourceColumnName, deleteColumn, versionColumn, signColumn,
+                    nameGuessedFlagsManaged)) {
                 log.debug(String.format(
                         "Table Name: %s, Database: %s, Column(%s) omitted from INSERT: "
                                 + "not present in this record's schema (pre-ALTER record); "
@@ -731,7 +767,7 @@ public class QueryFormatter {
             String columnName = entry.getKey();
             String selectExpr;
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                selectExpr = String.format("toDateTime('%s', '%s')", binlogRecordTimestamp, serverTimeZone);
+                selectExpr = String.format("toDateTime(%s)", binlogRecordTimestamp);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                 selectExpr = "0";
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
@@ -747,9 +783,9 @@ public class QueryFormatter {
             String columnName = entry.getKey();
             String selectExpr;
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
-                selectExpr = String.format("toDateTime('%s', '%s')", binlogRecordTimestamp, serverTimeZone);
+                selectExpr = String.format("toDateTime(%s)", binlogRecordTimestamp);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
-                selectExpr = String.format("toDateTime('%s', '%s')", validToMax, serverTimeZone);
+                selectExpr = String.format("toDateTime(%s)", validToMax);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.OPERATION_COLUMN)) {
                 selectExpr = "'D'";
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
@@ -772,8 +808,8 @@ public class QueryFormatter {
         String isDeletedCondition = columnNameToDataTypeMap.containsKey(
                 ClickHouseDbConstants.IS_DELETED_COLUMN) ? " AND `is_deleted` = 0" : "";
 
-        String whereClause = String.format("WHERE %s AND `_valid_to` = toDateTime('%s', '%s')%s",
-                primaryKeyPredicate, validToMax, serverTimeZone, isDeletedCondition);
+        String whereClause = String.format("WHERE %s AND `_valid_to` = toDateTime(%s)%s",
+                primaryKeyPredicate, validToMax, isDeletedCondition);
 
         String query = String.format(
             "INSERT INTO %s(%s) SELECT %s FROM %s FINAL %s UNION ALL SELECT %s FROM %s FINAL %s",
@@ -892,7 +928,7 @@ public class QueryFormatter {
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
                 // CLOSE the record by setting _valid_to to binlog timestamp (not now())
                 // Using binlog timestamp ensures _valid_to matches the next record's _valid_from
-                selectExpr = String.format("toDateTime('%s', '%s')", binlogRecordTimestamp, serverTimeZone);
+                selectExpr = String.format("toDateTime(%s)", binlogRecordTimestamp);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                 // Keep is_deleted = 0 (this is historical, not deleted)
                 selectExpr = String.format("0 as `%s`", columnName);
@@ -916,11 +952,11 @@ public class QueryFormatter {
 
             if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
                 // New record starts at binlog timestamp
-                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
+                selectExpr = "toDateTime(?) as `" + columnName + "`";
                 colNameToIndexMap.put(columnName, parameterIndex++);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
                 // New record is open-ended (valid until max time)
-                selectExpr = "toDateTime(?, '" + serverTimeZone + "') as `" + columnName + "`";
+                selectExpr = "toDateTime(?) as `" + columnName + "`";
                 colNameToIndexMap.put(columnName, parameterIndex++);
             } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.VERSION_COLUMN)) {
                 // HARDCODE the event's version (NOT version + 1, see the javadoc):
@@ -955,10 +991,10 @@ public class QueryFormatter {
 
                 if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_FROM_TIME_COLUMN)) {
                     // The marker starts where the closed version ends
-                    selectExpr = String.format("toDateTime('%s', '%s') as `%s`", binlogRecordTimestamp, serverTimeZone, columnName);
+                    selectExpr = String.format("toDateTime(%s) as `%s`", binlogRecordTimestamp, columnName);
                 } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.DELETED_TIME_COLUMN)) {
                     // Open sorting key of the old primary key
-                    selectExpr = String.format("toDateTime('%s', '%s') as `%s`", validToMax, serverTimeZone, columnName);
+                    selectExpr = String.format("toDateTime(%s) as `%s`", validToMax, columnName);
                 } else if (columnName.equalsIgnoreCase(ClickHouseDbConstants.IS_DELETED_COLUMN)) {
                     // Mark as deleted (is_deleted = 1)
                     selectExpr = String.format("1 as `%s`", columnName);
@@ -991,8 +1027,8 @@ public class QueryFormatter {
                 ClickHouseDbConstants.IS_DELETED_COLUMN) ? " AND `is_deleted` = 0" : "";
 
         // The open-row predicate at the before key, shared by every table-reading SELECT
-        String openRowClause = String.format("FROM %s FINAL WHERE %s AND `_valid_to` = toDateTime('%s', '%s')%s",
-                tableWithBackTicks, primaryKeyPredicate, validToMax, serverTimeZone, isDeletedCondition);
+        String openRowClause = String.format("FROM %s FINAL WHERE %s AND `_valid_to` = toDateTime(%s)%s",
+                tableWithBackTicks, primaryKeyPredicate, validToMax, isDeletedCondition);
 
         // Build the query:
         // 1. Close existing record (from table with WHERE) - uses FINAL to get merged view
@@ -1024,10 +1060,10 @@ public class QueryFormatter {
      *
      * <pre>
      * INSERT INTO t
-     * SELECT * REPLACE (toDateTime('ts', 'tz') AS `_valid_to`, V AS `_version`)
-     *   FROM t FINAL WHERE `_valid_to` = toDateTime('S', 'tz') [AND `is_deleted` = 0]
+     * SELECT * REPLACE (toDateTime(ts) AS `_valid_to`, V AS `_version`)
+     *   FROM t FINAL WHERE `_valid_to` = toDateTime(S) [AND `is_deleted` = 0]
      * UNION ALL
-     * SELECT * REPLACE (toDateTime('ts', 'tz') AS `_valid_from`, [1 AS `is_deleted`,] 'T' AS `_operation`, V AS `_version`)
+     * SELECT * REPLACE (toDateTime(ts) AS `_valid_from`, [1 AS `is_deleted`,] 'T' AS `_operation`, V AS `_version`)
      *   FROM t FINAL WHERE &lt;same predicate&gt;
      * </pre>
      *
@@ -1042,20 +1078,20 @@ public class QueryFormatter {
      *
      * @param qualifiedTable       {@code database.table}
      * @param hasIsDeletedColumn   whether the table carries {@code is_deleted}
-     * @param validToMax           the open-row sentinel, rendered for the server timezone
-     * @param binlogRecordTimestamp the event time, rendered for the server timezone
+     * @param validToMax           the open-row sentinel as unix epoch seconds (Spec 12.04 section 3.5)
+     * @param binlogRecordTimestamp the event time as unix epoch seconds; no zone is involved
      * @param version              the event's version, shared by every emitted row
      * @param operationCode        the single-letter operation code stored in {@code _operation} ({@code 'T'})
-     * @param serverTimeZone       the resolved server timezone id
+     * @param serverTimeZone       unused on this path since the literals became epoch-exact; kept for signature stability
      * @return the statement; it binds no parameters
      */
     public String getInsertQueryForBulkClose(String qualifiedTable, boolean hasIsDeletedColumn,
                                              String validToMax, String binlogRecordTimestamp,
                                              long version, String operationCode, String serverTimeZone) {
         String table = quoteQualifiedTable(qualifiedTable);
-        String eventTime = String.format("toDateTime('%s', '%s')", binlogRecordTimestamp, serverTimeZone);
-        String openRowPredicate = String.format("WHERE `_valid_to` = toDateTime('%s', '%s')%s",
-                validToMax, serverTimeZone, hasIsDeletedColumn ? " AND `is_deleted` = 0" : "");
+        String eventTime = String.format("toDateTime(%s)", binlogRecordTimestamp);
+        String openRowPredicate = String.format("WHERE `_valid_to` = toDateTime(%s)%s",
+                validToMax, hasIsDeletedColumn ? " AND `is_deleted` = 0" : "");
 
         // Close row: the open version, ended at the event time
         String closeReplace = String.format("%s AS `%s`, %d AS `%s`",

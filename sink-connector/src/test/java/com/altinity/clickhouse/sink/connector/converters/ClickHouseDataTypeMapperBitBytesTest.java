@@ -1,6 +1,8 @@
 package com.altinity.clickhouse.sink.connector.converters;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
+import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.clickhouse.data.ClickHouseDataType;
 import io.debezium.data.Bits;
 import org.apache.kafka.connect.data.Schema;
@@ -87,7 +89,7 @@ public class ClickHouseDataTypeMapperBitBytesTest {
     }
 
     private static ClickHouseSinkConnectorConfig config() {
-        return new ClickHouseSinkConnectorConfig(new HashMap<>());
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()));
     }
 
     /**
@@ -153,6 +155,53 @@ public class ClickHouseDataTypeMapperBitBytesTest {
 
         Assertions.assertEquals("efbeadde", convertBits(payload));
         Assertions.assertEquals("efbeadde", convertBits(ByteBuffer.wrap(payload)));
+    }
+
+    @Test
+    public void byteBufferBoundsAndReadOnlyCarriersSurviveRepeatedBinding() throws SQLException {
+        byte[] backing = {0x11, 0x22, 0x33, 0x44};
+        ByteBuffer direct = ByteBuffer.allocateDirect(backing.length);
+        direct.put(backing).flip();
+        for (boolean raw : new boolean[]{false, true}) {
+            for (String logicalName : new String[]{null, Bits.LOGICAL_NAME}) {
+                ByteBuffer[] buffers = {
+                        ByteBuffer.wrap(backing, 1, 2),
+                        ByteBuffer.wrap(backing, 1, 2).slice(),
+                        ByteBuffer.wrap(backing, 1, 2).asReadOnlyBuffer(),
+                        direct.duplicate().position(1).limit(3),
+                        ByteBuffer.wrap(backing).position(2).limit(2)
+                };
+                for (ByteBuffer buffer : buffers) {
+                    int position = buffer.position();
+                    int limit = buffer.limit();
+                    byte[] expected = buffer.hasRemaining()
+                            ? Bits.LOGICAL_NAME.equals(logicalName)
+                                    ? new byte[]{0x33, 0x22} : new byte[]{0x22, 0x33}
+                            : new byte[0];
+                    String expectedHex = buffer.hasRemaining()
+                            ? Bits.LOGICAL_NAME.equals(logicalName) ? "3322" : "2233" : "";
+                    HashMap<String, String> props = new HashMap<>();
+                    props.put(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString(),
+                            Boolean.toString(raw));
+                    ClickHouseSinkConnectorConfig config =
+                            new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
+                    for (int attempt = 0; attempt < 2; attempt++) {
+                        RecordingStatement recorder = new RecordingStatement();
+                        Assertions.assertTrue(ClickHouseDataTypeMapper.convert(
+                                Schema.Type.BYTES, logicalName, buffer, 1, recorder.statement, config,
+                                ClickHouseDataType.String, ZoneId.of("UTC")));
+                        Assertions.assertEquals(1, recorder.callCount);
+                        if (raw) {
+                            Assertions.assertArrayEquals(expected, recorder.bytesValue);
+                        } else {
+                            Assertions.assertEquals(expectedHex, recorder.stringValue);
+                        }
+                        Assertions.assertEquals(position, buffer.position());
+                        Assertions.assertEquals(limit, buffer.limit());
+                    }
+                }
+            }
+        }
     }
 
     /** A zero-length BIT payload must not throw. */

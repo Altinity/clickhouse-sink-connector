@@ -5,6 +5,25 @@ Specifies the versioning behaviour when the connector restarts or Debezium rewin
 
 ---
 
+## Correction on 2.11.1
+
+Every successfully seeded engine start now calls `VersionSequencer.beginEngineRun`
+before dispatch. It raises (never lowers) the floor and clears the old position
+mark and its effective timestamp. The counter, anchor and assigned-version
+maximum are retained. Missing offset-table configuration or a failed seed read
+refuses startup rather than processing unseeded records. An absent mark row still
+uses the existing clock fallback; its clock assumptions are unchanged.
+A producer-stop timeout retains ownership and refuses a replacement even when
+the offset FIFO is empty. A runtime failure while recreating the engine follows
+the existing terminal-failure path instead of disappearing into the event task.
+
+`EngineEpochVersionTest` exercises the actual startup-seeding path for unwritten,
+partly written and fully written suffixes, DELETE/re-INSERT, lower-numbered logs
+after an engine boundary, retained arithmetic state and seed failures. The
+original in-process restart assertion is enabled in normal regression discovery.
+The failure-mode descriptions below record the prior baseline. Transparent
+failover without engine recreation remains outside this correction.
+
 ## 2. Codebase Mapping on 2.11.0
 - **Primary Source**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionSequencer.java` (package-private, extracted from `DebeziumChangeEventCapture`) — `nextSequenceNumber`, `seedVersionFloor`, `sequenceHighWaterPosition`, `sequenceMaxSourceTs`, `SEQUENCE_START_INITIAL = 500000000`, `SEQUENCE_START = 1000000000`
 - **Durable high-water mark**: `sink-connector-lightweight/src/main/java/com/altinity/clickhouse/debezium/embedded/cdc/VersionHighWaterMark.java` (spec 02.02 §3.5, spec 09.03 §3.4)

@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.executor.OffsetTestSupport.RecordingCommitter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
@@ -83,7 +84,7 @@ public class ParkedBatchWrittenOnceTest {
         Map<String, String> props = new HashMap<>();
         // Keep the per-batch pacing sleep negligible so the test is fast.
         props.put("buffer.flush.time.ms", "1");
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     @Test

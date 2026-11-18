@@ -42,6 +42,7 @@ def _mysql_checksums():
         "--mysql_password", MYSQL_PASSWORD,
         "--mysql_database", DATABASE,
         "--tables_regex", TABLES_REGEX,
+        "--source_timezone", "UTC",
         "--min_date_value", "1900-01-01",
     ]
     return _run_checksum(cmd)
@@ -56,6 +57,7 @@ def _clickhouse_checksums():
         "--clickhouse_password", CLICKHOUSE_PASSWORD,
         "--clickhouse_database", DATABASE,
         "--tables_regex", TABLES_REGEX,
+        "--source_timezone", "UTC",
         "--sign_column", "",
         "--exclude_columns", "_version,is_deleted,_is_deleted,__is_deleted,_sign",
     ]

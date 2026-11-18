@@ -27,11 +27,11 @@ only the PostgreSQL dumper consumes today. The most consequential findings:
 - **Dump time zone (S1, fixed).** The packaged copy used to pick a random zone from an unsorted set (a
   January `'+00:00'` gave a DST zone for 4 of 10 hash seeds). Both copies now map a MySQL zone value
   deterministically (`UTC`, a fixed-offset `Etc/GMT±N` zone or a named zone), and the MySQL Shell zone comes
-  from the dump's `@.json` `tzUtc` flag. An undeterminable zone gives `UTC` with a WARNING (§3.9).
+  from the dump's `@.json` `tzUtc` flag. Every run requires `--source_timezone` (exit 2 without it); a dump zone that cannot be determined is refused unless the flag names it; nothing falls back to UTC (§3.9).
 - **Binary values (S1, fixed).** The decode transform used to test the translated type (`String`) and never
   ran, so binary, BIT and spatial columns received MySQL Shell's base64 text. The loader now renders them in
-  the connector's representation, selected by `--binary_handling_mode` and `--persist_raw_bytes` (defaults
-  match the connector's defaults: lower-case hex) and decoded as the dump's per-table metadata says (§3.7.1).
+  the connector's representation, selected by `--binary_handling_mode` and `--persist_raw_bytes` (both default
+  to the connector's defaults: base64 text) and decoded as the dump's per-table metadata says (§3.7.1).
 - **Pipeline failures (S1, fixed).** Load pipelines now run under `bash -o pipefail`, so a failing
   decompressor or `sed` stage fails the load with a non-zero exit (§3.10). The loader still never compares
   loaded row counts with the dump (D-13.04-19).
@@ -85,7 +85,7 @@ re-load into a table that already holds streamed rows cannot repair them (§3.11
 Line anchors used throughout. L means the legacy loader, P the packaged loader, and LS the listener. The
 listener is identical in both copies except for the import lines 2-4. The anchors refer to the 2.11.0 sources,
 before the fixes of D-13.04-1 to D-13.04-7 and D-13.04-28. Code added by those fixes is cited by function
-name: in the loader `get_unix_timezone_from_mysql_timezone`, `find_mysqlshell_dump_timezone`,
+name: in `checksum_common.py` `get_unix_timezone_from_mysql_timezone` (moved there by FM-13.04-27), in the loader `find_mysqlshell_dump_timezone`,
 `is_loaded_column`, `mysqlshell_binary_kind`, `read_mysqlshell_decode_columns` and
 `mysqlshell_column_expression`; in the listener `UnsafeTableDefinitionError`, `index_column_names`,
 `exitUniqueKeyTableConstraint` and `sorting_key`.
@@ -99,7 +99,7 @@ name: in the loader `get_unix_timezone_from_mysql_timezone`, `find_mysqlshell_du
 | `find_primary_key`, `find_dump_timezone`, `find_create_table`, `find_partitioning_options` | L89-130 | P89-130 |
 | `convert_to_clickhouse_table_regexp` | L133-246 | P133-246 |
 | `convert_to_clickhouse_table` (selector) | L249-265 | P249-265 |
-| `get_unix_timezone_from_mysql_timezone` | L268-284 | P268-285 |
+| `get_unix_timezone_from_mysql_timezone` (moved to `checksum_common.py`, FM-13.04-27) | L268-284 | P268-285 |
 | `load_schema` / `load_schema_mysqlshell` | L287-330 / L333-377 | P288-331 / P334-378 |
 | `get_column_list` | L380-405 | P381-406 |
 | `load_data` (mydumper data path) | L408-441 | P409-441 |
@@ -140,7 +140,7 @@ setting `module.args` raises `NameError`. The unit tests set it by hand.
 | `--clickhouse_database` | str | required | Target database. Used for the driver connection that creates tables, and in `INSERT INTO <db>.<table>`. With `--mysqlshell` it is the database created. | yes, except mydumper `CREATE DATABASE` and `--truncate_tables` (D-13.04-8/20) |
 | `--mysql_source_database` | str | required | Source schema. Builds the schema-file globs (`<db>@*.sql`, `<db>-schema-create.sql.gz`). Also the database in `truncate table <db>.<t>`. | yes |
 | `--dump_dir` | str | required | Dump directory. Concatenated into globs and into shell commands without quoting. | yes |
-| `--threads` | int | `8`, but `required=True` | `ThreadPoolExecutor(max_workers=threads)` for mysqlshell chunks. The mydumper data path is sequential and ignores it. | partly (D-13.04-30) |
+| `--threads` | int | `8` | `ThreadPoolExecutor(max_workers=threads)` for mysqlshell chunks. The mydumper data path is sequential and ignores it. | yes |
 | `--debug` | flag | False | Parsed, never read. The root logger is fixed at INFO. | no |
 | `--schema_only` | flag | False | Skip the data phase | yes |
 | `--data_only` | flag | False | Skip schema creation. The schema is still re-parsed with `dry_run=True` to build the column map (L645-647). | yes |
@@ -151,7 +151,8 @@ setting `module.args` raises `NameError`. The unit tests set it by hand.
 | `--mysqlshell` | flag | False | Selects the MySQL Shell layout. Without it the mydumper layout is used. | yes; mydumper mode fails the zstd assertion (D-13.04-14) |
 | `--rmt_delete_support` | flag | False | `ReplacingMergeTree(_version, is_deleted)` plus an `is_deleted UInt8 DEFAULT 0` column. Without the flag: `ReplacingMergeTree(_version)` plus `_sign Int8 DEFAULT 1`. | yes |
 | `--clickhouse_datetime_timezone` | str | `None` | Appends `,'<tz>'` to every `DateTime64(p)` from DATETIME/TIMESTAMP (ANTLR only). Not used by the `--data_only` re-parse. | schema phase only |
-| `--binary_handling_mode` | `bytes`/`base64`/`hex` | `bytes` | Mirror of the streaming connector's (Debezium's) `binary.handling.mode`; set it to the value of the connector that streams into the tables. Selects how binary/varbinary/blob values of a MySQL Shell dump are rendered: lower-case hex, base64 text or upper-case hex. BIT and spatial values are hex under every mode (§3.7.1). The default is Debezium's default; the shipped `deploy/ansible-systemd/templates/config.yml.j2` sets `base64`. | mysqlshell path |
+| `--source_timezone` | str | `None` | IANA region name (`Area/Location`, or `UTC`) of the zone the source MySQL server stored the dump's `TIMESTAMP` text in, i.e. the connector's `database.connectionTimeZone`. Checked by `validate_timezone`, the rule the checksum tools' `--source_timezone` uses. Required on every run (exit 2 without it, §3.9); when the dump records a zone, the flag must name the same zone or the load is refused. | both layouts; resolved before any DDL |
+| `--binary_handling_mode` | `bytes`/`base64`/`hex` | `base64` | Mirror of the streaming connector's `binary.handling.mode`; set it to the value of the connector that streams into the tables when that connector runs a non-default mode. Selects how binary/varbinary/blob values of a MySQL Shell dump are rendered: base64 text, lower-case hex or upper-case hex. BIT and spatial values are hex under every mode (§3.7.1). The default is the connector's own default (base64, Spec 07.05 §3.2) and the checksum tools' default (Spec 11.02 §3.6), so a dump, the stream into the same tables and a checksum of them agree with no flags. | mysqlshell path |
 | `--persist_raw_bytes` | flag | False | Mirror of the connector's `persist.raw.bytes`: load the decoded bytes instead of lower-case hex (binary types only under `--binary_handling_mode bytes`; BIT and spatial always) | mysqlshell path |
 
 There are no environment variables. `TZ` is **set** inside every shell command (§3.9), never read.
@@ -239,7 +240,7 @@ create database if not exists <clickhouse_database>        -- unquoted; any exce
 ```
 
 The dump zone is read from `<dump_dir>/@.json` by `find_mysqlshell_dump_timezone` before any table is created
-(§3.9). Statements run through `clickhouse_execute_conn`
+(§3.9), before the database is created, so a refused zone leaves nothing behind. Statements run through `clickhouse_execute_conn`
 (`cursor.execute` + `fetchall`). The first failing `CREATE TABLE` raises out of `main`, so later tables are
 not created and the process exits 1.
 
@@ -255,7 +256,7 @@ not created and the process exits 1.
 The database created is the **source** name from the dump, not `--clickhouse_database`. The `IF NOT EXISTS`
 sits inside a MySQL version comment, which ClickHouse treats as a comment. Re-runs therefore fail on the
 database, and on every table, because the ANTLR DDL has no `IF NOT EXISTS` (D-13.04-20). The time zone is
-read from every schema file (`SET TIME_ZONE='...'`). Files without the statement are ignored; two files
+read from every schema file (`SET TIME_ZONE='...'`, `find_mydumper_dump_timezone`) and resolved under §3.9 before the database is created, so a refused zone leaves nothing behind. Files without the statement are ignored; two files
 naming different zones raise `ValueError` (no glob-order winner).
 
 The translated statement is unqualified unless the source DDL was qualified. ANTLR copies `tableName` text
@@ -302,9 +303,14 @@ export TZ=UTC; zstd -d --stdout /backups/dump/mydb@t1@@1.tsv.zst  | clickhouse-c
 The packaged copy emits `--password 'pa'ss word'`. The quote is unbalanced, so the shell command breaks.
 Different password text can inject shell syntax (D-13.04-11).
 
+A `TIMESTAMP` field of that table declares its zone in the structure, e.g.
+`\`ts\`  Nullable( DateTime64(0, 'UTC'))` for a `tzUtc` dump (§3.9, D-13.04-37).
+
 Every value except `TIMESTAMP` columns is parsed as `String` and converted by ClickHouse during the
 `INSERT ... SELECT` to the column type (integers, `Decimal`, `Date32`, `DateTime64`, `Enum`).
-`TIMESTAMP` columns are parsed as `DateTime64(p)`, in the client zone given by `TZ` (§3.9).
+`TIMESTAMP` columns are declared as `DateTime64(p, '<resolved zone>')`, the zone the loader resolved from the
+dump metadata or `--source_timezone` pinned in the declared type, so the parsed instant does not follow the
+ambient zone of the load (`TZ`, `use_client_time_zone`) — §3.9.
 
 #### 3.7.1 Column list (`get_column_list`, `is_loaded_column`, `mysqlshell_column_expression`)
 
@@ -328,10 +334,17 @@ Every value except `TIMESTAMP` columns is parsed as `String` and converted by Cl
   DateTime64 range to the instants 1900-01-01 00:00:00 and 2299-12-31 23:59:59 UTC (`DataTypeRange.DATETIME64_MIN`
   / `DATETIME64_MAX`, `clamp.out.of.range`, Spec 07.03), and the checksum tools clamp to the same bounds
   (`db/checksum_common.py` `DATETIME_MIN`/`DATETIME_MAX`). `datetime_clamp_expression` gives the dump's text the
-  same treatment: `multiIf(col >= '2299-12-31 23:59:59', CAST(toDateTime64('2299-12-31 23:59:59', p, 'UTC') AS T),
+  same treatment: `multiIf(col >= high, CAST(toDateTime64(high, p, 'UTC') AS T),
   col < '1900-01-01 00:00:00.000001', CAST(toDateTime64('1900-01-01 00:00:00', p, 'UTC') AS T), CAST(col AS T))`
   with `T` the target table's own column type, read from `system.columns` before the INSERT
-  (`target_column_types`; the loader's translation only when it is unknown). A `--data_only` load into a table
+  (`target_column_types`; the loader's translation only when it is unknown). **`high` is the highest text a
+  `DateTime64(p)` parse accepts, and it is not the same at every precision** (`datetime64_max_text(p)`):
+  `2299-12-31 23:59:59` for p in 0..8, and `2262-04-11 23:47:16.854775807` for p = 9, whose Int64 nanosecond
+  representation ends there. Parsing the 2299 text at precision 9 raises `Code: 407 Decimal math overflow` and
+  `parseDateTime64BestEffortOrNull(..., 9, 'UTC')` returns NULL, so a scale-9 load used to fail outright; the
+  PostgreSQL source mapper (`postgres_type_mapper.py` `_datetime64_expr`, spec 13.05 §3.8 and §3.9.2) carries the
+  same per-precision bound and an extra `col >= high` saturation branch at p = 9, where the year test alone cannot
+  catch a 2263 value. A `--data_only` load into a table
   created elsewhere (the connector's `DateTime64(6, 'UTC')`, or ch-mysql-resync's scratch table `CREATE TABLE ... AS`
   the live table, loaded without `--clickhouse_datetime_timezone`) must convert exactly as the implicit INSERT
   conversion into that table did: a first version cast to the zone-less translation, and an end-to-end resync under
@@ -368,10 +381,10 @@ Every value except `TIMESTAMP` columns is parsed as `String` and converted by Cl
   | decode `UNHEX` | `raw = unhex(col)` |
   | not encoded per the metadata | `raw = col` |
   | spatial | `raw = substring(raw, 5)`: MySQL's internal value is a 4-byte SRID followed by the WKB; the connector stores the WKB only (Spec 07.06 §3.2, POINT(1 2) = `0101000000000000000000f03f0000000000000040`) |
-  | binary type, `--binary_handling_mode base64` | `base64Encode(raw)` (no line breaks, like the connector's base64 text) |
+  | binary type, `--binary_handling_mode base64` (the default) | `base64Encode(raw)` (no line breaks, like the connector's base64 text) |
   | binary type, `--binary_handling_mode hex` | `hex(raw)` (upper case, as Debezium's hex mode, Spec 07.05 §3.2) |
   | otherwise, `--persist_raw_bytes` | `raw` |
-  | otherwise | `lower(hex(raw))`, the connector's default rendering |
+  | otherwise | `lower(hex(raw))`, the connector's rendering under `--binary_handling_mode bytes` |
 
   BIT(n) and spatial values reach the connector as bytes under every `binary.handling.mode` (Spec 07.05 §3.2,
   Spec 07.06 §3.2), so they ignore `--binary_handling_mode`. A NULL needs no special case: the input
@@ -438,13 +451,14 @@ of 100 applies).
   - `@.json` with `"tzUtc": true`: `'+00:00'`, mapped to `UTC`.
   - `"tzUtc": false`: `ValueError`. The values are in the dump session's zone, which the dump does not
     record, and loading them as UTC would shift every `TIMESTAMP`.
-  - `@.json` missing (WARNING) or without a boolean `tzUtc` (WARNING): `None`, mapped to `UTC` with a WARNING.
+  - `@.json` missing (WARNING) or without a boolean `tzUtc` (WARNING): `None`, no zone recorded (see Resolution below).
     A malformed `@.json` raises.
   `ch-mysql-resync` hard-links `@.json` into each per-table directory (`isolate_table_dir`), so its loads
   read the flag. The in-tree dumpers never set `tzUtc`, so their dumps are UTC.
 - **Dump zone, mydumper**: `find_dump_timezone(schema text)` (`SET TIME_ZONE='(.*?)'`, case-insensitive,
-  first match) per schema file; conflicting files raise (§3.6); possibly `None`.
-- **MySQL zone value to IANA name** (`get_unix_timezone_from_mysql_timezone`, identical in both copies):
+  first match) per schema file, collected by `find_mydumper_dump_timezone` before any DDL; conflicting files raise
+  (§3.6); `None` when no file sets it (see Resolution below).
+- **MySQL zone value to IANA name** (`get_unix_timezone_from_mysql_timezone` in `ch_sink_tools/db/checksum_common.py`, one copy used by both loaders):
   - `'+00:00'`/`'-00:00'` → `UTC`.
   - Another whole-hour offset within MySQL's range (±14:00) → the fixed-offset zone `Etc/GMT∓N` (POSIX sign:
     `+05:00` → `Etc/GMT-5`), when zoneinfo knows it. Never a regional zone whose offset merely equals the value
@@ -452,7 +466,8 @@ of 100 applies).
   - A valid offset that no fixed-offset IANA zone represents (`+05:30`, `+05:45`, `-13:00`) → `ValueError`
     asking for a UTC re-dump. No zone choice would be correct.
   - A named zone known to zoneinfo (e.g. `Europe/Paris`) → itself.
-  - `None`, empty, `SYSTEM`, out of range or malformed → `UTC` with a WARNING ("cannot be determined").
+  - `None`, empty or `SYSTEM` (no zone recorded) → no zone; the flag decides (Resolution below). Out of range,
+    malformed or an unknown name → `ValueError`, whatever the flag says. Nothing maps to `UTC` by default.
   - The result does not depend on `PYTHONHASHSEED` or on the date of the run.
   `Etc/GMT-5`, `Etc/GMT+12` and `Etc/GMT-14` are listed in ClickHouse's `system.time_zones` (24.8), and
   `TZ=Etc/GMT-5 clickhouse local --use_client_time_zone 1` parses `2026-07-01 12:00:00` as 07:00:00 UTC.
@@ -462,11 +477,39 @@ of 100 applies).
   seeds; `None` gave `Japan`, `Europe/Lisbon`, ...). The legacy copy sorted and returned the first zone with
   the matching offset today (`Africa/Abidjan` for `+00:00`), else `UTC`: deterministic for `+00:00`, but a
   seasonal choice for other offsets.
-- **Application.** The name is exported as `TZ` in the shell command, and clickhouse-client runs with
-  `--use_client_time_zone 1`. TIMESTAMP text (UTC in MySQL Shell dumps) is meant to be interpreted in that
-  zone. Whether `input()` parsing honours the client zone was not verified offline (GAP in §5.2). DATETIME
-  values travel as `String` and are converted by the server into a zone-less `DateTime64(p)` column (server
-  zone), or into the `--clickhouse_datetime_timezone` zone when one is set.
+- **Resolution with `--source_timezone` (FM-13.04-27).** The zone is decided once, before any DDL, by
+  `get_unix_timezone_from_mysql_timezone(timezone, source_timezone)`. Nothing else chooses a zone:
+  - The dump records a zone and no flag is given: the recorded zone (`UTC` for `tzUtc: true`).
+  - The dump records a zone and the flag names the same zone: that zone. A flag naming a different zone is
+    refused, and the error names both values.
+  - The dump records no zone (`@.json` missing or without `tzUtc`; a mydumper dump without `SET TIME_ZONE`; or
+    `None`, empty or `SYSTEM`) and the flag is given: the flag's zone, after `validate_timezone` (an IANA region
+    name or `UTC`, the checksum tools' rule). This is the only way a zone comes from the flag alone.
+  - The dump records no zone and no flag is given: `ValueError` naming `--source_timezone` and suggesting a value
+    (the source value is the connector's `database.connectionTimeZone`, e.g. `America/Chicago`). Nothing is created.
+  - An invalid flag value is refused whether or not the dump records a zone. A recorded value that is out of
+    range, malformed or an unknown name is refused whatever the flag says.
+  - **Required on every run (11.02 §3.2 step 1).** `main()` calls `check_source_timezone_flag` after argument
+    parsing: a load without `--source_timezone` exits 2 before any connection, whether or not the dump records a
+    zone. The message names the flag, suggests `America/Chicago` and says UTC must be passed explicitly. A recorded
+    zone is still used and a disagreeing flag is refused (above). `ch-mysql-resync patch` requires the same flag and
+    passes it to the loader (`run_loader`). Tests: `db_load/tests/test_loader_zone_flag_required.py`.
+  - `tzUtc: false` stays refused, with or without the flag: the dump session's zone is not recorded, so no flag
+    can be checked against it.
+  - `UTC` is returned only when the dump records `+00:00` or the flag names `UTC`.
+  - Tests: `db_load/tests/test_loader_dump_zone_refusal.py` (real loader functions; refusal before any DDL in both
+    layouts).
+- **Application.** The resolved zone is exported as `TZ` in the shell command and clickhouse-client runs with
+  `--use_client_time_zone 1`, but the parse no longer depends on either: the `input()` declaration of a `TIMESTAMP`
+  field carries the zone itself. `timestamp_input_datatype(datatype, timezone)` (`clickhouse_loader.py`, both
+  copies) turns the translator's zone-less `DateTime64(p)` into `DateTime64(p, '<timezone>')` — the zone resolved
+  from the dump or `--source_timezone`. A declaration that already names a zone is kept unchanged, so
+  `--clickhouse_datetime_timezone` still decides that one. Measured: a zone-less declaration parses the same
+  UTC text as UTC+0 under `TZ=UTC`, one hour earlier under `TZ=Europe/London` in summer and one hour later under
+  `TZ=America/Chicago`, while the pinned declaration parses it identically under all three (D-13.04-37). This
+  closes the §5.2 item 11 gap for `input()` parsing. DATETIME values travel as `String` and are converted by the
+  server into a zone-less `DateTime64(p)` column (server zone), or into the
+  `--clickhouse_datetime_timezone` zone when one is set.
 - **Column zone.** Only with `--clickhouse_datetime_timezone` (ANTLR `add_timezone`, LS28-31) does
   `DateTime64(p)` become `DateTime64(p,'<tz>')`. The regexp translator never adds a zone.
 
@@ -499,8 +542,8 @@ of 100 applies).
 |---|---|---|
 | All statements and pipelines return 0 | 0 | Loaded, but **not verified** against the dump's row counts. Chunk files the glob does not find still exit 0 (D-13.04-19). |
 | A decompressor or `sed` stage fails | 1, after all submitted chunks finish | partial table(s) |
-| Undeterminable dump zone | continues, WARNING | `TIMESTAMP` read as UTC |
-| `tzUtc: false` dump, unrepresentable offset, conflicting mydumper zones, bookkeeping-name collision, or a keyless table the translators cannot key | 1 (`ValueError` / `UnsafeTableDefinitionError`) | tables created before the failing one remain |
+| Zone refused: undeterminable dump zone with no `--source_timezone`, flag not matching the dump, invalid flag or recorded zone, `tzUtc: false` dump, unrepresentable offset, conflicting mydumper zones | 1 (`ValueError`), before any DDL | nothing created |
+| Bookkeeping-name collision, or a keyless table the translators cannot key | 1 (`ValueError` / `UnsafeTableDefinitionError`) | tables created before the failing one remain |
 | `assert` failure (missing clickhouse-client, mydumper mode, password without user, config file missing) | 1 (traceback) | nothing done |
 | CREATE DATABASE fails (mysqlshell) | continues | the next CREATE TABLE fails |
 | CREATE TABLE / CREATE DATABASE (mydumper) / truncate fails | 1 | tables created so far remain |
@@ -714,7 +757,7 @@ exact emitted text by a server was **not** verified offline.
 | `json` | `String` | `String` | String | `String` | value text: MySQL rendering vs Debezium re-rendering (Spec 07.04 §3.1) |
 | `char(n)`, `varchar(n)`, `*text` | verbatim, `CHARACTER SET x` stripped | verbatim, `CHARACTER SET`/`COLLATE` stripped | String aliases | `String` | none |
 | `varchar(64) COLLATE utf8mb4_bin` (column collation without charset, MySQL 8's normal form) | `varchar(64) COLLATE utf8mb4_bin` | stripped | a MySQL collation name in a ClickHouse COLLATE clause: CREATE expected to fail (not verified) | `String` | D-13.04-15 |
-| `binary(n)`, `varbinary(n)`, `blob`, `tinyblob`, `mediumblob`, `longblob` | `String`. Packaged: upper-case `MEDIUMBLOB`/`VARBINARY(16)` pass through verbatim (still String aliases). | `binary(n)` → String; `blob`/`longblob`/`varbinary(n)` verbatim (String aliases) | String | `String` (hex by default) | none since the D-13.04-3 fix, with `--binary_handling_mode`/`--persist_raw_bytes` set like the connector (§3.7.1) |
+| `binary(n)`, `varbinary(n)`, `blob`, `tinyblob`, `mediumblob`, `longblob` | `String`. Packaged: upper-case `MEDIUMBLOB`/`VARBINARY(16)` pass through verbatim (still String aliases). | `binary(n)` → String; `blob`/`longblob`/`varbinary(n)` verbatim (String aliases) | String | `String` (base64 text by default, hex under `--binary_handling_mode bytes`) | none since the D-13.04-3 fix, with `--binary_handling_mode`/`--persist_raw_bytes` set like the connector (§3.7.1) |
 | `geometry`, `point`, `linestring`, `polygon`, `multi*`, `geomcollection` | `String` | `String` (`multi*` partly verbatim) | String | `String` (WKB hex, Spec 07.06 §3.4) | none since the D-13.04-3 fix (§3.7.1) |
 | `geometrycollection` | legacy `String`; packaged **verbatim** (missing from its tuple) | verbatim | unknown to ClickHouse | `String` | D-13.04-22 |
 | `enum('bit','byte')` | legacy verbatim enum; packaged **`String`** (`"bit" in datatype`) | verbatim | | `String` | copies diverge (D-13.04-22) |
@@ -897,7 +940,7 @@ This is D-13.04-26.
 | Function / area | Legacy | Packaged | Effect |
 |---|---|---|---|
 | Imports | `from db.clickhouse import *`. `sys.path` is appended **after** the imports that need it (L21-25), so it only works with `PYTHONPATH` set to `sink-connector/python`. | explicit package imports | packaging only |
-| `get_unix_timezone_from_mysql_timezone`, `find_mysqlshell_dump_timezone` | identical (§3.9) | identical | none (D-13.04-2 fixed in both) |
+| `get_unix_timezone_from_mysql_timezone` (one copy, in `checksum_common.py`), `find_mysqlshell_dump_timezone` | identical (§3.9) | identical | none (D-13.04-2 fixed in both) |
 | Listener fixes (D-13.04-1/6/7/28), `get_column_list`/`mysqlshell_column_expression` (D-13.04-3), `run_quick_command` (D-13.04-4), mydumper data glob (D-13.04-5) | identical | identical | none |
 | Password quoting | `shlex.quote` | `'...'` | D-13.04-11 |
 | Log redaction | `register_secret` + `redact_password` | none: full command at INFO | D-13.04-11 (FM-11.05-1) |
@@ -918,9 +961,9 @@ This is D-13.04-26.
   writes `snapshot_position.json` into the dump directory (Spec 13.03, 3.8). The loader still does not read it.
 - Spec 11.04 (`ch-mysql-resync`) wraps the packaged loader per table, adds exact count reconciliation and an
   optional canary, and avoids `--truncate_tables`. FM-11.04-8 is the downstream effect of the rendering
-  differences recorded here (D-13.04-10; D-13.04-3 is fixed, but `ch-mysql-resync` passes no
-  `--binary_handling_mode`, so a connector running `binary.handling.mode=base64` needs the flag through
-  `--loader-cmd`).
+  differences recorded here (D-13.04-10; D-13.04-3 is fixed, and since the default is base64 on both sides
+  `ch-mysql-resync` needs no flag for a default-configured connector — a connector explicitly set to
+  `binary.handling.mode=bytes` passes `--binary_handling_mode bytes` through `--loader-cmd`).
 - Spec 11.05 owns the unit-test contract. FM-11.05-1, -2, -4, -5 and -6 are restated here with their full
   control flow.
 
@@ -959,7 +1002,7 @@ What the existing tests pin (all legacy unless noted):
 
 - `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestSchemaPathParsing::test_parse_schema_path_mydumper`, `::TestSchemaPathParsing::test_parse_schema_path_mysqlshell`, `::TestSchemaPathParsing::test_mysqlshell_table_with_special_chars`: file-name parsing (§3.4).
 - `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestDumpTimezone::test_finds_set_time_zone`, `::TestDumpTimezone::test_case_insensitive`, `::TestDumpTimezone::test_absent_returns_none`: `find_dump_timezone`.
-- `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestUnixTimezoneFromMysqlTimezone::test_utc_offset_resolves_to_a_zero_offset_zone`, `::TestUnixTimezoneFromMysqlTimezone::test_unknown_offset_falls_back_to_utc`: legacy mapping only; both still pass after the D-13.04-2 fix.
+- `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestUnixTimezoneFromMysqlTimezone::test_utc_offset_resolves_to_a_zero_offset_zone`, `::TestUnixTimezoneFromMysqlTimezone::test_unknown_offset_is_refused` (was `test_unknown_offset_falls_back_to_utc`, which asserted the UTC fallback that FM-13.04-27 removed): legacy mapping only; both pass after the D-13.04-2 and FM-13.04-27 changes.
 - `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestSourceIntrospection::test_find_primary_key`, `::TestSourceIntrospection::test_find_partitioning_options_range_columns` and the related absent/true/false cases: regex helpers.
 - `sink-connector/python/db_load/tests/test_clickhouse_loader_unit.py::TestDdlConversionAntlr::test_returns_ddl_and_columns`, `::TestDdlConversionAntlr::test_datetime_maps_to_datetime64`, `::TestDdlConversionAntlr::test_decimal_precision_preserved`, `::TestDdlConversionAntlr::test_replacing_merge_tree_engine`, `::TestDdlConversionAntlr::test_order_by_primary_key`, `::TestDdlConversionAntlr::test_datetime_timezone_applied_when_configured`, `::TestDdlConversionAntlr::test_no_create_table_returns_empty`: structural ANTLR contract.
 - `sink-connector/python/db_load/tests/test_loader_failure_modes.py::TestLegacyLoaderFailurePath::test_logged_command_is_redacted`: legacy log redaction, and a failing load raises.
@@ -971,7 +1014,8 @@ with a stand-in `clickhouse-client` script, binary values are checked with `clic
 it is not installed):
 
 - `TestDumpTimezoneMapping`, `TestMysqlShellDumpTimezone`: D-13.04-2 (UTC, `Etc/GMT±N`, named zones,
-  WARNING + UTC when undeterminable, refusal of `+05:30` and of `tzUtc: false`, identical result for
+  refusal when the zone is undeterminable and no flag names it (the flag supplies it when the dump records none,
+  FM-13.04-27), refusal of `+05:30` and of `tzUtc: false`, identical result for
   `PYTHONHASHSEED` 0-5, `@.json` read by `load_schema`).
 - `TestKeylessSortingKey`: D-13.04-1 (all-columns key with `allow_nullable_key`, NOT NULL UNIQUE key
   table- and column-level, nullable UNIQUE fallback, PK unchanged, refusals not passed to the regexp fallback,
@@ -1016,7 +1060,7 @@ installed; with it the offline suites give 653 passed, 4 skipped):
 - `TestRegexpFallback`: the regexp fallback refuses generated columns.
 
 A throwaway sweep (outside the repository) translated, the way the loader does, every table with generated
-columns in the DDL of a production-shaped sandbox (5 distinct tables, 12 generated columns, 9 distinct
+columns in the DDL of a MySQL schema that uses them (5 distinct tables, 12 generated columns, 9 distinct
 expressions: bit flags `((x & (1 << n)) > 0)`, an `IS NOT NULL ... AND ...` chain, and one concatenated key with
 19 `CONVERT ... USING`, 32 `IFNULL` and 64 charset introducers) and executed each CREATE plus an INSERT in
 `clickhouse local`: 2.11.0 creates 3 of 5 (`Code: 62` at `&` and at `using`), the fix creates 5 of 5.
@@ -1046,7 +1090,8 @@ loaded under every binary mode, values checked with `clickhouse local`).
 
 End to end, `sink-connector/python/tests_e2e/mysql` (CI job `python-toolset-e2e-mysql`) loads a real
 consistent MySQL Shell dump (`db_dump/mysql_dumper.py`) into a fresh database with `db_load/clickhouse_loader.py
---mysqlshell --rmt_delete_support --binary_handling_mode base64 --clickhouse_datetime_timezone UTC`, the
+--mysqlshell --rmt_delete_support --binary_handling_mode base64 --clickhouse_datetime_timezone UTC` (the
+flags are written out; base64 is also the default on both sides), the
 settings of the connector that streams the same tables, and verifies it with the production checksum job:
 - `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_loader_fills_a_fresh_database`
 - `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_production_job_matches_the_loaded_snapshot`
@@ -1070,8 +1115,8 @@ writes `DEFAULT NULL` in upper case, so a lower-case `null` never reaches the lo
 ### 5.2 Acceptance criteria (each is a test to add; GAP until added)
 
 1. Keyless DDL never yields `order by tuple()` (both translators, both copies). **Covered** (§5.1).
-2. `get_unix_timezone_from_mysql_timezone` is deterministic across `PYTHONHASHSEED` values, returns `UTC` for
-   `None` or unknown offsets, and never returns a DST zone for a fixed offset (packaged). **Covered**.
+2. `get_unix_timezone_from_mysql_timezone` is deterministic across `PYTHONHASHSEED` values, refuses unknown offsets
+   and, for `None`, requires `--source_timezone` (FM-13.04-27), and never returns a DST zone for a fixed offset (packaged). **Covered**.
 3. For a MySQL Shell dump with a `varbinary` and a `bit(1)` column, the rendered INSERT applies the binary
    transform that matches the configured connector rendering. **Covered**, BIT(1) included
    (`sink-connector/python/db_load/tests/test_loader_bit1_bool.py::test_bit1_values_are_true_false_under_every_binary_mode`).
@@ -1086,7 +1131,11 @@ writes `DEFAULT NULL` in upper case, so a lower-case `null` never reaches the lo
 10. The packaged loader redacts credentials in logs and exceptions, and quotes them with `shlex.quote`.
 11. A server-backed integration test confirms the ClickHouse acceptance of every emitted type spelling in
     §3.15, and the zone used to parse `TIMESTAMP` text in `input()` under `--use_client_time_zone 1`. Both
-    are unverified here because no database may be contacted.
+    are unverified here because no database may be contacted. **Partially covered offline**: the `input()`
+    half is now measured with `clickhouse local` — the emitted declaration parses the same UTC text to the same
+    instant under `TZ=UTC`, `America/Chicago` and `Europe/London`, and a zone-less declaration does not —
+    `db_load/tests/test_loader_timestamp_input_zone.py::TestParsedInstant` (D-13.04-37). The type-spelling
+    acceptance half stays a GAP.
 12. Overrides: the CLI string accepts commas inside parentheses. Singular and plural lookups agree. The
     reconciler compares normalised types and expressions case-insensitively.
 
@@ -1129,11 +1178,11 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Recovery**: re-run the load with the legacy copy (`--loader-cmd`) or with `PYTHONHASHSEED` pinned to a seed known to pick a UTC-equivalent zone, until fixed. Reload the affected tables.
   - **RTO**: unmeasured (no server). The time to reload the affected tables.
   - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestDumpTimezoneMapping::test_deterministic_across_hash_seeds`
-  - **FIXED**: D-13.04-2. Both copies map the zone deterministically (`UTC`, `Etc/GMT±N` or a named zone; WARNING + UTC when undeterminable) and take the MySQL Shell zone from `@.json` `tzUtc` (§3.9).
+  - **FIXED**: D-13.04-2. Both copies map the zone deterministically (`UTC`, `Etc/GMT±N` or a named zone; an undeterminable zone is refused unless `--source_timezone` names it, D-13.04-36) and take the MySQL Shell zone from `@.json` `tzUtc` (§3.9).
 
 - **FM-13.04-3 Binary, BIT and spatial values loaded as base64 text**
   - **Trigger**: a MySQL Shell dump of a table with `binary`/`varbinary`/`blob`/`bit`/spatial columns.
-  - **Behaviour**: `get_column_list(transform=True)` tests `is_binary_datatype` on the **translated** type `String` (`clickhouse_loader.py:398`, `CreateTableMySQLParserListener.py:127-130`). The decode transform never runs, so the dump's base64 text is stored verbatim. The connector stores lower-case hex by default, raw bytes with `persist.raw.bytes`, or base64 only under `binary.handling.mode=base64` (Spec 07.05 §3.2).
+  - **Behaviour**: `get_column_list(transform=True)` tests `is_binary_datatype` on the **translated** type `String` (`clickhouse_loader.py:398`, `CreateTableMySQLParserListener.py:127-130`). The decode transform never runs, so the dump's base64 text is stored verbatim. The connector stores base64 text by default, lower-case hex under `binary.handling.mode=bytes` (raw bytes with `persist.raw.bytes`) or upper-case hex under `binary.handling.mode=hex` (Spec 07.05 §3.2).
   - **Detection**: a value checksum reports mismatches on binary columns. `ch-mysql-resync`'s canary fails (FM-11.04-8).
   - **Blast radius**: every binary-family value in snapshot rows. Rows streamed later use the connector's rendering, so one column mixes two renderings.
   - **Recovery**: transform in place with `ALTER TABLE ... UPDATE col = lower(hex(base64Decode(col)))` on snapshot rows (`_version = 0`), or reload after a fix.
@@ -1141,7 +1190,7 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Test**: `sink-connector/python/db_load/tests/test_loader_s1_fixes.py::TestBinaryRepresentation::test_values_match_the_connector_rendering`;
     end to end (connector `binary.handling.mode: base64`, loader `--binary_handling_mode base64`)
     `sink-connector/python/tests_e2e/mysql/test_mysql_03_snapshot.py::test_loaded_values_equal_the_streamed_values`
-  - **FIXED**: D-13.04-3. The transform classifies by the MySQL type, decodes as the dump metadata says, and renders per `--binary_handling_mode`/`--persist_raw_bytes` (connector defaults: lower-case hex, §3.7.1).
+  - **FIXED**: D-13.04-3. The transform classifies by the MySQL type, decodes as the dump metadata says, and renders per `--binary_handling_mode`/`--persist_raw_bytes` (both default to the connector's own default, base64, §3.7.1).
 
 - **FM-13.04-4 Decompressor failure is invisible and the chunk is loaded partially or not at all**
   - **Trigger**: a truncated, corrupt, unreadable or vanished `.tsv.zst` or `.dat.gz` chunk.
@@ -1381,7 +1430,46 @@ Python. No database was contacted: driver connections, `clickhouse-client` and `
   - **Test**: GAP.
   - **DEFECT**: D-13.04-27.
 
-Summary: 26 failure modes, 16 DEFECT, 16 GAP (FM-13.04-9 fixed by D-13.04-33).
+- **FM-13.04-27 Undeterminable dump zone loaded as UTC**
+  - **Trigger**: a dump whose zone cannot be read (MySQL Shell `@.json` missing or without `tzUtc`; a mydumper dump
+    without `SET TIME_ZONE`; `SYSTEM` or empty), or a `--source_timezone` that disagrees with the zone the dump records.
+  - **Behaviour**: before the fix the loader logged a WARNING and loaded every `TIMESTAMP` as `UTC`, which shifts each
+    value by the source offset when the source server stored local time. After the fix the load is refused before any
+    DDL: an error naming `--source_timezone` when no zone is known, or naming both values on a mismatch. The flag
+    supplies the zone only when the dump records none. Invalid zones, `tzUtc: false` and unrepresentable offsets are
+    refused as before (§3.9, Resolution).
+  - **Detection**: exit code 1 and the error text; no table is created.
+  - **Blast radius**: none on refusal. Before the fix, every `TIMESTAMP` column of the loaded tables. `ch-mysql-resync`
+    passes no zone flag, so a table whose dump records no zone is reported LOAD_FAILED (Spec 13.08).
+  - **Recovery**: re-run the loader with `--source_timezone` set to the connector's `database.connectionTimeZone`;
+    on a mismatch, correct the flag or re-dump with `tzUtc` true.
+  - **RTO**: one re-run.
+  - **Test**: `db_load/tests/test_loader_dump_zone_refusal.py` and the
+    updated `TestDumpTimezoneMapping`, `TestMysqlShellDumpTimezone`.
+  - **FIXED**: D-13.04-36 (this change).
+
+- **FM-13.04-41 `TIMESTAMP` text parsed in the ambient zone of the load**
+  - **Trigger**: a MySQL Shell dump (`tzUtc: true`, so the `TIMESTAMP` text is UTC) loaded while the ambient zone of
+    the load is not UTC — a `clickhouse-client` whose client zone is the host's, a loader invoked outside the
+    generated shell command, any future change to how `TZ` reaches the client.
+  - **Behaviour**: the `input()` structure declared a `TIMESTAMP` field as a zone-less `DateTime64(p)`, and such a
+    declaration parses the text in the ambient zone of the process that reads it. Under a DST zone every value in
+    that zone's summer months moves by the offset difference: a dump of one table loaded with `Europe/London`
+    ambient stored its whole summer half one hour early and its winter half correctly, with row counts and row-level
+    hashes both matching.
+  - **Detection**: a value-level comparison against the MySQL source (row counts and `FINAL` hashes both pass); the
+    per-row instant differs by a whole number of hours, in a pattern that follows the ambient zone's DST calendar.
+  - **Blast radius**: every non-NULL `TIMESTAMP` column of every table loaded by that run. `DATETIME` columns are
+    unaffected (they travel as `String`).
+  - **Recovery**: reload the affected tables with this fix, from a dump whose zone is known, and compare against the
+    source at value level (a per-row column comparison, not row counts).
+  - **RTO**: one reload per table.
+  - **Test**: `db_load/tests/test_loader_timestamp_input_zone.py` — the emitted structure names the resolved zone,
+    and `clickhouse local` stores the same instant under `TZ=UTC`, `America/Chicago` and `Europe/London`, while a
+    zone-less declaration does not.
+  - **FIXED**: D-13.04-37 (this change).
+
+Summary: 28 failure modes, 16 DEFECT, 17 GAP (FM-13.04-9 fixed by D-13.04-33; FM-13.04-27 fixed by D-13.04-36; FM-13.04-41 fixed by D-13.04-37).
 
 ---
 
@@ -1390,8 +1478,8 @@ Summary: 26 failure modes, 16 DEFECT, 16 GAP (FM-13.04-9 fixed by D-13.04-33).
 | ID | Severity | Copy (legacy/packaged/both) | Location | Evidence | Summary |
 |---|---|---|---|---|---|
 | D-13.04-1 | S1 | both | `db_load/mysql_parser/CreateTableMySQLParserListener.py:145,182-183`; `db_load/clickhouse_loader.py:140-144,195-200` (same lines in `ch_sink_tools/`) | reproduced (`r1_translate.py no_pk`: `order by tuple()` / `ORDER BY (tuple())`); collapse semantics measured in Spec 08.05 §3.2 | FIXED: keyed like the streaming DDL path (`MySqlDDLParserListenerImpl.java` 652-724, 870): NOT NULL UNIQUE key, else every stored column with `allow_nullable_key=1` when needed; the regexp fallback refuses. Test `test_loader_s1_fixes.py::TestKeylessSortingKey`. Was: keyless tables created as `ReplacingMergeTree ORDER BY tuple()`, collapsed to one row by merges and `FINAL`. |
-| D-13.04-2 | S1 | packaged | `ch_sink_tools/db_load/clickhouse_loader.py:268-285` | reproduced (`r4_pure.py`, `r5_dst.py`: `None` gives `Japan`/`Europe/Lisbon`; a January `+00:00` gives `Europe/Dublin`/`WET`/`Antarctica/Troll` in 4/10 seeds) | FIXED (both copies converged): deterministic mapping (`UTC`, `Etc/GMT±N`, named zone; WARNING + UTC when undeterminable; refusal of unrepresentable offsets) and the MySQL Shell zone read from `@.json` `tzUtc`. Tests `test_loader_s1_fixes.py::TestDumpTimezoneMapping`, `::TestMysqlShellDumpTimezone`. Was: non-deterministic mapping falling back to the last iterated zone, possibly a DST zone. |
-| D-13.04-3 | S1 | both | `db_load/clickhouse_loader.py:398-402` (P399-403); `CreateTableMySQLParserListener.py:51-52,127-130` | reproduced (`r4_pure.py` B: transformed list equals plain list) | FIXED: classified by the MySQL type, decoded per `<db>@<table>.json` `decodeColumns`, rendered per the new `--binary_handling_mode` (default `bytes`) and `--persist_raw_bytes` flags, mirroring the connector settings. Test `test_loader_s1_fixes.py::TestBinaryRepresentation`. Was: the transform tested the translated type `String`, never fired, and base64 text was stored. |
+| D-13.04-2 | S1 | packaged | `ch_sink_tools/db_load/clickhouse_loader.py:268-285` | reproduced (`r4_pure.py`, `r5_dst.py`: `None` gives `Japan`/`Europe/Lisbon`; a January `+00:00` gives `Europe/Dublin`/`WET`/`Antarctica/Troll` in 4/10 seeds) | FIXED (both copies converged): deterministic mapping (`UTC`, `Etc/GMT±N`, named zone; an undeterminable zone is refused unless `--source_timezone` names it, D-13.04-36; refusal of unrepresentable offsets) and the MySQL Shell zone read from `@.json` `tzUtc`. Tests `test_loader_s1_fixes.py::TestDumpTimezoneMapping`, `::TestMysqlShellDumpTimezone`. Was: non-deterministic mapping falling back to the last iterated zone, possibly a DST zone. |
+| D-13.04-3 | S1 | both | `db_load/clickhouse_loader.py:398-402` (P399-403); `CreateTableMySQLParserListener.py:51-52,127-130` | reproduced (`r4_pure.py` B: transformed list equals plain list) | FIXED: classified by the MySQL type, decoded per `<db>@<table>.json` `decodeColumns`, rendered per the new `--binary_handling_mode` (default `base64`) and `--persist_raw_bytes` flags, mirroring the connector settings. Test `test_loader_s1_fixes.py::TestBinaryRepresentation`. Was: the transform tested the translated type `String`, never fired, and base64 text was stored. |
 | D-13.04-4 | S1 | both | `db_load/clickhouse_loader.py:47-60,440,549`; `ch_sink_tools/db_load/clickhouse_loader.py:47-60,440,517` | reproduced (`r7_pipefail.py`, `r8_zstd.py`: rc 0 with 91 500/200 000, 49 865/100 000 and 0 rows) | FIXED: commands run under `bash -o pipefail`; a failing decompressor or `sed` fails the load with exit 1. Test `test_loader_s1_fixes.py::TestPipelineFailure`. Was: the pipeline status hid decompressor failures, so truncated or missing chunks loaded partially or not at all with exit 0. (`--throw_if_no_data_to_insert=0` stays for valid empty chunks.) |
 | D-13.04-5 | S1 | both | `db_load/clickhouse_loader.py:428-430`; `ch_sink_tools/db_load/clickhouse_loader.py:428-430` | reproduced (`r2_flow.py mydumper_noassert dump-mydumper`: 0 commands, exit 0) | FIXED: the data glob strips only the `-schema.sql.gz` suffix and glob-escapes the prefix. Test `test_loader_s1_fixes.py::TestMydumperDataFileDiscovery`. Was: `path.split("-")[0]`, so a `-` in the dump path or table name loaded zero rows silently. |
 | D-13.04-6 | S1 | both | `db_load/clickhouse_loader.py:388,528,612` (P389,496,580); `CreateTableMySQLParserListener.py:159-167` | reproduced (`r4_pure.py` D: `_sign` dropped from the load list; `_version` duplicated in DDL) | FIXED: every ANTLR source column is loaded (`source_column`); a collision with an appended bookkeeping column (`_version`; `_sign` without `--rmt_delete_support`; `_is_deleted` next to a source `is_deleted`) raises `UnsafeTableDefinitionError`. Test `test_loader_s1_fixes.py::TestSourceColumnsNamedLikeBookkeeping`. Was: such columns silently excluded (NULL), `_version` duplicated. |
@@ -1418,9 +1506,11 @@ Summary: 26 failure modes, 16 DEFECT, 16 GAP (FM-13.04-9 fixed by D-13.04-33).
 | D-13.04-27 | S3 | both | `db_load/clickhouse_loader.py` (no override input; whole file); contrast `MySqlDDLParserListenerImpl.java` around line 1557 | code-read | The MySQL snapshot loader ignores `column_type_override.*`. Snapshot tables lack override types and alias columns that the streaming path would create. |
 | D-13.04-28 | S4 | both | `CreateTableMySQLParserListener.py:37` | reproduced (`'varchar(5) charset latin1'` unchanged) | FIXED: `flags=re.IGNORECASE`. Test `test_loader_s1_fixes.py::TestColumnModifiers::test_lower_case_charset_is_stripped`. Was: `re.sub("CHARSET.*", '', t, re.IGNORECASE)` passed the flag as `count`, so the strip was case-sensitive. |
 | D-13.04-29 | S4 | both | `CreateTableMySQLParserListener.py:148-154,189-282`; `db_load/clickhouse_loader.py:28-44`; `mysql_parser.py:26` | code-read (grammar rule `partitionClause` is the window clause; `translateFieldDefinition` undefined); stderr noise reproduced | Dead code: `exitPartitionClause`, `exitAlterList` (calls an undefined method), `run_command`. antlr4's default console error listener stays installed. |
-| D-13.04-30 | S4 | both | `db_load/clickhouse_loader.py:255-256,410-411,597-600,605-606` (P similar) | code-read | Flags declared but ignored or mis-declared: `--use_regexp_parser`, `--debug`, `--threads` (required although it has a default; ignored by the mydumper path), the `load_data` `dry_run` parameter. `load_data` falls through after the mysqlshell load. |
+| D-13.04-30 | S4 | both | `db_load/clickhouse_loader.py:255-256,410-411,597-600,605-606` (P similar) | code-read | Flags declared but ignored or mis-declared: `--use_regexp_parser`, `--debug`, the `load_data` `dry_run` parameter. `load_data` falls through after the mysqlshell load. `--threads` was declared `required=True` with a default of `8`, so the default could never take effect; FIXED: `required=True` removed, the declared default now applies. |
 | D-13.04-31 | S4 | both | `db_load/clickhouse_loader.py:1`; `ch_sink_tools/db_load/postgres_type_mapper.py:8`; `ch_sink_tools/config/column_type_overrides.py:17-18`; `Dockerfile_db_load` | code-read | Doc drift. The usage header names a nonexistent script and flags. The PostgreSQL mapper claims a `--source postgres` loader flag. The override docstring uses dashed flag names (the dumper uses underscores). The `db_load` image contains no loader. Unit tests cover the legacy copy only. |
 | D-13.04-32 | S3 | both | `db_load/clickhouse_loader.py` (`load_data_mysqlshell`: table name from the data file name, unquoted `INSERT INTO {ch_schema}.{table_name}`); packaged equivalent | reproduced end to end (`temp_fx$rates` dumped as `pyops@temp_fx%24rates@@0.tsv.zst`; `INSERT INTO pyops_snapshot.temp_fx%24rates(...)` → Code 62 syntax error at `%`, loader exit 1) | A table name MySQL Shell percent-encodes in file names (`$` and similar) is used encoded and unquoted in the data phase, so the load of the whole dump fails. Pinned by the strict xfail `tests_e2e/mysql/test_mysql_05_justification.py::test_loader_loads_a_table_with_a_dollar_in_its_name`. |
-| D-13.04-33 | S1 | both | `db_load/mysql_parser/CreateTableMySQLParserListener.py` (`translateColumnDefinition`, generated branch); `db_load/clickhouse_loader.py` (`convert_to_clickhouse_table_regexp`, generated-column deletion); same files in `ch_sink_tools/` | reproduced in a production-shaped sandbox (`mysql_dumper` then `clickhouse_loader --mysqlshell --binary_handling_mode base64` on a real schema with `int GENERATED ALWAYS AS (((attrs & (1 << 0)) > 0)) VIRTUAL` columns: `Code: 62` syntax error at `&`, loader exit 1, on 2.11.0 and on the branch); offline `Code: 62` from `clickhouse local` on the translated DDL | FIXED: a generated column becomes `<type> NULL DEFAULT <expression>`. The expression is passed through as written (every expression ClickHouse accepted before loads unchanged), except for the constructs ClickHouse rejects, translated on the parse tree: charset introducers dropped; the bit operators as `bitAnd`/`bitOr`/`bitXor`/`bitShiftLeft`/`bitShiftRight`/`bitNot` on unsigned 64-bit operands (a shift by 64 or more giving 0, MySQL precedence for chains that hold a bit operator, NULL propagated); `CONVERT(expr USING cs)` as `toString(expr)` (`toDecimalString` for a decimal column); `IFNULL`/`COALESCE` of a string and a number, date or decimal column with that column as text (a second real schema: `Code: 62` at `using`, then `Code: 386` no common type). Numbers written as text (CONCAT/CONCAT_WS arguments, string-typed columns) keep MySQL's text: decimals with their scale, `/` with MySQL's result scale, CONCAT_WS skipping NULL values; a FLOAT/DOUBLE or BIT(1) column or an unmodelled quotient written as text keeps loading with a WARNING. A decimal result stored in a DECIMAL generated column is computed exactly and rounded half away from zero to the column's scale, as MySQL stores it (ClickHouse alone truncates a Float64 quotient: 2/3 → 0.6666 instead of 0.6667). Where ClickHouse would compute a different value it refuses with `UnsafeTableDefinitionError` naming the table and the column (a bit operator on a non-integer operand; CONVERT or a mixed IFNULL over a floating-point, binary or BIT(1) column); none of these ever loaded. The regexp fallback refuses generated columns instead of deleting them (§3.16, §3.17). A sweep of every generated column in a production-shaped sandbox's DDL creates 5 of 5 tables in `clickhouse local` (2.11.0: 3 of 5) (§5.1). Tests: `test_loader_generated_columns.py::TestBitFlagColumns`, `::TestPrecedenceAndOperators`, `::TestPassThrough`, `::TestNonIntegerBitOperands`, `::TestConvertUsingAndMixedIfnull`, `::TestRegexpFallback` (both copies, values via `clickhouse local`); e2e `tests_e2e/mysql/test_mysql_03_snapshot.py::test_loader_computes_generated_bit_flag_columns`, `::test_production_job_matches_the_loaded_generated_columns`. Was: the MySQL expression was copied verbatim as `MATERIALIZED <expr>`, so a bit operator (no `&`/`<<` in ClickHouse) failed the CREATE and with it the whole load, and the regexp fallback silently dropped generated columns. The streaming connector copies generated expressions verbatim as well (outside the Python tools). |
-| D-13.04-34 | S1 | both | `db_load/clickhouse_loader.py` (`mysqlshell_column_expression`, `datetime_clamp_expression`); same in `ch_sink_tools/db_load/clickhouse_loader.py` | reproduced in a production-shaped sandbox (snapshot of a real schema verified by the job's checksum driver: two tables differed only in a DATETIME(6) column holding `9999-12-31 23:59:59` style open-ended values, loaded as `2299-12-31 00:00:00.000000` and, with a zone shift, `2299-12-31 05:59:00.000000`, while the connector's replicas of the same tables matched); offline `clickhouse local` 24.8 keeps `2299-12-31 23:59:59.999999` and moves below-range values parsed in America/Chicago to `1900-01-01 06:00:00` UTC | FIXED: a DATETIME field of the dump is saturated as the connector saturates it: at or above `2299-12-31 23:59:59` the instant `2299-12-31 23:59:59` UTC, below `1900-01-01 00:00:00.000001` the instant `1900-01-01 00:00:00` UTC (the connector's `DataTypeRange.DATETIME64_MIN/MAX`, the checksum tools' `DATETIME_MIN/DATETIME_MAX`), cast to the target table's own column type (read from `system.columns`) so neither `--clickhouse_datetime_timezone` nor the server zone moves the instant; in-range values are cast as before (§3.7.1). (The first version cast to the loader's own translation; for a `--data_only` load into a table created elsewhere, such as the resync scratch table, that moved in-range values by the server zone, caught end to end by `tests_e2e/mysql/test_mysql_04_resync.py::test_unlogged_change_is_reported_then_repaired_by_resync`.) Test: `test_loader_datetime_clamp.py` (both copies; the loader's own INSERT executed in `clickhouse local` under UTC and America/Chicago, with and without a column zone). Was: the text went to ClickHouse, which saturated to another value, so a loaded table could never verify equal to MySQL for such rows and differed from what streaming writes. |
+| D-13.04-33 | S1 | both | `db_load/mysql_parser/CreateTableMySQLParserListener.py` (`translateColumnDefinition`, generated branch); `db_load/clickhouse_loader.py` (`convert_to_clickhouse_table_regexp`, generated-column deletion); same files in `ch_sink_tools/` | reproduced end to end (`mysql_dumper` then `clickhouse_loader --mysqlshell --binary_handling_mode base64` on a schema with `int GENERATED ALWAYS AS (((attrs & (1 << 0)) > 0)) VIRTUAL` columns: `Code: 62` syntax error at `&`, loader exit 1, on 2.11.0 and on the 2.11.1 base); offline `Code: 62` from `clickhouse local` on the translated DDL | FIXED: a generated column becomes `<type> NULL DEFAULT <expression>`. The expression is passed through as written (every expression ClickHouse accepted before loads unchanged), except for the constructs ClickHouse rejects, translated on the parse tree: charset introducers dropped; the bit operators as `bitAnd`/`bitOr`/`bitXor`/`bitShiftLeft`/`bitShiftRight`/`bitNot` on unsigned 64-bit operands (a shift by 64 or more giving 0, MySQL precedence for chains that hold a bit operator, NULL propagated); `CONVERT(expr USING cs)` as `toString(expr)` (`toDecimalString` for a decimal column); `IFNULL`/`COALESCE` of a string and a number, date or decimal column with that column as text (a second schema: `Code: 62` at `using`, then `Code: 386` no common type). Numbers written as text (CONCAT/CONCAT_WS arguments, string-typed columns) keep MySQL's text: decimals with their scale, `/` with MySQL's result scale, CONCAT_WS skipping NULL values; a FLOAT/DOUBLE or BIT(1) column or an unmodelled quotient written as text keeps loading with a WARNING. A decimal result stored in a DECIMAL generated column is computed exactly and rounded half away from zero to the column's scale, as MySQL stores it (ClickHouse alone truncates a Float64 quotient: 2/3 → 0.6666 instead of 0.6667). Where ClickHouse would compute a different value it refuses with `UnsafeTableDefinitionError` naming the table and the column (a bit operator on a non-integer operand; CONVERT or a mixed IFNULL over a floating-point, binary or BIT(1) column); none of these ever loaded. The regexp fallback refuses generated columns instead of deleting them (§3.16, §3.17). A sweep of every generated column in that schema's DDL creates 5 of 5 tables in `clickhouse local` (2.11.0: 3 of 5) (§5.1). Tests: `test_loader_generated_columns.py::TestBitFlagColumns`, `::TestPrecedenceAndOperators`, `::TestPassThrough`, `::TestNonIntegerBitOperands`, `::TestConvertUsingAndMixedIfnull`, `::TestRegexpFallback` (both copies, values via `clickhouse local`); e2e `tests_e2e/mysql/test_mysql_03_snapshot.py::test_loader_computes_generated_bit_flag_columns`, `::test_production_job_matches_the_loaded_generated_columns`. Was: the MySQL expression was copied verbatim as `MATERIALIZED <expr>`, so a bit operator (no `&`/`<<` in ClickHouse) failed the CREATE and with it the whole load, and the regexp fallback silently dropped generated columns. The streaming connector copies generated expressions verbatim as well (outside the Python tools). |
+| D-13.04-34 | S1 | both | `db_load/clickhouse_loader.py` (`mysqlshell_column_expression`, `datetime_clamp_expression`); same in `ch_sink_tools/db_load/clickhouse_loader.py` | reproduced end to end (a snapshot verified by the checksum driver: two tables differed only in a DATETIME(6) column holding `9999-12-31 23:59:59` style open-ended values, loaded as `2299-12-31 00:00:00.000000` and, with a zone shift, `2299-12-31 05:59:00.000000`, while the connector's replicas of the same tables matched); offline `clickhouse local` 24.8 keeps `2299-12-31 23:59:59.999999` and moves below-range values parsed in America/Chicago to `1900-01-01 06:00:00` UTC | FIXED: a DATETIME field of the dump is saturated as the connector saturates it: at or above `2299-12-31 23:59:59` the instant `2299-12-31 23:59:59` UTC, below `1900-01-01 00:00:00.000001` the instant `1900-01-01 00:00:00` UTC (the connector's `DataTypeRange.DATETIME64_MIN/MAX`, the checksum tools' `DATETIME_MIN/DATETIME_MAX`), cast to the target table's own column type (read from `system.columns`) so neither `--clickhouse_datetime_timezone` nor the server zone moves the instant; in-range values are cast as before (§3.7.1). (The first version cast to the loader's own translation; for a `--data_only` load into a table created elsewhere, such as the resync scratch table, that moved in-range values by the server zone, caught end to end by `tests_e2e/mysql/test_mysql_04_resync.py::test_unlogged_change_is_reported_then_repaired_by_resync`.) Test: `test_loader_datetime_clamp.py` (both copies; the loader's own INSERT executed in `clickhouse local` under UTC and America/Chicago, with and without a column zone). Was: the text went to ClickHouse, which saturated to another value, so a loaded table could never verify equal to MySQL for such rows and differed from what streaming writes. |
 | D-13.04-35 | S1 | both | `db_load/clickhouse_loader.py` (`mysqlshell_column_expression`, `time_text_expression`); same in `ch_sink_tools/db_load/clickhouse_loader.py` | observed on a real replica: one TIME column held 2.69 M rows `01:15:00` from the initial load and 97 K rows `01:15:00.000000` streamed afterwards, and the snapshot verified by the job driver reported every row of such a table DIFFERENT; offline the loader stored the MySQL Shell text unchanged | FIXED: a TIME field of the dump is written into its String column as the connector's `MicroTimeConverter.convert` formats it (`[-]HH:MM:SS.ffffff`, six fraction digits, sign kept, hours unbounded): the fraction is padded to six digits, NULL stays NULL, a non-String target is left alone (§3.7.1). The checksum tools and the connector are unchanged. Tests: `test_loader_time_text.py` (both copies, the loader's INSERT in `clickhouse local`); e2e `tests_e2e/mysql/test_mysql_03_snapshot.py::test_loaded_values_equal_the_streamed_values[ledger]`, `::test_production_job_matches_the_loaded_snapshot`. Was: the dump text (`01:15:00`, `12:00:00.500`) was stored as is. |
+| D-13.04-36 | S3 | both | `ch_sink_tools/db/checksum_common.py` (`get_unix_timezone_from_mysql_timezone`); `db_load/clickhouse_loader.py` (`load_schema`, `load_schema_mysqlshell`, `main`); same in `ch_sink_tools/db_load/clickhouse_loader.py` | code-read: the undeterminable branch logged a WARNING and returned `UTC`, so a dump with no recorded zone loaded `TIMESTAMP` as UTC whatever the source server stored | FIXED: no implicit zone. A recorded zone is used and must match `--source_timezone` when one is given; an undeterminable zone is refused before any DDL unless `--source_timezone` names it (FM-13.04-27, §3.9). Tests: `test_loader_dump_zone_refusal.py`, `test_loader_s1_fixes.py::TestDumpTimezoneMapping`, `::TestMysqlShellDumpTimezone`. Was: `UTC` fallback. |
+| D-13.04-37 | S1 | both | `db_load/clickhouse_loader.py` (`load_data_mysqlshell` structure build, `timestamp_input_datatype`); same in `ch_sink_tools/db_load/clickhouse_loader.py` | reproduced with `clickhouse local` on the UTC text `2018-04-05 20:44:35.772929` (April) and `2018-12-01 00:18:03.545683` (December): the zone-less declaration `\`ts\`  Nullable( DateTime64(6))` stores `1522961075772929`/`1543623483545683` under `TZ=UTC`, `1522957475772929`/`1543623483545683` under `TZ=Europe/London` (April one hour early, December exact) and `1522979075772929`/`1543645083545683` under `TZ=America/Chicago` (five and six hours late); the pinned `DateTime64(6, 'UTC')` stores `1522961075772929`/`1543623483545683` under all three | FIXED: a `TIMESTAMP` field is declared with the zone the loader resolved from the dump or `--source_timezone` (`DateTime64(p, '<zone>')`), so the parsed instant no longer follows the ambient zone of the load; a declaration that already names a zone (`--clickhouse_datetime_timezone`) is kept. Test `test_loader_timestamp_input_zone.py` (structure + `clickhouse local` values under three ambient zones; mutation-checked — the fix reverted makes 5 of its 17 tests fail). Was: zone-less `DateTime64(p)`, so every `TIMESTAMP` of a load followed the load's ambient zone (FM-13.04-41). |

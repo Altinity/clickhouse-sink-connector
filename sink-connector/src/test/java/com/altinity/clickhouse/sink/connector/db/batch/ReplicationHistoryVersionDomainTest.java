@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.common.SnowFlakeId;
@@ -262,7 +263,7 @@ public class ReplicationHistoryVersionDomainTest {
         method.setAccessible(true);
         try {
             method.invoke(new PreparedStatementFieldMapper("is_deleted", true, null, "_version", "test_db", ZoneId.of("UTC")),
-                    columnNameToIndexMap, ps, record, new ClickHouseSinkConnectorConfig(props),
+                    columnNameToIndexMap, ps, record, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)),
                     columnNameToDataTypeMap, DBMetadata.TABLE_ENGINE.REPLACING_MERGE_TREE);
         } catch (InvocationTargetException e) {
             Throwable cause = e.getCause();

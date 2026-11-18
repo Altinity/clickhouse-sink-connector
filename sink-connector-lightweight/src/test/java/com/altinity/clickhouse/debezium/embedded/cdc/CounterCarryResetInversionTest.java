@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import com.altinity.clickhouse.sink.connector.model.SourcePosition;
 
 import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -89,8 +88,6 @@ public class CounterCarryResetInversionTest {
     }
 
     @Test
-    @Disabled("DEFECT FM-02.03-1: a window of more than 10^6 rows carries the counter into the "
-            + "timestamp field, and the reset versions the next commit below the window's last rows")
     @DisplayName("more than 10^6 rows in one statement: the commit after it must rank above its last row")
     public void resetAfterMoreThanAMillionRowsInOneWindowStillRanksAbove() {
         anchorAtTs();
@@ -106,8 +103,6 @@ public class CounterCarryResetInversionTest {
     }
 
     @Test
-    @Disabled("DEFECT FM-02.03-1: a clamp at the floor never resets the counter, so a long clamp "
-            + "carries it into the timestamp field and the first reset after the clamp inverts")
     @DisplayName("after a long clamp at the floor, the first reset must rank above the clamped rows")
     public void resetAfterALongClampStillRanksAbove() {
         // A restart on a lagging source: the floor is seeded well ahead of the rows
@@ -127,5 +122,77 @@ public class CounterCarryResetInversionTest {
                 "the row at the reset is the newer commit but was versioned " + atReset + " < "
                         + beforeReset + ": 1 200 000 clamped rows carried the counter 1.2 ms into the "
                         + "timestamp field and the reset re-based it at +1 ms");
+    }
+
+    @Test
+    public void laterStatementOfTheSameCompressedEventRetainsCounterCarryAtReset() {
+        anchorAtTs();
+        long previous = 0L;
+        // A compressed payload shares its coordinate across statements, while
+        // each inner rows event can restart the row index at zero.
+        for (int row = 0; row < 2_000_000; row++) {
+            previous = version(TS + 1_999, 1_000, row % 1_000);
+        }
+        assertEquals(previous + 1, version(TS + 2_000, 1_000, 0),
+                "the later statement of the marked event is also a first-delivery row");
+    }
+
+    @Test
+    public void resetAtExactlyOneMillionRowsCannotReuseThePreviousVersion() {
+        anchorAtTs();
+        long previous = bigStatement(TS + 1_999, 1_000, 1_000_000);
+        long next = version(TS + 2_000, 1_000_000, 0);
+        assertEquals(previous + 1, next, "a reset that would tie must advance by one");
+    }
+
+    @Test
+    public void replayResetDoesNotEraseCarryNeededByTheNextFirstDelivery() {
+        anchorAtTs();
+        long previous = bigStatement(TS + 1_999, 1_000, 2_000_000);
+        long replay = version(TS + 2_000, 50, 0);
+        assertEquals((TS + 2_000) * 1_000_000L + VersionSequencer.SEQUENCE_START, replay,
+                "an older position keeps the existing raw-timestamp reset assignment");
+        long next = version(TS + 2_000, 1_000_000, 0);
+        assertEquals(previous + 1, next, "the next first delivery must retain the discarded carry");
+    }
+
+    @Test
+    public void positionlessResetDoesNotEraseCarryNeededByTheNextFirstDelivery() {
+        anchorAtTs();
+        long previous = bigStatement(TS + 1_999, 1_000, 2_000_000);
+        long unknown = VersionSequencer.nextSequenceNumber(TS + 2_000, null);
+        assertEquals((TS + 2_000) * 1_000_000L + VersionSequencer.SEQUENCE_START, unknown,
+                "positionless assignment must not be promoted to the maximum");
+        assertEquals(previous + 1, version(TS + 2_000, 1_000_000, 0));
+    }
+
+    @Test
+    public void reinitializingTheAnchorClearsTheAssignedVersionMaximum() {
+        version(TS + 60_000, 100, 0);
+        resetSequenceState();
+        assertEquals(TS * 1_000_000L + VersionSequencer.SEQUENCE_START_INITIAL + 1,
+                version(TS, 100, 0), "a fresh counter lifecycle must not inherit the old maximum");
+    }
+
+    @Test
+    public void guardedVersionRetainsItsTimestampAndFitsTheExistingDurableHorizon() {
+        anchorAtTs();
+        long previous = bigStatement(TS + 1_999, 1_000, 2_000_000);
+        VersionSequencer.VersionAssignment next = VersionSequencer.nextVersionAssignment(
+                TS + 2_000, SourcePosition.ofBinlog(LOG, 1_000_000L, 0));
+        assertEquals(previous + 1, next.sequenceNumber);
+        assertEquals(TS + 2_000, next.effectiveTs, "only the counter retains carry");
+        assertEquals(next.sequenceNumber, next.effectiveTs * 1_000_000L + VersionSequencer.sequenceNumber);
+
+        VersionHighWaterMarkTest.FakeClickHouse fake = new VersionHighWaterMarkTest.FakeClickHouse();
+        VersionHighWaterMark mark = new VersionHighWaterMark(fake::connection,
+                "offsets_db.replica_source_info", () -> TS + 10_000, 1, 0L);
+        mark.cover(next.sequenceNumber);
+        long horizon = mark.horizon();
+        assertTrue(horizon >= next.sequenceNumber, "the unchanged horizon covers counter carry");
+        resetSequenceState();
+        VersionSequencer.seedVersionFloor(horizon);
+        assertTrue(version(TS, 2_000_000, 0) > next.sequenceNumber,
+                "the unchanged sequence-domain seed orders the next run above the guarded value");
     }
 }

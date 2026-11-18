@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.batch;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.converters.ClickHouseConverter;
@@ -61,7 +62,9 @@ public class PreparedStatementFieldMapperColumnBindingMemoTest {
     private static ClickHouseSinkConnectorConfig config() {
         Map<String, String> props = new HashMap<>();
         props.put(ClickHouseSinkConnectorConfigVariables.CONNECTION_POOL_DISABLE.toString(), "true");
-        return new ClickHouseSinkConnectorConfig(props);
+        // Explicit source zone: an unset database.connectionTimeZone now means America/Chicago (spec 07.03 3.1.6).
+        props.put(ClickHouseSinkConnectorConfigVariables.SOURCE_DATETIME_TIMEZONE.toString(), "UTC");
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static ClickHouseStruct record(int id) {

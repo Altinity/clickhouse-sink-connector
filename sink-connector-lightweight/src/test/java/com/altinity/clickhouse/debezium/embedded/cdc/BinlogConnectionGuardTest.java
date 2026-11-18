@@ -9,6 +9,8 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.SocketTimeoutException;
@@ -123,7 +125,9 @@ public class BinlogConnectionGuardTest {
      */
     @Test
     void aPeerCloseOnARealSocketThrows() throws Exception {
-        ServerSocket server = new ServerSocket(0);
+        // Bound to loopback: the wildcard address a plain ServerSocket reports is not connectable on a host
+        // without a working IPv6 route ("Network is unreachable").
+        ServerSocket server = new ServerSocket(0, 50, InetAddress.getLoopbackAddress());
         closeables.add(server);
         Thread closer = new Thread(() -> {
             try (Socket s = server.accept(); OutputStream out = s.getOutputStream()) {
@@ -137,7 +141,7 @@ public class BinlogConnectionGuardTest {
         closer.start();
         Socket client = new BinlogConnectionGuard.GuardedSocketFactory(5_000).createSocket();
         closeables.add(client);
-        client.connect(server.getLocalSocketAddress(), 5_000);
+        client.connect(new InetSocketAddress(InetAddress.getLoopbackAddress(), server.getLocalPort()), 5_000);
         InputStream in = client.getInputStream();
         assertEquals(42, in.read());
         assertThrows(EOFException.class, in::read);

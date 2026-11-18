@@ -30,6 +30,9 @@ import java.util.TreeSet;
  * PREPARE wrote, and the {@code clickhouse_sink_binlog_xa_rollback_after_prepare} metric; replication of
  * everything else continues. Recovery: re-synchronise the named tables (spec 11.04).</p>
  *
+ * <p>The same feeds also record the stop for a partial update event ({@code PARTIAL_UPDATE_ROWS_EVENT}, which
+ * Debezium drops; spec 01.10 section 3.1), exposed through {@link #unreplicable()}.</p>
+ *
  * <p>Two feeds, one state. The listener registered on the task's binlog client (by the connector's copy of
  * Debezium's MySQL streaming metrics class, spec 01.09) sees the outer events -- {@code XA_PREPARE} and the
  * later {@code XA COMMIT} / {@code XA ROLLBACK}. With {@code binlog_transaction_compression=ON} the XA
@@ -55,6 +58,10 @@ public final class BinlogEventAudit implements BinaryLogClient.EventListener {
     };
     private static String currentXid = null;
     private static TreeSet<String> currentTables = null;
+    /** The table of the most recent TABLE_MAP in this stream, named in a partial update's message. */
+    private static String lastTable = null;
+    /** The stop recorded by the first partial update event since the last reset, or null. */
+    private static volatile Throwable pendingStop = null;
     private static volatile BinaryLogClient client = null;
 
     BinlogEventAudit(BinaryLogClient client) {
@@ -77,11 +84,23 @@ public final class BinlogEventAudit implements BinaryLogClient.EventListener {
         client.registerEventListener(new BinlogEventAudit(client));
     }
 
-    /** Forgets the XA state (a new task re-reads the stream from its offset). */
+    /** Forgets the XA state and any recorded stop (a new task re-reads the stream from its offset). */
     static synchronized void reset() {
         PREPARED.clear();
         currentXid = null;
         currentTables = null;
+        lastTable = null;
+        pendingStop = null;
+    }
+
+    /**
+     * The stop recorded by the first partial update event since the last reset, or {@code null}.
+     *
+     * <p>Read by the connection guard (its next read is refused) and by the engine's completion handler (the
+     * stop is terminal, not retried). Spec 01.10 section 3.1.</p>
+     */
+    static Throwable unreplicable() {
+        return pendingStop;
     }
 
     @Override
@@ -115,9 +134,10 @@ public final class BinlogEventAudit implements BinaryLogClient.EventListener {
         EventHeader header = event.getHeader();
         EventType type = header.getEventType();
         if (type == EventType.TABLE_MAP && event.getData() instanceof TableMapEventData) {
+            TableMapEventData tm = (TableMapEventData) event.getData();
+            lastTable = tm.getDatabase() + "." + tm.getTable();
             if (currentTables != null) {
-                TableMapEventData tm = (TableMapEventData) event.getData();
-                currentTables.add(tm.getDatabase() + "." + tm.getTable());
+                currentTables.add(lastTable);
             }
         } else if (type == EventType.QUERY && event.getData() instanceof QueryEventData) {
             onQuery(((QueryEventData) event.getData()).getSql(), header);
@@ -129,7 +149,30 @@ public final class BinlogEventAudit implements BinaryLogClient.EventListener {
             }
             currentXid = null;
             currentTables = null;
+        } else if (type == EventType.PARTIAL_UPDATE_ROWS_EVENT) {
+            onPartialUpdate(header);
         }
+    }
+
+    /**
+     * Records the stop for a partial update event (spec 01.10 section 3.1). Debezium drops this event type, so
+     * the rest of its statement would be lost silently; the first one is recorded, logged and refused. The
+     * client swallows listener exceptions, so the stop is recorded here and enforced by the connection guard
+     * (its next read fails) and by the engine's completion handler (terminal, not retried).
+     */
+    private static void onPartialUpdate(EventHeader header) {
+        if (pendingStop != null) {
+            return;
+        }
+        String table = lastTable == null ? "(no table map read in this process)" : lastTable;
+        String message = "partial update event at " + where(header) + " for table " + table + ": the source logged an "
+                + "UPDATE as a partial update (binlog_row_value_options=PARTIAL_JSON in the writing session), which the "
+                + "connector cannot replicate, so the other columns of that statement would be lost. The engine is "
+                + "stopped. Remedy: set binlog_row_value_options to empty in the source session (SET GLOBAL "
+                + "binlog_row_value_options = ''; and in each session that writes), re-synchronise table " + table
+                + " (ch-mysql-resync, spec 11.04), then restart the connector (spec 01.10 section 3.1).";
+        log.error(message);
+        pendingStop = new IllegalStateException(message);
     }
 
     private static void onQuery(String sql, EventHeader header) {

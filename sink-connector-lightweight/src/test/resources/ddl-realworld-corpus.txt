@@ -1,0 +1,202 @@
+# Real-world DDL shapes: what mysqldump, Liquibase, Flyway, gh-ost,
+# pt-online-schema-change and ORMs actually emit. The grammar corpus covers one
+# statement per grammar alternative; this file covers the COMBINATIONS and the
+# tool-specific spellings that real producers put on the wire.
+#
+# Every statement here must be one a MySQL SERVER accepts, because only such a
+# statement can reach a binlog. Most are MySQL 8.0. Two blocks are deliberate
+# exceptions, marked in place: the legacy ALTER ONLINE/OFFLINE/IGNORE prefixes
+# and UPGRADE PARTITIONING, both removed by 8.0 but still present in older
+# binlogs and dumps the connector may be pointed at, and the SECONDARY_ENGINE
+# family, which is 8.0 syntax that the 8.0 manual page for ALTER TABLE does not
+# list. A statement no server can execute proves nothing about the connector,
+# so a spelling that belongs to a different product (for example Oracle's
+# VALIDATE PARTITION) must NOT be added here.
+#
+# A parse failure on one of these is fatal in production: ErrorListenerImpl
+# throws and replication stops for EVERY table on the host.
+
+# --- mysqldump CREATE TABLE with the full option tail ---
+CREATE TABLE `t` (`id` bigint NOT NULL AUTO_INCREMENT, `v` varchar(255) DEFAULT NULL, PRIMARY KEY (`id`), KEY `idx_v` (`v`)) ENGINE=InnoDB AUTO_INCREMENT=1000 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci ROW_FORMAT=DYNAMIC;
+CREATE TABLE `t` (`id` int NOT NULL, `d` datetime(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='a table''s comment';
+CREATE TABLE `t` (`id` int NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_swedish_ci ROW_FORMAT=COMPRESSED KEY_BLOCK_SIZE=8;
+CREATE TABLE `t` (`id` int NOT NULL) ENGINE=MyISAM DEFAULT CHARSET=utf8 ROW_FORMAT=FIXED;
+CREATE TABLE `t` (`id` int NOT NULL) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci PACK_KEYS=1 STATS_PERSISTENT=0;
+
+# --- mysqldump ADD/CHANGE/MODIFY combination clauses ---
+ALTER TABLE `t` ADD COLUMN `a` int NOT NULL DEFAULT '0' AFTER `id`, ADD INDEX `idx_a` (`a`), MODIFY COLUMN `v` varchar(500) NOT NULL DEFAULT '';
+# DESTRUCTIVE: fixture text only; parsed and asserted on, never executed.
+ALTER TABLE `t` ADD `a` int(11) DEFAULT NULL, ADD `b` varchar(10) DEFAULT NULL, DROP COLUMN `c`, RENAME COLUMN `d` TO `e`;
+ALTER TABLE `t` CHANGE COLUMN `old` `new` varchar(64) NOT NULL DEFAULT '' COMMENT 'renamed by migration';
+ALTER TABLE `t` MODIFY `c` bigint NOT NULL AUTO_INCREMENT FIRST;
+
+# --- gh-ost / pt-online-schema-change spellings ---
+ALTER TABLE `t` ADD COLUMN `x` int NOT NULL DEFAULT 0, ALGORITHM=INPLACE, LOCK=NONE;
+ALTER TABLE `t` ADD COLUMN `x` int NOT NULL DEFAULT 0, ALGORITHM=INSTANT;
+ALTER TABLE `t` ADD INDEX `idx_x` (`x`), ALGORITHM=INPLACE, LOCK=NONE;
+# DESTRUCTIVE: fixture text only; parsed and asserted on, never executed.
+ALTER TABLE `t` DROP INDEX `idx_x`, ALGORITHM=INPLACE, LOCK=NONE;
+ALTER TABLE `t` ENGINE=InnoDB, ALGORITHM=INPLACE, LOCK=NONE;
+
+# --- partitioning (Liquibase / hand-written retention) ---
+ALTER TABLE `t` ADD PARTITION (PARTITION p2024 VALUES LESS THAN (2025));
+# DESTRUCTIVE: fixture text only; parsed and asserted on, never executed.
+ALTER TABLE `t` DROP PARTITION p2020;
+ALTER TABLE `t` REORGANIZE PARTITION p1 INTO (PARTITION p1a VALUES LESS THAN (10), PARTITION p1b VALUES LESS THAN MAXVALUE);
+ALTER TABLE `t` EXCHANGE PARTITION p0 WITH TABLE `t_swap`;
+ALTER TABLE `t` TRUNCATE PARTITION p0;
+ALTER TABLE `t` COALESCE PARTITION 2;
+ALTER TABLE `t` REMOVE PARTITIONING;
+ALTER TABLE `t` PARTITION BY RANGE (YEAR(created)) (PARTITION p0 VALUES LESS THAN (2020), PARTITION pmax VALUES LESS THAN MAXVALUE);
+ALTER TABLE `t` ANALYZE PARTITION p0, p1;
+ALTER TABLE `t` CHECK PARTITION ALL;
+ALTER TABLE `t` OPTIMIZE PARTITION p0;
+ALTER TABLE `t` REBUILD PARTITION p0;
+ALTER TABLE `t` REPAIR PARTITION p0;
+ALTER TABLE `t` PARTITION BY HASH(id) PARTITIONS 8;
+ALTER TABLE `t` PARTITION BY KEY(id) PARTITIONS 4;
+ALTER TABLE `t` PARTITION BY LIST(id) (PARTITION p0 VALUES IN (1,2), PARTITION p1 VALUES IN (3,4));
+
+# --- index DDL (standalone, emitted by ORMs) ---
+CREATE INDEX `idx_a` ON `t` (`a`);
+CREATE UNIQUE INDEX `idx_ab` ON `t` (`a`, `b`);
+CREATE FULLTEXT INDEX `ft` ON `t` (`body`);
+CREATE SPATIAL INDEX `sp` ON `t` (`geom`);
+# DESTRUCTIVE: fixture text only; parsed and asserted on, never executed.
+DROP INDEX `idx_a` ON `t`;
+
+# --- foreign keys / check constraints ---
+# DESTRUCTIVE: fixture text only; parsed and asserted on, never executed.
+ALTER TABLE `t` ADD CONSTRAINT `fk_x` FOREIGN KEY (`a`) REFERENCES `p` (`id`) ON DELETE CASCADE ON UPDATE RESTRICT;
+ALTER TABLE `t` DROP FOREIGN KEY `fk_x`;
+ALTER TABLE `t` ADD CONSTRAINT `ck_x` CHECK ((`a` > 0));
+ALTER TABLE `t` DROP CHECK `ck_x`;
+ALTER TABLE `t` ALTER CHECK `ck_x` NOT ENFORCED;
+ALTER TABLE `t` ALTER CHECK `ck_x` ENFORCED;
+
+# --- generated / invisible columns ---
+ALTER TABLE `t` ADD COLUMN `g` int GENERATED ALWAYS AS ((`a` + 1)) VIRTUAL;
+ALTER TABLE `t` MODIFY COLUMN `g` int GENERATED ALWAYS AS ((`a` * 2)) STORED;
+ALTER TABLE `t` ADD COLUMN `inv` int NOT NULL INVISIBLE;
+ALTER TABLE `t` ALTER COLUMN `inv` SET VISIBLE;
+
+# --- CREATE TABLE variants ---
+CREATE TABLE `t2` LIKE `t`;
+CREATE TABLE `t2` AS SELECT * FROM `t`;
+CREATE TEMPORARY TABLE `tmp` (`id` int);
+CREATE TABLE IF NOT EXISTS `t` (`id` int NOT NULL) ENGINE=InnoDB;
+CREATE TABLE `t` (`id` int NOT NULL, PRIMARY KEY (`id`) USING BTREE) ENGINE=InnoDB;
+CREATE TABLE `t` (`id` int NOT NULL, KEY `k` (`id`) USING HASH) ENGINE=MEMORY;
+CREATE TABLE `t` (`id` int NOT NULL) ENGINE=InnoDB TABLESPACE `ts1`;
+CREATE TABLE `t` (`id` int NOT NULL) ENGINE=InnoDB DATA DIRECTORY='/var/lib/mysql/data';
+CREATE TABLE `t` (`id` int NOT NULL) ENGINE=InnoDB COMMENT='x' AUTOEXTEND_SIZE=4M;
+CREATE TABLE `t` (`id` int NOT NULL) ENGINE=InnoDB COMMENT='x' AUTOEXTEND_SIZE = '4M';
+
+# --- charset conversions / table-level maintenance ---
+ALTER TABLE `t` CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+ALTER TABLE `t` DEFAULT CHARACTER SET utf8mb4;
+ALTER TABLE `t` CHARACTER SET utf8mb4 COLLATE utf8mb4_bin;
+ALTER TABLE `t` FORCE;
+ALTER TABLE `t` ENGINE=InnoDB;
+ALTER TABLE `t` ROW_FORMAT=COMPRESSED;
+ALTER TABLE `t` RENAME TO `t_new`;
+ALTER TABLE `t` RENAME AS `t_new`;
+ALTER TABLE `t` RENAME `t_new`;
+RENAME TABLE `a` TO `b`, `c` TO `d`;
+
+# --- ALTER modifier prefixes that carry DDL text ---
+ALTER TABLE `t` ALGORITHM=COPY, LOCK=SHARED;
+# Legacy prefixes: MySQL 5.x accepted them, 8.0 does not. They stay because a
+# connector can be pointed at a host still running 5.7 and these arrive in the
+# binlog there, and because the bundled grammar parses them -- removing them
+# would drop that surface silently.
+ALTER ONLINE TABLE `t` ADD COLUMN `c` int;
+ALTER OFFLINE TABLE `t` ADD COLUMN `c` int;
+ALTER IGNORE TABLE `t` ADD COLUMN `c` int;
+
+# --- views and routines (forwarded as DDL by some producers) ---
+CREATE OR REPLACE VIEW `v` AS SELECT `id` FROM `t`;
+ALTER VIEW `v` AS SELECT `id`, `v` FROM `t`;
+# DESTRUCTIVE: fixture text only; parsed and asserted on, never executed.
+DROP VIEW IF EXISTS `v`;
+CREATE DEFINER=`root`@`localhost` PROCEDURE `p`() BEGIN SELECT 1; END;
+
+# --- expression defaults (8.0.13+) ---
+CREATE TABLE `t` (`j` json DEFAULT (json_object()), `k` json DEFAULT (json_array()));
+CREATE TABLE `t` (`d` date DEFAULT (curdate()), `ts` timestamp DEFAULT (now()));
+
+# --- the expression layer inside CHECK, GENERATED and DEFAULT ---
+# Every predicate and expression-atom alternative that a MySQL server accepts
+# in a definition. A CHECK constraint holds a full boolean expression, so it is
+# where the expression grammar is exercised; the connector does not translate
+# CHECK into ClickHouse, but it MUST parse it, because a parse failure here
+# stops replication for every table on the host.
+ALTER TABLE `t` ADD CONSTRAINT `ck_cmp` CHECK (`a` <> 1);
+ALTER TABLE `t` ADD CONSTRAINT `ck_null_safe` CHECK (`a` <=> NULL);
+ALTER TABLE `t` ADD CONSTRAINT `ck_between` CHECK (`a` BETWEEN 1 AND 10);
+ALTER TABLE `t` ADD CONSTRAINT `ck_not_between` CHECK (`a` NOT BETWEEN 1 AND 10);
+ALTER TABLE `t` ADD CONSTRAINT `ck_in` CHECK (`a` IN (1, 2, 3));
+ALTER TABLE `t` ADD CONSTRAINT `ck_not_in` CHECK (`a` NOT IN (1, 2, 3));
+ALTER TABLE `t` ADD CONSTRAINT `ck_isnull` CHECK (`b` IS NULL);
+ALTER TABLE `t` ADD CONSTRAINT `ck_isnotnull` CHECK (`b` IS NOT NULL);
+ALTER TABLE `t` ADD CONSTRAINT `ck_istrue` CHECK (`b` IS TRUE);
+ALTER TABLE `t` ADD CONSTRAINT `ck_like` CHECK (`c` LIKE 'x%');
+ALTER TABLE `t` ADD CONSTRAINT `ck_like_escape` CHECK (`c` LIKE 'x!_%' ESCAPE '!');
+ALTER TABLE `t` ADD CONSTRAINT `ck_regexp` CHECK (`c` REGEXP '^x');
+ALTER TABLE `t` ADD CONSTRAINT `ck_rlike` CHECK (`c` RLIKE '^x');
+ALTER TABLE `t` ADD CONSTRAINT `ck_sounds` CHECK (`c` SOUNDS LIKE 'x');
+ALTER TABLE `t` ADD CONSTRAINT `ck_collate` CHECK (`c` COLLATE utf8mb4_bin = 'x');
+ALTER TABLE `t` ADD CONSTRAINT `ck_bit` CHECK ((`a` & 1) > 0);
+ALTER TABLE `t` ADD CONSTRAINT `ck_jsonextract` CHECK ((`j` ->> '$.x') = '1');
+ALTER TABLE `t` ADD CONSTRAINT `ck_binary` CHECK (BINARY `c` = 'x');
+ALTER TABLE `t` ADD CONSTRAINT `ck_unary` CHECK (-`a` > 0);
+# Generated columns carry the same expression grammar and DO reach ClickHouse,
+# so a shape the translator drops here is a silently missing column.
+ALTER TABLE `t` ADD COLUMN `gg` int GENERATED ALWAYS AS (length(`c`)) VIRTUAL;
+ALTER TABLE `t` ADD COLUMN `gh` int GENERATED ALWAYS AS ((`a` & 1)) VIRTUAL;
+
+# --- secondary engine family (RAPID) ---
+# MySQL 8.0 syntax. The 8.0 ALTER TABLE page does not list it, but the bundled
+# grammar has no alternative for it either -- which is exactly the drift these
+# entries exist to catch.
+ALTER TABLE `t` SECONDARY_ENGINE = RAPID;
+ALTER TABLE `t` SECONDARY_LOAD;
+ALTER TABLE `t` SECONDARY_UNLOAD;
+CREATE TABLE `t` (`id` int) SECONDARY_ENGINE=RAPID;
+
+# --- ALTER clauses a grammar sweep misses but a migration tool emits ---
+# The clustered ADD COLUMN form: one ALTER adding several columns at once.
+ALTER TABLE `t` ADD COLUMN (`a` int, `b` int);
+ALTER TABLE `t` ADD (`a` int, `b` int);
+# Primary-key changes. Unsupported by the connector (the ClickHouse sorting key
+# cannot follow), but they must PARSE: a parse failure halts every table.
+ALTER TABLE `t` ADD PRIMARY KEY (`id`);
+ALTER TABLE `t` DROP PRIMARY KEY;
+ALTER TABLE `t` ADD UNIQUE KEY `uk` (`a`);
+ALTER TABLE `t` ADD UNIQUE INDEX `uk` (`a`, `b`);
+ALTER TABLE `t` ADD FULLTEXT INDEX `ft` (`body`);
+ALTER TABLE `t` ADD SPATIAL INDEX `sp` (`geom`);
+# Index maintenance emitted by migrations and by DBA repair scripts.
+ALTER TABLE `t` RENAME INDEX `old_idx` TO `new_idx`;
+ALTER TABLE `t` ALTER INDEX `idx` VISIBLE;
+ALTER TABLE `t` ALTER INDEX `idx` INVISIBLE;
+# Column DEFAULT changes (Liquibase `dropDefaultValue`, hand-written repairs).
+ALTER TABLE `t` ALTER COLUMN `c` SET DEFAULT 5;
+ALTER TABLE `t` ALTER COLUMN `c` DROP DEFAULT;
+ALTER TABLE `t` ALTER `c` SET DEFAULT 'x';
+# mysqldump emits DISABLE KEYS / ENABLE KEYS around bulk loads.
+ALTER TABLE `t` DISABLE KEYS;
+ALTER TABLE `t` ENABLE KEYS;
+ALTER TABLE `t` ORDER BY `a`, `b`;
+# Transportable-tablespace workflow.
+ALTER TABLE `t` DISCARD TABLESPACE;
+ALTER TABLE `t` IMPORT TABLESPACE;
+# Partition validation (a DBA repair step after a suspect restore). MySQL has
+# no VALIDATE PARTITION -- that spelling is Oracle's, and CHECK PARTITION does
+# the job. An entry the server cannot execute proves nothing about the
+# connector, so it does not belong in this file.
+ALTER TABLE `t` CHECK PARTITION p0, p1;
+ALTER TABLE `t` ANALYZE PARTITION ALL;
+ALTER TABLE `t` OPTIMIZE PARTITION ALL;
+ALTER TABLE `t` REBUILD PARTITION ALL;
+ALTER TABLE `t` REPAIR PARTITION ALL;

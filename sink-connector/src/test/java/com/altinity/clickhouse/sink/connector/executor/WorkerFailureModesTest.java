@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.executor;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.executor.OffsetTestSupport.RecordingCommitter;
 import com.altinity.clickhouse.sink.connector.model.ClickHouseStruct;
@@ -84,7 +85,7 @@ public class WorkerFailureModesTest {
         props.put("batch.retry.backoff.initial.ms", "1");
         props.put("batch.retry.backoff.max.ms", "2");
         props.putAll(extra);
-        return new ClickHouseSinkConnectorConfig(props);
+        return new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
     }
 
     private static ClickHouseSinkConnectorConfig config() {

@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import org.apache.kafka.connect.data.Field;
 import org.apache.kafka.connect.data.Schema;
@@ -42,7 +43,7 @@ public class ClickHouseAutoCreateTableHistoryDdlTest {
         ArrayList<String> primaryKey = new ArrayList<>();
         primaryKey.add("id");
         return new ClickHouseAutoCreateTable().createTableSyntax(primaryKey, "t", "binlog_history",
-                fields(), columnMap(), true, false, null, new ClickHouseSinkConnectorConfig(props));
+                fields(), columnMap(), true, false, null, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props)));
     }
 
     @Test
@@ -54,8 +55,8 @@ public class ClickHouseAutoCreateTableHistoryDdlTest {
 
         String ddl = createTable(props);
 
-        Assert.assertTrue(ddl, ddl.contains("`_valid_from` DateTime('UTC') DEFAULT '2100-01-01 00:00:00'"));
-        Assert.assertTrue(ddl, ddl.contains("`_valid_to` DateTime('UTC') DEFAULT '2100-01-01 00:00:00'"));
+        Assert.assertTrue(ddl, ddl.contains("`_valid_from` DateTime('UTC') DEFAULT 4102444800"));
+        Assert.assertTrue(ddl, ddl.contains("`_valid_to` DateTime('UTC') DEFAULT 4102444800"));
         Assert.assertTrue(ddl, ddl.contains("`_operation` LowCardinality(String)"));
         Assert.assertTrue(ddl, ddl.contains("PARTITION BY toDate(`_valid_to`)"));
         // The sorting key is (k, _valid_to): what makes the table an SCD2 table.
@@ -65,14 +66,18 @@ public class ClickHouseAutoCreateTableHistoryDdlTest {
     }
 
     @Test
-    public void historyModeWithoutTimezoneEmitsBareDateTimeWithDefault() {
+    public void historyModeWithExplicitZoneEmitsZonedDateTimeWithDefault() {
         Map<String, String> props = new HashMap<>();
         props.put("replication.history.enable", "true");
+        props.put("clickhouse.datetime.timezone", "America/Chicago");
 
         String ddl = createTable(props);
 
-        Assert.assertTrue(ddl, ddl.contains("`_valid_from` DateTime DEFAULT '2100-01-01 00:00:00'"));
-        Assert.assertTrue(ddl, ddl.contains("`_valid_to` DateTime DEFAULT '2100-01-01 00:00:00'"));
+        // Spec 07.03 section 3.1.2: clickhouse.datetime.timezone is mandatory, so new history tables carry the
+        // configured zone, never a bare DateTime. The default is the numeric epoch (Spec 07.03 section 3.1.12),
+        // not quoted text: '2100-01-01 00:00:00' read in Chicago is 6 h late.
+        Assert.assertTrue(ddl, ddl.contains("`_valid_from` DateTime('America/Chicago') DEFAULT 4102444800"));
+        Assert.assertTrue(ddl, ddl.contains("`_valid_to` DateTime('America/Chicago') DEFAULT 4102444800"));
         // Default replication.history.ttl.
         Assert.assertTrue(ddl, ddl.contains("TTL `_valid_to` + toIntervalDay(30)"));
     }

@@ -26,7 +26,7 @@ After a fresh metadata read still does not produce column $C$, its
 
 | `default_kind` | Meaning | Action |
 |---|---|---|
-| `ALIAS` | not stored; nothing can diverge | ignore; `markColumnProvenAbsent` so the probe is not repeated per record |
+| `ALIAS` | not stored: ClickHouse computes it, so the source's value for it is **not replicated** (a real divergence, not a stale cache) | WARN once per table and column, naming the expression (`warnAliasNamesake`); the record's value is ignored; `markColumnProvenAbsent` so the probe is not repeated per record |
 | `MATERIALIZED` | stored, ClickHouse-computed; shadows the source value | §3.2 convert to `DEFAULT`, re-read, bind the source value. If the conversion cannot be performed (declared type or expression unreadable, `ALTER` rejected or without effect) or the re-read still lacks the column, **fail the batch** with `MissingTargetColumnException` naming the failed remediation (§3.3); never continue without the source value |
 | `DEFAULT` or `""` (a stored column the connector can write) | the writable map read raced a concurrent change (typically another worker's §3.2 conversion) | §3.4: re-read the writable map once; if it now has $C$, bump the version and bind it; otherwise §3.3 |
 | `null` (no `system.columns` row: the column does not exist in ClickHouse) | the replica is incomplete | §3.3 |

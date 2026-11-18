@@ -15,8 +15,9 @@ import java.util.List;
  *
  * <p>Stateless logic over process-wide mutable state; extracted from
  * {@link DebeziumChangeEventCapture} so it is owned and tested on its own. The
- * statics are shared across engine restarts within one JVM -- deliberately: see
- * {@link #sequenceMaxSourceTs} and {@link #sequenceHighWaterPosition}. The formal
+ * floor, anchor, counter and assigned-version maximum survive engine restarts
+ * within one JVM. The position gate is cleared by {@link #beginEngineRun} only
+ * after successful seeding. The formal
  * model of the floor is {@code Replication.VersionFloor}
  * (formal_specs/lean/Replication/VersionFloor.lean).</p>
  */
@@ -58,6 +59,14 @@ final class VersionSequencer {
     public static long sequenceNumber = SEQUENCE_START;
 
     /**
+     * Highest sequence-domain value assigned in this counter lifecycle. Guarded
+     * by the class monitor and cleared when an unset anchor initializes the
+     * counter. Retains carry that a reset would otherwise discard (spec 02.03
+     * section 3.2.1); this is not a new persisted version domain.
+     */
+    private static long sequenceMaxAssignedVersion = 0L;
+
+    /**
      * Source-timestamp anchor for the intra-second sequence counter.
      *
      * <p>The counter resets only when the SOURCE commit clock advances by more than one
@@ -73,10 +82,11 @@ final class VersionSequencer {
      * High-water mark of the source-log position ({@link SourcePosition}) versioned in
      * this run.
      *
-     * <p>Debezium delivers events in log order, and log order IS commit order. The only
-     * time a lower position follows a higher one is a redelivery after an offset rewind.
-     * The mark therefore separates the two cases the version sequence has to treat
-     * differently:</p>
+     * <p>Debezium delivers events in log order, and log order IS commit order.
+     * MySQL positions prefer the restart anchor/event/row cursor, which survives
+     * header-position wrap inside a transaction (spec 01.02 section 3.4). An
+     * anchor that itself wraps is still ambiguous with replay; no wrap is inferred.
+     * Within comparable coordinates the mark separates the two cases:</p>
      * <ul>
      *   <li><b>first delivery</b> (position above the mark): the event committed after
      *   every event already versioned, so its {@code _version} must rank above all of
@@ -89,7 +99,7 @@ final class VersionSequencer {
      * <p>The mark is comparable only within one binary log: a positioned record from a
      * differently named log ({@link SourcePosition#sameLog} false -- the basename
      * changed) is a first delivery and replaces the mark (spec 01.02 section 3.1.1).
-     * It is reset by a process restart; a new run starts with an empty mark and a
+     * It is reset by every successfully seeded engine start; a new run starts with an empty mark and a
      * floor seeded from the durable high-water mark (spec 02.02 section 3.5).</p>
      */
     public static SourcePosition sequenceHighWaterPosition = null;
@@ -206,6 +216,7 @@ final class VersionSequencer {
         if (sequenceAnchorTs == 0L) {
             sequenceAnchorTs = recordTs;
             sequenceNumber = SEQUENCE_START_INITIAL;
+            sequenceMaxAssignedVersion = 0L;
         }
         long effectiveTs = recordTs;
         // A position is comparable with the mark only inside one binary log. After
@@ -228,12 +239,21 @@ final class VersionSequencer {
         // through to the redelivery branch and kept their raw statement time
         // while the first statement's rows had been floored: an INSERT
         // out-ranked its own UPDATE and DELETE (spec 02.02 section 3.1.2).
+        boolean incompatibleCoordinates = position != null && sequenceHighWaterPosition != null
+                && position.sameLog(sequenceHighWaterPosition)
+                && !position.sameCoordinateKind(sequenceHighWaterPosition);
+        if (incompatibleCoordinates) {
+            log.warn("Source coordinate kind changed from {} to {}; keeping the high-water mark and "
+                    + "raw source timestamp because restart anchors and event-header positions are not comparable",
+                    sequenceHighWaterPosition, position);
+        }
         boolean restOfMarkedEvent = position != null && sequenceHighWaterPosition != null
                 && position.sameLogPosition(sequenceHighWaterPosition);
-        if (position != null && !restOfMarkedEvent
+        boolean firstDelivery = position != null && !incompatibleCoordinates && !restOfMarkedEvent
                 && (sequenceHighWaterPosition == null
                         || !position.sameLog(sequenceHighWaterPosition)
-                        || position.compareTo(sequenceHighWaterPosition) > 0)) {
+                        || position.compareTo(sequenceHighWaterPosition) > 0);
+        if (firstDelivery) {
             if (sequenceHighWaterPosition != null && !position.sameLog(sequenceHighWaterPosition)) {
                 log.warn("Binary log identity changed: high-water position {} is replaced by {} from a "
                         + "differently named log; its first record is versioned as a first delivery",
@@ -277,7 +297,19 @@ final class VersionSequencer {
         } else {
             sequenceNumber++;
         }
-        return new VersionAssignment(effectiveTs * 1_000_000L + sequenceNumber, effectiveTs);
+        long timestampComponent = effectiveTs * 1_000_000L;
+        long version = timestampComponent + sequenceNumber;
+        if ((firstDelivery || restOfMarkedEvent) && version <= sequenceMaxAssignedVersion) {
+            // A large window carries its counter into the timestamp component.
+            // A reset (including one caused by a replay or positionless row)
+            // must not make a first delivery, including remaining statements of
+            // the marked event, tie or fall below it. Older-event replay remains
+            // unclamped. Keep the timestamp and formula; retain only needed carry.
+            version = Math.addExact(sequenceMaxAssignedVersion, 1L);
+            sequenceNumber = version - timestampComponent;
+        }
+        sequenceMaxAssignedVersion = Math.max(sequenceMaxAssignedVersion, version);
+        return new VersionAssignment(version, effectiveTs);
     }
 
     /**
@@ -298,6 +330,25 @@ final class VersionSequencer {
             return sequenceMaxSourceTs;
         }
         return raiseVersionFloor(VersionHighWaterMark.sequenceFloor(highWaterVersion));
+    }
+
+    /**
+     * Starts an engine epoch after its predecessor has stopped dispatching.
+     * The seed must already cover the previous epoch's handed-off versions.
+     * Replay from the durable offset is an ordered suffix, not an isolated in-run
+     * duplicate. Keep the counter, anchor and maximum assigned sequence value.
+     *
+     * @param floorMs the successfully established restart floor
+     * @return the floor in force
+     */
+    static synchronized long beginEngineRun(long floorMs) {
+        if (floorMs <= 0) {
+            throw new IllegalArgumentException("A positive version floor is required before an engine starts");
+        }
+        long floor = raiseVersionFloor(floorMs);
+        sequenceHighWaterPosition = null;
+        sequenceHighWaterEffectiveTs = 0L;
+        return floor;
     }
 
     /**

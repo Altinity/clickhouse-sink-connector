@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.debezium.embedded.cdc;
 
+import com.altinity.clickhouse.debezium.embedded.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import io.debezium.storage.jdbc.offset.JdbcOffsetBackingStoreConfig;
@@ -116,12 +117,16 @@ public class ReplicaStatusViewFailureModesTest {
         if (view != null) {
             props.setProperty(ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString(), view);
         }
-        return props;
+        // DBMetadata(Properties) builds a full connector config from these props, and the zone keys are
+        // mandatory. Without them the constructor throws inside the view code's try blocks, which swallow it,
+        // so the view check and the CREATE are silently skipped. Production always has the zone keys here
+        // (ConnectionTimeZonePreflight refuses the start without them).
+        return ZoneFixtures.withZones(props);
     }
 
     private static void create(RecordingConnection ch, Properties props) {
         new DebeziumJdbcStorageOperations().createViewForShowReplicaStatus(ch.connection(),
-                new ClickHouseSinkConnectorConfig(new HashMap<>()), props);
+                new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())), props);
     }
 
     @Test
@@ -159,7 +164,7 @@ public class ReplicaStatusViewFailureModesTest {
     @Test
     @DisplayName("the ConfigDef default view reads ts_sec (MySQL) and ts_usec (PostgreSQL) offsets")
     public void configDefDefaultReadsBothOffsetShapes() {
-        String view = new ClickHouseSinkConnectorConfig(new HashMap<>())
+        String view = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>()))
                 .getString(ClickHouseSinkConnectorConfigVariables.REPLICA_STATUS_VIEW.toString());
         assertTrue(view.contains("'ts_sec'"), view);
         assertTrue(view.contains("'ts_usec'"), view);

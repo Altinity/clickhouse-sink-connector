@@ -104,9 +104,14 @@ cannot raise the floor, move the anchor, reset the counter or advance the
 high-water position (spec 02.02 §3.2; `Replication.VersionFloor.dispatch_control_preserves_state`).
 
 ### 3.2 Safety — quiescence gate on the control-record commit
-`commitControlRecordOffset` commits the control offset ONLY when both:
-1. `handedOffRows == false` — this batch handed no rows to the writers; and
-2. `isPipelineQuiescent() == true`, i.e. ALL of:
+`commitControlRecordOffset` commits the control offset ONLY when all three:
+1. `handedOffRows == false` — this batch handed no rows to the writers;
+2. `!DebeziumOffsetManagement.hasUnprovenAbandonment()` — no `reset()`
+   abandoned units whose rows are still unaccounted for (spec 09.01 §3.6);
+   the latch is read HERE, at the gate, and deliberately not inside
+   `isPipelineQuiescent()`, so the drains and `setup()` keep treating an
+   abandoned FIFO as empty (spec 09.04 §3); and
+3. `isPipelineQuiescent() == true`, i.e. ALL of:
    - `records` is null/empty (legacy handoff queue),
    - every per-thread queue in `routedQueues` is empty (hash routing), and
    - `!DebeziumOffsetManagement.hasUnwrittenBatches()` — the outstanding
@@ -189,7 +194,7 @@ Control records carry no data, so their failure modes are about offsets: never c
 
 - **FM-01.06-3 A control offset committed ahead of unwritten rows**
   - **Trigger**: a heartbeat or transaction marker arrives while rows of this or an earlier batch are queued, in flight or parked.
-  - **Behaviour**: `commitControlRecordOffset` commits only when `handedOffRows == false` and `isPipelineQuiescent()` (both queues empty and `!DebeziumOffsetManagement.hasUnwrittenBatches()`); otherwise the rows' own acknowledgements carry the offset (§3.2, §3.3).
+  - **Behaviour**: `commitControlRecordOffset` commits only when `handedOffRows == false`, `!DebeziumOffsetManagement.hasUnprovenAbandonment()` and `isPipelineQuiescent()` (both queues empty and `!DebeziumOffsetManagement.hasUnwrittenBatches()`); otherwise the rows' own acknowledgements carry the offset (§3.2, §3.3).
   - **Detection**: none needed — prevented by construction.
   - **Blast radius**: none.
   - **Recovery**: none needed.

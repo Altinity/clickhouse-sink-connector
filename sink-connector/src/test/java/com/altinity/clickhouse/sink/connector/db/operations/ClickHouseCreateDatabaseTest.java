@@ -1,5 +1,6 @@
 package com.altinity.clickhouse.sink.connector.db.operations;
 
+import com.altinity.clickhouse.sink.connector.ZoneFixtures;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
 import com.altinity.clickhouse.sink.connector.db.BaseDbWriter;
@@ -51,7 +52,7 @@ public class ClickHouseCreateDatabaseTest {
         HashMap<String, String> options = new HashMap<>();
         options.put(ClickHouseSinkConnectorConfigVariables.ERRORS_MAX_RETRIES.toString(), "5");
         options.put("connector.class", "io.debezium.connector.mysql.MySqlConnector");
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(options);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(options));
 
         String jdbcUrl = BaseDbWriter.getConnectionString(hostName, port, systemDb);
         Connection conn = BaseDbWriter.createConnection(jdbcUrl, BaseDbWriter.DATABASE_CLIENT_NAME, userName, password,
@@ -82,7 +83,7 @@ public class ClickHouseCreateDatabaseTest {
 
         ClickHouseCreateDatabase act = new ClickHouseCreateDatabase();
         try {
-            act.createNewDatabase(conn, dbName, false, new ClickHouseSinkConnectorConfig(new HashMap<>()));
+            act.createNewDatabase(conn, dbName, false, new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(new HashMap<>())));
         } catch (SQLException se) {
             Assert.fail("createNewDatabase failed: " + se.getMessage());
         }

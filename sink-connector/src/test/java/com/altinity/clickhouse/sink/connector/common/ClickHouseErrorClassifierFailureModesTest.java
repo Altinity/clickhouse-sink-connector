@@ -2,6 +2,7 @@ package com.altinity.clickhouse.sink.connector.common;
 
 import com.altinity.clickhouse.sink.connector.db.batch.MissingTargetColumnException;
 import com.altinity.clickhouse.sink.connector.db.operations.ColumnTypeOverrideMismatchException;
+import com.altinity.clickhouse.sink.connector.executor.ClickHouseBatchWriter;
 import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -86,6 +87,49 @@ public class ClickHouseErrorClassifierFailureModesTest {
                 ClickHouseErrorClassifier.classify(new RuntimeException("Fatal ClickHouse error, stopping task",
                         new RuntimeException("wrapped", clickHouse(16, "No such column note in table db.t")))),
                 "a column removed out of band makes the cached INSERT name a missing column: code 16, FATAL");
+    }
+
+    @Test
+    @DisplayName("a target table the catalog reports missing is terminal, so the batch stops instead of retrying")
+    public void missingTargetTableIsFatal() {
+        // Spec 08.07 section 3.6. The throw carries no ClickHouse error code,
+        // so without the terminal-type registration it classifies UNKNOWN and
+        // the engine retries a condition that can never settle. On 2026-11-09
+        // that retry loop filled the handoff FIFO and stopped the connector
+        // every thirteen minutes, with a message about row counts and none
+        // about the table.
+        assertEquals(ClickHouseErrorClassifier.ErrorCategory.FATAL,
+                ClickHouseErrorClassifier.classify(new MissingTargetTableException(
+                        "Target table db.t does not exist in ClickHouse. Create the table, or enable "
+                                + "auto.create.tables, to resume replication.")),
+                "a dropped table cannot appear by retrying: stopping names the cause, retrying hides it");
+    }
+
+    @Test
+    @DisplayName("the missing table is found through the batch-persistence wrapper the writer adds")
+    public void missingTargetTableWrappedInBatchFailureIsFatal() {
+        // ClickHouseBatchWriter.persistRecords wraps anything that is not
+        // already a BatchPersistenceException, so the reason reaches the
+        // classifier as the cause of a wrapper with no code of its own.
+        assertEquals(ClickHouseErrorClassifier.ErrorCategory.FATAL,
+                ClickHouseErrorClassifier.classify(new ClickHouseBatchWriter.BatchPersistenceException(
+                        "Failed to persist a batch of records to ClickHouse (topics: s.db.t)",
+                        new MissingTargetTableException(
+                                "Target table db.t does not exist in ClickHouse."))),
+                "hasTerminalCause walks the cause chain, so the wrapper must not hide the reason");
+    }
+
+    @Test
+    @DisplayName("a batch failure with no terminal cause behind it is still retried (pinned)")
+    public void plainBatchFailureIsNotFatal() {
+        // Pinned so the terminal registration above cannot widen into "every
+        // batch failure stops the connector". A wrapper carrying no
+        // recognisable cause keeps the retry, which is what a transient
+        // network failure needs.
+        assertEquals(ClickHouseErrorClassifier.ErrorCategory.UNKNOWN,
+                ClickHouseErrorClassifier.classify(new ClickHouseBatchWriter.BatchPersistenceException(
+                        "Failed to persist a batch of records to ClickHouse (topics: s.db.t)")),
+                "without a code and without a terminal cause the outcome is unknown, and unknown is retried");
     }
 
     @Test

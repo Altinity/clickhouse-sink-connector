@@ -32,9 +32,9 @@ def test_legacy_mysql_side_names_the_flag_and_the_columns(caplog):
                fidelity.mysql_column("k", "json"), fidelity.mysql_column("f", "double")]
     with caplog.at_level(logging.WARNING):
         fidelity.build_mysql_select(columns)
-    json_warnings = [w for w in warnings_of(caplog) if "JSON columns ['j', 'k']" in w]
+    json_warnings = [w for w in warnings_of(caplog) if "2 JSON columns ['j', 'k']" in w]
     assert len(json_warnings) == 1, warnings_of(caplog)
-    assert json_warnings[0] == ("Not compared in table db1.t1: JSON columns ['j', 'k'] (pass --include_json_columns "
+    assert json_warnings[0] == ("Not compared in table db1.t1: 2 JSON columns ['j', 'k'] (pass --include_json_columns "
                                 f"for a best-effort text comparison; {HINT})")
     assert not any("--json_columns" in w for w in warnings_of(caplog) if "floating point" in w)
 
@@ -44,14 +44,14 @@ def test_clickhouse_side_warning_has_no_hint(caplog):
     ch.warned_tables.clear()
     with caplog.at_level(logging.WARNING):
         fidelity.TestClickHouseRowExpression().build(fidelity.CLICKHOUSE_COLUMNS + [("j", "String", 0, None)], json_columns="j")
-    assert any("JSON columns ['j']" in w for w in warnings_of(caplog)), warnings_of(caplog)
+    assert any("1 JSON column ['j']" in w for w in warnings_of(caplog)), warnings_of(caplog)
     assert not any("--json_columns" in w for w in warnings_of(caplog))
 
 
 def test_packaged_mysql_side_names_the_flag_and_the_columns(caplog):
     with caplog.at_level(logging.WARNING):
         packaged.mysql_select_for([("id", "int", "NO", None), ("j", "json", "YES", None), ("k", "json", "YES", None)])
-    json_warnings = [w for w in warnings_of(caplog) if "JSON columns ['j', 'k']" in w]
+    json_warnings = [w for w in warnings_of(caplog) if "2 JSON columns ['j', 'k']" in w]
     assert len(json_warnings) == 1, warnings_of(caplog)
     assert json_warnings[0].endswith(f"; {HINT})"), json_warnings[0]
 
@@ -59,7 +59,7 @@ def test_packaged_mysql_side_names_the_flag_and_the_columns(caplog):
 def test_drivers_relay_the_side_note_without_the_hint():
     """The job forwards --json_columns itself; its log keeps the side note it logged before (no new text, no
     WARNING)."""
-    before = ("2026-10-01 10:00:00,000 - WARNING - MainThread - Not compared in table db1.t1: JSON columns "
+    before = ("2026-10-01 10:00:00,000 - WARNING - MainThread - Not compared in table db1.t1: 2 JSON columns "
               "['j', 'k'] (pass --include_json_columns for a best-effort text comparison)")
     after = before[:-1] + f"; {HINT})"
     expected = before.replace(" - WARNING - ", " - ")

@@ -26,7 +26,7 @@ for (int i = 0; i < sourceBytes.length; i++) {
 }
 // Bind reversed byte array into ClickHouse UInt64 or String
 ```
-Single-byte values and BLOB / `ByteBuffer` payloads (non-`Bits` schemas) are bound unchanged. Failure to reverse multi-byte values results in byte transposition (e.g. `BIT(16)` value `0x0001` stored as `0x0100`).
+Single-byte values and BLOB / `ByteBuffer` payloads (non-`Bits` schemas) are bound unchanged. For a `ByteBuffer`, the payload is exactly its remaining bytes (`position` inclusive through `limit` exclusive), including sliced, direct and read-only buffers. Read through a duplicate so binding and retries never change the original position or limit. Apply the same BIT reversal, raw/hex encoding and spill handling to those bytes as to a `byte[]`. Failure to reverse multi-byte values results in byte transposition (e.g. `BIT(16)` value `0x0001` stored as `0x0100`).
 
 ### 3.2 Canonical stored representation of binary values
 The text that lands in the (`String`) ClickHouse column depends on two
@@ -34,10 +34,19 @@ settings, and a value-level comparison must know which one applies:
 
 | Debezium `binary.handling.mode` | Connector `persist.raw.bytes` | Delivered as | Stored as |
 |---|---|---|---|
-| `bytes` (Debezium default) | `false` (default) | `BYTES` (`byte[]` / `ByteBuffer`) | **lower-case hex text** of the bytes (`BaseEncoding.base16().lowerCase()`), e.g. `deadbeef` — equals `LOWER(HEX(col))` on MySQL |
+| `base64` (the **default**: the connector sets it when the key is absent or blank, `DebeziumChangeEventCapture.ensureBinaryHandlingMode`) | any | `STRING` (Debezium already base64-encoded it) | the **base64 text** verbatim, e.g. `3q2+7w==` — equals `TO_BASE64(col)` on MySQL; `persist.raw.bytes` has no effect because the value is no longer `BYTES` |
+| `bytes` (Debezium's own default, used when the operator sets it explicitly) | `false` | `BYTES` (`byte[]` / `ByteBuffer`) | **lower-case hex text** of the bytes (`BaseEncoding.base16().lowerCase()`), e.g. `deadbeef` — equals `LOWER(HEX(col))` on MySQL |
 | `bytes` | `true` | `BYTES` | the raw bytes (`ps.setBytes`); the `String` column holds the bytes verbatim — equals the MySQL bytes |
-| `base64` (set by the shipped deployment templates) | any | `STRING` (Debezium already base64-encoded it) | the **base64 text** verbatim, e.g. `3q2+7w==` — equals `TO_BASE64(col)` on MySQL; `persist.raw.bytes` has no effect because the value is no longer `BYTES` |
 | `hex` | any | `STRING` | Debezium's hex text verbatim (`DEADBEEF`, upper case — note the case difference from the connector's own hex) |
+
+The default is base64 in **every** component, so a snapshot and the streamed
+rows it is joined by carry the same text and a checksum compares like with
+like: the connector sets it (`ensureBinaryHandlingMode`), the Python loader's
+`--binary_handling_mode` defaults to `base64` (Spec 13.04 §3.7.1), and the
+checksum tools' `--binary_encoding` defaults to `base64` (Spec 11.02 §3.6). An
+existing deployment that relied on Debezium's `bytes` default must set
+`binary.handling.mode: "bytes"` explicitly and pass `--binary_handling_mode
+bytes` / `--binary_encoding hex` to the tools.
 
 `BIT(n>1)` is delivered as `BYTES` (`io.debezium.data.Bits`) under every
 `binary.handling.mode` and follows the first two rows after the §3.1
@@ -54,12 +63,15 @@ bound for a `String` column follow the first two rows as well (Spec 07.06 §3.2)
 ## 5. Verification Criteria
 - `ClickHouseDataTypeMapperBitEndianTest.testBit64AsymmetricValueIsBigEndian()`, `ClickHouseDataTypeMapperBitEndianTest.testBit24AsymmetricValueIsBigEndian()`, `ClickHouseDataTypeMapperBitEndianTest.testBit16HighByteIsBigEndian()`, `ClickHouseDataTypeMapperBitEndianTest.testSingleHighByteUnchanged()`, `ClickHouseDataTypeMapperBitEndianTest.testPalindromicValuesUnchanged()`, `ClickHouseDataTypeMapperBitEndianTest.testBlobByteBufferNotReversed()`.
 - `ClickHouseDataTypeMapperBitBytesTest` — bit / bytes binding.
+- `BinaryHandlingModeDefaultTest` — the connector sets `binary.handling.mode`
+  to `base64` when it is absent or blank, and leaves an explicit value alone
+  (§3.2).
 
 ---
 
 ## 6. Failure Modes & Recovery
 
-Recovery posture: a `BYTES` value is written as text — lower-case hex by default, `unhex('<hex>')` from the V2 driver under `persist.raw.bytes=true` (`JdbcUtils.convertToUnhexExpression`, jdbc-v2 0.9.8 bytecode). Since spec 03.06 §3.4 a value of 64 KiB or more in a chunk at or above `insert.spill.threshold.bytes` is streamed from its array into a spill file as that same text, so it no longer costs its hex text in the heap. Procedures P-FIX-TYPE / P-SKIP / P-RESYNC and the retry-vs-stop rule are defined in spec 07.01 §6.
+Recovery posture: a `BYTES` value only arises when the operator sets `binary.handling.mode=bytes` explicitly (base64 is the default, §3.2); it is written as text — lower-case hex, or `unhex('<hex>')` from the V2 driver under `persist.raw.bytes=true` (`JdbcUtils.convertToUnhexExpression`, jdbc-v2 0.9.8 bytecode). Since spec 03.06 §3.4 a value of 64 KiB or more in a chunk at or above `insert.spill.threshold.bytes` is streamed from its array into a spill file as that same text, so it no longer costs its hex text in the heap. Procedures P-FIX-TYPE / P-SKIP / P-RESYNC and the retry-vs-stop rule are defined in spec 07.01 §6.
 
 - **FM-07.05-1 BLOB near or above 1 GiB (hex rendering limit)**
   - **Trigger**: a `LONGBLOB`/`VARBINARY` value of hundreds of MB up to `max_allowed_packet` (1 GiB).
@@ -73,13 +85,12 @@ Recovery posture: a `BYTES` value is written as text — lower-case hex by defau
 
 - **FM-07.05-2 `ByteBuffer` carrier with an offset, a limit, or read-only**
   - **Trigger**: a `BYTES` value delivered as a `ByteBuffer` that is a slice, has a non-zero position, or is read-only/direct (possible with Kafka Connect converters; Debezium's MySQL converter delivers a fully wrapped array — not verified for every converter).
-  - **Behaviour**: `ClickHouseDataTypeMapper.convert` reads `((ByteBuffer) value).array()`, which returns the whole backing array regardless of position, limit and offset: a slice binds bytes that are not the value; a read-only buffer throws `ReadOnlyBufferException` and a direct buffer `UnsupportedOperationException` (both UNKNOWN, retried forever). The `Geometry` branch of the same method reads `remaining()` correctly.
-  - **Detection**: slice: none (DEFECT); read-only/direct: ERROR + WARN `Retriable ... Category: UNKNOWN` every ≤ 30 s, no exit.
-  - **Blast radius**: slice: silent value divergence; read-only/direct: the worker's tables stop.
-  - **Recovery**: none in configuration; for the Kafka path, change the value converter so it delivers `byte[]`, restart, P-RESYNC.
-  - **RTO**: unbounded detection for the silent case; unmeasured.
-  - **Test**: `ClickHouseDataTypeMapperPoisonValueTest.byteBufferSliceBindsOnlyItsRemainingBytes()` (disabled, fails on 2.11.0: binds `01020304` for the slice `0203`).
-  - **DEFECT**: the `BYTES` branch ignores the buffer's position/limit/offset; read `remaining()` bytes like the `Geometry` branch does.
+  - **Behaviour**: the mapper reads `remaining()` bytes through a duplicate, preserving position and limit for retries. Sliced, direct and read-only buffers follow the same raw/hex and BIT endian rules as `byte[]`. Previously `array()` bound the whole backing array or threw for direct/read-only buffers.
+  - **Detection**: regression tests assert the exact bound bytes and unchanged cursor on repeated calls.
+  - **Blast radius before the fix**: slices could silently diverge; direct/read-only buffers could stall the worker.
+  - **Recovery**: the corrected mapper prevents new corruption; previously corrupted values still require reconciliation against the source.
+  - **RTO**: historical reconciliation is outside this fix; unmeasured.
+  - **Test**: `ClickHouseDataTypeMapperPoisonValueTest.byteBufferSliceBindsOnlyItsRemainingBytes()` is enabled; `ClickHouseDataTypeMapperBitBytesTest.byteBufferBoundsAndReadOnlyCarriersSurviveRepeatedBinding()` covers sliced, positioned, direct, read-only and empty buffers, both raw/hex modes and BIT/non-BIT semantics.
 
 - **FM-07.05-3 `binary.handling.mode` changed on a running replica**
   - **Trigger**: an operator changes Debezium `binary.handling.mode` (e.g. `bytes` → `base64`) or the connector's `persist.raw.bytes` between runs.
@@ -91,4 +102,4 @@ Recovery posture: a `BYTES` value is written as text — lower-case hex by defau
   - **Test**: GAP: a start-up check that refuses a representation change against a replica written in another one (for example by recording the mode in the offset storage).
   - **DEFECT**: a configuration change silently changes the stored value format.
 
-Summary: 3 failure modes, 3 DEFECT, 2 GAP.
+Summary: 3 failure modes, 2 unresolved DEFECT, 2 GAP; FM-07.05-2 has permanent regression coverage.

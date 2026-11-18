@@ -3,6 +3,7 @@ package com.altinity.clickhouse.debezium.embedded.ddl.parser;
 import com.altinity.clickhouse.debezium.embedded.cdc.DDLReplicationException;
 import com.altinity.clickhouse.debezium.embedded.cdc.DebeziumChangeEventCapture;
 import com.altinity.clickhouse.debezium.embedded.config.SinkConnectorLightWeightConfig;
+import com.altinity.clickhouse.debezium.embedded.ddl.DdlColumnFilter;
 import com.altinity.clickhouse.debezium.embedded.parser.DataTypeConverter;
 
 import static com.altinity.clickhouse.sink.connector.config.DefaultColumnDataTypeMappingConfig.loadDefaultColumnDataTypeMapping;
@@ -11,6 +12,7 @@ import static org.apache.commons.lang3.StringUtils.containsIgnoreCase;
 
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
+import com.altinity.clickhouse.sink.connector.common.TimeZoneResolver;
 import com.altinity.clickhouse.sink.connector.common.Utils;
 import com.altinity.clickhouse.sink.connector.config.ColumnTypeOverrideConfig;
 import com.altinity.clickhouse.sink.connector.config.SchemaOverrideConfig;
@@ -63,6 +65,17 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     private static final Pattern CHARSET_INTRODUCER =
             Pattern.compile("(?<![A-Za-z0-9_$])_[A-Za-z0-9]+(?=['\"])");
+
+    /**
+     * An identifier in a generated partition-key expression: a backtick-quoted
+     * name or a bare one. Used to find the source columns a translated
+     * partition clause refers to, so a nullable one can be told apart from a
+     * NOT NULL one. Function names also match and are harmless: they are not
+     * columns, so the membership test in
+     * {@link #namesNullableColumn} skips them.
+     */
+    private static final Pattern PARTITION_KEY_IDENTIFIER =
+            Pattern.compile("`([^`]+)`|([A-Za-z_][A-Za-z0-9_$]*)");
 
     /**
      * Removes MySQL character-set introducers from a generated-column
@@ -209,6 +222,24 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     private final Set<String> tableLevelPrimaryKeyColumns = new HashSet<>();
 
     /**
+     * Columns named by a table-level {@code UNIQUE KEY (...)} of the CREATE
+     * TABLE being parsed (lower-cased, backticks stripped). The first one is
+     * adopted as the sorting key when the table declares no PRIMARY KEY, so a
+     * column list must not remove it either (Spec 06.04 §3.6).
+     */
+    private final Set<String> tableLevelUniqueKeyColumns = new HashSet<>();
+
+    /**
+     * Set for a CREATE TABLE whose every column the configured column list
+     * excludes, so the filter is not applied to that statement at all. A list
+     * is a projection of the replicated tables: Debezium never captures a
+     * table it matches nothing in, and a CREATE with an empty column set
+     * cannot be translated (the sorting-key policy refuses it with a terminal
+     * exception that halts every table on the host). Reset per statement.
+     */
+    private boolean columnFilterBypassedForCreate;
+
+    /**
      * Whether the ALTER TABLE being walked carries a {@code DROP PRIMARY KEY}
      * clause; reset per statement (Spec 06.07 §3.1).
      */
@@ -283,6 +314,20 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * (Spec 06.04 §3.2.2).
      */
     private long ddlEventTimestampMs;
+
+    /**
+     * Decides which source columns this statement translates, from
+     * {@code column.include.list} / {@code column.exclude.list}; keeps every
+     * column when no list is configured (Spec 06.04 §3.6).
+     */
+    private DdlColumnFilter columnFilter = DdlColumnFilter.NONE;
+
+    /**
+     * The SOURCE database of the statement, which the column filter matches
+     * on; {@code null} when the record carries none. Deliberately not
+     * {@link #databaseName}, which is the DESTINATION name.
+     */
+    private String columnFilterDatabase;
 
     /**
      * Whether the statement being walked is, at STATEMENT level, a
@@ -400,6 +445,92 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     /**
+     * @param columnFilter   the column filter to apply to this statement;
+     *                       {@link DdlColumnFilter#NONE} keeps every column.
+     * @param sourceDatabase the SOURCE database of the statement (the lists
+     *                       are written against source names).
+     */
+    public void setColumnFilter(DdlColumnFilter columnFilter, String sourceDatabase) {
+        this.columnFilter = columnFilter == null ? DdlColumnFilter.NONE : columnFilter;
+        this.columnFilterDatabase = sourceDatabase;
+    }
+
+    /**
+     * Whether a CREATE TABLE must translate the given column.
+     *
+     * <p>Always true for a column the new table's identity is built from: the
+     * names {@link #tableLevelPrimaryKeyColumns} and
+     * {@link #tableLevelUniqueKeyColumns} collected before the columns are
+     * emitted. Those go into {@code ORDER BY}, so filtering one out leaves
+     * the CREATE referring to a column it never declares (Code: 47) -- or,
+     * once the keyless fallback picks the remaining columns, silently changes
+     * which source rows ClickHouse collapses into one. Such a column is kept
+     * and reported: the lists are a projection, not a re-keying of the
+     * table.</p>
+     *
+     * @param columnName the column name as written in the statement.
+     * @return true when the column is replicated and must be emitted.
+     */
+    private boolean keepsCreateColumn(String columnName) {
+        if (this.columnFilter.isDisabled() || this.columnFilterBypassedForCreate) {
+            return true;
+        }
+        String clean = stripBackticks(columnName);
+        // keepsColumn answers before the key sets are consulted when the name
+        // is unknown, so the lookups below never see a null.
+        if (clean == null || clean.isEmpty()) {
+            return true;
+        }
+        return keepsColumn(clean, tableLevelPrimaryKeyColumns.contains(clean.toLowerCase())
+                || tableLevelUniqueKeyColumns.contains(clean.toLowerCase()));
+    }
+
+    /**
+     * Whether an ALTER TABLE must translate the given column.
+     *
+     * <p>Always true for a column of the target table's sorting key: ClickHouse
+     * cannot re-key a table in place, so an ALTER that dropped or renamed one
+     * would change the row identity the replica was built with (the key policy
+     * below handles those clauses and is left to it).</p>
+     *
+     * @param columnName the column name as written in the statement.
+     * @return true when the column is replicated and must be emitted.
+     */
+    private boolean keepsAlterColumn(String columnName) {
+        if (this.columnFilter.isDisabled()) {
+            // Guarded before the lookup: with no column list configured this
+            // must cost nothing, and targetSortingKeyTypes() reads the target
+            // schema.
+            return true;
+        }
+        String clean = stripBackticks(columnName);
+        return keepsColumn(clean, targetSortingKeyTypes().containsKey(clean));
+    }
+
+    /**
+     * @param clean       the column name, backticks stripped.
+     * @param isKeyColumn whether the table's identity is built from it.
+     * @return true when the column is replicated and must be emitted.
+     */
+    private boolean keepsColumn(String clean, boolean isKeyColumn) {
+        if (this.columnFilter.isDisabled() || clean == null || clean.isEmpty()) {
+            return true;
+        }
+        boolean kept = this.columnFilter.keeps(this.columnFilterDatabase, this.cleanTableName, clean);
+        if (!kept && isKeyColumn) {
+            log.warn("Column {}.{}.{} is part of the table's primary/sorting key, so it is replicated "
+                            + "even though {} excludes it: it is in ORDER BY, and filtering it out would "
+                            + "either reference a missing column or change which source rows collapse "
+                            + "into one. Source DDL: [{}]",
+                    this.columnFilterDatabase, this.cleanTableName, clean,
+                    DdlColumnFilter.COLUMN_INCLUDE_LIST + " / " + DdlColumnFilter.COLUMN_EXCLUDE_LIST,
+                    this.originalSql);
+            return true;
+        }
+        return kept;
+    }
+
+    /**
      * Constructor for initializing the MySqlDDLParserListenerImpl instance.
      *
      * @param writer         The database writer instance.
@@ -456,20 +587,17 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     /**
      * Parse the user-provided time zone string and return a ZoneId object.
      *
+     * <p>Spec 07.03 section 3.1.6 (B3): a configured value that {@link TimeZoneResolver} refuses throws
+     * rather than being logged and dropped (which silently changed the DDL column type).</p>
+     *
      * @return The ZoneId object representing the user-provided time zone, or null if not provided.
+     * @throws IllegalArgumentException when the configured zone is set but not accepted.
      */
     public ZoneId parseTimeZone() {
         String userProvidedTimeZone = config.getString(ClickHouseSinkConnectorConfigVariables
                 .CLICKHOUSE_DATETIME_TIMEZONE.toString());
-        ZoneId userProvidedTimeZoneId = null;
-        try {
-            if(userProvidedTimeZone != null && !userProvidedTimeZone.isEmpty()) {
-                userProvidedTimeZoneId = ZoneId.of(userProvidedTimeZone);
-            }
-        } catch (Exception e){
-            log.error("**** Error parsing user provided timezone:"+ userProvidedTimeZone + e.toString());
-        }
-        return userProvidedTimeZoneId;
+        return TimeZoneResolver.resolve(TimeZoneResolver.CLICKHOUSE_DATETIME_TIMEZONE, userProvidedTimeZone,
+                TimeZoneResolver.Kind.CLICKHOUSE);
     }
 
 
@@ -644,7 +772,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
         String chDataTypeWithTimeZone = DataTypeConverter.addTimeZoneToDateTimeType(ClickHouseDataType.DateTime, 0, userProvidedTimeZone);
         // append this to the chDataTypeWithTimeZone
-        chDataTypeWithTimeZone = chDataTypeWithTimeZone + " DEFAULT " + "'" + DataTypeRange.epochSecondsToDateString(DataTypeRange.DATETIME32_MAX_TTL) + "'";
+        // Epoch-exact DEFAULT (Spec 07.03 section 3.1.12): a quoted string is read in the column zone.
+        chDataTypeWithTimeZone = chDataTypeWithTimeZone + " DEFAULT " + DataTypeRange.DATETIME32_MAX_TTL;
         // If Replication history is enabled, add the
         // deleted_time DateTime DEFAULT '2149-06-06',
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
@@ -693,18 +822,38 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         this.query.append(ReplacingMergeTreeKeyPolicy.engineClause(DebeziumChangeEventCapture.isNewReplacingMergeTreeEngine,
                 isReplicatedReplacingMergeTree, VERSION_COLUMN, isDeletedColumn));
 
-        // Append partitioning and ordering clauses, using values from tableConfig if they exist
-
+        // Append partitioning and ordering clauses, using values from tableConfig if they exist.
+        // Constants.PARTITION_BY already carries its trailing space, so nothing
+        // is appended between it and the key.
+        String emittedPartitionKey = null;
         if (config.getBoolean(ClickHouseSinkConnectorConfigVariables.REPLICATION_HISTORY_ENABLE.toString())) {
-            String deletedTimeColumnToDate = String.format(DELETED_TIME_COLUMN_TO_DATE, DELETED_TIME_COLUMN);
-            this.query.append(" PARTITION BY ").append(deletedTimeColumnToDate);
+            emittedPartitionKey = String.format(DELETED_TIME_COLUMN_TO_DATE, DELETED_TIME_COLUMN);
         } else if (tableConfig.getPartitionBy() != null && !tableConfig.getPartitionBy().isEmpty()) {
-            // Use the partition_by from tableConfig if it exists
-            this.query.append(Constants.PARTITION_BY).append(" ").append(tableConfig.getPartitionBy());
+            // Use the partition_by from tableConfig if it exists. It is an
+            // operator-written ClickHouse expression, emitted verbatim.
+            emittedPartitionKey = tableConfig.getPartitionBy();
         } else if (partitionByColumn.length() > 0) {
             // Fallback to partitionByColumn if tableConfig does not provide a partition_by value
-            this.query.append(Constants.PARTITION_BY).append(" ").append(partitionByColumn);
+            emittedPartitionKey = parenIfCommaList(partitionByColumn.toString());
         }
+        if (emittedPartitionKey != null) {
+            this.query.append(Constants.PARTITION_BY).append(emittedPartitionKey);
+        }
+
+        // A nullable column in the PARTITION key needs allow_nullable_key just
+        // as a nullable sorting key does: ClickHouse rejects it with Code: 44
+        // whether or not the sorting key is nullable. Measured on 24.8.8.17 --
+        // CREATE TABLE s5 (id Int32 NOT NULL, d Nullable(Date)) ENGINE =
+        // ReplacingMergeTree ORDER BY id PARTITION BY (d) fails with "Partition
+        // key contains nullable columns, but merge tree setting
+        // `allow_nullable_key` is disabled"; the same statement with SETTINGS
+        // allow_nullable_key = 1 is accepted. A source PRIMARY KEY makes the
+        // sorting key NOT NULL, so nullableSortingKey is false for exactly the
+        // tables where the partition column is the only nullable one: without
+        // this the CREATE TABLE never lands and every later event for the table
+        // fails.
+        boolean nullablePartitionKey = !isReplicationHistoryEnabled()
+                && namesNullableColumn(emittedPartitionKey, orderedColumnNames, notNullColumnNames);
 
         // Every branch goes through appendOrderBy, which appends _valid_to in
         // history mode (Spec 12.02 section 3.4, Gap G-12.02-3).
@@ -739,7 +888,8 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // Append to any user-supplied settings rather than replacing them.
         String tableSettings = tableConfig.getSettings();
         boolean hasUserSettings = tableSettings != null && !tableSettings.isEmpty();
-        if (nullableSortingKey && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {
+        if ((nullableSortingKey || nullablePartitionKey)
+                && !containsIgnoreCase(hasUserSettings ? tableSettings : "", ALLOW_NULLABLE_KEY)) {
             this.query.append(Constants.SETTINGS);
             if (hasUserSettings) {
                 this.query.append(tableSettings).append(",");
@@ -843,6 +993,115 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             partitioningOptions = "PARTITION BY " + partitioningKeys;
         }
         return partitioningOptions;
+    }
+
+    /**
+     * True when a partition-key expression names a column that the source
+     * declares nullable.
+     *
+     * <p>The expression is the connector's own translation of the source
+     * partition clause, so its identifiers are source column names wrapped in
+     * the ClickHouse functions the translator emits ({@code toYear(d)}). Every
+     * identifier-shaped token is therefore looked up: one that is not a known
+     * column is ignored, which makes an unrecognised function name harmless.</p>
+     *
+     * <p>Function names are deliberately not excluded by a list. Excluding
+     * them would need a list to be maintained against the translator and
+     * {@code toYear}/{@code toMonth}/{@code toDayOfMonth}/{@code toUnixTimestamp}
+     * are not columns, so they simply fail the
+     * {@code orderedColumnNames} membership test and are skipped.</p>
+     *
+     * @param expression        the emitted partition-key expression.
+     * @param orderedColumnNames every stored column, in declaration order.
+     * @param notNullColumnNames the subset of those declared NOT NULL.
+     * @return true when at least one identifier in the expression is a column
+     *         outside {@code notNullColumnNames}.
+     */
+    static boolean namesNullableColumn(String expression, List<String> orderedColumnNames,
+                                       Set<String> notNullColumnNames) {
+        if (expression == null || expression.isEmpty() || orderedColumnNames == null
+                || orderedColumnNames.isEmpty()) {
+            return false;
+        }
+        // Column names without quoting, matched case-insensitively: MySQL
+        // column names are case-insensitive and the parser preserves whatever
+        // quoting the DDL used.
+        Set<String> nullable = new HashSet<>();
+        for (String column : orderedColumnNames) {
+            String bare = stripBackticks(column).toLowerCase();
+            if (!notNullColumnNames.contains(stripBackticks(column))) {
+                nullable.add(bare);
+            }
+        }
+        if (nullable.isEmpty()) {
+            return false;
+        }
+        Matcher identifier = PARTITION_KEY_IDENTIFIER.matcher(expression);
+        while (identifier.find()) {
+            String name = identifier.group(1) != null ? identifier.group(1) : identifier.group(2);
+            if (nullable.contains(name.toLowerCase())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * The partition-key expression for a column list derived from the source
+     * DDL, as ClickHouse needs it.
+     *
+     * <p>A multi-column MySQL partition key ({@code PARTITION BY KEY(a,b)},
+     * {@code RANGE COLUMNS(a,b)}) is collected as the bare comma list
+     * {@code a,b}. ClickHouse has no such form -- the partition key is a
+     * SINGLE expression and a multi-column key is a tuple -- so the emitted
+     * {@code PARTITION BY a, b} fails with {@code Code: 62} (syntax error at
+     * the comma) and the CREATE TABLE never lands, which makes every later
+     * event for that table fail too. Measured on 24.8.8.17: the bare list is
+     * rejected, {@code PARTITION BY (a, b)} is accepted.</p>
+     *
+     * <p>Only a bare comma list is changed. A single column, a function call
+     * ({@code toYear(d)}) and a list that is already parenthesised
+     * ({@code (a,d,c)}, built by the RANGE COLUMNS branch) are returned as
+     * they are -- wrapping those again would nest the tuple.</p>
+     *
+     * <p>This is for DDL-derived keys only. An operator-supplied
+     * {@code partition_by} is a ClickHouse expression the operator wrote, and
+     * is emitted verbatim.</p>
+     *
+     * @param columns the partition key as collected from the source DDL.
+     * @return the same key, parenthesised when it is a bare comma list.
+     */
+    static String parenIfCommaList(String columns) {
+        if (columns == null) {
+            return null;
+        }
+        String keys = columns.trim();
+        if (keys.isEmpty()
+                || (keys.charAt(0) == '(' && keys.charAt(keys.length() - 1) == ')')
+                || !hasTopLevelComma(keys)) {
+            return keys;
+        }
+        return "(" + keys + ")";
+    }
+
+    /**
+     * True when a comma occurs outside every parenthesis, which is what makes a
+     * string a LIST of expressions rather than one expression that happens to
+     * carry a comma in its arguments ({@code cityHash64(a, b)}).
+     */
+    private static boolean hasTopLevelComma(String expression) {
+        int depth = 0;
+        for (int i = 0; i < expression.length(); i++) {
+            char c = expression.charAt(i);
+            if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+            } else if (c == ',' && depth == 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -959,10 +1218,19 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         // Nullable sorting key, which ClickHouse rejects with Code: 44
         // (Spec 06.05 §3.3).
         tableLevelPrimaryKeyColumns.clear();
+        tableLevelUniqueKeyColumns.clear();
+        this.columnFilterBypassedForCreate = false;
         for (ParseTree tree : pt) {
             if (tree instanceof MySqlParser.CreateDefinitionsContext) {
                 for (ParseTree subtree : ((MySqlParser.CreateDefinitionsContext) tree).children) {
-                    if (subtree instanceof MySqlParser.ConstraintDeclarationContext) {
+                    if (subtree instanceof MySqlParser.ColumnDeclarationContext) {
+                        // A column-level key puts the column in ORDER BY just as
+                        // a table-level one does (`id INT PRIMARY KEY`), so it
+                        // is collected here for the same reason: before the
+                        // columns are emitted, so the column filter cannot
+                        // remove the column the identity is built from.
+                        collectColumnLevelKeys(subtree, tableLevelPrimaryKeyColumns, tableLevelUniqueKeyColumns);
+                    } else if (subtree instanceof MySqlParser.ConstraintDeclarationContext) {
                         for (ParseTree constraintTree : ((MySqlParser.ConstraintDeclarationContext) subtree).children) {
                             if (constraintTree instanceof MySqlParser.PrimaryKeyTableConstraintContext) {
                                 for (ParseTree primaryKeyTree : ((MySqlParser.PrimaryKeyTableConstraintContext) constraintTree).children) {
@@ -970,6 +1238,20 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                         for (String column : indexColumnNames((MySqlParser.IndexColumnNamesContext) primaryKeyTree)) {
                                             tableLevelPrimaryKeyColumns.add(stripBackticks(column).toLowerCase());
                                         }
+                                    }
+                                }
+                            } else if (constraintTree instanceof MySqlParser.UniqueKeyTableConstraintContext) {
+                                // Same pre-collection as the PRIMARY KEY: the
+                                // first UNIQUE key becomes the ClickHouse
+                                // sorting key on a table without a PRIMARY KEY,
+                                // so the column filter must not remove one of
+                                // its columns (Spec 06.04 §3.6).
+                                for (ParseTree uniqueKeyTree : ((MySqlParser.UniqueKeyTableConstraintContext) constraintTree).children) {
+                                    if (uniqueKeyTree instanceof MySqlParser.IndexColumnNamesContext) {
+                                        for (String column : indexColumnNames((MySqlParser.IndexColumnNamesContext) uniqueKeyTree)) {
+                                            tableLevelUniqueKeyColumns.add(stripBackticks(column).toLowerCase());
+                                        }
+                                        break;
                                     }
                                 }
                             }
@@ -991,6 +1273,24 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
 
             if (tree instanceof TableNameContext) {
                 this.tableName = tree.getText();
+                this.cleanTableName = Utils.extractPlainTableName(this.tableName);
+                // A column list that matches NO column of this table would
+                // leave a CREATE with an empty column set, which cannot be
+                // translated at all: the sorting-key policy refuses it, and a
+                // DDL failure is terminal for every table on the host. The
+                // same include list governs capture, so Debezium replicates no
+                // row of such a table either; the statement is therefore
+                // translated unfiltered, which keeps the source schema and
+                // cannot hide a table that is replicating.
+                this.columnFilterBypassedForCreate =
+                        !this.columnFilter.isDisabled() && !declaresAnyKeptColumn(pt);
+                if (this.columnFilterBypassedForCreate) {
+                    log.warn("Neither {} nor {} matches any column of {}.{}: creating the table with every "
+                                    + "source column, because a CREATE with no columns cannot be translated. "
+                                    + "Source DDL: [{}]",
+                            DdlColumnFilter.COLUMN_INCLUDE_LIST, DdlColumnFilter.COLUMN_EXCLUDE_LIST,
+                            this.columnFilterDatabase, this.cleanTableName, this.originalSql);
+                }
                 // If tableName already includes the database name, don't include database name in the query.
                 if (tableName.contains(".")) {
                     // Split tableName into databaseName and tableName
@@ -1061,6 +1361,31 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                                 String partitionColumn = partitionKeyTree.getText();
                                 partitionByColumns.append(partitionColumn);
                             }
+                        }
+                    } else if (partitionTree instanceof MySqlParser.PartitionFunctionHashContext) {
+                        // PARTITION BY HASH(expr) -- the column list is an
+                        // expression here, not a uid list. MySQL hashes the
+                        // expression's value; ClickHouse has no plain "hash"
+                        // function (Code: 46 UNKNOWN_FUNCTION), so the
+                        // expression is wrapped in cityHash64, which is the
+                        // same idea. A bare column keeps a stable, evenly
+                        // spread partition key.
+                        MySqlParser.ExpressionContext expression =
+                                ((MySqlParser.PartitionFunctionHashContext) partitionTree).expression();
+                        if (expression != null) {
+                            String hashed = expression.getText();
+                            log.info("Found partition hash expression: " + hashed);
+                            partitionByColumns.append("cityHash64(").append(hashed).append(")");
+                        }
+                    } else if (partitionTree instanceof MySqlParser.PartitionFunctionListContext) {
+                        // PARTITION BY LIST COLUMNS(a, b) -- same uid list
+                        // shape as KEY. LIST(expr) carries a bare expression
+                        // with no column list and is left alone: it has no
+                        // ClickHouse equivalent to translate to.
+                        MySqlParser.UidListContext listColumns =
+                                ((MySqlParser.PartitionFunctionListContext) partitionTree).uidList();
+                        if (listColumns != null) {
+                            partitionByColumns.append(listColumns.getText());
                         }
                     } else if (partitionTree instanceof MySqlParser.PartitionFunctionRangeContext) {
                         for (ParseTree partitionFunctionRangeTree: ((MySqlParser.PartitionFunctionRangeContext) partitionTree).children) {
@@ -1143,11 +1468,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      */
     private void parseColumnDefinitions(ParseTree subtree, StringBuilder orderByColumns, Set<String> columnNames,
                                         StringBuilder uniqueKeyColumns, List<String> orderedColumnNames) {
+        // A column the record path does not replicate is not created either:
+        // Debezium applies column.include.list / column.exclude.list to the
+        // record schema, so the writer would never send a value for it, and
+        // the table would carry an empty column the source does not (and that
+        // the record-schema creation path never adds). Judged BEFORE anything
+        // is appended, so the skip leaves no stray comma or type behind.
+        if (!keepsCreateColumn(columnDeclarationName(subtree))) {
+            return;
+        }
+
         String columnName = null;
         String colDataType = null;
         boolean isNullColumn = true;
         boolean isGeneratedColumn = false;
         String generatedColumn = "";
+        MySqlParser.DefaultColumnConstraintContext defaultConstraint = null;
 
         for (ParseTree colDefTree : ((MySqlParser.ColumnDeclarationContext) subtree).children) {
             if (colDefTree instanceof MySqlParser.FullColumnNameContext) {
@@ -1196,6 +1532,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                         if (uniqueKeyColumns.length() == 0 && columnName != null) {
                             uniqueKeyColumns.append(columnName);
                         }
+                    } else if (colDefinitionChildTree instanceof MySqlParser.DefaultColumnConstraintContext) {
+                        // Resolved after the type and nullability are known,
+                        // the same way the ALTER path does it: the DEFAULT is a
+                        // clause of the column, not part of its type.
+                        defaultConstraint = (MySqlParser.DefaultColumnConstraintContext) colDefinitionChildTree;
                     } else if (colDefinitionChildTree instanceof MySqlParser.GeneratedColumnConstraintContext) {
                         // The shared helper, as on the ALTER path (Spec 06.06
                         // section 2): the two paths cannot translate the same
@@ -1237,15 +1578,26 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     continue;
                 }
 
+                // DEFAULT (Spec 06.04 §3.2): carried on CREATE too. It used to
+                // be dropped here, so a source table declaring `a INT DEFAULT
+                // 7` reached ClickHouse as a bare Nullable(Int32) and every
+                // row that omitted the column took 0 instead of 7.
+                String defaultModifier = resolveDefault(ColumnClause.CREATE, defaultConstraint, columnName,
+                        colDataType, (MySqlParser.ColumnDefinitionContext) colDefTree, isNullColumn);
+
                 // For non-generated columns, apply nullable constraints if applicable.
                 // (Spatial types are String now -- Spec 07.06 §3.2 -- so no type
                 // is exempt from Nullable any more.)
                 if (isNullColumn) {
                     this.query.append(Constants.NULLABLE).append("(").append(colDataType)
-                            .append(")").append(",");
+                            .append(")");
                 } else {
-                    this.query.append(colDataType).append(" ").append(Constants.NOT_NULLABLE).append(" ").append(",");
+                    this.query.append(colDataType).append(" ").append(Constants.NOT_NULLABLE).append(" ");
                 }
+                if (defaultModifier != null) {
+                    this.query.append(" ").append(defaultModifier);
+                }
+                this.query.append(",");
 
                 // Add column name to the set of column names.
                 columnNames.add(columnName);
@@ -1263,6 +1615,92 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
+    }
+
+    /**
+     * Whether the configured column list keeps at least one column this CREATE
+     * declares.
+     *
+     * @param definitions the statement's top-level parse children.
+     * @return true when at least one column would be emitted, or when the
+     *         statement declares no column at all.
+     */
+    private boolean declaresAnyKeptColumn(List<ParseTree> definitions) {
+        boolean sawColumn = false;
+        for (ParseTree tree : definitions) {
+            if (!(tree instanceof MySqlParser.CreateDefinitionsContext)) {
+                continue;
+            }
+            for (ParseTree subtree : ((MySqlParser.CreateDefinitionsContext) tree).children) {
+                if (!(subtree instanceof MySqlParser.ColumnDeclarationContext)) {
+                    continue;
+                }
+                sawColumn = true;
+                String clean = stripBackticks(columnDeclarationName(subtree));
+                if (clean != null && !clean.isEmpty()
+                        && this.columnFilter.keeps(this.columnFilterDatabase, this.cleanTableName, clean)) {
+                    return true;
+                }
+            }
+        }
+        return !sawColumn;
+    }
+
+    /**
+     * Records a column-level key constraint ({@code c INT PRIMARY KEY},
+     * {@code c INT NOT NULL UNIQUE}, {@code c SERIAL}) in the key sets.
+     *
+     * <p>Both sets feed {@link #keepsCreateColumn}, so a column the configured
+     * column list excludes is still created when the table's ORDER BY names
+     * it. Only the collection happens here; which constraint does what to
+     * nullability and to the sorting key stays in
+     * {@link #parseColumnDefinitions}.</p>
+     *
+     * @param subtree the parse subtree of the column declaration.
+     * @param primaryKeyColumns receives a column-level PRIMARY KEY column.
+     * @param uniqueKeyColumns receives a column-level UNIQUE / SERIAL column,
+     *                         the fallback identity of a table with no
+     *                         PRIMARY KEY.
+     */
+    private static void collectColumnLevelKeys(ParseTree subtree, Set<String> primaryKeyColumns,
+                                               Set<String> uniqueKeyColumns) {
+        String name = stripBackticks(columnDeclarationName(subtree));
+        if (name == null || name.isEmpty()) {
+            return;
+        }
+        String lower = name.toLowerCase();
+        for (ParseTree child : ((MySqlParser.ColumnDeclarationContext) subtree).children) {
+            if (!(child instanceof MySqlParser.ColumnDefinitionContext)) {
+                continue;
+            }
+            MySqlParser.ColumnDefinitionContext definition = (MySqlParser.ColumnDefinitionContext) child;
+            if (isSerial(definition.dataType())) {
+                uniqueKeyColumns.add(lower);
+            }
+            for (ParseTree constraint : definition.children) {
+                if (constraint instanceof MySqlParser.PrimaryKeyColumnConstraintContext) {
+                    primaryKeyColumns.add(lower);
+                } else if (constraint instanceof MySqlParser.UniqueKeyColumnConstraintContext) {
+                    uniqueKeyColumns.add(lower);
+                }
+            }
+        }
+    }
+
+    /**
+     * The column name a column declaration declares, without emitting
+     * anything.
+     *
+     * @param subtree the parse subtree of the column declaration.
+     * @return the name as written, or null when the subtree carries none.
+     */
+    private static String columnDeclarationName(ParseTree subtree) {
+        for (ParseTree child : ((MySqlParser.ColumnDeclarationContext) subtree).children) {
+            if (child instanceof MySqlParser.FullColumnNameContext) {
+                return child.getText();
+            }
+        }
+        return null;
     }
 
     /**
@@ -1346,8 +1784,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         MySqlParser.DataTypeContext dtc = ((MySqlParser.ColumnDefinitionContext) colDefTree).dataType();
         DataType dt = DataTypeConverter.getDataType(dtc);
 
-        if (dt.name().equalsIgnoreCase("ENUM") || dt.name().equalsIgnoreCase("SET")) {
-            // Skip precision and scale for ENUM and SET types
+        if (dtc instanceof MySqlParser.CollectionDataTypeContext) {
+            // Skip precision and scale for ENUM and SET types. The check is on
+            // the parse-tree class, not on dt.name(): the resolver reports the
+            // JDBC name CHAR for both, so the old name test never matched and
+            // ENUM/SET fell through to the (precision, scale) branch below,
+            // which read the value list as numbers and logged an error for
+            // every such column.
         } else if (parsedDataType.contains("(") && parsedDataType.contains(")") && parsedDataType.contains(",")) {
             String sanitizedDataType = parsedDataType.split("COMMENT")[0].trim();
             try {
@@ -1448,6 +1891,18 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
+        if (oldName != null && !keepsAlterColumn(oldName) && (newName == null || !keepsAlterColumn(newName))) {
+            // Neither name is replicated: the ClickHouse table has no such
+            // column to rename, and the record path never carries it. Emitting
+            // RENAME COLUMN IF EXISTS would be a no-op statement, so the clause
+            // is dropped and the separator it followed cleaned up.
+            log.info("Not renaming column {}.{}.{} to {}: neither name is replicated ({} excludes it)",
+                    this.columnFilterDatabase, this.cleanTableName, stripBackticks(oldName),
+                    stripBackticks(newName),
+                    DdlColumnFilter.COLUMN_INCLUDE_LIST + " / " + DdlColumnFilter.COLUMN_EXCLUDE_LIST);
+            removeTrailingComma();
+            return;
+        }
         if (oldName != null && newName != null) {
             this.statementRenamedColumns.put(stripBackticks(oldName), stripBackticks(newName));
             String keyType = targetSortingKeyTypes().get(stripBackticks(oldName));
@@ -1484,8 +1939,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         }
     }
 
-    /** Which single-column ALTER clause is being translated. */
-    private enum ColumnClause { ADD, MODIFY, CHANGE }
+    /**
+     * Which clause is being translated. {@code CREATE} is a column of a new
+     * table: nothing pre-exists, so its DEFAULT describes only the value
+     * ClickHouse derives for a row that omits the column -- it back-fills
+     * nothing and is carried whenever it is reproducible.
+     */
+    private enum ColumnClause { CREATE, ADD, MODIFY, CHANGE }
 
     /**
      * Translates one ADD COLUMN / MODIFY COLUMN / CHANGE COLUMN clause: gathers
@@ -1538,6 +1998,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         if (columnName == null || columnDefinition == null) {
             return;
         }
+        if (!keepsAlterColumn(columnName)) {
+            // The record path does not replicate this column, so the table
+            // does not have it (or must not gain it): emitting the clause
+            // would either add a column nothing writes or fail on one that is
+            // not there.
+            return;
+        }
         translateColumnClause(clause, columnName, newColumnName, columnDefinition, columnPositionModifier.toString());
     }
 
@@ -1552,6 +2019,9 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         List<MySqlParser.UidContext> names = ctx.uid();
         List<MySqlParser.ColumnDefinitionContext> definitions = ctx.columnDefinition();
         for (int i = 0; i < names.size() && i < definitions.size(); i++) {
+            if (!keepsAlterColumn(names.get(i).getText())) {
+                continue;
+            }
             if (i > 0) {
                 appendClauseSeparator(headerEnd);
             }
@@ -1572,6 +2042,11 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         for (MySqlParser.CreateDefinitionContext definition : ctx.createDefinition()) {
             if (definition instanceof MySqlParser.ColumnDeclarationContext) {
                 MySqlParser.ColumnDeclarationContext column = (MySqlParser.ColumnDeclarationContext) definition;
+                if (!keepsAlterColumn(column.fullColumnName().getText())) {
+                    // Not replicated: the table must not gain the column
+                    // either, and no separator is left behind for it.
+                    continue;
+                }
                 if (!first) {
                     appendClauseSeparator(headerEnd);
                 }
@@ -1913,6 +2388,12 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
      * <ul>
      *   <li>A literal default is carried on every clause, rewritten to
      *       ClickHouse literal syntax ({@link DefaultLiteralTranslator#literalDefault}).</li>
+     *   <li>On {@code CREATE TABLE} nothing pre-exists, so no row can be
+     *       diverged by the default: it is carried when it is a literal, and
+     *       a {@code CURRENT_TIMESTAMP}/{@code NOW()} default is carried as
+     *       ClickHouse's own equivalent. Any other expression is MySQL's
+     *       parenthesized form, dropped at INFO -- a CREATE back-fills no row,
+     *       so the source value always wins from the first replicated insert.</li>
      *   <li>On {@code ADD COLUMN}: {@code CURRENT_TIMESTAMP}/{@code NOW()}
      *       becomes the DDL event's own instant; an {@code ENUM ... NOT NULL}
      *       without a default gets MySQL's implicit default, the first
@@ -1939,7 +2420,7 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
             // defaults coincide with ClickHouse's zero values (0, '') except
             // for ENUM NOT NULL, whose implicit default is the first member
             // while the String column's zero value is '' -- not a member.
-            if (clause == ColumnClause.ADD && !isNullColumn) {
+            if (clause != ColumnClause.MODIFY && clause != ColumnClause.CHANGE && !isNullColumn) {
                 String firstMember = DefaultLiteralTranslator.firstEnumMember(columnDefinition.dataType());
                 if (firstMember != null) {
                     return "DEFAULT " + firstMember;
@@ -1955,7 +2436,39 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 && this.config.getBoolean(ClickHouseSinkConnectorConfigVariables.PERSIST_RAW_BYTES.toString());
         String literal = DefaultLiteralTranslator.literalDefault(defaultValue, columnType, persistRawBytes);
         if (literal != null) {
+            // A `NULL` literal default is never emitted (Spec 06.04 §3.2.3).
+            //
+            // On a Nullable column it is implied by the type and changes no
+            // stored value -- an insert that omits the column stores NULL with
+            // or without it -- but ClickHouse validates a default expression on
+            // every later ALTER, so keeping it turns an ordinary `MODIFY COLUMN
+            // c String` into Code: 70 CANNOT_CONVERT_TYPE. MySQL renders a
+            // nullable column without a default as `DEFAULT NULL` in SHOW
+            // CREATE TABLE, so this shape reaches the parser constantly.
+            //
+            // On a non-Nullable (NOT NULL) column ClickHouse cannot represent
+            // it at all: `DEFAULT NULL` there is rejected outright with Code:
+            // 70 CANNOT_CONVERT_TYPE ("Cannot convert NULL to a non-nullable
+            // type"), measured on 24.8.8.17 for both the CREATE and the ADD
+            // COLUMN form, so emitting it produced a statement that fails on
+            // every retry and stalls the stream. A NOT NULL column can hold no
+            // NULL either way, so dropping it loses nothing.
+            if ("NULL".equals(literal)) {
+                return null;
+            }
             return "DEFAULT " + literal;
+        }
+        if (clause == ColumnClause.CREATE) {
+            // Nothing pre-exists, so no row can be diverged by this DEFAULT.
+            // CURRENT_TIMESTAMP is the one non-literal a CREATE can carry
+            // exactly: ClickHouse derives the insert time the same way.
+            if (DefaultLiteralTranslator.isCurrentTimestampDefault(defaultValue)) {
+                return "DEFAULT " + derivedNowLiteral(columnType);
+            }
+            log.info("Column {}: DEFAULT {} is an expression; a CREATE TABLE back-fills no row, so it is "
+                            + "dropped and every replicated row carries the source value",
+                    columnName, defaultValue.getText());
+            return null;
         }
         if (clause != ColumnClause.ADD) {
             log.info("Column {}: DEFAULT {} is a function or expression; a MODIFY/CHANGE back-fills nothing, "
@@ -1969,6 +2482,26 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
         throw backfillNotReproducible(columnName, defaultValue.getText(),
                 "it is a value MySQL computed on the source (per row, or once at the ALTER) that the replica "
                         + "cannot reproduce for the rows that already exist");
+    }
+
+    /**
+     * A CREATE TABLE {@code DEFAULT CURRENT_TIMESTAMP} as ClickHouse's own
+     * derive-on-insert equivalent (Spec 06.04 §3.2). Nothing pre-exists on a
+     * CREATE, so the source instant is not known and is not needed: every row
+     * arrives with the value MySQL computed for it in the row image, and this
+     * expression only decides what an insert that omits the column gets.
+     *
+     * @param columnType the ClickHouse column type.
+     * @return the ClickHouse expression that derives the current instant.
+     */
+    private static String derivedNowLiteral(String columnType) {
+        String type = columnType == null ? "" : columnType;
+        if (type.startsWith("DateTime64")) {
+            Matcher scaleMatcher = DATETIME64_SCALE.matcher(type);
+            int scale = scaleMatcher.find() ? Integer.parseInt(scaleMatcher.group(1)) : 3;
+            return "now64(" + scale + ")";
+        }
+        return "now()";
     }
 
     /**
@@ -2177,6 +2710,17 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                     if (dropColumnTree instanceof MySqlParser.UidContext) {
                         String droppedColumn = resolveExistingColumnName(dropColumnTree.getText());
                         String cleanDropped = stripBackticks(droppedColumn);
+                        if (!keepsAlterColumn(droppedColumn)) {
+                            // Never created in ClickHouse: nothing to drop,
+                            // and recording it as dropped would put it into
+                            // the rebuild plan as a column of the old table.
+                            log.info("Not dropping column {}.{}.{}: it is not replicated ({} excludes "
+                                            + "it), so the ClickHouse table never had it",
+                                    this.columnFilterDatabase, this.cleanTableName, cleanDropped,
+                                    DdlColumnFilter.COLUMN_INCLUDE_LIST + " / "
+                                            + DdlColumnFilter.COLUMN_EXCLUDE_LIST);
+                            continue;
+                        }
                         // Leaves the keyless all-columns identity (Spec 06.09 §3.1).
                         this.statementDroppedColumns.add(cleanDropped);
                         if (targetSortingKeyTypes().containsKey(cleanDropped) && primaryKeyRebuildEnabled()) {
@@ -2247,6 +2791,16 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 log.info("ALTER TABLE clause [{}] drops the primary key; nothing is emitted for it, the "
                         + "identity is checked against the target sorting key", tree.getText());
                 removeTrailingComma();
+            } else if (isDataChangingSpecification(tree)) {
+                // A clause that rewrites the stored values of rows MySQL already holds
+                // (CONVERT TO CHARACTER SET re-encodes every string column with no row
+                // events; EXCHANGE/IMPORT/DISCARD TABLESPACE move whole partitions in or
+                // out) cannot be skipped: ClickHouse would keep the old values and the
+                // count-clean compare would not show it. Refuse loudly instead (Spec 06.03
+                // section 3.2 and Spec 06.08 section 3.1).
+                throw new DDLReplicationException("ALTER TABLE clause [" + tree.getText()
+                        + "] rewrites the stored values of existing rows and cannot be replicated; refusing to "
+                        + "skip it silently. DDL: [" + this.originalSql + "]", null);
             } else if (isNoOpSpecification(tree)) {
                 // Indexes, keys, foreign keys, DROP PRIMARY KEY, column
                 // DEFAULT changes, charset/collation, table options,
@@ -2554,14 +3108,40 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
     }
 
     /**
+     * The clauses that change the stored values of rows MySQL already holds:
+     * CONVERT TO CHARACTER SET, DISCARD and IMPORT TABLESPACE, and the
+     * partition operations that move rows in or out (EXCHANGE, DISCARD and
+     * IMPORT PARTITION). Every other no-op clause, including DROP and TRUNCATE
+     * PARTITION (ignored under disable.drop.truncate, Spec 06.08 §3.3), leaves
+     * the rows as they are. Spec 06.03 §3.2.
+     */
+    private static boolean isDataChangingSpecification(ParseTree tree) {
+        if (tree instanceof MySqlParser.AlterByConvertCharsetContext
+                || tree instanceof MySqlParser.AlterByDiscardTablespaceContext
+                || tree instanceof MySqlParser.AlterByImportTablespaceContext) {
+            return true;
+        }
+        if (tree instanceof MySqlParser.AlterPartitionContext) {
+            // getText() concatenates the tokens, so the keywords are adjacent.
+            String text = tree.getText().toUpperCase(Locale.ROOT);
+            return text.startsWith("EXCHANGEPARTITION")
+                    || text.startsWith("DISCARDPARTITION")
+                    || text.startsWith("IMPORTPARTITION");
+        }
+        return false;
+    }
+
+    /**
      * Returns true for an ALTER specification this translator deliberately
      * drops because ClickHouse has no equivalent and nothing is lost by
      * skipping it (Spec 06.03 §3.2): indexes and keys of every kind
      * ({@code ADD}/{@code DROP PRIMARY KEY} are recorded first and judged by
      * {@link #enforcePrimaryKeyPolicy}), foreign keys, column DEFAULT changes,
-     * CHECK constraints, charset and collation, table options,
+     * CHECK constraints, DEFAULT CHARACTER SET, table options,
      * {@code ALGORITHM}/{@code LOCK} hints, key enable/disable, physical
-     * ORDER BY, tablespace and every partition operation.
+     * ORDER BY, and every partition operation that moves no rows. The
+     * data-changing clauses are checked first and refused by
+     * {@link #isDataChangingSpecification}.
      *
      * <p>CHECK constraints (Spec 06.04 §3.1): a CHECK holds no data and MySQL
      * has already validated every replicated row against it. Echoed, an
@@ -2585,7 +3165,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 || tree instanceof MySqlParser.AlterByChangeDefaultContext
                 || tree instanceof MySqlParser.AlterByAlterColumnDefaultContext
                 || tree instanceof MySqlParser.AlterByAlterCheckTableConstraintContext
-                || tree instanceof MySqlParser.AlterByConvertCharsetContext
                 || tree instanceof MySqlParser.AlterByDefaultCharsetContext
                 || tree instanceof MySqlParser.AlterByTableOptionContext
                 || tree instanceof MySqlParser.AlterBySetAlgorithmContext
@@ -2595,8 +3174,6 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 || tree instanceof MySqlParser.AlterByOrderContext
                 || tree instanceof MySqlParser.AlterByForceContext
                 || tree instanceof MySqlParser.AlterByValidateContext
-                || tree instanceof MySqlParser.AlterByDiscardTablespaceContext
-                || tree instanceof MySqlParser.AlterByImportTablespaceContext
                 // Every partition operation (ADD/DROP/DISCARD/IMPORT/TRUNCATE/
                 // COALESCE/REORGANIZE/EXCHANGE/ANALYZE/CHECK/OPTIMIZE/REBUILD/
                 // REPAIR PARTITION, REMOVE/UPGRADE PARTITIONING) arrives wrapped
@@ -2877,15 +3454,13 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 if (renameTableContextChildren.size() >= 3) {
                     originalTableName = renameTableContextChildren.get(0).getText();
                     newTableName = renameTableContextChildren.get(2).getText();
-                    // If the table name already includes the database name don't include it in the query.
+                    // A qualified side keeps its own database: RENAME TABLE a.t TO b.t moves the
+                    // table across databases, so each side is mapped through the override map, not
+                    // both rewritten to the listener's database. An unqualified side is in the DDL's
+                    // database. Spec 06.04 section 3.4.
                     if (originalTableName.contains(".") || newTableName.contains(".")) {
-                        // Split database and table name.
-                        String origTable = originalTableName.contains(".")
-                                ? originalTableName.split("\\.")[1] : originalTableName;
-                        String newTable = newTableName.contains(".")
-                                ? newTableName.split("\\.")[1] : newTableName;
-                        this.query.append(this.databaseName).append(".").append(origTable).append(" to ").append(this.databaseName)
-                                .append(".").append(newTable);
+                        this.query.append(renameSideQualifiedName(originalTableName)).append(" to ")
+                                .append(renameSideQualifiedName(newTableName));
                     } else {
                         this.query.append(databaseName).append(".").append(originalTableName).append(" to ").append(databaseName)
                                 .append(".").append(newTableName);
@@ -2897,6 +3472,22 @@ public class MySqlDDLParserListenerImpl extends MySQLDDLParserBaseListener {
                 }
             }
         }
+    }
+
+    /**
+     * One side of a RENAME TABLE, qualified for ClickHouse. A qualified side ({@code db.t}) names its own
+     * database, mapped through the override map as the DDL's database is; an unqualified side ({@code t}) is in
+     * the DDL's database. The table part is kept as written.
+     *
+     * @param sourceName the side as written in the statement, e.g. {@code `src`.t} or {@code t}
+     * @return the ClickHouse name, e.g. {@code src.t} or {@code dst.t}
+     */
+    private String renameSideQualifiedName(String sourceName) {
+        int dot = sourceName.lastIndexOf('.');
+        if (dot < 0) {
+            return this.databaseName + "." + sourceName;
+        }
+        return overrideDatabaseName(sourceName.substring(0, dot)) + "." + sourceName.substring(dot + 1);
     }
 
     /**

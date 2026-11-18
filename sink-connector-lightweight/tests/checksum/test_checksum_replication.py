@@ -48,17 +48,21 @@ def _run_checksum(cmd):
     env["PYTHONPATH"] = os.pathsep.join(
         [str(PYTHON_DIR), env.get("PYTHONPATH", "")]
     ).rstrip(os.pathsep)
-    proc = subprocess.run(
-        cmd,
-        cwd=str(PYTHON_DIR),
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert proc.returncode == 0, (
-        f"Checksum command failed ({proc.returncode}):\n"
-        f"CMD: {' '.join(cmd)}\nSTDOUT:\n{proc.stdout}\nSTDERR:\n{proc.stderr}"
-    )
+    # A hung checksum must not outlive the integration test. Never include the
+    # command or subprocess output in failures: both can contain credentials.
+    try:
+        proc = subprocess.run(
+            cmd,
+            cwd=str(PYTHON_DIR),
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired:
+        raise AssertionError("Checksum command exceeded 120 seconds") from None
+    if proc.returncode != 0:
+        raise AssertionError(f"Checksum command failed ({proc.returncode})")
     results = {}
     for line in proc.stdout.splitlines():
         m = CHECKSUM_RE.search(line)
@@ -67,7 +71,7 @@ def _run_checksum(cmd):
     return results
 
 
-def _mysql_checksums():
+def _mysql_checksums(tables_regex=TABLES_REGEX, extra_args=()):
     cmd = [
         "python3",
         "db_compare/mysql_table_checksum.py",
@@ -75,13 +79,14 @@ def _mysql_checksums():
         "--mysql_user", MYSQL_USER,
         "--mysql_password", MYSQL_PASSWORD,
         "--mysql_database", DATABASE,
-        "--tables_regex", TABLES_REGEX,
+        "--tables_regex", tables_regex,
+        "--source_timezone", "UTC",
         "--min_date_value", "1900-01-01",
     ]
-    return _run_checksum(cmd)
+    return _run_checksum(cmd + list(extra_args))
 
 
-def _clickhouse_checksums():
+def _clickhouse_checksums(tables_regex=TABLES_REGEX, extra_args=()):
     cmd = [
         "python3",
         "db_compare/clickhouse_table_checksum.py",
@@ -89,11 +94,12 @@ def _clickhouse_checksums():
         "--clickhouse_user", CLICKHOUSE_USER,
         "--clickhouse_password", CLICKHOUSE_PASSWORD,
         "--clickhouse_database", DATABASE,
-        "--tables_regex", TABLES_REGEX,
+        "--tables_regex", tables_regex,
+        "--source_timezone", "UTC",
         "--sign_column", "",
         "--exclude_columns", "_version,is_deleted,_is_deleted,__is_deleted,_sign",
     ]
-    return _run_checksum(cmd)
+    return _run_checksum(cmd + list(extra_args))
 
 
 def _print_checksums(mysql_results, clickhouse_results):

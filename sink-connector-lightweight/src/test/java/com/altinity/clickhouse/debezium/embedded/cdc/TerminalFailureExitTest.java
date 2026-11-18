@@ -216,6 +216,31 @@ public class TerminalFailureExitTest {
     }
 
     @Test
+    public void recreationFailureSignalsTerminalStop() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        AtomicInteger restarts = new AtomicInteger();
+        ReplicationStatusSingleton.getInstance().setIsReplicationRunning(true);
+        fail(capture, props(null), () -> {
+            restarts.incrementAndGet();
+            throw new IllegalStateException("refusing to start an unseeded engine");
+        });
+        assertEquals(1, restarts.get());
+        assertEquals(Collections.singletonList(DebeziumChangeEventCapture.TERMINAL_FAILURE_EXIT_CODE), exitCodes);
+        assertFalse(ReplicationStatusSingleton.getInstance().isReplicationRunning());
+    }
+
+    @Test
+    public void recreationFailureStillStopsReplicationWhenExitIsDisabled() {
+        DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();
+        ReplicationStatusSingleton.getInstance().setIsReplicationRunning(true);
+        fail(capture, props("false"), () -> {
+            throw new IllegalStateException("refusing to start an unseeded engine");
+        });
+        assertTrue(exitCodes.isEmpty());
+        assertFalse(ReplicationStatusSingleton.getInstance().isReplicationRunning());
+    }
+
+    @Test
     @DisplayName("A retriable failure still draws on the retry budget (the fix is scoped to FATAL)")
     public void retriableFailureStillRetries() {
         DebeziumChangeEventCapture capture = new DebeziumChangeEventCapture();

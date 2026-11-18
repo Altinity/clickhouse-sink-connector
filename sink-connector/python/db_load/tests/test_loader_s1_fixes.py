@@ -45,7 +45,7 @@ def loader_args(dump_dir, **overrides):
                   clickhouse_password=None, mysql_source_database="db1", dump_dir=str(dump_dir), threads=2,
                   truncate_tables=False, dry_run=False, mysqlshell=True, rmt_delete_support=True,
                   use_regexp_parser=False, virtual_columns=['`_sign`', '`_version`', '`is_deleted`', '`_is_deleted`'],
-                  binary_handling_mode="bytes", persist_raw_bytes=False)
+                  binary_handling_mode="bytes", persist_raw_bytes=False, source_timezone=None)
     values.update(overrides)
     return Namespace(**values)
 
@@ -65,26 +65,35 @@ class TestDumpTimezoneMapping:
     def test_named_zone_is_kept(self, loader):
         assert loader.get_unix_timezone_from_mysql_timezone("Europe/Paris") == "Europe/Paris"
 
-    @pytest.mark.parametrize("value", [None, "", "SYSTEM", "+99:00", "not-a-zone"])
-    def test_undeterminable_zone_is_utc_with_a_warning(self, loader, value, caplog):
-        with caplog.at_level(logging.WARNING):
-            assert loader.get_unix_timezone_from_mysql_timezone(value) == "UTC"
-        assert any(r.levelno == logging.WARNING and "cannot be determined" in r.getMessage() for r in caplog.records)
+    @pytest.mark.parametrize("value", [None, "", "SYSTEM"])
+    def test_undeterminable_zone_without_flag_is_refused(self, loader, value):
+        # no implicit UTC (Spec 13.04 section 3.9): the refusal names the flag that decides the zone
+        with pytest.raises(ValueError, match="--source_timezone"):
+            loader.get_unix_timezone_from_mysql_timezone(value)
+
+    @pytest.mark.parametrize("value", ["+99:00", "not-a-zone"])
+    def test_invalid_recorded_zone_is_refused_with_or_without_flag(self, loader, value):
+        with pytest.raises(ValueError):
+            loader.get_unix_timezone_from_mysql_timezone(value)
+        with pytest.raises(ValueError):
+            loader.get_unix_timezone_from_mysql_timezone(value, "America/Chicago")
 
     def test_offset_without_a_fixed_iana_zone_is_refused(self, loader):
         with pytest.raises(ValueError, match=r"\+05:30"):
             loader.get_unix_timezone_from_mysql_timezone("+05:30")
 
     def test_deterministic_across_hash_seeds(self, loader):
+        # a dump that records no zone takes the flag, so the result is fixed by the input, not by the hash seed
         code = ("import sys; sys.path.insert(0, %r); import importlib; m = importlib.import_module(%r); "
-                "print(m.get_unix_timezone_from_mysql_timezone('+00:00'), m.get_unix_timezone_from_mysql_timezone(None))"
+                "print(m.get_unix_timezone_from_mysql_timezone('+00:00'), "
+                "m.get_unix_timezone_from_mysql_timezone(None, 'America/Chicago'))"
                 % (ROOT, loader.__name__))
         seen = set()
         for seed in range(6):
             out = subprocess.run([sys.executable, "-c", code], env=dict(os.environ, PYTHONHASHSEED=str(seed)),
                                  capture_output=True, text=True, check=True).stdout.split()
             seen.add(tuple(out))
-        assert seen == {("UTC", "UTC")}
+        assert seen == {("UTC", "America/Chicago")}
 
 
 class TestMysqlShellDumpTimezone:
@@ -111,12 +120,16 @@ class TestMysqlShellDumpTimezone:
         with pytest.raises(ValueError, match="tzUtc: false"):
             self.load(loader, tmp_path)
 
-    def test_missing_metadata_is_utc_with_a_warning(self, loader, tmp_path, caplog):
+    def test_missing_metadata_without_flag_is_refused_before_any_statement(self, loader, tmp_path, caplog):
         self.write_dump(tmp_path, None)
         os.remove(tmp_path / "@.json")
-        with caplog.at_level(logging.WARNING):
-            (tz, _) = self.load(loader, tmp_path)
-        assert tz == "UTC"
+        execute = mock.MagicMock()
+        with caplog.at_level(logging.WARNING), \
+                mock.patch.object(loader, "get_connection", mock.MagicMock()), \
+                mock.patch.object(loader, "clickhouse_execute_conn", execute):
+            with pytest.raises(ValueError, match="--source_timezone"):
+                loader.load_schema(loader_args(tmp_path), dry_run=False)
+        execute.assert_not_called()
         assert any(r.levelno == logging.WARNING and "@.json not found" in r.getMessage() for r in caplog.records)
 
 
@@ -229,9 +242,32 @@ class TestBinaryRepresentation:
         listed = loader.get_column_list({"db1.t": cols}, "db1", "t", [], transform=True, mysqlshell=True, **kw)
         return split_top_level(listed)
 
-    def test_default_is_lower_hex_of_the_decoded_base64(self, loader):
+    def test_default_is_the_connector_default_base64(self, loader):
+        # The loader default is the connector's own default (binary.handling.mode=base64, spec 07.05 section 3.2),
+        # so a default dump load and a default connector store the same base64 text.
         b64 = "base64Decode(replaceAll(\\`{0}\\`, char(10), ''))"
         assert self.columns(loader) == [
+            "\\`id\\`",
+            "base64Encode(" + b64.format("vb") + ")",
+            "base64Encode(" + b64.format("bl") + ")",
+            "lower(hex(" + b64.format("b8") + "))",
+            "lower(hex(substring(" + b64.format("p") + ", 5)))",
+            "\\`s\\`"]
+
+    def test_the_cli_default_is_base64(self, loader):
+        # The parser is built inside main() and cannot be reached without running a load: read the
+        # add_argument('--binary_handling_mode', ..., default=...) call out of the module source instead.
+        import ast
+        tree = ast.parse(open(loader.__file__).read())
+        defaults = [kw.value.value
+                    for node in ast.walk(tree) if isinstance(node, ast.Call)
+                    for arg in node.args if isinstance(arg, ast.Constant) and arg.value == "--binary_handling_mode"
+                    for kw in node.keywords if kw.arg == "default"]
+        assert defaults == ["base64"]
+
+    def test_bytes_mode_is_lower_hex_of_the_decoded_base64(self, loader):
+        b64 = "base64Decode(replaceAll(\\`{0}\\`, char(10), ''))"
+        assert self.columns(loader, binary_handling_mode="bytes") == [
             "\\`id\\`",
             "lower(hex(" + b64.format("vb") + "))",
             "lower(hex(" + b64.format("bl") + "))",
@@ -240,8 +276,10 @@ class TestBinaryRepresentation:
             "\\`s\\`"]
 
     def test_dump_metadata_decides_the_decoding(self, loader):
-        cols = self.columns(loader, decode_columns={"vb": "UNHEX", "bl": "FROM_BASE64", "b8": "FROM_BASE64",
-                                                    "p": "FROM_BASE64"})
+        # bytes mode, so the only variable left in the expression is the dump's decode function.
+        cols = self.columns(loader, binary_handling_mode="bytes",
+                            decode_columns={"vb": "UNHEX", "bl": "FROM_BASE64", "b8": "FROM_BASE64",
+                                            "p": "FROM_BASE64"})
         assert cols[1] == "lower(hex(unhex(\\`vb\\`)))"
 
     def test_base64_mode_keeps_bit_and_spatial_hex(self, loader):
@@ -253,7 +291,9 @@ class TestBinaryRepresentation:
         assert self.columns(loader, binary_handling_mode="hex")[1].startswith("hex(base64Decode(")
 
     def test_persist_raw_bytes_loads_the_bytes(self, loader):
-        cols = self.columns(loader, persist_raw_bytes=True)
+        # persist.raw.bytes is the bytes-mode writer's parameter: base64 already carries the text, so under
+        # binary.handling.mode=base64 it has no effect (spec 07.05 section 3.2) and the loader keeps base64.
+        cols = self.columns(loader, binary_handling_mode="bytes", persist_raw_bytes=True)
         assert cols[1].startswith("base64Decode(") and cols[4].startswith("substring(base64Decode(")
 
     def test_plain_column_list_is_unchanged(self, loader):
@@ -271,15 +311,26 @@ class TestBinaryRepresentation:
         b64_blob = b64_blob[:76] + "\\n" + b64_blob[76:]
         tsv = "1\t3q2+7w==\t%s\tAQI=\tAAAAAAEBAAAAAAAAAAAA8D8AAAAAAAAAQA==\tx\n2\t\\N\t\\N\t\\N\t\\N\t\\N\n" % b64_blob
         (tmp_path / "in.tsv").write_text(tsv)
-        exprs = [c.replace("\\`", "`") for c in self.columns(loader)]
         structure = ("`id` String, `vb` Nullable(String), `bl` Nullable(String), `b8` Nullable(String), "
                      "`p` Nullable(String), `s` Nullable(String)")
-        query = "SELECT %s FROM file('%s', TSV, '%s') ORDER BY id FORMAT TSV" % (
-            ", ".join(exprs), tmp_path / "in.tsv", structure)
-        out = subprocess.run(["clickhouse", "local", "-q", query], capture_output=True, text=True, check=True).stdout
-        rows = [line.split("\t") for line in out.splitlines()]
-        assert rows[0] == ["1", "deadbeef", blob.hex(), "0102", "0101000000000000000000f03f0000000000000040", "x"]
-        assert rows[1] == ["2", "\\N", "\\N", "\\N", "\\N", "\\N"]
+
+        def rows(**mode):
+            exprs = [c.replace("\\`", "`") for c in self.columns(loader, **mode)]
+            query = "SELECT %s FROM file('%s', TSV, '%s') ORDER BY id FORMAT TSV" % (
+                ", ".join(exprs), tmp_path / "in.tsv", structure)
+            out = subprocess.run(["clickhouse", "local", "-q", query], capture_output=True, text=True,
+                                 check=True).stdout
+            return [line.split("\t") for line in out.splitlines()]
+
+        # The default is the connector's default (binary.handling.mode=base64): the same base64 text it stores.
+        assert rows() == [
+            ["1", "3q2+7w==", base64.b64encode(blob).decode(), "0102",
+             "0101000000000000000000f03f0000000000000040", "x"],
+            ["2", "\\N", "\\N", "\\N", "\\N", "\\N"]]
+        # --binary_handling_mode bytes (binary.handling.mode=bytes, persist.raw.bytes=false) is lower-case hex.
+        assert rows(binary_handling_mode="bytes") == [
+            ["1", "deadbeef", blob.hex(), "0102", "0101000000000000000000f03f0000000000000040", "x"],
+            ["2", "\\N", "\\N", "\\N", "\\N", "\\N"]]
 
 
 # --------------------------------------------------------------------------------------------- D-13.04-4 pipefail

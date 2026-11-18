@@ -79,7 +79,7 @@ public class DeDuplicatorRetriedPutTest {
         Map<String, String> props = new HashMap<>();
         ClickHouseSinkConnectorConfig.setDefaultValues(props);
         props.put(ClickHouseSinkConnectorConfigVariables.DEDUPLICATION_POLICY.toString(), policy);
-        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(props);
+        ClickHouseSinkConnectorConfig config = new ClickHouseSinkConnectorConfig(ZoneFixtures.withZones(props));
         ScheduledFuture<?> live = executor.scheduleAtFixedRate(() -> { }, 0, 10, TimeUnit.MILLISECONDS);
         ClickHouseSinkTask task = new ClickHouseSinkTask();
         task.attachForTest(config, queue, new ConcurrentHashMap<>(), new DeDuplicator(config), live);
