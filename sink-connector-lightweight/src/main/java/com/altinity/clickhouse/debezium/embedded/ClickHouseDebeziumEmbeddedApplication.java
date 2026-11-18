@@ -8,6 +8,8 @@ import com.altinity.clickhouse.debezium.embedded.common.PropertiesHelper;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigKeyCheck;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigLoader;
 import com.altinity.clickhouse.debezium.embedded.config.ConfigurationService;
+import com.altinity.clickhouse.debezium.embedded.config.TableFilterConfig;
+import io.debezium.relational.RelationalDatabaseConnectorConfig;
 import com.altinity.clickhouse.debezium.embedded.parser.DebeziumRecordParserService;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfig;
 import com.altinity.clickhouse.sink.connector.ClickHouseSinkConnectorConfigVariables;
@@ -281,6 +283,12 @@ public class ClickHouseDebeziumEmbeddedApplication {
             loadPropertiesFile(configurationFile);
         }
 
+        if (TableFilterConfig.removeRedundantInclude(props,
+                RelationalDatabaseConnectorConfig.TABLE_INCLUDE_LIST.name(),
+                RelationalDatabaseConnectorConfig.TABLE_EXCLUDE_LIST.name())) {
+            log.warn("Removed redundant table.include.list=.* so table.exclude.list takes effect; "
+                    + "excluded tables will not be captured (spec 10.08).");
+        }
         debeziumChangeEventCapture = new DebeziumChangeEventCapture();
         debeziumChangeEventCapture.setup(
                 props, recordParserService, forceStart
