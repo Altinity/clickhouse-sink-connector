@@ -102,7 +102,7 @@ def build_pg_select_expression(col_name, pg_type, is_nullable, udt_name,
     # Timestamps → microsecond-precision UTC string matching CH toString(toTimeZone(col, 'UTC'))
     # timestamptz (with time zone): normalise to UTC first so both sides produce the same string
     # regardless of PG session timezone or CH server timezone.
-    elif 'timestamp' in pg_type_lower and 'time zone' in pg_type_lower:
+    elif 'timestamp' in pg_type_lower and 'with time zone' in pg_type_lower:
         expr = f"to_char({q} AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US')"
     # timestamp without time zone: no timezone conversion needed
     elif 'timestamp' in pg_type_lower:
